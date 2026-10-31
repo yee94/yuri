@@ -13,18 +13,54 @@ function jsonResponse(body, status = 200) {
   }));
 }
 
+const originalCliLookup = npm.npmCli.lookup;
+
 describe('npm registry client', () => {
   beforeEach(() => {
     npm.clearCache();
     Date.now = originalDateNow;
     fetchMock = mock(() => jsonResponse({}));
     globalThis.fetch = fetchMock;
+    npm.npmCli.lookup = async () => null;
   });
 
   afterEach(() => {
     npm.clearCache();
     globalThis.fetch = originalFetch;
     Date.now = originalDateNow;
+    npm.npmCli.lookup = originalCliLookup;
+  });
+
+  test('npm CLI answer wins and skips the direct request (scope registries/auth)', async () => {
+    npm.npmCli.lookup = async () => ({ ok: true, latest: '2.0.0', versions: ['1.0.0', '2.0.0'], distTags: { latest: '2.0.0' } });
+
+    const result = await npm.lookupNpmPackage('@private/pkg', { cwd: '/proj' });
+
+    expect(result).toMatchObject({ ok: true, latest: '2.0.0' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('CLI 404 is definitive and not retried over HTTP', async () => {
+    npm.npmCli.lookup = async () => ({ ok: false, status: 404, error: 'Package not found' });
+
+    const result = await npm.lookupNpmPackage('@private/missing');
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('cache is separated by cwd because .npmrc differs per project', async () => {
+    let calls = 0;
+    npm.npmCli.lookup = async () => {
+      calls += 1;
+      return { ok: true, latest: '1.0.0', versions: ['1.0.0'], distTags: { latest: '1.0.0' } };
+    };
+
+    await npm.getNpmInfo('foo', { cwd: '/a' });
+    await npm.getNpmInfo('foo', { cwd: '/b' });
+    await npm.getNpmInfo('foo', { cwd: '/a' });
+
+    expect(calls).toBe(2);
   });
 
   test('200 success returns latest versions and dist tags', async () => {
@@ -175,5 +211,33 @@ describe('npm registry client', () => {
     await npm.getNpmInfo('foo');
 
     expect(fetchMock.mock.calls[0][1].headers['User-Agent']).toMatch(/^yuri-server\//);
+  });
+  test('npm CLI answer carries a vetted magpie.icon', async () => {
+    npm.npmCli.lookup = async () => ({ ok: true, latest: '1.0.0', versions: ['1.0.0'], distTags: { latest: '1.0.0' }, icon: 'https://cdn.example/a.png' });
+
+    const result = await npm.getNpmInfo('@scope/pkg', { cwd: '/proj' });
+
+    expect(result.icon).toBe('https://cdn.example/a.png');
+  });
+
+  test('registry fallback reads magpie.icon from the latest release', async () => {
+    fetchMock.mockImplementation(() => jsonResponse({
+      'dist-tags': { latest: '1.0.0' },
+      versions: { '1.0.0': { magpie: { icon: 'data:image/svg+xml;base64,AAAA' } } },
+    }));
+
+    const result = await npm.lookupNpmPackage('foo');
+
+    expect(result.icon).toBe('data:image/svg+xml;base64,AAAA');
+  });
+
+  test('sanitizePluginIcon keeps only https and data:image, within the size cap', () => {
+    expect(npm.sanitizePluginIcon('https://x/y.png')).toBe('https://x/y.png');
+    expect(npm.sanitizePluginIcon('  data:image/png;base64,AA  ')).toBe('data:image/png;base64,AA');
+    expect(npm.sanitizePluginIcon('http://x/y.png')).toBeUndefined();
+    expect(npm.sanitizePluginIcon('javascript:alert(1)')).toBeUndefined();
+    expect(npm.sanitizePluginIcon('data:text/html;base64,AA')).toBeUndefined();
+    expect(npm.sanitizePluginIcon(42)).toBeUndefined();
+    expect(npm.sanitizePluginIcon(`https://x/${'a'.repeat(3 << 19)}`)).toBeUndefined();
   });
 });

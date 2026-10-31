@@ -6,6 +6,7 @@
 
 - `bundle.ts` 提供允许的共享模块并求值标准 CJS。SDK、Solid、Solid store/web 与 Effect 使用宿主同一实例，不能把它们重新打进插件。
 - `host.ts` 负责插件 owner/context、注册表、Contract、生命周期、窗口贡献、会话与布局桥接；`GuiPluginsProvider.tsx` 管理加载与启停，`react.ts` 提供轻量 React context，`components/gui-plugins` 负责界面和 Solid 容器。
+- React inventory 保留官方 `source`，插件设置按来源关联 GUI 能力，不按 GUI id 猜 npm 包名。commands/menuItems 与 panels/settings 一样携带显式 `pluginId`，以便详情只展示当前插件自己的贡献；停用后仍保留来源与 GUI 标识。
 - `files.ts` 负责会话工作区文件读取与变更观察；`storage.ts` 和 `preferences.ts` 负责插件持久状态及 GUI 启用偏好。
 - `file-icons.ts` 负责窗口级文件扩展名图标索引、SVG 资源校验和独立订阅，不依赖 host snapshot。
 - Web、Electron、VS Code 聊天窗口、hosted/mobile 使用同一个窗口 host。嵌入会话和独立 Agent Manager 不重复加载宿主。只有新版 Electron 的本地实例主 frame 可以申请 native lease；其他运行时、远程/Relay 实例及旧 shell 保持 `app.platform: web`、`desktop: undefined`。获得 lease 后为 `app.platform: desktop`，提供 `desktop.os`（其他 desktop 方法仍明确 unsupported）。若部署的 CSP 禁止 CJS 求值，插件状态显示求值失败，不能绕过 CSP。

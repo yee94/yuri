@@ -12,6 +12,7 @@ import { McpIcon } from '@/components/icons/McpIcon';
 import { McpDropdownContent } from '@/components/mcp/McpDropdown';
 import { AboutSettings } from '@/components/sections/yuri/AboutSettings';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
+import { PluginIssueNotifier } from '@/components/sections/plugins/PluginIssueNotifier';
 import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { MobileOtaUpdateNotice } from '@/components/update/MobileOtaUpdateNotice';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
@@ -3467,6 +3468,7 @@ const MobileShell: React.FC<{
       <ErrorBoundary>
         <MobileSessionStatusBar />
       </ErrorBoundary>
+      <PluginIssueNotifier />
       </MobileGlobalSearchHost>
     </DedicatedMobileAppProvider>
     </MobileAutoReadProvider>

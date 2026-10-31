@@ -141,6 +141,21 @@ search fields may keep visibly bordered inputs because editing is their primary
 task. Their surrounding section label, group spacing, typography, and helper
 placement still follow this specification.
 
+The Plugins source editor follows its approved compact entity mockup with shared input/card tokens,
+13px truncated package titles with 10px monospace version subtitles, and one
+compact update strip shared by registry and runtime updates. Its collection opts
+into `SettingsSidebarItem.compact`; healthy rows have no redundant loaded/type
+line, while errors and operation progress add one detail line. Ordinary Settings
+rows and other collections retain their default geometry and wrapping.
+The approved Plugins mockup also embeds a compact GUI interface/status/switch
+strip above a provider's form and a small neutral window capability icon in its
+collection row. There is no second GUI inventory card or row action menu.
+Plugin detail header actions are ordered delete icon, reload, save. Delete
+replaces discard and opens a confirmation naming the selected config entry or
+local file; failure retains the editor and confirmation for retry.
+Plugin options (JSON) use the shared `Textarea`, not CodeMirror; object-only JSON
+validation and update/reload disabled states still apply.
+
 ## Responsive and platform rules
 
 - Verify mobile Settings layouts down to a 350px viewport width.

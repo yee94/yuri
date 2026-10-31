@@ -1863,6 +1863,26 @@ input[aria-label="Terminal input"] {
   animation: yuri-busy-pulse 1.2s ease-in-out infinite;
 }
 
+@keyframes yuri-indeterminate-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(333%);
+  }
+}
+
+.animate-indeterminate-slide {
+  animation: yuri-indeterminate-slide 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-indeterminate-slide {
+    animation: none;
+    transform: translateX(110%);
+  }
+}
+
 @keyframes yuri-lattice-orb-swell {
   0%,
   100% {

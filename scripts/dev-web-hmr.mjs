@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +138,31 @@ if (forceViteOptimize) {
 
 mkdirSync(hmrSessionIndexDir, { recursive: true });
 
+// Opt-in: run a private OpenCode for HMR instead of the shared service the
+// desktop app uses, so a slow or stuck dev upstream cannot stall the desktop.
+// Its data/state live under the HMR data dir (own database, sessions,
+// worktrees, service registration); global OpenCode config stays shared.
+const isolateOpenCode = ['1', 'true'].includes(String(process.env.YURI_HMR_ISOLATED_OPENCODE ?? '').trim().toLowerCase());
+const isolatedOpenCodeEnv = {};
+if (isolateOpenCode) {
+  const root = path.join(hmrSessionIndexDir, 'opencode');
+  const xdgDataHome = path.join(root, 'xdg-data');
+  const xdgStateHome = path.join(root, 'xdg-state');
+  mkdirSync(path.join(xdgDataHome, 'opencode'), { recursive: true });
+  mkdirSync(xdgStateHome, { recursive: true });
+  // Legacy auth.json seeds the new database's credentials on first start only.
+  const sharedAuth = path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json');
+  const isolatedAuth = path.join(xdgDataHome, 'opencode', 'auth.json');
+  if (existsSync(sharedAuth) && !existsSync(isolatedAuth)) copyFileSync(sharedAuth, isolatedAuth);
+  Object.assign(isolatedOpenCodeEnv, {
+    YURI_OPENCODE_SHARED_SERVICE: '0',
+    YURI_OPENCODE_PORT: process.env.YURI_HMR_OPENCODE_PORT || '4196',
+    XDG_DATA_HOME: xdgDataHome,
+    XDG_STATE_HOME: xdgStateHome,
+    YURI_MANAGED_PROCESS_REGISTRY: path.join(root, 'managed-opencode'),
+  });
+}
+
 // Do not pin the staged Electron bundled binary. Managed startup detects the
 // local opencode2 version and installs the pinned V2 into the Yuri
 // data dir when PATH is missing or too old.
@@ -146,6 +171,7 @@ const apiEnv = {
   YURI_SESSION_INDEX_DB_PATH: hmrSessionIndexDbPath,
   // Never inherit a leftover desktop runtime from the parent shell.
   YURI_RUNTIME: 'web',
+  ...isolatedOpenCodeEnv,
 };
 
 const startApi = () => run('api', 'bun', ['run', '--cwd', 'packages/web', 'dev:server:watch'], apiEnv);
@@ -179,6 +205,9 @@ if (hmrHost === '0.0.0.0' || hmrHost === '::') {
 }
 console.log(`[dev:web:hmr] API: http://127.0.0.1:${backendPort}`);
 console.log(`[dev:web:hmr] Session index: ${hmrSessionIndexDbPath}`);
+console.log(isolateOpenCode
+  ? `[dev:web:hmr] OpenCode: private on port ${isolatedOpenCodeEnv.YURI_OPENCODE_PORT}, data ${isolatedOpenCodeEnv.XDG_DATA_HOME}`
+  : '[dev:web:hmr] OpenCode: shared service (same as desktop); YURI_HMR_ISOLATED_OPENCODE=1 isolates it');
 console.log('[dev:web:hmr] IMPORTANT: open UI URL above for HMR; backend URL has no HMR');
 
 let shuttingDown = false;

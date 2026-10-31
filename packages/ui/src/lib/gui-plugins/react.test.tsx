@@ -118,7 +118,7 @@ it('keeps initial render light across 50 rerenders before idle preload starts', 
   for (let index = 0; index < 50; index++) await act(async () => draw());
   expect(context.requested).toBe(false);
   expect(context.loading).toBe(false);
-  expect(context.inventory).toEqual([{ id: 'dsl', enabled: true }]);
+  expect(context.inventory).toEqual([{ id: 'dsl', source: plugin.source, enabled: true }]);
   expect(state.list).toHaveBeenCalledOnce();
   await act(async () => context.refresh()); await settle();
   expect(state.list).toHaveBeenCalledTimes(2);

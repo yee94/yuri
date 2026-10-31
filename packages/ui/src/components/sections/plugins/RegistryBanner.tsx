@@ -1,76 +1,20 @@
 import React from 'react';
-import { Button } from '@/components/ui/button';
-import { toast } from '@/components/ui';
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { usePluginRegistryQuery } from '@/queries/pluginQueries';
-import { usePluginsStore } from '@/stores/usePluginsStore';
 
 interface RegistryBannerProps {
-  entryId: string;
   spec: string;
 }
 
-export const RegistryBanner: React.FC<RegistryBannerProps> = ({ entryId, spec }) => {
+export const RegistryBanner: React.FC<RegistryBannerProps> = ({ spec }) => {
   const { t } = useI18n();
   const { data } = usePluginRegistryQuery([spec]);
   const info = data?.[spec];
-  const updateEntry = usePluginsStore((s) => s.updateEntry);
-
-  const [isUpdating, setIsUpdating] = React.useState(false);
 
   if (!info) return null;
 
-  if (info.kind === 'npm-ok') {
-    if (!info.hasUpdate || !info.latestVersion) return null;
-
-    const latest = info.latestVersion;
-    const current = info.currentVersion ?? '';
-
-    const handleUpdate = async () => {
-      setIsUpdating(true);
-      try {
-        const result = await updateEntry(entryId, { spec: `${info.name}@latest` });
-        if (result.ok) {
-          toast.success(
-            t('settings.plugins.toast.updatedToLatest', { version: latest }),
-          );
-        } else {
-          toast.error(t('settings.plugins.toast.refreshFailed'));
-        }
-      } finally {
-        setIsUpdating(false);
-      }
-    };
-
-    return (
-      <div className="rounded-md border border-border bg-card p-3 flex items-start gap-3">
-        <Icon
-          name="arrow-up"
-          className="h-5 w-5 text-[var(--status-success)] shrink-0 mt-0.5"
-        />
-        <div className="flex-1 min-w-0">
-          <p className="typography-label text-[var(--status-success)]">
-            {t('settings.plugins.registry.banner.updateAvailable.title')}
-          </p>
-          <p className="typography-micro text-muted-foreground mt-0.5">
-            {t('settings.plugins.registry.banner.updateAvailable.description', {
-              current,
-              latest,
-            })}
-          </p>
-        </div>
-        <Button
-          variant="default"
-          size="sm"
-          onClick={() => void handleUpdate()}
-          disabled={isUpdating}
-        >
-          {t('settings.plugins.registry.banner.updateAvailable.action', { latest })}
-        </Button>
-      </div>
-    );
-  }
+  if (info.kind === 'npm-ok') return null;
 
   if (info.kind === 'path-ok') return null;
 

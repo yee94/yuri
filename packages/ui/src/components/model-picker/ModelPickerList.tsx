@@ -530,7 +530,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     const query = searchQuery.trim();
     if (!query) return true;
     // Separator-tolerant: "GLM 5.2" should still hit "GLM-5.2".
-    return matchesModelSearch(modelName, query) || matchesModelSearch(providerName, query);
+    return matchesModelSearch(`${providerName} ${modelName}`, query);
   }, [searchQuery]);
 
   const filteredFavorites = React.useMemo(() => favoriteModels.filter(({ model, providerID, modelID }) => {

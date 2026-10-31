@@ -160,12 +160,6 @@ export const pluginRuntimeQueryOptions = (
   };
 };
 
-export const pluginPackageUpdateKey = (
-  directory: string | null,
-  target: string,
-  transport = getRuntimeTransportIdentity(),
-): string => JSON.stringify([transport, normalizeDirectory(directory) ?? '', target]);
-
 export const usePluginsQuery = (options: { enabled?: boolean } = {}) => {
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   return useQuery({

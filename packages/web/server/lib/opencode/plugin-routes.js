@@ -149,7 +149,7 @@ export const registerPluginRoutes = (app, dependencies) => {
 
       const npmInfoByName = new Map();
       await Promise.all(Array.from(npmJobs.keys()).map(async (name) => {
-        npmInfoByName.set(name, await getNpmInfo(name, { forceRefresh: refresh }));
+        npmInfoByName.set(name, await getNpmInfo(name, { forceRefresh: refresh, cwd: directory || undefined }));
       }));
 
       const results = [];
@@ -198,6 +198,7 @@ export const registerPluginRoutes = (app, dependencies) => {
             currentVersion,
             latestVersion: info.latest,
             versions: info.versions,
+            ...(info.icon ? { icon: info.icon } : {}),
           });
           continue;
         }
@@ -210,6 +211,7 @@ export const registerPluginRoutes = (app, dependencies) => {
           latestVersion: info.latest,
           versions: info.versions,
           hasUpdate: currentVersion !== null && isExactSemver(currentVersion) && currentVersion !== info.latest,
+          ...(info.icon ? { icon: info.icon } : {}),
         });
       }
 

@@ -6,12 +6,10 @@ import { opencodeClient } from '@/lib/opencode/client';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { queryClient } from '@/lib/queryRuntime';
-import { pluginOperationErrorMessage, updatePluginPackage } from '@/lib/opencode/plugins';
 import {
-  pluginPackageUpdateKey,
   pluginsListQueryOptions,
-  refreshPluginRuntimeQuery,
   refreshPluginsQuery,
+  type PluginsList,
 } from '@/queries/pluginQueries';
 
 export type PluginScope = 'user' | 'project';
@@ -56,14 +54,9 @@ export type PluginMutationResult = {
   warning?: string;
 };
 
-/** An update this client started. Keyed by `pluginPackageUpdateKey`. */
-export type PluginPackageUpdate =
-  | { kind: 'running' }
-  | { kind: 'failed'; error: string };
-
 export type RegistryResult =
-  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean }
-  | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[] }
+  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string }
+  | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[]; icon?: string }
   | { kind: 'npm-missing-package'; spec: string; name: string; error: string }
   | { kind: 'npm-malformed'; spec: string; error: string }
   | { kind: 'npm-network'; spec: string; error: string }
@@ -79,15 +72,12 @@ export interface PluginsStore {
   registryInfo: Record<string, RegistryResult>;
   isLoadingRegistry: boolean;
   draft: PluginDraft | null;
-  packageUpdates: Record<string, PluginPackageUpdate>;
 
   setSelected: (id: string | null) => void;
   setDraft: (draft: PluginDraft | null) => void;
   loadPlugins: (options?: { force?: boolean }) => Promise<boolean>;
   loadRegistryInfo: (opts?: { specs?: string[]; force?: boolean }) => Promise<void>;
   updateToLatest: (id: string) => Promise<PluginMutationResult>;
-  /** Reinstalls one package spec in place. Does not rewrite the config spec. */
-  updatePackage: (target: string) => Promise<boolean>;
   createEntry: (input: { spec: string; options?: Record<string, unknown>; scope: PluginScope }) => Promise<PluginMutationResult>;
   updateEntry: (id: string, input: { spec?: string; options?: Record<string, unknown> }) => Promise<PluginMutationResult>;
   deleteEntry: (id: string) => Promise<PluginMutationResult>;
@@ -162,7 +152,6 @@ export const usePluginsStore = create<PluginsStore>()(
         registryInfo: {},
         isLoadingRegistry: false,
         draft: null,
-        packageUpdates: {},
 
         setSelected: (id) => set({ selectedId: id }),
 
@@ -256,37 +245,6 @@ export const usePluginsStore = create<PluginsStore>()(
           return await get().updateEntry(id, { spec: `${info.name}@${info.latestVersion}` });
         },
 
-        updatePackage: async (target) => {
-          const configDirectory = getConfigDirectory();
-          const transport = getRuntimeTransportIdentity();
-          const key = pluginPackageUpdateKey(configDirectory, target, transport);
-          if (get().packageUpdates[key]?.kind === 'running') return false;
-          set({ packageUpdates: { ...get().packageUpdates, [key]: { kind: 'running' } } });
-          try {
-            await updatePluginPackage(configDirectory, target);
-            if (getRuntimeTransportIdentity() === transport) {
-              try {
-                await refreshPluginRuntimeQuery(queryClient, configDirectory, transport);
-              } catch (error) {
-                console.error('[PluginsStore] Plugin updated, but status could not be reread:', error);
-              }
-            }
-            const next = { ...get().packageUpdates };
-            delete next[key];
-            set({ packageUpdates: next });
-            return true;
-          } catch (error) {
-            console.error('[PluginsStore] Failed to update plugin package:', error);
-            set({
-              packageUpdates: {
-                ...get().packageUpdates,
-                [key]: { kind: 'failed', error: pluginOperationErrorMessage(error) },
-              },
-            });
-            return false;
-          }
-        },
-
         createEntry: async (input) => {
           const result = await runPluginMutation(async (configDirectory) => {
             const response = await runtimeFetch(buildPluginsUrl('/api/config/plugins/entry', configDirectory), {
@@ -303,7 +261,9 @@ export const usePluginsStore = create<PluginsStore>()(
         },
 
         updateEntry: async (id, input) => {
-          const existingSpec = get().entries.find((plugin) => plugin.id === id)?.spec;
+          const currentList = queryClient.getQueryData<PluginsList>(pluginsListQueryOptions(getConfigDirectory(), getRuntimeTransportIdentity()).queryKey);
+          const existingEntry = (currentList?.entries ?? get().entries).find((plugin) => plugin.id === id);
+          const existingSpec = existingEntry?.spec;
           const nextSpec = input.spec ?? existingSpec;
           const result = await runPluginMutation(async (configDirectory) => {
             const response = await runtimeFetch(buildPluginsUrl(`/api/config/plugins/entry/${encodeURIComponent(id)}`, configDirectory), {
@@ -312,7 +272,7 @@ export const usePluginsStore = create<PluginsStore>()(
               body: JSON.stringify(buildEntryBody(input)),
             });
             return response;
-          });
+          }, existingEntry && nextSpec ? { ...existingEntry, spec: nextSpec } : undefined);
           if (result.ok && nextSpec) {
             void get().loadRegistryInfo({ specs: [nextSpec], force: true });
           }
@@ -470,6 +430,7 @@ function buildEntryBody(input: { spec?: string; options?: Record<string, unknown
 
 async function runPluginMutation(
   request: (configDirectory: string | null) => Promise<Response>,
+  updatedEntry?: PluginEntry,
 ): Promise<PluginMutationResult> {
   const transport = getRuntimeTransportIdentity();
   const generation = getRuntimeGeneration();
@@ -489,7 +450,15 @@ async function runPluginMutation(
     const plugins = await refreshPluginsQuery(queryClient, configDirectory, transport);
     if (configDirectory === getConfigDirectory() && transport === getRuntimeTransportIdentity()
       && generation === getRuntimeGeneration()) {
-      usePluginsStore.setState({ entries: plugins.entries, files: plugins.files });
+      const replacement = updatedEntry && usePluginsStore.getState().selectedId === updatedEntry.id
+        ? plugins.entries.find((entry) => entry.spec === updatedEntry.spec
+          && entry.scope === updatedEntry.scope && entry.sourcePath === updatedEntry.sourcePath)
+        : undefined;
+      usePluginsStore.setState({
+        entries: plugins.entries,
+        files: plugins.files,
+        ...(replacement ? { selectedId: replacement.id } : {}),
+      });
       pluginsLastLoadedAt.set(getPluginCacheKey(configDirectory), Date.now());
     }
     return {

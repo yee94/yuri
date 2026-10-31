@@ -7,8 +7,18 @@ start or replace OpenCode to provide inference.
 ## Ownership and security
 
 - `bridge-client.js` writes one self-contained built-in plugin to a Yuri-owned
-  temporary `.opencode/plugins` directory. Official client `plugin.list` activates
-  that isolated Location. No global/project OpenCode configuration is changed.
+  `.opencode/plugins` directory under the OS temporary directory. Official client
+  `plugin.list` activates that isolated Location. No global/project OpenCode
+  configuration is changed.
+- The directory name is `yuri-inference-<sha256 prefix of the plugin bundle>`.
+  Every Location stays loaded in the shared service until its idle sweep, so
+  restarts and concurrent hosts running the same bundle reuse one directory and
+  one Location instead of adding one per process. The plugin file is replaced
+  atomically only when its content differs. Shutdown never deletes this shared
+  directory. On first use per process, cleanup removes other `yuri-inference-*`
+  directories (older bundles and the former per-process layout) unless upstream
+  `debug.location.list` reports them loaded; an unreadable inventory skips the
+  pass. Cleanup is best effort and never delays inference.
 - Calls use the official authenticated `client.rpc(LlmBridge)` transport, scoped
   to that directory. `ready` verifies protocol version 2 and runtime service availability; only RPC-not-ready
   startup errors receive a bounded readiness retry. Generation is not rerun for

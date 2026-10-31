@@ -2,6 +2,9 @@ import { settingsDict } from './en.settings';
 
 export const dict = {
   'guiPlugins.title': 'Interface plugins',
+  'guiPlugins.interface': 'UI plugin',
+  'guiPlugins.interface.description': 'This plugin provides a UI that can be displayed in the app',
+  'guiPlugins.off': 'Off',
   'guiPlugins.loading': 'Loading interface plugins…',
   'guiPlugins.preview.loadingTitle': 'Preparing preview',
   'guiPlugins.preview.loadingDescription': 'Opening for the first time may take a moment',

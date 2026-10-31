@@ -116,7 +116,6 @@ const resetStore = () => {
     registryInfo: {},
     isLoadingRegistry: false,
     draft: null,
-    packageUpdates: {},
   });
 };
 

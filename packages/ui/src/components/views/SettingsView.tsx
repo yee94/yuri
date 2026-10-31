@@ -83,6 +83,8 @@ import {
   type SettingsRuntimeContext,
   type SettingsPageMeta,
 } from "@/lib/settings/metadata";
+import { usePluginIssues } from "@/components/sections/plugins/usePluginIssues";
+import { usePluginUpdates } from "@/components/sections/plugins/usePluginUpdates";
 import {
   buildSettingsSearchResults,
   type SettingsSearchResult,
@@ -506,6 +508,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       .filter((page) => !(runtimeCtx.isVSCode && page.slug === "projects"))
       .filter((page) => !(isMobile && page.slug === "shortcuts"));
   }, [runtimeCtx, isMobile, mobileInstancesPage, visiblePageSlugs]);
+
+  const pluginIssueCount = usePluginIssues().length;
+  const hasPluginUpdates = usePluginUpdates();
 
   const visiblePageGroups = React.useMemo(() => {
     return groupSettingsPages(visiblePages);
@@ -1490,6 +1495,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               {getPageTitle(page.slug)}
                             </span>
                           </span>
+                          {page.slug === "plugins" && (pluginIssueCount > 0 || hasPluginUpdates) ? (
+                            <span
+                              role="img"
+                              aria-label={t(pluginIssueCount > 0 ? "settings.plugins.status.failed.title" : "settings.plugins.update.available.title")}
+                              data-plugin-issue-badge=""
+                              className="size-1.5 shrink-0 rounded-full bg-[var(--status-error)]"
+                            />
+                          ) : null}
                           {isMobile ? (
                             <Icon
                               name="arrow-right-s"

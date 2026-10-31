@@ -131,6 +131,35 @@ flag unless a newer Agent load has taken ownership.
 Plugin Settings page/sidebar observe `pluginQueries.ts`, including external
 plugin/config changes, while the legacy store mirrors explicit list loads for
 imperative selection/mutation callers. The store loader now shares Query IO.
+Plugin operations with their own lifecycle (in-place or pinned-entry update, OpenCode
+reload, update check) are TanStack mutations in `queries/pluginMutations.ts`; the
+store keeps no pending/error state for them. Per-target update state is read with
+`usePluginPackageUpdateState`, keyed by runtime transport, directory and target, so
+the detail page and every list row agree. Package icons come from the registry
+result (`RegistryResult.icon`, the server-vetted `magpie.icon`).
+Pinned updates retain the config entry identity and destination spec through the
+write/reload, so a changed spec cannot lose the pending/error state. Registry and
+runtime update notices share one compact strip; the registry banner only reports
+validation/read failures. Healthy rows omit redundant loaded/type indicators.
+After a config spec rewrite changes its server-owned entry ID, mutation
+reconciliation moves the selection to the confirmed replacement in the same
+scope/source file. It does not override a selection the user changed meanwhile.
+The mutation captures the original entry from the Query catalog, not a possibly
+stale legacy Store projection. If a live config refresh announces the new ID
+before the write returns, detail resolution follows the mutation's exact
+destination spec and source identity; only the pending operation may retain its
+original entry snapshot until the authoritative replacement arrives. It never
+falls back across transport/directory boundaries or replaces another selection.
+Unreported runtime status uses the same compact blue strip and spinner as
+update progress, with description only; it is not proof the plugin is active.
+Settings navigation shows one right-aligned red attention dot for known load
+failures or available registry/runtime updates. Update counts are not repeated
+in the collection header; per-plugin update details remain on the row/editor.
+The failure notifier continues to announce failures only, not available updates.
+Plugin row and detail subtitles display the effective version reported by an
+active runtime package, including unpinned specs. Config selectors and registry
+latest versions are not evidence of the effective version; unknown versions are
+omitted. A failed replacement may still show the previous active revision.
 
 ## Architecture
 

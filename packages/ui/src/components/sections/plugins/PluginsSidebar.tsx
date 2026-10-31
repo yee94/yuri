@@ -2,37 +2,33 @@ import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { AddPluginDialog } from './AddPluginDialog';
 import { RegistryBadge } from './RegistryBadge';
-import { PluginStatusBadge } from './PluginStatusBadge';
+import { useGuiPlugins } from '@/lib/gui-plugins/react';
+import { findPluginGuiMatches } from './pluginGuiState';
 import {
   configEntryRuntimeTarget,
   findRuntimeMatches,
   pluginFileRuntimeTarget,
   resolveUpdateFlag,
-  type PluginRuntimeTarget,
+  resolveLoadState,
+  resolveEffectivePluginVersion,
 } from './pluginLoadState';
-import { toast } from '@/components/ui';
 import { Icon } from '@/components/icon/Icon';
-import type { IconName } from '@/components/icon/icons';
 import { SettingsSidebarLayout } from '@/components/sections/shared/SettingsSidebarLayout';
 import { SettingsSidebarItem } from '@/components/sections/shared/SettingsSidebarItem';
-import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
+import {
+  useCheckPluginUpdates,
+  usePendingPluginUpdateTargets,
+  usePluginReloadPending,
+  useReloadPlugins,
+} from '@/queries/pluginMutations';
+import { PluginIcon } from './PluginIcon';
+import { PluginListSkeleton } from './PluginSkeletons';
+import { splitPluginSpec } from './pluginPresentation';
+import './plugin-settings.css';
 import { useI18n } from '@/lib/i18n';
 import {
-  checkPluginRuntimeUpdates,
-  pluginPackageUpdateKey,
-  refreshPluginRegistryQuery,
-  resolveConfigQueryDirectory,
-  usePluginConfigDirectory,
   usePluginRegistryQuery,
   usePluginRuntimeQuery,
   usePluginsQuery,
@@ -48,31 +44,19 @@ interface PluginsSidebarProps {
   onAddClick?: () => void;
 }
 
-type DeleteTarget =
-  | { kind: 'entry'; id: string; label: string }
-  | { kind: 'file'; id: string; label: string }
-  | null;
-
-const entryIcon = (entry: PluginEntry): IconName =>
-  entry.parsedKind === 'npm' ? 'code-box' : 'folder';
-
 export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
   onItemSelect,
   onAddClick,
 }) => {
   const { t } = useI18n();
+  const gui = useGuiPlugins();
 
-  const { selectedId, setSelected, deleteEntry, deleteFile, loadPlugins, updateEntry, updatePackage, packageUpdates } =
+  const { selectedId, setSelected, loadPlugins } =
     usePluginsStore(
       useShallow((s) => ({
         selectedId: s.selectedId,
         setSelected: s.setSelected,
-        deleteEntry: s.deleteEntry,
-        deleteFile: s.deleteFile,
         loadPlugins: s.loadPlugins,
-        updateEntry: s.updateEntry,
-        updatePackage: s.updatePackage,
-        packageUpdates: s.packageUpdates,
       })),
     );
 
@@ -83,13 +67,15 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
   const specs = React.useMemo(() => entries.map((entry) => entry.spec), [entries]);
   const { data, isFetching } = usePluginRegistryQuery(specs, false);
   const registryInfo = React.useMemo(() => data ?? {}, [data]);
-  const configDirectory = usePluginConfigDirectory();
   const runtimeQuery = usePluginRuntimeQuery();
   const runtimeUnavailable = runtimeQuery.isError && runtimeQuery.data === undefined;
-  const [isCheckingUpdates, setIsCheckingUpdates] = React.useState(false);
+  const checkUpdates = useCheckPluginUpdates(specs);
+  const reload = useReloadPlugins();
+  const isCheckingUpdates = checkUpdates.isPending;
+  const pendingUpdateTargets = usePendingPluginUpdateTargets();
+  const isReloading = usePluginReloadPending();
+  const isInitialLoading = pluginsQuery.isPending && pluginsQuery.data === undefined;
 
-  const [deleteTarget, setDeleteTarget] = React.useState<DeleteTarget>(null);
-  const [isDeleting, setIsDeleting] = React.useState(false);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -102,56 +88,39 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
     return () => window.removeEventListener('yuri:settings-open-plugin-add', handleOpenAdd);
   }, []);
 
-  const runtimeTargets = React.useMemo(() => {
-    const targets = new Map<string, PluginRuntimeTarget | null>();
-    for (const entry of entries) targets.set(entry.id, configEntryRuntimeTarget(entry.spec, entry.sourcePath));
-    for (const file of files) targets.set(file.id, pluginFileRuntimeTarget(file.absolutePath));
-    return targets;
-  }, [entries, files]);
-
   const openCodeUpdateTargets = React.useMemo(() => {
     const inventory = runtimeQuery.data;
     const targets = new Map<string, string>();
     if (!inventory) return targets;
     for (const entry of entries) {
-      const target = runtimeTargets.get(entry.id);
+      const target = configEntryRuntimeTarget(entry.spec, entry.sourcePath);
       if (target?.kind !== 'package') continue;
-      if (packageUpdates[pluginPackageUpdateKey(configDirectory, target.target)]?.kind === 'running') continue;
+      if (pendingUpdateTargets.has(target.target)) continue;
       if (resolveUpdateFlag(findRuntimeMatches(target, inventory)) === 'available') {
         targets.set(entry.id, target.target);
       }
     }
     return targets;
-  }, [configDirectory, entries, packageUpdates, runtimeQuery.data, runtimeTargets]);
+  }, [entries, pendingUpdateTargets, runtimeQuery.data]);
 
-  const updateCounts = React.useMemo(() => {
-    const counts = { userEntries: 0, projectEntries: 0 };
-    for (const entry of entries) {
-      const info = registryInfo[entry.spec];
-      if ((info?.kind === 'npm-ok' && info.hasUpdate) || openCodeUpdateTargets.has(entry.id)) {
-        if (entry.scope === 'user') counts.userEntries++;
-        else if (entry.scope === 'project') counts.projectEntries++;
-      }
-    }
-    return counts;
-  }, [entries, openCodeUpdateTargets, registryInfo]);
-
-  const userEntries = React.useMemo(
-    () => entries.filter((e) => e.scope === 'user'),
+  // Scope is a quiet tag on the row, not a section: user-level is the default,
+  // so only project-level plugins are marked.
+  const orderedEntries = React.useMemo(
+    () => [...entries.filter((e) => e.scope === 'user'), ...entries.filter((e) => e.scope === 'project')],
     [entries],
   );
-  const projectEntries = React.useMemo(
-    () => entries.filter((e) => e.scope === 'project'),
-    [entries],
-  );
-  const userFiles = React.useMemo(
-    () => files.filter((f) => f.scope === 'user'),
+  const orderedFiles = React.useMemo(
+    () => [...files.filter((f) => f.scope === 'user'), ...files.filter((f) => f.scope === 'project')],
     [files],
   );
-  const projectFiles = React.useMemo(
-    () => files.filter((f) => f.scope === 'project'),
-    [files],
-  );
+
+  // Focus the selected plugin when it is chosen from outside the list
+  // (for example the load-failure notification).
+  React.useEffect(() => {
+    if (!selectedId) return;
+    const row = document.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(selectedId)}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [selectedId, entries.length, files.length]);
 
   const total = entries.length + files.length;
   const isEmpty = total === 0;
@@ -172,197 +141,99 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
     [onItemSelect, setSelected],
   );
 
-  const handleUpdateToLatest = React.useCallback(
-    async (id: string) => {
-      const entry = entries.find((e) => e.id === id);
-      if (!entry) return;
-      const info = registryInfo[entry.spec];
-      if (!info || info.kind !== 'npm-ok' || !info.hasUpdate || !info.latestVersion) {
-        return;
-      }
-      const latest = info.latestVersion;
-      const result = await updateEntry(id, { spec: `${info.name}@${latest}` });
-      if (result.ok) {
-        toast.success(
-          t('settings.plugins.toast.updatedToLatest', { version: latest }),
-        );
-      } else {
-        toast.error(t('settings.plugins.toast.refreshFailed'));
-      }
-    },
-    [entries, registryInfo, t, updateEntry],
-  );
-
-  const handleOpenCodeUpdate = useEvent(async (target: string, pluginName: string) => {
-    const ok = await updatePackage(target);
-    if (ok) toast.success(t('settings.plugins.update.toast.done', { name: pluginName }));
-    else toast.error(t('settings.plugins.update.toast.failed', { name: pluginName }));
+  const handleRefresh = useEvent(() => {
+    if (isReloading || isCheckingUpdates) return;
+    reload.mutate(undefined, { onSuccess: () => checkUpdates.mutate() });
   });
-
-  const handleRefresh = useEvent(async () => {
-    toast.info(t('settings.plugins.toast.refreshing'));
-    setIsCheckingUpdates(true);
-    const registryOk = await refreshPluginRegistryQuery(undefined, resolveConfigQueryDirectory(), specs)
-      .then(() => true)
-      .catch(() => false);
-    const checkOk = await checkPluginRuntimeUpdates(configDirectory)
-      .then(() => true)
-      .catch(() => false);
-    setIsCheckingUpdates(false);
-    if (!registryOk) toast.error(t('settings.plugins.toast.refreshFailed'));
-    if (!checkOk) toast.error(t('settings.plugins.toast.checkFailed'));
-  });
-
-  const handleDelete = React.useCallback(async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    const result =
-      deleteTarget.kind === 'entry'
-        ? await deleteEntry(deleteTarget.id)
-        : await deleteFile(deleteTarget.id);
-    if (result.ok) {
-      toast.success(
-        result.message ||
-          t('settings.plugins.sidebar.toast.deleted', { name: deleteTarget.label }),
-      );
-    } else {
-      toast.error(t('settings.plugins.sidebar.toast.deleteFailed'));
-    }
-    setDeleteTarget(null);
-    setIsDeleting(false);
-  }, [deleteEntry, deleteFile, deleteTarget, t]);
 
   const renderEntry = (entry: PluginEntry) => {
     const info = registryInfo[entry.spec];
+    const spec = splitPluginSpec(entry.spec, entry.parsedKind === 'npm');
+    const target = configEntryRuntimeTarget(entry.spec, entry.sourcePath);
+    const matches = target && runtimeQuery.data ? findRuntimeMatches(target, runtimeQuery.data) : [];
+    const load = runtimeQuery.data ? resolveLoadState(matches) : null;
+    const version = resolveEffectivePluginVersion(matches);
+    const updating = (target?.kind === 'package' && pendingUpdateTargets.has(target.target)) || resolveUpdateFlag(matches) === 'updating';
+    const busy = updating || isReloading;
     const canUpdate =
       info?.kind === 'npm-ok' && info.hasUpdate && !!info.latestVersion;
+    const latest = info?.kind === 'npm-ok' ? info.latestVersion : null;
+    const subtitle = updating
+      ? latest ? t('settings.plugins.update.running.toVersion', { version: latest }) : t('settings.plugins.update.running')
+      : isReloading ? t('settings.plugins.sidebar.reloading')
+        : load?.kind === 'failed' ? load.error.split('\n')[0]
+          : canUpdate && latest ? t('settings.plugins.update.available.toVersion', { version: latest })
+            : openCodeUpdateTargets.has(entry.id) ? t('settings.plugins.update.available.title') : null;
     const updateTarget = openCodeUpdateTargets.get(entry.id) ?? null;
-    const actions: Array<{
-      label: string;
-      icon?: IconName;
-      destructive?: boolean;
-      onClick: () => void;
-    }> = [];
-    if (updateTarget) {
-      actions.push({
-        label: t('settings.plugins.update.action'),
-        icon: 'arrow-up-s',
-        onClick: () => void handleOpenCodeUpdate(updateTarget, entry.spec),
-      });
-    } else if (canUpdate) {
-      actions.push({
-        label: t('settings.plugins.sidebar.actions.updateToLatest'),
-        icon: 'arrow-up-s',
-        onClick: () => void handleUpdateToLatest(entry.id),
-      });
-    }
-    actions.push({
-      label: t('settings.common.actions.delete'),
-      icon: 'delete-bin',
-      destructive: true,
-      onClick: () =>
-        setDeleteTarget({ kind: 'entry', id: entry.id, label: entry.spec }),
-    });
     return (
       <SettingsSidebarItem
+        compact
         key={entry.id}
-        title={<span title={entry.spec}>{entry.spec}</span>}
+        rowId={entry.id}
+        title={<>
+          <span className="min-w-0 flex-1 truncate" title={entry.spec}>{spec.name}</span>
+          {findPluginGuiMatches(target, gui.inventory).length > 0 ? <span className="yuri-plugin-gui-tag" title={t('guiPlugins.interface')} role="img" aria-label={t('guiPlugins.interface')}><Icon name="window" className="size-[13px]" /></span> : null}
+          {version ? <span className="inline-flex h-5 shrink-0 items-center font-mono text-[11px] leading-none text-muted-foreground/60" data-plugin-version>{version}</span> : null}
+          {entry.scope === 'project' ? <span className="shrink-0 text-[10px] text-muted-foreground/60">{t('settings.plugins.sidebar.group.projectEntries')}</span> : null}
+        </>}
         metadata={
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <PluginStatusBadge target={runtimeTargets.get(entry.id) ?? null} />
-            <span>{entry.parsedKind === 'npm'
-              ? t('settings.plugins.sidebar.kind.npm')
-              : t('settings.plugins.sidebar.kind.path')}</span>
-            <RegistryBadge info={info} />
-          </span>
+          subtitle ? <span title={subtitle} className={load?.kind === 'failed' && !busy ? 'text-[var(--status-error)] opacity-70' : 'text-[var(--status-info)] opacity-80'}>{subtitle}</span>
+            : info && info.kind !== 'npm-ok' ? <RegistryBadge info={info} /> : null
         }
         selected={selectedId === entry.id}
         onSelect={() => handleSelect(entry.id)}
-        icon={
-          <Icon
-            name={entryIcon(entry)}
-            className="h-4 w-4 flex-shrink-0 text-muted-foreground/70"
+        icon={(
+          <PluginIcon
+            name={entry.spec}
+            src={info && 'icon' in info ? info.icon : undefined}
+            fallback={entry.parsedKind === 'npm' ? undefined : 'folder'}
+            busy={busy}
+            marker={load?.kind === 'failed'
+              ? <span className="size-1.5 rounded-full bg-[var(--status-error)]" />
+              : canUpdate || updateTarget ? <span className="size-1.5 rounded-full bg-[var(--status-info)]" /> : null}
           />
-        }
-        actions={actions}
+        )}
       />
     );
   };
 
-  const renderFile = (file: PluginFile) => (
+  const renderFile = (file: PluginFile) => {
+    const target = pluginFileRuntimeTarget(file.absolutePath);
+    const load = target && runtimeQuery.data ? resolveLoadState(findRuntimeMatches(target, runtimeQuery.data)) : null;
+    return (
     <SettingsSidebarItem
+      compact
       key={file.id}
-      title={<span title={file.fileName}>{file.fileName}</span>}
+      rowId={file.id}
+      title={<><span className="min-w-0 flex-1 truncate" title={file.fileName}>{file.fileName}</span>
+        {findPluginGuiMatches(target, gui.inventory).length > 0 ? <span className="yuri-plugin-gui-tag" title={t('guiPlugins.interface')} role="img" aria-label={t('guiPlugins.interface')}><Icon name="window" className="size-[13px]" /></span> : null}
+      </>}
       metadata={
-        <span className="flex min-w-0 items-center gap-1.5">
-          <PluginStatusBadge target={runtimeTargets.get(file.id) ?? null} />
-          <span>{t('settings.plugins.sidebar.kind.file')}</span>
-        </span>
+        isReloading ? t('settings.plugins.sidebar.reloading')
+          : load?.kind === 'failed' ? <span className="text-[var(--status-error)] opacity-70" title={load.error}>{load.error.split('\n')[0]}</span>
+          : file.scope === 'project' ? t('settings.plugins.sidebar.group.projectFiles') : null
       }
       selected={selectedId === file.id}
       onSelect={() => handleSelect(file.id)}
-      icon={
-        <Icon
-          name="file-text"
-          className="h-4 w-4 flex-shrink-0 text-muted-foreground/70"
-        />
-      }
-      actions={[
-        {
-          label: t('settings.common.actions.delete'),
-          icon: 'delete-bin',
-          destructive: true,
-          onClick: () =>
-            setDeleteTarget({ kind: 'file', id: file.id, label: file.fileName }),
-        },
-      ]}
+      icon={<PluginIcon name={file.fileName} fallback="file-text" busy={isReloading} marker={load?.kind === 'failed' ? <span className="size-1.5 rounded-full bg-[var(--status-error)]" /> : null} />}
     />
-  );
-
-  const renderGroup = (
-    label: string,
-    children: React.ReactNode,
-    updateCount = 0,
-    actions?: React.ReactNode,
-    hideCard = false,
-  ) => (
-    <SettingsGroup
-      cardClassName={hideCard ? 'hidden' : undefined}
-      label={(
-        <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0">
-            {label}
-            {updateCount > 0 && (
-              <span className="block text-[var(--status-success)]">
-                {t(
-                  updateCount === 1
-                    ? 'settings.plugins.sidebar.group.updatesAvailable_one'
-                    : 'settings.plugins.sidebar.group.updatesAvailable_other',
-                  { count: updateCount },
-                )}
-              </span>
-            )}
-          </span>
-          {actions}
-        </div>
-      )}
-    >
-      {children}
-    </SettingsGroup>
-  );
+    );
+  };
 
   const pluginHeaderActions = (
     <div className="flex shrink-0 items-center gap-1">
       <Button
         type="button"
         variant="ghost"
-        size="icon"
-        onClick={() => void handleRefresh()}
-        disabled={isFetching || runtimeQuery.isFetching || isCheckingUpdates}
-        aria-label={t('settings.plugins.sidebar.actions.refresh')}
-        title={t('settings.plugins.sidebar.actions.refresh')}
+        size="xs"
+        onClick={handleRefresh}
+        aria-busy={isReloading || isCheckingUpdates}
+        disabled={isFetching || runtimeQuery.isFetching || isCheckingUpdates || isReloading || isInitialLoading}
+        aria-label={t('settings.plugins.sidebar.actions.reload')}
+        title={t('settings.plugins.sidebar.actions.reload')}
       >
-        <Icon name="refresh" className={isFetching || runtimeQuery.isFetching || isCheckingUpdates ? 'size-4 animate-spin' : 'size-4'} />
+        {isReloading || isCheckingUpdates ? <Icon name="loader-4" className="size-3 animate-spin" aria-hidden /> : null}
+        {t('settings.plugins.page.action.reload')}
       </Button>
       <Button
         data-settings-item="plugins.create"
@@ -381,6 +252,7 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
   return (
     <>
       <SettingsSidebarLayout
+        className="yuri-plugin-collection"
         variant="background"
         header={runtimeUnavailable ? (
           <p className="typography-micro mb-2 flex items-center gap-1 text-muted-foreground" role="status">
@@ -389,25 +261,26 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
           </p>
         ) : undefined}
       >
-        {userEntries.length > 0
-          ? renderGroup(
-              t('settings.plugins.sidebar.group.userEntries'),
-              userEntries.map(renderEntry),
-              updateCounts.userEntries,
-              pluginHeaderActions,
-            )
-          : renderGroup(
-              t('settings.plugins.sidebar.group.userEntries'),
-              <span />,
-              0,
-              pluginHeaderActions,
-              true,
-            )}
+        <div className="mb-2 flex items-center justify-between gap-2 px-1">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h3 className="typography-ui-label font-medium text-foreground">
+              {t('settings.plugins.sidebar.title')}
+            </h3>
+            {isReloading ? (
+              <span className="typography-micro text-muted-foreground/70" role="status">· {t('settings.plugins.sidebar.reloading')}</span>
+            ) : total > 0 ? (
+              <span className="typography-micro text-muted-foreground/70">{total}</span>
+            ) : null}
+          </div>
+          {pluginHeaderActions}
+        </div>
 
-        {isEmpty ? (
-          <SettingsGroup>
-            <div className="yuri-settings-group-row py-12 text-center text-muted-foreground">
-              <Icon name="plug" className="mx-auto mb-3 h-10 w-10 opacity-50" />
+        <div className="yuri-plugin-list">
+          {isInitialLoading ? (
+            <PluginListSkeleton />
+          ) : isEmpty ? (
+            <div className="yuri-settings-group-row py-8 text-center text-muted-foreground">
+              <Icon name="plug" className="mx-auto mb-2 h-8 w-8 opacity-50" />
               <p className="typography-ui-label font-medium">
                 {t('settings.plugins.sidebar.empty.title')}
               </p>
@@ -415,70 +288,17 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
                 {t('settings.plugins.sidebar.empty.description')}
               </p>
             </div>
-          </SettingsGroup>
-        ) : (
-          <>
-            {userFiles.length > 0 &&
-              renderGroup(
-                t('settings.plugins.sidebar.group.userFiles'),
-                userFiles.map(renderFile),
-              )}
-            {projectEntries.length > 0 &&
-              renderGroup(
-                t('settings.plugins.sidebar.group.projectEntries'),
-                projectEntries.map(renderEntry),
-                updateCounts.projectEntries,
-              )}
-            {projectFiles.length > 0 &&
-              renderGroup(
-                t('settings.plugins.sidebar.group.projectFiles'),
-                projectFiles.map(renderFile),
-              )}
-          </>
-        )}
+          ) : (
+            <>
+              {orderedEntries.map(renderEntry)}
+              {orderedFiles.map(renderFile)}
+            </>
+          )}
+        </div>
       </SettingsSidebarLayout>
 
       <AddPluginDialog open={isAddOpen} onOpenChange={setIsAddOpen} />
 
-      <Dialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          if (!open && !isDeleting) setDeleteTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {t('settings.plugins.sidebar.deleteDialog.title')}
-            </DialogTitle>
-            <DialogDescription>
-              {t('settings.plugins.sidebar.deleteDialog.description', {
-                name: deleteTarget?.label ?? '',
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setDeleteTarget(null)}
-              disabled={isDeleting}
-            >
-              {t('settings.common.actions.cancel')}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isDeleting}
-            >
-              {isDeleting
-                ? t('settings.plugins.sidebar.actions.deleting')
-                : t('settings.common.actions.delete')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 };

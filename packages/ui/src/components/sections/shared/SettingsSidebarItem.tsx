@@ -36,6 +36,10 @@ interface SettingsSidebarItemProps {
   actions?: SettingsSidebarItemAction[];
   /** Additional className for the outer container */
   className?: string;
+  /** Stable row identity, so callers can scroll a selection into view. */
+  rowId?: string;
+  /** Dense entity collection: one-line title, with an optional detail line. */
+  compact?: boolean;
 }
 
 /**
@@ -63,13 +67,17 @@ export const SettingsSidebarItem: React.FC<SettingsSidebarItemProps> = ({
   icon,
   actions,
   className,
+  rowId,
+  compact = false,
 }) => {
   const hasActions = actions && actions.length > 0;
 
   return (
     <div
+      data-row-id={rowId}
       className={cn(
-        'yuri-settings-group-row group relative flex items-center transition-colors duration-150',
+        'group relative flex items-center transition-colors duration-150',
+        !compact && 'yuri-settings-group-row',
         selected
           ? 'bg-interactive-selection'
           : 'hover:bg-interactive-hover',
@@ -79,19 +87,23 @@ export const SettingsSidebarItem: React.FC<SettingsSidebarItemProps> = ({
       <div className="flex min-w-0 flex-1 self-stretch items-center">
         <button
           onClick={onSelect}
+          aria-current={selected ? 'true' : undefined}
           data-mobile-press-feedback="soft"
-          className="flex min-w-0 flex-1 self-stretch flex-col justify-center gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className={cn(
+            'flex min-w-0 flex-1 self-stretch flex-col justify-center gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+            compact && cn('px-3 py-2', hasActions && 'pr-9'),
+          )}
           tabIndex={0}
         >
           <div className="flex max-w-full min-w-0 items-center gap-1.5">
             {icon}
-            <span className="typography-ui-label min-w-0 font-normal whitespace-normal [overflow-wrap:anywhere] text-foreground">
+            <span className={cn('min-w-0 font-normal text-foreground', compact ? 'flex flex-1 items-center gap-2 text-[13px] leading-5' : 'typography-ui-label whitespace-normal [overflow-wrap:anywhere]')}>
               {title}
             </span>
           </div>
 
           {metadata && (
-            <div className="max-w-full whitespace-normal [overflow-wrap:anywhere] typography-micro leading-tight text-muted-foreground/60">
+            <div className={cn('max-w-full leading-tight text-muted-foreground/60', compact ? 'mt-0.5 min-w-0 w-full truncate pl-7 text-[11px]' : 'typography-micro whitespace-normal [overflow-wrap:anywhere]')}>
               {metadata}
             </div>
           )}
@@ -103,7 +115,7 @@ export const SettingsSidebarItem: React.FC<SettingsSidebarItemProps> = ({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-6 w-6 flex-shrink-0 -mr-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
+                className={cn('h-6 w-6 flex-shrink-0 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100', compact ? 'absolute right-2 top-1/2 -translate-y-1/2' : '-mr-1')}
               >
                 <Icon name="more-2" className="h-3.5 w-3.5" />
               </Button>

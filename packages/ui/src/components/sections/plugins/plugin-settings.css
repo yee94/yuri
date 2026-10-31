@@ -1,0 +1,54 @@
+.yuri-plugin-icon-placeholder {
+  background: color-mix(in srgb, var(--surface-foreground) 8%, transparent);
+}
+
+.yuri-plugin-detail {
+  --yuri-settings-section-title-inset: 0px;
+}
+
+.yuri-plugin-detail [data-slot="input"] {
+  font-size: var(--form-control-font-size);
+  line-height: var(--form-control-line-height);
+}
+
+.yuri-plugin-gui-tag {
+  display: inline-flex;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+  color: var(--surface-muted-foreground);
+  opacity: 0.8;
+}
+
+.yuri-plugin-gui-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--surface-foreground) 4%, transparent);
+}
+
+.yuri-plugin-collection {
+  --yuri-settings-section-stack-gap: 0.5rem;
+}
+
+.yuri-plugin-list {
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid var(--yuri-settings-group-border);
+  border-radius: 0.375rem;
+}
+
+.yuri-plugin-list > [data-row-id] + [data-row-id] {
+  border-top: 1px solid var(--yuri-settings-row-divider);
+}
+
+.yuri-plugin-update-strip {
+  border-color: color-mix(in srgb, var(--status-info-border) 40%, transparent);
+  background: color-mix(in srgb, var(--status-info-background) 35%, transparent);
+}

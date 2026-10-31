@@ -29,6 +29,14 @@ whose launcher has already exited. Ctrl-C stops both groups and cancels retries.
 Logs remain in the tmux pane. Restarting preserves Vite's dependency cache;
 `YURI_VITE_FORCE=1` remains an explicit cache-reset option.
 
+By default the HMR API attaches to the same shared OpenCode service as the
+desktop app, so heavy dev traffic can slow the desktop too.
+`YURI_HMR_ISOLATED_OPENCODE=1` starts a private OpenCode instead (port
+`YURI_HMR_OPENCODE_PORT`, default 4196) with its own database, sessions and
+worktrees under `data/hmr/opencode/`. Global OpenCode config stays shared, and the
+shared `auth.json` seeds credentials on first start only. The isolated instance
+does not see desktop sessions, and it costs a second OpenCode process.
+
 ## Install
 
 ```bash

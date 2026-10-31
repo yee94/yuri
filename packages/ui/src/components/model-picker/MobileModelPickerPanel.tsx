@@ -268,9 +268,8 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
             const provider = providerByID.get(entry.providerID);
             const providerName = provider?.name || entry.providerID;
             const modelName = getModelDisplayName(entry.model, entry.modelID, { maxLength: 40 });
-            return matchesModelSearch(modelName, normalizedQuery)
-                || matchesModelSearch(entry.modelID, normalizedQuery)
-                || matchesModelSearch(providerName, normalizedQuery);
+            return matchesModelSearch(`${providerName} ${modelName}`, normalizedQuery)
+                || matchesModelSearch(`${entry.providerID} ${entry.modelID}`, normalizedQuery);
         },
         [providerByID, query],
     );
@@ -295,8 +294,9 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                     const modelID = typeof model.id === 'string' ? model.id : '';
                     if (!modelID || !isAllowed(provider.id, modelID)) return false;
                     if (providerMatches || !normalizedQuery) return true;
-                    return matchesModelSearch(getModelDisplayName(model, modelID, { maxLength: 40 }), normalizedQuery)
-                        || matchesModelSearch(modelID, normalizedQuery);
+                    const providerName = provider.name || provider.id;
+                    return matchesModelSearch(`${providerName} ${getModelDisplayName(model, modelID, { maxLength: 40 })}`, normalizedQuery)
+                        || matchesModelSearch(`${provider.id} ${modelID}`, normalizedQuery);
                 });
                 return { provider, models };
             })

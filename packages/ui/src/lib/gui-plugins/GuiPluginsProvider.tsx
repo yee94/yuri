@@ -177,7 +177,7 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
   const inventory = React.useMemo(() => (inventoryQuery.data ?? []).flatMap((plugin) => {
     if (!plugin.id || !plugin.features.gui) return [];
     const error = plugin.state.status === 'failed' ? plugin.state.error : bundles?.host === host ? bundles.states[plugin.id]?.error : null;
-    return [{ id: plugin.id, enabled: disabled !== null && !disabled.includes(plugin.id), ...(error ? { error } : {}) }];
+    return [{ id: plugin.id, source: plugin.source, enabled: disabled !== null && !disabled.includes(plugin.id), ...(error ? { error } : {}) }];
   }), [inventoryQuery.data, disabled, bundles, host]);
   const hasEnabled = disabled !== null && inventory.some((plugin) => plugin.enabled);
   const hasGui = disabled !== null && inventory.length > 0;

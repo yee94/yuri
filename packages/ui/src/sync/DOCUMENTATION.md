@@ -9,6 +9,20 @@ observers retain their ordinary active-refetch behavior. The production event
 dispatcher is covered with 61 historical scopes and a 50-event reconnect burst in
 `config-reconnect-demand.test.ts`.
 
+Directory re-bootstrap follows the same demand rule. Outside the recent-boot
+window, `server.connected` / `global.disposed` mark every initialized child store
+`loading` (clearing its status snapshot), but only directories that are visible
+right now bootstrap immediately: the client's current directory, the active
+session, the Context Panel session, and unexpired externally viewed sessions
+(`getVisibleBootstrapDirectories`). Each bootstrap boots an upstream Location
+(plugins, skills, file watchers), and a restarted shared service would otherwise
+cold start every historical directory at once. Other stores keep their
+last-known sessions and receive live events, and they bootstrap on their next
+demanding `ensureChild`. The reconnect status/blocking-request resync still runs
+for them, and those reads use only Locations that are already loaded (see
+`resolveBlockingRequestDirectories`). Cost: a deferred directory's config/VCS
+refreshes when it is next opened. Covered by `reconnect-bootstrap-demand.test.ts`.
+
 Mobile transcript demand keeps correctness reads enabled: opening/observing a
 session, authored-user anchor recovery (up to four extra projection pages),
 reconnect/terminal authority refresh, durable-seed exact revalidation, send

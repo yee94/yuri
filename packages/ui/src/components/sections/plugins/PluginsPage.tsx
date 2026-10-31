@@ -1,25 +1,34 @@
 import React from 'react';
 import { GuiPluginsManager } from '@/components/gui-plugins/GuiPluginsManager';
-import { usePluginsQuery } from '@/queries/pluginQueries';
+import { useGuiPlugins } from '@/lib/gui-plugins/react';
+import { findPluginGuiMatches } from './pluginGuiState';
+import './plugin-settings.css';
+import { usePluginsQuery, usePluginRuntimeQuery } from '@/queries/pluginQueries';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from '@/components/ui';
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { usePluginPackageUpdateState, useReloadPlugins } from '@/queries/pluginMutations';
+import { PluginIcon } from './PluginIcon';
+import { usePluginRegistryQuery } from '@/queries/pluginQueries';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import { SettingsActionHeader } from '@/components/sections/shared/SettingsActionHeader';
 import { RegistryBanner } from './RegistryBanner';
 import { PluginStatusBanner } from './PluginStatusBanner';
-import { configEntryRuntimeTarget, pluginFileRuntimeTarget } from './pluginLoadState';
+import { PluginDetailSkeleton } from './PluginSkeletons';
+import { usePluginBusy } from './usePluginBusy';
+import { splitPluginSpec } from './pluginPresentation';
+import { configEntryRuntimeTarget, pluginFileRuntimeTarget, findRuntimeMatches, resolveEffectivePluginVersion } from './pluginLoadState';
 import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
 import {
   usePluginsStore,
   type PluginDraft,
   type PluginEntry,
   type PluginFile,
-  type PluginScope,
 } from '@/stores/usePluginsStore';
 
 interface OptionsParseResult {
@@ -72,26 +81,23 @@ function buildFileDraft(file: PluginFile, content: string): PluginDraft {
   };
 }
 
-const ScopeBadge: React.FC<{ scope: PluginScope; label: string }> = ({ scope, label }) => {
-  return (
-    <span
-      className={cn(
-        'typography-micro font-medium rounded-full px-2 py-0.5',
-        'bg-[var(--surface-elevated)] text-muted-foreground',
-        'border border-[var(--interactive-border)]',
-      )}
-      data-scope={scope}
-    >
-      {label}
-    </span>
-  );
-};
+const PluginTitle: React.FC<{ name: string; version: string | null; icon?: string; fallback?: 'folder' | 'file-text' }> = ({ name, version, icon, fallback }) => (
+  <div className="flex min-w-0 items-center gap-2.5">
+    <PluginIcon name={name} src={icon} fallback={fallback} size={28} />
+    <div className="min-w-0">
+      <h2 className="truncate text-[13px] font-medium leading-tight text-foreground" title={name}>{name}</h2>
+      {version ? <div className="mt-0.5 font-mono text-[10px] leading-tight text-muted-foreground/70">v{version}</div> : null}
+    </div>
+  </div>
+);
 
 export const PluginsPage: React.FC = () => {
   const { t } = useI18n();
 
   const selectedId = usePluginsStore((s) => s.selectedId);
+  const gui = useGuiPlugins();
   const pluginsQuery = usePluginsQuery();
+  const runtimeQuery = usePluginRuntimeQuery();
   const entries = React.useMemo(() => pluginsQuery.data?.entries ?? [], [pluginsQuery.data?.entries]);
   const files = React.useMemo(() => pluginsQuery.data?.files ?? [], [pluginsQuery.data?.files]);
   const draft = usePluginsStore((s) => s.draft);
@@ -99,11 +105,24 @@ export const PluginsPage: React.FC = () => {
   const updateEntry = usePluginsStore((s) => s.updateEntry);
   const updateFile = usePluginsStore((s) => s.updateFile);
   const readFile = usePluginsStore((s) => s.readFile);
+  const deleteEntry = usePluginsStore((s) => s.deleteEntry);
+  const deleteFile = usePluginsStore((s) => s.deleteFile);
+  const [deleteTarget, setDeleteTarget] = React.useState<{ kind: 'entry' | 'file'; id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
-  const selectedEntry = React.useMemo(
-    () => (selectedId ? entries.find((e) => e.id === selectedId) ?? null : null),
-    [entries, selectedId],
-  );
+  const directEntry = selectedId ? entries.find((entry) => entry.id === selectedId) : undefined;
+  const directTarget = directEntry ? configEntryRuntimeTarget(directEntry.spec, directEntry.sourcePath) : null;
+  const selectedUpdate = usePluginPackageUpdateState(directTarget?.kind === 'package' ? directTarget.target : null, selectedId ?? undefined);
+  const updatingEntry = selectedUpdate.kind !== 'idle' ? selectedUpdate.entry : undefined;
+  const originalEntry = updatingEntry?.original;
+  const replacement = originalEntry && updatingEntry ? entries.find((entry) => entry.spec === updatingEntry.spec
+    && entry.scope === originalEntry.scope && entry.sourcePath === originalEntry.sourcePath) : undefined;
+  const selectedEntry = directEntry ?? replacement ?? (selectedUpdate.kind === 'pending' ? originalEntry : undefined) ?? null;
+  React.useEffect(() => {
+    if (replacement && selectedId === originalEntry?.id && usePluginsStore.getState().selectedId === selectedId) {
+      usePluginsStore.getState().setSelected(replacement.id);
+    }
+  }, [replacement, selectedId, originalEntry?.id]);
   const selectedFile = React.useMemo(
     () => (selectedId ? files.find((f) => f.id === selectedId) ?? null : null),
     [files, selectedId],
@@ -117,9 +136,64 @@ export const PluginsPage: React.FC = () => {
     [selectedFile],
   );
 
+  const busy = usePluginBusy(selectedEntryTarget ?? selectedFileTarget, selectedEntry?.id) !== null || isDeleting;
+  const guiIds = findPluginGuiMatches(selectedEntryTarget ?? selectedFileTarget, gui.inventory).map((plugin) => plugin.id);
+  const guiControls = guiIds.length > 0 ? <div className={cn('transition-opacity', busy && 'opacity-40')} inert={busy || undefined}>
+    <GuiPluginsManager key={selectedId} pluginIds={guiIds} disabled={busy} />
+  </div> : null;
+  const reloadMutation = useReloadPlugins();
+  const isReloading = reloadMutation.isPending;
+  const reload = () => reloadMutation.mutate();
+  const registrySpecs = React.useMemo(() => entries.map((entry) => entry.spec), [entries]);
+  const registryQuery = usePluginRegistryQuery(registrySpecs);
+  const registryInfo = selectedEntry ? registryQuery.data?.[selectedEntry.spec] : undefined;
+  const entryIcon = registryInfo && 'icon' in registryInfo ? registryInfo.icon : undefined;
   const [isSaving, setIsSaving] = React.useState(false);
   const [isLoadingFile, setIsLoadingFile] = React.useState(false);
   const originalFileContentById = React.useRef(new Map<string, string>());
+  const confirmDelete = async () => {
+    if (!deleteTarget || busy || isSaving || isLoadingFile) return;
+    setIsDeleting(true);
+    try {
+      const result = await (deleteTarget.kind === 'entry' ? deleteEntry(deleteTarget.id) : deleteFile(deleteTarget.id));
+      if (!result.ok) {
+        toast.error(result.message || t('settings.plugins.sidebar.toast.deleteFailed'));
+        return;
+      }
+      setDeleteTarget(null);
+      if (result.reloadFailed) {
+        toast.warning(result.message || t('settings.plugins.toast.reloadFailed'), { description: result.warning });
+      } else {
+        toast.success(t('settings.plugins.sidebar.toast.deleted', { name: deleteTarget.name }));
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+  const deleteAction = <>
+    <Button variant="ghost" size="icon" aria-label={t('settings.common.actions.delete')} title={t('settings.common.actions.delete')}
+      disabled={busy || isSaving || isLoadingFile}
+      onClick={() => {
+        if (selectedEntry) setDeleteTarget({ kind: 'entry', id: selectedEntry.id, name: selectedEntry.spec });
+        else if (selectedFile) setDeleteTarget({ kind: 'file', id: selectedFile.id, name: selectedFile.fileName });
+      }}>
+      <Icon name="delete-bin" className="size-4" />
+    </Button>
+    <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !isDeleting) setDeleteTarget(null); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('settings.plugins.sidebar.deleteDialog.title')}</DialogTitle>
+          <DialogDescription>{t('settings.plugins.sidebar.deleteDialog.description', { name: deleteTarget?.name ?? '' })}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" disabled={isDeleting} onClick={() => setDeleteTarget(null)}>{t('settings.common.actions.cancel')}</Button>
+          <Button variant="destructive" size="sm" disabled={busy || isSaving || isLoadingFile} aria-busy={isDeleting} onClick={() => void confirmDelete()}>
+            {isDeleting ? t('settings.plugins.sidebar.actions.deleting') : t('settings.common.actions.delete')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </>;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -152,10 +226,13 @@ export const PluginsPage: React.FC = () => {
     };
   }, [selectedEntry, selectedFile, readFile, setDraft]);
 
-  if (!selectedId) {
+  const detailSkeleton = <PluginDetailSkeleton />;
+
+  if (pluginsQuery.isPending && pluginsQuery.data === undefined) return detailSkeleton;
+
+  if (!selectedId || (!selectedEntry && !selectedFile)) {
     return (
       <SettingsPageLayout>
-        <GuiPluginsManager />
         <div className="text-center text-muted-foreground">
           <Icon name="plug" className="mx-auto mb-3 h-12 w-12 opacity-50" />
           <p className="typography-body">{t('settings.plugins.page.empty.select')}</p>
@@ -168,18 +245,15 @@ export const PluginsPage: React.FC = () => {
   }
 
   if (selectedEntry && draft && draft.mode === 'entry') {
+    const entrySpec = splitPluginSpec(selectedEntry.spec, selectedEntry.parsedKind === 'npm');
     const optionsResult = parseOptionsJson(draft.optionsJson);
     const optionsValid = optionsResult.ok;
     const isDirty =
       draft.spec !== selectedEntry.spec ||
       draft.optionsJson !== stringifyOptions(selectedEntry.options);
 
-    const handleEntryDiscard = () => {
-      setDraft(buildEntryDraft(selectedEntry));
-    };
-
     const handleEntrySave = async () => {
-      if (!optionsValid) return;
+      if (!optionsValid || busy) return;
       const spec = draft.spec.trim();
       if (!spec) {
         toast.error(t('settings.plugins.validation.specRequired'));
@@ -210,33 +284,33 @@ export const PluginsPage: React.FC = () => {
     };
 
     return (
-      <SettingsPageLayout>
-        <GuiPluginsManager />
-        <SettingsActionHeader actions={<>
-          <Button variant="outline" size="sm" onClick={handleEntryDiscard} disabled={!isDirty || isSaving}>{t('settings.plugins.page.action.discard')}</Button>
-          <Button size="sm" onClick={() => void handleEntrySave()} disabled={!isDirty || !optionsValid || isSaving} aria-busy={isSaving}>{t('settings.plugins.page.action.save')}</Button>
-        </>}>
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <h2 className="typography-ui-header font-semibold text-foreground break-all">
-              {selectedEntry.spec}
-            </h2>
-            <ScopeBadge
-              scope={selectedEntry.scope}
-              label={
-                selectedEntry.scope === 'project'
-                  ? t('settings.plugins.sidebar.group.projectEntries')
-                  : t('settings.plugins.sidebar.group.userEntries')
-              }
-            />
-          </div>
+      <SettingsPageLayout className="yuri-plugin-detail sm:pt-6">
+        <SettingsActionHeader className="py-0" actions={<div className={cn('flex flex-wrap items-center gap-1.5', busy && 'opacity-40')}>
+          {deleteAction}
+          <Button variant="outline" size="sm" onClick={() => void reload()} disabled={isReloading || isSaving || busy}>{t('settings.plugins.page.action.reload')}</Button>
+          <Button size="sm" onClick={() => void handleEntrySave()} disabled={!isDirty || !optionsValid || isSaving || busy} aria-busy={isSaving}>{t('settings.plugins.page.action.save')}</Button>
+        </div>}>
+          <PluginTitle
+            name={entrySpec.name}
+            version={selectedEntryTarget && runtimeQuery.data ? resolveEffectivePluginVersion(findRuntimeMatches(selectedEntryTarget, runtimeQuery.data)) : null}
+            icon={entryIcon}
+            fallback={selectedEntry.parsedKind === 'npm' ? undefined : 'folder'}
+          />
         </SettingsActionHeader>
 
-        <PluginStatusBanner target={selectedEntryTarget} name={selectedEntry.spec} />
+        <PluginStatusBanner
+          target={selectedEntryTarget}
+          name={selectedEntry.spec}
+          latestVersion={registryInfo?.kind === 'npm-ok' ? registryInfo.latestVersion : null}
+          entryId={selectedEntry.id}
+          registry={registryInfo}
+        />
 
-        <RegistryBanner entryId={selectedEntry.id} spec={selectedEntry.spec} />
+        <RegistryBanner spec={selectedEntry.spec} />
+        {guiControls}
 
-        <div data-settings-item="plugins.spec">
-          <SettingsGroup label={t('settings.plugins.page.field.spec')} cardClassName="p-3">
+        <div data-settings-item="plugins.spec" className={cn('transition-opacity', busy && 'opacity-40')} inert={busy || undefined}>
+          <SettingsGroup label={t('settings.plugins.page.field.spec')} cardClassName="contents">
             <Input
               value={draft.spec}
               aria-label={t('settings.plugins.page.field.spec')}
@@ -244,33 +318,30 @@ export const PluginsPage: React.FC = () => {
                 setDraft({ ...draft, spec: e.target.value })
               }
               placeholder={t('settings.plugins.page.field.spec.placeholder')}
-              className="font-mono typography-meta"
+              className="font-mono"
+              disabled={busy}
               spellCheck={false}
             />
           </SettingsGroup>
         </div>
 
-        <div data-settings-item="plugins.options">
+        <div data-settings-item="plugins.options" className={cn('transition-opacity', busy && 'opacity-40')} inert={busy || undefined}>
           <SettingsGroup
             label={t('settings.plugins.page.field.options')}
             description={!optionsValid ? t('settings.plugins.page.field.options.invalidJson') : undefined}
-            cardClassName="p-3"
+            cardClassName="contents"
           >
             <Textarea
-              embedded
               value={draft.optionsJson}
-              aria-label={t('settings.plugins.page.field.options')}
+              onChange={(event) => setDraft({ ...draft, optionsJson: event.target.value })}
+              rows={3}
+              className="min-h-20 font-mono"
+              hasError={!optionsValid}
               aria-invalid={!optionsValid}
-              onChange={(e) =>
-                setDraft({ ...draft, optionsJson: e.target.value })
-              }
-              rows={6}
-              className={cn(
-                'font-mono typography-meta min-h-[144px] resize-y',
-                !optionsValid && 'border-[var(--status-error-border)]',
-              )}
+              aria-label={t('settings.plugins.page.field.options')}
+              placeholder={t('settings.plugins.page.field.options.placeholder')}
+              disabled={busy}
               spellCheck={false}
-              placeholder='{ }'
             />
           </SettingsGroup>
         </div>
@@ -283,18 +354,8 @@ export const PluginsPage: React.FC = () => {
     const originalContent = originalFileContentById.current.get(selectedFile.id) ?? '';
     const isDirty = draft.content !== originalContent || draft.fileName !== selectedFile.fileName;
 
-    const handleFileDiscard = () => {
-      void (async () => {
-        setIsLoadingFile(true);
-        const result = await readFile(selectedFile.id);
-        const content = result?.content ?? '';
-        setIsLoadingFile(false);
-        originalFileContentById.current.set(selectedFile.id, content);
-        setDraft(buildFileDraft(selectedFile, content));
-      })();
-    };
-
     const handleFileSave = async () => {
+      if (busy) return;
       setIsSaving(true);
       try {
         const result = await updateFile(selectedFile.id, { content: draft.content });
@@ -317,30 +378,19 @@ export const PluginsPage: React.FC = () => {
     };
 
     return (
-      <SettingsPageLayout>
-        <GuiPluginsManager />
-        <SettingsActionHeader actions={<>
-          <Button variant="outline" size="sm" onClick={handleFileDiscard} disabled={isSaving || isLoadingFile}>{t('settings.plugins.page.action.discard')}</Button>
-          <Button size="sm" onClick={() => void handleFileSave()} disabled={!isDirty || isSaving || isLoadingFile} aria-busy={isSaving}>{t('settings.plugins.page.action.save')}</Button>
-        </>}>
-          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-            <h2 className="typography-ui-header font-semibold text-foreground break-all">
-              {selectedFile.fileName}
-            </h2>
-            <ScopeBadge
-              scope={selectedFile.scope}
-              label={
-                selectedFile.scope === 'project'
-                  ? t('settings.plugins.sidebar.group.projectFiles')
-                  : t('settings.plugins.sidebar.group.userFiles')
-              }
-            />
-          </div>
+      <SettingsPageLayout className="yuri-plugin-detail sm:pt-6">
+        <SettingsActionHeader className="py-0" actions={<div className={cn('flex flex-wrap items-center gap-1.5', busy && 'opacity-40')}>
+          {deleteAction}
+          <Button variant="outline" size="sm" onClick={() => void reload()} disabled={isReloading || isSaving || busy}>{t('settings.plugins.page.action.reload')}</Button>
+          <Button size="sm" onClick={() => void handleFileSave()} disabled={!isDirty || isSaving || isLoadingFile || busy} aria-busy={isSaving}>{t('settings.plugins.page.action.save')}</Button>
+        </div>}>
+          <PluginTitle name={selectedFile.fileName} version={null} fallback="file-text" />
         </SettingsActionHeader>
 
         <PluginStatusBanner target={selectedFileTarget} name={selectedFile.fileName} />
+        {guiControls}
 
-        <div data-settings-item="plugins.content">
+        <div data-settings-item="plugins.content" className={cn('transition-opacity', busy && 'opacity-40')} inert={busy || undefined}>
           <SettingsGroup label={t('settings.plugins.page.field.content')} cardClassName="p-3">
             <Textarea
               embedded
@@ -361,12 +411,5 @@ export const PluginsPage: React.FC = () => {
     );
   }
 
-  return (
-    <SettingsPageLayout>
-      <GuiPluginsManager />
-      <div className="text-center text-muted-foreground">
-        <Icon name="loader-4" className="mx-auto mb-3 h-6 w-6 animate-spin opacity-50" />
-      </div>
-    </SettingsPageLayout>
-  );
+  return detailSkeleton;
 };

@@ -111,7 +111,8 @@ the inference input. Clean inference does not use the Session context builder.
 `{ buildOpenCodeUrl, getOpenCodeAuthHeaders, persistSessionMetadata,
 onSystemSessionPersisted }` into the factory (and the service into session
 assist/title/goal, scheduled tasks, and `createFeatureRoutesRuntime`). Server
-`stop()` calls `stopLlmBridgeDirectory()` to remove the isolated plugin directory.
+`stop()` calls `stopLlmBridgeDirectory()` to forget the isolated plugin directory;
+the content-addressed directory is shared across hosts and is not deleted.
 
 ## Summary AI settings
 

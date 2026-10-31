@@ -1,0 +1,309 @@
+import { signal, component } from 'eficy';
+import 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.css';
+
+type Status = 'ok' | 'error' | 'pending' | 'update';
+type Plugin = { id: string; name: string; version?: string; scope: '用户' | '项目'; kind: 'npm' | '本地'; status: Status; error?: string; latest?: string; icon?: string; gui?: boolean };
+
+const plugins: Plugin[] = [
+  { id: 'a', name: 'opencode2-wakatime', scope: '用户', kind: 'npm', status: 'ok' },
+  { id: 'b', name: '@yee94/opencode-profile', scope: '用户', kind: 'npm', status: 'ok' },
+  { id: 'c', name: '@tencent/runmark-opencode-plugin', version: '0.2.11', scope: '用户', kind: 'npm', status: 'error',
+    error: 'Cannot find module \'@tencent/runmark-sdk\'\nRequire stack:\n- /Users/me/.cache/opencode/npm/@tencent/runmark-opencode-plugin@0.2.11/node_modules/@tencent/runmark-opencode-plugin/dist/index.js\n- /Users/me/.cache/opencode/packages/plugin-loader/dist/load.js\n- /Users/me/.cache/opencode/packages/plugin-loader/dist/index.js\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1225:15)\n    at Module._load (node:internal/modules/cjs/loader:1051:27)\n    at Module.require (node:internal/modules/cjs/loader:1311:19)' },
+  { id: 'd', name: 'opencode-magpie-plugin', version: '0.4.1', scope: '用户', kind: 'npm', status: 'update', latest: '0.4.3' },
+  { id: 'e', name: '@eficy/opencode2-plugin', scope: '用户', kind: 'npm', status: 'ok', gui: true },
+  { id: 'f', name: 'local-hooks.ts', scope: '项目', kind: '本地', status: 'ok' },
+];
+
+const svg = (bg: string, d: string) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='${bg}'/><path d='${d}' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/></svg>`)}`;
+plugins[3].icon = svg('#0ea5e9', 'M5 15c3-8 11-8 14 0M8 18h8');
+plugins[2].icon = svg('#6366f1', 'M7 8l-3 4 3 4M17 8l3 4-3 4');
+
+const phase = signal<'idle' | 'updating' | 'done'>('idle');
+
+const demo = signal<'normal' | 'loading' | 'reloading'>('normal');
+
+const setDemo = (v: 'normal' | 'loading' | 'reloading') => {
+  demo.value = v;
+  if (v !== 'normal') setTimeout(() => { if (demo.value === v) demo.value = 'normal'; }, 3000);
+};
+
+const Bone = ({ w, h = 8, r = 4 }: { w: number | string; h?: number; r?: number }) => (
+  <svg width={w} height={h} style={{ display: 'block' }}>
+    <rect width="100%" height={h} rx={r} fill="rgba(255,255,255,0.06)">
+      <animate attributeName="opacity" values="1;0.45;1" dur="1.4s" repeatCount="indefinite" />
+    </rect>
+  </svg>
+);
+
+const RowSkeleton = ({ w }: { w: string }) => (
+  <div className="flex items-center gap-2 px-3" style={{ height: 37 }}>
+    <Bone w={20} h={20} r={6} />
+    <Bone w={w} />
+  </div>
+);
+
+const DetailSkeleton = () => (
+  <div className="flex-1 p-6">
+    <div className="flex items-center gap-2.5">
+      <Bone w={28} h={28} r={6} />
+      <div className="space-y-1.5"><Bone w={180} h={10} /><Bone w={48} h={7} /></div>
+    </div>
+    <div className="mt-6 space-y-2"><Bone w={56} h={8} /><Bone w="100%" h={32} r={6} /></div>
+    <div className="mt-5 space-y-2"><Bone w={72} h={8} /><Bone w="100%" h={80} r={6} /></div>
+  </div>
+);
+
+const view = (p: Plugin) => {
+  if (demo.value === 'reloading') return { ...p, busy: true };
+  if (p.id === 'd' && phase.value === 'updating') return { ...p, busy: true };
+  if (p.id === 'd' && phase.value === 'done') return { ...p, status: 'ok' as Status, version: p.latest, busy: false };
+  return { ...p, busy: false };
+};
+
+const startUpdate = () => {
+  phase.value = 'updating';
+  setTimeout(() => { phase.value = 'done'; }, 3000);
+};
+
+const Spinner = ({ size = 10 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" style={{ display: 'block' }}>
+    <circle cx="8" cy="8" r="6" stroke="rgba(161,161,170,0.25)" strokeWidth="2" />
+    <path d="M8 2a6 6 0 0 1 6 6" stroke="rgba(56,189,248,0.9)" strokeWidth="2" strokeLinecap="round">
+      <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.9s" repeatCount="indefinite" />
+    </path>
+  </svg>
+);
+
+const PluginIcon = ({ p, size = 20, busy = false }: { p: Plugin; size?: number; busy?: boolean }) => (
+  <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
+    {p.icon ? (
+      <img src={p.icon} alt="" className="rounded-md" style={{ width: size, height: size }} />
+    ) : (
+      <span className="grid place-items-center rounded-md bg-white/[0.08] text-muted-foreground" style={{ width: size, height: size, fontSize: size * 0.5 }}>
+        {p.name.replace(/^@/, '').charAt(0).toUpperCase()}
+      </span>
+    )}
+    {busy ? (
+      <span className="absolute" style={{ right: -3, bottom: -3, padding: 1.5, borderRadius: 9999, background: '#141414', display: 'inline-flex' }}>
+        <Spinner />
+      </span>
+    ) : p.status !== 'ok' ? (
+      <span className="absolute" style={{ right: -2, bottom: -2, padding: 1.5, borderRadius: 9999, background: '#141414', display: 'inline-flex' }}>
+        <Dot s={p.status} />
+      </span>
+    ) : null}
+  </span>
+);
+
+const selected = signal('c');
+const dismissed = signal(false);
+const errOpen = signal(false);
+const guiOn = signal(true);
+
+const GuiTag = () => (
+  <span className="inline-flex shrink-0" title="UI 插件" style={{ color: 'rgba(161,161,170,0.8)' }}>
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+      <path d="M1.75 6h12.5M4.5 4.4h.01M6.5 4.4h.01" />
+    </svg>
+  </span>
+);
+
+const Switch = ({ on, onToggle }: { on: boolean; onToggle: () => void }) => (
+  <button
+    role="switch"
+    aria-checked={on}
+    onClick={onToggle}
+    style={{ width: 28, height: 16, borderRadius: 9999, padding: 2, display: 'flex', justifyContent: on ? 'flex-end' : 'flex-start', background: on ? 'rgba(56,189,248,0.55)' : 'rgba(255,255,255,0.12)', transition: 'all .15s' }}
+  >
+    <span style={{ width: 12, height: 12, borderRadius: 9999, background: '#fafafa' }} />
+  </button>
+);
+
+const failed = plugins.filter((p) => p.status === 'error');
+
+const Dot = ({ s }: { s: Status }) => {
+  const color = s === 'ok' ? 'rgba(16,185,129,0.7)' : s === 'error' ? 'rgba(251,113,133,0.8)' : s === 'update' ? 'rgba(56,189,248,0.8)' : '#71717a';
+  return <span className="inline-block shrink-0 rounded-full" style={{ width: 6, height: 6, background: color }} />;
+};
+
+const NavItem = ({ label, active, badge }: { label: string; active?: boolean; badge?: boolean }) => (
+  <div className={`flex h-8 items-center justify-between rounded-md px-2.5 text-[13px] ${active ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground'}`}>
+    <span>{label}</span>
+    {badge ? <span className="size-1.5 rounded-full bg-rose-500" /> : null}
+  </div>
+);
+
+const Row = component(({ p: raw }: { p: Plugin }) => {
+  const p = view(raw);
+  const active = selected.value === p.id;
+  return (
+    <button
+      onClick={() => { selected.value = p.id; }}
+      className={`flex w-full flex-col justify-center gap-0.5 px-3 py-2 text-left transition-colors ${active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}
+    >
+      <span className="flex items-center gap-2">
+        <PluginIcon p={p} busy={p.busy} />
+        <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{p.name}</span>
+        {p.gui ? <GuiTag /> : null}
+        {p.version ? <span className="shrink-0 font-mono text-[11px] text-muted-foreground/60">{p.version}</span> : null}
+        {p.scope === '项目' ? <span className="shrink-0 rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">项目</span> : null}
+      </span>
+      {p.status === 'error' ? (
+        <span className="truncate pl-7 text-[11px] text-rose-300/60">{p.error!.split('\n')[0]}</span>
+      ) : null}
+      {p.status === 'update' ? (
+        <span className="pl-7 text-[11px] text-sky-300/60">{p.busy ? `正在更新至 ${p.latest}…` : `可更新至 ${p.latest}`}</span>
+      ) : null}
+    </button>
+  );
+});
+
+const Detail = component(() => {
+  const p = view(plugins.find((x) => x.id === selected.value)!);
+  const dim = p.busy ? { opacity: 0.4, pointerEvents: 'none' as const } : undefined;
+  return (
+    <div className="flex-1 overflow-hidden p-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <PluginIcon p={{ ...p, status: 'ok' }} size={28} />
+          <div className="min-w-0">
+            <h2 className="truncate text-[13px] font-medium leading-tight" style={{ marginBottom: 2 }} title={p.name}>{p.name}</h2>
+            {p.version ? <div className="leading-tight" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10, color: 'rgba(161,161,170,0.7)' }}>v{p.version}</div> : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-1.5 text-[12px]" style={dim}>
+          <button className="rounded-md bg-white/[0.06] px-2.5 py-1 text-muted-foreground hover:bg-white/[0.1]">重载</button>
+          <button className="rounded-md bg-white/[0.06] px-2.5 py-1 text-muted-foreground hover:bg-white/[0.1]">放弃</button>
+          <button className="rounded-md bg-foreground px-2.5 py-1 text-background">保存</button>
+        </div>
+      </div>
+
+      {p.status === 'error' ? (
+        <div className="mt-4 rounded-md border border-rose-400/15 bg-rose-400/[0.04]">
+          <pre className={`px-3 pt-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-all ${errOpen.value ? '' : 'max-h-[3.4rem] overflow-hidden'}`}>{p.error}</pre>
+          <div className="flex items-center justify-between px-3 py-1.5 text-[11px] text-muted-foreground/70">
+            <button className="hover:text-foreground" onClick={() => { errOpen.value = !errOpen.value; }}>
+              {errOpen.value ? '收起' : `展开（共 ${p.error!.split('\n').length} 行）`}
+            </button>
+            <button className="hover:text-foreground">复制</button>
+          </div>
+        </div>
+      ) : null}
+
+      {p.status === 'update' ? (
+        <div className="relative mt-4 overflow-hidden rounded-md border border-sky-400/15 bg-sky-400/[0.04]">
+          <div className="flex items-center justify-between px-3 py-1.5">
+            <div className="flex items-center gap-1.5 text-[12px] text-sky-300/80">
+              {p.busy ? <Spinner size={12} /> : <Dot s="update" />}
+              <span>{p.busy ? '正在更新至 ' : '可更新至 '}<span className="font-mono">{p.latest}</span>{p.busy ? '…' : ''}</span>
+            </div>
+            <button
+              className="text-[11px] hover:text-foreground"
+              style={{ color: 'rgba(161,161,170,0.8)' }}
+              disabled={p.busy}
+              onClick={startUpdate}
+            >{p.busy ? '更新中' : '更新'}</button>
+          </div>
+          {p.busy ? (
+            <svg width="100%" height="2" style={{ display: 'block' }}>
+              <rect x="-30%" y="0" width="30%" height="2" fill="rgba(56,189,248,0.6)">
+                <animate attributeName="x" from="-30%" to="100%" dur="1.2s" repeatCount="indefinite" />
+              </rect>
+            </svg>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mt-5 space-y-4" style={dim}>
+        {p.gui ? (
+          <div className="flex items-center justify-between gap-3 rounded-md bg-white/[0.04] px-3 py-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-foreground">UI 插件</span>
+                <Dot s={guiOn.value ? 'ok' : 'pending'} />
+                <span style={{ color: 'rgba(161,161,170,0.8)' }}>{guiOn.value ? '运行中' : '已关闭'}</span>
+              </div>
+              <div style={{ fontSize: 11, marginTop: 2, color: 'rgba(161,161,170,0.6)' }}>本插件提供 UI 插件，可在应用内展示界面</div>
+            </div>
+            <Switch on={guiOn.value} onToggle={() => { guiOn.value = !guiOn.value; }} />
+          </div>
+        ) : null}
+        <div>
+          <div className="mb-1.5 text-[12px] text-muted-foreground">插件包名</div>
+          <div className="rounded-md bg-white/[0.04] px-3 py-2 font-mono text-[12px]">{p.name}{p.version ? `@${p.version}` : ''}</div>
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] text-muted-foreground">选项（JSON）</div>
+          <div className="h-20 rounded-md bg-white/[0.04] px-3 py-2 font-mono text-[12px] text-muted-foreground">{'{ }'}</div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const App = component(() => (
+  <main className="min-h-screen bg-black/60 p-8 text-foreground">
+    <div className="relative mx-auto flex h-[560px] max-w-[980px] overflow-hidden rounded-xl border border-white/10 bg-[#141414] shadow-2xl">
+      {/* 设置主导航 */}
+      <aside className="w-40 shrink-0 space-y-0.5 border-r border-white/[0.06] p-2.5">
+        <NavItem label="通用" />
+        <NavItem label="模型" />
+        <NavItem label="插件" active badge={failed.length > 0} />
+        <NavItem label="快捷键" />
+      </aside>
+
+      {/* 列表：单卡片、无分组 */}
+      <section className="flex w-[280px] shrink-0 flex-col border-r border-white/[0.06]">
+        <header className="flex h-11 shrink-0 items-center justify-between px-3">
+          <span className="text-[13px] text-muted-foreground">
+            插件{' '}
+            <span style={{ color: 'rgba(161,161,170,0.5)' }}>
+              {demo.value === 'loading' ? '' : demo.value === 'reloading' ? '· 正在重载' : plugins.length}
+            </span>
+          </span>
+          <span className="flex items-center gap-0.5 text-muted-foreground">
+            <button className="grid size-7 place-items-center rounded-md hover:bg-white/[0.06]" title="重载全部" onClick={() => setDemo('reloading')} disabled={demo.value !== 'normal'}>
+              {demo.value === 'normal' ? '⟳' : <Spinner size={12} />}
+            </button>
+            <button className="grid size-7 place-items-center rounded-md hover:bg-white/[0.06]" title="添加">＋</button>
+          </span>
+        </header>
+        <div className="divide-y divide-white/[0.04] overflow-y-auto border-t border-white/[0.04]">
+          {demo.value === 'loading'
+            ? ['62%', '78%', '54%', '70%', '48%'].map((w, i) => <RowSkeleton key={i} w={w} />)
+            : plugins.map((p) => <Row key={p.id} p={p} />)}
+        </div>
+      </section>
+
+      {demo.value === 'loading' ? <DetailSkeleton /> : <Detail />}
+
+      {/* 全局异常提示 */}
+      {!dismissed.value && failed.length > 0 ? (
+        <div className="absolute bottom-4 right-4 flex w-[300px] items-start gap-2.5 rounded-lg border border-white/10 bg-[#1c1c1c] px-3 py-2.5 shadow-xl">
+          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-rose-400/80" />
+          <button className="min-w-0 flex-1 text-left" onClick={() => { selected.value = failed[0].id; dismissed.value = true; }}>
+            <div className="text-[12.5px] text-foreground">{failed.length} 个插件加载失败</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{failed[0].name} · 点击查看</div>
+          </button>
+          <button className="text-muted-foreground/60 hover:text-foreground" onClick={() => { dismissed.value = true; }}>✕</button>
+        </div>
+      ) : null}
+    </div>
+    <div className="mx-auto mt-4 flex max-w-[980px] justify-center gap-1.5 text-[12px]">
+      {([['normal', '正常'], ['loading', '首次加载'], ['reloading', '重载全部']] as const).map(([k, label]) => (
+        <button
+          key={k}
+          onClick={() => setDemo(k)}
+          className="rounded-md px-2.5 py-1"
+          style={{ background: demo.value === k ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)', color: demo.value === k ? '#fafafa' : '#a1a1aa' }}
+        >{label}</button>
+      ))}
+    </div>
+    <p className="mx-auto mt-3 max-w-[980px] text-center text-[11px] text-muted-foreground/60">
+      点击列表切换；点击右下角提示会跳到失败的插件。选中 opencode-magpie-plugin 点「更新」可看更新中状态（3 秒后完成）。
+    </p>
+  </main>
+));
+
+export default App;

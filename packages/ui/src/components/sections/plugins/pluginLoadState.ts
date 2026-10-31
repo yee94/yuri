@@ -81,6 +81,16 @@ export function findRuntimeMatches(target: PluginRuntimeTarget, inventory: reado
   return inventory.filter((info) => matches(target, info));
 }
 
+/** Only an active package's resolved version is evidence of the effective version. */
+export function resolveEffectivePluginVersion(matched: readonly PluginRuntimeInfo[]): string | null {
+  for (const plugin of matched) {
+    if (plugin.state.kind === 'active' && plugin.source.kind === 'package' && plugin.source.version?.trim()) {
+      return plugin.source.version.trim();
+    }
+  }
+  return null;
+}
+
 /**
  * A failure wins over an active match: when a new revision fails OpenCode
  * keeps the previous one running and reports both.

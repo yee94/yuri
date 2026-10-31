@@ -219,7 +219,7 @@ describe('opencode plugin routes', () => {
     await request(app).get('/api/config/plugins/registry?specs=foo@1,foo@2,foo@3').expect(200);
 
     expect(getNpmInfo).toHaveBeenCalledTimes(1);
-    expect(getNpmInfo).toHaveBeenCalledWith('foo', { forceRefresh: false });
+    expect(getNpmInfo).toHaveBeenCalledWith('foo', { forceRefresh: false, cwd: expect.any(String) });
   });
 
   test('GET /registry forwards refresh true to npm lookup', async () => {
@@ -228,7 +228,7 @@ describe('opencode plugin routes', () => {
 
     await request(app).get('/api/config/plugins/registry?specs=foo&refresh=true').expect(200);
 
-    expect(getNpmInfo).toHaveBeenCalledWith('foo', { forceRefresh: true });
+    expect(getNpmInfo).toHaveBeenCalledWith('foo', { forceRefresh: true, cwd: expect.any(String) });
   });
 
   test('GET /registry rejects more than 100 unique specs', async () => {
@@ -261,7 +261,7 @@ describe('opencode plugin routes', () => {
 
     const response = await request(app).get('/api/config/plugins/registry?specs=%40scope%2Ffoo%401.0.0').expect(200);
 
-    expect(getNpmInfo).toHaveBeenCalledWith('@scope/foo', { forceRefresh: false });
+    expect(getNpmInfo).toHaveBeenCalledWith('@scope/foo', { forceRefresh: false, cwd: expect.any(String) });
     expect(response.body.results[0]).toMatchObject({ kind: 'npm-ok', spec: '@scope/foo@1.0.0', name: '@scope/foo' });
   });
 

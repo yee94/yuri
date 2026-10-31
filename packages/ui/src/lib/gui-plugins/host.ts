@@ -23,14 +23,14 @@ import type { toast } from 'sonner';
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
 type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void> };
-type CommandView = { key: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
+type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
 export type GuiPluginSnapshot = Readonly<{
     plugins: readonly Readonly<{ id: string; revision: string; status: 'active' | 'failed'; error?: string; errorCode?: NativeGuiErrorCode }>[];
     commands: readonly Readonly<CommandView>[];
     panels: readonly Readonly<PanelView>[];
     settings: readonly Readonly<{ key: string; pluginId: string; title: string }>[];
-    menuItems: readonly Readonly<{ key: string; title: string; description?: string; run: () => void }>[];
+    menuItems: readonly Readonly<{ key: string; pluginId?: string; title: string; description?: string; run: () => void }>[];
     activePanel: string | null;
     sessionKey?: string;
 }>;
@@ -390,7 +390,7 @@ export class GuiPluginHost {
             const value = contribution.read(); if (value === undefined) continue;
             if (contribution.registry === Gui.Command.id) {
                 const command = value as Gui.Command;
-                if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
+                if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
             } else if (contribution.registry === Gui.Panel.id && session) {
                 const panel = value as Gui.Panel;
                 const prefix = `${instance.id}:`;
@@ -425,7 +425,7 @@ export class GuiPluginHost {
             plugins: freezeRows(instances.map(({ id, revision, status, error, errorCode, iconError }) => ({ id, revision, status, error: error ?? iconError, ...(errorCode ? { errorCode } : {}) }))),
             commands: freezeRows(active.flatMap((instance) => instance.commands.filter((command) => !command.hidden))), panels: freezeRows(panels),
             settings: freezeRows(active.flatMap((instance) => instance.settings.map((page) => ({ key: `${instance.id}:${page.id}`, pluginId: instance.id, title: page.title })))),
-            menuItems: freezeRows(active.flatMap((instance) => instance.menus.map((menu) => ({ key: `${instance.id}:${menu.id}`, title: menu.title, description: menu.description, run: () => { void this.invoke(instance, () => menu.run()); } })))),
+            menuItems: freezeRows(active.flatMap((instance) => instance.menus.map((menu) => ({ key: `${instance.id}:${menu.id}`, pluginId: instance.id, title: menu.title, description: menu.description, run: () => { void this.invoke(instance, () => menu.run()); } })))),
             activePanel: layout?.shown && panels.some((panel) => panel.key === layout.active) ? layout.active : null,
             sessionKey: session?.key,
         });

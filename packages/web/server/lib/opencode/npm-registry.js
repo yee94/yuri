@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,6 +13,7 @@ const NPM_REGISTRY_BASE = 'https://registry.npmjs.org';
  * @property {string|null} latest
  * @property {string[]} versions
  * @property {Record<string, string>} distTags
+ * @property {string} [icon] sanitized `magpie.icon` of the latest release
  *
  * @typedef {Object} NpmLookupError
  * @property {false} ok
@@ -79,13 +81,101 @@ function cacheResult(name, payload) {
   }
 }
 
+const NPM_ICON_MAX_LENGTH = 3 << 19;
+
 /**
- * Fetch package metadata directly from the npm registry.
+ * A package's own picture, as magpie reads `magpie.icon` from package.json:
+ * an https URL or a data:image URI, at most ~1.5 MB. Anything else is dropped.
+ * Nothing is fetched here; the client renders it as an image.
+ *
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+export function sanitizePluginIcon(value) {
+  const icon = typeof value === 'string' ? value.trim() : '';
+  return icon.length > 0 && icon.length <= NPM_ICON_MAX_LENGTH && /^(https:\/\/|data:image\/)/i.test(icon)
+    ? icon
+    : undefined;
+}
+
+const VALID_NPM_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+const NPM_CLI_TIMEOUT_MS = 15_000;
+
+/**
+ * Ask the user's own npm CLI. It resolves `.npmrc` (per-scope `@scope:registry`,
+ * auth tokens, mirrors, proxies) exactly as `npm install` would, which a bare
+ * request to registry.npmjs.org cannot do for private or mirrored scopes.
+ *
+ * Resolves to `null` when the CLI is unavailable or fails for a reason other than
+ * the package being absent, so the caller can fall back to a direct request.
+ *
+ * @param {string} name npm package name
+ * @param {string | undefined} cwd directory whose `.npmrc` applies
+ * @returns {Promise<NpmLookupResult | null>}
+ */
+function lookupViaNpmCli(name, cwd) {
+  if (!VALID_NPM_NAME.test(name)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['view', name, 'dist-tags', 'versions', 'magpie.icon', '--json'],
+      {
+        cwd: cwd || undefined,
+        timeout: NPM_CLI_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+        shell: process.platform === 'win32',
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const output = `${stdout}\n${stderr}`;
+          if (/\bE404\b|404 Not Found/i.test(output)) {
+            resolve({ ok: false, status: 404, error: 'Package not found' });
+            return;
+          }
+          resolve(null);
+          return;
+        }
+        try {
+          const data = JSON.parse(stdout);
+          const distTags = parseDistTags(data?.['dist-tags']);
+          const versions = Array.isArray(data?.versions)
+            ? data.versions.filter((version) => typeof version === 'string')
+            : typeof data?.versions === 'string' ? [data.versions] : [];
+          const icon = sanitizePluginIcon(data?.['magpie.icon'] ?? data?.magpie?.icon);
+          resolve({ ok: true, latest: distTags.latest ?? null, versions, distTags, ...(icon ? { icon } : {}) });
+        } catch {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
+/** Seam so tests can isolate the direct-request path from the developer's npm. */
+export const npmCli = { lookup: lookupViaNpmCli };
+
+/**
+ * Fetch package metadata: the npm CLI first (honours scope registries and auth),
+ * then a direct request to the public registry when the CLI cannot answer.
+ *
+ * @param {string} name npm package name
+ * @param {{ cwd?: string }} [options]
+ * @returns {Promise<NpmLookupResult>}
+ */
+export async function lookupNpmPackage(name, options = {}) {
+  const viaCli = await npmCli.lookup(name, options.cwd);
+  if (viaCli) return viaCli;
+  return lookupNpmPackageOverHttp(name);
+}
+
+/**
+ * Fetch package metadata directly from the public npm registry.
  *
  * @param {string} name npm package name
  * @returns {Promise<NpmLookupResult>}
  */
-export async function lookupNpmPackage(name) {
+async function lookupNpmPackageOverHttp(name) {
   try {
     const response = await fetch(`${NPM_REGISTRY_BASE}/${encodeName(name)}`, {
       headers: {
@@ -98,11 +188,14 @@ export async function lookupNpmPackage(name) {
     if (response.ok) {
       const data = await response.json();
       const distTags = parseDistTags(data?.['dist-tags']);
+      const latest = distTags.latest ?? null;
+      const icon = sanitizePluginIcon(latest ? data?.versions?.[latest]?.magpie?.icon : undefined);
       return {
         ok: true,
-        latest: distTags.latest ?? null,
+        latest,
         versions: parseVersions(data?.versions),
         distTags,
+        ...(icon ? { icon } : {}),
       };
     }
 
@@ -124,29 +217,31 @@ export async function lookupNpmPackage(name) {
  * @returns {Promise<NpmLookupResult>}
  */
 export async function getNpmInfo(name, options = {}) {
-  const { forceRefresh = false } = options;
-  const cached = _cache.get(name);
+  const { forceRefresh = false, cwd } = options;
+  // The cwd selects which `.npmrc` applies, so it is part of the cache identity.
+  const cacheKey = cwd ? `${cwd}\0${name}` : name;
+  const cached = _cache.get(cacheKey);
   if (cached && !forceRefresh && Date.now() - cached.fetchedAt < NPM_CACHE_TTL_MS) {
     return cached.payload;
   }
 
-  const existing = _inFlight.get(name);
+  const existing = _inFlight.get(cacheKey);
   if (existing && !forceRefresh) {
     return existing;
   }
 
   const lookup = (async () => {
-    const result = await lookupNpmPackage(name);
-    cacheResult(name, result);
+    const result = await lookupNpmPackage(name, { cwd });
+    cacheResult(cacheKey, result);
     return result;
   })();
 
-  _inFlight.set(name, lookup);
+  _inFlight.set(cacheKey, lookup);
   try {
     return await lookup;
   } finally {
-    if (_inFlight.get(name) === lookup) {
-      _inFlight.delete(name);
+    if (_inFlight.get(cacheKey) === lookup) {
+      _inFlight.delete(cacheKey);
     }
   }
 }

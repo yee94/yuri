@@ -93,6 +93,60 @@ afterEach(async () => {
 });
 
 describe('foreign DOM ownership', () => {
+  test('scoped manager shows the inline GUI status and working switch without a separate inventory', async () => {
+    await render(<GuiPluginsManager pluginIds={['demo']} />);
+    expect(container.querySelector('details')).toBeNull();
+    expect(container.querySelector('.yuri-settings-group-label')).toBeNull();
+    expect(container.textContent).toContain('guiPlugins.interface');
+    expect(container.textContent).toContain('guiPlugins.active');
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+    await act(async () => toggle.click());
+    expect(context().setEnabled).toHaveBeenCalledWith('demo', false);
+    state.context = { ...context(), inventory: [{ id: 'demo', enabled: false }] };
+    await render(<GuiPluginsManager pluginIds={['demo']} />);
+    expect(container.textContent).toContain('guiPlugins.off');
+    expect(container.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false');
+  });
+
+  test('scoped contributions use explicit ownership and retain their actions', async () => {
+    const ownCommand = vi.fn();
+    const ownMenu = vi.fn();
+    fixture.methods.runCommand = ownCommand;
+    updateSnapshot({
+      commands: [
+        { key: 'demo.run', pluginId: 'demo', title: 'Own command', run: vi.fn() },
+        { key: 'demo:other.run', pluginId: 'demo:other', title: 'Other command', run: vi.fn() },
+      ],
+      menuItems: [
+        { key: 'demo:open', pluginId: 'demo', title: 'Own launcher', run: ownMenu },
+        { key: 'demo:other:open', pluginId: 'demo:other', title: 'Other launcher', run: vi.fn() },
+      ],
+      settings: [
+        { key: 'demo:settings', pluginId: 'demo', title: 'Own preferences' },
+        { key: 'demo:other:settings', pluginId: 'demo:other', title: 'Other preferences' },
+      ],
+    });
+    await render(<GuiPluginsManager pluginIds={['demo']} />);
+    expect(container.textContent).toContain('Own command');
+    expect(container.textContent).toContain('Own preferences');
+    expect(container.textContent).not.toContain('Other');
+    await click('guiPlugins.run');
+    expect(ownCommand).toHaveBeenCalledWith('demo.run');
+    const launcher = [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'guiPlugins.open')!;
+    await act(async () => launcher.click());
+    expect(ownMenu).toHaveBeenCalledTimes(1);
+  });
+
+  test('scoped GUI errors remain visible and busy forms cannot toggle the interface', async () => {
+    state.context = { ...context(), inventory: [{ id: 'demo', enabled: true, error: 'GUI bundle failed' }] };
+    await render(<GuiPluginsManager pluginIds={['demo']} disabled />);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('GUI bundle failed');
+    const toggle = container.querySelector<HTMLElement>('[role="switch"]')!;
+    expect(toggle.hasAttribute('data-disabled')).toBe(true);
+    await act(async () => toggle.click());
+    expect(context().setEnabled).not.toHaveBeenCalled();
+  });
+
   test('places plugin actions with the source toggle outside the capture body and removes them in source mode', async () => {
     fixture.methods.mountPanel.mockImplementation((key, node, actions) => {
       const content = document.createElement('span'); content.textContent = `preview:${key}`; node.append(content);

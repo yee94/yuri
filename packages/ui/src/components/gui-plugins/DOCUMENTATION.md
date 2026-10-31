@@ -47,8 +47,19 @@ toast while the container is still cleared. Locale changes update fallback copy
 without remounting foreign content. Root-surface failure notifications remain
 visible even when the host removes the failed active panel.
 
-`GuiPluginsManager` appears in every PluginsPage branch. It reads inventory and
-runtime statuses from the provider, delegates enable/reload actions, and opens
+The Plugins collection has no separate GUI inventory or row action menus.
+A provider row carries a muted 13px window icon (localized UI-plugin tooltip)
+even when its GUI is disabled; it is not a text badge.
+Ownership is matched against the authoritative GUI inventory source (exact
+package target or normalized local path), never a guessed GUI ID/package name.
+`GuiPluginsManager` is embedded above the selected provider's form, scoped by
+GUI IDs, with one compact UI-plugin/status/switch strip per matching GUI plugin
+and an 11px capability description beneath the label.
+It uses the existing per-runtime enable preference and host activation state;
+plugin update/reload disables and dims these controls with the rest of the form.
+Only that provider's commands, panels, menu launchers and settings appear below
+the status line; snapshot contributions carry their explicit `pluginId` owner.
+It reads inventory and runtime statuses from the provider, delegates enable/reload actions, and opens
 settings contributions. Its panel group also exposes `session.panel` menu-item
 launchers, including when no panel is open yet. Launcher actions use the same
 error-reporting path as other manager actions. Contribution rows are dynamic entities and are not

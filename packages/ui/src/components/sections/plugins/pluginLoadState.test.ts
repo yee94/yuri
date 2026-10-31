@@ -6,6 +6,7 @@ import {
   pluginFileRuntimeTarget,
   resolveLoadState,
   resolveUpdateFlag,
+  resolveEffectivePluginVersion,
 } from './pluginLoadState';
 
 const pkg = (target: string, extra: Partial<{ version: string; outdated: boolean; updating: boolean }> = {}): PluginRuntimeInfo => ({
@@ -42,6 +43,15 @@ describe('configEntryRuntimeTarget', () => {
 });
 
 describe('runtime matching', () => {
+  test('effective versions come only from active resolved packages', () => {
+    expect(resolveEffectivePluginVersion([pkg('foo', { version: '1.4.0' })])).toBe('1.4.0');
+    expect(resolveEffectivePluginVersion([pkg('foo@latest')])).toBeNull();
+    expect(resolveEffectivePluginVersion([pkg('foo@1.2.3')])).toBeNull();
+    expect(resolveEffectivePluginVersion([local('/repo/plugin.ts')])).toBeNull();
+    const failure: PluginRuntimeInfo = { ...pkg('foo', { version: '2.0.0' }), state: { kind: 'failed', error: 'boom', ref: null } };
+    expect(resolveEffectivePluginVersion([failure])).toBeNull();
+    expect(resolveEffectivePluginVersion([failure, pkg('foo', { version: '1.4.0' })])).toBe('1.4.0');
+  });
   test('a loaded package reports its version and does not match a different target', () => {
     const inventory = [pkg('foo@latest'), pkg('foo', { version: '1.4.0' })];
     const target = configEntryRuntimeTarget('foo', undefined);

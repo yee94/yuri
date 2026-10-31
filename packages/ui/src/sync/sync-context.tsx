@@ -90,7 +90,7 @@ import { listTranscriptEventBroadcastScopes } from "./transcript-event-broadcast
 import { queryClient } from "@/lib/queryRuntime"
 import { locationShutdownDirectory, refreshDemandedLocationServices } from "./location-services-demand"
 import { createConfigLiveRefresh } from "./config-live-refresh"
-import { normalizePath } from "@/lib/pathNormalization"
+import { normalizeDirectoryKey, normalizePath } from "@/lib/pathNormalization"
 import { createLocationRelease, directoryUse, isWorktreeDirectory } from "./location-release"
 import {
   materializationStatusFromTranscriptData,
@@ -872,6 +872,21 @@ function isViewedInCurrentSession(directory: string, sessionId?: string): boolea
   ) return true
   pruneExternallyViewedSessions()
   return externallyViewedSessions.has(viewedSessionKey(directory, sessionId))
+}
+
+/** Directories a reconnect re-bootstraps immediately; others defer to their next demand. */
+export function getVisibleBootstrapDirectories(): Set<string> {
+  pruneExternallyViewedSessions()
+  const visible = new Set<string>()
+  const add = (directory: string | undefined) => {
+    const key = normalizeDirectoryKey(directory)
+    if (key) visible.add(key)
+  }
+  add(opencodeClient.getDirectory())
+  add(_activeDirectory)
+  add(_contextPanelDirectory)
+  for (const key of externallyViewedSessions.keys()) add(key.split("\n")[0])
+  return visible
 }
 
 function isRecentBoot() {
@@ -2321,17 +2336,21 @@ export function handleEvent(
         projects: applyGlobalProject(current, result.project).projects,
       })
     }
-    // On server.connected / global.disposed, re-bootstrap all directories
-    // but only if not during recent boot
+    // On server.connected / global.disposed, mark every initialized directory
+    // for re-bootstrap but only if not during recent boot. Only visible
+    // directories bootstrap now: each bootstrap boots an upstream Location
+    // (plugins, skills, watchers), and a restarted service would otherwise cold
+    // start every historical directory at once. Others keep their last-known
+    // state and bootstrap on their next demanding `ensureChild`.
     if (payload.type === "server.connected" || payload.type === "global.disposed") {
       if (!recent) {
         void refreshDemandedLocationServices(queryClient, { transport: getRuntimeTransportIdentity() })
+        const visible = getVisibleBootstrapDirectories()
         for (const dir of childStores.children.keys()) {
           const store = childStores.getChild(dir)
           if (store && store.getState().status !== "loading") {
-            // Mark as loading to trigger re-bootstrap
             store.setState({ status: "loading" as const, session_status_snapshot_at: undefined })
-            childStores.ensureChild(dir)
+            if (visible.has(normalizeDirectoryKey(dir))) childStores.ensureChild(dir)
           }
         }
       }
