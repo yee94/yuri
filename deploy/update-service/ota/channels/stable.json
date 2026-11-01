@@ -32,17 +32,17 @@
     }
   },
   "nativeTargets": {
-    "desktop": {
-      "version": "0.2.24",
-      "build": 909,
-      "status": "published",
-      "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.2.24"
-    },
     "ios": {
       "version": "0.2.24",
       "build": 909,
       "status": "published",
       "installUrl": "https://testflight.apple.com/join/pN5SSHeg"
+    },
+    "desktop": {
+      "version": "0.2.24",
+      "build": 909,
+      "status": "published",
+      "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.2.24"
     }
   },
   "rollbackBundleIds": [],
