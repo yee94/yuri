@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'Permitir controle da área de trabalho remota',
   'settings.remoteDesktop.description': 'Desativado por padrão. Verifique as permissões abaixo antes de ativar.',
-  'settings.remoteDesktop.devices': 'Somente dispositivos pareados podem se conectar. Aprove a primeira conexão neste Mac e selecione “Sempre permitir este dispositivo” para acesso sem supervisão. A tela principal física é compartilhada, não uma área de trabalho privada.',
+  'settings.remoteDesktop.devices': 'Após conceder as permissões e ativar, os dispositivos pareados se conectam diretamente, sem nova confirmação ou janela de compartilhamento. Desative esta opção ou revogue o pareamento para interromper o controle. A tela principal física é compartilhada, não uma área de trabalho privada.',
   'settings.remoteDesktop.recheck': 'Verificar permissões novamente',
   'settings.remoteDesktop.status': 'Status',
   'settings.remoteDesktop.screen': 'Gravação de tela',

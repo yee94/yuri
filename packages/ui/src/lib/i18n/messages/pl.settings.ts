@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'Zezwalaj na sterowanie pulpitem zdalnym',
   'settings.remoteDesktop.description': 'Domyślnie wyłączone. Przed włączeniem sprawdź poniższe uprawnienia.',
-  'settings.remoteDesktop.devices': 'Łączyć mogą się tylko sparowane urządzenia. Zatwierdź pierwsze połączenie na tym Macu i wybierz „Zawsze zezwalaj temu urządzeniu”, aby łączyć się bez nadzoru. Udostępniany jest fizyczny ekran główny, a nie prywatny pulpit.',
+  'settings.remoteDesktop.devices': 'Po przyznaniu uprawnień i włączeniu funkcji sparowane urządzenia łączą się bezpośrednio, bez kolejnego potwierdzenia ani okna udostępniania. Wyłącz tę opcję lub usuń parowanie, aby zatrzymać sterowanie. Udostępniany jest fizyczny ekran główny, a nie prywatny pulpit.',
   'settings.remoteDesktop.recheck': 'Sprawdź uprawnienia ponownie',
   'settings.remoteDesktop.status': 'Stan',
   'settings.remoteDesktop.screen': 'Nagrywanie ekranu',

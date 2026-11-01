@@ -165,8 +165,8 @@ it('shows the session todos with a done count, keeps cancelled items struck thro
     { content: 'Dropped idea', status: 'cancelled', priority: 'low' },
   ] };
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
-  const group = host.querySelector('[role="group"][aria-label="To-dos"]');
-  expect(group?.textContent).toContain('To-dos1/4');
+  const group = host.querySelector('[role="group"][aria-label="Tasks"]');
+  expect(group?.textContent).toContain('Tasks1/4');
   expect(group?.querySelector('li[data-status="cancelled"]')?.textContent).toContain('Dropped idea');
   expect(group?.querySelectorAll('li')).toHaveLength(4);
   expect(group?.querySelector('li[aria-current="step"]')?.textContent).toContain('Build registry');
@@ -178,10 +178,10 @@ it('shows the session todos with a done count, keeps cancelled items struck thro
 
 it('renders no todo group when the session has none, and falls back to the persisted list', async () => {
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
-  expect(host.querySelector('[aria-label="To-dos"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Tasks"]')).toBeNull();
   fixture.persistedTodos = { s: { todos: [{ content: 'Cached', status: 'pending', priority: 'medium' }] } };
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
-  expect(host.querySelector('[aria-label="To-dos"]')?.textContent).toContain('0/1');
+  expect(host.querySelector('[aria-label="Tasks"]')?.textContent).toContain('0/1');
 });
 
 it('derives todos from the latest completed todowrite, so a stale cache never wins and an empty write clears', async () => {
@@ -191,13 +191,13 @@ it('derives todos from the latest completed todowrite, so a stale cache never wi
     { content: 'Fresh B', status: 'pending', priority: 'medium' },
   ];
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
-  const group = host.querySelector('[aria-label="To-dos"]');
+  const group = host.querySelector('[aria-label="Tasks"]');
   expect(group?.textContent).toContain('0/2');
   expect(group?.textContent).toContain('Fresh A');
   expect(group?.textContent).not.toContain('Stale cache');
   fixture.todowrite = [];
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
-  expect(host.querySelector('[aria-label="To-dos"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Tasks"]')).toBeNull();
 });
 
 it('does not reuse attached worktree metadata after changing the displayed directory', async () => {

@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'Permitir el control del escritorio remoto',
   'settings.remoteDesktop.description': 'Desactivado por defecto. Comprueba los permisos siguientes antes de activarlo.',
-  'settings.remoteDesktop.devices': 'Solo pueden conectarse dispositivos vinculados. Aprueba la primera conexión en este Mac y selecciona «Permitir siempre este dispositivo» para acceder sin supervisión. Se comparte la pantalla principal física, no un escritorio privado.',
+  'settings.remoteDesktop.devices': 'Tras conceder los permisos y activarlo, los dispositivos vinculados se conectan directamente, sin otra confirmación ni ventana de uso compartido. Desactívalo o revoca la vinculación para detener el control. Se comparte la pantalla principal física, no un escritorio privado.',
   'settings.remoteDesktop.recheck': 'Comprobar permisos de nuevo',
   'settings.remoteDesktop.status': 'Estado',
   'settings.remoteDesktop.screen': 'Grabación de pantalla',

@@ -34,7 +34,7 @@ export const SessionBusyIndicator: React.FC<SessionBusyIndicatorProps> = ({
     >
       <svg
         viewBox={`0 0 ${size} ${size}`}
-        className="animate-spin"
+        className="animate-spin yuri-busy-ring"
         style={{ width: size, height: size }}
         aria-hidden="true"
       >

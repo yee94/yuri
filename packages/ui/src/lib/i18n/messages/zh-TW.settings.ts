@@ -1,7 +1,7 @@
 ﻿export const settingsDict = {
   'settings.remoteDesktop.enable': '允許遠端桌面控制',
   'settings.remoteDesktop.description': '預設關閉。請先完成下方權限檢查，再開啟。',
-  'settings.remoteDesktop.devices': '僅已配對裝置可以連線。首次連線須在此 Mac 上確認，勾選「始終允許此裝置」後可無人值守連線。共享的是真實主螢幕，不是隱私桌面。',
+  'settings.remoteDesktop.devices': '完成授權並開啟後，已配對裝置可直接連線，無須再次確認，也不顯示共享視窗。關閉此開關可停止控制，也可撤銷裝置配對。共享的是真實主螢幕，不是隱私桌面。',
   'settings.remoteDesktop.recheck': '重新檢查權限',
   'settings.remoteDesktop.status': '狀態',
   'settings.remoteDesktop.screen': '螢幕錄製',

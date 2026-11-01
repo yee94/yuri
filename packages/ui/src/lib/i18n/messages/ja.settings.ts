@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'リモートデスクトップ操作を許可',
   'settings.remoteDesktop.description': '初期状態では無効です。以下の権限を確認してから有効にしてください。',
-  'settings.remoteDesktop.devices': 'ペアリング済みの端末のみ接続できます。初回はこの Mac で承認し、「この端末を常に許可」を選ぶと無人接続できます。共有するのは実際のメイン画面であり、非公開の別デスクトップではありません。',
+  'settings.remoteDesktop.devices': '権限を許可して有効にすると、ペアリング済み端末は再確認や共有ウィンドウなしで直接接続できます。無効にするか、端末のペアリングを解除すると操作を停止できます。共有するのは実際のメイン画面であり、非公開の別デスクトップではありません。',
   'settings.remoteDesktop.recheck': '権限を再確認',
   'settings.remoteDesktop.status': '状態',
   'settings.remoteDesktop.screen': '画面収録',

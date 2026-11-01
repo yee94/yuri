@@ -4,8 +4,14 @@ import 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.css';
 
 const view = signal('both');
 const keyboard = signal(false);
-const scroll = signal(false);
-const zoom = signal(false);
+const mode = signal('drag');
+const zoom = signal(1);
+const pan = signal({ x: 0, y: 0 });
+const rotated = signal(false);
+const points = new Map<number, { x: number; y: number }>();
+let pinchDistance = 1, pinchScale = 1, multi = false, moved = false;
+let tapAt = 0;
+let lastTap: { x: number; y: number; time: number } | null = null;
 const text = signal('');
 const sent = signal('');
 
@@ -15,8 +21,10 @@ function Glyph({ name }: { name: string }) {
     keyboard: 'M3 6h18v12H3zM6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 15h10',
     send: 'M21 3L9 15M21 3l-7 18-5-6-6-5z',
     monitor: 'M3 4h18v13H3zM12 17v4M8 21h8',
-    scroll: 'M8 7l4-4 4 4M12 3v18M8 17l4 4 4-4',
-    fit: 'M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5',
+    hand: 'M8 13V6a2 2 0 0 1 4 0v6-8a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v9c0 4-3 6-7 6-3 0-5-2-7-5l-3-4a2 2 0 0 1 3-2l2 2',
+    cursor: 'M5 3v17l5-5 4 7 3-2-4-7h7z',
+    rotate: 'M8 3h8v18H8zM2 8l3-3 3 3M22 16l-3 3-3-3',
+    back: 'M20 12H4m6-6-6 6 6 6',
   };
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] || paths.monitor} /></svg>;
 }
@@ -45,23 +53,48 @@ function Desktop() {
 }
 
 const Phone = component(({ landscape }: { landscape?: boolean }) => (
-  <div className={`rd-device ${landscape ? 'rd-landscape' : 'rd-portrait'}`}>
-    <div className="rd-status"><span>14:30</span><span>▮▮▮　Wi-Fi　▰</span></div>
+  <div className={`rd-device ${(Boolean(landscape) !== rotated.value) ? 'rd-landscape' : 'rd-portrait'}`}>
     <div className="rd-panel">
-      <div className="rd-handle"/>
-      <header className="rd-header"><span>远程桌面 · 当前 Mac</span><button aria-label="模拟关闭：恢复初始视图" onClick={() => { keyboard.value = false; zoom.value = false; scroll.value = false; }}><Glyph name="close"/></button></header>
-      <div className="rd-screen" onDoubleClick={() => { zoom.value = !zoom.value; }}>
-        <div className="rd-desktop" style={{ transform: zoom.value ? 'scale(1.8)' : 'none' }}><Desktop/></div>
+      <div className="rd-top-controls"><button className="rd-fab" aria-label="模拟返回并还原" onClick={() => { keyboard.value = false; zoom.value = 1; pan.value = { x: 0, y: 0 }; mode.value = 'drag'; sent.value = '已模拟返回来源页面；实际 App 使用独立 history'; }}><Glyph name="back"/></button><button className="rd-fab" aria-label="切换横竖屏" onClick={() => { rotated.value = !rotated.value; zoom.value = 1; pan.value = { x: 0, y: 0 }; }}><Glyph name="rotate"/></button></div>
+      <div className="rd-screen" onWheel={e => { e.preventDefault(); zoom.value = Math.max(0.5, Math.min(5, zoom.value - e.deltaY / 400)); }}
+        onPointerDown={e => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          if (!points.size) { moved = false; multi = false; tapAt = Date.now(); }
+          points.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (points.size === 2) { const [a,b] = [...points.values()]; pinchDistance = Math.max(1, Math.hypot(a.x-b.x,a.y-b.y)); pinchScale = zoom.value; multi = true; lastTap = null; }
+        }}
+        onPointerMove={e => {
+          const previous = points.get(e.pointerId); if (!previous) return;
+          points.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          const dx = e.clientX - previous.x, dy = e.clientY - previous.y;
+          if (Math.abs(dx) + Math.abs(dy) > 1) { moved = true; lastTap = null; }
+          if (points.size === 2) { const [a,b] = [...points.values()]; zoom.value = Math.max(0.5, Math.min(5, pinchScale * Math.hypot(a.x-b.x,a.y-b.y) / pinchDistance)); }
+          else if (!multi && mode.value === 'drag') pan.value = { x: pan.value.x + dx, y: pan.value.y + dy };
+        }}
+        onPointerUp={e => {
+          points.delete(e.pointerId);
+          if (!multi && !moved && mode.value === 'drag' && Date.now() - tapAt < 300) {
+            const now = Date.now();
+            if (lastTap && now-lastTap.time < 300 && Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y) < 24) {
+              if (zoom.value > 1) { zoom.value = 1; pan.value = { x: 0, y: 0 }; }
+              else { const rect = e.currentTarget.getBoundingClientRect(); zoom.value = 2.5; pan.value = { x: -(e.clientX-rect.left-rect.width/2)*1.5, y: -(e.clientY-rect.top-rect.height/2)*1.5 }; }
+              lastTap = null;
+            } else lastTap = { x: e.clientX, y: e.clientY, time: now };
+          }
+          if (!points.size && zoom.value <= 1) { zoom.value = 1; pan.value = { x: 0, y: 0 }; }
+          if (!multi && !moved && mode.value === 'cursor') sent.value = '已模拟远端点击';
+        }}
+        onPointerCancel={e => { points.delete(e.pointerId); lastTap = null; if (!points.size && zoom.value <= 1) { zoom.value = 1; pan.value = { x: 0, y: 0 }; } }}>
+        <div className="rd-desktop" style={{ transform: `translate(${pan.value.x}px, ${pan.value.y}px) scale(${zoom.value})` }}><Desktop/></div>
       </div>
       <div className="rd-floating">
       {keyboard.value && <div className="rd-controls">
         {keyboard.value && <div className="rd-input"><input value={text.value} placeholder="文字输入" aria-label="模拟远程输入" onChange={e => { text.value = e.currentTarget.value; }}/><button aria-label="模拟发送" onClick={() => { sent.value = text.value ? `已模拟发送：${text.value}` : '请输入文字'; text.value = ''; }}><Glyph name="send"/></button></div>}
         {keyboard.value && <div className="rd-nav">{['Esc','Tab','⌫','↵','←','↑','↓','→'].map(key => <button key={key} onClick={() => { sent.value = `已模拟按键：${key}`; }}>{key}</button>)}</div>}
       </div>}
-      <div className="rd-gamepad"><div className="rd-left-buttons"><button className="rd-fab" aria-label="滚动模式" title="滚动模式" aria-pressed={scroll.value} onClick={() => { scroll.value = !scroll.value; }}><Glyph name="scroll"/></button><button className="rd-fab" aria-label="适应屏幕" title="适应屏幕" onClick={() => { zoom.value = false; }}><Glyph name="fit"/></button></div><button className="rd-fab" aria-label="文字输入" title="文字输入" aria-expanded={keyboard.value} aria-pressed={keyboard.value} onClick={() => { keyboard.value = !keyboard.value; }}><Glyph name="keyboard"/></button></div>
+      <div className="rd-gamepad"><div className="rd-left-buttons"><button className="rd-fab" aria-label="Drag · 拖动画布" title="Drag · 拖动画布" aria-pressed={mode.value === 'drag'} onClick={() => { mode.value = 'drag'; }}><Glyph name="hand"/></button><button className="rd-fab" aria-label="Cursor · 控制电脑" title="Cursor · 控制电脑" aria-pressed={mode.value === 'cursor'} onClick={() => { mode.value = 'cursor'; }}><Glyph name="cursor"/></button></div><button className="rd-fab" aria-label="文字输入" title="文字输入" aria-expanded={keyboard.value} aria-pressed={keyboard.value} onClick={() => { keyboard.value = !keyboard.value; }}><Glyph name="keyboard"/></button></div>
       </div>
     </div>
-    <div className="rd-home"><i/></div>
   </div>
 ));
 
@@ -70,15 +103,16 @@ const App = component(() => (
     <style>{`
       .rd-wrap{max-width:1320px;margin:auto}.rd-eyebrow{font-size:11px;letter-spacing:.14em;color:#929299}.rd-title{font-size:28px;font-weight:600;letter-spacing:-.04em;margin:10px 0}.rd-intro{font-size:13px;color:#a1a1aa;line-height:1.8;max-width:800px}.rd-tabs{display:flex;gap:8px;margin:24px 0 32px}.rd-layout{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap}.rd-section{min-width:0;max-width:100%}.rd-label{display:flex;justify-content:space-between;margin-bottom:14px;font-size:12px;color:#a1a1aa}.rd-label b{color:#e4e4e7;font-weight:500}.rd-overflow{overflow-x:auto;padding-bottom:12px}.rd-device{background:#0c0c0e;border:1px solid #3c3c42;border-radius:36px;padding:0 7px;overflow:hidden;display:flex;flex-direction:column;font-family:system-ui;flex-shrink:0;box-sizing:border-box}.rd-portrait{width:390px;height:844px}.rd-landscape{width:844px;height:390px;border-radius:28px}.rd-status{height:45px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;color:#e4e4e7;flex-shrink:0}.rd-landscape .rd-status{height:20px;font-size:9px;padding:0 26px}.rd-panel{background:#18181b;border:1px solid #303034;border-bottom:none;border-radius:16px 16px 0 0;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}.rd-handle{height:4px;width:32px;border-radius:3px;background:#52525b;margin:8px auto 4px;flex-shrink:0}.rd-header{display:flex;align-items:center;justify-content:space-between;padding:7px 14px 12px;font-size:14px;font-weight:500;flex-shrink:0}.rd-header button{padding:4px;color:#a1a1aa}.rd-screen{flex:1;min-height:0;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#18181b}.rd-desktop{width:100%;height:100%;transition:transform .2s;transform-origin:65% 55%;display:flex;align-items:center;justify-content:center}.rd-desktop svg{object-fit:contain;display:block;max-width:100%;max-height:100%}.rd-controls{border-top:1px solid #303034;padding:12px;flex-shrink:0}.rd-tools{display:flex;align-items:center;gap:8px;font-size:13px;height:32px}.rd-tools button{padding:6px 10px;border-radius:7px;white-space:nowrap;color:#e4e4e7}.rd-tools .rd-chip{border:1px solid #3f3f46}.rd-tools .selected{background:#38383e;border-color:#71717a}.rd-tools .rd-keyboard{margin-left:auto;padding:7px}.rd-transport{margin-left:auto;font-size:11px;color:#8e8e98}.rd-hint{font-size:11px;color:#93939e;margin:8px 0 0;line-height:1.5}.rd-input{display:flex;gap:8px;margin-top:8px}.rd-input input{min-width:0;flex:1;background:#222226;border:1px solid #424248;border-radius:7px;padding:7px 10px;font-size:12px;outline:none}.rd-input button{background:#e4e4e7;color:#18181b;border-radius:7px;padding:7px 10px}.rd-nav{display:flex;gap:3px;margin-top:6px}.rd-nav button{font-size:11px;padding:4px 8px;color:#b5b5bd;border-radius:4px}.rd-home{height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0}.rd-home i{width:120px;height:4px;background:#d4d4d8;border-radius:4px}.rd-landscape .rd-home{height:17px}.rd-device button:hover{background:#38383e}.rd-note{font-size:12px;color:#92929e;line-height:1.9;margin-top:14px;max-width:840px}.rd-foot{margin-top:32px;padding-top:20px;border-top:1px solid #2b2b30;font-size:12px;color:#92929e;line-height:1.9}.rd-feedback{min-height:22px;font-size:12px;color:#b8b8c0;margin-top:10px}@media(max-width:500px){.rd-title{font-size:24px}}
       .rd-panel{position:relative}.rd-floating{position:absolute;top:72px;right:12px;bottom:12px;left:12px;display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-end;gap:12px;pointer-events:none}.rd-floating .rd-controls{width:320px;max-width:100%;min-height:0;overflow-y:auto;border:1px solid #3f3f46;border-radius:16px;background:#242427e6;backdrop-filter:blur(12px);pointer-events:auto;flex-shrink:1;box-shadow:0 8px 24px #0003}.rd-gamepad{width:100%;display:flex;justify-content:space-between;flex-shrink:0}.rd-left-buttons{display:flex;gap:12px}.rd-fab{pointer-events:auto;flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#35353999;color:#f0f0f4;border:1px solid #ffffff22;backdrop-filter:blur(12px);opacity:.6;display:flex;align-items:center;justify-content:center;font-size:14px;transition:opacity .15s}.rd-fab:hover,.rd-fab:focus-visible,.rd-fab[aria-pressed="true"]{opacity:1}.rd-fab[aria-pressed="true"]{box-shadow:0 0 0 2px #ffffff44}.rd-device .rd-fab:hover{background:#45454a99}
+      .rd-device{padding:0}.rd-panel{border:0;border-radius:0}.rd-screen{touch-action:none}.rd-desktop{transition:none;transform-origin:center}.rd-top-controls{position:absolute;top:16px;left:16px;right:16px;display:flex;justify-content:space-between;z-index:2;pointer-events:none}
     `}</style>
     <div className="rd-wrap">
       <p className="rd-eyebrow">YURI / REMOTE DESKTOP / IMPLEMENTATION MOCKUP</p>
       <h1 className="rd-title">一台 Mac，两种握持方式。</h1>
-      <p className="rd-intro">像手机手柄一样，半透明 icon 按钮直接分布在左右下角：左边滚动、适应屏幕，右边键盘。没有底栏，也没有需要展开的菜单。不显示连接协议。屏幕内容为示意，不是真实采集。</p>
+      <p className="rd-intro">独立、沉浸式全屏页面，无标题栏与半浮层。左下 Drag / Cursor，右下键盘，右上横竖屏切换；仅此页面旋转，不改变 App 其他页面的竖屏限制。屏幕内容为示意，不是真实采集。</p>
       <div className="rd-tabs">{[['both','并排对照'],['portrait','仅竖屏'],['landscape','仅横屏']].map(([id,label]) => <Button key={id} size="sm" variant={view.value === id ? 'default' : 'outline'} onClick={() => { view.value = id; }}>{label}</Button>)}</div>
       <div className="rd-layout">
-        {view.value !== 'landscape' && <section className="rd-section"><div className="rd-label"><b>竖屏 · 完整桌面</b><span>390 × 844</span></div><div className="rd-overflow"><Phone/></div><p className="rd-note">桌面按原比例居中，不拉伸、不裁切。<br/>实际操作可双指放大局部，再平移到目标区域。</p></section>}
-        {view.value !== 'portrait' && <section className="rd-section"><div className="rd-label"><b>横屏 · 更大操作区域</b><span>844 × 390</span></div><div className="rd-overflow"><Phone landscape/></div><p className="rd-note">左右手直接操作，不占桌面布局高度，按钮默认 60% 透明度，选中后更清晰。<br/>点右下角键盘展开文字与导航键；两个方向同步展示状态。</p><p className="rd-note">可试用：滚动模式切换、文字输入展开、模拟发送、双击示意桌面放大／还原，以及「适应屏幕」。不建立远程连接，不发送真实输入。</p><div className="rd-feedback" role="status">{sent.value}</div></section>}
+        {view.value !== 'landscape' && <section className="rd-section"><div className="rd-label"><b>竖屏 · 独立全屏页</b><span>390 × 844</span></div><div className="rd-overflow"><Phone/></div><p className="rd-note">Drag 双击局部放大，再双击恢复；Cursor 双击操作远端。<br/>在 100% 时拖动画布，或双指缩小到 100% 以下，松手都会自动吸附归位。</p></section>}
+        {view.value !== 'portrait' && <section className="rd-section"><div className="rd-label"><b>横屏 · 页面内旋转</b><span>844 × 390</span></div><div className="rd-overflow"><Phone landscape/></div><p className="rd-note">半透明 icon 直接分布在左右下角，不设工具栏或菜单。<br/>有传感器数据时实际页面自动旋转；拒绝授权或无传感器时仍可手动切换。退出后无全局方向残留。</p><p className="rd-note">此 mockup 可试用 Drag 平移、Cursor 点击、双指缩放、方向切换和键盘；两个方向同步状态。桌面滚轮可模拟缩放。不建立远程连接、不访问真实传感器。</p><div className="rd-feedback" role="status">{sent.value}</div></section>}
       </div>
       <div className="rd-foot"><b className="text-foreground">使用前：</b>设置 → 远程实例 → 远程桌面，完成权限检查并开启（默认关闭）。手机控制当前连接的实例，不会回落到其他电脑。<br/><b className="text-foreground">Beta 限制：</b>Host 暂仅 macOS；连接中切换锁屏可能断开。正确密码解锁、签名安装包授权及实体 iPhone 端到端验收尚未完成。此图不代表真机验收。</div>
     </div>

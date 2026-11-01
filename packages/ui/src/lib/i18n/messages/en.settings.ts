@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'Allow remote desktop control',
   'settings.remoteDesktop.description': 'Off by default. Complete the permission checks below before enabling.',
-  'settings.remoteDesktop.devices': 'Only paired devices can connect. Approve the first connection on this Mac and select “Always allow this device” for unattended access. This shares the physical primary display, not a private desktop.',
+  'settings.remoteDesktop.devices': 'After permissions are granted and remote desktop is enabled, paired devices connect directly without another confirmation or sharing window. Turn this off to stop control, or revoke a device’s pairing. This shares the physical primary display, not a private desktop.',
   'settings.remoteDesktop.recheck': 'Check permissions again',
   'settings.remoteDesktop.status': 'Status',
   'settings.remoteDesktop.screen': 'Screen Recording',

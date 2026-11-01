@@ -32,6 +32,7 @@ export type MobilePhoneShellProps = {
   onScanQr?: () => void;
   onSwitchInstance?: MobileProjectsHomeProps['onSwitchInstance'];
   onRemoteDesktop?: MobileProjectsHomeProps['onRemoteDesktop'];
+  remoteDesktopActive?: boolean;
   instanceOptions?: MobileProjectsHomeProps['instanceOptions'];
   /** Enables assistants (opens settings at the assistants section). */
   onEnableAssistants: () => void;
@@ -75,6 +76,7 @@ export function MobilePhoneShell({
   onScanQr,
   onSwitchInstance,
   onRemoteDesktop,
+  remoteDesktopActive = false,
   instanceOptions,
   onEnableAssistants,
   instancesPage,
@@ -338,7 +340,7 @@ export function MobilePhoneShell({
       onTabChange={setActiveTab}
       tabs={tabs}
       secondaryPages={secondaryPages ?? []}
-      tabBarCovered={scheduledEditorActive || searchOpen}
+      tabBarCovered={scheduledEditorActive || searchOpen || remoteDesktopActive}
     />
   );
 }

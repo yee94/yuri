@@ -61,3 +61,10 @@ The phone navigation store separately captures an Assistant-origin chat return
 target (contact ID and root tab). Popping the worker restores the contact page,
 not the root catalog; explicit nested chat routes pop first. This target is
 runtime-local navigation metadata, not a persisted URL or session association.
+
+Mobile remote desktop is a dedicated fullscreen push page. Its root back route
+`remote-desktop-page` uses the shared `MobileBackNavigationCoordinator` for H5
+history and native Back, preserving its source tab/session rather than selecting
+a new session or using a sheet. Its local portrait/landscape transform and sensor
+listeners exist only while this page is mounted; other pages and native global
+orientation restrictions are untouched.

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 import { RemoteDesktopPanel } from './RemoteDesktopPanel';
+import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 
 const mock = vi.hoisted(() => ({
   supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock('@/queries/remoteDesktopQueries', () => ({ useRemoteDesktopCapability: (
   mock.query(); return { data: { supported: mock.supported, enabled: mock.enabled }, error: null, refetch: vi.fn() };
 } }));
 vi.mock('@/lib/remote-desktop/connection', () => ({ connectRemoteDesktop: mock.connect }));
+vi.mock('@/lib/nativeComposerCover', () => ({ holdNativeComposerCover: () => () => {} }));
 vi.mock('@reactuses/core', async importOriginal => ({ ...await importOriginal<typeof import('@reactuses/core')>(),
   useResizeObserver: (_ref: unknown, callback: typeof mock.resize) => { mock.resize = callback; },
 }));
@@ -28,7 +30,7 @@ afterEach(() => {
   act(() => root.unmount()); document.body.innerHTML = '';
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false });
 });
-const onClose = () => {};
+const onClose = vi.fn();
 function render(count = 0) {
   act(() => root.render(<I18nProvider><RemoteDesktopPanel onClose={onClose} instanceName="Connected Mac" /><span>{count}</span></I18nProvider>));
 }
@@ -50,10 +52,11 @@ it('explains how to enable the Host and opens no socket while disabled', () => {
   expect(document.body.textContent).toContain('Remote desktop is off on this Mac');
   expect(mock.connect).not.toHaveBeenCalled();
 });
-it('maps production touch handlers and pinch without remote click leakage, then uses the latest scroll mode', () => {
+it('maps Cursor touches and pinch without click leakage, then pans locally in Drag mode', () => {
   render();
   const options = mock.connect.mock.calls[0][0];
   act(() => { mock.resize?.([{ contentRect: { width: 400, height: 600 } }]); options.onSize(1600, 900); options.onState('webrtc'); });
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Cursor · Control computer"]')!.click());
   const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
   viewport.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 600, width: 400, height: 600, toJSON: () => ({}) });
   const captures = new Set<number>();
@@ -70,10 +73,10 @@ it('maps production touch handlers and pinch without remote click leakage, then 
   pointer('pointermove', 1, 100, 300); pointer('pointermove', 2, 300, 300);
   pointer('pointerup', 2, 300, 300); pointer('pointerup', 1, 100, 300);
   expect(mock.send).not.toHaveBeenCalled();
-  const scroll = document.querySelector<HTMLButtonElement>('button[aria-label="Scroll mode"]')!;
-  act(() => scroll.click());
+  const drag = document.querySelector<HTMLButtonElement>('button[aria-label="Drag · Pan canvas"]')!;
+  act(() => drag.click());
   pointer('pointerdown', 1, 200, 300); pointer('pointermove', 1, 200, 350); pointer('pointerup', 1, 200, 350);
-  expect(mock.send).toHaveBeenLastCalledWith({ type: 'scroll', dx: 0, dy: -50 });
+  expect(mock.send).not.toHaveBeenCalled();
 });
 it('keeps gamepad-style icon controls outside the pointer surface without a toolbar or protocol labels', () => {
   render();
@@ -84,7 +87,9 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
   expect(keyboard.getAttribute('aria-expanded')).toBe('false');
   expect(document.body.textContent).not.toContain('Scroll mode');
   expect(document.body.textContent).not.toContain('WebRTC');
-  for (const label of ['Scroll mode', 'Fit screen', 'Type on the remote computer']) {
+  expect(document.querySelector('button[aria-label="Fit screen"]')).toBeNull();
+  expect(document.querySelector('button[aria-label="Scroll mode"]')).toBeNull();
+  for (const label of ['Drag · Pan canvas', 'Cursor · Control computer', 'Type on the remote computer', 'Switch portrait / landscape']) {
     const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
     expect(button).not.toBeNull();
     expect(button.textContent).toBe('');
@@ -105,6 +110,45 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
   expect(mock.connect).toHaveBeenCalledTimes(1);
   act(() => options.onState('tunnel'));
   expect(document.body.textContent).not.toContain('Compatibility stream');
+});
+it('owns a full page history entry and rotates only this page without reconnecting', () => {
+  render();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const page = document.querySelector<HTMLElement>('[data-remote-desktop-page]')!;
+  expect(page.parentElement).toBe(document.body);
+  expect(mobileBackNavigationCoordinator.getTopRoute()?.id).toBe('remote-desktop-page');
+  expect(mobileBackNavigationCoordinator.getTopRoute()?.layer).toBe('root');
+  const surface = page.querySelector('main')!;
+  expect(surface.style.transform).toBe('');
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  expect(document.documentElement.style.transform).toBe('');
+  expect(document.body.style.transform).toBe('');
+  expect(mock.connect).toHaveBeenCalledTimes(1);
+  onClose.mockClear();
+  act(() => { mobileBackNavigationCoordinator.backImmediately('root'); });
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(mock.close).toHaveBeenCalledOnce();
+});
+it('follows meaningful sensor changes, ignores flat/noisy samples and leaves other pages untouched', () => {
+  render();
+  const surface = document.querySelector('[data-remote-desktop-page] main') as HTMLElement;
+  const tilt = (beta: number, gamma: number) => {
+    const event = new Event('deviceorientation');
+    Object.defineProperties(event, { beta: { value: beta }, gamma: { value: gamma } });
+    act(() => window.dispatchEvent(event));
+  };
+  tilt(80, 0);
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  const queryCalls = mock.query.mock.calls.length;
+  for (let index = 0; index < 100; index++) tilt(80 + index % 5, 0);
+  expect(mock.query).toHaveBeenCalledTimes(queryCalls);
+  tilt(0, 0);
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  tilt(0, 80);
+  expect(surface.style.transform).toBe('');
+  expect(mock.connect).toHaveBeenCalledTimes(1);
+  expect(document.body.style.transform).toBe('');
 });
 it('closes capture when the phone goes to the background', () => {
   render();

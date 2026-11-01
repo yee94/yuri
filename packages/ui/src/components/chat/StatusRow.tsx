@@ -237,7 +237,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }
 
   return (
-    <div className={cn("mb-1", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
+    <div className={cn("mb-1", isMobile && "relative", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
       {/*
         When leftAccessory is set (ChatInput pending-changes row), the parent is
         already `chat-input-column`. Use the same horizontal inset as the composer
@@ -290,29 +290,29 @@ export const StatusRow: React.FC<StatusRowProps> = ({
         </div>
 
         {/* Right: Todo */}
-        <div className={cn("relative flex items-center gap-2 flex-shrink-0", !isEmbedded && "-mr-3")} ref={popoverRef}>
+        <div className={cn("flex items-center gap-2 flex-shrink-0", !isMobile && "relative", !isEmbedded && "-mr-3")} ref={popoverRef}>
           {todoTrigger}
 
           {/* Popover dropdown */}
           {isExpanded && hasTodoContent && (
             <div
-              style={statusBarPopoverStyle}
+              style={isMobile ? { ...statusBarPopoverStyle, width: '100%', minWidth: 0, maxWidth: '100%' } : statusBarPopoverStyle}
               className={cn(
                 statusBarPopoverClassName,
                 "absolute right-0 bottom-full mb-1 z-50",
                 "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
-                "duration-150"
+                "duration-150 p-[0.5em] pb-[0.875em] text-base"
               )}
             >
               {/* Header */}
-              <div className="flex items-center gap-[0.6em] px-[calc(0.25rem+0.5em)] pt-2.5 pb-1 text-xs md:text-[0.8125rem]">
+              <div className="flex items-center gap-[0.6em] px-[0.5em] pt-[0.25em] pb-[0.5em]">
                 {progress.completed === progress.total ? (
                   <TodoCompleteMark />
                 ) : (
                   <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
                 )}
-                <span className="min-w-0 flex-1 truncate text-foreground">{t('chat.workStatus.todos.title')}</span>
-                <TodoCount done={progress.completed} total={progress.total} className="text-[0.92em] text-muted-foreground" />
+                <span className={cn("min-w-0 flex-1 truncate leading-[1.5] text-foreground", isMobile ? "text-[0.94em]" : "text-[0.88em]")}>{t('chat.workStatus.todos.title')}</span>
+                <TodoCount done={progress.completed} total={progress.total} className="text-[0.88em] text-muted-foreground" />
               </div>
 
               {/* Todo list */}
@@ -321,7 +321,8 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 isWorking={isWorking}
                 animate
                 listRef={todoListRef}
-                className="max-h-[min(22rem,50vh)] overflow-y-auto p-1 text-xs md:text-[0.8125rem]"
+                className={cn("max-h-[min(22rem,50vh)] overflow-y-auto text-inherit", isMobile && "[&_[dir=auto]]:text-[0.84em]")}
+                rowClassName="gap-[0.6em] px-[0.5em] py-[0.4em]"
               />
             </div>
           )}

@@ -11,7 +11,7 @@ test('home and chat overflow converge on one shell-owned remote desktop panel', 
   const home = await readFile(join(sourceDirectory, '../mobile/projects/MobileProjectsHomeContainer.tsx'), 'utf8');
 
   expect(source.match(/<RemoteDesktopPanel\b/g)).toHaveLength(1);
-  expect(source).toMatch(/const openRemoteDesktop = useEvent\(\(\) => \{\s*setOverflowOpen\(false\);\s*setRemoteDesktopOpen\(true\);/);
+  expect(source).toMatch(/const openRemoteDesktop = useEvent\(\(\) => \{\s*void requestDesktopOrientationPermission\(\);\s*setOverflowOpen\(false\);\s*setRemoteDesktopOpen\(true\);/);
   expect(source).toMatch(/key: 'remote-desktop',\s*icon: 'computer',\s*label: t\('remoteDesktop.title'\),\s*onSelect: openRemoteDesktop,/);
   expect(source).toContain('onRemoteDesktop={openRemoteDesktop}');
   expect(source).toContain('onClose={closeRemoteDesktop}');
@@ -24,7 +24,9 @@ test('home and chat overflow converge on one shell-owned remote desktop panel', 
 
 test('remote desktop blocks underlying navigation and Android back dismisses it first', async () => {
   const source = await readFile(join(sourceDirectory, 'MobileApp.tsx'), 'utf8');
-  expect(source).toMatch(/const rootBackRoutesBlocked[\s\S]*?\|\| remoteDesktopOpen;/);
+  const blocked = source.match(/const rootBackRoutesBlocked[\s\S]*?;/)![0];
+  expect(blocked).not.toContain('remoteDesktopOpen');
+  expect(source).toContain('remoteDesktopActive={remoteDesktopOpen}');
   expect(source).toMatch(/const headerSwipeDisabled[\s\S]*?\|\| remoteDesktopOpen;/);
   expect(source).toMatch(/const handleNativeBack = useEvent\(\(\) => \{\s*if \(remoteDesktopOpen\) \{\s*closeRemoteDesktop\(\);\s*return true;/);
 });

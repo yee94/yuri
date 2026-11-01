@@ -98,7 +98,7 @@ test.each([
 
     const groups = container.querySelectorAll('[data-component="context-tool-group"]');
     expect(groups).toHaveLength(chatRenderMode === 'sorted' ? 2 : 0);
-    const todo = Array.from(container.querySelectorAll('[role="button"]')).find(element => element.textContent?.includes('Update Todo List'));
+    const todo = Array.from(container.querySelectorAll('[role="button"]')).find(element => element.textContent?.includes('Update Tasks'));
     expect(todo).toBeDefined();
     expect(todo!.closest('[data-component="context-tool-group"]')).toBeNull();
     if (chatRenderMode === 'sorted') {

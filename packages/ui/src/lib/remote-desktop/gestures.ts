@@ -3,6 +3,7 @@ import type { DesktopInput } from './connection';
 type Point = { x: number; y: number };
 export type DesktopViewport = { width: number; height: number; remoteWidth: number; remoteHeight: number };
 export type DesktopTransform = { scale: number; x: number; y: number };
+export type DesktopInteractionMode = 'drag' | 'cursor';
 export const INITIAL_DESKTOP_TRANSFORM: DesktopTransform = { scale: 1, x: 0, y: 0 };
 
 function fit(view: DesktopViewport) {
@@ -19,8 +20,8 @@ export function desktopPoint(point: Point, view: DesktopViewport, transform: Des
   return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
 }
 
-export function clampDesktopTransform(value: DesktopTransform, view: DesktopViewport): DesktopTransform {
-  const scale = Math.max(1, Math.min(5, value.scale));
+export function clampDesktopTransform(value: DesktopTransform, view: DesktopViewport, minimumScale = 1): DesktopTransform {
+  const scale = Math.max(minimumScale, Math.min(5, value.scale));
   const fitted = fit(view);
   const clamp = (offset: number, start: number, size: number, viewport: number) => size * scale <= viewport
     ? (viewport - size * scale) / 2 - start * scale
@@ -31,8 +32,8 @@ export function clampDesktopTransform(value: DesktopTransform, view: DesktopView
 export function createDesktopGestures(options: {
   viewport: () => DesktopViewport;
   send: (input: DesktopInput) => void;
-  apply: (transform: DesktopTransform) => void;
-  scrollMode: () => boolean;
+  apply: (transform: DesktopTransform, settle?: boolean) => void;
+  mode: () => DesktopInteractionMode;
 }) {
   const pointers = new Map<number, Point>();
   let transform = { ...INITIAL_DESKTOP_TRANSFORM };
@@ -43,8 +44,20 @@ export function createDesktopGestures(options: {
   let multi = false;
   let contextClicked = false;
   let hold: ReturnType<typeof setTimeout> | undefined;
+  let lastTap: { point: Point; time: number } | null = null;
+  let downAt = 0;
   let pinch: { midpoint: Point; distance: number; transform: DesktopTransform } | null = null;
   const release = () => { if (dragging) options.send({ type: 'release' }); dragging = false; };
+  const snapToFit = () => {
+    if (transform.scale === 1 && transform.x === 0 && transform.y === 0) return;
+    transform = { ...INITIAL_DESKTOP_TRANSFORM }; options.apply(transform, true);
+  };
+  const cancel = () => {
+    clearTimeout(hold);
+    release(); pointers.clear(); pinch = null; start = previous = null; multi = false;
+    lastTap = null;
+    if (transform.scale <= 1) snapToFit();
+  };
   const measure = () => {
     const [a, b] = [...pointers.values()];
     return { midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
@@ -55,7 +68,8 @@ export function createDesktopGestures(options: {
       pointers.set(id, point);
       if (pointers.size === 1) {
         start = previous = point; moved = false; multi = false; contextClicked = false;
-        hold = setTimeout(() => {
+        downAt = Date.now();
+        if (options.mode() === 'cursor') hold = setTimeout(() => {
           const remote = desktopPoint(point, options.viewport(), transform);
           if (remote && !moved && !multi) { options.send({ type: 'pointer', action: 'right', ...remote }); contextClicked = true; }
         }, 550);
@@ -63,6 +77,7 @@ export function createDesktopGestures(options: {
       if (pointers.size === 2) {
         clearTimeout(hold);
         multi = true;
+        lastTap = null;
         release();
         pinch = { ...measure(), transform: { ...transform } };
       }
@@ -72,20 +87,21 @@ export function createDesktopGestures(options: {
       pointers.set(id, point);
       if (pointers.size === 2 && pinch) {
         const { midpoint, distance } = measure();
-        const scale = Math.max(1, Math.min(5, pinch.transform.scale * distance / pinch.distance));
+        const scale = Math.max(0.5, Math.min(5, pinch.transform.scale * distance / pinch.distance));
         const ratio = scale / pinch.transform.scale;
         transform = clampDesktopTransform({ scale,
           x: midpoint.x - (pinch.midpoint.x - pinch.transform.x) * ratio,
           y: midpoint.y - (pinch.midpoint.y - pinch.transform.y) * ratio,
-        }, options.viewport());
+        }, options.viewport(), 0.5);
         options.apply(transform);
         return;
       }
       if (multi || contextClicked || !start || !previous) return;
-      if (Math.hypot(point.x - start.x, point.y - start.y) > 6) { moved = true; clearTimeout(hold); }
+      if (Math.hypot(point.x - start.x, point.y - start.y) > 6) { moved = true; lastTap = null; clearTimeout(hold); }
       if (!moved) return;
-      if (options.scrollMode()) {
-        options.send({ type: 'scroll', dx: previous.x - point.x, dy: previous.y - point.y });
+      if (options.mode() === 'drag') {
+        transform = { ...transform, x: transform.x + point.x - previous.x, y: transform.y + point.y - previous.y };
+        options.apply(transform);
       } else {
         const remote = desktopPoint(point, options.viewport(), transform);
         if (remote) {
@@ -100,16 +116,31 @@ export function createDesktopGestures(options: {
       if (!pointers.has(id)) return;
       clearTimeout(hold);
       pointers.delete(id);
-      if (!cancelled && !multi && !moved && !contextClicked) {
+      if (options.mode() === 'cursor' && !cancelled && !multi && !moved && !contextClicked) {
         const remote = desktopPoint(point, options.viewport(), transform);
         if (remote) options.send({ type: 'pointer', action: 'click', ...remote });
       }
+      if (options.mode() === 'drag' && !cancelled && !multi && !moved && Date.now() - downAt < 300) {
+        const now = Date.now();
+        if (lastTap && now - lastTap.time < 300 && Math.hypot(point.x - lastTap.point.x, point.y - lastTap.point.y) < 24) {
+          if (transform.scale > 1) transform = { ...INITIAL_DESKTOP_TRANSFORM };
+          else {
+            const scale = 2.5, ratio = scale / transform.scale;
+            transform = clampDesktopTransform({ scale, x: point.x - (point.x - transform.x) * ratio,
+              y: point.y - (point.y - transform.y) * ratio }, options.viewport());
+          }
+          options.apply(transform, true); lastTap = null;
+        } else lastTap = { point, time: now };
+      } else lastTap = null;
       release();
-      if (!pointers.size) { pinch = null; start = previous = null; multi = false; }
+      if (!pointers.size) {
+        pinch = null; start = previous = null; multi = false;
+        if (transform.scale <= 1) snapToFit();
+      }
     },
+    cancel,
     reset() {
-      clearTimeout(hold);
-      release(); pointers.clear(); pinch = null; start = previous = null; multi = false;
+      cancel();
       transform = { ...INITIAL_DESKTOP_TRANSFORM }; options.apply(transform);
     },
   };

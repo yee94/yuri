@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': 'Autoriser le contrôle du bureau à distance',
   'settings.remoteDesktop.description': 'Désactivé par défaut. Vérifiez les autorisations ci-dessous avant de l’activer.',
-  'settings.remoteDesktop.devices': 'Seuls les appareils associés peuvent se connecter. Approuvez la première connexion sur ce Mac et choisissez « Toujours autoriser cet appareil » pour un accès sans intervention. L’écran principal physique est partagé, pas un bureau privé.',
+  'settings.remoteDesktop.devices': 'Une fois les autorisations accordées et la fonction activée, les appareils associés se connectent directement, sans nouvelle confirmation ni fenêtre de partage. Désactivez cette option ou révoquez l’association pour arrêter le contrôle. L’écran principal physique est partagé, pas un bureau privé.',
   'settings.remoteDesktop.recheck': 'Revérifier les autorisations',
   'settings.remoteDesktop.status': 'État',
   'settings.remoteDesktop.screen': 'Enregistrement de l’écran',

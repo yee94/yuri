@@ -95,6 +95,7 @@ import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
 import { RemoteDesktopPanel } from '@/mobile/RemoteDesktopPanel';
+import { requestDesktopOrientationPermission } from '@/lib/remote-desktop/orientation';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
 import { MobileFloatingSurface } from '@/mobile/MobileSurface';
 import {
@@ -2273,6 +2274,7 @@ const MobileShell: React.FC<{
   const [overflowOpen, setOverflowOpen] = React.useState(false);
   const [remoteDesktopOpen, setRemoteDesktopOpen] = React.useState(false);
   const openRemoteDesktop = useEvent(() => {
+    void requestDesktopOrientationPermission();
     setOverflowOpen(false);
     setRemoteDesktopOpen(true);
   });
@@ -2400,8 +2402,7 @@ const MobileShell: React.FC<{
     || settingsOpen
     || updateOpen
     || directoryDialogOpen
-    || overflowOpen
-    || remoteDesktopOpen;
+    || overflowOpen;
   useMobileNavigationDriver({
     enabled: !isIPad,
     rootRoutesBlocked: rootBackRoutesBlocked,
@@ -2974,7 +2975,7 @@ const MobileShell: React.FC<{
           </aside>
         ) : null}
 
-        <div className="flex h-full min-w-0 flex-1 flex-col" data-page-scroll-lock="true">
+        <div className="flex h-full min-w-0 flex-1 flex-col" data-page-scroll-lock="true" inert={remoteDesktopOpen || undefined} aria-hidden={remoteDesktopOpen || undefined}>
           {isIPad ? (
             <>
               {activeMainTab !== 'assistant' ? <div>
@@ -3005,6 +3006,7 @@ const MobileShell: React.FC<{
               onScanQr={showCapacitorOnlyFeatures && qrScanSupported ? () => { void scanConnectionFromHome(); } : undefined}
               onSwitchInstance={showCapacitorOnlyFeatures ? switchInstanceFromHome : undefined}
               onRemoteDesktop={openRemoteDesktop}
+              remoteDesktopActive={remoteDesktopOpen}
               instanceOptions={showCapacitorOnlyFeatures ? connection.connections.map((saved) => ({
                 id: saved.id,
                 label: saved.label,

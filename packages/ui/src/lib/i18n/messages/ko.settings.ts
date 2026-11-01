@@ -1,7 +1,7 @@
 export const settingsDict = {
   'settings.remoteDesktop.enable': '원격 데스크톱 제어 허용',
   'settings.remoteDesktop.description': '기본적으로 꺼져 있습니다. 아래 권한을 확인한 후 켜세요.',
-  'settings.remoteDesktop.devices': '페어링된 기기만 연결할 수 있습니다. 처음에는 이 Mac에서 승인하고 “이 기기 항상 허용”을 선택하면 무인 연결이 가능합니다. 별도의 비공개 데스크톱이 아닌 실제 주 화면을 공유합니다.',
+  'settings.remoteDesktop.devices': '권한을 허용하고 켜면 페어링된 기기가 추가 확인이나 공유 창 없이 바로 연결됩니다. 이 설정을 끄거나 기기 페어링을 해제하면 제어가 중지됩니다. 별도의 비공개 데스크톱이 아닌 실제 주 화면을 공유합니다.',
   'settings.remoteDesktop.recheck': '권한 다시 확인',
   'settings.remoteDesktop.status': '상태',
   'settings.remoteDesktop.screen': '화면 기록',

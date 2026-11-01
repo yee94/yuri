@@ -654,6 +654,12 @@ svg.animate-spin {
   display: block !important;
 }
 
+/* Busy ring has a fixed viewBox centered on its own box; fill-box forces WebKit
+   to resolve the rotation origin from SVG content bounds. */
+svg.animate-spin.yuri-busy-ring {
+  transform-box: view-box !important;
+}
+
 @keyframes webkit-spin {
   0% {
     transform: translateZ(0) rotate(0deg);

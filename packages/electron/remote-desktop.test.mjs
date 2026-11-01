@@ -111,26 +111,27 @@ nativeTest('enable persistence failure never enables control and screen guidance
   expect(adapter.enabled).toBe(false);
 });
 
-nativeTest('turning off aborts a pending consent and a late allow cannot start capture', async () => {
-  let consent;
-  mock.consent.mockImplementation(() => new Promise(resolve => { consent = resolve; }));
+nativeTest('turning off cancels pending screen discovery and late completion cannot start capture', async () => {
+  let sources;
+  mock.sources.mockImplementation(() => new Promise(resolve => { sources = resolve; }));
   const adapter = createRemoteDesktopAdapter();
   const ended = vi.fn();
   const pending = adapter.start({ send: vi.fn(), onEnded: ended });
   const rejected = expect(pending).rejects.toMatchObject({ code: 'permission_denied' });
+  await vi.waitFor(() => expect(sources).toBeDefined());
   await adapter.setEnabled(false);
-  consent({ response: 1 });
+  sources([{ id: 'screen:primary', display_id: '123' }]);
   await rejected;
-  expect(ended).toHaveBeenCalledOnce(); expect(mock.sources).not.toHaveBeenCalled();
+  expect(ended).toHaveBeenCalledOnce(); expect(mock.windows).toHaveLength(0);
   expect(mock.spawn).not.toHaveBeenCalled();
 });
-nativeTest('local denial or missing accessibility permission never starts capture or native input', async () => {
-  mock.consent.mockResolvedValue({ response: 0 });
-  await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: new AbortController().signal })).rejects.toMatchObject({ code: 'permission_denied' });
-  expect(mock.sources).not.toHaveBeenCalled(); expect(mock.spawn).not.toHaveBeenCalled();
-  mock.consent.mockResolvedValue({ response: 1 }); mock.accessibility.mockReturnValue(false);
+nativeTest('missing app accessibility permission never prompts or starts capture or native input', async () => {
+  mock.accessibility.mockReturnValue(false);
   await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: new AbortController().signal })).rejects.toMatchObject({ code: 'permission_required' });
-  expect(mock.sources).not.toHaveBeenCalled();
+  expect(mock.sources).not.toHaveBeenCalled(); expect(mock.spawn).not.toHaveBeenCalled();
+  expect(mock.accessibility).toHaveBeenCalledWith(false);
+  expect(mock.accessibility).not.toHaveBeenCalledWith(true);
+  expect(mock.consent).not.toHaveBeenCalled();
 });
 nativeTest('never falls back to a different screen if primary-display identity does not match', async () => {
   mock.sources.mockResolvedValue([{ id: 'screen:other', display_id: '999' }]);
@@ -141,12 +142,12 @@ nativeTest('only the owned capture frame can publish media; stop closes all reso
   const send = vi.fn(() => true), ended = vi.fn();
   const adapter = createRemoteDesktopAdapter();
   const desktop = await adapter.start({ send, onEnded: ended, signal: new AbortController().signal });
-  const capture = mock.windows.at(-1), status = mock.windows[0];
+  const capture = mock.windows.at(-1);
   expect(capture.options.webPreferences).toMatchObject({ nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false });
   expect(mock.spawn.mock.calls[0][1]).toEqual(['123']);
   const child = mock.spawn.mock.results[0].value; child.stdout.emit('data', Buffer.from('ready\n'));
   const owned = { sender: capture.webContents, senderFrame: capture.webContents.mainFrame };
-  const untrusted = { sender: status.webContents, senderFrame: status.webContents.mainFrame };
+  const untrusted = { sender: new EventEmitter(), senderFrame: {} };
   send.mockClear();
   mock.ipc.emit('yuri:capture:frame', untrusted, new ArrayBuffer(10));
   mock.ipc.emit('yuri:capture:frame', { ...owned, senderFrame: {} }, new ArrayBuffer(10));
@@ -162,25 +163,42 @@ nativeTest('only the owned capture frame can publish media; stop closes all reso
   expect(ended).not.toHaveBeenCalled();
 });
 
-nativeTest('remembered approval is scoped to a paired device, and another device still needs local confirmation', async () => {
+nativeTest('enabled and authorized devices connect directly without a dialog, visible status window or approval writes', async () => {
   const stored = { enabled: true, clients: ['phone-a'] };
   const store = { readRoot: () => structuredClone(stored), mutate: vi.fn(async mutator => { const next = structuredClone(stored); await mutator(next); Object.assign(stored, next); }) };
   const adapter = createRemoteDesktopAdapter({ approvalsStore: store });
   const first = await adapter.start({ send: vi.fn(() => true), onEnded: vi.fn(), signal: new AbortController().signal, client: { id: 'phone-a', label: 'Phone A' } });
-  expect(mock.consent).not.toHaveBeenCalled(); first.close();
-  mock.consent.mockResolvedValue({ response: 1, checkboxChecked: true });
+  first.close();
   const second = await adapter.start({ send: vi.fn(() => true), onEnded: vi.fn(), signal: new AbortController().signal, client: { id: 'phone-b', label: 'Phone B' } });
-  expect(mock.consent).toHaveBeenCalledTimes(1);
-  expect(stored.clients).toEqual(['phone-a', 'phone-b']); second.close();
+  expect(mock.consent).not.toHaveBeenCalled();
+  expect(store.mutate).not.toHaveBeenCalled();
+  expect(stored.clients).toEqual(['phone-a']);
+  expect(mock.windows).toHaveLength(2);
+  expect(mock.windows.every(win => win.options.show === false && !win.options.alwaysOnTop)).toBe(true);
+  expect(mock.ipc.listenerCount('yuri:capture:stop')).toBe(0);
+  expect(mock.ipc.listenerCount('yuri:capture:forget')).toBe(0);
+  second.close();
 });
 
-nativeTest('failed approval persistence preserves prior approvals and closes capture instead of claiming success', async () => {
-  const stored = { enabled: true, clients: ['phone-a'] };
-  const store = { readRoot: () => stored, mutate: vi.fn(async () => { throw Error('disk failure'); }) };
-  mock.consent.mockResolvedValue({ response: 1, checkboxChecked: true });
-  await expect(createRemoteDesktopAdapter({ approvalsStore: store }).start({ send: vi.fn(() => true), onEnded: vi.fn(),
-    signal: new AbortController().signal, client: { id: 'phone-b', label: 'Phone B' } })).rejects.toThrow('disk failure');
-  expect(stored.clients).toEqual(['phone-a']);
-  expect(mock.windows.every(win => win.destroyed)).toBe(true);
-  expect(mock.spawn.mock.results[0].value.stdin.end).toHaveBeenCalledOnce();
+nativeTest('revoked screen or helper permissions fail closed without opening authorization dialogs', async () => {
+  const adapter = createRemoteDesktopAdapter();
+  mock.media.mockReturnValue('denied');
+  await expect(adapter.start({ send: vi.fn(), onEnded: vi.fn() })).rejects.toMatchObject({ code: 'permission_required' });
+  mock.media.mockReturnValue('granted');
+  mock.exec.mockImplementation((_file, _args, _options, callback) => callback(null, 'denied\n', ''));
+  await expect(adapter.start({ send: vi.fn(), onEnded: vi.fn() })).rejects.toMatchObject({ code: 'permission_required' });
+  expect(mock.sources).not.toHaveBeenCalled(); expect(mock.spawn).not.toHaveBeenCalled();
+  expect(mock.windows).toHaveLength(0); expect(mock.consent).not.toHaveBeenCalled();
+  expect(mock.exec.mock.calls.every(call => call[1][0] === '--check-accessibility')).toBe(true);
+});
+
+nativeTest('disconnect during permission checking never starts capture after the check completes', async () => {
+  let permissions;
+  mock.exec.mockImplementation((_file, _args, _options, callback) => { permissions = callback; });
+  const signal = new AbortController();
+  const pending = createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: signal.signal });
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'permission_denied' });
+  signal.abort(); permissions(null, 'granted\n');
+  await rejected;
+  expect(mock.windows).toHaveLength(0); expect(mock.spawn).not.toHaveBeenCalled();
 });

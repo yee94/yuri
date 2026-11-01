@@ -4,10 +4,10 @@ import type { DesktopInput } from './connection';
 
 const viewport = { width: 400, height: 600, remoteWidth: 1600, remoteHeight: 900 };
 const center = { x: 200, y: 300 };
-const setup = (scroll = false) => {
+const setup = (drag = false) => {
   const events: DesktopInput[] = [];
   const transforms: ReturnType<typeof clampDesktopTransform>[] = [];
-  const gestures = createDesktopGestures({ viewport: () => viewport, scrollMode: () => scroll,
+  const gestures = createDesktopGestures({ viewport: () => viewport, mode: () => drag ? 'drag' : 'cursor',
     send: event => events.push(event), apply: value => transforms.push(value) });
   return { gestures, events, transforms };
 };
@@ -66,12 +66,61 @@ describe('remote desktop coordinate mapping and gestures', () => {
     gestures.down(2, { x: 100, y: 300 });
     expect(events.at(-1)).toEqual({ type: 'release' });
   });
-  it('scroll mode emits relative scroll, not mouse-down, and hundreds of pinch moves send no network input', () => {
-    const { gestures, events } = setup(true);
-    gestures.down(1, center); gestures.move(1, { x: 200, y: 330 }); gestures.up(1, { x: 200, y: 330 });
-    expect(events).toEqual([{ type: 'scroll', dx: 0, dy: -30 }]);
+  it('Drag pans freely without clicking or native input, including hundreds of pinch moves', () => {
+    const { gestures, events, transforms } = setup(true);
+    gestures.down(1, center); gestures.move(1, { x: 200, y: 330 });
+    expect(transforms.at(-1)).toEqual({ scale: 1, x: 0, y: 30 });
+    gestures.up(1, { x: 200, y: 330 });
+    expect(transforms.at(-1)).toEqual(INITIAL_DESKTOP_TRANSFORM);
+    expect(events).toEqual([]);
     gestures.down(1, center); gestures.down(2, { x: 250, y: 300 });
     for (let i = 0; i < 500; i++) gestures.move(2, { x: 250 + i / 10, y: 300 });
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(0);
+  });
+  it('allows a pinch below fit and snaps to fit only after the final finger lifts', () => {
+    const { gestures, events, transforms } = setup(true);
+    gestures.down(1, { x: 100, y: 300 }); gestures.down(2, { x: 300, y: 300 });
+    gestures.move(1, { x: 150, y: 300 }); gestures.move(2, { x: 250, y: 300 });
+    expect(transforms.at(-1)!.scale).toBe(0.5);
+    gestures.up(2, { x: 250, y: 300 });
+    expect(transforms.at(-1)!.scale).toBe(0.5);
+    gestures.up(1, { x: 150, y: 300 });
+    expect(transforms.at(-1)).toEqual(INITIAL_DESKTOP_TRANSFORM);
+    expect(events).toEqual([]);
+  });
+  it('cancels pending input on mode changes without resetting zoom or panning', () => {
+    let mode: 'drag' | 'cursor' = 'drag';
+    const events: DesktopInput[] = [], transforms: { scale: number; x: number; y: number }[] = [];
+    const gestures = createDesktopGestures({ viewport: () => viewport, mode: () => mode,
+      send: value => events.push(value), apply: value => transforms.push(value) });
+    gestures.down(1, { x: 150, y: 300 }); gestures.down(2, { x: 250, y: 300 });
+    gestures.move(1, { x: 100, y: 300 }); gestures.move(2, { x: 300, y: 300 });
+    gestures.up(2, { x: 300, y: 300 }); gestures.up(1, { x: 100, y: 300 });
+    gestures.down(1, center); gestures.move(1, { x: 220, y: 320 }); gestures.up(1, { x: 220, y: 320 });
+    expect(transforms.at(-1)).toEqual({ scale: 2, x: -180, y: -280 });
+    const count = transforms.length;
+    gestures.cancel(); mode = 'cursor';
+    expect(transforms).toHaveLength(count);
+    gestures.down(1, { x: 220, y: 320 }); gestures.up(1, { x: 220, y: 320 });
+    expect(events).toEqual([{ type: 'pointer', action: 'click', x: 0.5, y: 0.5 }]);
+  });
+  it('Drag double-taps zoom locally around the tap and the next double-tap restores Fit', () => {
+    const { gestures, events, transforms } = setup(true);
+    const point = { x: 100, y: 300 };
+    const tap = () => { gestures.down(1, point); gestures.up(1, point); };
+    tap(); tap();
+    const zoomed = transforms.at(-1)!;
+    expect(zoomed.scale).toBe(2.5);
+    expect(desktopPoint(point, viewport, zoomed)).toEqual(desktopPoint(point, viewport, INITIAL_DESKTOP_TRANSFORM));
+    tap(); tap();
+    expect(transforms.at(-1)).toEqual(INITIAL_DESKTOP_TRANSFORM);
+    expect(events).toEqual([]);
+  });
+  it('Cursor double-taps remain native clicks without local zoom', () => {
+    const { gestures, events, transforms } = setup();
+    for (let index = 0; index < 2; index++) { gestures.down(1, center); gestures.up(1, center); }
+    expect(events).toHaveLength(2);
+    expect(events.every(event => event.type === 'pointer' && event.action === 'click')).toBe(true);
+    expect(transforms.every(value => value.scale === 1)).toBe(true);
   });
 });

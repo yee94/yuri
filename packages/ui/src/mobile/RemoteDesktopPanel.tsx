@@ -1,13 +1,17 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/icon/Icon';
-import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
+import { holdNativeComposerCover } from '@/lib/nativeComposerCover';
+import { mobileBackNavigationCoordinator, useMobileBackRoute } from './mobileBackNavigation';
 import { useI18n } from '@/lib/i18n';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { connectRemoteDesktop, type DesktopInput } from '@/lib/remote-desktop/connection';
-import { createDesktopGestures, type DesktopViewport } from '@/lib/remote-desktop/gestures';
+import { createDesktopGestures, type DesktopInteractionMode, type DesktopViewport } from '@/lib/remote-desktop/gestures';
+import { desktopLocalPoint, requestDesktopOrientationPermission } from '@/lib/remote-desktop/orientation';
+import { useDesktopOrientation } from '@/lib/remote-desktop/useDesktopOrientation';
 import { useRemoteDesktopCapability } from '@/queries/remoteDesktopQueries';
 
 function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void; instanceName?: string }) {
@@ -17,10 +21,12 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const [attempt, setAttempt] = React.useState(0);
   const [state, setState] = React.useState<'connecting' | 'webrtc' | 'tunnel' | 'closed'>('connecting');
   const [error, setError] = React.useState<string>();
-  const [scrollMode, setScrollMode] = React.useState(false);
+  const [mode, setMode] = React.useState<DesktopInteractionMode>('drag');
   const [keyboardOpen, setKeyboardOpen] = React.useState(false);
   const [text, setText] = React.useState('');
   const viewportRef = React.useRef<HTMLDivElement>(null);
+  const pageRef = React.useRef<HTMLDivElement>(null);
+  const orientation = useDesktopOrientation(pageRef, keyboardOpen);
   const stageRef = React.useRef<HTMLDivElement>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const imageRef = React.useRef<HTMLImageElement>(null);
@@ -29,13 +35,16 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const frameRef = React.useRef<number | null>(null);
   const moves = React.useRef(new Map<number, { x: number; y: number }>());
   const send = useEvent((input: DesktopInput) => { connection.current?.send(input); });
-  const getScrollMode = useEvent(() => scrollMode);
+  const getMode = useEvent(() => mode);
   const [gestures] = React.useState(() => createDesktopGestures({
     viewport: () => geometry.current,
     send,
-    scrollMode: getScrollMode,
-    apply: value => {
-      if (stageRef.current) stageRef.current.style.transform = `translate(${value.x}px, ${value.y}px) scale(${value.scale})`;
+    mode: getMode,
+    apply: (value, settle) => {
+      if (!stageRef.current) return;
+      stageRef.current.style.transition = settle && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        ? 'transform 180ms ease-out' : 'none';
+      stageRef.current.style.transform = `translate(${value.x}px, ${value.y}px) scale(${value.scale})`;
     },
   }));
   const flushMoves = useEvent(() => {
@@ -48,6 +57,17 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     flushMoves(); gestures.reset();
     connection.current?.close(); connection.current = null;
   });
+  const closePage = useEvent(() => { stop(); onClose(); });
+  useMobileBackRoute({ id: 'remote-desktop-page', active: true, layer: 'root', onBack: closePage, surfaceRef: pageRef });
+  React.useEffect(() => holdNativeComposerCover('remote-desktop-page'), []);
+  React.useLayoutEffect(() => {
+    const previous = document.activeElement;
+    pageRef.current?.focus({ preventScroll: true });
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
+  }, []);
+  useEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); mobileBackNavigationCoordinator.requestBrowserBack(); }
+  }, () => document);
   const handleState = useEvent((next: typeof state, code?: string) => { setState(next); setError(code); });
   const handleSize = useEvent((width: number, height: number) => {
     if (width <= 0 || height <= 0 || (geometry.current.remoteWidth === width && geometry.current.remoteHeight === height)) return;
@@ -70,7 +90,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
 
   const point = (event: React.PointerEvent) => {
     const rect = viewportRef.current!.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return desktopLocalPoint({ x: event.clientX, y: event.clientY }, rect, orientation.rotation);
   };
   const live = state === 'webrtc' || state === 'tunnel';
   const unsupported = capability.data?.supported === false || capability.error?.message === 'unsupported';
@@ -83,10 +103,19 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     : error === 'runtime_changed' || capability.error?.message === 'runtime_changed' ? t('remoteDesktop.runtimeChanged')
     : error || capability.error || state === 'closed' ? t('remoteDesktop.failed')
     : t('remoteDesktop.connecting');
-  return (
-    <MobileOverlayPanel open title={instanceName ? `${t('remoteDesktop.title')} · ${instanceName}` : t('remoteDesktop.title')}
-      onClose={() => { stop(); onClose(); }} containedBody className="h-[calc(100dvh-0.75rem)] max-w-none" contentMaxHeightClassName="max-h-none">
-      <div className="relative min-h-0 flex-1">
+  return createPortal(
+    <div ref={pageRef} tabIndex={-1} data-remote-desktop-page className="yuri-keyboard-inset-surface yuri-keyboard-inset-snap fixed inset-0 z-[150] overflow-hidden bg-background text-foreground outline-none">
+      <main aria-label={instanceName ? `${t('remoteDesktop.title')} · ${instanceName}` : t('remoteDesktop.title')}
+        className="absolute left-0 top-0 overflow-hidden bg-background"
+        style={{ width: orientation.width, height: orientation.height, transformOrigin: 'top left',
+          ...{
+            '--desktop-safe-top': `env(safe-area-inset-${orientation.rotation === 90 ? 'right' : orientation.rotation === -90 ? 'left' : 'top'}, 0px)`,
+            '--desktop-safe-right': `env(safe-area-inset-${orientation.rotation === 90 ? 'bottom' : orientation.rotation === -90 ? 'top' : 'right'}, 0px)`,
+            '--desktop-safe-bottom': `env(safe-area-inset-${orientation.rotation === 90 ? 'left' : orientation.rotation === -90 ? 'right' : 'bottom'}, 0px)`,
+            '--desktop-safe-left': `env(safe-area-inset-${orientation.rotation === 90 ? 'top' : orientation.rotation === -90 ? 'bottom' : 'left'}, 0px)`,
+          },
+          transform: orientation.rotation === 90 ? `translateX(${orientation.height}px) rotate(90deg)`
+            : orientation.rotation === -90 ? `translateY(${orientation.width}px) rotate(-90deg)` : undefined }}>
       <div ref={viewportRef} className="absolute inset-0 touch-none overflow-hidden bg-background"
         aria-label={t('remoteDesktop.screen')}
         onPointerDown={event => {
@@ -119,8 +148,15 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
           }}>{t('remoteDesktop.retry')}</Button>}
         </div>}
       </div>
+      <div className="pointer-events-none absolute left-[max(0.75rem,var(--desktop-safe-left))] right-[max(0.75rem,var(--desktop-safe-right))] top-[max(0.75rem,var(--desktop-safe-top))] flex items-start justify-between gap-3">
+        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100"
+          aria-label={t('header.actions.backAria')} onClick={() => mobileBackNavigationCoordinator.requestBrowserBack()}><Icon name="arrow-left" className="size-5" /></Button>
+        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100"
+          aria-label={t('remoteDesktop.rotate')} title={t('remoteDesktop.rotate')}
+          onClick={() => { flushMoves(); gestures.reset(); setKeyboardOpen(false); orientation.toggle(); void requestDesktopOrientationPermission(); }}><Icon name="smartphone" className="size-5 rotate-45" /></Button>
+      </div>
       <p className="sr-only">{t('remoteDesktop.hint')}</p>
-      <div className="pointer-events-none absolute inset-3 flex flex-col items-end justify-end gap-3">
+      <div className="pointer-events-none absolute left-[max(0.75rem,var(--desktop-safe-left))] right-[max(0.75rem,var(--desktop-safe-right))] bottom-[max(0.75rem,var(--desktop-safe-bottom))] top-[calc(4rem+var(--desktop-safe-top))] flex flex-col items-end justify-end gap-3">
         {keyboardOpen && <div className="pointer-events-auto min-h-0 w-80 max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-border/40 bg-[var(--surface-elevated)]/90 p-3 shadow-lg backdrop-blur-md">
         <form className="flex gap-2" onSubmit={event => {
           event.preventDefault(); if (text && live) { send({ type: 'text', text }); setText(''); }
@@ -139,18 +175,19 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
         <div className="flex w-full shrink-0 items-end justify-between gap-3">
           <div className="pointer-events-auto flex gap-3">
             <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
-              aria-label={t('remoteDesktop.scroll')} title={t('remoteDesktop.scroll')} aria-pressed={scrollMode} disabled={!live}
-              onClick={() => { gestures.reset(); setScrollMode(value => !value); }}><Icon name="expand-up-down" className="size-5" /></Button>
-            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100"
-              aria-label={t('remoteDesktop.fit')} title={t('remoteDesktop.fit')} onClick={() => gestures.reset()}><Icon name="fullscreen-exit" className="size-5" /></Button>
+              aria-label={t('remoteDesktop.drag')} title={t('remoteDesktop.drag')} aria-pressed={mode === 'drag'} disabled={!live}
+              onClick={() => { flushMoves(); gestures.cancel(); setMode('drag'); }}><Icon name="hand" className="size-5" /></Button>
+            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+              aria-label={t('remoteDesktop.cursor')} title={t('remoteDesktop.cursor')} aria-pressed={mode === 'cursor'} disabled={!live}
+              onClick={() => { flushMoves(); gestures.cancel(); setMode('cursor'); }}><Icon name="cursor" className="size-5" /></Button>
           </div>
           <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
             disabled={!live} aria-label={t('remoteDesktop.text')} title={t('remoteDesktop.text')} aria-pressed={keyboardOpen} aria-expanded={keyboardOpen}
             onClick={() => setKeyboardOpen(value => !value)}><Icon name="keyboard" className="size-5" /></Button>
         </div>
       </div>
-      </div>
-    </MobileOverlayPanel>
+      </main>
+    </div>, document.body,
   );
 }
 
