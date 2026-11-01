@@ -4,6 +4,9 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildElectronDevChildEnv } from './electron-dev-env.mjs';
+import { buildRemoteDesktopHelper } from './build-remote-desktop.mjs';
+
+buildRemoteDesktopHelper();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

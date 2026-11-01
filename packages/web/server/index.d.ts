@@ -31,6 +31,15 @@ export interface StartWebUiServerOptions {
   messageQueueAttachmentRoot?: string | null;
   hostUpdateStateFile?: string;
   getHostUpdateVersion?: () => string;
+  remoteDesktopAdapter?: {
+    supported: boolean;
+    readonly enabled: boolean;
+    start: (options: { send: (message: unknown) => boolean; onEnded: () => void; signal: AbortSignal; client: { id: string; label: string } | null }) => Promise<{
+      handle: (message: unknown) => void | Promise<void>;
+      close: () => void;
+    }>;
+    stop?: () => void;
+  };
   hostUpdateAdapter?: {
     host: 'cli' | 'electron';
     supported: boolean;

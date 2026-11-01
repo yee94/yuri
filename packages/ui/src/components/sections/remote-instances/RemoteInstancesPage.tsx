@@ -94,6 +94,7 @@ import {
 import { createRelayTunnelClient } from '@/lib/relay/tunnel-client';
 import { getDesktopLanAddress, hasDesktopInvoke, isDesktopLocalOriginActive, isDesktopShell } from '@/lib/desktop';
 import { DesktopLanAccessSettings } from '@/components/sections/yuri/DesktopLanAccessSettings';
+import { RemoteDesktopSettings } from '@/components/sections/yuri/RemoteDesktopSettings';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import {
@@ -2967,6 +2968,7 @@ export const RemoteInstancesPage: React.FC = () => {
         </Dialog> : null}
 
         <DesktopLanAccessSettings />
+        <RemoteDesktopSettings />
 
         <Dialog
           open={Boolean(patternHost)}

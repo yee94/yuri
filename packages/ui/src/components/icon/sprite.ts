@@ -157,6 +157,7 @@ export const iconSpriteData = {
   "inbox-unarchive-fill": `<rect width="20" height="5" x="2" y="3" rx="1" /> <path d="M4 8v11a2 2 0 0 0 2 2h2"  fill="currentColor"/> <path d="M20 8v11a2 2 0 0 1-2 2h-2"  fill="currentColor"/> <path d="m9 15 3-3 3 3"  fill="currentColor"/> <path d="M12 12v9"  fill="currentColor"/>`,
   "information": `<circle cx="12" cy="12" r="10" /> <path d="M12 16v-4" /> <path d="M12 8h.01" />`,
   "key": `<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" /> <path d="m21 2-9.6 9.6" /> <circle cx="7.5" cy="15.5" r="5.5" />`,
+  "keyboard": `<path d="M3 17H21V19H3V17ZM3 11H6V14H3V11ZM8 11H11V14H8V11ZM3 5H6V8H3V5ZM13 5H16V8H13V5ZM18 5H21V8H18V5ZM13 11H16V14H13V11ZM18 11H21V14H18V11ZM8 5H11V8H8V5Z" fill="currentColor" stroke="none"/>`,
   "layout-column": `<rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M12 3v18" />`,
   "layout-left": `<rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M9 3v18" />`,
   "layout-left-rounded": `<rect width="18" height="18" x="3" y="3" rx="4" /><path d="M9.5 3v18" />`,

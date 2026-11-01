@@ -424,6 +424,10 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return jsonResponse({ error: 'host_update_unsupported' }, 501);
   }
 
+  if (normalizedPathname === '/api/remote-desktop' || normalizedPathname.startsWith('/api/remote-desktop/')) {
+    return jsonResponse({ error: 'remote_desktop_unsupported' }, 501);
+  }
+
   // Yuri-owned turn-page route — must run before the generic OpenCode
   // proxy fallthrough (api:proxy). Matches web host registration order.
   if (isSessionTurnPageRoute(normalizedPathname) || isSessionTurnPageRoute(pathname)) {

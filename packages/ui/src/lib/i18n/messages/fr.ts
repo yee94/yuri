@@ -1,6 +1,22 @@
 import { settingsDict } from './fr.settings';
 
 export const dict = {
+  'remoteDesktop.title': 'Bureau à distance',
+  'remoteDesktop.screen': 'Écran distant',
+  'remoteDesktop.connecting': 'En attente de l’autorisation du Mac pour partager l’écran…',
+  'remoteDesktop.unsupported': 'Cette instance ne prend pas en charge le bureau à distance. Connectez-vous à une application Yuri à jour sur macOS.',
+  'remoteDesktop.permissions': 'Autorisez l’enregistrement de l’écran et l’accessibilité pour Yuri dans les Réglages Système du Mac, puis redémarrez Yuri et réessayez.',
+  'remoteDesktop.denied': 'Le Mac a refusé le partage d’écran.',
+  'remoteDesktop.runtimeChanged': 'L’instance connectée a changé. Fermez cette vue et ouvrez-la à nouveau.',
+  'remoteDesktop.failed': 'Le bureau à distance est déconnecté ou inaccessible. Vérifiez l’hôte et réessayez.',
+  'remoteDesktop.retry': 'Reconnecter',
+  'remoteDesktop.scroll': 'Mode défilement',
+  'remoteDesktop.fit': 'Adapter à l’écran',
+  'remoteDesktop.tunnel': 'Flux de compatibilité',
+  'remoteDesktop.hint': 'Touchez pour cliquer, glissez avec un doigt. Utilisez deux doigts pour zoomer et déplacer. Activez le mode défilement pour faire défiler.',
+  'remoteDesktop.text': 'Saisir sur l’ordinateur distant',
+  'remoteDesktop.send': 'Envoyer le texte',
+  'remoteDesktop.pressKey': 'Appuyer sur {key}',
   'guiPlugins.loading': 'Chargement des extensions d’interface…',
   'guiPlugins.preview.loadingTitle': 'Préparation de l’aperçu',
   'guiPlugins.preview.loadingDescription': 'La première ouverture peut prendre un peu de temps',

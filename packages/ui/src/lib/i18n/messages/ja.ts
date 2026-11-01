@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './ja.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': 'リモートデスクトップ',
+  'remoteDesktop.screen': 'リモート画面',
+  'remoteDesktop.connecting': 'Mac で画面共有の許可を待っています…',
+  'remoteDesktop.unsupported': 'このインスタンスはリモートデスクトップに対応していません。更新済みの macOS 版 Yuri に接続してください。',
+  'remoteDesktop.permissions': 'Mac のシステム設定で Yuri の画面収録とアクセシビリティを許可し、Yuri を再起動して再試行してください。',
+  'remoteDesktop.denied': 'Mac で画面共有が拒否されました。',
+  'remoteDesktop.runtimeChanged': '接続先が変更されました。この画面を閉じて開き直してください。',
+  'remoteDesktop.failed': 'リモートデスクトップが切断されたか、接続できませんでした。ホストを確認して再試行してください。',
+  'remoteDesktop.retry': '再接続',
+  'remoteDesktop.scroll': 'スクロールモード',
+  'remoteDesktop.fit': '画面に合わせる',
+  'remoteDesktop.tunnel': '互換ストリーム',
+  'remoteDesktop.hint': 'タップでクリック、1本指でドラッグ。2本指で拡大縮小と移動。スクロールモードでは1本指でスクロールできます。',
+  'remoteDesktop.text': 'リモートのコンピューターに入力',
+  'remoteDesktop.send': 'テキストを送信',
+  'remoteDesktop.pressKey': '{key} を押す',
   'guiPlugins.loading': 'インターフェースプラグインを読み込み中…',
   'guiPlugins.preview.loadingTitle': 'プレビューを準備しています',
   'guiPlugins.preview.loadingDescription': '初めて開くときは少し時間がかかることがあります',

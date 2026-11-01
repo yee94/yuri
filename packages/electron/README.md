@@ -71,6 +71,16 @@ External project/session links (`project`, `open-project`, `new`, `new-session`,
 
 New links use `yuri://`. Packaged OS registration and runtime handlers also accept `openchamber://` and `openchambery://` as receive-only aliases, including cold-start arguments, second-instance arguments and macOS `open-url`. They share the same route handling and pairing-v2 validation; payloads are not rewritten, expired pairing secrets stay invalid, and retired v1 credential links remain rejected. An updated installer is required to register schemes; UI OTA alone cannot do this. When old and new applications coexist, the OS/default-app selection determines the recipient of a legacy scheme.
 
+## Remote desktop
+
+`remote-desktop.mjs` injects a Host-owned remote desktop adapter into the in-process server. The mobile Projects plus menu opens the connected Host's primary display. macOS supports capture and Quartz input after local approval and Screen Recording/Accessibility permission; other desktop platforms and CLI Hosts explicitly report unsupported. A native sharing window can stop the session. The capture renderer has its own nonpersistent session, no Node integration, and sender/frame-gated IPC; remote runtime pages cannot invoke it. WebRTC is preferred, with bounded JPEG-over-runtime-WS fallback when no ICE route is available. See `../web/server/lib/remote-desktop/DOCUMENTATION.md` for authentication, limits, configuration and validation gates.
+
+Local approval can remember an authenticated paired device through an unchecked-by-default checkbox, stored as public IDs in the native-only `remote-desktop-approvals.json`. Other devices are never implicitly approved. Stop/Forget device are available on the native sharing window; revoking pairing also blocks an approved device.
+
+Remote desktop defaults **off**, including for existing remembered devices. Enable it from the local desktop app's Settings → Remote instances → Remote desktop after completing Screen Recording, Accessibility (including the input helper), and helper-installation checks. Permission actions open fixed macOS Privacy panes; returning to Yuri or selecting Check permissions again refreshes the check. A newly granted permission may require an app restart. Setup/status/enable IPC is restricted to the trusted main desktop frame, never remote runtime pages. The native preference and WS upgrade gates both reject disabled access. Turning off immediately cancels pending approval and stops active capture; if saving the off preference fails, this app run remains blocked and the UI reports the failure.
+
+`scripts/build-remote-desktop.mjs` builds and ad-hoc signs the Swift input helper as a universal macOS executable during desktop dev startup and main bundling. The macOS installer includes it in `Resources/remote-desktop`, explicitly re-signs it with the installer identity, and packages the isolated capture HTML/preload beside the main bundle. Native capture/input and signed helper permissions require a new installer and physical-device verification; the synthetic Chromium evidence test is not a real-desktop test.
+
 ## Main Files
 
 | File | Purpose |

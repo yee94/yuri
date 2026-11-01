@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './pt-BR.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': 'Área de trabalho remota',
+  'remoteDesktop.screen': 'Tela remota',
+  'remoteDesktop.connecting': 'Aguardando o Mac permitir o compartilhamento de tela…',
+  'remoteDesktop.unsupported': 'Esta instância não oferece área de trabalho remota. Conecte-se ao aplicativo Yuri atualizado no macOS.',
+  'remoteDesktop.permissions': 'Permita a gravação de tela e a acessibilidade para o Yuri nos Ajustes do Sistema do Mac, reinicie o Yuri e tente novamente.',
+  'remoteDesktop.denied': 'O Mac recusou o compartilhamento de tela.',
+  'remoteDesktop.runtimeChanged': 'A instância conectada mudou. Feche esta visualização e abra-a novamente.',
+  'remoteDesktop.failed': 'A área de trabalho remota desconectou ou não pôde conectar. Verifique o host e tente novamente.',
+  'remoteDesktop.retry': 'Reconectar',
+  'remoteDesktop.scroll': 'Modo de rolagem',
+  'remoteDesktop.fit': 'Ajustar à tela',
+  'remoteDesktop.tunnel': 'Transmissão de compatibilidade',
+  'remoteDesktop.hint': 'Toque para clicar e arraste com um dedo. Use dois dedos para ampliar e mover. Ative o modo de rolagem para rolar.',
+  'remoteDesktop.text': 'Digitar no computador remoto',
+  'remoteDesktop.send': 'Enviar texto',
+  'remoteDesktop.pressKey': 'Pressionar {key}',
   'guiPlugins.loading': 'Carregando plugins de interface…',
   'guiPlugins.preview.loadingTitle': 'Preparando prévia',
   'guiPlugins.preview.loadingDescription': 'A primeira abertura pode demorar um pouco',

@@ -1,0 +1,84 @@
+import { signal, component } from 'eficy';
+import { Button } from 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.js';
+import 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.css';
+
+const view = signal('both');
+const keyboard = signal(false);
+const scroll = signal(false);
+const zoom = signal(false);
+const text = signal('');
+const sent = signal('');
+
+function Glyph({ name }: { name: string }) {
+  const paths: Record<string, string> = {
+    close: 'M6 6l12 12M18 6L6 18',
+    keyboard: 'M3 6h18v12H3zM6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 15h10',
+    send: 'M21 3L9 15M21 3l-7 18-5-6-6-5z',
+    monitor: 'M3 4h18v13H3zM12 17v4M8 21h8',
+  };
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] || paths.monitor} /></svg>;
+}
+
+function Desktop() {
+  return <svg viewBox="0 0 1600 1000" width="100%" height="100%" aria-label="模拟 Mac 主屏幕，不是真实截图">
+    <defs><linearGradient id="wall" x2="1" y2="1"><stop stopColor="#242b33"/><stop offset="1" stopColor="#101820"/></linearGradient></defs>
+    <path fill="url(#wall)" d="M0 0h1600v1000H0z"/>
+    <path fill="#30363b" d="M0 0h1600v30H0z"/>
+    <g fill="#d0d4d6" fontSize="15" fontFamily="system-ui"><text x="24" y="21">●</text><text x="62" y="21" fontWeight="600">Yuri</text><text x="115" y="21">文件　编辑　视图　窗口　帮助</text><text x="1410" y="21">周日　14:30</text></g>
+    <rect x="155" y="140" width="1290" height="700" rx="16" fill="#17191b" stroke="#4b5054"/>
+    <path d="M171 140h1258q16 0 16 16v35H155v-35q0-16 16-16" fill="#25282b"/>
+    <circle cx="179" cy="165" r="6" fill="#fa6159"/><circle cx="199" cy="165" r="6" fill="#f4be50"/><circle cx="219" cy="165" r="6" fill="#37c66b"/>
+    <text x="800" y="171" fill="#bcc0c3" textAnchor="middle" fontSize="17" fontFamily="system-ui">Yuri · 工作空间</text>
+    <path fill="#1d2022" d="M155 191h245v633q0 16-16 16H171q-16 0-16-16z"/>
+    <g fontFamily="system-ui" fontSize="18" fill="#999fa5"><text x="185" y="239">工作空间</text><rect x="170" y="263" width="214" height="43" rx="7" fill="#303437"/><text x="188" y="291" fill="#eff1f2">远程桌面</text><text x="188" y="337">助理</text><text x="188" y="384">定时任务</text><text x="188" y="792">设置</text></g>
+    <g fontFamily="system-ui"><text x="470" y="254" fill="#e8e9eb" fontSize="24" fontWeight="600">手机连接，继续当前工作</text><text x="470" y="292" fill="#959ca2" fontSize="17">这是一块真实桌面，不是单独的后台空间。</text>
+    <rect x="469" y="340" width="902" height="360" rx="10" fill="#111416" stroke="#34393d"/>
+    <text x="495" y="378" fill="#969da3" fontSize="15">终端</text>
+    <g fontFamily="monospace" fontSize="19"><text x="495" y="430" fill="#b5c7bc">$ bun run dev</text><text x="495" y="474" fill="#a5adb3">本地服务已就绪</text><text x="495" y="518" fill="#a5adb3">可从手机查看屏幕并操作鼠标和键盘。</text><text x="495" y="575" fill="#dce1e4">▍</text></g>
+    <text x="470" y="753" fill="#899198" fontSize="16">远程输入将作用于这台 Mac 当前打开的应用。</text></g>
+    <path d="M1050 618v32l9-8 7 14 7-4-7-14h13z" fill="white" stroke="#121416" strokeWidth="2"/>
+    <rect x="590" y="931" width="420" height="53" rx="17" fill="#434b51" opacity=".75"/>
+    {[0,1,2,3,4,5,6,7].map(i => <rect key={i} x={607+i*49} y="941" width="34" height="34" rx="9" fill={['#b4bdc4','#7198bc','#9c9aaa','#c3b68d'][i%4]}/>)}
+  </svg>;
+}
+
+const Phone = component(({ landscape }: { landscape?: boolean }) => (
+  <div className={`rd-device ${landscape ? 'rd-landscape' : 'rd-portrait'}`}>
+    <div className="rd-status"><span>14:30</span><span>▮▮▮　Wi-Fi　▰</span></div>
+    <div className="rd-panel">
+      <div className="rd-handle"/>
+      <header className="rd-header"><span>远程桌面 · 当前 Mac</span><button aria-label="模拟关闭：恢复初始视图" onClick={() => { keyboard.value = false; zoom.value = false; scroll.value = false; }}><Glyph name="close"/></button></header>
+      <div className="rd-screen" onDoubleClick={() => { zoom.value = !zoom.value; }}>
+        <div className="rd-desktop" style={{ transform: zoom.value ? 'scale(1.8)' : 'none' }}><Desktop/></div>
+      </div>
+      <footer className="rd-controls">
+        <div className="rd-tools"><button className={scroll.value ? 'rd-chip selected' : 'rd-chip'} aria-pressed={scroll.value} onClick={() => { scroll.value = !scroll.value; }}>滚动模式</button><button onClick={() => { zoom.value = false; }}>适应屏幕</button>{landscape && <span className="rd-transport">WebRTC</span>}<button className="rd-keyboard" aria-label="文字输入" aria-pressed={keyboard.value} onClick={() => { keyboard.value = !keyboard.value; }}><Glyph name="keyboard"/></button></div>
+        <p className="rd-hint">轻点点击 · 长按右键 · 双指缩放和平移</p>
+        {keyboard.value && <div className="rd-input"><input value={text.value} placeholder="文字输入" aria-label="模拟远程输入" onChange={e => { text.value = e.currentTarget.value; }}/><button aria-label="模拟发送" onClick={() => { sent.value = text.value ? `已模拟发送：${text.value}` : '请输入文字'; text.value = ''; }}><Glyph name="send"/></button></div>}
+        {keyboard.value && <div className="rd-nav">{['Esc','Tab','⌫','↵','←','↑','↓','→'].map(key => <button key={key} onClick={() => { sent.value = `已模拟按键：${key}`; }}>{key}</button>)}</div>}
+      </footer>
+    </div>
+    <div className="rd-home"><i/></div>
+  </div>
+));
+
+const App = component(() => (
+  <main className="dark bg-background text-foreground min-h-screen p-6 md:p-10">
+    <style>{`
+      .rd-wrap{max-width:1320px;margin:auto}.rd-eyebrow{font-size:11px;letter-spacing:.14em;color:#929299}.rd-title{font-size:28px;font-weight:600;letter-spacing:-.04em;margin:10px 0}.rd-intro{font-size:13px;color:#a1a1aa;line-height:1.8;max-width:800px}.rd-tabs{display:flex;gap:8px;margin:24px 0 32px}.rd-layout{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap}.rd-section{min-width:0;max-width:100%}.rd-label{display:flex;justify-content:space-between;margin-bottom:14px;font-size:12px;color:#a1a1aa}.rd-label b{color:#e4e4e7;font-weight:500}.rd-overflow{overflow-x:auto;padding-bottom:12px}.rd-device{background:#0c0c0e;border:1px solid #3c3c42;border-radius:36px;padding:0 7px;overflow:hidden;display:flex;flex-direction:column;font-family:system-ui;flex-shrink:0;box-sizing:border-box}.rd-portrait{width:390px;height:844px}.rd-landscape{width:844px;height:390px;border-radius:28px}.rd-status{height:45px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;color:#e4e4e7;flex-shrink:0}.rd-landscape .rd-status{height:20px;font-size:9px;padding:0 26px}.rd-panel{background:#18181b;border:1px solid #303034;border-bottom:none;border-radius:16px 16px 0 0;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}.rd-handle{height:4px;width:32px;border-radius:3px;background:#52525b;margin:8px auto 4px;flex-shrink:0}.rd-header{display:flex;align-items:center;justify-content:space-between;padding:7px 14px 12px;font-size:14px;font-weight:500;flex-shrink:0}.rd-header button{padding:4px;color:#a1a1aa}.rd-screen{flex:1;min-height:0;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#18181b}.rd-desktop{width:100%;height:100%;transition:transform .2s;transform-origin:65% 55%;display:flex;align-items:center;justify-content:center}.rd-desktop svg{object-fit:contain;display:block;max-width:100%;max-height:100%}.rd-controls{border-top:1px solid #303034;padding:12px;flex-shrink:0}.rd-tools{display:flex;align-items:center;gap:8px;font-size:13px;height:32px}.rd-tools button{padding:6px 10px;border-radius:7px;white-space:nowrap;color:#e4e4e7}.rd-tools .rd-chip{border:1px solid #3f3f46}.rd-tools .selected{background:#38383e;border-color:#71717a}.rd-tools .rd-keyboard{margin-left:auto;padding:7px}.rd-transport{margin-left:auto;font-size:11px;color:#8e8e98}.rd-hint{font-size:11px;color:#93939e;margin:8px 0 0;line-height:1.5}.rd-input{display:flex;gap:8px;margin-top:8px}.rd-input input{min-width:0;flex:1;background:#222226;border:1px solid #424248;border-radius:7px;padding:7px 10px;font-size:12px;outline:none}.rd-input button{background:#e4e4e7;color:#18181b;border-radius:7px;padding:7px 10px}.rd-nav{display:flex;gap:3px;margin-top:6px}.rd-nav button{font-size:11px;padding:4px 8px;color:#b5b5bd;border-radius:4px}.rd-home{height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0}.rd-home i{width:120px;height:4px;background:#d4d4d8;border-radius:4px}.rd-landscape .rd-home{height:17px}.rd-device button:hover{background:#38383e}.rd-note{font-size:12px;color:#92929e;line-height:1.9;margin-top:14px;max-width:840px}.rd-foot{margin-top:32px;padding-top:20px;border-top:1px solid #2b2b30;font-size:12px;color:#92929e;line-height:1.9}.rd-feedback{min-height:22px;font-size:12px;color:#b8b8c0;margin-top:10px}@media(max-width:500px){.rd-title{font-size:24px}}
+    `}</style>
+    <div className="rd-wrap">
+      <p className="rd-eyebrow">YURI / REMOTE DESKTOP / IMPLEMENTATION MOCKUP</p>
+      <h1 className="rd-title">一台 Mac，两种握持方式。</h1>
+      <p className="rd-intro">还原当前手机远控面板：竖屏保留完整桌面与上下留白，横屏增加桌面可视面积；两种方向使用相同底部工具栏。屏幕内容为示意，不是真实采集。</p>
+      <div className="rd-tabs">{[['both','并排对照'],['portrait','仅竖屏'],['landscape','仅横屏']].map(([id,label]) => <Button key={id} size="sm" variant={view.value === id ? 'default' : 'outline'} onClick={() => { view.value = id; }}>{label}</Button>)}</div>
+      <div className="rd-layout">
+        {view.value !== 'landscape' && <section className="rd-section"><div className="rd-label"><b>竖屏 · 完整桌面</b><span>390 × 844</span></div><div className="rd-overflow"><Phone/></div><p className="rd-note">桌面按原比例居中，不拉伸、不裁切。<br/>实际操作可双指放大局部，再平移到目标区域。</p></section>}
+        {view.value !== 'portrait' && <section className="rd-section"><div className="rd-label"><b>横屏 · 更大操作区域</b><span>844 × 390</span></div><div className="rd-overflow"><Phone landscape/></div><p className="rd-note">面板沿用顶部标题、关闭按钮及底部控制区，横屏显示传输方式。<br/>点键盘图标展开文字与导航键；本 mockup 的两个方向同步展示状态。</p><p className="rd-note">可试用：滚动模式切换、文字输入展开、模拟发送、双击示意桌面放大／还原，以及「适应屏幕」。不建立远程连接，不发送真实输入。</p><div className="rd-feedback" role="status">{sent.value}</div></section>}
+      </div>
+      <div className="rd-foot"><b className="text-foreground">使用前：</b>设置 → 远程实例 → 远程桌面，完成权限检查并开启（默认关闭）。手机控制当前连接的实例，不会回落到其他电脑。<br/><b className="text-foreground">Beta 限制：</b>Host 暂仅 macOS；连接中切换锁屏可能断开。正确密码解锁、签名安装包授权及实体 iPhone 端到端验收尚未完成。此图不代表真机验收。</div>
+    </div>
+  </main>
+));
+
+export default App;

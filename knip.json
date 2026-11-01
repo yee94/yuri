@@ -55,6 +55,7 @@
       "entry": [
         "main.mjs",
         "preload.mjs",
+        "remote-desktop-preload.cjs",
         "tray.mjs",
         "ssh-manager.mjs",
         "opencode-cwd.mjs",

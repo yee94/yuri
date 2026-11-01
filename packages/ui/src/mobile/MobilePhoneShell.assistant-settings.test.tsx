@@ -17,7 +17,9 @@ vi.mock('@/queries/assistantQueries', () => ({
 vi.mock('@/lib/iosNativeUi', () => ({ useIosNativeUiEnabled: () => false }));
 vi.mock('./useNativeIosTabBar', () => ({ useNativeIosTabBar: () => 'web' }));
 vi.mock('@/lib/native-ios-composer-session', () => ({ nativeIosComposerSession: { shutdown: () => undefined } }));
-vi.mock('./projects', () => ({ MobileProjectsHomeContainer: () => null }));
+vi.mock('./projects', () => ({ MobileProjectsHomeContainer: ({ onRemoteDesktop }: { onRemoteDesktop?: () => void }) => (
+  onRemoteDesktop ? <button data-remote-desktop onClick={onRemoteDesktop}>Remote desktop</button> : null
+) }));
 vi.mock('./assistant/MobileAssistantTab', () => ({ MobileAssistantTab: () => null }));
 vi.mock('./scheduled/MobileScheduledTab', () => ({ MobileScheduledTab: () => null }));
 vi.mock('./settings/MobileSettingsTab', () => ({
@@ -59,6 +61,21 @@ describe('phone Assistant Settings route', () => {
     await act(async () => root.unmount());
     host.remove();
     useMobileNavigationStore.getState().reset();
+  });
+
+  test('Projects forwards the shell remote-desktop action without changing the chat route', async () => {
+    const onRemoteDesktop = vi.fn();
+    const store = useMobileNavigationStore.getState();
+    store.setActiveTab('projects');
+    await act(async () => root.render(<MobilePhoneShell
+      onAddProject={() => undefined}
+      onEnableAssistants={() => undefined}
+      onRemoteDesktop={onRemoteDesktop}
+      renderChat={() => null}
+    />));
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-remote-desktop]')!.click());
+    expect(onRemoteDesktop).toHaveBeenCalledOnce();
+    expect(useMobileNavigationStore.getState()).toMatchObject({ activeTab: 'projects', secondary: null });
   });
 
   test.each(['header', 'system', 'gesture'] as const)('%s Back reveals the retained conversation directly', async (backKind) => {

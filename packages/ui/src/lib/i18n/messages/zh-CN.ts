@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './zh-CN.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': '远程桌面',
+  'remoteDesktop.screen': '远程屏幕',
+  'remoteDesktop.connecting': '等待 Mac 允许屏幕共享…',
+  'remoteDesktop.unsupported': '此实例不支持远程桌面，请连接已更新的 macOS Yuri 桌面应用。',
+  'remoteDesktop.permissions': '请在 Mac 系统设置中允许 Yuri 的屏幕录制和辅助功能权限，然后重启 Yuri 并重试。',
+  'remoteDesktop.denied': 'Mac 已拒绝屏幕共享。',
+  'remoteDesktop.runtimeChanged': '连接的实例已切换，请关闭后重新打开远程桌面。',
+  'remoteDesktop.failed': '远程桌面已断开或连接失败，请检查主机后重试。',
+  'remoteDesktop.retry': '重新连接',
+  'remoteDesktop.scroll': '滚动模式',
+  'remoteDesktop.fit': '适应屏幕',
+  'remoteDesktop.tunnel': '兼容传输',
+  'remoteDesktop.hint': '轻触点击，单指拖动；双指缩放和平移。开启滚动模式后可单指滚动。',
+  'remoteDesktop.text': '在远程电脑上输入',
+  'remoteDesktop.send': '发送文字',
+  'remoteDesktop.pressKey': '按下 {key}',
   'guiPlugins.loading': '正在加载界面插件…',
   'guiPlugins.preview.loadingTitle': '正在准备预览',
   'guiPlugins.preview.loadingDescription': '首次打开可能需要一点时间',

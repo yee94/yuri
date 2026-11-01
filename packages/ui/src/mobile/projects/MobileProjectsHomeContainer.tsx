@@ -64,6 +64,7 @@ export type MobileProjectsHomeContainerProps = {
   onNewSession?: () => void;
   onScanQr?: () => void;
   onSwitchInstance?: MobileProjectsHomeProps['onSwitchInstance'];
+  onRemoteDesktop?: MobileProjectsHomeProps['onRemoteDesktop'];
   instanceOptions?: MobileProjectsHomeProps['instanceOptions'];
   className?: string;
 };
@@ -78,6 +79,7 @@ export function MobileProjectsHomeContainer({
   onNewSession,
   onScanQr,
   onSwitchInstance,
+  onRemoteDesktop,
   instanceOptions,
   className,
 }: MobileProjectsHomeContainerProps) {
@@ -590,6 +592,7 @@ export function MobileProjectsHomeContainer({
         onScanQr={onScanQr}
         onSwitchInstance={onSwitchInstance}
         instanceOptions={instanceOptions}
+        onRemoteDesktop={onRemoteDesktop}
         onToggleProject={handleToggleProject}
         onOpenProjectActions={handleOpenProjectActions}
         onToggleWorktree={handleToggleWorktree}

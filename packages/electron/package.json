@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/electron",
-  "version": "0.2.22",
+  "version": "0.2.24-beta.1",
   "private": true,
   "description": "Electron desktop runtime for Yuri",
   "author": "Yuri",
@@ -47,7 +47,7 @@
     "test:preview-gateway": "vitest run ./preview-loopback-gateway.test.mjs",
     "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
     "package:preview": "YURI_DESKTOP_PROFILE=preview bun run package",
-    "type-check": "node --check ./main.mjs && node --check ./preload.mjs && node --check ./virtual-asset-protocol.mjs && node --check ./preview-loopback-gateway.mjs && node --check ./view-export.mjs",
+    "type-check": "node --check ./main.mjs && node --check ./preload.mjs && node --check ./virtual-asset-protocol.mjs && node --check ./preview-loopback-gateway.mjs && node --check ./view-export.mjs && node --check ./remote-desktop.mjs && node --check ./remote-desktop-preload.cjs",
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
@@ -55,7 +55,9 @@
     "productName": "Yuri",
     "files": [
       "dist-bundle/main.mjs",
-      "preload.mjs"
+      "preload.mjs",
+      "remote-desktop-preload.cjs",
+      "remote-desktop.html"
     ],
     "extraResources": [
       {
@@ -119,6 +121,15 @@
       "entitlementsInherit": "resources/entitlements.mac.inherit.plist",
       "gatekeeperAssess": false,
       "notarize": true,
+      "extraResources": [
+        {
+          "from": "resources/remote-desktop",
+          "to": "remote-desktop"
+        }
+      ],
+      "binaries": [
+        "Contents/Resources/remote-desktop/input-helper"
+      ],
       "target": [
         "dmg",
         "zip"

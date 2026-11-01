@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './uk.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': 'Віддалений робочий стіл',
+  'remoteDesktop.screen': 'Віддалений екран',
+  'remoteDesktop.connecting': 'Очікування дозволу Mac на спільний доступ до екрана…',
+  'remoteDesktop.unsupported': 'Цей екземпляр не підтримує віддалений робочий стіл. Підключіться до оновленого застосунку Yuri на macOS.',
+  'remoteDesktop.permissions': 'Дозвольте Yuri запис екрана та спеціальні можливості в Системних параметрах Mac, перезапустіть Yuri й повторіть спробу.',
+  'remoteDesktop.denied': 'Mac відхилив спільний доступ до екрана.',
+  'remoteDesktop.runtimeChanged': 'Підключений екземпляр змінився. Закрийте цей екран і відкрийте його знову.',
+  'remoteDesktop.failed': 'Віддалений робочий стіл відключено або з’єднання не вдалося. Перевірте хост і повторіть спробу.',
+  'remoteDesktop.retry': 'Підключитися знову',
+  'remoteDesktop.scroll': 'Режим прокручування',
+  'remoteDesktop.fit': 'За розміром екрана',
+  'remoteDesktop.tunnel': 'Сумісний потік',
+  'remoteDesktop.hint': 'Торкніться для клацання, перетягуйте одним пальцем. Двома пальцями змінюйте масштаб і переміщуйте. Увімкніть режим прокручування, щоб прокручувати.',
+  'remoteDesktop.text': 'Ввести текст на віддаленому комп’ютері',
+  'remoteDesktop.send': 'Надіслати текст',
+  'remoteDesktop.pressKey': 'Натиснути {key}',
   'guiPlugins.loading': 'Завантаження плагінів інтерфейсу…',
   'guiPlugins.preview.loadingTitle': 'Підготовка попереднього перегляду',
   'guiPlugins.preview.loadingDescription': 'Перше відкриття може зайняти трохи часу',

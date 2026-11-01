@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './pl.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': 'Pulpit zdalny',
+  'remoteDesktop.screen': 'Ekran zdalny',
+  'remoteDesktop.connecting': 'Oczekiwanie na zgodę Maca na udostępnianie ekranu…',
+  'remoteDesktop.unsupported': 'Ta instancja nie obsługuje pulpitu zdalnego. Połącz się z aktualną aplikacją Yuri na macOS.',
+  'remoteDesktop.permissions': 'Zezwól Yuri na nagrywanie ekranu i dostępność w Ustawieniach systemowych Maca, następnie uruchom Yuri ponownie i spróbuj jeszcze raz.',
+  'remoteDesktop.denied': 'Mac odmówił udostępnienia ekranu.',
+  'remoteDesktop.runtimeChanged': 'Połączona instancja uległa zmianie. Zamknij ten widok i otwórz go ponownie.',
+  'remoteDesktop.failed': 'Pulpit zdalny został rozłączony lub połączenie nie powiodło się. Sprawdź hosta i spróbuj ponownie.',
+  'remoteDesktop.retry': 'Połącz ponownie',
+  'remoteDesktop.scroll': 'Tryb przewijania',
+  'remoteDesktop.fit': 'Dopasuj do ekranu',
+  'remoteDesktop.tunnel': 'Strumień zgodności',
+  'remoteDesktop.hint': 'Dotknij, aby kliknąć, przeciągnij jednym palcem. Użyj dwóch palców do powiększania i przesuwania. Włącz tryb przewijania, aby przewijać.',
+  'remoteDesktop.text': 'Pisz na zdalnym komputerze',
+  'remoteDesktop.send': 'Wyślij tekst',
+  'remoteDesktop.pressKey': 'Naciśnij {key}',
   'guiPlugins.loading': 'Ładowanie wtyczek interfejsu…',
   'guiPlugins.preview.loadingTitle': 'Przygotowywanie podglądu',
   'guiPlugins.preview.loadingDescription': 'Pierwsze otwarcie może chwilę potrwać',

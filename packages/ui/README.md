@@ -99,6 +99,10 @@ new URLs or new protocol defaults.
 
 ## Runtime contract integration
 
+Mobile remote desktop lives in `src/mobile/RemoteDesktopPanel.tsx`, with transient connection/gesture ownership in `src/lib/remote-desktop/` and runtime-scoped capability Query state in `src/queries/remoteDesktopQueries.ts`. It uses the existing runtime fetch/auth/socket path for direct and Relay connections. The connected Host owns capture and input; the client never falls back to its local computer. See `../web/server/lib/remote-desktop/DOCUMENTATION.md` for supported platforms, interaction, resource limits and acceptance gates.
+
+The local Electron Settings → Remote instances page includes `RemoteDesktopSettings`, a default-off permission checker. `remoteDesktopSetupQueries.ts` owns native setup Query/mutation state; `lib/desktop.ts` provides the narrow local IPC calls. The mobile panel explains how to enable a disabled Host and does not open a control socket until the Host reports enabled. Permission management never targets a remote runtime or changes the phone's own permissions.
+
 The phone Projects header menu lists saved native-mobile instances directly,
 marks the active instance, and switches through the shared mobile connection
 controller in one tap. Busy connections disable switching. A failed connection or

@@ -31,6 +31,7 @@ export type MobilePhoneShellProps = {
   onAddProject: () => void;
   onScanQr?: () => void;
   onSwitchInstance?: MobileProjectsHomeProps['onSwitchInstance'];
+  onRemoteDesktop?: MobileProjectsHomeProps['onRemoteDesktop'];
   instanceOptions?: MobileProjectsHomeProps['instanceOptions'];
   /** Enables assistants (opens settings at the assistants section). */
   onEnableAssistants: () => void;
@@ -73,6 +74,7 @@ export function MobilePhoneShell({
   onAddProject,
   onScanQr,
   onSwitchInstance,
+  onRemoteDesktop,
   instanceOptions,
   onEnableAssistants,
   instancesPage,
@@ -235,6 +237,7 @@ export function MobilePhoneShell({
           onNewSession={handleNewSessionDraft}
           onScanQr={onScanQr}
           onSwitchInstance={onSwitchInstance}
+          onRemoteDesktop={onRemoteDesktop}
           instanceOptions={instanceOptions}
         />
       ),
@@ -242,7 +245,7 @@ export function MobilePhoneShell({
       scheduled: <MobileScheduledTab showHeader={false}>{scheduledTabBody}</MobileScheduledTab>,
       settings: <MobileSettingsTab instancesPage={instancesPage} />,
     }),
-    [openChat, openAssistant, handleNewSessionDraft, onAddProject, onScanQr, onSwitchInstance, instanceOptions, onEnableAssistants, instancesPage, scheduledTabBody],
+    [openChat, openAssistant, handleNewSessionDraft, onAddProject, onScanQr, onSwitchInstance, onRemoteDesktop, instanceOptions, onEnableAssistants, instancesPage, scheduledTabBody],
   );
 
   const secondaryKind = navigation.secondary?.kind ?? null;

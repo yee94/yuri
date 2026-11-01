@@ -97,6 +97,7 @@ export type MobileProjectsHomeProps = {
   onNewSession: () => void;
   onScanQr?: () => void;
   onSwitchInstance?: (id?: string) => void;
+  onRemoteDesktop?: () => void;
   instanceOptions?: { id: string; label: string; active: boolean; disabled: boolean }[];
   onToggleProject: (project: MobileProjectHomeItem) => void;
   onOpenProjectActions: (project: MobileProjectHomeItem) => void;
@@ -520,6 +521,7 @@ export function MobileProjectsHome({
   onNewSession,
   onScanQr,
   onSwitchInstance,
+  onRemoteDesktop,
   instanceOptions,
   onToggleProject,
   onOpenProjectActions,
@@ -600,6 +602,12 @@ export function MobileProjectsHome({
                   <DropdownMenuItem className="min-h-11" onSelect={handleSwitchInstance}>
                     <Icon name="server" className="size-4" />
                     {t('mobile.projects.menu.switchInstance')}
+                  </DropdownMenuItem>
+                ) : null}
+                {onRemoteDesktop ? (
+                  <DropdownMenuItem className="min-h-11" onSelect={onRemoteDesktop}>
+                    <Icon name="computer" className="size-4" />
+                    {t('remoteDesktop.title')}
                   </DropdownMenuItem>
                 ) : null}
               </DropdownMenuContent>

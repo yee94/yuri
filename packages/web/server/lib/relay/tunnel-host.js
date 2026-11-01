@@ -32,6 +32,7 @@ const ALLOWED_WS_PATHS = new Set([
   '/api/global/event/ws',
   '/api/event/ws',
   '/api/terminal/ws',
+  '/api/remote-desktop/ws',
   '/api/dictation/ws',
 ]);
 

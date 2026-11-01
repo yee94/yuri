@@ -69,6 +69,22 @@ function findMenuItem(label: string): HTMLElement | null {
 }
 
 describe('MobileProjectsHome header menu', () => {
+  test('remote desktop is the final plus-menu action, after the instance entries', async () => {
+    let opened = 0;
+    const { root, container } = mount({ ...baseProps, onSwitchInstance: noop,
+      instanceOptions: [{ id: 'host-a', label: 'Connected Mac', active: true, disabled: false }],
+      onRemoteDesktop: () => { opened++; } });
+    clickMenuTrigger(container);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const items = Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]'));
+    const remote = items.at(-1)!;
+    expect(remote.textContent).toContain('Remote desktop');
+    expect(remote.querySelector('use')?.getAttribute('href')).toBe('#yuri-computer');
+    expect(items.at(-2)?.textContent).toContain('Connected Mac');
+    act(() => remote.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    expect(opened).toBe(1);
+    act(() => root.unmount()); document.body.innerHTML = '';
+  });
   test('plus trigger rotates and shows the base two actions when optional props are absent', async () => {
     const calls: string[] = [];
     const { root, container } = mount({

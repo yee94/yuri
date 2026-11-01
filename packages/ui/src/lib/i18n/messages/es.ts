@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './es.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': 'Escritorio remoto',
+  'remoteDesktop.screen': 'Pantalla remota',
+  'remoteDesktop.connecting': 'Esperando a que el Mac permita compartir la pantalla…',
+  'remoteDesktop.unsupported': 'Esta instancia no admite escritorio remoto. Conéctate a una aplicación Yuri actualizada en macOS.',
+  'remoteDesktop.permissions': 'Permite la grabación de pantalla y la accesibilidad para Yuri en Ajustes del Sistema del Mac. Reinicia Yuri y vuelve a intentarlo.',
+  'remoteDesktop.denied': 'El Mac rechazó compartir la pantalla.',
+  'remoteDesktop.runtimeChanged': 'La instancia conectada cambió. Cierra esta vista y ábrela de nuevo.',
+  'remoteDesktop.failed': 'El escritorio remoto se desconectó o no pudo conectarse. Comprueba el equipo y vuelve a intentarlo.',
+  'remoteDesktop.retry': 'Reconectar',
+  'remoteDesktop.scroll': 'Modo de desplazamiento',
+  'remoteDesktop.fit': 'Ajustar a la pantalla',
+  'remoteDesktop.tunnel': 'Transmisión compatible',
+  'remoteDesktop.hint': 'Toca para hacer clic y arrastra con un dedo. Usa dos dedos para ampliar y mover. Activa el modo de desplazamiento para desplazar.',
+  'remoteDesktop.text': 'Escribir en el equipo remoto',
+  'remoteDesktop.send': 'Enviar texto',
+  'remoteDesktop.pressKey': 'Pulsar {key}',
   'guiPlugins.loading': 'Cargando complementos de interfaz…',
   'guiPlugins.preview.loadingTitle': 'Preparando la vista previa',
   'guiPlugins.preview.loadingDescription': 'La primera vez que se abre puede tardar un momento',

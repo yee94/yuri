@@ -94,6 +94,7 @@ import { MobileFilesSurface } from './MobileFilesSurface';
 import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
+import { RemoteDesktopPanel } from '@/mobile/RemoteDesktopPanel';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
 import { MobileFloatingSurface } from '@/mobile/MobileSurface';
 import {
@@ -1085,7 +1086,7 @@ const getProjectLabel = (path: string): string => {
 };
 
 type OverflowItem = {
-  key: 'new-session' | 'refresh-transcript' | 'files' | 'changes' | 'scheduled' | 'assistant' | 'mcp' | 'instances' | 'update' | 'settings' | 'auto-read';
+  key: 'new-session' | 'refresh-transcript' | 'remote-desktop' | 'files' | 'changes' | 'scheduled' | 'assistant' | 'mcp' | 'instances' | 'update' | 'settings' | 'auto-read';
   icon?: IconName;
   iconNode?: React.ReactNode;
   label: string;
@@ -2270,6 +2271,12 @@ const MobileShell: React.FC<{
   const [isHomeQrScanning, setIsHomeQrScanning] = React.useState(false);
   const [settingsInitialMobileStage, setSettingsInitialMobileStage] = React.useState<'nav' | 'page-content'>('nav');
   const [overflowOpen, setOverflowOpen] = React.useState(false);
+  const [remoteDesktopOpen, setRemoteDesktopOpen] = React.useState(false);
+  const openRemoteDesktop = useEvent(() => {
+    setOverflowOpen(false);
+    setRemoteDesktopOpen(true);
+  });
+  const closeRemoteDesktop = useEvent(() => setRemoteDesktopOpen(false));
   const [isTranscriptRefreshing, setIsTranscriptRefreshing] = React.useState(false);
   const toggleOverflowMenu = useEvent(() => setOverflowOpen((open) => !open));
   const closeOverflowMenu = useEvent(() => setOverflowOpen(false));
@@ -2393,7 +2400,8 @@ const MobileShell: React.FC<{
     || settingsOpen
     || updateOpen
     || directoryDialogOpen
-    || overflowOpen;
+    || overflowOpen
+    || remoteDesktopOpen;
   useMobileNavigationDriver({
     enabled: !isIPad,
     rootRoutesBlocked: rootBackRoutesBlocked,
@@ -2670,7 +2678,8 @@ const MobileShell: React.FC<{
     || settingsOpen
     || updateOpen
     || directoryDialogOpen
-    || overflowOpen;
+    || overflowOpen
+    || remoteDesktopOpen;
   const handleHeaderSwipeOpen = useEvent(() => {
     getMobileWindowMotionController(MOBILE_SESSIONS_WINDOW_ID)?.finish('commit');
   });
@@ -2700,6 +2709,10 @@ const MobileShell: React.FC<{
   });
 
   const handleNativeBack = useEvent(() => {
+    if (remoteDesktopOpen) {
+      closeRemoteDesktop();
+      return true;
+    }
     if (overflowOpen) {
       setOverflowOpen(false);
       return true;
@@ -2886,9 +2899,15 @@ const MobileShell: React.FC<{
           onSelect: refreshCurrentTranscript,
         });
       }
+      items.push({
+        key: 'remote-desktop',
+        icon: 'computer',
+        label: t('remoteDesktop.title'),
+        onSelect: openRemoteDesktop,
+      });
       return items;
     },
-    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openSettingsSurface, refreshCurrentTranscript, setActiveMainTab, showUpdateItem, t],
+    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openRemoteDesktop, openSettingsSurface, refreshCurrentTranscript, setActiveMainTab, showUpdateItem, t],
   );
 
   return (
@@ -2985,6 +3004,7 @@ const MobileShell: React.FC<{
               onAddProject={() => setDirectoryDialogOpen(true)}
               onScanQr={showCapacitorOnlyFeatures && qrScanSupported ? () => { void scanConnectionFromHome(); } : undefined}
               onSwitchInstance={showCapacitorOnlyFeatures ? switchInstanceFromHome : undefined}
+              onRemoteDesktop={openRemoteDesktop}
               instanceOptions={showCapacitorOnlyFeatures ? connection.connections.map((saved) => ({
                 id: saved.id,
                 label: saved.label,
@@ -3200,6 +3220,13 @@ const MobileShell: React.FC<{
         />
 
         <ScheduledTasksDialog />
+
+        {remoteDesktopOpen && (
+          <RemoteDesktopPanel
+            onClose={closeRemoteDesktop}
+            instanceName={connection.connections.find(isActiveRuntimeConnection)?.label}
+          />
+        )}
 
         {/* Mount only while open so each surface computes safe-area layout
             fresh. open={state} (not a bare `open`) is required: dismiss settle

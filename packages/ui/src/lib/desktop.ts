@@ -327,6 +327,28 @@ export const invokeDesktop = async <T = unknown>(command: string, args?: Record<
   return bridge.invoke(command, args ?? {}) as Promise<T>;
 };
 
+type DesktopRemoteDesktopStatus = {
+  supported: boolean;
+  enabled: boolean;
+  screenRecording: string;
+  accessibility: boolean;
+  helperAvailable: boolean;
+  ready: boolean;
+};
+
+export const configureDesktopRemoteDesktop = async (
+  action: { type: 'status' } | { type: 'enabled'; enabled: boolean } | { type: 'permission'; permission: 'screen' | 'accessibility' },
+): Promise<DesktopRemoteDesktopStatus> => {
+  if (!canUseElectronDesktopIPC() || !isDesktopLocalOriginActive()) throw new Error('unsupported');
+  const command = action.type === 'status' ? 'desktop_remote_desktop_status'
+    : action.type === 'enabled' ? 'desktop_remote_desktop_enable' : 'desktop_remote_desktop_permission';
+  const result = await invokeDesktop<DesktopRemoteDesktopStatus>(command, { ...action });
+  if (!result || typeof result.supported !== 'boolean' || typeof result.enabled !== 'boolean'
+    || typeof result.screenRecording !== 'string' || typeof result.accessibility !== 'boolean'
+    || typeof result.helperAvailable !== 'boolean' || typeof result.ready !== 'boolean') throw new Error('invalid_desktop_status');
+  return result;
+};
+
 type LaunchAtLoginStatus = {
   supported: boolean;
   enabled: boolean;

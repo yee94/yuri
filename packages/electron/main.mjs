@@ -17,6 +17,7 @@ import { importHostBrandData } from '@yuriai/web/server/lib/brand-migration.js';
 import { isBinaryFile } from '@yuriai/web/server/lib/fs/binary-file.js';
 import { DesktopInstaller } from './desktop-installer.mjs';
 import { createDesktopUpdateAdapter } from './host-update.mjs';
+import { createRemoteDesktopAdapter } from './remote-desktop.mjs';
 import electronUpdater from 'electron-updater';
 import { ElectronSshManager, planOpenCodeConfigSync, parseSshCommand } from './ssh-manager.mjs';
 import { buildSshEditorUrl, sshEditorAppIds } from './ssh-editor.mjs';
@@ -656,6 +657,10 @@ const settingsFilePath = () => {
 // in-process web settings-runtime. Without one chain, concurrent RMW writers
 // overwrite sibling fields (hosts vs projects vs window state).
 const settingsStore = createSettingsStore({ resolveFilePath: settingsFilePath });
+const remoteDesktopApprovalsStore = createSettingsStore({
+  resolveFilePath: () => path.join(app.getPath('userData'), 'remote-desktop-approvals.json'),
+});
+const remoteDesktopAdapter = createRemoteDesktopAdapter({ approvalsStore: remoteDesktopApprovalsStore });
 const readSettingsRoot = () => settingsStore.readRoot();
 const mutateSettingsRoot = (mutator) => settingsStore.mutate(mutator);
 const getLocalSyncExecutor = () => createDirectTargetExecutor({ host: {
@@ -1662,6 +1667,7 @@ const spawnLocalServer = async () => {
   const { startWebUiServer } = backend;
 
   const handle = await startWebUiServer({
+    remoteDesktopAdapter,
     hostUpdateStateFile: path.join(app.getPath('userData'), 'host-update.json'),
     getHostUpdateVersion: () => desktopOta?.version ?? APP_VERSION,
     hostUpdateAdapter: createDesktopUpdateAdapter({
@@ -3967,6 +3973,15 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_get_app_version':
       return APP_VERSION;
 
+    case 'desktop_remote_desktop_status':
+      return remoteDesktopAdapter.getStatus();
+
+    case 'desktop_remote_desktop_enable':
+      return remoteDesktopAdapter.setEnabled(args.enabled);
+
+    case 'desktop_remote_desktop_permission':
+      return remoteDesktopAdapter.requestPermission(args.permission);
+
     case 'desktop_get_launch_at_login': {
       if (process.platform !== 'darwin' && process.platform !== 'win32') return { supported: false, enabled: false };
       const settings = app.getLoginItemSettings(getLoginItemOptions());
@@ -5315,6 +5330,10 @@ const viewExportHost = createViewExportHost({
 ipcMain.handle('yuri:view-export', (event, method, input) => viewExportHost.dispatch(event, method, input));
 
 ipcMain.handle('yuri:invoke', async (event, command, args) => {
+  if (typeof command === 'string' && command.startsWith('desktop_remote_desktop_')
+    && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
+    throw new Error('Remote desktop setup requires the main desktop frame');
+  }
   if (!isLocalSender(event.sender) && !isRemoteIpcCommandAllowed(command, args)) {
     log.warn(`[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');

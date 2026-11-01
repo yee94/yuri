@@ -33,6 +33,24 @@ interface SettingsSearchAvailabilityContext extends SettingsRuntimeContext {
 
 const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
   {
+    id: 'remote-instances.remote-desktop', page: 'remote-instances',
+    titleKey: 'settings.remoteDesktop.enable', descriptionKey: 'settings.remoteDesktop.description',
+    keywords: ['remote desktop', 'screen sharing', 'control', '远程桌面', '投屏'],
+    isAvailable: ctx => ctx.isDesktopLocalOrigin,
+  },
+  {
+    id: 'remote-instances.remote-desktop-screen', page: 'remote-instances',
+    titleKey: 'settings.remoteDesktop.screen', descriptionKey: 'settings.remoteDesktop.screenHint',
+    keywords: ['permission', 'screen recording', '屏幕录制', '权限'],
+    isAvailable: ctx => ctx.isDesktopLocalOrigin && ctx.isMac,
+  },
+  {
+    id: 'remote-instances.remote-desktop-accessibility', page: 'remote-instances',
+    titleKey: 'settings.remoteDesktop.accessibility', descriptionKey: 'settings.remoteDesktop.accessibilityHint',
+    keywords: ['permission', 'accessibility', 'input', '辅助功能'],
+    isAvailable: ctx => ctx.isDesktopLocalOrigin && ctx.isMac,
+  },
+  {
     id: 'chat.question-auto-delegate',
     page: 'chat',
     titleKey: 'settings.chat.questionDelegate.label',

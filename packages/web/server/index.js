@@ -122,6 +122,7 @@ import { createProjectConfigRuntime } from './lib/projects/project-config.js';
 import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.js';
 import { createHostUpdateRuntime } from './lib/host-update/runtime.js';
 import { createCliUpdateAdapter } from './lib/host-update/cli.js';
+import { attachRemoteDesktop } from './lib/remote-desktop/runtime.js';
 import { getOrCreateInstallId } from './lib/package-manager.js';
 import { applyRuntimeCorsHeaders } from './lib/request-cors.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
@@ -1920,6 +1921,14 @@ async function main(options = {}) {
     }, 0);
   }
   uiAuthController = bootstrapResult.uiAuthController;
+  const remoteDesktopRuntime = attachRemoteDesktop({
+    app, server, adapter: options.remoteDesktopAdapter, uiAuthController, isRequestOriginAllowed,
+    isClientActive: async (id) => {
+      const clients = await remoteClientAuthRuntime.listClients();
+      return clients.some((client) => client.id === id && !client.revokedAt
+        && (!client.expiresAt || Date.parse(client.expiresAt) > Date.now()));
+    },
+  });
   realtimeProxyRuntime = attachRealtimeProxy({
     app,
     server,
@@ -2228,6 +2237,7 @@ async function main(options = {}) {
         console.warn('[message-queue] Failed to close durable database during shutdown');
       }
       realtimeProxyRuntime.stop();
+      remoteDesktopRuntime.stop();
       liveActivityRefreshRuntime.dispose();
       notificationTriggerRuntime.dispose();
       if (relayReconcileTimer) clearInterval(relayReconcileTimer);

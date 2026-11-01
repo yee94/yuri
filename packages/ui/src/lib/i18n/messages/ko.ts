@@ -2,6 +2,22 @@ import type { I18nKey } from './en';
 import { settingsDict } from './ko.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'remoteDesktop.title': '원격 데스크톱',
+  'remoteDesktop.screen': '원격 화면',
+  'remoteDesktop.connecting': 'Mac에서 화면 공유를 허용하기를 기다리는 중…',
+  'remoteDesktop.unsupported': '이 인스턴스는 원격 데스크톱을 지원하지 않습니다. 업데이트된 macOS Yuri 데스크톱 앱에 연결하세요.',
+  'remoteDesktop.permissions': 'Mac 시스템 설정에서 Yuri의 화면 기록 및 손쉬운 사용 권한을 허용한 후 Yuri를 재시작하고 다시 시도하세요.',
+  'remoteDesktop.denied': 'Mac에서 화면 공유를 거부했습니다.',
+  'remoteDesktop.runtimeChanged': '연결된 인스턴스가 변경되었습니다. 이 화면을 닫고 다시 여세요.',
+  'remoteDesktop.failed': '원격 데스크톱 연결이 끊어졌거나 연결할 수 없습니다. 호스트를 확인하고 다시 시도하세요.',
+  'remoteDesktop.retry': '다시 연결',
+  'remoteDesktop.scroll': '스크롤 모드',
+  'remoteDesktop.fit': '화면에 맞추기',
+  'remoteDesktop.tunnel': '호환 스트림',
+  'remoteDesktop.hint': '탭하여 클릭하고 한 손가락으로 드래그하세요. 두 손가락으로 확대·축소 및 이동합니다. 스크롤 모드를 켜면 한 손가락으로 스크롤합니다.',
+  'remoteDesktop.text': '원격 컴퓨터에 입력',
+  'remoteDesktop.send': '텍스트 보내기',
+  'remoteDesktop.pressKey': '{key} 누르기',
   'guiPlugins.loading': '인터페이스 플러그인 불러오는 중…',
   'guiPlugins.preview.loadingTitle': '미리보기 준비 중',
   'guiPlugins.preview.loadingDescription': '처음 열 때는 시간이 조금 걸릴 수 있습니다',

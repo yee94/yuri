@@ -8,6 +8,8 @@ Trusted-device access has one durable credential model: a remote client bearer t
 Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. It stores short-lived one-time pairing sessions with hashed secrets, exposes create/cancel/redeem routes under `/api/client-auth/pairing/*`, and redeems a valid pairing secret into the same remote client token used by password/passkey trusted-device flows.
 
 ## Entrypoints and structure
+
+Remote desktop uses the exact `/api/remote-desktop/ws` scoped URL-token path, mirrored in the Relay tunnel allowlist. Its own upgrade gate additionally rejects password-less owner cookies and checks origin even when password auth is disabled; see `../remote-desktop/DOCUMENTATION.md`.
 - `packages/web/server/lib/ui-auth/ui-auth.js`: UI auth controller runtime, cookie/session issuance, rate limiting, and auth route handlers.
 - `packages/web/server/lib/ui-auth/ui-passkeys.js`: passkey store and WebAuthn registration/authentication verification helpers.
 - `packages/web/server/lib/client-auth/remote-clients.js`: trusted-device client token storage, bearer authentication, last-used tracking, and revocation.

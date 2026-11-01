@@ -1,6 +1,22 @@
 import { settingsDict } from './en.settings';
 
 export const dict = {
+  'remoteDesktop.title': 'Remote desktop',
+  'remoteDesktop.screen': 'Remote screen',
+  'remoteDesktop.connecting': 'Waiting for the Mac to approve screen sharing…',
+  'remoteDesktop.unsupported': 'This instance does not support remote desktop. Connect to an updated Yuri desktop app on macOS.',
+  'remoteDesktop.permissions': 'Allow Screen Recording and Accessibility for Yuri in the Mac’s System Settings, then restart Yuri and retry.',
+  'remoteDesktop.denied': 'Screen sharing was declined on the Mac.',
+  'remoteDesktop.runtimeChanged': 'The connected instance changed. Close this view and open it again.',
+  'remoteDesktop.failed': 'Remote desktop disconnected or could not connect. Check the host and try again.',
+  'remoteDesktop.retry': 'Reconnect',
+  'remoteDesktop.scroll': 'Scroll mode',
+  'remoteDesktop.fit': 'Fit screen',
+  'remoteDesktop.tunnel': 'Compatibility stream',
+  'remoteDesktop.hint': 'Tap to click, drag with one finger. Use two fingers to zoom and pan. Enable scroll mode to scroll.',
+  'remoteDesktop.text': 'Type on the remote computer',
+  'remoteDesktop.send': 'Send text',
+  'remoteDesktop.pressKey': 'Press {key}',
   'guiPlugins.title': 'Interface plugins',
   'guiPlugins.interface': 'UI plugin',
   'guiPlugins.interface.description': 'This plugin provides a UI that can be displayed in the app',
