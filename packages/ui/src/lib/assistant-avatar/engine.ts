@@ -122,6 +122,8 @@ export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, see
   return {
     setMotion: (next: AvatarMotion) => machine.setState(next),
     setCompact: (next: boolean) => machine.setCompact(next),
+    setResting: (next: boolean) => machine.setResting(next),
+    get isSettled() { return runtime.isSettled; },
     setGaze: (point: Point | null) => runtime.setGaze(point),
     blink: () => runtime.blink(),
     advance(dt: number) {
@@ -152,6 +154,8 @@ export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed:
   return {
     setMotion: timeline.setMotion,
     setCompact: (next: boolean) => { compact = next; timeline.setCompact(next); },
+    setResting: timeline.setResting,
+    get isSettled() { return timeline.isSettled; },
     setGaze: timeline.setGaze,
     blink: timeline.blink,
     hover: () => { hoverTime ??= 0; },

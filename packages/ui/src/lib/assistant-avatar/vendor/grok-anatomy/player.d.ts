@@ -47,10 +47,11 @@ export function createRuntime(config: Config, options?: { body?: string; isGazeA
   setGaze(gaze: Point | null): void;
   setBody(body: string, options?: { isInstant?: boolean }): void;
   blink(): void;
+  readonly isSettled: boolean;
 };
 export function createStateMachine(config: Config, runtime: ReturnType<typeof createRuntime>, state: string, options?: {
   seed?: number; isCompact?: boolean; isResting?: boolean; firstPhase?: number;
-}): { advance(dt: number): void; setState(state: string): void; setCompact(compact: boolean): void };
+}): { advance(dt: number): void; setState(state: string): void; setCompact(compact: boolean): void; setResting(resting: boolean): void };
 export function buildModel(frame: Frame, theme: Theme, size: number, config: Config,
   generators: object, trail: object, warnBody: (body: string) => void, buildBody?: BodyBuilder): Model;
 export function createRenderer(document: Document, id: string, size: number, config: Config): {

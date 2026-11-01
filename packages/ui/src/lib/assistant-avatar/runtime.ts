@@ -5,6 +5,7 @@ import { resolveAssistantAvatar, type AssistantAvatarRecipe, type AvatarMotion, 
 
 type WorkingTimeline = {
   users: number;
+  active: number;
   timeline: ReturnType<typeof createAssistantAvatarTimeline>;
   frame: ReturnType<ReturnType<typeof createAssistantAvatarTimeline>['advance']>;
   timestamp: number;
@@ -18,13 +19,28 @@ function acquireWorkingTimeline(win: Window, identity: string, seed: string, rec
   let shared = timelines.get(key);
   if (!shared) {
     const timeline = createAssistantAvatarTimeline(recipe, seed, 'working', compact);
-    shared = { users: 0, timeline, frame: timeline.advance(0), timestamp: performance.now() };
+    shared = { users: 0, active: 0, timeline, frame: timeline.advance(0), timestamp: performance.now() };
     timelines.set(key, shared);
   }
   const source = shared;
   source.users++;
+  source.active++;
+  if (source.active === 1) source.timeline.setResting(false);
   let released = false;
+  let working = true;
   return {
+    settled: () => source.timeline.isSettled,
+    // The shared pose only eases to rest once no sharer is still working.
+    rest() {
+      if (!working || released) return;
+      working = false;
+      if (--source.active === 0) source.timeline.setResting(true);
+    },
+    resume() {
+      if (working || released) return;
+      working = true;
+      if (source.active++ === 0) source.timeline.setResting(false);
+    },
     read(timestamp?: number) {
       if (timestamp !== undefined && timestamp !== source.timestamp) {
         source.frame = source.timeline.advance((timestamp - source.timestamp) / 1000);
@@ -35,6 +51,7 @@ function acquireWorkingTimeline(win: Window, identity: string, seed: string, rec
     release() {
       if (released) return;
       released = true;
+      if (working) source.active--;
       if (--source.users === 0) timelines.delete(key);
       if (!timelines.size) workingTimelines.delete(win);
     },
@@ -49,13 +66,16 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let player: ReturnType<typeof createAssistantAvatarPlayer> | null = null;
   let stop: (() => void) | null = null;
   let disposed = false;
+  let shared: ReturnType<typeof acquireWorkingTimeline> | null = null;
+  let settling = false;
+  let settleDeadline = 0;
   let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
   const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer;
   const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
 
   const reset = () => {
     if (!stop) return;
-    stop(); stop = null; player = null;
+    stop(); stop = null; player = null; shared = null; settling = false;
     renderer.still();
   };
   const start = () => {
@@ -64,9 +84,10 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     if (!win) return;
     const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, state.size < 48, { randomizeShape, eyeColor, resting: resting() });
     player = live;
-    const shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe, state.size < 48) : null;
+    shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe, state.size < 48) : null;
     const pointer = state.followPointer ? acquireAvatarPointer(win) : null;
     if (shared) renderer.paint(live.advance(0, shared.read()));
+    const source = shared;
     let gaze: [number, number] | null = null;
     let previousGaze: [number, number] | null = null;
     let previous = performance.now();
@@ -75,10 +96,10 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         live.setGaze(gaze);
         previousGaze = gaze;
       }
-      const sample = live.advance((timestamp - previous) / 1000, shared?.read(timestamp));
+      const sample = live.advance((timestamp - previous) / 1000, source?.read(timestamp));
       renderer.paint(sample);
       previous = timestamp;
-      if (resting() && !sample.hovering) reset();
+      if (resting() && !sample.hovering && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
     }, () => {
       gaze = null;
       const point = pointer?.read();
@@ -92,7 +113,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         Math.max(-1, Math.min(1, -(point.y - rect.top - rect.height / 2) / reach)),
       ];
     });
-    stop = () => { unsubscribe(); pointer?.release(); shared?.release(); };
+    stop = () => { unsubscribe(); pointer?.release(); source?.release(); };
   };
 
   return {
@@ -102,6 +123,19 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
       const wasSharing = sharing();
       const previous = state;
       state = { ...next, active: next.active && recipe.animate, followPointer: next.followPointer ?? false };
+      // Leaving live work: ease from the current pose to the static pose, then release.
+      if (state.active && player && !wasResting && resting()) {
+        settling = true;
+        settleDeadline = performance.now() + 1500;
+        if (shared) shared.rest(); else player.setResting(true);
+        return;
+      }
+      if (settling && sharing() && shared) {
+        settling = false;
+        shared.resume();
+        player?.setMotion(state.motion);
+        return;
+      }
       if (!state.active || wasResting !== resting() || wasSharing !== sharing()
         || previous.followPointer !== state.followPointer
         || (wasSharing && (previous.size < 48) !== (state.size < 48))) reset();
