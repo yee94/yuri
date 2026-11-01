@@ -2222,7 +2222,6 @@ export const settingsDict = {
   'assistants.contact.peer.from': 'Від {name}',
   'assistants.contact.peer.unknown': 'Інший асистент',
   'assistants.contact.peer.aria': 'Повідомлення від {name}',
-  'assistants.contact.selectAll': 'Вибрати все',
   'assistants.contact.reading.close': 'Закрити',
   'assistants.contact.card.assistant.aria': 'Асистент {name}',
   'assistants.contact.card.schedule.aria': 'Заплановане завдання {name}',

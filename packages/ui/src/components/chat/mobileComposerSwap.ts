@@ -27,6 +27,13 @@ export const COMPOSER_SWAP_FULL_RANGE_PX = COMPOSER_SWAP_FOLLOW_RANGE_PX * 2;
 /** Treat this near-bottom band as "at the bottom" for expand recovery. */
 export const COMPOSER_SWAP_NOISE_PX = 2;
 export const COMPOSER_SWAP_COMMIT_THRESHOLD = 0.5;
+/**
+ * Readers move top to bottom, so travel toward the bottom does not undo a
+ * collapse until the viewport is this close to the live edge. Inside it the
+ * return is progressive and still lands expanded exactly at the edge. The
+ * mobile chat header mirrors this state, so header and composer share the rule.
+ */
+export const COMPOSER_SWAP_RETURN_ZONE_PX = 120;
 export const COMPOSER_SWAP_SNAP_MS = 240;
 export const COMPOSER_SWAP_IDLE_MS = 120;
 /** After landing compact, ignore return-follow this long (momentum settle). */
@@ -149,9 +156,10 @@ export const applyComposerSwapForce = (
 
 /**
  * Relative follow. A frame moves progress by its own travel, never by absolute
- * distance, so it cannot jump against the finger. Travel toward the bottom
- * also scales by the remaining distance so progress lands on 0 exactly at the
- * live edge — the composer never arrives at the bottom half-collapsed.
+ * distance, so it cannot jump against the finger. Travel toward the bottom is
+ * ignored outside the return zone, then scales by the remaining distance so
+ * progress lands on 0 exactly at the live edge — the composer never arrives at
+ * the bottom half-collapsed.
  */
 const quantize = (value: number): number => Math.round(clamp(value, 0, 1) * 1000) / 1000;
 
@@ -165,6 +173,7 @@ const followProgress = (
         return quantize(progress + travel / COMPOSER_SWAP_FULL_RANGE_PX);
     }
     if (distance <= COMPOSER_SWAP_NOISE_PX) return 0;
+    if (distance >= COMPOSER_SWAP_RETURN_ZONE_PX) return progress;
     const toward = progress + travel / COMPOSER_SWAP_FULL_RANGE_PX;
     const edgeBound = progress * (distance / previousDistance);
     return quantize(Math.min(toward, edgeBound));

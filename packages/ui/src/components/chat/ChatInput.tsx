@@ -4798,8 +4798,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         }
 
         // Handle Enter/Ctrl+Enter based on selected follow-up behavior.
-        // When enterkeyhint="send" is set on mobile, the keyboard shows
-        // a send button; plain Enter should submit, Shift+Enter for newline.
+        // Mobile IMEs cannot distinguish Enter from a send action, so plain
+        // Enter keeps its native newline behavior there; sending uses the button.
+        if (e.key === 'Enter' && isMobile && !e.ctrlKey && !e.metaKey) return;
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (getLocalChatCommand(getCurrentInputSnapshot().message, inputMode) === 'btw') {

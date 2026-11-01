@@ -2223,7 +2223,6 @@ export const settingsDict = {
   'assistants.contact.peer.from': 'Od {name}',
   'assistants.contact.peer.unknown': 'Inny asystent',
   'assistants.contact.peer.aria': 'Wiadomość od {name}',
-  'assistants.contact.selectAll': 'Zaznacz wszystko',
   'assistants.contact.reading.close': 'Zamknij',
   'assistants.contact.card.assistant.aria': 'Asystent {name}',
   'assistants.contact.card.schedule.aria': 'Zaplanowane zadanie {name}',

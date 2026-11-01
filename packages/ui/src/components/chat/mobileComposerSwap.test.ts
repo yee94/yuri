@@ -5,6 +5,7 @@ import {
     COMPOSER_SWAP_FOLLOW_RANGE_PX,
     COMPOSER_SWAP_FULL_RANGE_PX,
     COMPOSER_SWAP_NOISE_PX,
+    COMPOSER_SWAP_RETURN_ZONE_PX,
     MOBILE_COMPOSER_OCCUPANCY_CSS_VAR,
     NATIVE_COMPOSER_DOCK_CSS_VAR,
     applyComposerSwapCommit,
@@ -73,13 +74,21 @@ describe('mobileComposerSwap', () => {
         expect(applyComposerSwapScroll(expanded, 600)).toBe(expanded);
     });
 
-    test('travel toward the bottom reveals compact proportionally far from the edge', () => {
-        let state = travel(compactRest(), [600, 570]);
+    test('travel toward the bottom is ignored outside the return zone', () => {
+        const state = travel(compactRest(), [900, 600, 400, COMPOSER_SWAP_RETURN_ZONE_PX]);
+        expect(state).toMatchObject({ phase: 'rest', rest: 'compact', progress: 1 });
+    });
+
+    test('inside the return zone the reveal is progressive and lands at the edge', () => {
+        let state = travel(compactRest(), [COMPOSER_SWAP_RETURN_ZONE_PX + 10, 100]);
         expect(state.phase).toBe('tracking');
         expect(state.rest).toBe('compact');
         expect(state.progress).toBeCloseTo(0.625);
 
-        state = travel(state, [570, 550, 530, 520]);
+        state = travel(state, [100, 80]);
+        expect(state.phase).toBe('tracking');
+        expect(state.progress).toBeLessThan(0.625);
+        state = travel(state, [80, 30, COMPOSER_SWAP_NOISE_PX]);
         expect(state).toMatchObject({ phase: 'rest', rest: 'expanded', progress: 0 });
     });
 
@@ -122,7 +131,7 @@ describe('mobileComposerSwap', () => {
             rest: 'compact',
             progress: 1,
         });
-        expect(travel(compactRest(), [600, 500])).toMatchObject({
+        expect(travel(compactRest(), [119, 30])).toMatchObject({
             phase: 'snapping',
             rest: 'expanded',
             progress: 0,

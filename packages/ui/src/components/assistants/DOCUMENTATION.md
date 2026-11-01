@@ -323,25 +323,18 @@ Preview freshness follows the existing snapshot revision/events, foreground reco
 
 ## Phone reading gestures
 
-On `isMobile` surfaces the contact surface owns one capture-phase pointer
-listener set (`contactMessageGesture.ts`), mounted with the transcript and never
-re-rendered per frame. A long press (500 ms, ≤10 px slop, cancelled by scroll or
-pointer cancel) selects the pressed bubble's whole text through the native
-selection API, so the OS handles and copy callout stay native. A host-popover
-`assistants.contact.selectAll` chip sits above that selection for 400 ms after
-the press ends; tapping the just-selected bubble widens to the whole message.
-The chip uses shadow DOM so the global button `user-select: none` rule cannot
-collapse the selection, and its presses never move the document selection.
+Long press is native. On `isMobile` surfaces text bubbles are `user-select: all`,
+so iOS/Android select the whole message and show their own Copy callout; the
+surface sets no ranges and renders no select-all chrome. Image-only bubbles are
+excluded.
 
-A double tap (two taps within 280 ms and 10 px, landing on ordinary bubble text)
-opens `AssistantMessageReadingView`: a fullscreen, scrollable reading copy at
-large type on the plain background, closed by its button or Escape. Links,
-code, images, video, cards and image-only bubbles never trigger it. The reading
-view renders the bubble's raw Markdown as a separate instance at the surface
-root — transcript rows are never cloned, re-parented or remounted, so the
-fullscreen view does not disturb scroll anchors or the open text selection.
-Its own visibility state is local to the surface; closing leaves the transcript
-exactly as it was. Focused coverage: `contactMessageGesture.test.ts`.
+A double tap (two quick, stationary taps within 280 ms and 10 px, landing on
+ordinary bubble text) opens `AssistantMessageReadingView`: a fullscreen,
+scrollable reading copy at large type, closed by its button or Escape. Links,
+code, images, video, cards and image-only bubbles never trigger it. It renders
+the bubble's raw Markdown as a separate instance at the surface root, so
+transcript rows are never cloned or remounted. Focused coverage:
+`contactMessageGesture.test.ts`.
 
 ## Shared unread and read visibility
 

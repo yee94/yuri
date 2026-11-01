@@ -269,11 +269,13 @@ describe('useMobileComposerSwap gesture commit', () => {
 
         await collapse();
 
-        // Return travel follows the finger from far up the transcript.
+        // Reading down far from the live edge never reveals; the zone does.
         await fireScroll(290);
-        expect(readSwap(scopeEl).phase).toBe('tracking');
-        expect(Number(readSwap(scopeEl).progress)).toBeCloseTo(0.875);
         await fireScroll(280);
+        await fireScroll(130);
+        expect(readSwap(scopeEl)).toMatchObject({ phase: 'rest', rest: 'compact', progress: '1' });
+        await fireScroll(110);
+        expect(readSwap(scopeEl).phase).toBe('tracking');
         expect(Number(readSwap(scopeEl).progress)).toBeCloseTo(0.75);
 
         await fireTouch('touchend', 420);
@@ -371,18 +373,23 @@ describe('useMobileComposerSwap gesture commit', () => {
         await collapse();
         await fireTouch('touchend', 420);
 
-        // Momentum toward the bottom tracks the reveal, then commits that way.
+        // Momentum toward the bottom is ignored until the return zone, where it
+        // tracks the reveal and then commits that way.
         await fireScroll(280);
+        await fireScroll(270);
+        expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'compact', progress: '1' });
+        await fireScroll(130);
+        await fireScroll(110);
         expect(readSwap(scopeEl).phase).toBe('tracking');
         expect(Number(readSwap(scopeEl).progress)).toBeCloseTo(0.75);
-        await fireScroll(270);
+        await fireScroll(100);
         await advance(120);
         expect(readSwap(scopeEl)).toEqual({ phase: 'snapping', rest: 'expanded', progress: '0' });
         await advance(COMPOSER_SWAP_SNAP_MS);
         expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'expanded', progress: '0' });
 
         // Further travel toward the bottom never collapses it again.
-        await fireScroll(260);
+        await fireScroll(90);
         expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'expanded', progress: '0' });
         // Accessories have no background: stay hidden even while swap is expanded,
         // and a short approach toward the edge must not fade them in.
@@ -476,9 +483,10 @@ describe('useMobileComposerSwap gesture commit', () => {
         // takes ownership immediately and follows from the corrected baseline.
         scrollEl.removeAttribute(TIMELINE_ANCHORING_ATTRIBUTE);
         await fireTouch('touchmove', 380);
-        await fireScroll(270);
+        await fireScroll(130);
+        await fireScroll(110);
         expect(readSwap(scopeEl).phase).toBe('tracking');
-        expect(Number(readSwap(scopeEl).progress)).toBeCloseTo(0.625);
+        expect(Number(readSwap(scopeEl).progress)).toBeCloseTo(0.75);
     });
 
     test('load-older tap cannot turn released anchor compensation into a composer reveal', async () => {

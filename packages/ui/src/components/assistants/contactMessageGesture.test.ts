@@ -3,10 +3,7 @@ import {
   CONTACT_DOUBLE_TAP_MS,
   CONTACT_TAP_SLOP_PX,
   createContactDoubleTapDetector,
-  createContactLongPressToolbar,
   isContactReadingTapTarget,
-  selectContactMessage,
-  type ContactLongPressToolbar,
 } from './contactMessageGesture'
 
 const bubble = (html: string) => {
@@ -58,29 +55,5 @@ describe('contact reading gestures', () => {
     detector.register({ x: 10, y: 10, t: 2000 }, node.querySelector('a'))
     expect(detector.register({ x: 10, y: 10, t: 2050 }, node.querySelector('a'))).toBe(false)
     expect(opened).toEqual([])
-  })
-
-  test('the toolbar press never steals the document selection', () => {
-    const toolbar = createContactLongPressToolbar(document, 'Select all', () => {})
-    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
-    toolbar.node.dispatchEvent(down)
-    expect(down.defaultPrevented).toBe(true)
-    toolbar.destroy()
-    expect(document.querySelector('[data-assistant-contact-select-toolbar]')).toBeNull()
-  })
-
-  test('selecting a message covers its whole bubble text', () => {
-    const node = bubble('<p>first</p><p>second</p>')
-    const shown: string[] = []
-    const toolbar = { node: document.createElement('button'), show: () => shown.push('show'), hide: () => shown.push('hide'), destroy: () => {} } satisfies ContactLongPressToolbar
-    const range = selectContactMessage(toolbar, node, (container) => {
-      const next = document.createRange()
-      next.selectNodeContents(container)
-      return next
-    })
-    expect(range?.toString()).toBe('firstsecond')
-    expect(window.getSelection()?.toString()).toBe('firstsecond')
-    expect(shown).toEqual(['show'])
-    window.getSelection()?.removeAllRanges()
   })
 })

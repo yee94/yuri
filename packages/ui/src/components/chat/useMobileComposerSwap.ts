@@ -5,6 +5,7 @@ import {
     COMPOSER_SWAP_COMPACT_SETTLE_MS,
     COMPOSER_SWAP_FULL_RANGE_PX,
     COMPOSER_SWAP_IDLE_MS,
+    COMPOSER_SWAP_RETURN_ZONE_PX,
     COMPOSER_SWAP_INTENT_TRAVEL_PX,
     COMPOSER_SWAP_INTENT_WINDOW_MS,
     COMPOSER_SWAP_SNAP_MS,
@@ -24,16 +25,10 @@ import {
     type ComposerSwapState,
 } from './mobileComposerSwap';
 import {
-    applyHeaderCollapseCommit,
-    applyHeaderCollapseForce,
-    applyHeaderCollapseScroll,
-    applyHeaderCollapseSnapDone,
     clearHeaderCollapse,
-    createHeaderCollapseState,
     publishHeaderCollapse,
     resolveCollapsibleHeader,
-    type HeaderCollapseRest,
-    type HeaderCollapseState,
+    type HeaderCollapsePublished,
 } from './mobileHeaderCollapse';
 import {
     readTimelineParkEndOffset,
@@ -129,11 +124,31 @@ export const useMobileComposerSwap = (args: {
         return next;
     };
 
+    const headerElRef = React.useRef<HTMLElement | null>(null);
+    const headerPublishedRef = React.useRef<HeaderCollapsePublished | undefined>(undefined);
+
+    /**
+     * The header owns no state: it mirrors the swap state on every publish, so
+     * it is always at the composer's progress/phase/rest. It is a sibling of the
+     * scope and can mount later, so it is re-resolved whenever it detaches.
+     */
+    const mirrorHeader = (scope: HTMLElement, state: ComposerSwapState) => {
+        let header = headerElRef.current;
+        if (!header || !header.isConnected) {
+            header = resolveCollapsibleHeader(scope);
+            headerElRef.current = header;
+            headerPublishedRef.current = undefined;
+        }
+        if (!header) return;
+        headerPublishedRef.current = publishHeaderCollapse(header, state, headerPublishedRef.current);
+    };
+
     const publish = useEvent((state: ComposerSwapState) => {
         const scope = args.scopeRef.current;
         if (!scope) return;
         const target = resolveMotionTarget(scope);
         publishedRef.current = publishComposerSwap(scope, state, publishedRef.current, target);
+        mirrorHeader(scope, state);
     });
 
     /** Re-publish onto a freshly mounted foot before this frame reads it. */
@@ -141,6 +156,7 @@ export const useMobileComposerSwap = (args: {
         const previous = motionTargetRef.current;
         const target = resolveMotionTarget(scope);
         if (target !== previous) publish(stateRef.current);
+        else mirrorHeader(scope, stateRef.current);
         return target;
     });
 
@@ -165,57 +181,10 @@ export const useMobileComposerSwap = (args: {
         }, COMPOSER_SWAP_SNAP_MS);
     });
 
-    const headerStateRef = React.useRef<HeaderCollapseState>(createHeaderCollapseState());
-    const headerPublishedRef = React.useRef<{ progress: string; phase: string; rest: string } | undefined>(undefined);
-    const headerSnapTimerRef = React.useRef<number | null>(null);
-    const headerElRef = React.useRef<HTMLElement | null>(null);
-
-    /** The floating header is a sibling of the scope; it can mount after the hook binds. */
-    const resolveHeader = (scope: HTMLElement): HTMLElement | null => {
-        const current = headerElRef.current;
-        if (current && current.isConnected) return current;
-        const next = resolveCollapsibleHeader(scope);
-        if (next !== current) {
-            headerElRef.current = next;
-            headerPublishedRef.current = undefined;
-        }
-        return next;
-    };
-
-    const publishHeader = useEvent((state: HeaderCollapseState) => {
-        const scope = args.scopeRef.current;
-        if (!scope) return;
-        const header = resolveHeader(scope);
-        if (!header) return;
-        headerPublishedRef.current = publishHeaderCollapse(header, state, headerPublishedRef.current);
-    });
-
-    const replaceHeaderState = useEvent((next: HeaderCollapseState) => {
-        if (next === headerStateRef.current) return;
-        headerStateRef.current = next;
-        publishHeader(next);
-    });
-
-    const armHeaderSnapDone = useEvent(() => {
-        clearTimer(headerSnapTimerRef);
-        if (headerStateRef.current.phase !== 'snapping') return;
-        headerSnapTimerRef.current = window.setTimeout(() => {
-            headerSnapTimerRef.current = null;
-            replaceHeaderState(applyHeaderCollapseSnapDone(headerStateRef.current));
-        }, COMPOSER_SWAP_SNAP_MS);
-    });
-
-    const forceHeaderExpanded = useEvent(() => {
-        replaceHeaderState(applyHeaderCollapseForce(headerStateRef.current, 'expanded'));
-        armHeaderSnapDone();
-    });
-
     const syncPin = useEvent(() => {
         const scope = args.scopeRef.current;
         if (!scope || !enabledRef.current) return;
-        const pinned = isComposerPinned(scope);
-        replaceState(applyComposerSwapPin(stateRef.current, pinned));
-        if (pinned) forceHeaderExpanded();
+        replaceState(applyComposerSwapPin(stateRef.current, isComposerPinned(scope)));
     });
 
     const resolveSuppressReturn = useEvent((distance: number): boolean => {
@@ -240,6 +209,9 @@ export const useMobileComposerSwap = (args: {
     const resolveReleaseDirection = (): ComposerSwapRest | null => {
         const run = travelRunRef.current;
         if (!run.direction || run.px < COMPOSER_SWAP_INTENT_TRAVEL_PX) return null;
+        // Reading down outside the return zone never commits an expand.
+        if (run.direction === 'expanded'
+            && (lastDistanceRef.current ?? 0) >= COMPOSER_SWAP_RETURN_ZONE_PX) return null;
         if (Date.now() - run.at > COMPOSER_SWAP_INTENT_WINDOW_MS) return null;
         return run.direction;
     };
@@ -248,25 +220,10 @@ export const useMobileComposerSwap = (args: {
         clearTimer(idleTimerRef);
         if (!enabledRef.current) return;
         if (touchActiveRef.current > 0) return;
-        const composerTracking = stateRef.current.phase === 'tracking';
-        const headerTracking = headerStateRef.current.phase === 'tracking';
-        if (!composerTracking && !headerTracking) return;
-        const direction = resolveReleaseDirection();
-        if (composerTracking) {
-            replaceState(applyComposerSwapCommit(stateRef.current, direction));
-            armSnapDone();
-        }
-        if (headerTracking) {
-            const headerDirection: HeaderCollapseRest | null = direction === 'compact'
-                ? 'collapsed'
-                : direction === 'expanded' ? 'expanded' : null;
-            replaceHeaderState(applyHeaderCollapseCommit(
-                headerStateRef.current,
-                lastDistanceRef.current ?? 0,
-                headerDirection,
-            ));
-            armHeaderSnapDone();
-        }
+        if (stateRef.current.phase !== 'tracking') return;
+        const next = applyComposerSwapCommit(stateRef.current, resolveReleaseDirection());
+        replaceState(next);
+        armSnapDone();
     });
 
     const rebaseTouchIntent = useEvent(() => {
@@ -429,24 +386,6 @@ export const useMobileComposerSwap = (args: {
         }
         replaceState(next);
 
-        // The header follows the same user-owned frames with its own asymmetric
-        // model (collapse with travel away, return only near the live edge).
-        const previousHeader = headerStateRef.current;
-        const headerNext = pinned
-            ? applyHeaderCollapseForce(previousHeader, 'expanded')
-            : applyHeaderCollapseScroll(previousHeader, distance, {
-                previousDistance: travelFrame ? previousDistance : null,
-                userDriven,
-            });
-        if (headerPublishedRef.current === undefined && resolveHeader(scope)) publishHeader(previousHeader);
-        replaceHeaderState(headerNext);
-        const headerChanged = headerNext !== previousHeader;
-        if (headerChanged && headerNext.phase === 'snapping') {
-            armHeaderSnapDone();
-        } else if (headerChanged && previousHeader.phase === 'snapping') {
-            clearTimer(headerSnapTimerRef);
-        }
-
         if (!userDriven) return;
         clearTimer(idleTimerRef);
         // A scroll-driven reveal snaps from inside the scroll handler, so the
@@ -457,11 +396,12 @@ export const useMobileComposerSwap = (args: {
                 || previousState.progress !== next.progress) {
                 armSnapDone();
             }
-        } else if (previousState.phase === 'snapping') {
+            return;
+        }
+        if (previousState.phase === 'snapping') {
             clearTimer(snapTimerRef);
         }
-        if ((next.phase === 'tracking' || headerNext.phase === 'tracking')
-            && touchActiveRef.current === 0) {
+        if (next.phase === 'tracking' && touchActiveRef.current === 0) {
             idleTimerRef.current = window.setTimeout(() => {
                 idleTimerRef.current = null;
                 commitIdle();
@@ -493,7 +433,7 @@ export const useMobileComposerSwap = (args: {
         }
         // iOS often omits scrollend; arm the same idle commit after the finger
         // lifts. Momentum scroll events keep deferring it until quiescence.
-        if (stateRef.current.phase !== 'tracking' && headerStateRef.current.phase !== 'tracking') return;
+        if (stateRef.current.phase !== 'tracking') return;
         clearTimer(idleTimerRef);
         idleTimerRef.current = window.setTimeout(() => {
             idleTimerRef.current = null;
@@ -543,7 +483,6 @@ export const useMobileComposerSwap = (args: {
         resetTravelRun();
         replaceState(applyComposerSwapForce(stateRef.current, 'expanded'));
         armSnapDone();
-        forceHeaderExpanded();
         armExpandFocusShield();
         const textarea = args.scopeRef.current?.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
         textarea?.focus({ preventScroll: true });
@@ -554,6 +493,9 @@ export const useMobileComposerSwap = (args: {
     const lastScopeRef = React.useRef<HTMLElement | null>(null);
     const releaseScope = useEvent((scope: HTMLElement | null) => {
         if (scope) clearComposerSwap(scope, motionTargetRef.current ?? scope);
+        if (headerElRef.current) clearHeaderCollapse(headerElRef.current);
+        headerElRef.current = null;
+        headerPublishedRef.current = undefined;
         motionTargetRef.current = null;
         publishedRef.current = undefined;
         publishedDockRef.current = undefined;
@@ -567,11 +509,6 @@ export const useMobileComposerSwap = (args: {
         lastGeometryRef.current = null;
         resetTravelRun();
         replaceState(createComposerSwapState());
-        if (headerElRef.current) clearHeaderCollapse(headerElRef.current);
-        headerElRef.current = null;
-        headerPublishedRef.current = undefined;
-        clearTimer(headerSnapTimerRef);
-        headerStateRef.current = createHeaderCollapseState();
     });
     React.useLayoutEffect(() => {
         const nextScroll = args.enabled ? args.scrollRef.current : null;
@@ -618,7 +555,6 @@ export const useMobileComposerSwap = (args: {
         return () => {
             clearTimer(idleTimerRef);
             clearTimer(snapTimerRef);
-            clearTimer(headerSnapTimerRef);
         };
         // enabled is the semantic rebind; handlers are useEvent and must not
         // control this effect.

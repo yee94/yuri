@@ -2222,7 +2222,6 @@ export const settingsDict = {
   'assistants.contact.peer.from': 'From {name}',
   'assistants.contact.peer.unknown': 'Another bot',
   'assistants.contact.peer.aria': 'Message from {name}',
-  'assistants.contact.selectAll': 'Select all',
   'assistants.contact.reading.close': 'Close',
   'assistants.contact.card.assistant.aria': 'Bot {name}',
   'assistants.contact.card.schedule.aria': 'Scheduled task {name}',

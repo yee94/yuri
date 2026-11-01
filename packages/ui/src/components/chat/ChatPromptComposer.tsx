@@ -163,7 +163,7 @@ export const ChatPromptComposer: React.FC<ChatPromptComposerProps> = ({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     textareaProps?.onKeyDown?.(event);
     if (event.defaultPrevented || isIMECompositionEvent(event)) return;
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !isMobile) {
       event.preventDefault();
       if (!disabled && (!pending || !disableInputWhilePending)) onSubmit();
     }
@@ -403,7 +403,7 @@ export const ChatPromptComposer: React.FC<ChatPromptComposerProps> = ({
               onKeyDown={handleKeyDown}
               disabled={disabled || (pending && disableInputWhilePending)}
               placeholder={placeholder}
-              enterKeyHint={isMobile ? 'send' : textareaProps?.enterKeyHint}
+              enterKeyHint={isMobile ? 'enter' : textareaProps?.enterKeyHint}
               outerClassName={cn(
                 'ring-0 bg-transparent shadow-none hover:bg-transparent focus-within:ring-0',
                 inline && 'flex-none',
