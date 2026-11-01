@@ -544,10 +544,7 @@ export async function runContactTurn({
     // streamFn receives the model; completions needs providerID/modelID.
     model.name = `${providerID}/${modelID}`;
 
-    const pendingFileParts = [
-      ...(Array.isArray(history) ? history.flatMap((message) => completionFileParts(message.parts)) : []),
-      ...completionFileParts(userParts),
-    ];
+    const pendingFileParts = completionFileParts(userParts);
     const prior = Array.isArray(history)
       ? history.map((message) => (
         message.role === 'assistant'

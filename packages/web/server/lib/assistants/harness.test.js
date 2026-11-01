@@ -363,6 +363,44 @@ describe('createContactStreamFn', () => {
     })
   })
 
+  it.each([
+    { name: 'text-only confirmation', currentParts: [] },
+    { name: 'new image', currentParts: [{ type: 'file', mime: 'image/png', url: 'data:image/png;base64,bmV3', filename: 'current.png' }] },
+    { name: 'new text file', currentParts: [{ type: 'file', mime: 'text/plain', url: 'data:text/plain;base64,bmV3', filename: 'current.txt' }] },
+  ])('keeps historical attachments on their original message for a $name through tool follow-ups', async ({ currentParts }) => {
+    const historicalParts = [
+      { type: 'file', mime: 'image/png', url: 'data:image/png;base64,b2xk', filename: 'earlier.png' },
+      { type: 'file', mime: 'text/plain', url: 'data:text/plain;base64,b2xk', filename: 'earlier.txt' },
+    ]
+    const requests = []
+    const execute = vi.fn(async () => ({ content: [{ type: 'text', text: 'Checked.' }] }))
+    await runContactTurn({
+      assistant: { providerID: 'p', modelID: 'm' },
+      history: [
+        { role: 'user', content: 'Read these earlier attachments.', parts: historicalParts },
+        { role: 'assistant', content: 'Read them.' },
+        { role: 'user', content: 'Change the scheduled task model.' },
+        { role: 'assistant', content: 'Should the remaining task use that model too?' },
+      ],
+      userText: 'Yes.',
+      userParts: [{ type: 'text', text: 'Yes.' }, ...currentParts],
+      tools: [{ name: 'probe', description: 'Check.', parameters: { type: 'object', properties: {} }, execute }],
+      createChatCompletion: async ({ body }) => {
+        requests.push(body.messages)
+        return requests.length === 1 ? toolCall('probe', {}) : { text: 'Done.' }
+      },
+    })
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(requests).toHaveLength(2)
+    for (const messages of requests) {
+      expect(messages.find((message) => message.content === 'Read these earlier attachments.').parts).toEqual(historicalParts)
+      expect(messages.findLast((message) => message.role === 'user')).toEqual({
+        role: 'user', content: 'Yes.', ...(currentParts.length > 0 ? { parts: currentParts } : {}),
+      })
+      expect(messages.some((message) => message.role === 'assistant' && message.content === 'Should the remaining task use that model too?')).toBe(true)
+    }
+  })
+
   it('keeps thinking off and never installs bash/edit/read/write when sending attachments', async () => {
     const prompt = vi.fn(async function prompt() {
       this.state.messages = [{

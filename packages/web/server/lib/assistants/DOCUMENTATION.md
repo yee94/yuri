@@ -48,6 +48,21 @@ show temporary error feedback until a newer message arrives; reconnect/restart d
 not recover errors. Errors do not become list previews, unread counts, or LLM memory.
 Worker-card execution status remains part of the card's authoritative state.
 
+## Contact attachment chronology
+
+Historical files stay on their original user message in model context. The
+completion adapter's pending-file fallback contains only the current turn's
+`userParts`, never files collected from history. A text-only confirmation must
+not resubmit older images or documents as new attachments; a new upload must not
+be mixed with historical files. This also holds across tool follow-up completions.
+The Host owns this behavior for web, Electron, hosted mobile and Capacitor clients;
+no transcript migration or attachment deletion is needed.
+
+When a turn falls out of the bounded history window, its file parts fall out with
+it. Rolling summaries receive text only, not original attachment bytes; relevant
+facts already described in conversation may survive as summary text. Stored
+attachments remain available in the transcript UI.
+
 ## Avatar identity
 
 `avatarSeed` is an optional nonempty string (maximum 256 characters) on create

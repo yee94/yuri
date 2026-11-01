@@ -66,6 +66,38 @@ describe('ensureContactSummary', () => {
     db.close();
   });
 
+  it('drops original attachments with compressed turns while retaining text context and the stored upload', async () => {
+    const db = openDb();
+    try {
+      const image = { type: 'file', mime: 'image/png', url: 'data:image/png;base64,b2xk', filename: 'earlier.png' };
+      const messageID = crypto.randomUUID();
+      insertContactMessage(db, {
+        messageID, assistantID: 'a', role: 'user', turnID: crypto.randomUUID(), bubbleIndex: 0, createdAt: Date.now(),
+        ordinal: nextContactOrdinal(db, 'a'), status: 'complete',
+        parts: [{ type: 'text', text: 'Explain the earlier screenshot.' }, image],
+      });
+      add(db, 'a', 'assistant', 'The earlier screenshot shows a rejected appeal.');
+      fill(db, 'a', 40);
+
+      const complete = vi.fn(async () => 'Earlier discussion concerned a rejected appeal.');
+      expect(await ensureContactSummary(db, 'a', { complete })).toBe(true);
+      const input = complete.mock.calls[0][0];
+      expect(input.user).toContain('The earlier screenshot shows a rejected appeal.');
+      expect(JSON.stringify(input)).not.toContain(image.url);
+      expect(JSON.stringify(input)).not.toContain(image.filename);
+
+      const history = contactHistoryForLlm(db, 'a');
+      expect(history[0].content).toContain('Earlier discussion concerned a rejected appeal.');
+      expect(history.every((message) => !message.parts?.length)).toBe(true);
+      expect(JSON.stringify(history)).not.toContain(image.url);
+      expect(JSON.stringify(history)).not.toContain('Explain the earlier screenshot.');
+      const stored = db.prepare('SELECT part_json FROM assistant_contact_part WHERE message_id=? ORDER BY ordinal').all(messageID);
+      expect(stored.map((row) => JSON.parse(row.part_json))).toEqual(expect.arrayContaining([expect.objectContaining(image)]));
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps the previous state when the model fails', async () => {
     const db = openDb();
     fill(db, 'a', 40);
