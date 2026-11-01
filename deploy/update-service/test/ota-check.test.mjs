@@ -607,6 +607,46 @@ test('manifestBaseUrl override loads CHANGELOG from the same origin as manifests
   );
 });
 
+test('localManifestBaseUrl serves the manifest locally without touching the Vercel origin', async () => {
+  const requests = stubChannel({ manifest: channelManifest() });
+  const response = await handleMobileUpdateCheck(mobileRequest(validBody), {
+    manifestBaseUrl: 'https://origin.example.com',
+    localManifestBaseUrl: 'https://updates.example.com',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.primaryAction, 'apply_ota');
+  assert.equal(requests.some((href) => href.includes('origin.example.com/ota/channels')), false);
+  assert.ok(requests[0].startsWith('https://updates.example.com/ota/channels/'));
+});
+
+test('localManifestBaseUrl miss falls back to the Vercel origin', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    requests.push(url.href);
+    if (url.origin === 'https://updates.example.com') return new Response('missing', { status: 404 });
+    if (url.pathname === '/ota/channels/beta.json') {
+      return new Response(JSON.stringify(channelManifest()), { status: 200 });
+    }
+    return new Response('', { status: 404 });
+  };
+  restoreFetch = () => { globalThis.fetch = originalFetch; };
+
+  const response = await handleMobileUpdateCheck(mobileRequest(validBody), {
+    manifestBaseUrl: 'https://origin.example.com',
+    localManifestBaseUrl: 'https://updates.example.com',
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.primaryAction, 'apply_ota');
+  assert.ok(requests[0].startsWith('https://updates.example.com/ota/channels/'));
+  assert.ok(requests.some((href) => href.startsWith('https://origin.example.com/ota/channels/')));
+});
+
 test('answers CORS preflight for mobile update check', async () => {
   const optionsResponse = await handleMobileUpdateCheck(
     new Request('https://updates.example.com/v1/mobile/update/check', { method: 'OPTIONS' }),

@@ -66,3 +66,32 @@ test('EdgeOne build skips OTA seed tree and CHANGELOG so edge proxies are not sh
     rmSync(outputPath, { recursive: true, force: true });
   }
 });
+
+test('EdgeOne build ships only OTA channel manifests so bundle zips keep flowing through the proxy', () => {
+  const outputDirectory = `.test-dist-edgeone-channels-${process.pid}-${Date.now()}`;
+  const outputPath = path.join(projectRoot, outputDirectory);
+  const edgeoneConfig = JSON.parse(readFileSync(path.join(projectRoot, 'edgeone.json'), 'utf8'));
+
+  try {
+    assert.match(edgeoneConfig.buildCommand, /YURI_UPDATE_OTA_CHANNELS_ONLY=1/);
+    assert.doesNotMatch(edgeoneConfig.buildCommand, /YURI_UPDATE_SKIP_OTA_COPY/);
+
+    execFileSync(process.execPath, ['scripts/build.mjs'], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        YURI_UPDATE_OUTPUT_DIR: outputDirectory,
+        YURI_UPDATE_OTA_CHANNELS_ONLY: '1',
+        YURI_UPDATE_SKIP_CHANGELOG_COPY: '1',
+      },
+      stdio: 'pipe',
+    });
+
+    assert.equal(existsSync(path.join(outputPath, 'CHANGELOG.md')), false);
+    assert.equal(existsSync(path.join(outputPath, 'ota', 'channels', 'beta.json')), true);
+    assert.equal(existsSync(path.join(outputPath, 'ota', 'channels', 'stable.json')), true);
+    assert.equal(existsSync(path.join(outputPath, 'ota', 'bundles')), false);
+  } finally {
+    rmSync(outputPath, { recursive: true, force: true });
+  }
+});

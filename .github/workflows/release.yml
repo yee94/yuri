@@ -879,6 +879,16 @@ jobs:
             --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
 
+      - name: Publish channel manifests to EdgeOne (git deploy)
+        shell: bash
+        env:
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
+        run: |
+          scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
+            "chore(ota): publish ${OTA_CHANNEL} manifest ${VERSION} for EdgeOne"
+
       - name: Verify client update detectability
         env:
           OTA_BASE_URL: ${{ env.OTA_BASE_URL }}

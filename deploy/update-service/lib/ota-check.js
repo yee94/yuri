@@ -254,7 +254,21 @@ async function withReleaseNotes(decision, parsedRequest, changelogBaseUrl) {
   return { ...decision, releaseNotes };
 }
 
-async function runUpdateCheck(request, parsedRequest, manifestBaseUrl) {
+/**
+ * Load the channel manifest, preferring `localManifestBaseUrl` (EdgeOne ships a
+ * git-deployed copy, so domestic clients never wait on the Vercel origin) and
+ * falling back to `manifestBaseUrl`. A local miss is not authoritative.
+ */
+async function loadChannelManifest(request, channel, options) {
+  if (options.localManifestBaseUrl) {
+    const local = await loadOtaChannelManifest(options.localManifestBaseUrl, channel);
+    if (local !== null) return local;
+  }
+  return loadOtaChannelManifest(options.manifestBaseUrl ?? request.url, channel);
+}
+
+async function runUpdateCheck(request, parsedRequest, options) {
+  const manifestBaseUrl = options.manifestBaseUrl;
   // By default manifests and CHANGELOG load relative to the request origin
   // (fast on Vercel, where they are static files). EdgeOne deployments must
   // override this with the Vercel origin: /ota/* and /CHANGELOG.md on EdgeOne
@@ -262,7 +276,7 @@ async function runUpdateCheck(request, parsedRequest, manifestBaseUrl) {
   // stale). Fetching either from an edge endpoint would loop or filter notes
   // against an outdated changelog and omit releaseNotes.
   const assetBaseUrl = manifestBaseUrl ?? request.url;
-  const manifest = await loadOtaChannelManifest(assetBaseUrl, parsedRequest.channel);
+  const manifest = await loadChannelManifest(request, parsedRequest.channel, options);
   if (manifest === null) {
     // Distinguish missing channel file (null from fetch miss) vs load failure:
     // loadOtaChannelManifest returns null for both fetch failure and invalid JSON.
@@ -293,7 +307,7 @@ export async function handleMobileUpdateCheck(request, options = {}) {
   const parsed = parseMobileUpdateRequest(body.payload);
   if (!parsed.ok) return parsed.response;
 
-  return runUpdateCheck(request, parsed.request, options.manifestBaseUrl);
+  return runUpdateCheck(request, parsed.request, options);
 }
 
 export async function handleCapgoOtaCheck(request, options = {}) {
@@ -306,10 +320,7 @@ export async function handleCapgoOtaCheck(request, options = {}) {
   const parsed = parseCapgoRequest(body.payload);
   if (!parsed.ok) return parsed.response;
 
-  const manifest = await loadOtaChannelManifest(
-    options.manifestBaseUrl ?? request.url,
-    parsed.request.channel,
-  );
+  const manifest = await loadChannelManifest(request, parsed.request.channel, options);
   if (manifest === null) {
     return jsonResponse({ error: 'ota_manifest_unavailable' }, { status: 503 });
   }

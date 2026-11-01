@@ -76,7 +76,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
@@ -221,6 +221,16 @@ jobs:
             --cwd deploy/update-service
 
           rm -rf deploy/update-service/.vercel
+
+      - name: Publish channel manifests to EdgeOne (git deploy)
+        shell: bash
+        env:
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+          ACTION: ${{ inputs.action }}
+          CHANNEL: ${{ steps.prepare.outputs.write_channel }}
+        run: |
+          scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
+            "chore(ota): ${ACTION} ${CHANNEL} manifest for EdgeOne"
 
       - name: Verify production channel after rollout
         shell: bash

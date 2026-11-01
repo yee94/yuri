@@ -432,6 +432,15 @@ jobs:
 
           rm -rf deploy/update-service/.vercel
 
+      - name: Publish channel manifests to EdgeOne (git deploy)
+        shell: bash
+        env:
+          CHANNEL: ${{ needs.release-plan.outputs.channel }}
+          VERSION: ${{ needs.release-plan.outputs.version }}
+        run: |
+          scripts/mobile-ota/commit-edgeone-manifests.sh /tmp/ota-snapshot \
+            "chore(ota): publish ${CHANNEL} manifest ${VERSION} for EdgeOne"
+
       - name: Verify production OTA manifest + bundle
         shell: bash
         env:

@@ -90,10 +90,17 @@ writeFileSync(path.join(outputDirectory, 'health.json'), `${JSON.stringify({
 }, null, 2)}\n`);
 
 // EdgeOne serves /ota/* through the edge reverse proxy (edge-functions/ota)
-// and static assets shadow edge functions there — so the EdgeOne build must
-// not emit the seed tree. Vercel serves /ota/* as real static files.
+// and static assets shadow edge functions there. The EdgeOne build therefore
+// emits only the small channel manifests (committed by CI) so domestic clients
+// never wait on Vercel; bundle zips stay un-emitted and keep flowing through
+// the proxy. Vercel serves the whole /ota/ tree as real static files.
 const skipOtaCopy = process.env.YURI_UPDATE_SKIP_OTA_COPY === '1';
+const otaChannelsOnly = process.env.YURI_UPDATE_OTA_CHANNELS_ONLY === '1';
 if (!skipOtaCopy) {
   const otaSource = path.join(projectRoot, 'ota');
-  cpSync(otaSource, path.join(outputDirectory, 'ota'), { recursive: true });
+  if (otaChannelsOnly) {
+    cpSync(path.join(otaSource, 'channels'), path.join(outputDirectory, 'ota', 'channels'), { recursive: true });
+  } else {
+    cpSync(otaSource, path.join(outputDirectory, 'ota'), { recursive: true });
+  }
 }
