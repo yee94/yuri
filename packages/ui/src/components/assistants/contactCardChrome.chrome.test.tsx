@@ -92,7 +92,7 @@ describe('contact card width', () => {
     const surface = readFileSync(join(here, 'AssistantConversationSurface.tsx'), 'utf8')
     expect(surface).toContain('flex min-w-0 flex-col gap-1.5')
     expect(surface).toContain('max-w-[min(84%,34rem)] items-start')
-    expect(surface).toContain('mr-2.5 flex w-8 shrink-0 justify-center pt-0.5')
+    expect(surface).toContain('mr-2.5 flex w-9 shrink-0 justify-center pt-0.5')
   })
 
   test.skipIf(!resolveChrome())('measures production cards and CSS at phone widths with enlarged text', async () => {

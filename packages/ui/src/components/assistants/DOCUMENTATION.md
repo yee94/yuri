@@ -321,6 +321,28 @@ Desktop sidebar rows and mobile catalog cards share `getAssistantMessagePreview`
 
 Preview freshness follows the existing snapshot revision/events, foreground reconcile, and focus/reconnect query path. List rows add zero history requests, transcript-cache reads, or message subscriptions. Creation, selection, avatars, working dots, and context/long-press edit/delete ownership remain unchanged.
 
+## Phone reading gestures
+
+On `isMobile` surfaces the contact surface owns one capture-phase pointer
+listener set (`contactMessageGesture.ts`), mounted with the transcript and never
+re-rendered per frame. A long press (500 ms, ≤10 px slop, cancelled by scroll or
+pointer cancel) selects the pressed bubble's whole text through the native
+selection API, so the OS handles and copy callout stay native. A host-popover
+`assistants.contact.selectAll` chip sits above that selection for 400 ms after
+the press ends; tapping the just-selected bubble widens to the whole message.
+The chip uses shadow DOM so the global button `user-select: none` rule cannot
+collapse the selection, and its presses never move the document selection.
+
+A double tap (two taps within 280 ms and 10 px, landing on ordinary bubble text)
+opens `AssistantMessageReadingView`: a fullscreen, scrollable reading copy at
+large type on the plain background, closed by its button or Escape. Links,
+code, images, video, cards and image-only bubbles never trigger it. The reading
+view renders the bubble's raw Markdown as a separate instance at the surface
+root — transcript rows are never cloned, re-parented or remounted, so the
+fullscreen view does not disturb scroll anchors or the open text selection.
+Its own visibility state is local to the surface; closing leaves the transcript
+exactly as it was. Focused coverage: `contactMessageGesture.test.ts`.
+
 ## Shared unread and read visibility
 
 Desktop and mobile mark-all-read use the shared double-check icon action in the catalog header, immediately before the add button. Desktop uses a ghost icon button; mobile uses the shared glass icon button. The translated action remains available through its accessible label and title, not visible text or a separate row. When unread reaches zero the compact button is disabled and hidden with `visibility: hidden`, retaining its horizontal space so read updates do not shift the header or list.

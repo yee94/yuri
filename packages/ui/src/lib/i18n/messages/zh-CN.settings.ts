@@ -2222,6 +2222,8 @@ export const settingsDict = {
   'assistants.contact.peer.from': '来自 {name}',
   'assistants.contact.peer.unknown': '另一位助理',
   'assistants.contact.peer.aria': '来自 {name} 的消息',
+  'assistants.contact.selectAll': '全选',
+  'assistants.contact.reading.close': '关闭',
   'assistants.contact.card.assistant.aria': '助理 {name}',
   'assistants.contact.card.schedule.aria': '定时任务 {name}',
   'assistants.contact.addFiles': '添加文件',

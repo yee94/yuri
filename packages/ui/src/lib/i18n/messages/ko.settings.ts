@@ -2222,6 +2222,8 @@ export const settingsDict = {
   'assistants.contact.peer.from': '{name}에게서',
   'assistants.contact.peer.unknown': '다른 어시스턴트',
   'assistants.contact.peer.aria': '{name}의 메시지',
+  'assistants.contact.selectAll': '모두 선택',
+  'assistants.contact.reading.close': '닫기',
   'assistants.contact.card.assistant.aria': '어시스턴트 {name}',
   'assistants.contact.card.schedule.aria': '예약 작업 {name}',
   'assistants.contact.addFiles': '파일 첨부',

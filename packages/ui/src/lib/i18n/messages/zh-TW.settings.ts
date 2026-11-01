@@ -2222,6 +2222,8 @@
   'assistants.contact.peer.from': '來自 {name}',
   'assistants.contact.peer.unknown': '另一位助理',
   'assistants.contact.peer.aria': '來自 {name} 的訊息',
+  'assistants.contact.selectAll': '全選',
+  'assistants.contact.reading.close': '關閉',
   'assistants.contact.card.assistant.aria': '助理 {name}',
   'assistants.contact.card.schedule.aria': '排程任務 {name}',
   'assistants.contact.addFiles': '新增檔案',

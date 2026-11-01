@@ -71,7 +71,7 @@ export function MobileChatScreen({
   return (
     <main
       className={cn(
-        'relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground',
+        'mobile-chat-screen relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground',
         className,
       )}
     >

@@ -33,6 +33,8 @@ export type MobileDetailNavigationProps = {
    * escape the header stacking context, so re-tap-to-close needs this.
    */
   elevated?: boolean;
+  /** Opt in to scroll-driven collapse owned by `useMobileComposerSwap`. */
+  collapsible?: boolean;
 };
 
 /** Shared safe-area navigation for mobile secondary pages. */
@@ -47,12 +49,14 @@ export function MobileDetailNavigation({
   sticky = false,
   overlay = false,
   elevated = false,
+  collapsible = false,
 }: MobileDetailNavigationProps) {
   const trailingCount = Array.isArray(trailing) ? trailing.filter(Boolean).length : trailing ? 1 : 0;
   const actionElevated = elevated || actions.some((action) => action.elevated);
 
   return (
     <header
+      data-yuri-collapsible-header={collapsible ? 'true' : undefined}
       className={cn(
         'yuri-mobile-detail-navigation relative shrink-0 pt-[max(0.25rem,var(--yuri-safe-area-top,0px))]',
         sticky && 'yuri-mobile-detail-navigation-sticky',

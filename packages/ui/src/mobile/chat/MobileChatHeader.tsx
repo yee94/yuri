@@ -38,6 +38,7 @@ export function MobileChatHeader({
       backAriaLabel={t('header.actions.backAria')}
       onBack={handleBack}
       overlay
+      collapsible
       elevated={elevated || menuOpen}
       trailing={trailing}
       actions={[{

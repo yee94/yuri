@@ -2222,6 +2222,8 @@ export const settingsDict = {
   'assistants.contact.peer.from': '{name} から',
   'assistants.contact.peer.unknown': '別のアシスタント',
   'assistants.contact.peer.aria': '{name} からのメッセージ',
+  'assistants.contact.selectAll': 'すべて選択',
+  'assistants.contact.reading.close': '閉じる',
   'assistants.contact.card.assistant.aria': 'アシスタント {name}',
   'assistants.contact.card.schedule.aria': 'スケジュール {name}',
   'assistants.contact.addFiles': 'ファイルを添付',

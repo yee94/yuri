@@ -55,6 +55,17 @@ import { AssistantAssistantCard } from './AssistantAssistantCard'
 import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
+import { ContactMessageReadingLayer } from './ContactMessageReadingLayer'
+import {
+  CONTACT_DOUBLE_TAP_MS,
+  CONTACT_LONG_PRESS_MS,
+  CONTACT_TAP_SLOP_PX,
+  createContactDoubleTapDetector,
+  createContactLongPressToolbar,
+  selectContactMessage,
+  type ContactLongPressToolbar,
+  type ContactSelectionRange,
+} from './contactMessageGesture'
 import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
 import { useAssistantContactWorkingStore } from './assistantWorking'
 import { useAssistantContactAutoFollow } from './useAssistantContactAutoFollow'
@@ -80,6 +91,9 @@ const isInternalSettleText = (text: string) => text.trim().startsWith('yuri.sett
 
 const isContactError = (message: AssistantContactMessage) => message.status === 'error'
   || (message.status === 'failed' && message.messageID.endsWith(':preview:failed'))
+
+/** Raw bubble Markdown, captured for the fullscreen reading view. */
+const contactGestureSource = (text: string): string => (isInternalSettleText(text) ? '' : text)
 
 // Live previews are text-only, so only text bubbles share the turn/bubble key
 // that lets a preview hand its DOM to the authoritative row. Cards and files in
@@ -158,6 +172,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const [sendError, setSendError] = React.useState<string | null>(null)
   // Shared image/mermaid preview — same ToolOutputDialog contract as ChatMessage.
   const [popupContent, setPopupContent] = React.useState<ToolPopupContent>({ open: false, title: '', content: '' })
+  // Reading-view identity; the transcript bubble keeps its own DOM.
+  const [reading, setReading] = React.useState<{ key: string; text: string } | null>(null)
   const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen)
   const handleShowPopup = useEvent((content: ToolPopupContent) => {
     // Only viewer-capable content opens here; the contact surface has no tool popups.
@@ -252,7 +268,132 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     contentRevision: `${transcript[0]?.messageID}:${transcript.length}:${streamingTextLength}:${contactQuery.isFetchingPreviousPage}:${contactQuery.hasPreviousPage}:${contactQuery.isFillingMessageGap}`,
     onLoadEarlier: () => { void loadEarlier(true) },
   })
+  const closeReading = React.useCallback(() => setReading(null), [])
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
+  const selectAllLabelRef = React.useRef('')
+  selectAllLabelRef.current = t('assistants.contact.selectAll')
+  const toolbarRef = React.useRef<ContactLongPressToolbar | null>(null)
+  const longPressRef = React.useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false })
+
+  // Phone gestures live on the transcript: a long press selects the whole
+  // bubble, a double tap opens the fullscreen reading view.
+  React.useEffect(() => {
+    if (!isMobile) return
+    const surface = surfaceRef.current
+    const doc = surface?.ownerDocument
+    const win = doc?.defaultView
+    if (!surface || !doc || !win) return
+    const hideToolbar = () => toolbarRef.current?.hide()
+    const cancelLongPress = () => {
+      if (longPressRef.current.timer !== null) win.clearTimeout(longPressRef.current.timer)
+      longPressRef.current.timer = null
+    }
+    const selectWholeBubble: ContactSelectionRange = (container) => {
+      const next = doc.createRange()
+      next.selectNodeContents(container)
+      return next
+    }
+    let selectedBubble: HTMLElement | null = null
+    const toolbar = createContactLongPressToolbar(doc, selectAllLabelRef.current, () => {
+      const bubble = selectedBubble
+      if (bubble) selectContactMessage(toolbar, bubble, selectWholeBubble)
+    })
+    toolbarRef.current = toolbar
+    const detector = createContactDoubleTapDetector((bubble: HTMLElement) => {
+      hideToolbar()
+      win.getSelection()?.removeAllRanges()
+      const messageID = bubble.closest('[data-message-id]')?.getAttribute('data-message-id')
+      const text = bubble.dataset.contactSource ?? ''
+      if (!messageID || !text) return
+      setReading({ key: `${messageID}:reading:${bubble.dataset.contactPartIndex ?? '0'}`, text })
+    })
+    let pressOrigin: { x: number; y: number } | null = null
+    let heldBubble: HTMLElement | null = null
+    let heldPoint: { x: number; y: number; t: number } | null = null
+    const moved = (event: PointerEvent) => !pressOrigin
+      || Math.abs(event.clientX - pressOrigin.x) > CONTACT_TAP_SLOP_PX
+      || Math.abs(event.clientY - pressOrigin.y) > CONTACT_TAP_SLOP_PX
+    // A tap on the bubble just selected widens the selection to the whole
+    // message, matching WeChat's long-press then "select all" step.
+    const extendToWholeMessage = (bubble: HTMLElement) => {
+      const selection = doc.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      if (!selection || !range || !range.toString().trim() || !bubble.contains(range.commonAncestorContainer)) return false
+      selection.removeAllRanges()
+      selection.addRange(selectWholeBubble(bubble))
+      return true
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse') return
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest('[data-assistant-contact-select-toolbar]')) {
+        cancelLongPress()
+        return
+      }
+      const bubble = target?.closest<HTMLElement>('[data-assistant-contact-text]')
+      if (!bubble || bubble.closest('[data-assistant-contact-reading]')) return
+      // Media bubbles render no text; only the selection they already own widens.
+      if (bubble.hasAttribute('data-assistant-contact-media')) return
+      heldBubble = bubble
+      heldPoint = { x: event.clientX, y: event.clientY, t: event.timeStamp }
+      cancelLongPress()
+      hideToolbar()
+      pressOrigin = { x: event.clientX, y: event.clientY }
+      longPressRef.current.fired = false
+      longPressRef.current.timer = win.setTimeout(() => {
+        longPressRef.current.timer = null
+        longPressRef.current.fired = true
+        // A held first tap of a double tap keeps its own meaning.
+        if (detector.register({ x: event.clientX, y: event.clientY, t: performance.now() }, null)) return
+        selectedBubble = bubble
+        selectContactMessage(toolbar, bubble, selectWholeBubble)
+      }, CONTACT_LONG_PRESS_MS)
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      // Touch jitter stays a press; scrolling must win over the pending long press.
+      if (longPressRef.current.timer !== null && moved(event)) cancelLongPress()
+    }
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse') return
+      const pending = longPressRef.current.timer !== null
+      const dragged = moved(event)
+      const held = !pending && longPressRef.current.fired ? heldPoint : null
+      const tappedBubble = heldBubble
+      cancelLongPress()
+      pressOrigin = null
+      heldPoint = null
+      heldBubble = null
+      // Same bubble and no drag: a tap right after selecting widens to the message.
+      if (held && tappedBubble && tappedBubble === selectedBubble && !dragged && event.timeStamp - held.t < CONTACT_DOUBLE_TAP_MS && extendToWholeMessage(tappedBubble)) return
+      if (pending && !longPressRef.current.fired && !dragged) {
+        detector.register({ x: event.clientX, y: event.clientY, t: performance.now() }, event.target)
+      }
+    }
+    const handleSelectionChange = () => {
+      const selection = doc.getSelection()
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) hideToolbar()
+    }
+    surface.addEventListener('pointerdown', handlePointerDown, true)
+    surface.addEventListener('pointermove', handlePointerMove, true)
+    surface.addEventListener('pointerup', handlePointerUp, true)
+    surface.addEventListener('pointercancel', cancelLongPress, true)
+    doc.addEventListener('selectionchange', handleSelectionChange)
+    return () => {
+      cancelLongPress()
+      surface.removeEventListener('pointerdown', handlePointerDown, true)
+      surface.removeEventListener('pointermove', handlePointerMove, true)
+      surface.removeEventListener('pointerup', handlePointerUp, true)
+      surface.removeEventListener('pointercancel', cancelLongPress, true)
+      doc.removeEventListener('selectionchange', handleSelectionChange)
+      toolbarRef.current = null
+      toolbar.destroy()
+    }
+  }, [isMobile, assistant.id])
+
+  React.useEffect(() => {
+    toolbarRef.current?.hide()
+    setReading(null)
+  }, [assistant.id, transportIdentity])
   const composerRef = React.useRef<HTMLElement | null>(null)
   const pendingSendFlightRef = React.useRef<{ messageID: string; source: ContactSendFlightSource } | null>(null)
   // The morph owns the flown row's entrance; the generic append fade must not also run.
@@ -523,7 +664,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const optimisticByID = new Map(scopedOptimisticTurns.map((turn) => [turn.messageID, turn]))
 
   return (
-    <div ref={surfaceRef} className="flex min-h-0 flex-1 flex-col bg-background">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div ref={surfaceRef} className="flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
         className={cn(
@@ -701,6 +843,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                             key={`${renderKey}:text:${index}`}
                             aria-label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
                             data-assistant-contact-text=""
+                            data-assistant-contact-part-index={index}
+                            data-assistant-contact-source={contactGestureSource(part.text)}
                             data-assistant-contact-media={imageOnly || undefined}
                             className={cn(
                               'min-w-0 max-w-full [overflow-wrap:anywhere] rounded-[1.35rem] typography-markdown leading-6',
@@ -779,6 +923,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
           </div>
         )}
       </div>
+      </div>
       <footer
         ref={composerRef}
         className="relative z-10 shrink-0 bg-background pt-1"
@@ -840,6 +985,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
           </div>
         </form>
       </footer>
+      <ContactMessageReadingLayer reading={reading} onClose={closeReading} />
       {popupContent.open ? (
         <React.Suspense fallback={null}>
           <ToolOutputDialog

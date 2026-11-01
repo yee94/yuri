@@ -2222,6 +2222,8 @@ export const settingsDict = {
   'assistants.contact.peer.from': 'De {name}',
   'assistants.contact.peer.unknown': 'Un autre assistant',
   'assistants.contact.peer.aria': 'Message de {name}',
+  'assistants.contact.selectAll': 'Tout sélectionner',
+  'assistants.contact.reading.close': 'Fermer',
   'assistants.contact.card.assistant.aria': 'Assistant {name}',
   'assistants.contact.card.schedule.aria': 'Tâche planifiée {name}',
   'assistants.contact.addFiles': 'Joindre des fichiers',
