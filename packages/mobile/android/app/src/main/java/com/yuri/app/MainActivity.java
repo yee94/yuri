@@ -26,6 +26,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(YuriHapticsPlugin.class);
         registerPlugin(YuriUpdateConfigPlugin.class);
         registerPlugin(YuriScreenAwakePlugin.class);
+        registerPlugin(YuriOrientationPlugin.class);
         registerPlugin(YuriNavigationPlugin.class);
         registerPlugin(YuriSharePlugin.class);
         registerPlugin(YuriExternalBrowserPlugin.class);

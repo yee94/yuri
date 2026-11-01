@@ -130,9 +130,9 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     : error || capability.error || state === 'closed' ? t('remoteDesktop.failed')
     : t('remoteDesktop.connecting');
   return createPortal(
-    <div ref={pageRef} tabIndex={-1} data-remote-desktop-page className="yuri-keyboard-inset-surface yuri-keyboard-inset-snap fixed inset-0 z-[150] overflow-hidden bg-background text-foreground outline-none">
+    <div ref={pageRef} tabIndex={-1} data-remote-desktop-page className="yuri-keyboard-inset-surface yuri-keyboard-inset-snap fixed inset-0 z-[150] overflow-clip bg-background text-foreground outline-none">
       <main aria-label={instanceName ? `${t('remoteDesktop.title')} · ${instanceName}` : t('remoteDesktop.title')}
-        className="absolute left-0 top-0 flex flex-col overflow-hidden bg-background"
+        className="absolute left-0 top-0 flex flex-col overflow-clip bg-background"
         style={{ width: orientation.width, height: orientation.height, transformOrigin: 'top left',
           ...{
             '--desktop-safe-top': `env(safe-area-inset-${orientation.rotation === 90 ? 'right' : orientation.rotation === -90 ? 'left' : 'top'}, 0px)`,
@@ -142,8 +142,8 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
           },
           transform: orientation.rotation === 90 ? `translateX(${orientation.height}px) rotate(90deg)`
             : orientation.rotation === -90 ? `translateY(${orientation.width}px) rotate(-90deg)` : undefined }}>
-       <div data-remote-desktop-stage-region className="relative min-h-0 flex-1 overflow-hidden">
-       <div ref={viewportRef} className="absolute inset-0 touch-none overflow-hidden bg-background"
+       <div data-remote-desktop-stage-region className="relative min-h-0 flex-1 overflow-clip">
+       <div ref={viewportRef} className="absolute inset-0 touch-none overflow-clip bg-background"
         aria-label={t('remoteDesktop.screen')}
         onPointerDown={event => {
           if (!live) return;

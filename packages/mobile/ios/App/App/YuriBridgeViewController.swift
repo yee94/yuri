@@ -175,10 +175,13 @@ class YuriBridgeViewController: CAPBridgeViewController {
         }
     }
 
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { YuriOrientationPlugin.mask }
+
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(YuriHapticsPlugin())
         bridge?.registerPluginInstance(YuriUpdateConfigPlugin())
         bridge?.registerPluginInstance(YuriScreenAwakePlugin())
+        bridge?.registerPluginInstance(YuriOrientationPlugin())
         bridge?.registerPluginInstance(YuriNavigationPlugin())
         bridge?.registerPluginInstance(YuriVirtualAssetPlugin())
         bridge?.registerPluginInstance(YuriMediaPlugin())

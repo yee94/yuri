@@ -5,6 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { I18nProvider } from '@/lib/i18n';
 import { RemoteDesktopPanel } from './RemoteDesktopPanel';
 import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } from '@/components/ui/chromeCdpHarness';
 
 const mock = vi.hoisted(() => ({
   supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(),
@@ -320,3 +324,57 @@ it('coalesces a pinch burst into one layout read and one transform write per fra
   expect(mock.query).toHaveBeenCalledTimes(queryCalls);
   expect(mock.send).not.toHaveBeenCalled();
 });
+
+it.skipIf(!resolveChrome())('clips the zoomed screen without scrollports under production mobile-pointer CSS', async () => {
+  vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
+  vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(844);
+  render();
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 844 } }]); mock.connect.mock.calls[0][0].onState('tunnel'); });
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  viewport.setPointerCapture = () => {};
+  viewport.hasPointerCapture = () => false;
+  vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 390, bottom: 844 } as DOMRect);
+  for (let tap = 0; tap < 2; tap++) {
+    act(() => viewport.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, clientX: 200, clientY: 422, bubbles: true })));
+    act(() => viewport.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 200, clientY: 422, bubbles: true })));
+  }
+  expect((viewport.firstElementChild as HTMLElement).style.transform).toContain('scale(2.5)');
+  const pageNode = document.querySelector<HTMLElement>('[data-remote-desktop-page]')!;
+  const snapshots = [pageNode.outerHTML];
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!.click());
+  snapshots.push(pageNode.outerHTML);
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
+  snapshots.push(pageNode.outerHTML);
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!.click());
+  snapshots.push(pageNode.outerHTML);
+
+  const css = await compileProductionCssAsync(join(dirname(fileURLToPath(import.meta.url)), '..'));
+  const work = mkdtempSync(join(evidenceRoot(), 'remote-desktop-overflow-'));
+  const browser = await openChromeSession({ width: 390, height: 844 });
+  try {
+    const page = await openPageSession(browser, { width: 390, height: 844, standalone: false });
+    for (const [index, markup] of snapshots.entries()) {
+      const file = join(work, `layout-${index}.html`);
+      writeFileSync(file, `<!doctype html><html class="mobile-pointer device-mobile yuri-capacitor-app yuri-platform-android"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${markup}</body></html>`);
+      await page.navigateFile(file);
+      const samples = await page.evaluate<Array<{ overflowX: string; overflowY: string; scrollTop: number }>>(`(() => {
+        const viewport = document.querySelector('div[aria-label="Remote screen"]');
+        const samples = [];
+        for (let node = viewport; node && node !== document.body; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          node.scrollTop = 60;
+          samples.push({ overflowX: style.overflowX, overflowY: style.overflowY, scrollTop: node.scrollTop });
+        }
+        return samples;
+      })()`);
+      for (const sample of samples) {
+        expect(sample.scrollTop, `snapshot ${index}: canvas must not scroll independently of gestures`).toBe(0);
+        expect(sample.overflowY, `snapshot ${index}`).toBe('clip');
+        expect(sample.overflowX, `snapshot ${index}`).toBe('clip');
+      }
+    }
+  } finally {
+    await browser.close();
+    rmSync(work, { recursive: true, force: true });
+  }
+}, 120_000);

@@ -7,11 +7,13 @@ The mobile package reuses the web build, then rewrites `mobile.html` to `index.h
 ## Runtime Model
 
 Remote desktop is a shared-UI fullscreen page with its own mobile back/history
-entry. Only this page supports portrait/landscape via page-local rotation, sensor
-events (with user-triggered permission where required) and a manual icon fallback.
-The iPhone/Android native portrait restrictions are intentionally unchanged; no
-global orientation unlock or new native plugin is used. Leaving the page restores
-the retained source view and releases sensor listeners/native composer cover.
+entry. Only this page supports portrait/landscape, switched manually by the icon.
+Shells with the `YuriOrientation` native plugin lock the real window orientation
+(so the system keyboard rotates too) and restore portrait when the page closes or
+the Android activity is destroyed; the app stays portrait everywhere else. Shells
+without the plugin (web, VS Code, older builds) fall back to page-local CSS
+rotation. Native orientation needs a native rebuild.
+Leaving the page restores the retained source view and releases the native composer cover.
 
 The contact feature is named **Bots** in English, with **Bot** for an individual
 share destination. Only English UI copy changes; other locales, contact names,
