@@ -7,7 +7,7 @@ import { RemoteDesktopPanel } from './RemoteDesktopPanel';
 import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 
 const mock = vi.hoisted(() => ({
-  supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(),
+  supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(), setZoomed: vi.fn(),
   resize: null as null | ((entries: { contentRect: { width: number; height: number } }[]) => void),
   observers: new Map<{ current: HTMLElement | null }, (entries: { contentRect: { width: number; height: number } }[]) => void>(),
 }));
@@ -24,8 +24,9 @@ let container: HTMLDivElement;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mock.supported = true; mock.enabled = true; mock.query.mockClear(); mock.send.mockClear(); mock.close.mockClear();
+  mock.setZoomed.mockClear();
   mock.observers.clear();
-  mock.connect.mockReset().mockReturnValue({ send: mock.send, close: mock.close });
+  mock.connect.mockReset().mockReturnValue({ send: mock.send, close: mock.close, setZoomed: mock.setZoomed });
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
 afterEach(() => {
@@ -319,4 +320,27 @@ it('coalesces a pinch burst into one layout read and one transform write per fra
   expect(writes).toHaveBeenCalledTimes(61);
   expect(mock.query).toHaveBeenCalledTimes(queryCalls);
   expect(mock.send).not.toHaveBeenCalled();
+  expect(mock.setZoomed.mock.calls).toEqual([[false], [true]]);
+});
+
+it('requests detail on Drag double-tap, preserves it across encoder size changes, then releases it on Fit', () => {
+  render();
+  const options = mock.connect.mock.calls[0][0];
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 844 } }]); options.onState('webrtc'); });
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  viewport.setPointerCapture = () => {};
+  viewport.hasPointerCapture = () => false;
+  vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 390, bottom: 844 } as DOMRect);
+  const tap = () => act(() => {
+    for (const type of ['pointerdown', 'pointerup']) viewport.dispatchEvent(new PointerEvent(type,
+      { pointerId: 1, clientX: 195, clientY: 422, pointerType: 'touch', bubbles: true, cancelable: true }));
+  });
+  tap(); tap();
+  expect(mock.setZoomed.mock.calls).toEqual([[false], [true]]);
+  act(() => { options.onSize(960, 540); options.onSize(1920, 1080); });
+  expect((viewport.firstElementChild as HTMLElement).style.transform).toContain('scale(2.5)');
+  expect(mock.setZoomed).toHaveBeenCalledTimes(2);
+  tap(); tap();
+  expect(mock.setZoomed.mock.calls).toEqual([[false], [true], [false]]);
+  expect(mock.connect).toHaveBeenCalledOnce();
 });

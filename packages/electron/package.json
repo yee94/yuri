@@ -47,7 +47,7 @@
     "test:preview-gateway": "vitest run ./preview-loopback-gateway.test.mjs",
     "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
     "package:preview": "YURI_DESKTOP_PROFILE=preview bun run package",
-    "type-check": "node --check ./main.mjs && node --check ./preload.mjs && node --check ./virtual-asset-protocol.mjs && node --check ./preview-loopback-gateway.mjs && node --check ./view-export.mjs && node --check ./remote-desktop.mjs && node --check ./remote-desktop-preload.cjs",
+    "type-check": "node --check ./main.mjs && node --check ./preload.mjs && node --check ./virtual-asset-protocol.mjs && node --check ./preview-loopback-gateway.mjs && node --check ./view-export.mjs && node --check ./remote-desktop.mjs && node --check ./remote-desktop-preload.cjs && node --check ./remote-desktop-capture.mjs && node --check ./remote-desktop-quality.mjs",
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
@@ -57,7 +57,9 @@
       "dist-bundle/main.mjs",
       "preload.mjs",
       "remote-desktop-preload.cjs",
-      "remote-desktop.html"
+      "remote-desktop.html",
+      "remote-desktop-capture.mjs",
+      "remote-desktop-quality.mjs"
     ],
     "extraResources": [
       {

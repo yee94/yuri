@@ -5,6 +5,7 @@ export function parseDesktopMessage(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_message');
   const { type } = value;
   if (type === 'ack' || type === 'fallback' || type === 'ping' || type === 'release') return { type };
+  if (type === 'view' && typeof value.zoomed === 'boolean') return { type, zoomed: value.zoomed };
   if (type === 'answer' && typeof value.sdp === 'string' && value.sdp.length <= 65536) return { type, sdp: value.sdp };
   if (type === 'ice' && (value.candidate === null || (typeof value.candidate === 'object'
     && typeof value.candidate.candidate === 'string' && value.candidate.candidate.length <= 2048))) {

@@ -27,7 +27,7 @@ beforeEach(async () => {
   app.post('/auth/url-token', auth.handleUrlAuthToken);
   app.use(auth.requireAuth);
   adapter = { supported: true, enabled: true, start: vi.fn(async ({ send }) => {
-    send({ type: 'ready', width: 1600, height: 900 });
+    send({ type: 'ready', width: 1600, height: 900, zoomQuality: true });
     return { handle: vi.fn(), close: vi.fn() };
   }), stop: vi.fn() };
   server = http.createServer(app);
@@ -72,6 +72,8 @@ it('allows a scoped device, handles input and pong, rejects simultaneous control
   const desktop = await adapter.start.mock.results[0].value;
   ws.send(JSON.stringify({ type: 'pointer', action: 'click', x: 0.4, y: 0.6 }));
   await vi.waitFor(() => expect(desktop.handle).toHaveBeenCalledWith({ type: 'pointer', action: 'click', x: 0.4, y: 0.6 }));
+  ws.send(JSON.stringify({ type: 'view', zoomed: true, maxBitrate: 999999999 }));
+  await vi.waitFor(() => expect(desktop.handle).toHaveBeenCalledWith({ type: 'view', zoomed: true }));
   const pong = once(ws, 'message'); ws.send('{"type":"ping"}');
   expect(JSON.parse((await pong)[0].toString()).type).toBe('pong');
   expect(await rejected(socket())).toBe(409);
@@ -89,6 +91,22 @@ it('keeps an early SDP answer until asynchronous capture startup finishes', asyn
   ws.send('{"type":"answer","sdp":"answer"}');
   await vi.waitFor(() => expect(finish).toBeDefined()); finish();
   await vi.waitFor(() => expect(handle).toHaveBeenCalledWith({ type: 'answer', sdp: 'answer' }));
+});
+
+it('does not forward view commands into an older native adapter that did not advertise support', async () => {
+  const handle = vi.fn();
+  adapter.start.mockImplementation(async ({ send, zoomQuality }) => {
+    expect(zoomQuality).toBe(true);
+    send({ type: 'ready', width: 1600, height: 900 });
+    return { handle, close: vi.fn() };
+  });
+  const ws = socket(); await once(ws, 'open');
+  ws.send('{"type":"view","zoomed":true}');
+  const pong = new Promise(resolve => ws.on('message', data => { if (JSON.parse(data.toString()).type === 'pong') resolve(); }));
+  ws.send('{"type":"ping"}');
+  await pong;
+  await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledOnce());
+  expect(handle).not.toHaveBeenCalled();
 });
 it('aborts pending native consent on disconnect and frees the single capture slot', async () => {
   let signal;
@@ -119,6 +137,8 @@ it('carries screen frames and validated input through the real Relay WS dispatch
     await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsText, 2, Buffer.from('{"type":"key","key":"Enter"}')));
     const desktop = await adapter.start.mock.results[0].value;
     await vi.waitFor(() => expect(desktop.handle).toHaveBeenCalledWith({ type: 'key', key: 'Enter' }));
+    await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsText, 2, Buffer.from('{"type":"view","zoomed":true}')));
+    await vi.waitFor(() => expect(desktop.handle).toHaveBeenCalledWith({ type: 'view', zoomed: true }));
     const jpeg = Buffer.alloc(200000, 17);
     adapter.start.mock.calls[0][0].send(jpeg);
     let reassembled;

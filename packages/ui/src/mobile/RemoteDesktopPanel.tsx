@@ -47,6 +47,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const frameRef = React.useRef<number | null>(null);
   const moves = React.useRef(new Map<number, { x: number; y: number }>());
   const activePointers = React.useRef(new Set<number>());
+  const zoomedRef = React.useRef(false);
   const send = useEvent((input: DesktopInput) => { connection.current?.send(input); });
   const getMode = useEvent(() => mode);
   const [gestures] = React.useState(() => createDesktopGestures({
@@ -54,6 +55,11 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     send,
     mode: getMode,
     apply: (value, settle) => {
+      const zoomed = value.scale > (zoomedRef.current ? 1.01 : 1.05);
+      if (zoomed !== zoomedRef.current) {
+        zoomedRef.current = zoomed;
+        connection.current?.setZoomed(zoomed);
+      }
       if (!stageRef.current) return;
       stageRef.current.style.transition = settle && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
         ? 'transform 180ms ease-out' : 'none';
@@ -110,6 +116,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     if (!capability.data?.supported || !capability.data.enabled || !videoRef.current || !imageRef.current) return;
     const active = connectRemoteDesktop({ ...scope, video: videoRef.current, image: imageRef.current, onSize: handleSize, onState: handleState });
     connection.current = active;
+    active.setZoomed(zoomedRef.current);
     return () => { active.close(); connection.current = null; };
   }, [capability.data?.supported, capability.data?.enabled, scope, attempt, handleSize, handleState]);
   React.useEffect(() => () => { flushMoves(); gestures.reset(); }, [flushMoves, gestures]);
