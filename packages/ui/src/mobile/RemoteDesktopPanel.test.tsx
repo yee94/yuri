@@ -79,13 +79,31 @@ it('maps Cursor touches and pinch without click leakage, then pans locally in Dr
   pointer('pointerdown', 1, 200, 300); pointer('pointermove', 1, 200, 350); pointer('pointerup', 1, 200, 350);
   expect(mock.send).not.toHaveBeenCalled();
 });
-it('keeps gamepad-style icon controls outside the pointer surface without a toolbar or protocol labels', () => {
+it('blocks native touch panning on the remote viewport, like image preview, and cleans up on close', () => {
+  render();
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  const nativeMove = () => new Event('touchmove', { bubbles: true, cancelable: true });
+  const move = nativeMove();
+  viewport.dispatchEvent(move);
+  expect(move.defaultPrevented).toBe(true);
+  const keyboard = document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!;
+  const controlMove = nativeMove();
+  keyboard.dispatchEvent(controlMove);
+  expect(controlMove.defaultPrevented).toBe(false);
+  expect(() => viewport.dispatchEvent(new Event('touchmove', { cancelable: false }))).not.toThrow();
+  act(() => root.render(<></>));
+  const afterClose = nativeMove();
+  viewport.dispatchEvent(afterClose);
+  expect(afterClose.defaultPrevented).toBe(false);
+});
+it('opens a full-width keyboard footer outside the pointer surface with icon-only navigation keys', () => {
   render();
   const options = mock.connect.mock.calls[0][0];
   act(() => options.onState('webrtc'));
   const keyboard = document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!;
   const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
   expect(keyboard.getAttribute('aria-expanded')).toBe('false');
+  expect(document.querySelector('footer')).toBeNull();
   expect(document.body.textContent).not.toContain('Scroll mode');
   expect(document.body.textContent).not.toContain('WebRTC');
   expect(document.querySelector('button[aria-label="Fit screen"]')).toBeNull();
@@ -102,6 +120,19 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
   act(() => keyboard.click());
   expect(keyboard.getAttribute('aria-expanded')).toBe('true');
   expect(keyboard.classList.contains('yuri-mobile-inverse-action')).toBe(true);
+  const footer = document.querySelector<HTMLElement>('footer[data-remote-desktop-keyboard]')!;
+  expect(footer.parentElement?.tagName).toBe('MAIN');
+  expect(footer.classList.contains('w-full')).toBe(true);
+  expect(footer.className).not.toMatch(/absolute|fixed|rounded/);
+  expect(document.querySelector('[data-remote-desktop-stage-region]')?.contains(footer)).toBe(false);
+  for (const key of ['Escape', 'Tab', 'Backspace', 'Enter', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight']) {
+    const button = footer.querySelector<HTMLButtonElement>(`button[aria-label="Press ${key}"]`)!;
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.textContent).toBe('');
+    expect(button.title).toBe(`Press ${key}`);
+    act(() => button.click());
+    expect(mock.send).toHaveBeenLastCalledWith({ type: 'key', key });
+  }
   const input = document.querySelector('input')!;
   expect(viewport.contains(input)).toBe(false);
   act(() => {
@@ -112,6 +143,7 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
   expect(mock.send).toHaveBeenLastCalledWith({ type: 'text', text: 'hello' });
   act(() => keyboard.click());
   expect(document.querySelector('input')).toBeNull();
+  expect(document.querySelector('footer')).toBeNull();
   expect(keyboard.classList.contains('yuri-mobile-inverse-action')).toBe(false);
   expect(mock.connect).toHaveBeenCalledTimes(1);
   act(() => options.onState('tunnel'));

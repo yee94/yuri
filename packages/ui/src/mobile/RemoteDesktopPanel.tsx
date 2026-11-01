@@ -4,6 +4,7 @@ import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/icon/Icon';
+import type { IconName } from '@/components/icon/icons';
 import { holdNativeComposerCover } from '@/lib/nativeComposerCover';
 import { mobileBackNavigationCoordinator, useMobileBackRoute } from './mobileBackNavigation';
 import { useI18n } from '@/lib/i18n';
@@ -13,6 +14,17 @@ import { createDesktopGestures, type DesktopInteractionMode, type DesktopViewpor
 import { desktopLocalPoint } from '@/lib/remote-desktop/orientation';
 import { useDesktopOrientation } from '@/lib/remote-desktop/useDesktopOrientation';
 import { useRemoteDesktopCapability } from '@/queries/remoteDesktopQueries';
+
+const navigationKeys: { key: string; icon: IconName }[] = [
+  { key: 'Escape', icon: 'corner-up-left' },
+  { key: 'Tab', icon: 'arrow-right-to-line' },
+  { key: 'Backspace', icon: 'delete-back' },
+  { key: 'Enter', icon: 'corner-down-left' },
+  { key: 'ArrowLeft', icon: 'arrow-left' },
+  { key: 'ArrowUp', icon: 'arrow-up' },
+  { key: 'ArrowDown', icon: 'arrow-down' },
+  { key: 'ArrowRight', icon: 'arrow-right' },
+];
 
 function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void; instanceName?: string }) {
   const { t } = useI18n();
@@ -83,6 +95,10 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     geometry.current = { ...geometry.current, width: entry.contentRect.width, height: entry.contentRect.height };
     gestures.reset();
   });
+  // Match image preview: Android can start native panning on transformed layers despite touch-action.
+  useEventListener('touchmove', event => {
+    if (event.cancelable) event.preventDefault();
+  }, viewportRef, { passive: false });
   useEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') stop(); }, () => document);
   React.useEffect(() => {
     if (!capability.data?.supported || !capability.data.enabled || !videoRef.current || !imageRef.current) return;
@@ -110,7 +126,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   return createPortal(
     <div ref={pageRef} tabIndex={-1} data-remote-desktop-page className="yuri-keyboard-inset-surface yuri-keyboard-inset-snap fixed inset-0 z-[150] overflow-hidden bg-background text-foreground outline-none">
       <main aria-label={instanceName ? `${t('remoteDesktop.title')} · ${instanceName}` : t('remoteDesktop.title')}
-        className="absolute left-0 top-0 overflow-hidden bg-background"
+        className="absolute left-0 top-0 flex flex-col overflow-hidden bg-background"
         style={{ width: orientation.width, height: orientation.height, transformOrigin: 'top left',
           ...{
             '--desktop-safe-top': `env(safe-area-inset-${orientation.rotation === 90 ? 'right' : orientation.rotation === -90 ? 'left' : 'top'}, 0px)`,
@@ -120,7 +136,8 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
           },
           transform: orientation.rotation === 90 ? `translateX(${orientation.height}px) rotate(90deg)`
             : orientation.rotation === -90 ? `translateY(${orientation.width}px) rotate(-90deg)` : undefined }}>
-      <div ref={viewportRef} className="absolute inset-0 touch-none overflow-hidden bg-background"
+       <div data-remote-desktop-stage-region className="relative min-h-0 flex-1 overflow-hidden">
+       <div ref={viewportRef} className="absolute inset-0 touch-none overflow-hidden bg-background"
         aria-label={t('remoteDesktop.screen')}
         onPointerDown={event => {
           if (!live) return;
@@ -161,21 +178,6 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
       </div>
       <p className="sr-only">{t('remoteDesktop.hint')}</p>
       <div className="pointer-events-none absolute left-[max(0.75rem,var(--desktop-safe-left))] right-[max(0.75rem,var(--desktop-safe-right))] bottom-[max(0.75rem,var(--desktop-safe-bottom))] top-[calc(4rem+var(--desktop-safe-top))] flex flex-col items-end justify-end gap-3">
-        {keyboardOpen && <div className="pointer-events-auto min-h-0 w-80 max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-border/40 bg-[var(--surface-elevated)]/90 p-3 shadow-lg backdrop-blur-md">
-        <form className="flex gap-2" onSubmit={event => {
-          event.preventDefault(); if (text && live) { send({ type: 'text', text }); setText(''); }
-        }}>
-          <Input className="min-w-0" value={text} maxLength={1024} onChange={event => setText(event.target.value)} placeholder={t('remoteDesktop.text')} aria-label={t('remoteDesktop.text')} disabled={!live} autoComplete="off" />
-          <Button type="submit" size="icon" disabled={!live || !text} aria-label={t('remoteDesktop.send')}><Icon name="send-plane-2" className="size-4" /></Button>
-        </form>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {['Escape', 'Tab', 'Backspace', 'Enter', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'].map(key => (
-            <Button key={key} size="xs" variant="ghost" disabled={!live} onClick={() => send({ type: 'key', key })} aria-label={t('remoteDesktop.pressKey', { key })}>
-              {{ Escape: 'Esc', Backspace: '⌫', Enter: '↵', ArrowLeft: '←', ArrowUp: '↑', ArrowDown: '↓', ArrowRight: '→' }[key] ?? key}
-            </Button>
-          ))}
-        </div>
-        </div>}
         <div className="flex w-full shrink-0 items-end justify-between gap-3">
           <div className="pointer-events-auto flex gap-3">
             <Button size="mobileIcon" variant="mobileGlass" className={mode === 'drag' ? 'yuri-mobile-inverse-action' : undefined}
@@ -189,8 +191,25 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
             disabled={!live} aria-label={t('remoteDesktop.text')} title={t('remoteDesktop.text')} aria-pressed={keyboardOpen} aria-expanded={keyboardOpen}
             onClick={() => setKeyboardOpen(value => !value)}><Icon name="keyboard" className="size-5" /></Button>
         </div>
-      </div>
-      </main>
+       </div>
+       </div>
+       {keyboardOpen && <footer data-remote-desktop-keyboard className="max-h-[50%] w-full shrink-0 overflow-y-auto overscroll-contain border-t border-border bg-[var(--surface-elevated)] pt-3 pl-[max(0.75rem,var(--desktop-safe-left))] pr-[max(0.75rem,var(--desktop-safe-right))] pb-[max(0.75rem,var(--desktop-safe-bottom))]">
+         <form className="flex gap-2" onSubmit={event => {
+           event.preventDefault(); if (text && live) { send({ type: 'text', text }); setText(''); }
+         }}>
+           <Input className="min-w-0 flex-1" value={text} maxLength={1024} onChange={event => setText(event.target.value)} placeholder={t('remoteDesktop.text')} aria-label={t('remoteDesktop.text')} disabled={!live} autoComplete="off" />
+           <Button type="submit" size="icon" disabled={!live || !text} aria-label={t('remoteDesktop.send')}><Icon name="send-plane-2" className="size-4" /></Button>
+         </form>
+          <div className="mt-2 grid grid-cols-4 gap-1 min-[360px]:grid-cols-8">
+           {navigationKeys.map(({ key, icon }) => (
+             <Button key={key} size="icon" variant="ghost" className="w-full" disabled={!live} onClick={() => send({ type: 'key', key })}
+               aria-label={t('remoteDesktop.pressKey', { key })} title={t('remoteDesktop.pressKey', { key })}>
+               <Icon name={icon} className="size-4" />
+             </Button>
+           ))}
+         </div>
+       </footer>}
+       </main>
     </div>, document.body,
   );
 }
