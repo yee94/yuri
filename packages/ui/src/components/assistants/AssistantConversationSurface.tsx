@@ -56,8 +56,9 @@ import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { ContactMessageReadingLayer } from './ContactMessageReadingLayer'
+import { ContactMessageCopyLayer } from './ContactMessageCopyLayer'
 import { resolveContactReadingBubble } from './contactMessageGesture'
-import { bindDoubleTap } from '@/lib/touch-gestures'
+import { bindDoubleTap, bindLongPress } from '@/lib/touch-gestures'
 import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
 import { useAssistantContactWorkingStore } from './assistantWorking'
 import { useAssistantContactAutoFollow } from './useAssistantContactAutoFollow'
@@ -166,6 +167,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const [popupContent, setPopupContent] = React.useState<ToolPopupContent>({ open: false, title: '', content: '' })
   // Reading-view identity; the transcript bubble keeps its own DOM.
   const [reading, setReading] = React.useState<{ key: string; text: string } | null>(null)
+  const [copyTarget, setCopyTarget] = React.useState<{ bubble: HTMLElement; text: string; top: number; left: number } | null>(null)
   const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen)
   const handleShowPopup = useEvent((content: ToolPopupContent) => {
     // Only viewer-capable content opens here; the contact surface has no tool popups.
@@ -261,23 +263,32 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     onLoadEarlier: () => { void loadEarlier(true) },
   })
   const closeReading = React.useCallback(() => setReading(null), [])
+  const closeCopy = useEvent(() => setCopyTarget(null))
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
-  // Long press is left to the system: bubbles are `user-select: all`, so iOS/Android
-  // select the whole message and show their native Copy callout. Only the double
-  // tap is ours, opening the fullscreen reading view.
+  // Both gestures are ours: bubbles are not natively selectable (iOS cannot show its Copy
+  // callout for a programmatic whole-message selection). Double tap opens the fullscreen
+  // reading view; long press highlights the whole message with a Copy button.
   React.useEffect(() => {
     if (!isMobile) return
     const surface = surfaceRef.current
     const doc = surface?.ownerDocument
     if (!surface || !doc) return
     const openReading = (bubble: HTMLElement) => {
-      doc.getSelection()?.removeAllRanges()
+      setCopyTarget(null)
       const messageID = bubble.closest('[data-message-id]')?.getAttribute('data-message-id')
       const text = bubble.getAttribute('data-assistant-contact-source') ?? ''
       if (!messageID || !text) return
       setReading({ key: `${messageID}:reading:${bubble.getAttribute('data-assistant-contact-part-index') ?? '0'}`, text })
     }
-    return bindDoubleTap(surface, { resolve: resolveContactReadingBubble, onDoubleTap: openReading })
+    const openCopy = (bubble: HTMLElement) => {
+      const text = bubble.getAttribute('data-assistant-contact-source') ?? ''
+      if (!text) return
+      const rect = bubble.getBoundingClientRect()
+      setCopyTarget({ bubble, text, top: rect.top, left: rect.left + rect.width / 2 })
+    }
+    const unbindDouble = bindDoubleTap(surface, { resolve: resolveContactReadingBubble, onDoubleTap: openReading })
+    const unbindLong = bindLongPress(surface, { resolve: resolveContactReadingBubble, onLongPress: openCopy })
+    return () => { unbindDouble(); unbindLong() }
   }, [isMobile, assistant.id])
 
   React.useEffect(() => {
@@ -737,7 +748,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                             data-assistant-contact-media={imageOnly || undefined}
                             className={cn(
                               'min-w-0 max-w-full [overflow-wrap:anywhere] rounded-[1.35rem] typography-markdown leading-6',
-                              isMobile && !imageOnly && 'touch-manipulation [-webkit-user-select:all] [user-select:all]',
+                              isMobile && !imageOnly && 'touch-manipulation select-none [-webkit-touch-callout:none] [&[data-assistant-contact-selected]]:ring-2 [&[data-assistant-contact-selected]]:ring-[var(--primary-base)]',
                               imageOnly ? 'p-0' : 'px-4 py-2.5',
                               useMarkdown ? null : 'whitespace-pre-wrap',
                               imageOnly
@@ -876,6 +887,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
         </form>
       </footer>
       <ContactMessageReadingLayer reading={reading} onClose={closeReading} />
+      <ContactMessageCopyLayer target={copyTarget} onClose={closeCopy} />
       {popupContent.open ? (
         <React.Suspense fallback={null}>
           <ToolOutputDialog

@@ -117,3 +117,63 @@ export function bindDoubleTap<T extends HTMLElement>(root: HTMLElement, options:
     root.removeEventListener('dblclick', handleDoubleClick, true);
   };
 }
+
+/**
+ * Long press on one resolved element. Fires once after `LONG_PRESS_MS` of a still
+ * touch; moving beyond `LONG_PRESS_MOVE_PX`, lifting or cancelling aborts it. The
+ * click that follows a fired press is swallowed, and the native context menu is
+ * suppressed so a surface that owns the gesture never shows the system callout.
+ */
+export function bindLongPress<T extends HTMLElement>(root: HTMLElement, options: {
+  resolve: (target: EventTarget | null) => T | null;
+  onLongPress: (element: T) => void;
+}): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let origin: { x: number; y: number } | null = null;
+  let fired = false;
+  const clear = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    origin = null;
+  };
+  const handleDown = (event: PointerEvent) => {
+    clear();
+    fired = false;
+    if (event.pointerType === 'mouse') return;
+    const element = options.resolve(event.target);
+    if (!element) return;
+    origin = { x: event.clientX, y: event.clientY };
+    timer = setTimeout(() => {
+      timer = null;
+      fired = true;
+      options.onLongPress(element);
+    }, LONG_PRESS_MS);
+  };
+  const handleMove = (event: PointerEvent) => {
+    if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > LONG_PRESS_MOVE_PX) clear();
+  };
+  const handleClick = (event: MouseEvent) => {
+    if (!fired) return;
+    fired = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const handleContextMenu = (event: Event) => {
+    if (options.resolve(event.target)) event.preventDefault();
+  };
+  root.addEventListener('pointerdown', handleDown, true);
+  root.addEventListener('pointermove', handleMove, true);
+  root.addEventListener('pointerup', clear, true);
+  root.addEventListener('pointercancel', clear, true);
+  root.addEventListener('click', handleClick, true);
+  root.addEventListener('contextmenu', handleContextMenu, true);
+  return () => {
+    clear();
+    root.removeEventListener('pointerdown', handleDown, true);
+    root.removeEventListener('pointermove', handleMove, true);
+    root.removeEventListener('pointerup', clear, true);
+    root.removeEventListener('pointercancel', clear, true);
+    root.removeEventListener('click', handleClick, true);
+    root.removeEventListener('contextmenu', handleContextMenu, true);
+  };
+}

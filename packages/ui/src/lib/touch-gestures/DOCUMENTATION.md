@@ -9,6 +9,11 @@ Surfaces describe *what* a gesture does; this module owns *how touch is read*.
   `root`. `resolve` maps an event target to the element the gesture belongs to, or
   `null` for targets that keep their own behavior (links, buttons, media, code).
   Both taps must land on the same resolved element.
+- `bindLongPress(root, { resolve, onLongPress })` — long press on an element inside
+  `root`, fired once after `LONG_PRESS_MS` of a still touch. Lifting, dragging past
+  `LONG_PRESS_MOVE_PX`, cancelling, or a mouse press aborts it. The click that
+  follows a fired press is swallowed and the native context menu on resolved
+  targets is suppressed.
 - `createTapRecognizer()` — pointer down/up pairs classified as `'none' | 'tap' |
   'double-tap'`, for surfaces that already own pointer handling (image viewer,
   remote desktop).
@@ -40,7 +45,7 @@ Surfaces describe *what* a gesture does; this module owns *how touch is read*.
 ## Current consumers
 
 Image viewer (`ToolOutputDialog` / `imageViewerTransform`), remote desktop
-(`lib/remote-desktop/gestures.ts`, `RemoteDesktopPanel`), contact bubble reading
+(`lib/remote-desktop/gestures.ts`, `RemoteDesktopPanel`), contact bubble reading and copy
 (`components/assistants`), and every long-press timer (`mobileLongPress`,
 `MobileAgentButton`, `ModelControls`, `tooltip`). The tooltip's longer
 press-to-reveal delay is intentional.

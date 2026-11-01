@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { DOUBLE_TAP_DISTANCE_PX, DOUBLE_TAP_MS, TAP_MAX_MS, TAP_SLOP_PX, bindDoubleTap, createTapRecognizer, isDoubleTap } from './tap'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { DOUBLE_TAP_DISTANCE_PX, DOUBLE_TAP_MS, TAP_MAX_MS, TAP_SLOP_PX, LONG_PRESS_MOVE_PX, LONG_PRESS_MS, bindDoubleTap, bindLongPress, createTapRecognizer, isDoubleTap } from './tap'
 import { lockNativeTouchPan } from './nativePan'
 
 const pointer = (type: string, x: number, y: number, timeStamp: number, target: Element, pointerType = 'touch') => {
@@ -119,5 +119,65 @@ describe('lockNativeTouchPan', () => {
     const after = new Event('touchmove', { cancelable: true })
     element.dispatchEvent(after)
     expect(after.defaultPrevented).toBe(false)
+  })
+})
+
+describe('bindLongPress', () => {
+  const setup = () => {
+    vi.useFakeTimers()
+    const root = document.createElement('div')
+    root.innerHTML = '<p data-item="a">alpha</p><a data-item="x" href="/x">skip</a>'
+    document.body.append(root)
+    const hits: string[] = []
+    const dispose = bindLongPress(root, {
+      resolve: (target) => (target instanceof Element ? target.closest<HTMLElement>('p[data-item]') : null),
+      onLongPress: (el) => hits.push(el.dataset.item!),
+    })
+    const item = root.querySelector<HTMLElement>('[data-item="a"]')!
+    return { root, dispose, hits, item, skip: root.querySelector<HTMLElement>('[data-item="x"]')! }
+  }
+  afterEach(() => { vi.useRealTimers() })
+
+  test('fires once after a still hold and swallows the following click', () => {
+    const { root, dispose, hits, item } = setup()
+    pointer('pointerdown', 10, 10, 0, item)
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10)
+    pointer('pointerup', 10, 10, 600, item)
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    item.dispatchEvent(click)
+    expect(hits).toEqual(['a'])
+    expect(click.defaultPrevented).toBe(true)
+    dispose(); root.remove()
+  })
+
+  test('a quick tap, a drag, a cancel and skipped targets never fire', () => {
+    const { root, dispose, hits, item, skip } = setup()
+    pointer('pointerdown', 10, 10, 0, item)
+    vi.advanceTimersByTime(LONG_PRESS_MS - 100)
+    pointer('pointerup', 10, 10, 400, item)
+    vi.advanceTimersByTime(1000)
+    pointer('pointerdown', 10, 10, 2000, item)
+    pointer('pointermove', 10 + LONG_PRESS_MOVE_PX + 5, 10, 2100, item)
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10)
+    pointer('pointerdown', 10, 10, 3000, item)
+    pointer('pointercancel', 10, 10, 3100, item)
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10)
+    pointer('pointerdown', 10, 10, 4000, skip)
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10)
+    pointer('pointerdown', 10, 10, 5000, item, 'mouse')
+    vi.advanceTimersByTime(LONG_PRESS_MS + 10)
+    expect(hits).toEqual([])
+    dispose(); root.remove()
+  })
+
+  test('suppresses the native context menu on resolved targets only', () => {
+    const { root, dispose, item, skip } = setup()
+    const on = new Event('contextmenu', { bubbles: true, cancelable: true })
+    item.dispatchEvent(on)
+    const off = new Event('contextmenu', { bubbles: true, cancelable: true })
+    skip.dispatchEvent(off)
+    expect(on.defaultPrevented).toBe(true)
+    expect(off.defaultPrevented).toBe(false)
+    dispose(); root.remove()
   })
 })

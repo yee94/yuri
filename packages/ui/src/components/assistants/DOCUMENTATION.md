@@ -323,22 +323,26 @@ Preview freshness follows the existing snapshot revision/events, foreground reco
 
 ## Phone reading gestures
 
-Long press is native. On `isMobile` surfaces text bubbles are `user-select: all`,
-so iOS/Android select the whole message and show their own Copy callout; the
-surface sets no ranges and renders no select-all chrome. Image-only bubbles are
-excluded.
+Both gestures belong to the surface; native text selection is deliberately off on
+`isMobile` text bubbles (`select-none` plus `-webkit-touch-callout: none`), because
+iOS cannot show its Copy callout for a programmatically selected whole message and
+`user-select: all` made a single tap select everything.
 
-A double tap opens `AssistantMessageReadingView`: an edge-to-edge reading copy at
-large type with no header, no chrome and no safe-area padding, following the
-theme background, closed by a plain tap (not while text is selected) or Escape.
-Timing, the same-element rule and the Android `pointercancel` / `dblclick`
-fallback come from `@/lib/touch-gestures` (`bindDoubleTap`); the surface only
-supplies `resolveContactReadingBubble`, so links, code, images, video, cards and
-image-only bubbles keep their own behavior. The reading view renders the
-bubble's raw Markdown as a separate instance at the surface root, so transcript
-rows are never cloned or remounted. Focused coverage:
-`contactMessageGesture.test.ts`, `AssistantMessageReadingView.test.tsx` and
-`lib/touch-gestures/tap.test.ts`.
+- Long press highlights the whole bubble through `ContactMessageCopyLayer` and
+  offers one Copy button. Any outside touch, scroll or Escape dismisses it; the
+  text is copied with `copyTextToClipboard`. Image-only bubbles are excluded.
+- A double tap opens `AssistantMessageReadingView`: an edge-to-edge reading copy at
+  large type with no header, no chrome and no safe-area padding, following the
+  theme background, closed by a plain tap or Escape.
+
+Timing, the same-element rule, the swallowed post-press click and the Android
+`pointercancel` / `dblclick` fallback come from `@/lib/touch-gestures`
+(`bindDoubleTap`, `bindLongPress`); the surface only supplies
+`resolveContactReadingBubble`, so links, code, images, video, cards and image-only
+bubbles keep their own behavior. The reading view renders the bubble's raw Markdown
+as a separate instance at the surface root, so transcript rows are never cloned or
+remounted. Focused coverage: `contactMessageGesture.test.ts`,
+`AssistantMessageReadingView.test.tsx` and `lib/touch-gestures/tap.test.ts`.
 
 ## Shared unread and read visibility
 
