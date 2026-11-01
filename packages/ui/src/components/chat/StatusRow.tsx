@@ -311,7 +311,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 ) : (
                   <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
                 )}
-                <span className="min-w-0 flex-1 truncate text-[0.88em] leading-[1.5] text-foreground">{t('chat.workStatus.todos.title')}</span>
+                <span className={cn("min-w-0 flex-1 truncate leading-[1.5] text-foreground", isMobile ? "text-[0.94em]" : "text-[0.88em]")}>{t('chat.workStatus.todos.title')}</span>
                 <TodoCount done={progress.completed} total={progress.total} className="text-[0.88em] text-muted-foreground" />
               </div>
 
@@ -321,7 +321,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 isWorking={isWorking}
                 animate
                 listRef={todoListRef}
-                className="max-h-[min(22rem,50vh)] overflow-y-auto text-inherit"
+                className={cn("max-h-[min(22rem,50vh)] overflow-y-auto text-inherit", isMobile && "[&_[dir=auto]]:text-[0.84em]")}
                 rowClassName="gap-[0.6em] px-[0.5em] py-[0.4em]"
               />
             </div>

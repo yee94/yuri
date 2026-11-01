@@ -147,7 +147,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
    },
 
    todowrite: {
-     displayName: 'Update Todo List',
+     displayName: 'Update Tasks',
      category: 'system',
      outputLanguage: 'json',
      inputFields: [
@@ -155,7 +155,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
      ]
    },
    todoread: {
-     displayName: 'Read Todo List',
+     displayName: 'Read Tasks',
      category: 'system',
      outputLanguage: 'json',
      inputFields: []

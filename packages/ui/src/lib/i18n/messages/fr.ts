@@ -3301,7 +3301,7 @@ export const dict = {
   'chat.workStatus.usage.refresh': 'Actualiser les quotas',
   'chat.workStatus.compact.onBranch': 'Sur {branch}',
   'chat.workStatus.compact.changes': 'Modifications',
-  'chat.workStatus.todos.title': 'À faire',
+  'chat.workStatus.todos.title': 'Tâches',
   'opencodeUpgrade.screen.title': 'OpenCode 2.0.20 est requis',
   'opencodeUpgrade.screen.outdatedTitle': 'Mettre à jour OpenCode',
   'opencodeUpgrade.screen.local': 'OpenCode {version} est installé. Cette version d’Yuri exige OpenCode v2.',
