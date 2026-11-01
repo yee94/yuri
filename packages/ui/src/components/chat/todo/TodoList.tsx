@@ -144,7 +144,7 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, isWorking = false, an
             aria-current={index === activeIndex ? 'step' : undefined}
             className={cn('grid min-w-0 shrink-0 grid-cols-[auto_minmax(0,1fr)] items-start py-[0.25em]', rowClassName ?? 'gap-[0.6em] px-[0.5em]', animate && 'yuri-todo-row-in')}
           >
-            <span key={status} className={cn('flex h-[1.32em] items-center', animate && 'yuri-todo-icon-pop')} title={t(statusLabelKey[status])}>
+            <span key={status} className={cn('flex h-[1.32em] w-[1.15em] items-center justify-center', animate && 'yuri-todo-icon-pop')} title={t(statusLabelKey[status])}>
               <TodoGlyph status={status} />
             </span>
             <span dir="auto" title={todo.content} className={cn('line-clamp-3 min-w-0 whitespace-normal text-[0.88em] break-words leading-[1.5] transition-colors duration-300', textClassName[status])}>
