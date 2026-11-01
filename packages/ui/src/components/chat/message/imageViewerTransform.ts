@@ -1,3 +1,5 @@
+import { DOUBLE_TAP_DISTANCE_PX, DOUBLE_TAP_MS, isDoubleTap } from '@/lib/touch-gestures/tap';
+
 export type ImageViewerPoint = {
   x: number;
   y: number;
@@ -224,16 +226,14 @@ export const estimateImageViewerVelocity = (samples: readonly ImageViewerPointer
   return elapsed > 0 ? { x: (last.x - first.x) / elapsed, y: (last.y - first.y) / elapsed } : { x: 0, y: 0 };
 };
 
-export const IMAGE_VIEWER_DOUBLE_TAP_MS = 280;
-export const IMAGE_VIEWER_DOUBLE_TAP_DISTANCE = 32;
+export const IMAGE_VIEWER_DOUBLE_TAP_MS = DOUBLE_TAP_MS;
+export const IMAGE_VIEWER_DOUBLE_TAP_DISTANCE = DOUBLE_TAP_DISTANCE_PX;
 export const IMAGE_VIEWER_DOUBLE_TAP_SCALE = 2;
 
 export const isImageViewerDoubleTap = (
   previous: ImageViewerPointerSample | null,
   current: ImageViewerPointerSample,
-): boolean => previous !== null
-  && current.time - previous.time <= IMAGE_VIEWER_DOUBLE_TAP_MS
-  && Math.hypot(current.x - previous.x, current.y - previous.y) <= IMAGE_VIEWER_DOUBLE_TAP_DISTANCE;
+): boolean => isDoubleTap(previous, current);
 
 export const resolveImageViewerDragRelease = (
   frame: ImageViewerDragFrame,

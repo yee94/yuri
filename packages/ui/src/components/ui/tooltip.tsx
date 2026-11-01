@@ -1,3 +1,4 @@
+import { LONG_PRESS_MOVE_PX } from '@/lib/touch-gestures/tap'
 import * as React from "react"
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip"
 
@@ -5,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 const MOBILE_LONG_PRESS_DELAY = 600
 const MOBILE_LONG_PRESS_CLOSE_DELAY = 1600
-const MOBILE_LONG_PRESS_MOVE_TOLERANCE = 10
+const MOBILE_LONG_PRESS_MOVE_TOLERANCE = LONG_PRESS_MOVE_PX
 
 type LongPressTooltipContextValue = {
   handlePointerDown: (event: React.PointerEvent<HTMLElement>) => void;

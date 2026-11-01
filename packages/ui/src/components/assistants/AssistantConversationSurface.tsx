@@ -56,7 +56,8 @@ import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { ContactMessageReadingLayer } from './ContactMessageReadingLayer'
-import { CONTACT_TAP_MAX_MS, CONTACT_TAP_SLOP_PX, createContactDoubleTapDetector } from './contactMessageGesture'
+import { resolveContactReadingBubble } from './contactMessageGesture'
+import { bindDoubleTap } from '@/lib/touch-gestures'
 import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
 import { useAssistantContactWorkingStore } from './assistantWorking'
 import { useAssistantContactAutoFollow } from './useAssistantContactAutoFollow'
@@ -269,33 +270,14 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     const surface = surfaceRef.current
     const doc = surface?.ownerDocument
     if (!surface || !doc) return
-    const detector = createContactDoubleTapDetector((bubble: HTMLElement) => {
+    const openReading = (bubble: HTMLElement) => {
       doc.getSelection()?.removeAllRanges()
       const messageID = bubble.closest('[data-message-id]')?.getAttribute('data-message-id')
       const text = bubble.getAttribute('data-assistant-contact-source') ?? ''
       if (!messageID || !text) return
       setReading({ key: `${messageID}:reading:${bubble.getAttribute('data-assistant-contact-part-index') ?? '0'}`, text })
-    })
-    let origin: { x: number; y: number; t: number } | null = null
-    const handlePointerDown = (event: PointerEvent) => {
-      origin = event.pointerType === 'mouse' ? null : { x: event.clientX, y: event.clientY, t: event.timeStamp }
     }
-    const handlePointerUp = (event: PointerEvent) => {
-      const start = origin
-      origin = null
-      if (!start) return
-      // Only a quick, stationary touch is a tap; a hold belongs to native selection.
-      if (event.timeStamp - start.t > CONTACT_TAP_MAX_MS) return
-      if (Math.abs(event.clientX - start.x) > CONTACT_TAP_SLOP_PX || Math.abs(event.clientY - start.y) > CONTACT_TAP_SLOP_PX) return
-      detector.register({ x: event.clientX, y: event.clientY, t: performance.now() }, event.target)
-    }
-    surface.addEventListener('pointerdown', handlePointerDown, true)
-    surface.addEventListener('pointerup', handlePointerUp, true)
-    surface.addEventListener('pointercancel', () => { origin = null }, true)
-    return () => {
-      surface.removeEventListener('pointerdown', handlePointerDown, true)
-      surface.removeEventListener('pointerup', handlePointerUp, true)
-    }
+    return bindDoubleTap(surface, { resolve: resolveContactReadingBubble, onDoubleTap: openReading })
   }, [isMobile, assistant.id])
 
   React.useEffect(() => {

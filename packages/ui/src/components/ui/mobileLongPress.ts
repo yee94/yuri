@@ -1,5 +1,7 @@
-const MOBILE_LONG_PRESS_DELAY_MS = 500;
-const MOBILE_LONG_PRESS_MOVE_THRESHOLD_PX = 12;
+import { LONG_PRESS_MOVE_PX, LONG_PRESS_MS } from '@/lib/touch-gestures/tap';
+
+const MOBILE_LONG_PRESS_DELAY_MS = LONG_PRESS_MS;
+const MOBILE_LONG_PRESS_MOVE_THRESHOLD_PX = LONG_PRESS_MOVE_PX;
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 

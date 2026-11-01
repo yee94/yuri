@@ -1,3 +1,4 @@
+import { LONG_PRESS_MS } from '@/lib/touch-gestures/tap';
 import React from 'react';
 import type { Agent } from '@/lib/opencode/v2-types';
 import { cn } from '@/lib/utils';
@@ -16,7 +17,6 @@ interface MobileAgentButtonProps {
     disabled?: boolean;
 }
 
-const LONG_PRESS_MS = 500;
 
 // NOTE: Use pointer events instead of onClick to keep soft keyboard open on mobile
 export const MobileAgentButton: React.FC<MobileAgentButtonProps> = ({ onCycleAgent, onOpenAgentPanel, className, agentName, agents = [], disabled = false }) => {

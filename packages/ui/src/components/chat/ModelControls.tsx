@@ -1,3 +1,4 @@
+import { LONG_PRESS_MS } from '@/lib/touch-gestures/tap';
 import React from 'react';
 import { agentDisplayName as getAgentCatalogLabel } from '@/lib/opencode/agent-identity';
 import { useEvent } from '@reactuses/core';
@@ -1524,7 +1525,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         }
         longPressTimerRef.current = setTimeout(() => {
             setMobileTooltipOpen(type);
-        }, 500);
+        }, LONG_PRESS_MS);
     }, []);
 
     const handleLongPressEnd = React.useCallback(() => {

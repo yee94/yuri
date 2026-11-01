@@ -328,13 +328,17 @@ so iOS/Android select the whole message and show their own Copy callout; the
 surface sets no ranges and renders no select-all chrome. Image-only bubbles are
 excluded.
 
-A double tap (two quick, stationary taps within 280 ms and 10 px, landing on
-ordinary bubble text) opens `AssistantMessageReadingView`: a fullscreen,
-scrollable reading copy at large type, closed by its button or Escape. Links,
-code, images, video, cards and image-only bubbles never trigger it. It renders
-the bubble's raw Markdown as a separate instance at the surface root, so
-transcript rows are never cloned or remounted. Focused coverage:
-`contactMessageGesture.test.ts`.
+A double tap opens `AssistantMessageReadingView`: an edge-to-edge reading copy at
+large type with no header, no chrome and no safe-area padding, following the
+theme background, closed by a plain tap (not while text is selected) or Escape.
+Timing, the same-element rule and the Android `pointercancel` / `dblclick`
+fallback come from `@/lib/touch-gestures` (`bindDoubleTap`); the surface only
+supplies `resolveContactReadingBubble`, so links, code, images, video, cards and
+image-only bubbles keep their own behavior. The reading view renders the
+bubble's raw Markdown as a separate instance at the surface root, so transcript
+rows are never cloned or remounted. Focused coverage:
+`contactMessageGesture.test.ts`, `AssistantMessageReadingView.test.tsx` and
+`lib/touch-gestures/tap.test.ts`.
 
 ## Shared unread and read visibility
 

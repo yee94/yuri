@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
 import { holdNativeComposerCover } from '@/lib/nativeComposerCover';
+import { useNativeTouchPanLock } from '@/lib/touch-gestures';
 import { mobileBackNavigationCoordinator, useMobileBackRoute } from './mobileBackNavigation';
 import { useI18n } from '@/lib/i18n';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
@@ -107,10 +108,8 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
     geometry.current = { ...geometry.current, width, height };
     if (changed && !activePointers.current.size) gestures.refit();
   });
-  // Match image preview: Android can start native panning on transformed layers despite touch-action.
-  useEventListener('touchmove', event => {
-    if (event.cancelable) event.preventDefault();
-  }, viewportRef, { passive: false });
+  // Android can start native panning on transformed layers despite touch-action.
+  useNativeTouchPanLock(viewportRef);
   useEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') stop(); }, () => document);
   React.useEffect(() => {
     if (!capability.data?.supported || !capability.data.enabled || !videoRef.current || !imageRef.current) return;

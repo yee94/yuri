@@ -1,3 +1,4 @@
+import { DOUBLE_TAP_DISTANCE_PX, DOUBLE_TAP_MS, LONG_PRESS_MS, TAP_MAX_MS, TAP_SLOP_PX, isDoubleTap } from '@/lib/touch-gestures/tap';
 import type { DesktopInput } from './connection';
 
 type Point = { x: number; y: number };
@@ -44,7 +45,7 @@ export function createDesktopGestures(options: {
   let multi = false;
   let contextClicked = false;
   let hold: ReturnType<typeof setTimeout> | undefined;
-  let lastTap: { point: Point; time: number } | null = null;
+  let lastTap: { x: number; y: number; time: number } | null = null;
   let downAt = 0;
   let pinch: { midpoint: Point; distance: number; transform: DesktopTransform } | null = null;
   const release = () => { if (dragging) options.send({ type: 'release' }); dragging = false; };
@@ -72,7 +73,7 @@ export function createDesktopGestures(options: {
         if (options.mode() === 'cursor') hold = setTimeout(() => {
           const remote = desktopPoint(point, options.viewport(), transform);
           if (remote && !moved && !multi) { options.send({ type: 'pointer', action: 'right', ...remote }); contextClicked = true; }
-        }, 550);
+        }, LONG_PRESS_MS + 50);
       }
       if (pointers.size === 2) {
         clearTimeout(hold);
@@ -129,9 +130,10 @@ export function createDesktopGestures(options: {
         const remote = desktopPoint(point, options.viewport(), transform);
         if (remote) options.send({ type: 'pointer', action: 'click', ...remote });
       }
-      if (options.mode() === 'drag' && !cancelled && !multi && !moved && Date.now() - downAt < 300) {
+      if (options.mode() === 'drag' && !cancelled && !multi && !moved && Date.now() - downAt < TAP_MAX_MS) {
         const now = Date.now();
-        if (lastTap && now - lastTap.time < 300 && Math.hypot(point.x - lastTap.point.x, point.y - lastTap.point.y) < 24) {
+        const tap = { x: point.x, y: point.y, time: now };
+        if (isDoubleTap(lastTap, tap)) {
           if (transform.scale > 1) transform = { ...INITIAL_DESKTOP_TRANSFORM };
           else {
             const scale = 2.5, ratio = scale / transform.scale;
@@ -139,7 +141,7 @@ export function createDesktopGestures(options: {
               y: point.y - (point.y - transform.y) * ratio }, options.viewport());
           }
           options.apply(transform, true); lastTap = null;
-        } else lastTap = { point, time: now };
+        } else lastTap = tap;
       } else lastTap = null;
       release();
       if (!pointers.size) {

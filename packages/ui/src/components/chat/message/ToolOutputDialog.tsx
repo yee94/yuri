@@ -1,3 +1,4 @@
+import { lockNativeTouchPan } from '@/lib/touch-gestures';
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -636,16 +637,11 @@ const ImagePreviewDialog: React.FC<{
         // eslint-disable-next-line react-hooks/exhaustive-deps -- isRendered and isMobile control the subscription lifecycle; useEvent supplies the latest callback.
     }, [isMobile, isRendered]);
 
+    // Android can start a native pan on transformed layers and pointercancel our gestures.
     React.useEffect(() => {
         const canvas = canvasRef.current;
         if (!isRendered || !isMobile || !canvas) return;
-        // Android Chromium hit-tests touch-action on the compositor, where transformed/zoomed layers can expose a
-        // stale region and start a native pan that pointercancels the drag. A non-passive touchmove forces it to wait.
-        const preventNativePan = (event: TouchEvent) => {
-            if (event.cancelable) event.preventDefault();
-        };
-        canvas.addEventListener('touchmove', preventNativePan, { passive: false });
-        return () => canvas.removeEventListener('touchmove', preventNativePan);
+        return lockNativeTouchPan(canvas);
     }, [isMobile, isRendered]);
 
     const handleDoubleClick = useEvent((event: React.MouseEvent<HTMLDivElement>) => {
