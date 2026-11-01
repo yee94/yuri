@@ -321,29 +321,6 @@ Desktop sidebar rows and mobile catalog cards share `getAssistantMessagePreview`
 
 Preview freshness follows the existing snapshot revision/events, foreground reconcile, and focus/reconnect query path. List rows add zero history requests, transcript-cache reads, or message subscriptions. Creation, selection, avatars, working dots, and context/long-press edit/delete ownership remain unchanged.
 
-## Phone reading gestures
-
-Both gestures belong to the surface; native text selection is deliberately off on
-`isMobile` text bubbles (`select-none` plus `-webkit-touch-callout: none`), because
-iOS cannot show its Copy callout for a programmatically selected whole message and
-`user-select: all` made a single tap select everything.
-
-- Long press highlights the whole bubble through `ContactMessageCopyLayer` and
-  offers one Copy button. Any outside touch, scroll or Escape dismisses it; the
-  text is copied with `copyTextToClipboard`. Image-only bubbles are excluded.
-- A double tap opens `AssistantMessageReadingView`: an edge-to-edge reading copy at
-  large type with no header, no chrome and no safe-area padding, following the
-  theme background, closed by a plain tap or Escape.
-
-Timing, the same-element rule, the swallowed post-press click and the Android
-`pointercancel` / `dblclick` fallback come from `@/lib/touch-gestures`
-(`bindDoubleTap`, `bindLongPress`); the surface only supplies
-`resolveContactReadingBubble`, so links, code, images, video, cards and image-only
-bubbles keep their own behavior. The reading view renders the bubble's raw Markdown
-as a separate instance at the surface root, so transcript rows are never cloned or
-remounted. Focused coverage: `contactMessageGesture.test.ts`,
-`AssistantMessageReadingView.test.tsx` and `lib/touch-gestures/tap.test.ts`.
-
 ## Shared unread and read visibility
 
 Desktop and mobile mark-all-read use the shared double-check icon action in the catalog header, immediately before the add button. Desktop uses a ghost icon button; mobile uses the shared glass icon button. The translated action remains available through its accessible label and title, not visible text or a separate row. When unread reaches zero the compact button is disabled and hidden with `visibility: hidden`, retaining its horizontal space so read updates do not shift the header or list.

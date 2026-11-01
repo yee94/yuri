@@ -55,10 +55,6 @@ import { AssistantAssistantCard } from './AssistantAssistantCard'
 import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
-import { ContactMessageReadingLayer } from './ContactMessageReadingLayer'
-import { ContactMessageCopyLayer } from './ContactMessageCopyLayer'
-import { resolveContactReadingBubble } from './contactMessageGesture'
-import { bindDoubleTap, bindLongPress } from '@/lib/touch-gestures'
 import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
 import { useAssistantContactWorkingStore } from './assistantWorking'
 import { useAssistantContactAutoFollow } from './useAssistantContactAutoFollow'
@@ -84,9 +80,6 @@ const isInternalSettleText = (text: string) => text.trim().startsWith('yuri.sett
 
 const isContactError = (message: AssistantContactMessage) => message.status === 'error'
   || (message.status === 'failed' && message.messageID.endsWith(':preview:failed'))
-
-/** Raw bubble Markdown, captured for the fullscreen reading view. */
-const contactGestureSource = (text: string): string => (isInternalSettleText(text) ? '' : text)
 
 // Live previews are text-only, so only text bubbles share the turn/bubble key
 // that lets a preview hand its DOM to the authoritative row. Cards and files in
@@ -165,9 +158,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const [sendError, setSendError] = React.useState<string | null>(null)
   // Shared image/mermaid preview — same ToolOutputDialog contract as ChatMessage.
   const [popupContent, setPopupContent] = React.useState<ToolPopupContent>({ open: false, title: '', content: '' })
-  // Reading-view identity; the transcript bubble keeps its own DOM.
-  const [reading, setReading] = React.useState<{ key: string; text: string } | null>(null)
-  const [copyTarget, setCopyTarget] = React.useState<{ bubble: HTMLElement; text: string; top: number; left: number } | null>(null)
   const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen)
   const handleShowPopup = useEvent((content: ToolPopupContent) => {
     // Only viewer-capable content opens here; the contact surface has no tool popups.
@@ -262,38 +252,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     contentRevision: `${transcript[0]?.messageID}:${transcript.length}:${streamingTextLength}:${contactQuery.isFetchingPreviousPage}:${contactQuery.hasPreviousPage}:${contactQuery.isFillingMessageGap}`,
     onLoadEarlier: () => { void loadEarlier(true) },
   })
-  const closeReading = React.useCallback(() => setReading(null), [])
-  const closeCopy = useEvent(() => setCopyTarget(null))
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
-  // Both gestures are ours: bubbles are not natively selectable (iOS cannot show its Copy
-  // callout for a programmatic whole-message selection). Double tap opens the fullscreen
-  // reading view; long press highlights the whole message with a Copy button.
-  React.useEffect(() => {
-    if (!isMobile) return
-    const surface = surfaceRef.current
-    const doc = surface?.ownerDocument
-    if (!surface || !doc) return
-    const openReading = (bubble: HTMLElement) => {
-      setCopyTarget(null)
-      const messageID = bubble.closest('[data-message-id]')?.getAttribute('data-message-id')
-      const text = bubble.getAttribute('data-assistant-contact-source') ?? ''
-      if (!messageID || !text) return
-      setReading({ key: `${messageID}:reading:${bubble.getAttribute('data-assistant-contact-part-index') ?? '0'}`, text })
-    }
-    const openCopy = (bubble: HTMLElement) => {
-      const text = bubble.getAttribute('data-assistant-contact-source') ?? ''
-      if (!text) return
-      const rect = bubble.getBoundingClientRect()
-      setCopyTarget({ bubble, text, top: rect.top, left: rect.left + rect.width / 2 })
-    }
-    const unbindDouble = bindDoubleTap(surface, { resolve: resolveContactReadingBubble, onDoubleTap: openReading })
-    const unbindLong = bindLongPress(surface, { resolve: resolveContactReadingBubble, onLongPress: openCopy })
-    return () => { unbindDouble(); unbindLong() }
-  }, [isMobile, assistant.id])
-
-  React.useEffect(() => {
-    setReading(null)
-  }, [assistant.id, transportIdentity])
   const composerRef = React.useRef<HTMLElement | null>(null)
   const pendingSendFlightRef = React.useRef<{ messageID: string; source: ContactSendFlightSource } | null>(null)
   // The morph owns the flown row's entrance; the generic append fade must not also run.
@@ -564,8 +523,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const optimisticByID = new Map(scopedOptimisticTurns.map((turn) => [turn.messageID, turn]))
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <div ref={surfaceRef} className="flex min-h-0 flex-1 flex-col">
+    <div ref={surfaceRef} className="flex min-h-0 flex-1 flex-col bg-background">
       <div
         ref={scrollRef}
         className={cn(
@@ -743,12 +701,10 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                             key={`${renderKey}:text:${index}`}
                             aria-label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
                             data-assistant-contact-text=""
-                            data-assistant-contact-part-index={index}
-                            data-assistant-contact-source={contactGestureSource(part.text)}
                             data-assistant-contact-media={imageOnly || undefined}
                             className={cn(
                               'min-w-0 max-w-full [overflow-wrap:anywhere] rounded-[1.35rem] typography-markdown leading-6',
-                              isMobile && !imageOnly && 'touch-manipulation select-none [-webkit-touch-callout:none] [&[data-assistant-contact-selected]]:ring-2 [&[data-assistant-contact-selected]]:ring-[var(--primary-base)]',
+                              isMobile && !imageOnly && 'touch-manipulation [-webkit-user-select:all] [user-select:all]',
                               imageOnly ? 'p-0' : 'px-4 py-2.5',
                               useMarkdown ? null : 'whitespace-pre-wrap',
                               imageOnly
@@ -824,7 +780,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
           </div>
         )}
       </div>
-      </div>
       <footer
         ref={composerRef}
         className="relative z-10 shrink-0 bg-background pt-1"
@@ -886,8 +841,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
           </div>
         </form>
       </footer>
-      <ContactMessageReadingLayer reading={reading} onClose={closeReading} />
-      <ContactMessageCopyLayer target={copyTarget} onClose={closeCopy} />
       {popupContent.open ? (
         <React.Suspense fallback={null}>
           <ToolOutputDialog

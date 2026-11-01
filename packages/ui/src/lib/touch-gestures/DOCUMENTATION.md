@@ -45,10 +45,10 @@ Surfaces describe *what* a gesture does; this module owns *how touch is read*.
 ## Current consumers
 
 Image viewer (`ToolOutputDialog` / `imageViewerTransform`), remote desktop
-(`lib/remote-desktop/gestures.ts`, `RemoteDesktopPanel`), contact bubble reading and copy
-(`components/assistants`), and every long-press timer (`mobileLongPress`,
-`MobileAgentButton`, `ModelControls`, `tooltip`). The tooltip's longer
-press-to-reveal delay is intentional.
+(`lib/remote-desktop/gestures.ts`, `RemoteDesktopPanel`) and every long-press timer
+(`mobileLongPress`, `MobileAgentButton`, `ModelControls`, `tooltip`). The tooltip's
+longer press-to-reveal delay is intentional. Contact bubbles deliberately use
+native selection (`user-select: all`) and no custom gesture.
 
 A new tap-like gesture starts here. If the shared API cannot express it, extend
 it with a test rather than adding a parallel recognizer.
