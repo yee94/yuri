@@ -46,6 +46,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const connection = React.useRef<ReturnType<typeof connectRemoteDesktop> | null>(null);
   const frameRef = React.useRef<number | null>(null);
   const moves = React.useRef(new Map<number, { x: number; y: number }>());
+  const activePointers = React.useRef(new Set<number>());
   const send = useEvent((input: DesktopInput) => { connection.current?.send(input); });
   const getMode = useEvent(() => mode);
   const [gestures] = React.useState(() => createDesktopGestures({
@@ -87,13 +88,18 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const handleState = useEvent((next: typeof state, code?: string) => { setState(next); setError(code); });
   const handleSize = useEvent((width: number, height: number) => {
     if (width <= 0 || height <= 0 || (geometry.current.remoteWidth === width && geometry.current.remoteHeight === height)) return;
-    geometry.current = { ...geometry.current, remoteWidth: width, remoteHeight: height };
-    gestures.reset();
+    const previous = geometry.current;
+    geometry.current = { ...previous, remoteWidth: width, remoteHeight: height };
+    // Encoder/JPEG downscaling keeps the aspect ratio, so the fitted layout is unchanged and zoom must survive it.
+    const sameAspect = Math.abs(previous.remoteWidth / previous.remoteHeight - width / height) < 0.01;
+    if (!sameAspect && !activePointers.current.size) gestures.reset();
   });
   useResizeObserver(viewportRef, ([entry]) => {
     if (!entry) return;
-    geometry.current = { ...geometry.current, width: entry.contentRect.width, height: entry.contentRect.height };
-    gestures.reset();
+    const { width, height } = entry.contentRect;
+    const changed = Math.abs(geometry.current.width - width) >= 1 || Math.abs(geometry.current.height - height) >= 1;
+    geometry.current = { ...geometry.current, width, height };
+    if (changed && !activePointers.current.size) gestures.refit();
   });
   // Match image preview: Android can start native panning on transformed layers despite touch-action.
   useEventListener('touchmove', event => {
@@ -142,19 +148,24 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
         onPointerDown={event => {
           if (!live) return;
           event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+          activePointers.current.add(event.pointerId);
           flushMoves(); gestures.down(event.pointerId, point(event));
         }}
         onPointerMove={event => {
-          if (!live || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-           moves.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (!live || !activePointers.current.has(event.pointerId)) return;
+          event.preventDefault();
+          moves.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushMoves);
         }}
         onPointerUp={event => {
           flushMoves(); gestures.up(event.pointerId, point(event));
+          activePointers.current.delete(event.pointerId);
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
         }}
-        onPointerCancel={event => { flushMoves(); gestures.up(event.pointerId, point(event), true); }}
-        onLostPointerCapture={event => gestures.up(event.pointerId, point(event), true)}
+        onPointerCancel={event => {
+          flushMoves(); gestures.up(event.pointerId, point(event), true);
+          activePointers.current.delete(event.pointerId);
+        }}
         onContextMenu={event => event.preventDefault()}>
         <div ref={stageRef} className="absolute inset-0 origin-top-left will-change-transform">
           <video ref={videoRef} autoPlay muted playsInline className="pointer-events-none absolute inset-0 size-full object-contain" style={{ visibility: state === 'webrtc' ? 'visible' : 'hidden' }} />

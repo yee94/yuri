@@ -246,6 +246,43 @@ it.each([[390, 844], [844, 390]])('never changes rotation on viewport or keyboar
   expect(mock.connect).toHaveBeenCalledTimes(1);
 });
 
+it('keeps an Android pinch alive without pointer-capture reports or lost-capture cancels, and ignores resize resets mid-gesture', () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++id, callback); return id; });
+  vi.stubGlobal('cancelAnimationFrame', (key: number) => frames.delete(key));
+  render();
+  const options = mock.connect.mock.calls[0][0];
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 844 } }]); options.onState('webrtc'); });
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  const stage = viewport.firstElementChild as HTMLElement;
+  viewport.setPointerCapture = () => {};
+  viewport.hasPointerCapture = () => false;
+  viewport.releasePointerCapture = () => {};
+  vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 390, bottom: 844 } as DOMRect);
+  const pointer = (type: string, pointerId: number, clientX: number) => act(() => {
+    viewport.dispatchEvent(new PointerEvent(type, { pointerId, clientX, clientY: 422, bubbles: true, cancelable: true }));
+  });
+  const flush = () => act(() => { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(16)); });
+  pointer('pointerdown', 1, 145); pointer('pointerdown', 2, 245);
+  pointer('pointermove', 1, 85); pointer('pointermove', 2, 305); flush();
+  expect(stage.style.transform).toContain('scale(2.2)');
+  pointer('lostpointercapture', 1, 85);
+  act(() => { mock.resize?.([{ contentRect: { width: 390.4, height: 844 } }]); });
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 780 } }]); });
+  expect(stage.style.transform).toContain('scale(2.2)');
+  pointer('pointermove', 1, 45); pointer('pointermove', 2, 345); flush();
+  expect(stage.style.transform).toContain('scale(3');
+  pointer('pointerup', 2, 345); pointer('pointerup', 1, 45);
+  expect(stage.style.transform).toContain('scale(3');
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 700 } }]); });
+  expect(stage.style.transform).toContain('scale(3');
+  act(() => { options.onSize(960, 540); options.onSize(1920, 1080); });
+  expect(stage.style.transform).toContain('scale(3');
+  act(() => { options.onSize(1080, 1920); });
+  expect(stage.style.transform).toBe('translate(0px, 0px) scale(1)');
+});
+
 it('coalesces a pinch burst into one layout read and one transform write per frame', () => {
   const frames = new Map<number, FrameRequestCallback>();
   let id = 0;

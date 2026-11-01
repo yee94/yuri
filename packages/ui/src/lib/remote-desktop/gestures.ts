@@ -148,6 +148,11 @@ export function createDesktopGestures(options: {
       }
     },
     cancel,
+    refit() {
+      if (transform.scale <= 1) { snapToFit(); return; }
+      transform = clampDesktopTransform(transform, options.viewport());
+      options.apply(transform);
+    },
     reset() {
       cancel();
       transform = { ...INITIAL_DESKTOP_TRANSFORM }; options.apply(transform);
