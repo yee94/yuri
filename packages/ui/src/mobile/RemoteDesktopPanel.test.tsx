@@ -70,10 +70,41 @@ it('maps production touch handlers and pinch without remote click leakage, then 
   pointer('pointermove', 1, 100, 300); pointer('pointermove', 2, 300, 300);
   pointer('pointerup', 2, 300, 300); pointer('pointerup', 1, 100, 300);
   expect(mock.send).not.toHaveBeenCalled();
-  const scroll = [...document.querySelectorAll('button')].find(button => button.textContent === 'Scroll mode')!;
+  const scroll = document.querySelector<HTMLButtonElement>('button[aria-label="Scroll mode"]')!;
   act(() => scroll.click());
   pointer('pointerdown', 1, 200, 300); pointer('pointermove', 1, 200, 350); pointer('pointerup', 1, 200, 350);
   expect(mock.send).toHaveBeenLastCalledWith({ type: 'scroll', dx: 0, dy: -50 });
+});
+it('keeps gamepad-style icon controls outside the pointer surface without a toolbar or protocol labels', () => {
+  render();
+  const options = mock.connect.mock.calls[0][0];
+  act(() => options.onState('webrtc'));
+  const keyboard = document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!;
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  expect(keyboard.getAttribute('aria-expanded')).toBe('false');
+  expect(document.body.textContent).not.toContain('Scroll mode');
+  expect(document.body.textContent).not.toContain('WebRTC');
+  for (const label of ['Scroll mode', 'Fit screen', 'Type on the remote computer']) {
+    const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+    expect(button).not.toBeNull();
+    expect(button.textContent).toBe('');
+    expect(viewport.contains(button)).toBe(false);
+  }
+  act(() => keyboard.click());
+  expect(keyboard.getAttribute('aria-expanded')).toBe('true');
+  const input = document.querySelector('input')!;
+  expect(viewport.contains(input)).toBe(false);
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'hello');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  act(() => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(mock.send).toHaveBeenLastCalledWith({ type: 'text', text: 'hello' });
+  act(() => keyboard.click());
+  expect(document.querySelector('input')).toBeNull();
+  expect(mock.connect).toHaveBeenCalledTimes(1);
+  act(() => options.onState('tunnel'));
+  expect(document.body.textContent).not.toContain('Compatibility stream');
 });
 it('closes capture when the phone goes to the background', () => {
   render();

@@ -86,7 +86,8 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   return (
     <MobileOverlayPanel open title={instanceName ? `${t('remoteDesktop.title')} · ${instanceName}` : t('remoteDesktop.title')}
       onClose={() => { stop(); onClose(); }} containedBody className="h-[calc(100dvh-0.75rem)] max-w-none" contentMaxHeightClassName="max-h-none">
-      <div ref={viewportRef} className="relative min-h-0 flex-1 touch-none overflow-hidden bg-background"
+      <div className="relative min-h-0 flex-1">
+      <div ref={viewportRef} className="absolute inset-0 touch-none overflow-hidden bg-background"
         aria-label={t('remoteDesktop.screen')}
         onPointerDown={event => {
           if (!live) return;
@@ -118,27 +119,36 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
           }}>{t('remoteDesktop.retry')}</Button>}
         </div>}
       </div>
-      <div className="flex shrink-0 flex-col gap-2 border-t border-border/40 p-3">
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="chip" className="min-w-0 max-w-[40%]" title={t('remoteDesktop.scroll')} aria-pressed={scrollMode} disabled={!live} onClick={() => { gestures.reset(); setScrollMode(value => !value); }}><span className="truncate">{t('remoteDesktop.scroll')}</span></Button>
-          <Button size="sm" variant="ghost" className="min-w-0" onClick={() => gestures.reset()}><span className="truncate">{t('remoteDesktop.fit')}</span></Button>
-          <span className="ml-auto hidden text-xs text-muted-foreground min-[480px]:inline">{live ? (state === 'webrtc' ? 'WebRTC' : t('remoteDesktop.tunnel')) : ''}</span>
-          <Button size="icon" variant="ghost" className="ml-auto" disabled={!live} aria-label={t('remoteDesktop.text')} aria-pressed={keyboardOpen} onClick={() => setKeyboardOpen(value => !value)}><Icon name="keyboard" className="size-4" /></Button>
-        </div>
-        <p className="text-xs text-muted-foreground">{t('remoteDesktop.hint')}</p>
-        {keyboardOpen && <form className="flex gap-2" onSubmit={event => {
+      <p className="sr-only">{t('remoteDesktop.hint')}</p>
+      <div className="pointer-events-none absolute inset-3 flex flex-col items-end justify-end gap-3">
+        {keyboardOpen && <div className="pointer-events-auto min-h-0 w-80 max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-border/40 bg-[var(--surface-elevated)]/90 p-3 shadow-lg backdrop-blur-md">
+        <form className="flex gap-2" onSubmit={event => {
           event.preventDefault(); if (text && live) { send({ type: 'text', text }); setText(''); }
         }}>
-          <Input value={text} maxLength={1024} onChange={event => setText(event.target.value)} placeholder={t('remoteDesktop.text')} aria-label={t('remoteDesktop.text')} disabled={!live} autoComplete="off" />
+          <Input className="min-w-0" value={text} maxLength={1024} onChange={event => setText(event.target.value)} placeholder={t('remoteDesktop.text')} aria-label={t('remoteDesktop.text')} disabled={!live} autoComplete="off" />
           <Button type="submit" size="icon" disabled={!live || !text} aria-label={t('remoteDesktop.send')}><Icon name="send-plane-2" className="size-4" /></Button>
-        </form>}
-        {keyboardOpen && <div className="flex flex-wrap gap-1">
+        </form>
+        <div className="mt-2 flex flex-wrap gap-1">
           {['Escape', 'Tab', 'Backspace', 'Enter', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'].map(key => (
             <Button key={key} size="xs" variant="ghost" disabled={!live} onClick={() => send({ type: 'key', key })} aria-label={t('remoteDesktop.pressKey', { key })}>
               {{ Escape: 'Esc', Backspace: '⌫', Enter: '↵', ArrowLeft: '←', ArrowUp: '↑', ArrowDown: '↓', ArrowRight: '→' }[key] ?? key}
             </Button>
           ))}
+        </div>
         </div>}
+        <div className="flex w-full shrink-0 items-end justify-between gap-3">
+          <div className="pointer-events-auto flex gap-3">
+            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+              aria-label={t('remoteDesktop.scroll')} title={t('remoteDesktop.scroll')} aria-pressed={scrollMode} disabled={!live}
+              onClick={() => { gestures.reset(); setScrollMode(value => !value); }}><Icon name="expand-up-down" className="size-5" /></Button>
+            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100"
+              aria-label={t('remoteDesktop.fit')} title={t('remoteDesktop.fit')} onClick={() => gestures.reset()}><Icon name="fullscreen-exit" className="size-5" /></Button>
+          </div>
+          <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+            disabled={!live} aria-label={t('remoteDesktop.text')} title={t('remoteDesktop.text')} aria-pressed={keyboardOpen} aria-expanded={keyboardOpen}
+            onClick={() => setKeyboardOpen(value => !value)}><Icon name="keyboard" className="size-5" /></Button>
+        </div>
+      </div>
       </div>
     </MobileOverlayPanel>
   );
