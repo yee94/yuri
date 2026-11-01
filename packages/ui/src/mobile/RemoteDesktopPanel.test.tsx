@@ -9,6 +9,7 @@ import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 const mock = vi.hoisted(() => ({
   supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(),
   resize: null as null | ((entries: { contentRect: { width: number; height: number } }[]) => void),
+  observers: new Map<{ current: HTMLElement | null }, (entries: { contentRect: { width: number; height: number } }[]) => void>(),
 }));
 vi.mock('@/queries/remoteDesktopQueries', () => ({ useRemoteDesktopCapability: () => {
   mock.query(); return { data: { supported: mock.supported, enabled: mock.enabled }, error: null, refetch: vi.fn() };
@@ -16,13 +17,14 @@ vi.mock('@/queries/remoteDesktopQueries', () => ({ useRemoteDesktopCapability: (
 vi.mock('@/lib/remote-desktop/connection', () => ({ connectRemoteDesktop: mock.connect }));
 vi.mock('@/lib/nativeComposerCover', () => ({ holdNativeComposerCover: () => () => {} }));
 vi.mock('@reactuses/core', async importOriginal => ({ ...await importOriginal<typeof import('@reactuses/core')>(),
-  useResizeObserver: (_ref: unknown, callback: typeof mock.resize) => { mock.resize = callback; },
+  useResizeObserver: (ref: { current: HTMLElement | null }, callback: NonNullable<typeof mock.resize>) => { mock.resize = callback; mock.observers.set(ref, callback); },
 }));
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mock.supported = true; mock.enabled = true; mock.query.mockClear(); mock.send.mockClear(); mock.close.mockClear();
+  mock.observers.clear();
   mock.connect.mockReset().mockReturnValue({ send: mock.send, close: mock.close });
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
@@ -216,6 +218,32 @@ it('manually rotates a portrait-locked viewport and discards orientation on clos
   act(() => root.render(<></>));
   render();
   expect(document.querySelector<HTMLElement>('[data-remote-desktop-page] main')!.style.transform).toBe('');
+});
+
+it.each([[390, 844], [844, 390]])('never changes rotation on viewport or keyboard resize (opened at %i × %i)', (width, height) => {
+  vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(width);
+  vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(height);
+  render();
+  act(() => mock.connect.mock.calls[0][0].onState('webrtc'));
+  const surface = document.querySelector<HTMLElement>('[data-remote-desktop-page] main')!;
+  const resizePage = (width: number, height: number) => {
+    const observer = [...mock.observers].find(([ref]) => ref.current?.hasAttribute('data-remote-desktop-page'))![1];
+    act(() => observer([{ contentRect: { width, height } }]));
+  };
+  resizePage(height, width);
+  expect(surface.style.transform).toBe('');
+  resizePage(width, height);
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  resizePage(height, width);
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!.click());
+  resizePage(390, 240);
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Type on the remote computer"]')!.click());
+  resizePage(390, 844);
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  expect(mock.connect).toHaveBeenCalledTimes(1);
 });
 
 it('coalesces a pinch burst into one layout read and one transform write per frame', () => {
