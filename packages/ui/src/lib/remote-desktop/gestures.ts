@@ -62,7 +62,7 @@ export function createDesktopGestures(options: {
     const [a, b] = [...pointers.values()];
     return { midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
   };
-  return {
+  const gestures = {
     down(id: number, point: Point) {
       if (pointers.size >= 2) return;
       pointers.set(id, point);
@@ -112,6 +112,15 @@ export function createDesktopGestures(options: {
       }
       previous = point;
     },
+    moveMany(points: ReadonlyMap<number, Point>) {
+      let last: [number, Point] | undefined;
+      for (const [id, point] of points) {
+        if (!pointers.has(id)) continue;
+        pointers.set(id, point);
+        last = [id, point];
+      }
+      if (last) gestures.move(...last);
+    },
     up(id: number, point: Point, cancelled = false) {
       if (!pointers.has(id)) return;
       clearTimeout(hold);
@@ -144,4 +153,5 @@ export function createDesktopGestures(options: {
       transform = { ...INITIAL_DESKTOP_TRANSFORM }; options.apply(transform);
     },
   };
+  return gestures;
 }

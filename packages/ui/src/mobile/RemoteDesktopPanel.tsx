@@ -10,7 +10,7 @@ import { useI18n } from '@/lib/i18n';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { connectRemoteDesktop, type DesktopInput } from '@/lib/remote-desktop/connection';
 import { createDesktopGestures, type DesktopInteractionMode, type DesktopViewport } from '@/lib/remote-desktop/gestures';
-import { desktopLocalPoint, requestDesktopOrientationPermission } from '@/lib/remote-desktop/orientation';
+import { desktopLocalPoint } from '@/lib/remote-desktop/orientation';
 import { useDesktopOrientation } from '@/lib/remote-desktop/useDesktopOrientation';
 import { useRemoteDesktopCapability } from '@/queries/remoteDesktopQueries';
 
@@ -50,7 +50,11 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   const flushMoves = useEvent(() => {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
-    for (const [id, point] of moves.current) gestures.move(id, point);
+    if (moves.current.size && viewportRef.current) {
+      const rect = viewportRef.current.getBoundingClientRect();
+      const points = new Map([...moves.current].map(([id, point]) => [id, desktopLocalPoint(point, rect, orientation.rotation)]));
+      gestures.moveMany(points);
+    }
     moves.current.clear();
   });
   const stop = useEvent(() => {
@@ -125,7 +129,7 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
         }}
         onPointerMove={event => {
           if (!live || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-          moves.current.set(event.pointerId, point(event));
+           moves.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushMoves);
         }}
         onPointerUp={event => {
@@ -149,11 +153,11 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
         </div>}
       </div>
       <div className="pointer-events-none absolute left-[max(0.75rem,var(--desktop-safe-left))] right-[max(0.75rem,var(--desktop-safe-right))] top-[max(0.75rem,var(--desktop-safe-top))] flex items-start justify-between gap-3">
-        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100"
+        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto"
           aria-label={t('header.actions.backAria')} onClick={() => mobileBackNavigationCoordinator.requestBrowserBack()}><Icon name="arrow-left" className="size-5" /></Button>
-        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100"
+        <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto"
           aria-label={t('remoteDesktop.rotate')} title={t('remoteDesktop.rotate')}
-          onClick={() => { flushMoves(); gestures.reset(); setKeyboardOpen(false); orientation.toggle(); void requestDesktopOrientationPermission(); }}><Icon name="smartphone" className="size-5 rotate-45" /></Button>
+          onClick={() => { flushMoves(); gestures.reset(); setKeyboardOpen(false); orientation.toggle(); }}><Icon name="smartphone" className="size-5 rotate-45" /></Button>
       </div>
       <p className="sr-only">{t('remoteDesktop.hint')}</p>
       <div className="pointer-events-none absolute left-[max(0.75rem,var(--desktop-safe-left))] right-[max(0.75rem,var(--desktop-safe-right))] bottom-[max(0.75rem,var(--desktop-safe-bottom))] top-[calc(4rem+var(--desktop-safe-top))] flex flex-col items-end justify-end gap-3">
@@ -174,14 +178,14 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
         </div>}
         <div className="flex w-full shrink-0 items-end justify-between gap-3">
           <div className="pointer-events-auto flex gap-3">
-            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+            <Button size="mobileIcon" variant="mobileGlass" className={mode === 'drag' ? 'yuri-mobile-inverse-action' : undefined}
               aria-label={t('remoteDesktop.drag')} title={t('remoteDesktop.drag')} aria-pressed={mode === 'drag'} disabled={!live}
               onClick={() => { flushMoves(); gestures.cancel(); setMode('drag'); }}><Icon name="hand" className="size-5" /></Button>
-            <Button size="mobileIcon" variant="mobileGlass" className="opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+            <Button size="mobileIcon" variant="mobileGlass" className={mode === 'cursor' ? 'yuri-mobile-inverse-action' : undefined}
               aria-label={t('remoteDesktop.cursor')} title={t('remoteDesktop.cursor')} aria-pressed={mode === 'cursor'} disabled={!live}
               onClick={() => { flushMoves(); gestures.cancel(); setMode('cursor'); }}><Icon name="cursor" className="size-5" /></Button>
           </div>
-          <Button size="mobileIcon" variant="mobileGlass" className="pointer-events-auto opacity-60 hover:opacity-100 focus-visible:opacity-100 aria-pressed:opacity-100 aria-pressed:ring-2 aria-pressed:ring-foreground/30"
+          <Button size="mobileIcon" variant="mobileGlass" className={`pointer-events-auto${keyboardOpen ? ' yuri-mobile-inverse-action' : ''}`}
             disabled={!live} aria-label={t('remoteDesktop.text')} title={t('remoteDesktop.text')} aria-pressed={keyboardOpen} aria-expanded={keyboardOpen}
             onClick={() => setKeyboardOpen(value => !value)}><Icon name="keyboard" className="size-5" /></Button>
         </div>

@@ -28,6 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   act(() => root.unmount()); document.body.innerHTML = '';
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false });
 });
 const onClose = vi.fn();
@@ -93,10 +94,14 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
     const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
     expect(button).not.toBeNull();
     expect(button.textContent).toBe('');
+    expect(button.classList.contains('yuri-mobile-floating-action')).toBe(true);
+    expect(button.classList.contains('size-10')).toBe(true);
+    expect(button.className).not.toMatch(/opacity-60|aria-pressed:ring|backdrop-blur|shadow-/);
     expect(viewport.contains(button)).toBe(false);
   }
   act(() => keyboard.click());
   expect(keyboard.getAttribute('aria-expanded')).toBe('true');
+  expect(keyboard.classList.contains('yuri-mobile-inverse-action')).toBe(true);
   const input = document.querySelector('input')!;
   expect(viewport.contains(input)).toBe(false);
   act(() => {
@@ -107,6 +112,7 @@ it('keeps gamepad-style icon controls outside the pointer surface without a tool
   expect(mock.send).toHaveBeenLastCalledWith({ type: 'text', text: 'hello' });
   act(() => keyboard.click());
   expect(document.querySelector('input')).toBeNull();
+  expect(keyboard.classList.contains('yuri-mobile-inverse-action')).toBe(false);
   expect(mock.connect).toHaveBeenCalledTimes(1);
   act(() => options.onState('tunnel'));
   expect(document.body.textContent).not.toContain('Compatibility stream');
@@ -130,7 +136,10 @@ it('owns a full page history entry and rotates only this page without reconnecti
   expect(onClose).toHaveBeenCalledOnce();
   expect(mock.close).toHaveBeenCalledOnce();
 });
-it('follows meaningful sensor changes, ignores flat/noisy samples and leaves other pages untouched', () => {
+it('ignores all sensor samples and preserves the manually selected orientation without requesting permission', () => {
+  const requestPermission = vi.fn();
+  vi.stubGlobal('DeviceOrientationEvent', { requestPermission });
+  const listen = vi.spyOn(window, 'addEventListener');
   render();
   const surface = document.querySelector('[data-remote-desktop-page] main') as HTMLElement;
   const tilt = (beta: number, gamma: number) => {
@@ -138,15 +147,19 @@ it('follows meaningful sensor changes, ignores flat/noisy samples and leaves oth
     Object.defineProperties(event, { beta: { value: beta }, gamma: { value: gamma } });
     act(() => window.dispatchEvent(event));
   };
-  tilt(80, 0);
+  const original = surface.style.transform;
+  tilt(80, 0); tilt(0, 80); tilt(0, -80);
+  expect(surface.style.transform).toBe(original);
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
   expect(surface.style.transform).toContain('rotate(90deg)');
   const queryCalls = mock.query.mock.calls.length;
-  for (let index = 0; index < 100; index++) tilt(80 + index % 5, 0);
+  for (let index = 0; index < 100; index++) tilt(index % 2 ? 0 : 80, index % 2 ? -80 : 0);
   expect(mock.query).toHaveBeenCalledTimes(queryCalls);
-  tilt(0, 0);
   expect(surface.style.transform).toContain('rotate(90deg)');
-  tilt(0, 80);
-  expect(surface.style.transform).toBe('');
+  expect(requestPermission).not.toHaveBeenCalled();
+  expect(listen.mock.calls.map(([event]) => String(event))).not.toContain('deviceorientation');
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
+  expect(surface.style.transform).toBe(original);
   expect(mock.connect).toHaveBeenCalledTimes(1);
   expect(document.body.style.transform).toBe('');
 });
@@ -156,4 +169,57 @@ it('closes capture when the phone goes to the background', () => {
   act(() => document.dispatchEvent(new Event('visibilitychange')));
   expect(mock.close).toHaveBeenCalledTimes(1);
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+});
+
+it('manually rotates a portrait-locked viewport and discards orientation on close', () => {
+  vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
+  vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(844);
+  render();
+  const surface = document.querySelector('[data-remote-desktop-page] main') as HTMLElement;
+  expect(surface.style.transform).toBe('');
+  act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Switch portrait / landscape"]')!.click());
+  expect(surface.style.transform).toContain('rotate(90deg)');
+  expect(surface.style.width).toBe('844px');
+  expect(surface.style.height).toBe('390px');
+  act(() => root.render(<></>));
+  render();
+  expect(document.querySelector<HTMLElement>('[data-remote-desktop-page] main')!.style.transform).toBe('');
+});
+
+it('coalesces a pinch burst into one layout read and one transform write per frame', () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++id, callback); return id; });
+  vi.stubGlobal('cancelAnimationFrame', (key: number) => frames.delete(key));
+  render();
+  const options = mock.connect.mock.calls[0][0];
+  act(() => { mock.resize?.([{ contentRect: { width: 390, height: 844 } }]); options.onState('webrtc'); });
+  const viewport = document.querySelector<HTMLElement>('div[aria-label="Remote screen"]')!;
+  const captures = new Set<number>();
+  viewport.setPointerCapture = key => { captures.add(key); };
+  viewport.hasPointerCapture = key => captures.has(key);
+  const rect = vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 390, bottom: 844 } as DOMRect);
+  const pointer = (type: string, pointerId: number, clientX: number) => act(() => {
+    viewport.dispatchEvent(new PointerEvent(type, { pointerId, clientX, clientY: 422, bubbles: true }));
+  });
+  pointer('pointerdown', 1, 145); pointer('pointerdown', 2, 245);
+  rect.mockClear();
+  const writes = vi.spyOn((viewport.firstElementChild as HTMLElement).style, 'transform', 'set');
+  const queryCalls = mock.query.mock.calls.length;
+  for (let step = 1; step <= 60; step++) {
+    pointer('pointermove', 1, 145 - step); pointer('pointermove', 2, 245 + step);
+  }
+  expect(frames.size).toBe(1);
+  act(() => { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(16)); });
+  expect(rect).toHaveBeenCalledTimes(1);
+  expect(writes).toHaveBeenCalledTimes(1);
+  expect((viewport.firstElementChild as HTMLElement).style.transform).toContain('scale(2.2)');
+  for (let frame = 0; frame < 60; frame++) {
+    pointer('pointermove', 1, 85 - frame / 2); pointer('pointermove', 2, 305 + frame / 2);
+    act(() => { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(32 + frame * 16)); });
+  }
+  expect(rect).toHaveBeenCalledTimes(61);
+  expect(writes).toHaveBeenCalledTimes(61);
+  expect(mock.query).toHaveBeenCalledTimes(queryCalls);
+  expect(mock.send).not.toHaveBeenCalled();
 });

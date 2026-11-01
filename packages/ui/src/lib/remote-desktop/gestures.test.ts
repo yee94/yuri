@@ -13,6 +13,16 @@ const setup = (drag = false) => {
 };
 
 describe('remote desktop coordinate mapping and gestures', () => {
+  it('batches both fingers before computing one anchored pinch transform and ignores stale pointers', () => {
+    const { gestures, transforms, events } = setup(true);
+    gestures.down(1, { x: 150, y: 300 }); gestures.down(2, { x: 250, y: 300 });
+    gestures.moveMany(new Map([[1, { x: 100, y: 300 }], [2, { x: 300, y: 300 }], [99, center]]));
+    expect(transforms).toEqual([{ scale: 2, x: -200, y: -300 }]);
+    gestures.up(2, { x: 300, y: 300 }); gestures.up(1, { x: 100, y: 300 });
+    gestures.moveMany(new Map([[1, center], [2, center]]));
+    expect(transforms).toHaveLength(1);
+    expect(events).toEqual([]);
+  });
   it('long press opens the context menu once and pinch cancels the pending long press', () => {
     vi.useFakeTimers();
     try {

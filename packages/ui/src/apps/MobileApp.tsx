@@ -95,7 +95,6 @@ import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
 import { RemoteDesktopPanel } from '@/mobile/RemoteDesktopPanel';
-import { requestDesktopOrientationPermission } from '@/lib/remote-desktop/orientation';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
 import { MobileFloatingSurface } from '@/mobile/MobileSurface';
 import {
@@ -2274,7 +2273,6 @@ const MobileShell: React.FC<{
   const [overflowOpen, setOverflowOpen] = React.useState(false);
   const [remoteDesktopOpen, setRemoteDesktopOpen] = React.useState(false);
   const openRemoteDesktop = useEvent(() => {
-    void requestDesktopOrientationPermission();
     setOverflowOpen(false);
     setRemoteDesktopOpen(true);
   });

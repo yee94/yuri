@@ -11,7 +11,8 @@ test('home and chat overflow converge on one shell-owned remote desktop panel', 
   const home = await readFile(join(sourceDirectory, '../mobile/projects/MobileProjectsHomeContainer.tsx'), 'utf8');
 
   expect(source.match(/<RemoteDesktopPanel\b/g)).toHaveLength(1);
-  expect(source).toMatch(/const openRemoteDesktop = useEvent\(\(\) => \{\s*void requestDesktopOrientationPermission\(\);\s*setOverflowOpen\(false\);\s*setRemoteDesktopOpen\(true\);/);
+  expect(source).toMatch(/const openRemoteDesktop = useEvent\(\(\) => \{\s*setOverflowOpen\(false\);\s*setRemoteDesktopOpen\(true\);/);
+  expect(source).not.toContain('requestDesktopOrientationPermission');
   expect(source).toMatch(/key: 'remote-desktop',\s*icon: 'computer',\s*label: t\('remoteDesktop.title'\),\s*onSelect: openRemoteDesktop,/);
   expect(source).toContain('onRemoteDesktop={openRemoteDesktop}');
   expect(source).toContain('onClose={closeRemoteDesktop}');
