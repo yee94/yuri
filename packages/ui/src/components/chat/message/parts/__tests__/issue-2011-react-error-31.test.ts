@@ -117,7 +117,7 @@ describe('renderTodoOutput (issue #2011)', () => {
         expect(markup.indexOf('Completed second')).toBeLessThan(markup.indexOf('Cancelled third'));
         expect(markup.indexOf('Cancelled third')).toBeLessThan(markup.indexOf('Active fourth'));
         expect(markup).toContain('line-through');
-        expect(markup).toContain('#yuri-checkbox-circle');
+        expect(markup).toContain('M5 8 7.5 11 11 5.5');
         expect(markup.match(/aria-current="step"/g)?.length).toBe(1);
     });
 });

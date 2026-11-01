@@ -7547,6 +7547,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     )}
                     showAssistantStatus={false}
                     showTodos
+                    insideInputColumn
                     leftAccessory={newSessionDraftOpen || !hasPendingChanges ? null : <PendingChangesBar />}
                 />
                 {!isMobile && showDraftTargetSelectors ? (

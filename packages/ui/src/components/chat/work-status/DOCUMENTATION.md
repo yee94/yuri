@@ -53,6 +53,8 @@ Unlinked child sessions use their own session ID immediately, so later transcrip
 hydration, continuation, or renaming preserves their face. Titles and Agent names
 only own labels; no extra message fetch is needed.
 
+Todos sit under the changes row and follow the displayed session. The list is derived from the latest completed `todowrite` in the transcript (already cut at the revert boundary), because OpenCode v2 keeps no todo state and emits no `todo.updated`; an empty write clears it. Legacy live `todo` state and the persisted copy only cover sessions with no `todowrite` loaded. Rows use the same glyph set as OpenCode's native to-do pill: ring, half-filled in-progress (warning color), check, and slash. Cancelled items stay, struck through. The header shows completed/total, collapses the list, and turns into a green check once every item is completed or cancelled. The in-progress item is the only row in foreground color and scrolls into view as the plan advances. The group renders nothing without todos and is read-only.
+
 Changes uses a vertical plus/minus glyph and opens the Git sidebar. The branch
 and worktree copy buttons, and the changes row, use the hand cursor. The
 desktop shell otherwise draws an arrow on buttons; these controls keep the

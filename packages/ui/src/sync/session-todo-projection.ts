@@ -126,6 +126,71 @@ const readTodosFromPart = (part: Part): Todo[] => {
 }
 
 /**
+ * Latest usable `todowrite` input in a message-record list (already cut at
+ * the revert boundary). OpenCode v2 keeps no todo state server-side and emits
+ * no `todo.updated`, so the list is derived from the transcript itself.
+ * A running `todowrite` already carries the authoritative list, including
+ * `in_progress`, and must count; otherwise the row keeps a stale or empty
+ * presented set until the tool settles. An explicit empty list clears; failed
+ * or aborted calls are skipped.
+ */
+export function projectTodosFromMessageRecords(
+  records: ReadonlyArray<{ info: { id: string }; parts?: unknown[] }>,
+): Todo[] | undefined {
+  const part = findLatestTodoListPart(records.map((record) => record.parts as Part[] | undefined))
+  if (!part) return undefined
+  return normalizeTodoList((part as { state?: { input?: { todos?: unknown } } }).state?.input?.todos)
+}
+
+/** Rejected, settled, or still running `todowrite` parts all contribute. */
+const isUsableTodoListPart = (part: Part): boolean => (
+  readToolName(part) === "todowrite" && !REJECTED_TOOL_STATUSES.has(readToolStatus(part) ?? "")
+)
+
+const findLatestTodoListPart = (partsByMessage: ReadonlyArray<readonly Part[] | undefined>): Part | undefined => {
+  for (let index = partsByMessage.length - 1; index >= 0; index -= 1) {
+    const parts = partsByMessage[index]
+    if (!parts) continue
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex]!
+      if (!isUsableTodoListPart(part)) continue
+      if (Array.isArray((part as { state?: { input?: { todos?: unknown } } }).state?.input?.todos)) return part
+    }
+  }
+  return undefined
+}
+
+const normalizedTodoCache = new WeakMap<object, Todo[]>()
+
+/**
+ * Same projection as `projectTodosFromMessageRecords`, but reads the raw
+ * transcript and returns a reference that only changes when the source
+ * `todowrite` input changes. Streaming text deltas therefore yield an
+ * identical snapshot and cause no re-render in subscribers.
+ */
+export function projectLatestTodosFromTranscript(
+  transcript: TranscriptTodoSource,
+  revertMessageID?: string,
+): Todo[] | undefined {
+  const order = transcript.messageOrder
+  let end = order.length
+  if (revertMessageID) {
+    const cut = order.indexOf(revertMessageID)
+    if (cut >= 0) end = cut
+  }
+  const part = findLatestTodoListPart(order.slice(0, end).map((messageID) => transcript.partsByMessageID[messageID]))
+  if (!part) return undefined
+  const input = (part as { state?: { input?: { todos?: unknown } } }).state?.input?.todos
+  if (!Array.isArray(input)) return undefined
+  let normalized = normalizedTodoCache.get(input)
+  if (!normalized) {
+    normalized = normalizeTodoList(input)
+    normalizedTodoCache.set(input, normalized)
+  }
+  return normalized
+}
+
+/**
  * Walk the loaded transcript newest-first and return the latest usable
  * todowrite/todoread list. Does not fetch; callers already hydrated messages.
  */

@@ -128,6 +128,34 @@ describe("projectTodosFromTranscript", () => {
     expect(todos).toEqual([FIRST])
   })
 
+  test("uses the list from a running todowrite so in_progress shows while working", () => {
+    const working: Todo[] = [
+      { content: "done step", status: "completed", priority: "medium" },
+      { content: "working step", status: "in_progress", priority: "high" },
+    ]
+    const todos = projectTodosFromTranscript({
+      messageOrder: ["msg_1", "msg_2"],
+      partsByMessageID: {
+        msg_1: [toolPart({ id: "p_done", tool: "todowrite", status: "completed", todos: [FIRST] })],
+        msg_2: [toolPart({ id: "p_running", tool: "todowrite", status: "running", todos: working })],
+      },
+    })
+
+    expect(todos).toEqual(working)
+  })
+
+  test("skips an aborted todowrite and uses the previous list", () => {
+    const todos = projectTodosFromTranscript({
+      messageOrder: ["msg_1", "msg_2"],
+      partsByMessageID: {
+        msg_1: [toolPart({ id: "p_ok", tool: "todowrite", status: "completed", todos: [FIRST] })],
+        msg_2: [toolPart({ id: "p_aborted", tool: "todowrite", status: "aborted", todos: [SECOND] })],
+      },
+    })
+
+    expect(todos).toEqual([FIRST])
+  })
+
   test("reads todos from tool output when input is missing", () => {
     const todos = projectTodosFromTranscript({
       messageOrder: ["msg_1"],
@@ -158,6 +186,34 @@ describe("projectTodosFromTranscript", () => {
     })
 
     expect(todos).toEqual([THIRD])
+  })
+
+  test("uses the list from a running todowrite so in_progress shows while working", () => {
+    const working: Todo[] = [
+      { content: "done step", status: "completed", priority: "medium" },
+      { content: "working step", status: "in_progress", priority: "high" },
+    ]
+    const todos = projectTodosFromTranscript({
+      messageOrder: ["msg_1", "msg_2"],
+      partsByMessageID: {
+        msg_1: [toolPart({ id: "p_done", tool: "todowrite", status: "completed", todos: [FIRST] })],
+        msg_2: [toolPart({ id: "p_running", tool: "todowrite", status: "running", todos: working })],
+      },
+    })
+
+    expect(todos).toEqual(working)
+  })
+
+  test("skips an aborted todowrite and uses the previous list", () => {
+    const todos = projectTodosFromTranscript({
+      messageOrder: ["msg_1", "msg_2"],
+      partsByMessageID: {
+        msg_1: [toolPart({ id: "p_ok", tool: "todowrite", status: "completed", todos: [FIRST] })],
+        msg_2: [toolPart({ id: "p_aborted", tool: "todowrite", status: "aborted", todos: [SECOND] })],
+      },
+    })
+
+    expect(todos).toEqual([FIRST])
   })
 
   test("returns an empty list when the loaded tail has no todo tools", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 
 import {
     collectConsecutiveProcessTools,
@@ -28,6 +28,14 @@ describe('process tool grouping', () => {
         const afterQuestion = collectConsecutiveProcessTools(tools, 11, (name) => name);
         expect(afterQuestion.items).toEqual(['edit']);
         expect(afterQuestion.end).toBe(12);
+    });
+
+    test.each(['todowrite', 'todoread', 'functions.todowrite', 'runtime.todoread:2'])('treats %s as a boundary without counting it as a call', (todoTool) => {
+        const tools = ['read', todoTool, 'bash'];
+        expect(collectConsecutiveProcessTools(tools, 0, (name) => name)).toEqual({ items: ['read'], end: 1 });
+        expect(collectConsecutiveProcessTools(tools, 2, (name) => name)).toEqual({ items: ['bash'], end: 3 });
+        expect(isProcessSuccessorPart({ kind: 'tool', toolName: todoTool })).toBe(true);
+        expect(summarizeProcessTools(tools)).toEqual({ read: 1, search: 0, list: 0, edit: 0, command: 1, other: 0 });
     });
 
     test('combines explore and used counts in one summary', () => {

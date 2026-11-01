@@ -14,6 +14,7 @@ import { normalizePath } from '@/lib/pathNormalization';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useWorkStatusSubagents } from './useWorkStatusSubagents';
+import { WorkStatusTodos } from './WorkStatusTodos';
 
 type Props = {
   sessionId: string | null;
@@ -172,6 +173,8 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => 
           ) : <span className="ml-auto tabular-nums">{changed}</span>}
         </Button>
       ) : null}
+
+      <WorkStatusTodos sessionId={sessionId} directory={directory} />
 
       {subagents.length > 0 ? (
         <div role="group" aria-label={t('chat.workStatus.section.subagents')} className="flex min-w-0 flex-col">

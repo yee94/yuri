@@ -42,6 +42,7 @@ import { Icon } from "@/components/icon/Icon";
 import { AgentAvatar } from '@/components/chat/AgentAvatar';
 import { type DiffViewMode } from '../DiffViewToggle';
 import { getToolIcon } from './toolPresentation';
+import { TodoCount, TodoProgressMark } from '@/components/chat/todo/TodoList';
 import { useDurationTickerNow } from './useDurationTicker';
 import {
     buildTaskSummaryEntriesFromSession,
@@ -1889,6 +1890,16 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const input = stateWithData.input;
     const time = stateWithData.time;
 
+    const todoProgress = React.useMemo(() => {
+        const raw = (input as { todos?: unknown } | undefined)?.todos;
+        if (!isTodoTool || !Array.isArray(raw)) return null;
+        const items = raw.filter((todo): todo is { status: string } => (
+            !!todo && typeof todo === 'object' && typeof (todo as { status?: unknown }).status === 'string'
+        ));
+        if (items.length === 0) return null;
+        return { done: items.filter((todo) => todo.status === 'completed').length, total: items.length };
+    }, [input, isTodoTool]);
+
     // Execution timing belongs to the server and survives row/session remounts.
     const effectiveTimeStart = typeof time?.start === 'number' && Number.isFinite(time.start) ? time.start : undefined;
 
@@ -2548,6 +2559,12 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                     className="text-[var(--tools-icon)]"
                                     label={t('chat.assistantStatus.usingTool', { tool: taskTitle })}
                                 />
+                            ) : todoProgress ? (
+                                <TodoProgressMark
+                                    done={todoProgress.done}
+                                    total={todoProgress.total}
+                                    className="size-3.5 text-current"
+                                />
                             ) : (
                                 getToolIcon(normalizedPartTool || part.tool)
                             )}
@@ -2651,6 +2668,9 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                 <span className="flex-shrink-0 inline-flex items-center gap-0 typography-meta">
                                     <span style={{ color: 'var(--status-success)' }}>+{writeLineCount}</span>
                                 </span>
+                            )}
+                            {todoProgress && (
+                                <TodoCount done={todoProgress.done} total={todoProgress.total} className="typography-meta" />
                             )}
                         </div>
                     </div>

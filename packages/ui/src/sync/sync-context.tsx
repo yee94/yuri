@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react"
 import { mountProjectOrderSync } from './project-order-sync'
-import type { Message, Part } from '@/lib/opencode/v2-types'
+import type { Message, Part, Todo } from '@/lib/opencode/v2-types'
 import type { Event } from '@/sync/types'
 
 import type { Session } from '@/lib/opencode/v2-types'
@@ -190,7 +190,10 @@ import {
   resyncDirectorySessionStatuses,
   setAuthoritativeGlobalSessionStatusConverge,
 } from "./session-status-reconciliation"
-import { seedSessionTodosFromHydratedTranscript } from "./session-todo-projection"
+import {
+  projectLatestTodosFromTranscript,
+  seedSessionTodosFromHydratedTranscript,
+} from "./session-todo-projection"
 import type { NormalizedOpenCodeEvent } from "./opencode-event-normalizer"
 
 // ---------------------------------------------------------------------------
@@ -4783,6 +4786,57 @@ export function useSessionMessageRecords(
       }
     },
     [enabled, sessionID, store, targetDirectory],
+  )
+
+  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+/**
+ * Latest usable `todowrite` list for a session, or undefined when none is
+ * loaded. Unlike `useSessionMessageRecords`, the snapshot keeps its reference
+ * across streaming text deltas, so subscribers re-render only when the todo
+ * list itself changes. Running calls count so `in_progress` is visible while
+ * the step is still working.
+ */
+export function useSessionLatestTodos(sessionID: string, directory?: string): Todo[] | undefined {
+  const system = useSyncSystem()
+  const targetDirectory = directory ?? system.directory
+  const store = useDirectoryStore(targetDirectory)
+
+  const getSnapshot = useMemo(
+    () => () => {
+      if (!sessionID) return undefined
+      const repository = getTranscriptRepository()
+        ?? resolveTranscriptRepositoryForStore(targetDirectory, store)
+      const data = repository.getTranscript(transcriptScope(targetDirectory, sessionID))
+      const session = store.getState().session.find((candidate) => candidate.id === sessionID)
+      const revertMessageID = (session as { revert?: { messageID?: string } } | undefined)?.revert?.messageID
+      return projectLatestTodosFromTranscript(data, revertMessageID)
+    },
+    [sessionID, store, targetDirectory],
+  )
+
+  const subscribe = useMemo(
+    () => (notify: () => void) => {
+      if (!sessionID) return () => undefined
+      const subscribeRepository = () => (
+        (getTranscriptRepository() ?? resolveTranscriptRepositoryForStore(targetDirectory, store))
+          .subscribe(transcriptScope(targetDirectory, sessionID), notify)
+      )
+      let repoUnsub = subscribeRepository()
+      const unsubBinding = subscribeTranscriptRepositoryBinding(() => {
+        repoUnsub()
+        repoUnsub = subscribeRepository()
+        notify()
+      })
+      const unsubStore = store.subscribe(notify)
+      return () => {
+        unsubBinding()
+        repoUnsub()
+        unsubStore()
+      }
+    },
+    [sessionID, store, targetDirectory],
   )
 
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)

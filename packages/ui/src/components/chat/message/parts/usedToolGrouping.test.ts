@@ -39,10 +39,12 @@ describe('used tool grouping', () => {
         expect(usedToolCountKey('read')).toBeNull();
         expect(usedToolCountKey('task')).toBeNull();
         expect(usedToolCountKey('question')).toBeNull();
+        expect(usedToolCountKey('todowrite')).toBeNull();
+        expect(usedToolCountKey('todoread')).toBeNull();
         expect(summarizeUsedTools(['edit', 'write', 'apply_patch', 'bash', 'shell', 'websearch', 'todowrite'])).toEqual({
             edit: 3,
             command: 2,
-            other: 2,
+            other: 1,
         });
     });
 

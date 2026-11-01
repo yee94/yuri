@@ -53,13 +53,14 @@ export const isSkillGroupTool = (toolName: unknown): boolean => {
 };
 
 // Task stays a standalone row (child-session chrome). Question stays visible
-// because it waits on the user. Everything else that is not explore/skill
+// because it waits on the user. Todo calls keep their own task-list rows.
+// Everything else that is not explore/skill
 // is a used-class process tool (edit / command / other).
 export const isUsedGroupTool = (toolName: unknown): boolean => {
     const name = normalizeToolName(toolName);
     if (!name) return false;
     if (CONTEXT_GROUP_TOOL_NAMES.has(name)) return false;
-    if (name === 'skill' || STANDALONE_TOOL_NAMES.has(name) || name === 'question') {
+    if (name === 'skill' || STANDALONE_TOOL_NAMES.has(name) || name === 'question' || name === 'todowrite' || name === 'todoread') {
         return false;
     }
     return true;

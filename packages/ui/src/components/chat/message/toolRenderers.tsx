@@ -3,8 +3,8 @@ import { cn } from '@/lib/utils';
 import { typography } from '@/lib/typography';
 import { formatToolInput, detectToolOutputLanguage } from '@/lib/toolHelpers';
 import { SimpleMarkdownRenderer } from '../MarkdownRenderer';
-import { TodoItemRow, type TodoItemRowTodo, type TodoItemStatus } from '../TodoItemRow';
-import { statusBarPopoverListClassName } from '../statusBarPopover';
+import type { TodoListItem, TodoStatus } from '../todo/todoStatus';
+import { TodoList } from '../todo/TodoList';
 
 const cleanOutput = (output: string) => {
     let cleaned = output.replace(/^<file>\s*\n?/, '').replace(/\n?<\/file>\s*$/, '');
@@ -380,7 +380,7 @@ export const renderGlobOutput = (output: string, isMobile: boolean, options?: { 
     }
 };
 
-const TODO_STATUSES = new Set<TodoItemStatus>(['in_progress', 'pending', 'completed', 'cancelled']);
+const TODO_STATUSES = new Set<TodoStatus>(['in_progress', 'pending', 'completed', 'cancelled']);
 
 export const renderTodoOutput = (
     output: string,
@@ -399,31 +399,19 @@ export const renderTodoOutput = (
         if (!Array.isArray(raw)) {
             return null;
         }
-        const todos: TodoItemRowTodo[] = raw.filter(
-            (t): t is TodoItemRowTodo =>
+        const todos: TodoListItem[] = raw.filter(
+            (t): t is TodoListItem =>
                 !!t &&
                 typeof t === 'object' &&
                 typeof (t as { content?: unknown }).content === 'string' &&
                 typeof (t as { status?: unknown }).status === 'string' &&
-                TODO_STATUSES.has((t as { status: TodoItemStatus }).status),
+                TODO_STATUSES.has((t as { status: TodoStatus }).status),
         );
         if (todos.length === 0) {
             return null;
         }
 
-        const activeTodo = todos.find((todo) => todo.status === 'in_progress') ?? null;
-
-        return (
-            <ul className={options?.listClassName ?? statusBarPopoverListClassName}>
-                {todos.map((todo, index) => (
-                    <TodoItemRow
-                        key={todo.id ?? `todo-${index}`}
-                        todo={todo}
-                        isActive={todo === activeTodo}
-                    />
-                ))}
-            </ul>
-        );
+        return <TodoList todos={todos} className={cn('px-1 py-1', options?.listClassName)} />;
     } catch {
         return null;
     }

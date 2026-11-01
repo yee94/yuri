@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 
 import {
     isContextGroupTool,
@@ -64,6 +64,12 @@ describe('tool rendering classification', () => {
         expect(isUsedGroupTool('task')).toBe(false);
         expect(isUsedGroupTool('subagent')).toBe(false);
         expect(isUsedGroupTool('question')).toBe(false);
+    });
+
+    test.each(['todowrite', 'todoread', 'functions.todowrite', 'runtime.todoread:2'])('keeps %s expandable but outside process groups and call counts', (toolName) => {
+        expect(isExpandableTool(toolName)).toBe(true);
+        expect(isProcessGroupTool(toolName)).toBe(false);
+        expect(isUsedGroupTool(toolName)).toBe(false);
     });
 
     test('keeps native subagent on the standalone task-row path', async () => {

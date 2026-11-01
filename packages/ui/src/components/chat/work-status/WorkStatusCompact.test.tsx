@@ -11,6 +11,9 @@ const fixture = vi.hoisted(() => ({
   attached: new Map<string, WorktreeMetadata>(),
   sessions: [] as { id: string; parentID: string; title: string }[],
   faces: [] as { key: string; sessionID?: string; seed: string; label: string; phase: 'working' | 'done' }[],
+  todowrite: undefined as { content: string; status: string; priority: string }[] | undefined,
+  liveTodos: {} as Record<string, { content: string; status: string; priority: string }[]>,
+  persistedTodos: {} as Record<string, { todos: { content: string; status: string; priority: string }[] }>,
   ui: {
     workStatusPanelEnabled: true,
     isRightSidebarOpen: false,
@@ -34,6 +37,11 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (selector: (state
   worktreeMetadata: fixture.attached, availableWorktreesByProject: fixture.worktrees,
 }) }));
 vi.mock('./useWorkStatusSubagents', () => ({ useWorkStatusSubagents: () => fixture.faces }));
+vi.mock('@/sync/sync-context', () => ({
+  useDirectorySync: (selector: (state: unknown) => unknown) => selector({ todo: fixture.liveTodos, session_status: {} }),
+  useSessionLatestTodos: () => fixture.todowrite,
+}));
+vi.mock('@/stores/useTodosPersistStore', () => ({ useTodosPersistStore: (selector: (state: unknown) => unknown) => selector({ sessions: fixture.persistedTodos }) }));
 vi.mock('@/stores/useUIStore', () => ({
   normalizeContextPanelDirectoryKey: (directory: string) => directory,
   useUIStore: (selector: (state: unknown) => unknown) => selector(fixture.ui),
@@ -53,6 +61,9 @@ beforeEach(() => {
   fixture.attached.clear();
   fixture.sessions = [];
   fixture.faces = [];
+  fixture.liveTodos = {};
+  fixture.persistedTodos = {};
+  fixture.todowrite = undefined;
   fixture.worktrees.set('/repo', [{ path: '/trees/topic', projectDirectory: '/repo', branch: 'old-branch', label: 'old-branch', name: 'topic', worktreeStatus: 'ready' }]);
   fixture.ui.isRightSidebarOpen = false;
   fixture.ui.contextPanelByDirectory = {};
@@ -144,6 +155,49 @@ it('renders a collapsed agent disclosure with stacked faces and expandable statu
   fixture.faces = [];
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
   expect(host.querySelector('[role="group"]')).toBeNull();
+});
+
+it('shows the session todos with a done count, keeps cancelled items struck through, and collapses on demand', async () => {
+  fixture.liveTodos = { s: [
+    { content: 'Scaffold', status: 'completed', priority: 'medium' },
+    { content: 'Build registry', status: 'in_progress', priority: 'medium' },
+    { content: 'Polish page', status: 'pending', priority: 'medium' },
+    { content: 'Dropped idea', status: 'cancelled', priority: 'low' },
+  ] };
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  const group = host.querySelector('[role="group"][aria-label="To-dos"]');
+  expect(group?.textContent).toContain('To-dos1/4');
+  expect(group?.querySelector('li[data-status="cancelled"]')?.textContent).toContain('Dropped idea');
+  expect(group?.querySelectorAll('li')).toHaveLength(4);
+  expect(group?.querySelector('li[aria-current="step"]')?.textContent).toContain('Build registry');
+  const toggle = group?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+  await act(async () => toggle?.click());
+  expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+  expect(group?.querySelector('[id]')?.getAttribute('aria-hidden')).toBe('true');
+});
+
+it('renders no todo group when the session has none, and falls back to the persisted list', async () => {
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  expect(host.querySelector('[aria-label="To-dos"]')).toBeNull();
+  fixture.persistedTodos = { s: { todos: [{ content: 'Cached', status: 'pending', priority: 'medium' }] } };
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  expect(host.querySelector('[aria-label="To-dos"]')?.textContent).toContain('0/1');
+});
+
+it('derives todos from the latest completed todowrite, so a stale cache never wins and an empty write clears', async () => {
+  fixture.persistedTodos = { s: { todos: [{ content: 'Stale cache', status: 'completed', priority: 'medium' }] } };
+  fixture.todowrite = [
+    { content: 'Fresh A', status: 'in_progress', priority: 'medium' },
+    { content: 'Fresh B', status: 'pending', priority: 'medium' },
+  ];
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  const group = host.querySelector('[aria-label="To-dos"]');
+  expect(group?.textContent).toContain('0/2');
+  expect(group?.textContent).toContain('Fresh A');
+  expect(group?.textContent).not.toContain('Stale cache');
+  fixture.todowrite = [];
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  expect(host.querySelector('[aria-label="To-dos"]')).toBeNull();
 });
 
 it('does not reuse attached worktree metadata after changing the displayed directory', async () => {

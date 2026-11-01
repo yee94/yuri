@@ -18,10 +18,10 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 - Message parts are rendered from `MessageBody.tsx`.
 - There are four tool rendering paths:
-  - **Process tools** (explore `read` / `glob` / `grep` / `list` plus edit / write / bash / apply_patch / custom / MCP) -> consecutive runs collapse into one `ContextToolGroup` ("Running" / "Used" plus mixed search/read/list/edit/command/call counts and aggregated `+N / -M` when edits contribute lines). Explore children are `StaticToolRow`; used children are `ToolPart`. Body text splits the run; skill / task / question stay out.
+  - **Process tools** (explore `read` / `glob` / `grep` / `list` plus edit / write / bash / apply_patch / custom / MCP) -> consecutive runs collapse into one `ContextToolGroup` ("Running" / "Used" plus mixed search/read/list/edit/command/call counts and aggregated `+N / -M` when edits contribute lines). Explore children are `StaticToolRow`; used children are `ToolPart`. Body text splits the run; skill / task / question / todo stay out.
   - **Skill tools** (`skill`) -> consecutive calls collapse into `SkillToolGroup` ("Load Skill" plus original names on one line, including a lone skill so later names can flip-animate)
   - **Other static tools** -> single `StaticToolRow` in `ProgressiveGroup.tsx` (no consecutive merge)
-  - **Expandable leftovers** (task / question) -> `ToolPart.tsx`
+  - **Expandable leftovers** (task / question / todowrite / todoread) -> `ToolPart.tsx`. Todo calls, like Skill calls, stay outside the process fold and its call counts; each retains its own expandable task-list row in source order and splits surrounding process runs.
 - Shared tool icon mapping is centralized in `toolPresentation.tsx` (`getToolIcon`).
 
 ## Which file controls what
@@ -84,7 +84,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 - `usedToolGrouping.ts`
   - Used-class count helpers consumed by the unified process fold: `summarizeUsedTools`, `summarizeUsedToolDiffs`.
-  - Count keys: edit (`edit` / `write` / `apply_patch` / …), command (`bash` / `shell` / …), other (custom / MCP / web / todo).
+   - Count keys: edit (`edit` / `write` / `apply_patch` / …), command (`bash` / `shell` / …), other (custom / MCP / web). Todo calls are excluded.
 
 - `../../lib/turns/resolveActivityPartId.ts`
   - Stable activity / tool row identity for keys and bash default-open expand state.
@@ -174,9 +174,8 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - Shared icon mapping for tool names (`getToolIcon`).
   - Used by both `ProgressiveGroup.tsx` and `ToolPart.tsx`.
 
-- `../../TodoItemRow.tsx`
-  - Owns the shared task-row presentation used by the StatusRow task popover and Todo tool output.
-  - Keeps status icons, active styling, dividers, responsive type, wrapping, and completed/cancelled treatment aligned.
+- `../../todo/TodoList.tsx`
+  - Owns the task-row presentation used by Todo tool output.
 
 - `toolRowChrome.ts`
   - Shared Codex-style rounded chip classes for interactive tool / reasoning headers.
@@ -194,7 +193,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
     - `isStandaloneTool`
     - `isContextGroupTool` (`read` / `glob` / `grep` / `list`)
     - `isSkillGroupTool` (`skill`)
-    - `isUsedGroupTool` (edit / command / other; not explore / skill / task / question)
+    - `isUsedGroupTool` (edit / command / other; not explore / skill / task / question / todowrite / todoread)
     - `isProcessGroupTool` (explore + used; the unified process fold)
     - `isToolPartActive` / `isToolPartSettled` lifecycle evidence shared by flat rendering, static rows, process groups, skill groups, and expandable rows
   - If a tool should switch between static vs expandable, or join the process / Skill grouping, change it here.

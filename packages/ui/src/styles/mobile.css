@@ -2483,7 +2483,8 @@ button.yuri-mobile-worktree-label-trigger:active,
     min-width: 0;
   }
 
-  :root.mobile-pointer:not(.desktop-runtime) button.yuri-pending-changes-trigger {
+  :root.mobile-pointer:not(.desktop-runtime) button.yuri-pending-changes-trigger,
+  :root.mobile-pointer:not(.desktop-runtime) button.yuri-status-row-trigger {
     min-height: 28px !important;
   }
 

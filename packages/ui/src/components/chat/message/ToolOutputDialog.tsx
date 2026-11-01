@@ -27,6 +27,7 @@ import { DiffViewToggle } from './DiffViewToggle';
 import { VirtualizedCodeBlock, type CodeLine } from './parts/VirtualizedCodeBlock';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { Icon } from "@/components/icon/Icon";
+import { TodoProgressMark } from '@/components/chat/todo/TodoList';
 import { useI18n, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { readRuntimeFile } from '@/lib/runtime-file-resource';
 import { MermaidLoadFailure, getMermaidDataUrlSourcePromise, isCurrentMermaidLoadRequest, isMermaidLoadFailure, nextMermaidLoadRequestId } from './toolOutputDialogMermaid';
@@ -123,7 +124,7 @@ const getToolIcon = (toolName: string) => {
         return <Icon name="search" className={iconClass} />;
     }
     if (tool === 'todowrite' || tool === 'todoread') {
-        return <Icon name="list-check-3" className={iconClass} />;
+        return <TodoProgressMark className={cn('text-current', iconClass)} />;
     }
     if (tool.startsWith('git')) {
         return <Icon name="git-branch" className={iconClass} />;

@@ -84,6 +84,30 @@ test.each([
     }
 });
 
+test.each([
+    ['sorted', false], ['sorted', true], ['live', false], ['live', true],
+] as const)('todo updates stay outside process folds and preserve source order (mode=%s, mobile=%s)', async (chatRenderMode, isMobile) => {
+    useUIStore.setState({ chatRenderMode, isMobile });
+    const row = assistant('tools-with-todos', '');
+    row.parts = [
+        { id: 'before-todo', type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/workspace/before.ts' }, output: 'before' } },
+        { id: 'todo-update', type: 'tool', tool: 'todowrite', state: { status: 'completed', input: { todos: [{ content: 'TODO_OUTSIDE_PROCESS', status: 'pending', priority: 'medium' }] }, output: 'done' } },
+        { id: 'after-todo', type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/workspace/after.ts' }, output: 'after' } },
+    ].map(part => ({ ...part, messageID: row.info.id, sessionID })) as Part[];
+    await render([user, row], row.info.id);
+
+    const groups = container.querySelectorAll('[data-component="context-tool-group"]');
+    expect(groups).toHaveLength(chatRenderMode === 'sorted' ? 2 : 0);
+    const todo = Array.from(container.querySelectorAll('[role="button"]')).find(element => element.textContent?.includes('Update Todo List'));
+    expect(todo).toBeDefined();
+    expect(todo!.closest('[data-component="context-tool-group"]')).toBeNull();
+    if (chatRenderMode === 'sorted') {
+        expect(groups[0].compareDocumentPosition(todo!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(todo!.compareDocumentPosition(groups[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(Array.from(groups).every(group => !group.textContent?.includes('call'))).toBe(true);
+    }
+});
+
 test.each(['sorted', 'live'] as const)('zero-width provider text does not paint a blank paragraph or split tools (%s)', async (chatRenderMode) => {
     useUIStore.setState({ chatRenderMode, showReasoningTraces: false, isMobile: true });
     const row = normalizeSessionProjectionMessage(sessionID, {

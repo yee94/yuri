@@ -1,5 +1,7 @@
 import React from 'react';
 import { Icon } from "@/components/icon/Icon";
+import { TodoProgressMark } from '@/components/chat/todo/TodoList';
+import { cn } from '@/lib/utils';
 
 export const getToolIcon = (toolName: string) => {
     const iconClass = 'h-3.5 w-3.5 flex-shrink-0';
@@ -46,7 +48,7 @@ export const getToolIcon = (toolName: string) => {
         return <Icon name="global" className={iconClass} />;
     }
     if (tool === 'todowrite' || tool === 'todoread') {
-        return <Icon name="list-check-3" className={iconClass} />;
+        return <TodoProgressMark className={cn('size-3.5 text-current', iconClass)} />;
     }
     if (tool === 'structuredoutput' || tool === 'structured_output') {
         return <Icon name="list-check-2" className={iconClass} />;

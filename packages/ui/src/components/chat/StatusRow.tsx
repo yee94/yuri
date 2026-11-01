@@ -3,9 +3,9 @@ import { useEvent } from '@reactuses/core';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import type { State as DirectorySyncState } from '@/sync/types';
 import { cn } from "@/lib/utils";
-import { useDirectorySync } from "@/sync/sync-context";
+import { useDirectorySync, useSessionLatestTodos } from "@/sync/sync-context";
 import type { Todo } from '@/lib/opencode/v2-types';
-import { TodoItemRow } from "./TodoItemRow";
+import { TodoCompleteMark, TodoCount, TodoList, TodoProgressMark } from "./todo/TodoList";
 
 // Compat aliases for old TodoItem shape
 type TodoItem = Todo & { id?: string };
@@ -19,10 +19,6 @@ import { useI18n } from "@/lib/i18n";
 import { useSessionSurface } from "./SessionSurfaceContext";
 import {
   statusBarPopoverClassName,
-  statusBarPopoverHeaderClassName,
-  statusBarPopoverHeaderMetaClassName,
-  statusBarPopoverHeaderTitleClassName,
-  statusBarPopoverListClassName,
   statusBarPopoverStyle,
   statusBarTriggerClassName,
   statusBarTriggerIconClassName,
@@ -54,6 +50,8 @@ interface StatusRowProps {
   showTodos?: boolean;
   agentName?: string;
   leftAccessory?: React.ReactNode;
+  /** Mounted inside the composer's `chat-input-column`; must not add another column. */
+  insideInputColumn?: boolean;
   className?: string;
 }
 
@@ -73,6 +71,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   showTodos = true,
   agentName,
   leftAccessory,
+  insideInputColumn = false,
   className,
 }) => {
   const { t } = useI18n();
@@ -96,11 +95,16 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   const persistedSessionTodos = useTodosPersistStore(
     persistedTodosSelector,
   );
+  const transcriptTodos = useSessionLatestTodos(
+    showTodos && currentSessionId ? currentSessionId : '',
+    sessionSurface.directory ?? undefined,
+  );
   const todos: TodoItem[] = React.useMemo(() => {
     if (!currentSessionId) return EMPTY_TODOS;
+    if (transcriptTodos) return transcriptTodos;
     if (liveTodos.length > 0) return liveTodos;
     return persistedSessionTodos ?? EMPTY_TODOS;
-  }, [liveTodos, persistedSessionTodos, currentSessionId]);
+  }, [transcriptTodos, liveTodos, persistedSessionTodos, currentSessionId]);
   const isMobile = useUIStore((state) => state.isMobile);
   const isCompact = isMobile || isVSCodeRuntime();
 
@@ -118,10 +122,6 @@ export const StatusRow: React.FC<StatusRowProps> = ({
       null
     );
   }, [visibleTodos]);
-  const focusedTodo = React.useMemo(
-    () => visibleTodos.find((todo) => todo.status === "in_progress") ?? null,
-    [visibleTodos],
-  );
 
   // Calculate progress
   const progress = React.useMemo(() => {
@@ -162,6 +162,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
     Boolean(showAbortStatus)
   );
   const hasLeftAccessory = Boolean(leftAccessory);
+  const isEmbedded = hasLeftAccessory || insideInputColumn;
   // Original logic from ChatInput
   const shouldRenderPlaceholder = !showAbortStatus && !hasAbortPrompt && (wasAborted || !abortActive);
 
@@ -170,10 +171,9 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   // Close popover when clicking outside
   const popoverRef = React.useRef<HTMLDivElement>(null);
   const todoListRef = React.useRef<HTMLUListElement>(null);
-  const activeTodoRef = React.useRef<HTMLLIElement>(null);
   React.useLayoutEffect(() => {
     const list = todoListRef.current;
-    const activeItem = activeTodoRef.current;
+    const activeItem = list?.querySelector<HTMLElement>('[aria-current="step"]') ?? null;
     if (!isExpanded || !list || !activeItem) return;
 
     const centeredScrollTop = activeItem.offsetTop - list.offsetTop - (list.clientHeight - activeItem.offsetHeight) / 2;
@@ -205,11 +205,15 @@ export const StatusRow: React.FC<StatusRowProps> = ({
     <button
       type="button"
       onClick={toggleExpanded}
-      className={cn(statusBarTriggerClassName, "shrink-0")}
+      className={cn(statusBarTriggerClassName, "yuri-status-row-trigger shrink-0")}
       aria-label={todoSummaryLabel}
       title={todoSummaryLabel}
     >
-      <Icon name="list-check-3" className={statusBarTriggerIconClassName} />
+      {statusSummary.left === 0 ? (
+        <TodoCompleteMark />
+      ) : (
+        <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
+      )}
       {/* Desktop: show task text; Mobile/VSCode: just "Tasks" */}
       {!isCompact && activeTodo ? (
         <span className={cn("status-row__active-todo max-w-[200px]", statusBarTriggerLabelClassName)}>
@@ -218,9 +222,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
       ) : (
         <span className="text-xs leading-4 md:text-[0.8125rem] md:leading-5">{t('chat.statusRow.tasksTitle')}</span>
       )}
-      <span className={statusBarTriggerMetaClassName} aria-hidden="true">
-        {progress.completed}/{progress.total}
-      </span>
+      <TodoCount done={progress.completed} total={progress.total} className={statusBarTriggerMetaClassName} animate={false} />
       {isExpanded ? (
         <Icon name="arrow-up-s" className={statusBarTriggerIconClassName} />
       ) : (
@@ -235,15 +237,15 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }
 
   return (
-    <div className={cn("mb-1", !hasLeftAccessory && "chat-column -mt-1", !hasLeftAccessory && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
+    <div className={cn("mb-1", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
       {/*
         When leftAccessory is set (ChatInput pending-changes row), the parent is
         already `chat-input-column`. Use the same horizontal inset as the composer
         textarea (`px-3`) so the status triggers align with input content.
       */}
-      <div className={cn("flex items-center justify-between py-0.5 gap-2", hasLeftAccessory && "px-3")}>
+      <div className={cn("flex items-center justify-between py-0.5 gap-2", isEmbedded && "px-3")}>
         {/* Left: Abort prompt | Abort status | Working placeholder | leftAccessory */}
-        <div className={cn("flex-1 flex items-center min-w-0 gap-2", !hasLeftAccessory && "overflow-x-hidden")}>
+        <div className={cn("flex-1 flex items-center min-w-0 gap-2", !isEmbedded && "overflow-x-hidden")}>
           {hasAbortPrompt ? (
             <div
               className="flex min-w-0 items-center text-muted-foreground"
@@ -288,7 +290,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
         </div>
 
         {/* Right: Todo */}
-        <div className={cn("relative flex items-center gap-2 flex-shrink-0", !hasLeftAccessory && "-mr-3")} ref={popoverRef}>
+        <div className={cn("relative flex items-center gap-2 flex-shrink-0", !isEmbedded && "-mr-3")} ref={popoverRef}>
           {todoTrigger}
 
           {/* Popover dropdown */}
@@ -303,27 +305,24 @@ export const StatusRow: React.FC<StatusRowProps> = ({
               )}
             >
               {/* Header */}
-              <div className={statusBarPopoverHeaderClassName}>
-                <span className={statusBarPopoverHeaderTitleClassName}>{t('chat.statusRow.tasksTitle')}</span>
-                <span className={statusBarPopoverHeaderMetaClassName}>
-                  {progress.completed}/{progress.total}
-                </span>
+              <div className="flex items-center gap-[0.6em] px-[calc(0.25rem+0.5em)] pt-2.5 pb-1 text-xs md:text-[0.8125rem]">
+                {progress.completed === progress.total ? (
+                  <TodoCompleteMark />
+                ) : (
+                  <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
+                )}
+                <span className="min-w-0 flex-1 truncate text-foreground">{t('chat.workStatus.todos.title')}</span>
+                <TodoCount done={progress.completed} total={progress.total} className="text-[0.92em] text-muted-foreground" />
               </div>
 
               {/* Todo list */}
-              <ul
-                ref={todoListRef}
-                className={statusBarPopoverListClassName}
-              >
-                {visibleTodos.map((todo, index) => (
-                  <TodoItemRow
-                    key={todo.id ?? `todo-${index}`}
-                    todo={todo}
-                    isActive={todo === focusedTodo}
-                    activeRef={todo === focusedTodo ? activeTodoRef : undefined}
-                  />
-                ))}
-              </ul>
+              <TodoList
+                todos={visibleTodos}
+                isWorking={isWorking}
+                animate
+                listRef={todoListRef}
+                className="max-h-[min(22rem,50vh)] overflow-y-auto p-1 text-xs md:text-[0.8125rem]"
+              />
             </div>
           )}
         </div>
