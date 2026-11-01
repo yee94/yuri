@@ -28,6 +28,7 @@ export function connectRemoteDesktop(options: {
   let lastMessage = Date.now();
   let reportedState: string | undefined;
   let reportedError: string | undefined;
+  let zoomQualitySupported = false, zoomed = false, reportedZoomed = false;
   const report = (state: 'connecting' | 'webrtc' | 'tunnel' | 'closed', error?: string) => {
     if (reportedState === state && reportedError === error) return;
     reportedState = state; reportedError = error;
@@ -39,6 +40,11 @@ export function connectRemoteDesktop(options: {
   const current = () => !closed && options.transport === getRuntimeTransportIdentity() && options.generation === getRuntimeGeneration();
   const send = (message: unknown) => {
     if (current() && ws?.readyState === 1) ws.send(JSON.stringify(message));
+  };
+  const syncZoom = () => {
+    if (!zoomQualitySupported || zoomed === reportedZoomed || !current() || ws?.readyState !== 1) return;
+    send({ type: 'view', zoomed });
+    reportedZoomed = zoomed;
   };
   const close = (error?: string) => {
     if (closed) return;
@@ -89,6 +95,8 @@ export function connectRemoteDesktop(options: {
     const message = JSON.parse(data);
     if (message.type === 'error') { close(typeof message.code === 'string' ? message.code : 'connection_failed'); return; }
     if (message.type === 'ready') {
+      zoomQualitySupported = message.zoomQuality === true;
+      syncZoom();
       if (Number.isFinite(message.width) && Number.isFinite(message.height)) options.onSize(message.width, message.height);
     } else if (message.type === 'offer' && !fallback) {
       if (peer || typeof message.sdp !== 'string' || message.sdp.length > 65536) throw new Error('invalid_offer');
@@ -144,5 +152,7 @@ export function connectRemoteDesktop(options: {
       ws.onclose = () => close('connection_failed');
     } catch { close('connection_failed'); }
   })();
-  return { send: (message: DesktopInput) => send(message), close };
+  return { send: (message: DesktopInput) => send(message), close,
+    setZoomed: (value: boolean) => { zoomed = value; syncZoom(); },
+  };
 }

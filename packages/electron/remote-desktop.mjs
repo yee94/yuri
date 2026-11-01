@@ -62,7 +62,7 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
       } else throw failure('invalid_permission');
       return getStatus();
     },
-    async start({ send, onEnded, signal }) {
+    async start({ send, onEnded, signal, zoomQuality = false }) {
       if (process.platform !== 'darwin') throw failure('unsupported');
       if (!enabled()) throw failure('disabled');
       if (!fs.existsSync(helper())) throw failure('helper_unavailable');
@@ -142,14 +142,14 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         void ready.catch(() => {});
         cleanups.push(() => rejectReady(failure('desktop_ended')));
         readyTimer = setTimeout(() => rejectReady(failure('permission_required')), 15000);
-        listen('yuri:capture:loaded', () => sendCommand({ type: 'start', sourceId: source.id, iceServers }));
+        listen('yuri:capture:loaded', () => sendCommand({ type: 'start', sourceId: source.id, iceServers, zoomQuality }));
         listen('yuri:capture:message', message => {
           if (message?.type === 'failure') { rejectReady(failure('permission_required')); onEnded(); return; }
           if (message?.type === 'ready') { clearTimeout(readyTimer); resolveReady(); }
           if (['ready', 'offer', 'ice', 'transport', 'rtc-failed'].includes(message?.type)) send(message.type === 'offer' ? { ...message, iceServers } : message);
         });
         listen('yuri:capture:frame', bytes => {
-          if (bytes instanceof ArrayBuffer && bytes.byteLength <= 512 * 1024 && !send(Buffer.from(bytes))) sendCommand({ type: 'ack' });
+          if (bytes instanceof ArrayBuffer && bytes.byteLength <= 512 * 1024 && !send(Buffer.from(bytes))) sendCommand({ type: 'ack', dropped: true });
         });
         await win.loadFile(path.join(app.getAppPath(), 'remote-desktop.html'));
         await ready;
@@ -157,7 +157,8 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         return {
           async handle(message) {
             if (disposed) return;
-            if (['answer', 'ice', 'fallback', 'ack'].includes(message.type)) { sendCommand(message); return; }
+            if (message.type === 'view' && !zoomQuality) return;
+            if (['answer', 'ice', 'fallback', 'ack', 'view'].includes(message.type)) { sendCommand(message); return; }
             if (!helperReady) throw failure('permission_required');
             if (child.stdin.writableLength > 32768) throw failure('desktop_failed');
             child.stdin.write(`${JSON.stringify(message)}\n`);

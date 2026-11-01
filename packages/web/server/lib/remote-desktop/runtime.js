@@ -18,6 +18,7 @@ export function attachRemoteDesktop({ app, server, adapter, uiAuthController, is
   wss.on('connection', (ws, req, auth) => {
     let session;
     let closed = false;
+    let zoomQuality = false;
     let lastPing = Date.now();
     let count = 0;
     let windowStart = Date.now();
@@ -27,6 +28,7 @@ export function attachRemoteDesktop({ app, server, adapter, uiAuthController, is
     const abort = new AbortController();
     const send = (value) => {
       if (closed || ws.readyState !== 1 || ws.bufferedAmount > 512 * 1024) return false;
+      if (value?.type === 'ready') zoomQuality = value.zoomQuality === true;
       ws.send(Buffer.isBuffer(value) ? value : JSON.stringify(value));
       return true;
     };
@@ -63,12 +65,12 @@ export function attachRemoteDesktop({ app, server, adapter, uiAuthController, is
       queued++;
       chain = chain.then(async () => {
         await start;
-        if (!closed && session) await session.handle(message);
+        if (!closed && session && (message.type !== 'view' || zoomQuality)) await session.handle(message);
       }).catch(() => fail('desktop_failed')).finally(() => { queued--; });
     });
     const start = (async () => {
       try {
-        session = await adapter.start({ send, onEnded: () => fail('desktop_ended'), signal: abort.signal,
+        session = await adapter.start({ send, onEnded: () => fail('desktop_ended'), signal: abort.signal, zoomQuality: true,
           client: auth.type === 'client' ? { id: auth.clientId ?? auth.client?.id, label: auth.client?.label ?? '' } : null });
         if (closed) { session.close(); occupied = false; }
       } catch (error) {

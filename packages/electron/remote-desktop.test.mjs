@@ -141,7 +141,7 @@ nativeTest('never falls back to a different screen if primary-display identity d
 nativeTest('only the owned capture frame can publish media; stop closes all resources and releases input', async () => {
   const send = vi.fn(() => true), ended = vi.fn();
   const adapter = createRemoteDesktopAdapter();
-  const desktop = await adapter.start({ send, onEnded: ended, signal: new AbortController().signal });
+  const desktop = await adapter.start({ send, onEnded: ended, signal: new AbortController().signal, zoomQuality: true });
   const capture = mock.windows.at(-1);
   expect(capture.options.webPreferences).toMatchObject({ nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false });
   expect(mock.spawn.mock.calls[0][1]).toEqual(['123']);
@@ -156,6 +156,10 @@ nativeTest('only the owned capture frame can publish media; stop closes all reso
   expect(send).toHaveBeenCalledTimes(1);
   await desktop.handle({ type: 'pointer', action: 'down', x: 0.5, y: 0.5 });
   expect(child.stdin.write).toHaveBeenCalledWith('{"type":"pointer","action":"down","x":0.5,"y":0.5}\n');
+  child.stdin.write.mockClear();
+  await desktop.handle({ type: 'view', zoomed: true });
+  expect(capture.webContents.send).toHaveBeenLastCalledWith('yuri:capture:command', { type: 'view', zoomed: true });
+  expect(child.stdin.write).not.toHaveBeenCalled();
   desktop.close(); desktop.close(); adapter.stop();
   expect(child.stdin.end).toHaveBeenCalledTimes(1);
   expect(mock.windows.every(win => win.destroyed)).toBe(true);
@@ -178,6 +182,29 @@ nativeTest('enabled and authorized devices connect directly without a dialog, vi
   expect(mock.ipc.listenerCount('yuri:capture:stop')).toBe(0);
   expect(mock.ipc.listenerCount('yuri:capture:forget')).toBe(0);
   second.close();
+});
+
+nativeTest('a locally dropped JPEG invalidates only the capture duplicate history, without changing the wire ACK', async () => {
+  const send = vi.fn(() => false);
+  const desktop = await createRemoteDesktopAdapter().start({ send, onEnded: vi.fn() });
+  const capture = mock.windows.at(-1);
+  const owned = { sender: capture.webContents, senderFrame: capture.webContents.mainFrame };
+  capture.webContents.send.mockClear();
+  mock.ipc.emit('yuri:capture:frame', owned, new ArrayBuffer(10));
+  expect(capture.webContents.send).toHaveBeenCalledWith('yuri:capture:command', { type: 'ack', dropped: true });
+  await desktop.handle({ type: 'ack' });
+  expect(capture.webContents.send).toHaveBeenLastCalledWith('yuri:capture:command', { type: 'ack' });
+  desktop.close();
+});
+
+nativeTest.each([false, true])('advertises zoom support only when the owning backend opted in (%s)', async zoomQuality => {
+  const desktop = await createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), zoomQuality });
+  const capture = mock.windows.at(-1);
+  expect(capture.webContents.send).toHaveBeenCalledWith('yuri:capture:command', expect.objectContaining({ type: 'start', zoomQuality }));
+  capture.webContents.send.mockClear();
+  await desktop.handle({ type: 'view', zoomed: true });
+  expect(capture.webContents.send).toHaveBeenCalledTimes(zoomQuality ? 1 : 0);
+  desktop.close();
 });
 
 nativeTest('revoked screen or helper permissions fail closed without opening authorization dialogs', async () => {

@@ -72,3 +72,32 @@ it('limits the initial connection wait and surfaces server permission errors wit
   await vi.advanceTimersByTimeAsync(120000);
   expect(mock.open).toHaveBeenCalledTimes(1);
 });
+
+it('sends only zoom state transitions after advertised support, including a zoom that preceded readiness', async () => {
+  const { connection } = setup();
+  connection.setZoomed(true);
+  await tick();
+  expect(mock.socket!.send).not.toHaveBeenCalled();
+  mock.socket!.onmessage!({ data: JSON.stringify({ type: 'ready', width: 1920, height: 1080, zoomQuality: true }) });
+  await tick();
+  expect(mock.socket!.send).toHaveBeenLastCalledWith('{"type":"view","zoomed":true}');
+  const sent = vi.mocked(mock.socket!.send).mock.calls.length;
+  for (let i = 0; i < 1000; i++) connection.setZoomed(true);
+  expect(mock.socket!.send).toHaveBeenCalledTimes(sent);
+  connection.setZoomed(false);
+  expect(mock.socket!.send).toHaveBeenLastCalledWith('{"type":"view","zoomed":false}');
+  mock.transport = 'host-b'; mock.generation++; mock.changed?.();
+  const closedSent = vi.mocked(mock.socket!.send).mock.calls.length;
+  connection.setZoomed(true);
+  expect(mock.socket!.send).toHaveBeenCalledTimes(closedSent);
+});
+
+it.each([undefined, false, 'true'])('never sends unknown view commands to an old or non-advertising Host (%s)', async zoomQuality => {
+  const { connection } = setup();
+  await tick();
+  mock.socket!.onmessage!({ data: JSON.stringify({ type: 'ready', width: 1920, height: 1080, zoomQuality }) });
+  await tick();
+  connection.setZoomed(true); connection.setZoomed(false);
+  expect(mock.socket!.send).not.toHaveBeenCalled();
+  connection.close();
+});

@@ -101,6 +101,8 @@ new URLs or new protocol defaults.
 
 Mobile remote desktop lives in `src/mobile/RemoteDesktopPanel.tsx`, with transient connection/gesture ownership in `src/lib/remote-desktop/` and runtime-scoped capability Query state in `src/queries/remoteDesktopQueries.ts`. It uses the existing runtime fetch/auth/socket path for direct and Relay connections. The connected Host owns capture and input; the client never falls back to its local computer. See `../web/server/lib/remote-desktop/DOCUMENTATION.md` for supported platforms, interaction, resource limits and acceptance gates.
 
+The panel forwards zoom/Fit state transitions to the session connection without React state or per-frame traffic. `connection.ts` sends the bounded `view.zoomed` control only after the Host advertises `ready.zoomQuality: true`; old/non-advertising Hosts receive no unknown commands. The latest state is retained through startup, and connection closure/runtime switching rejects later control. New Hosts prioritize source-resolution detail while zoomed and restore normal adaptive quality on Fit, without reconnecting or resetting local zoom when encoded dimensions change at the same aspect ratio.
+
 The local Electron Settings → Remote instances page includes `RemoteDesktopSettings`, a default-off permission checker. `remoteDesktopSetupQueries.ts` owns native setup Query/mutation state; `lib/desktop.ts` provides the narrow local IPC calls. The mobile panel explains how to enable a disabled Host and does not open a control socket until the Host reports enabled. Permission management never targets a remote runtime or changes the phone's own permissions.
 
 The phone Projects header menu lists saved native-mobile instances directly,
