@@ -549,6 +549,8 @@ node scripts/mobile-ota/rollout.mjs --action promote-channel --from beta --to st
 
 若 `finalize-release` 已发布 Release、但后续 OTA 因旧包 `404` 失败，先检查上一次完整 Vercel 部署的相同内容寻址 URL。确认全部引用包完整后恢复该部署，再只重跑原 Release 的失败 job；不要重复 npm / IPA 上传、移动 tag 或清空回滚记录。最后重新核验两个入口的稳定 feed、beta/stable OTA 与可检测性。
 
+使用 `vercel rollback` 后，Vercel 会暂停生产域名的自动分配。新快照构建成功并不代表自定义域名已经切换；先检查新部署的独立 URL，再用 `vercel promote <新部署 URL> --yes` 恢复域名与后续自动发布。若旧 tag 的 OTA job 把稳定 feed 覆盖为旧版，用当前 `main` 的 feed 构建更新服务，并原样覆盖最新完整 OTA 快照后再部署；不要重发安装包或改变已发布 tag。
+
 1. GitHub prerelease `mobile-beta/v…` / `mobile-stable/v…` 上的 zip + channel json 可重新 assemble / 手动 overlay。
 2. `mobile-beta-rollout.yml` → `rollback` 将上一 generation 的 bundle 重新激活（内容寻址 zip 会从生产拉回 snapshot）。
 3. 若 Vercel 部署把旧 bundle 冲掉，assemble/rollout 脚本都会把 **双通道** active + rollback zip 重新拉进 snapshot 再 deploy。
