@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -56,7 +56,7 @@ function fixture() {
   return assets;
 }
 
-function assetFetch(assets, { proxy = false, badRange = false, corruptRange = false, changedManifest = false } = {}) {
+function assetFetch(assets, { proxy = false, proxyChangelog = false, badRange = false, corruptRange = false, changedManifest = false } = {}) {
   const calls = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -69,7 +69,7 @@ function assetFetch(assets, { proxy = false, badRange = false, corruptRange = fa
       && calls.filter((call) => call.path === url.pathname).length > 1) {
       return new Response(JSON.stringify({ ...JSON.parse(data), generation: 4 }));
     }
-    const headers = proxy ? { 'x-ota-proxy': 'edgeone' } : {};
+    const headers = proxy || (proxyChangelog && url.pathname === '/CHANGELOG.md') ? { 'x-ota-proxy': 'edgeone' } : {};
     if (init.headers?.Range && !badRange) {
       const end = Number(init.headers.Range.match(/-(\d+)/)[1]);
       return new Response(corruptRange ? Buffer.alloc(end + 1) : data.subarray(0, end + 1), {
@@ -145,6 +145,11 @@ test('verification rejects the legacy proxy, broken Range, stale markers and mis
     const verify = (options = {}) => verifyOtaDistribution({ baseUrl: 'https://edge.example.com', snapshotDirectory: dir,
       requireLocal: true, ...assetFetch(assets, options) });
     await assert.rejects(() => verify({ proxy: true }), /still uses the upstream proxy/);
+    const changelogProxy = assetFetch(assets, { proxyChangelog: true });
+    await assert.rejects(() => verifyOtaDistribution({ baseUrl: 'https://edge.example.com', snapshotDirectory: dir,
+      requireLocal: true, ...changelogProxy }), /\/CHANGELOG\.md still uses the upstream proxy/);
+    assert.equal(changelogProxy.calls.filter(call => call.path.endsWith('.zip')).length, 0,
+      'readiness retries must reject proxied metadata before downloading retained bundles');
     await assert.rejects(() => verify({ badRange: true }), /Range unsupported/);
     await assert.rejects(() => verify({ corruptRange: true }), /Range bytes mismatch/);
     const marker = assets.get('/ota-distribution.json');
@@ -178,6 +183,23 @@ test('actual build hydrates live origin instead of git seeds, and check/download
     await exec(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot,
       env: { ...process.env, YURI_UPDATE_OUTPUT_DIR: dir, YURI_UPDATE_OTA_FULL_SNAPSHOT: '1',
         YURI_UPDATE_SKIP_CHANGELOG_COPY: '1', YURI_OTA_UPSTREAM_ORIGIN: `http://127.0.0.1:${server.address().port}` } });
+    const assertNoExactFunctionCollision = async (directory, segments = []) => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.name.includes('[')) continue;
+        const route = [...segments, entry.name];
+        if (entry.isDirectory()) {
+          await assertNoExactFunctionCollision(path.join(directory, entry.name), route);
+        } else if (/\.[jt]s$/.test(entry.name)) {
+          const routePath = route.join('/').replace(/\.[jt]s$/, '').replace(/(^|\/)index$/, '');
+          const asset = await stat(path.join(out, routePath)).catch(error => {
+            if (error.code === 'ENOENT') return undefined;
+            throw error;
+          });
+          assert.ok(!asset?.isFile(), `Static /${routePath} conflicts with exact EdgeOne function ${route.join('/')}`);
+        }
+      }
+    };
+    await assertNoExactFunctionCollision(path.join(projectRoot, 'edge-functions'));
     await new Promise((resolve) => server.close(resolve));
     closed = true;
     const requestsAtActivation = originRequests;

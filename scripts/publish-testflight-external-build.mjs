@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 const ASC_API_URL = 'https://api.appstoreconnect.apple.com';
 const BUILD_PROCESSING_TIMEOUT_MS = 60 * 60 * 1000;
 const BUILD_PROCESSING_POLL_MS = 30 * 1000;
-const EXTERNAL_GROUP_BUILD_RETENTION = 3;
+const EXTERNAL_GROUP_RECENT_BUILD_RETENTION = 3;
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -146,7 +146,9 @@ async function removeOldExternalGroupBuilds(currentBuildId) {
       'fields[builds]': 'uploadedDate,version',
     })}`,
   );
-  const builds = (assertSuccess(result, 'List external TestFlight group builds')?.data ?? []).slice()
+  const body = assertSuccess(result, 'List external TestFlight group builds');
+  if (body?.links?.next) throw new Error('External TestFlight group build listing is incomplete; keeping all builds.');
+  const builds = (body?.data ?? []).slice()
     .sort((left, right) => {
       const leftUploaded = Date.parse(left.attributes?.uploadedDate ?? 0);
       const rightUploaded = Date.parse(right.attributes?.uploadedDate ?? 0);
@@ -154,19 +156,25 @@ async function removeOldExternalGroupBuilds(currentBuildId) {
     });
   const retained = new Set([
     currentBuildId,
-    ...builds.slice(0, EXTERNAL_GROUP_BUILD_RETENTION).map((build) => build.id),
+    ...builds.slice(0, EXTERNAL_GROUP_RECENT_BUILD_RETENTION).map((build) => build.id),
   ]);
-  const removable = builds
-    .filter((build) => !retained.has(build.id))
-    .map((build) => ({ type: 'builds', id: build.id }));
-  if (removable.length === 0) return 0;
-
-  const removed = await api(`/v1/betaGroups/${betaGroupId}/relationships/builds`, {
-    method: 'DELETE',
-    body: JSON.stringify({ data: removable }),
-  });
-  assertSuccess(removed, 'Remove old builds from external TestFlight group');
-  return removable.length;
+  let removedCount = 0;
+  for (const build of builds) {
+    if (retained.has(build.id) || !Number.isFinite(Date.parse(build.attributes?.uploadedDate))) continue;
+    try {
+      const detail = assertSuccess(await api(`/v1/builds/${build.id}/buildBetaDetail`), 'Read external TestFlight build state');
+      if (detail?.data?.attributes?.externalBuildState !== 'WAITING_FOR_BETA_REVIEW') continue;
+      const removed = await api(`/v1/betaGroups/${betaGroupId}/relationships/builds`, {
+        method: 'DELETE',
+        body: JSON.stringify({ data: [{ type: 'builds', id: build.id }] }),
+      });
+      assertSuccess(removed, 'Remove waiting build from external TestFlight group');
+      removedCount += 1;
+    } catch (error) {
+      console.warn(`External TestFlight build ${build.id} cleanup deferred: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  return removedCount;
 }
 
 function reviewErrorText(result) {
@@ -244,23 +252,25 @@ async function main() {
   }
   if (!publishExternal) return;
   await addBuildToExternalGroup(build.id);
-  let removedBuildCount = 0;
-  try {
-    removedBuildCount = await removeOldExternalGroupBuilds(build.id);
-  } catch (error) {
-    console.warn(`External TestFlight group cleanup deferred: ${error instanceof Error ? error.message : error}`);
-  }
   const reviewStatus = await submitBetaReview(build);
+  let removedBuildCount = 0;
+  if (reviewStatus === 'submitted' || reviewStatus === 'already-submitted') {
+    try {
+      removedBuildCount = await removeOldExternalGroupBuilds(build.id);
+    } catch (error) {
+      console.warn(`External TestFlight group cleanup deferred: ${error instanceof Error ? error.message : error}`);
+    }
+  }
   const publicLink = await getPublicLink();
 
   console.log(`External TestFlight build ${buildNumber}: ${reviewStatus}`);
-  console.log(`Removed ${removedBuildCount} old build(s) from the external TestFlight group.`);
+  console.log(`Removed ${removedBuildCount} old waiting-for-review build(s) from the external TestFlight group.`);
   console.log(`Public TestFlight link: ${publicLink ?? 'not enabled'}`);
 
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
       process.env.GITHUB_STEP_SUMMARY,
-      `## External TestFlight\n\n- Build: \`${buildNumber}\`\n- Beta review: \`${reviewStatus}\`\n- Old group builds removed: \`${removedBuildCount}\`\n- Public link: ${publicLink ?? 'not enabled'}\n`,
+      `## External TestFlight\n\n- Build: \`${buildNumber}\`\n- Beta review: \`${reviewStatus}\`\n- Old waiting-for-review builds removed: \`${removedBuildCount}\`\n- Public link: ${publicLink ?? 'not enabled'}\n`,
     );
   }
 }

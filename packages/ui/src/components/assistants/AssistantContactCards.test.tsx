@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
   liveSession: null as null | { title: string; directory: string; branch: string; model: { providerID: string; id: string }; summary: { additions: number; deletions: number; files: number } },
   status: undefined as undefined | { type: string },
   phone: false,
+  branches: undefined as undefined | { current: string },
+  branchQuery: vi.fn(),
   openAssistant: vi.fn(), openMobileAssistant: vi.fn(), openSession: vi.fn(), openTask: vi.fn(), setMainTab: vi.fn(),
 }))
 vi.mock('@/lib/i18n', async () => {
@@ -21,6 +23,7 @@ vi.mock('@/apps/mobileAppContext', () => ({ useMobileAppActions: () => state.pho
 vi.mock('@/lib/platform', () => ({ isIPadApp: () => false }))
 vi.mock('@/stores/useGlobalSessionsStore', () => ({ useGlobalSessionsStore: () => state.liveSession }))
 vi.mock('@/sync/sync-context', () => ({ useGlobalSessionStatus: () => state.status }))
+vi.mock('@/queries/gitBranchQueries', () => ({ useGitBranchesQuery: (directory: string) => { state.branchQuery(directory); return { data: state.branches } } }))
 vi.mock('@/router/sessionLookup', () => ({ findSessionById: () => state.liveSession }))
 vi.mock('@/sync/openSessionWithFeedback', () => ({ openSessionWithFeedback: state.openSession }))
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: { getState: () => ({ setActiveMainTab: state.setMainTab }) } }))
@@ -35,6 +38,7 @@ beforeEach(() => {
   state.liveSession = null
   state.status = undefined
   state.phone = false
+  state.branches = undefined
   vi.clearAllMocks()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
@@ -53,7 +57,7 @@ describe('typed contact card presentation', () => {
     const task = { schedule: { kind: 'cron', cron: '0 9 1 * *', timezone: 'UTC' } }
     const markup = renderToStaticMarkup(<AssistantScheduleCard card={card} task={task} />)
     expect(markup).toContain('0 9 1 * *')
-    expect(markup).toContain('UTC')
+    expect(markup).not.toContain('UTC')
     expect(markup).not.toContain('Time unavailable')
     const missing = renderToStaticMarkup(<AssistantScheduleCard card={card} task={null} />)
     expect(missing).toContain('Cron')
@@ -75,14 +79,20 @@ describe('typed contact card presentation', () => {
     expect(markup).toContain('Project lead')
     expect(markup).toContain('provider')
     expect(markup).toContain('model')
+    expect(markup).toContain('provider/model')
+    expect(markup).toContain('data-contact-card-model')
+    expect(markup).toContain('yuri-brain')
   })
 
-  test('renders schedule time, frequency, timezone and prompt separately without invented state', () => {
+  test('groups schedule frequency and time without timezone, extra icons or invented state', () => {
     const markup = renderToStaticMarkup(<AssistantScheduleCard card={scheduleCard} />)
     expect(markup).toContain('09:00')
-    expect(markup).toContain('Asia/Shanghai')
+    expect(markup).not.toContain('Asia/Shanghai')
     expect(markup).toContain('Daily')
     expect(markup).toContain('Review unfinished work.')
+    expect(markup).toContain('data-contact-schedule-time')
+    expect(markup.indexOf('>Daily</span>')).toBeLessThan(markup.indexOf('>09:00</p>'))
+    expect(markup.match(/<svg /g)).toHaveLength(2)
     expect(markup).not.toMatch(/nextRun|aria-checked|role="switch"/)
     const missing = renderToStaticMarkup(<AssistantScheduleCard card={{ ...scheduleCard, kind: null, time: null, timezone: null, prompt: null }} />)
     expect(missing).toContain('Time unavailable')
@@ -93,14 +103,20 @@ describe('typed contact card presentation', () => {
   test('uses authoritative session details and preserves zero-summary suppression', () => {
     state.liveSession = { title: 'Live title', directory: '/workspace/live-project', branch: 'live-branch', model: { providerID: 'provider', id: 'live-model' }, summary: { additions: 12, deletions: 3, files: 2 } }
     state.status = { type: 'busy' }
+    state.branches = { current: 'main' }
     const markup = renderToStaticMarkup(<AssistantSessionCard card={{ ...sessionCard, status: 'complete' }} />)
     expect(markup).toContain('Live title')
     expect(markup).toContain('live-project')
-    expect(markup).toContain('live-branch')
+    expect(markup).toContain('main')
+    expect(markup).not.toContain('live-branch')
+    expect(state.branchQuery).toHaveBeenCalledWith('/workspace/live-project')
     expect(markup).toContain('provider/live-model')
-    expect(markup).toContain('+12')
-    expect(markup).toContain('−3')
-    expect(markup).toContain('2 files')
+    expect(markup).not.toMatch(/\+12|−3|2 files|data-contact-session-changes/)
+    state.status = { type: 'idle' }
+    const completed = renderToStaticMarkup(<AssistantSessionCard card={{ ...sessionCard, status: 'complete' }} />)
+    expect(completed).toContain('+12')
+    expect(completed).toContain('−3')
+    expect(completed).toContain('2 files')
     expect(markup).toContain('Working')
     expect(markup).toContain('yuri-chat-thread')
     expect(markup).not.toContain('Saved title')
@@ -110,6 +126,28 @@ describe('typed contact card presentation', () => {
     const missing = renderToStaticMarkup(<AssistantSessionCard card={{ ...sessionCard, title: null }} />)
     expect(missing).toContain('Untitled session')
     expect(missing).not.toContain('live-model')
+  })
+
+  test.each(['busy', 'complete', 'question', 'retry', 'error', 'cancelled'])('only completed sessions show real diff: %s', (status) => {
+    state.liveSession = { title: 'Live', directory: '/repo', branch: '', model: { providerID: 'p', id: 'm' }, summary: { additions: 12, deletions: 3, files: 2 } }
+    const markup = renderToStaticMarkup(<AssistantSessionCard card={{ ...sessionCard, status }} />)
+    expect(markup.includes('data-contact-session-changes')).toBe(status === 'complete')
+    expect(markup).toContain('data-contact-session-bottom')
+    expect(markup).toContain('p/m')
+  })
+
+  test('directory branch authority overrides stale card data, including successful no-branch and unknown reads', () => {
+    for (const current of ['main', 'feature/updated']) {
+      state.branches = { current }
+      const markup = renderToStaticMarkup(<AssistantSessionCard card={sessionCard} />)
+      expect(markup).toContain(`title="${current}"`)
+      expect(markup).not.toContain('saved-branch')
+    }
+    for (const data of [{ current: '' }, undefined]) {
+      state.branches = data
+      const markup = renderToStaticMarkup(<AssistantSessionCard card={sessionCard} />)
+      expect(markup).not.toMatch(/data-contact-session-branch|saved-branch/)
+    }
   })
 
   test.each([

@@ -37,3 +37,21 @@ test('branch failures remain errors instead of an authoritative empty list', asy
   git.branch.mockRejectedValue(new Error('repository unavailable'));
   await expect(getBranches('/repo')).rejects.toThrow('repository unavailable');
 });
+
+test('detached HEAD has no current branch even when simple-git returns a pseudo label', async () => {
+  git.raw.mockResolvedValue('/repo\n');
+  git.branch.mockResolvedValue({ all: ['main'], current: 'HEAD detached at abc123', detached: true, branches: {} });
+  expect(await getBranches('/repo')).toEqual({ all: ['main'], current: '', branches: {} });
+});
+
+test('a confirmed non-repository returns an empty snapshot, not a transport failure', async () => {
+  git.raw.mockRejectedValue(new Error('fatal: not a git repository (or any of the parent directories): .git'));
+  git.branch.mockRejectedValue(new Error('fatal: not a git repository'));
+  expect(await getBranches('/plain')).toEqual({ all: [], current: '', branches: {} });
+});
+
+test('an unborn branch uses its real symbolic HEAD name without inventing a default', async () => {
+  git.raw.mockImplementation(async (args) => args[0] === 'symbolic-ref' ? 'trunk\n' : '/repo\n');
+  git.branch.mockResolvedValue({ all: [], current: '', detached: false, branches: {} });
+  expect(await getBranches('/repo')).toEqual({ all: [], current: 'trunk', branches: {} });
+});

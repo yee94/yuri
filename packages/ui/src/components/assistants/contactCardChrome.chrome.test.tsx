@@ -20,7 +20,12 @@ vi.mock('@/lib/i18n', async () => {
 })
 vi.mock('@/apps/mobileAppContext', () => ({ useMobileAppActions: () => null }))
 vi.mock('@/lib/platform', () => ({ isIPadApp: () => false }))
-vi.mock('@/stores/useGlobalSessionsStore', () => ({ useGlobalSessionsStore: () => null }))
+vi.mock('@/stores/useGlobalSessionsStore', () => ({ useGlobalSessionsStore: (selector: (store: unknown) => unknown) => selector({ activeSessions: [
+  { id: 'layout-test', model: { providerID: 'openai', id: 'gpt-6.1-sol' }, summary: { additions: 128, deletions: 36, files: 4 } },
+  { id: 'no-diff', model: { providerID: 'openai', id: 'gpt-6.1-sol' } },
+  { id: 'design-session', model: { providerID: 'openai', id: 'gpt-6.1-sol' } },
+], archivedSessions: [] }) }))
+vi.mock('@/queries/gitBranchQueries', () => ({ useGitBranchesQuery: (directory: string) => ({ data: { current: directory === '/p' ? '' : 'main' } }) }))
 vi.mock('@/sync/sync-context', () => ({ useGlobalSessionStatus: () => undefined }))
 vi.mock('@/router/sessionLookup', () => ({ findSessionById: vi.fn() }))
 vi.mock('@/sync/openSessionWithFeedback', () => ({ openSessionWithFeedback: vi.fn() }))
@@ -35,7 +40,7 @@ const metadata = 'project-model-branch-'.repeat(12)
 function cards(short = false, missing = false, kind: 'daily' | 'weekly' | 'once' | 'cron' = 'daily') {
   const title = short ? 'Hi' : longTitle
   return [
-    ...['busy', 'question'].map((status) => <AssistantSessionCard key={status} card={{ type: 'card', cardType: 'session', sessionID: 'layout-test', directory: short ? '/p' : `/projects/${metadata}`, title: missing ? null : title, status, branch: short ? null : metadata }} />),
+    ...['busy', 'complete', 'complete-no-diff', 'question', 'retry', 'error', 'cancelled'].map((status) => <AssistantSessionCard key={status} card={{ type: 'card', cardType: 'session', sessionID: missing ? 'missing' : status === 'complete-no-diff' ? 'no-diff' : 'layout-test', directory: short ? '/p' : `/projects/${metadata}`, title: missing ? null : title, status: status === 'complete-no-diff' ? 'complete' : status, branch: short ? null : metadata }} />),
     <AssistantAssistantCard key="assistant" card={{ type: 'card', cardType: 'assistant', assistantID: 'layout-test', name: title, providerID: short ? 'p' : metadata, modelID: short ? 'm' : metadata, mode: 'continuous' }} />,
     <AssistantScheduleCard key="schedule" card={{ type: 'card', cardType: 'schedule', taskID: 'layout-test', projectID: 'p', name: title,
       kind: missing ? null : kind, time: missing || kind === 'cron' ? null : '09:00', timezone: missing ? null : 'Asia/Shanghai', prompt: missing ? null : metadata,
@@ -57,9 +62,11 @@ type Measurement = {
   whiteSpace: string; textOverflow: string; titleOverflow: string; fullTitle: boolean; titleHeight: number; lineHeight: number; titleFont: number; statusWidth: number; statusScrollWidth: number; statusRight: number
   footerBottom: number; bottom: number; titleBottom: number; footerTop: number; bodyBottom: number
   borderWidth: number; shadow: string; radius: string; background: string; messageRadius: string; messageBackground: string; dividerWidth: number
+  detailRows: Array<{ top: number; bottom: number; height: number; iconLeft: number; textLeft: number }>
+  schedule: null | { alignment: string; gap: number; bottom: number; footerBottom: number; cadenceLeft: number; timeLeft: number; cadenceRight: number; icons: number }
 }
 
-const sprite = `<svg style="display:none">${Object.entries(iconSpriteData).map(([name, content]) => `<symbol id="yuri-${name}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${content}</symbol>`).join('')}</svg>`
+const sprite = `<svg style="display:none">${Object.entries(iconSpriteData).map(([name, content]) => `<symbol id="yuri-${name}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="var(--yuri-icon-stroke, 1.5)" stroke-linecap="round" stroke-linejoin="round">${content}</symbol>`).join('')}</svg>`
 
 describe('contact card width', () => {
   test.skipIf(!resolveChrome())('keeps the contact typing row above the mobile composer fade', async () => {
@@ -100,7 +107,7 @@ describe('contact card width', () => {
   }, 60_000)
 
   test('shares fixed height and parent-bounded width across all three types', () => {
-    expect(CONTACT_CARD_COVER_CLASS).toContain('h-40 w-[19rem] min-w-0 max-w-full')
+    expect(CONTACT_CARD_COVER_CLASS).toContain('h-[148px] w-[19rem] min-w-0 max-w-full')
     expect(CONTACT_SESSION_CARD_COVER_CLASS).toBe(CONTACT_CARD_COVER_CLASS)
     expect(CONTACT_CARD_COVER_CLASS).not.toMatch(/overflow-(hidden|clip)/)
     expect(CONTACT_CARD_COVER_CLASS).toContain('rounded-[1.35rem] bg-[var(--surface-muted)]')
@@ -149,7 +156,15 @@ describe('contact card width', () => {
               const title = el.querySelector('h3');
                 const status = el.querySelector('[data-assistant-session-status]');
                 const footer = el.lastElementChild.getBoundingClientRect();
-                const style = getComputedStyle(el);
+                 const style = getComputedStyle(el);
+                 const schedule = el.querySelector('[data-contact-schedule-time]');
+                 const cadence = el.querySelector('[data-contact-schedule-cadence]');
+                 const time = schedule?.querySelector('p');
+                 const detailRows = [...el.querySelectorAll('[data-contact-session-project] > p:first-child, [data-contact-session-changes], [data-contact-card-model]')].map(row => {
+                   const bounds = row.getBoundingClientRect();
+                   return { top: bounds.top - rect.top, bottom: bounds.bottom - rect.top, height: bounds.height,
+                     iconLeft: row.querySelector('svg')?.getBoundingClientRect().left ?? 0, textLeft: row.querySelector('span')?.getBoundingClientRect().left ?? 0 };
+                 });
                 const reference = getComputedStyle(document.querySelector('[data-reference-message]'));
                return { kind: el.dataset.assistantContactCard, short: el.parentElement.parentElement.dataset.short === 'true',
                  width: rect.width, height: rect.height, parentWidth: parent.width, right: rect.right, parentRight: parent.right,
@@ -162,14 +177,17 @@ describe('contact card width', () => {
                   footerBottom: footer.bottom, footerTop: footer.top, bottom: rect.bottom, titleBottom: title.getBoundingClientRect().bottom,
                   bodyBottom: Math.max(...[...el.children].slice(1, -1).map(child => child.getBoundingClientRect().bottom)),
                   borderWidth: parseFloat(style.borderWidth), shadow: style.boxShadow, radius: style.borderRadius, background: style.backgroundColor,
-                  messageRadius: reference.borderRadius, messageBackground: reference.backgroundColor, dividerWidth: parseFloat(getComputedStyle(el.lastElementChild).borderTopWidth) };
+                   messageRadius: reference.borderRadius, messageBackground: reference.backgroundColor, dividerWidth: parseFloat(getComputedStyle(el.lastElementChild).borderTopWidth), detailRows,
+                   schedule: schedule ? { alignment: getComputedStyle(schedule).alignItems, gap: parseFloat(getComputedStyle(schedule).gap), bottom: schedule.getBoundingClientRect().bottom,
+                     footerBottom: footer.bottom, cadenceLeft: cadence?.getBoundingClientRect().left ?? 0, timeLeft: time.getBoundingClientRect().left,
+                     cadenceRight: cadence?.getBoundingClientRect().right ?? 0, icons: schedule.querySelectorAll('svg').length } : null };
             });
           })()`)
-            expect(measurements).toHaveLength(24)
+            expect(measurements).toHaveLength(54)
           for (const m of measurements) {
             const label = `${width}px / ${scale * 100}% / ${m.kind} / short=${m.short}`
              expect(m.width, label).toBeLessThanOrEqual(Math.min(m.parentWidth, 19 * 16) + 1)
-              expect(m.height, label).toBe(160)
+              expect(m.height, label).toBe(148)
               expect(m.borderWidth, label).toBe(0)
               expect(m.shadow, label).toBe('none')
               expect(m.dividerWidth, label).toBe(0)
@@ -189,14 +207,31 @@ describe('contact card width', () => {
              expect(m.titleBottom, label).toBeLessThanOrEqual(m.footerTop + 1)
               expect(m.bodyBottom, label).toBeLessThanOrEqual(m.footerTop + 1)
               expect(m.footerBottom, label).toBeLessThanOrEqual(m.bottom - 10 + 1)
-            if (m.kind === 'session') {
+             if (m.kind === 'session') {
+               expect(m.detailRows.every(row => row.height === 16), label).toBe(true)
+               if (m.detailRows.length > 1) {
+                 expect(m.detailRows.at(-1)!.top, label).toBe(118)
+                 expect(new Set(m.detailRows.map(row => row.iconLeft)).size, label).toBe(1)
+                 expect(new Set(m.detailRows.map(row => row.textLeft)).size, label).toBe(1)
+               }
+               if (m.detailRows.length === 3) {
+                 expect(m.detailRows[1].top - m.detailRows[0].bottom, label).toBe(6)
+                 expect(m.detailRows[2].top - m.detailRows[1].bottom, label).toBe(6)
+               }
               expect(m.statusWidth, label).toBeGreaterThan(0)
               expect(m.statusScrollWidth, label).toBeLessThanOrEqual(m.statusWidth + 1)
               expect(m.statusRight, label).toBeLessThanOrEqual(m.right - 14 + 1)
-            }
+             }
+             if (m.schedule) {
+               expect(m.schedule.alignment, label).toBe('baseline')
+               expect(m.schedule.gap, label).toBe(6)
+               expect(m.schedule.bottom, label).toBe(m.schedule.footerBottom)
+               expect(m.schedule.icons, label).toBe(0)
+               if (m.schedule.cadenceRight) expect(m.schedule.timeLeft - m.schedule.cadenceRight, label).toBeCloseTo(6)
+             }
           }
           if (width === 430 && scale === 1) {
-             expect(measurements[7].width).toBe(measurements[3].width)
+             expect(measurements[17].width).toBe(measurements[8].width)
           }
           evidence.push({ width, textScale: scale, cards: measurements })
         }
@@ -217,7 +252,7 @@ describe('contact card width', () => {
           await page.screenshotPng(join(root, `contact-cards-${name}.png`))
           await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
           await page.evaluate(`document.documentElement.classList.add('mobile-pointer')`)
-          expect(await page.evaluate<number[]>(`[...document.querySelectorAll('[data-assistant-contact-card]')].map(card => card.getBoundingClientRect().height)`)).toEqual([160, 160, 160])
+           expect(await page.evaluate<number[]>(`[...document.querySelectorAll('[data-assistant-contact-card]')].map(card => card.getBoundingClientRect().height)`)).toEqual([148, 148, 148])
           await page.screenshotPng(join(root, `contact-cards-${name}-mobile.png`))
        }
     } finally {

@@ -39,12 +39,16 @@ import { requestSpeechSession } from '../../../../ui/src/lib/voice/direct-sessio
 import { createGuiClient } from '../../../../ui/src/lib/opencode/gui.ts';
 import { createWebFilesAPI } from '../../../src/api/files.ts';
 import { createEventPipeline } from '../../../../ui/src/sync/event-pipeline.ts';
+import { uploadAssistantAttachment } from '../../../../ui/src/lib/assistant-attachment-upload.ts';
+import { registerAssistantRoutes } from '../assistants/routes.js';
+import { registerCommonRequestMiddleware } from '../opencode/core-routes.js';
 
 // Web's source aliases are not exported Node package subpaths. Forward them to
 // the real implementations so this Node E2E exercises the same transport singleton.
 vi.mock('@yuriai/ui/lib/runtime-fetch', () => import('../../../../ui/src/lib/runtime-fetch.ts'));
 vi.mock('@yuriai/ui/lib/runtime-file-resource', () => import('../../../../ui/src/lib/runtime-file-resource.ts'));
 vi.mock('@yuriai/ui/lib/runtime-file-download', () => import('../../../../ui/src/lib/runtime-file-download.ts'));
+vi.mock('@yuriai/ui/lib/opencode/client', () => import('../../../../ui/src/lib/opencode/client.ts'));
 
 const timeoutMs = 10_000;
 const previewPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64');
@@ -200,6 +204,16 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
   const requestSecurity = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
   const wss = new WebSocketServer({ noServer: true });
   const proxy = express();
+  const assistants = express();
+  registerCommonRequestMiddleware(assistants, { express });
+  const assistantRuntime = registerAssistantRoutes(assistants, {
+    dbPath: path.join(mediaDirectory, 'assistants.sqlite'),
+    yuriDataDir: mediaDirectory,
+    buildOpenCodeUrl: () => 'http://127.0.0.1:1',
+    getOpenCodeAuthHeaders: () => ({}),
+    getAllowedRoots: () => [mediaDirectory],
+  });
+  const attachmentAssistant = assistantRuntime.service.createAssistant({ name: 'Relay upload', providerID: 'fixture', modelID: 'fixture' });
   const speech = express();
   speech.use(express.json());
   registerTtsRoutes(speech, { sayTTSCapability: null });
@@ -258,6 +272,10 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
           bearerRequests.push(String(req.headers.authorization ?? ''));
           res.json({ body: await readBody(req), hasRelayConnection: Boolean(req.headers['x-yuri-relay-connection']) });
         });
+        return;
+      }
+      if (pathname.startsWith('/api/yuri/assistants/')) {
+        await uiAuth.requireAuth(req, res, () => assistants(req, rawRes));
         return;
       }
       if (pathname === '/api/e2e/initialization' && req.method === 'GET') {
@@ -348,9 +366,10 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as net.AddressInfo).port;
   return {
-    port, videoPath, previewPath, previewContent, guiBundle, pluginInventory, guiRequests, bearerRequests, observedOrigins, getHostSubscriptions: () => hostSubscriptions,
+    port, videoPath, previewPath, previewContent, guiBundle, pluginInventory, guiRequests, bearerRequests, observedOrigins, attachmentAssistant, getHostSubscriptions: () => hostSubscriptions,
     advanceRecoveryRevision: () => { recoveryRevision += 1; return `ses_recovery_${recoveryRevision}`; },
     stop: async () => {
+      assistantRuntime.close();
       dictation.stop();
       for (const client of wss.clients) client.terminate();
       for (const socket of sockets) socket.destroy();
@@ -799,6 +818,38 @@ describe('private relay compiled-process boundary', () => {
       adoptRelayTunnel({ relayUrl: relay.url, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk }, client);
       vi.stubGlobal('window', { location: new URL('https://relay-runtime.example'), addEventListener() {}, removeEventListener() {} });
       try {
+        const assistantID = origin.attachmentAssistant.id;
+        const uploadPath = `/api/yuri/assistants/${assistantID}/contact/attachments`;
+        for (const headers of [{}, { authorization: 'Bearer invalid-token' }]) {
+          expect((await client.fetch(`${uploadPath}/denied`, { method: 'PUT', headers, body: previewPng })).status).toBe(401);
+        }
+        const attachmentParts: Awaited<ReturnType<typeof uploadAssistantAttachment>>[] = [];
+        for (const [index, file] of [
+          new File([previewPng], '截图.png', { type: 'image/png' }),
+          new File([JSON.stringify({ text: '附件原始字节', padding: 'x'.repeat(128 * 1024) })], '附件.json', { type: 'application/json' }),
+        ].entries()) {
+          const uploadID = `relay-upload-${index}`;
+          const descriptor = await uploadAssistantAttachment(assistantID, file, uploadID);
+          attachmentParts.push(descriptor);
+          expect(descriptor).toMatchObject({
+            type: 'file', filename: file.name, mime: file.type, size: file.size,
+            sha256: crypto.createHash('sha256').update(Buffer.from(await file.arrayBuffer())).digest('hex'),
+          });
+          expect(await uploadAssistantAttachment(assistantID, file, uploadID)).toEqual(descriptor);
+          const download = await runtimeFetch(`${uploadPath}/${descriptor.attachmentID}`);
+          expect(download.status).toBe(200);
+          expect(Buffer.from(await download.arrayBuffer())).toEqual(Buffer.from(await file.arrayBuffer()));
+          expect((await client.fetch(`${uploadPath}/${descriptor.attachmentID}`)).status).toBe(401);
+        }
+        const admission = await runtimeFetch(`/api/yuri/assistants/${assistantID}/messages`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageID: 'relay-attachment-message', parts: [{ type: 'text', text: 'Check these attachments' }, ...attachmentParts] }),
+        });
+        expect(admission.status, await admission.text()).toBe(202);
+        const contactPage = await runtimeFetch(`/api/yuri/assistants/${assistantID}/contact/messages?messageID=relay-attachment-message`);
+        expect(contactPage.status).toBe(200);
+        const contactJson = await contactPage.text();
+        for (const part of attachmentParts) expect(contactJson).toContain(part.attachmentID);
         const gui = createGuiClient(new AbortController().signal);
         const files = createWebFilesAPI({ getDirectory: () => path.dirname(origin.previewPath) });
         expect(Buffer.byteLength(origin.guiBundle.code)).toBeGreaterThan(2_270_000);

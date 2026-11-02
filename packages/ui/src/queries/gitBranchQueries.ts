@@ -62,6 +62,7 @@ export const gitBranchesQueryOptions = (
       return branches;
     },
     staleTime: GIT_BRANCH_STALE_TIME,
+    refetchOnWindowFocus: true,
     gcTime: Infinity,
     initialData: () => readGitBranchStartupSnapshot(normalizedDirectory, transport, startupStorage) ?? undefined,
     initialDataUpdatedAt: 0,

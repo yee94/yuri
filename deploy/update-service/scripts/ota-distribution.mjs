@@ -207,6 +207,10 @@ export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requir
       throw new Error('EdgeOne is still serving a different update-service code revision');
     }
   }
+  // Reject incomplete metadata before retrying any full bundle downloads.
+  const changelog = await metadata(base, '/CHANGELOG.md', options);
+  if (!changelog.text.trim()) throw new Error('OTA distribution CHANGELOG.md is empty');
+  expectedDigests.set('/CHANGELOG.md', changelog.digest);
   const timings = [];
   await bounded([...artifacts(manifests)], async ([filePath, expected]) => {
     const localHash = createHash('sha256');
@@ -240,9 +244,6 @@ export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requir
     for await (const chunk of local) chunks.push(chunk);
     if (!rangeBytes.equals(Buffer.concat(chunks))) throw new Error(`OTA distribution Range bytes mismatch: ${filePath}`);
   });
-  const changelog = await metadata(base, '/CHANGELOG.md', options);
-  if (!changelog.text.trim()) throw new Error('OTA distribution CHANGELOG.md is empty');
-  expectedDigests.set('/CHANGELOG.md', changelog.digest);
   if (marker) {
     const expected = [...expectedDigests.values()].map(record).sort((a, b) => a.path.localeCompare(b.path));
     if (JSON.stringify(marker.files) !== JSON.stringify(expected)) throw new Error('EdgeOne distribution marker does not match served files');

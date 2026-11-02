@@ -69,6 +69,7 @@ Skill discovery uses the official V2 `skill.list` SDK with the selected director
 
 - `bridge-git-runtime.ts`
   - Standard Git message handlers.
+  - Branch reads use the directory's native Git HEAD, or the raw fallback when the Git extension has no repository. Raw detached HEAD leaves `current` empty; unborn HEAD resolves its real symbolic name. Only confirmed non-Git errors return an empty snapshot; permission/process failures reject so shared branch Query observers retain stale data rather than treating failure as no branch. `gitService.branches.test.ts` covers the raw fallback without spawning Git.
   - Explicit worktree removal passes a validated pre-remove hook into `gitService`; the hook uses the current manager URL/auth and official v2 `debug.location.evict`. The Web-owned `location-release.js` supplies the shared 2s best-effort policy. `locationRelease` reports eviction separately from Git success. Unmatched existing directories may only be removed inside the managed worktree root (never the root itself); primary workspaces are rejected before eviction. Removal failures propagate without publishing success. Shared/externally configured servers receive only the explicitly deleted target, never navigation-triggered automatic eviction.
 
 - `bridge-git-special-runtime.ts`

@@ -82,6 +82,40 @@ const insert = (db, assistantID, {
   return { messageID: id, ordinal, createdAt };
 };
 
+describe('contact watch lifecycle migration', () => {
+  it('rolls back lifecycle migration if the legacy-row conversion fails', () => {
+    const db = new (require('better-sqlite3'))(':memory:');
+    try {
+      db.exec(`
+        CREATE TABLE assistant_contact_watch (assistant_id TEXT NOT NULL, session_id TEXT NOT NULL, directory TEXT, status TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (assistant_id, session_id));
+        INSERT INTO assistant_contact_watch VALUES ('a','done',NULL,'complete',1);
+        CREATE TRIGGER reject_watch_conversion BEFORE UPDATE ON assistant_contact_watch BEGIN SELECT RAISE(ABORT, 'conversion failed'); END;
+      `);
+      expect(() => ensureContactSchema(db)).toThrow('conversion failed');
+      expect(db.prepare("SELECT name FROM pragma_table_info('assistant_contact_watch') WHERE name='active'").get()).toBeUndefined();
+      expect(db.prepare('SELECT status FROM assistant_contact_watch').get().status).toBe('complete');
+      db.exec('DROP TRIGGER reject_watch_conversion');
+      ensureContactSchema(db);
+      expect(db.prepare('SELECT active FROM assistant_contact_watch').get().active).toBe(0);
+    } finally { db.close(); }
+  });
+
+  it('releases legacy terminal watches but retains in-flight watches and explicit terminal baselines', () => {
+    const db = new (require('better-sqlite3'))(':memory:');
+    try {
+      db.exec('CREATE TABLE assistant_contact_watch (assistant_id TEXT NOT NULL, session_id TEXT NOT NULL, directory TEXT, status TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (assistant_id, session_id))');
+      for (const status of ['busy', 'question', 'complete', 'error', 'cancelled']) {
+        db.prepare('INSERT INTO assistant_contact_watch VALUES (?,?,?,?,?)').run('a', status, null, status, 1);
+      }
+      ensureContactSchema(db);
+      expect(db.prepare('SELECT session_id FROM assistant_contact_watch WHERE active=1 ORDER BY session_id').all().map((row) => row.session_id)).toEqual(['busy', 'question']);
+      db.prepare("UPDATE assistant_contact_watch SET active=1 WHERE session_id='complete'").run();
+      ensureContactSchema(db);
+      expect(db.prepare("SELECT active FROM assistant_contact_watch WHERE session_id='complete'").get().active).toBe(1);
+    } finally { db.close(); }
+  });
+});
+
 describe('contact LLM history trim', () => {
   it('documents the budget constants in one place', () => {
     expect(CONTACT_LLM_MAX_TURNS).toBe(32);

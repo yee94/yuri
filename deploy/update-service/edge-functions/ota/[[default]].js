@@ -1,10 +1,7 @@
 import { handleOtaProxyRequest } from '../../lib/ota-proxy.js';
 
-// EdgeOne multi-level dynamic route: matches /ota/* (channels + bundles).
-// `/CHANGELOG.md` is a sibling edge function (`edge-functions/CHANGELOG.md.js`);
-// this route cannot match it. Static assets shadow functions on EdgeOne, so
-// the EdgeOne build must NOT copy the `ota/` seed tree into its output
-// directory (see scripts/build.mjs).
+// Legacy fallback for /ota/* paths absent from the complete static snapshot.
+// CHANGELOG is static-only; do not add an exact function route beside it.
 export async function onRequest({ request, env }) {
   return handleOtaProxyRequest(request, { upstreamOrigin: env?.YURI_OTA_UPSTREAM_ORIGIN });
 }

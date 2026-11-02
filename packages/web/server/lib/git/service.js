@@ -3232,10 +3232,10 @@ export async function commit(directory, message, options = {}) {
 }
 
 export async function getBranches(directory) {
-  const { git } = await createRepositoryGitContext(directory);
-
   try {
+    const { git } = await createRepositoryGitContext(directory);
     const result = await git.branch();
+    const current = result.detached ? '' : result.current || (await git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
 
     // Listing branches is a local read. Explicit fetch updates remote-tracking
     // refs; startup must not wait on ls-remote or hide refs when a remote is offline.
@@ -3243,10 +3243,13 @@ export async function getBranches(directory) {
 
     return {
       all: filteredAll,
-      current: result.current,
+      current,
       branches: result.branches
     };
   } catch (error) {
+    if (isNotGitRepositoryError(error)) {
+      return { all: [], current: '', branches: {} };
+    }
     console.error('Failed to get branches:', error);
     throw error;
   }

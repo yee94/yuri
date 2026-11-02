@@ -7,6 +7,8 @@ import { useMobileAppActions } from '@/apps/mobileAppContext'
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore'
 import type { AssistantContactAssistantCardPart, AssistantDTO } from '@/queries/assistantQueries'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
+import { ContactCardModelLine } from './ContactCardModelLine'
+import { cn } from '@/lib/utils'
 import { openAssistant } from '@/stores/useAssistantUIStore'
 import { CONTACT_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
@@ -52,12 +54,11 @@ export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ 
           <AssistantWorkingAvatar name={card.assistantID} avatarSeed={assistant?.avatarSeed} size={32} working={active ? Boolean(assistant?.working || assistant?.activeContactTurn) : undefined} showWorkingDot={false} followPointer={false} />
         </span>
         <span className="min-w-0 truncate text-[0.8em] leading-4 text-muted-foreground">{t('assistants.contact.card.assistant.label')}</span>
-        <Icon name="arrow-right-s" className="ml-auto size-4 shrink-0 text-muted-foreground" />
+        <Icon name="arrow-right-s" weight="medium" className="ml-auto size-4 shrink-0 text-muted-foreground" />
       </div>
-      <h3 className={CONTACT_CARD_TITLE_CLASS} title={title}>{title}</h3>
-      <div className={CONTACT_CARD_FOOTER_CLASS} title={metadata}>
-        <p className="truncate text-[0.75em] leading-4 text-muted-foreground">{card.providerID}</p>
-        <p className="truncate text-[0.85em] leading-4 text-foreground">{card.modelID}</p>
+      <h3 className={cn(CONTACT_CARD_TITLE_CLASS, 'row-span-2 self-center')} title={title}>{title}</h3>
+      <div className={cn(CONTACT_CARD_FOOTER_CLASS, 'justify-end pb-1')}>
+        <div className="flex h-4 min-w-0 items-center"><ContactCardModelLine value={metadata} /></div>
       </div>
     </article>
   )

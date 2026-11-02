@@ -66,15 +66,3 @@ export function readSessionModelLabel(session: unknown): string | null {
   }
   return null
 }
-
-export function readSessionBranchLabel(session: unknown): string | null {
-  if (!session || typeof session !== 'object' || Array.isArray(session)) return null
-  const record = session as Record<string, unknown>
-  if (typeof record.branch === 'string' && record.branch.trim()) return record.branch.trim()
-  const project = record.project
-  if (project && typeof project === 'object' && !Array.isArray(project)) {
-    const branch = (project as { branch?: unknown }).branch
-    if (typeof branch === 'string' && branch.trim()) return branch.trim()
-  }
-  return null
-}

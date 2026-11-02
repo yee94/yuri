@@ -237,6 +237,8 @@ gh workflow run testflight-review.yml --repo yee94/yuri --ref main \
 
 脚本同时匹配 marketing version 和 build number，已送审的构建不会重复送审，也不重新打包或上传 IPA。外测群组未开启公开链接时记录 `Public link: not enabled`；邮箱邀请群组不依赖公开链接，已成功送审不会因此报错。
 
+外测滚动清理只在本次送审成功或确认已送审后执行，保留当前构建及上传时间最新的 3 个构建；其余构建只有在删除前读取到 `externalBuildState: WAITING_FOR_BETA_REVIEW`（等待审核）时才可移出外测组。已获批、正在外测、正在审核及未知状态一律保留，不因连续发版撤回任何已审核可用版本（直至 Apple 自然过期）。状态读取失败、上传时间缺失或群组列表不完整时不做对应删除；送审失败或被限流推迟时不清理。
+
 ### 恢复被旧版同步外测阻塞的 Release
 
 原运行使用旧 commit，重跑不会加载新的 workflow。使用 `release.yml` 的 `resume_run_id` 恢复已有 Draft：

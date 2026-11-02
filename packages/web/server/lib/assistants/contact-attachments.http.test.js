@@ -17,6 +17,7 @@ import { createRequire } from 'node:module';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerCommonRequestMiddleware } from '../opencode/core-routes.js';
+import { applyRuntimeCorsHeaders } from '../request-cors.js';
 import { isSafeInlineImageMime } from './contact-attachments.js';
 import { AssistantError, createAssistantsService } from './service.js';
 
@@ -81,6 +82,13 @@ const buildApp = (directory, serviceOverrides = {}) => {
   service.setEnabled({ enabled: true, expectedRevision: service.snapshot().revision });
 
   const app = express();
+  app.use((req, res, next) => {
+    if (req.headers.origin === 'yuri-ui://app') {
+      applyRuntimeCorsHeaders({ origin: req.headers.origin, setHeader: (name, value) => res.setHeader(name, value) });
+      if (req.method === 'OPTIONS') return res.status(204).end();
+    }
+    next();
+  });
   // Real core-routes binary exemption (must run before body parsers / attachment routes).
   registerCommonRequestMiddleware(app, { express });
   app.use((req, _res, next) => next());
@@ -155,21 +163,36 @@ describe('contact attachments real HTTP (core-routes + assistants routes)', () =
     });
 
     const digest = createHash('sha256').update(realPng).digest('hex');
+    const uploadHeaders = {
+      'Content-Type': 'image/png',
+      'X-Content-SHA256': digest,
+      'X-Content-Size': String(realPng.length),
+      'X-Attachment-Filename': encodeURIComponent('shot.png'),
+    };
+    const uploadUrl = `${base}/api/yuri/assistants/${encodeURIComponent(assistant.id)}/contact/attachments/up_png1`;
+    const preflight = await fetch(uploadUrl, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'yuri-ui://app',
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': Object.keys(uploadHeaders).join(','),
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('yuri-ui://app');
+    const allowedHeaders = preflight.headers.get('access-control-allow-headers').toLowerCase().split(',');
+    for (const name of Object.keys(uploadHeaders)) expect(allowedHeaders).toContain(name.toLowerCase());
     const putRes = await fetch(
       `${base}/api/yuri/assistants/${encodeURIComponent(assistant.id)}/contact/attachments/up_png1`,
       {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'image/png',
-          'X-Content-SHA256': digest,
-          'X-Content-Size': String(realPng.length),
-          'X-Attachment-Filename': encodeURIComponent('shot.png'),
-        },
+        headers: { ...uploadHeaders, Origin: 'yuri-ui://app' },
         body: realPng,
       },
     );
     const descriptor = await putRes.json();
     expect(putRes.status, JSON.stringify(descriptor)).toBe(201);
+    expect(putRes.headers.get('access-control-allow-origin')).toBe('yuri-ui://app');
     expect(descriptor).toMatchObject({
       type: 'file',
       attachmentID: expect.stringMatching(/^att_/),

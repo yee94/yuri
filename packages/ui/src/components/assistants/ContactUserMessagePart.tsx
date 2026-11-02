@@ -21,9 +21,7 @@ const ContactSendError = React.memo(({ turn, retryDisabled, onRetry }: SendError
         data-assistant-contact-send-error=""
         className="absolute right-full top-1/2 mr-1.5 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 shadow-none outline-none focus-visible:opacity-70"
       >
-        <span className="flex size-[18px] items-center justify-center rounded-full bg-[var(--status-error)] text-[var(--surface-background)]" data-assistant-contact-error-dot="">
-          <Icon name="alert" className="size-[18px]" />
-        </span>
+        <Icon name="exclamation-fill" className="size-[18px] text-[var(--status-error)]" data-assistant-contact-error-dot="" />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner side="left" align="center" sideOffset={6} collisionPadding={12} collisionAvoidance={{ side: 'flip', align: 'shift', fallbackAxisSide: 'end' }} className="z-50">

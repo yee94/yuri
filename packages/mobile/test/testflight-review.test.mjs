@@ -8,7 +8,7 @@ import path from 'node:path';
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function runReview({ alreadySubmitted = false, rejectReview = false, publicLink = true, version = '0.1.0', distribution = 'external', missingLink = false, conflict = false } = {}) {
+function runReview({ alreadySubmitted = false, rejectReview = false, submissionLimit = false, publicLink = true, version = '0.1.0', distribution = 'external', missingLink = false, conflict = false, groupBuilds = [{ id: 'current' }], detailFailure = false, nextPage = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'testflight-review-'));
   roots.push(root);
   const keyPath = path.join(root, 'key.p8');
@@ -16,6 +16,7 @@ function runReview({ alreadySubmitted = false, rejectReview = false, publicLink 
   const script = new URL('../../../scripts/publish-testflight-external-build.mjs', import.meta.url).href;
   return spawnSync(process.execPath, ['--input-type=module', '-e', `
     const calls = [];
+    const removed = [];
     globalThis.fetch = async (url, init) => {
       const { pathname } = new URL(url);
       calls.push([init.method ?? 'GET', pathname]);
@@ -30,25 +31,33 @@ function runReview({ alreadySubmitted = false, rejectReview = false, publicLink 
       else if (pathname.endsWith('/preReleaseVersion')) body = { data: { attributes: { version: pathname.includes('other-train') ? '0.0.9' : '0.1.0' } } };
       else if (pathname.endsWith('/relationships/builds')) {
         if (!init.method) body = { data: ${missingLink ? '[]' : "[{ id: 'current' }]"} };
-        else {
+        else if (init.method === 'DELETE') {
+          removed.push(...JSON.parse(init.body).data.map(build => build.id));
+          status = 204;
+        } else {
           if (JSON.parse(init.body).data[0].id !== 'current') throw new Error('Wrong marketing version selected');
           status = ${conflict ? 409 : 204};
         }
       }
-      else if (pathname.endsWith('/builds')) body = { data: [{ id: 'current' }] };
+      else if (pathname.endsWith('/builds')) body = { data: ${JSON.stringify(groupBuilds)}, links: { next: ${nextPage ? "'/v1/betaGroups/group/builds?cursor=next'" : 'null'} } };
+      else if (pathname.endsWith('/buildBetaDetail')) {
+        status = ${detailFailure ? 503 : 200};
+        const build = ${JSON.stringify(groupBuilds)}.find(build => pathname === '/v1/builds/' + build.id + '/buildBetaDetail');
+        body = { data: { attributes: { externalBuildState: build?.state } } };
+      }
       else if (pathname.endsWith('/betaAppReviewSubmission')) {
         status = ${alreadySubmitted ? 200 : 404};
         body = ${alreadySubmitted ? "{ data: { id: 'existing-review' } }" : '{}'};
       }
       else if (pathname === '/v1/betaAppReviewSubmissions') {
-        status = ${rejectReview ? 422 : 201};
-        body = ${rejectReview ? "{ errors: [{ detail: 'Beta App Description is required' }] }" : "{ data: { id: 'new-review' } }"};
+        status = ${rejectReview || submissionLimit ? 422 : 201};
+        body = ${submissionLimit ? "{ errors: [{ detail: 'Submission limit has been reached' }] }" : rejectReview ? "{ errors: [{ detail: 'Beta App Description is required' }] }" : "{ data: { id: 'new-review' } }"};
       }
       else if (pathname === '/v1/betaGroups/group') body = { data: { attributes: { publicLink: ${publicLink ? "'https://testflight.apple.com/join/example'" : 'null'} } } };
       else throw new Error('Unexpected request: ' + url);
       return new Response(status === 204 ? null : JSON.stringify(body), { status });
     };
-    process.on('exit', () => console.log(JSON.stringify(calls)));
+    process.on('exit', () => { console.log(JSON.stringify(calls)); console.log('Removed IDs: ' + JSON.stringify(removed)); });
     await import(${JSON.stringify(script)});
   `], {
     encoding: 'utf8',
@@ -112,4 +121,64 @@ test('a conflict is only successful if the internal association exists', () => {
   const result = runReview({ distribution: 'internal', conflict: true, missingLink: true });
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('does not contain the uploaded build');
+});
+
+const rollingBuilds = [
+  ['current', 'WAITING_FOR_BETA_REVIEW'],
+  ['pending-newer', 'WAITING_FOR_BETA_REVIEW'],
+  ['pending-new', 'WAITING_FOR_BETA_REVIEW'],
+  ['pending-old', 'WAITING_FOR_BETA_REVIEW'],
+  ['approved', 'BETA_APPROVED'],
+  ['testing', 'TESTING'],
+  ['approved-older', 'BETA_APPROVED'],
+  ['testing-older', 'TESTING'],
+  ['in-review', 'IN_BETA_REVIEW'],
+  ['unknown', undefined],
+].map(([id, state], index) => ({ id, state, attributes: { uploadedDate: new Date(Date.UTC(2026, 0, 20 - index)).toISOString() } }));
+
+test('rapid releases roll only waiting builds, never approved, testing, in-review or unknown builds', () => {
+  const result = runReview({ groupBuilds: rollingBuilds });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('Removed IDs: ["pending-old"]');
+});
+
+test('unavailable beta state preserves all group builds without blocking submission', () => {
+  const result = runReview({ groupBuilds: rollingBuilds, detailFailure: true });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('build 5: submitted');
+  expect(result.stdout).toContain('Removed IDs: []');
+});
+
+test('an incomplete group listing does not remove builds', () => {
+  const result = runReview({ groupBuilds: rollingBuilds, nextPage: true });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('Removed IDs: []');
+});
+
+test('failed or deferred submission never triggers cleanup', () => {
+  const failed = runReview({ groupBuilds: rollingBuilds, rejectReview: true });
+  expect(failed.status).toBe(1);
+  expect(failed.stdout).toContain('Removed IDs: []');
+  const deferred = runReview({ groupBuilds: rollingBuilds, submissionLimit: true });
+  expect(deferred.status, deferred.stderr).toBe(0);
+  expect(deferred.stdout).toContain('deferred-submission-limit');
+  expect(deferred.stdout).toContain('Removed IDs: []');
+});
+
+test('retention uses upload order and always protects the current build on retry', () => {
+  const builds = rollingBuilds.map(build => build.id === 'current'
+    ? { ...build, attributes: { uploadedDate: '2025-01-01T00:00:00Z' } }
+    : build).reverse();
+  const result = runReview({ groupBuilds: builds, alreadySubmitted: true });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('Removed IDs: []');
+});
+
+test('builds without a valid upload date are not cleanup candidates', () => {
+  const builds = rollingBuilds.map(build => build.id === 'pending-old'
+    ? { ...build, attributes: { uploadedDate: 'unknown' } }
+    : build);
+  const result = runReview({ groupBuilds: builds });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('Removed IDs: []');
 });

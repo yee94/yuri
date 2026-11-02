@@ -1841,6 +1841,21 @@ describe('runContactTurn bubble index continuity', () => {
 })
 
 describe('read-only worker notifications', () => {
+  it.each([false, true])('only exposes watch_session with the explicit background capability (%s)', async (allowWatchSession) => {
+    const tools = createContactTools({ watchSession: vi.fn() });
+    await runContactTurn({
+      assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: 'Review worker result',
+      readOnly: true, allowWatchSession, tools,
+      createChatCompletion: async ({ body }) => {
+        const names = body.tools.map((tool) => tool.function.name);
+        expect(names.includes('watch_session')).toBe(allowWatchSession);
+        expect(names).not.toContain('assign_session');
+        expect(names).not.toContain('stop_session');
+        return { text: '已检查。' };
+      },
+    });
+  });
+
   it('passes prior user constraints and exact card data to completions without any mutation tool', async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-readonly-'))
     const mutation = vi.fn()

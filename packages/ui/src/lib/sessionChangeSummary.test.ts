@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
   formatSessionChangeCounts,
-  readSessionBranchLabel,
   readSessionChangeSummary,
   readSessionModelLabel,
 } from './sessionChangeSummary'
@@ -48,13 +47,11 @@ describe('sessionChangeSummary', () => {
     expect(formatSessionChangeCounts(null)).toBeNull()
   })
 
-  test('reads model and branch only when those fields exist', () => {
+  test('reads model only when those fields exist, including the production nested id shape', () => {
     expect(readSessionModelLabel({ providerID: 'opencode-go', modelID: 'deepseek-v4-flash' }))
       .toBe('opencode-go/deepseek-v4-flash')
     expect(readSessionModelLabel({ model: { providerID: 'p', modelID: 'm' } })).toBe('p/m')
     expect(readSessionModelLabel({ title: 'Login' })).toBeNull()
-    expect(readSessionBranchLabel({ branch: 'feat/home' })).toBe('feat/home')
-    expect(readSessionBranchLabel({ project: { branch: 'main' } })).toBe('main')
-    expect(readSessionBranchLabel({ title: 'Login' })).toBeNull()
+    expect(readSessionModelLabel({ model: { providerID: 'openai', id: 'gpt-6.1-sol', variant: 'default' } })).toBe('openai/gpt-6.1-sol')
   })
 })

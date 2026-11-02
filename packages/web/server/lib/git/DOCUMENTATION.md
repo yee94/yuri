@@ -43,6 +43,12 @@ The following functions are exported and used by the web server:
 
 ### Branch Operations
 - `getBranches(directory)`: Read local branches and locally known remote-tracking refs, excluding remote HEAD aliases from `all`. This is an offline read: it never runs `ls-remote` or waits for remote authentication/network. Explicit Fetch updates remote-tracking refs; pruning is controlled by that operation. The returned `current` and `branches` metadata retain the Git snapshot shape.
+  `current` is empty for detached HEAD, not simple-git's pseudo branch label.
+  Unborn repositories resolve their actual symbolic HEAD name (no assumed
+  `main`/`master`). A confirmed non-repository returns an empty snapshot;
+  permission, unavailable-directory and other failures still reject so Query
+  refreshes retain their last valid data. Shared Web/Electron/mobile callers use
+  this contract; VS Code owns the equivalent native/raw Git projection.
 - `createBranch(directory, branchName, options)`: Create and checkout a new branch.
 - `checkoutBranch(directory, branchName)`: Checkout an existing branch.
 - `deleteBranch(directory, branch, options)`: Delete a branch (supports force flag).

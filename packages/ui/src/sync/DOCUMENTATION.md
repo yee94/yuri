@@ -1,5 +1,13 @@
 # Sync architecture, event handling & store update rules
 
+`vcs.branch.updated` invalidates the exact runtime/directory Git branch Query
+before child-store lookup. Mounted branch selectors and Assistant Session cards
+therefore share a fresh directory snapshot even when no Location child exists.
+Inactive Query entries become stale without bootstrapping Locations or reading
+messages. Detached events without a branch still invalidate; the authoritative
+Git read distinguishes no branch from refresh failure. Covered by
+`git-branch-query-events.test.ts`.
+
 Configuration reconnect/events invalidate matching Query catalogs, but imperative
 Provider/Agent projections refresh only the currently selected directory. Persisted
 `directoryScoped` selection keys never constitute live demand: enumerating them

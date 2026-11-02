@@ -14,6 +14,7 @@ import { createEventPipeline } from "./event-pipeline"
 import { sessionDisplayStatus, sessionDisplayStatusObservedAt } from "./session-interrupt"
 import { refreshQuestionAutoDelegate } from "@/lib/questionAutoDelegate"
 import { sessionEvents } from "@/lib/sessionEvents"
+import { invalidateGitBranchesQuery } from "@/queries/gitBranchQueries"
 import { QuestionAutoDelegateNotifications } from "@/components/chat/QuestionAutoDelegateStatus"
 import { bindStreamReconnect, noteStreamActivity, requestStreamReconnect } from "./stream-liveness"
 import { isVSCodeRuntime } from "@/lib/desktop"
@@ -2278,6 +2279,10 @@ export function handleEvent(
   }
 
   const directory = resolveDirectoryFromRoutingIndex(routingIndex, rawDirectory, payload, childStores)
+
+  if (payload.type === "vcs.branch.updated" && directory && directory !== "global") {
+    void invalidateGitBranchesQuery(directory)
+  }
 
   if (handleUiNotificationEvent(payload, directory)) {
     return

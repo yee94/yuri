@@ -90,8 +90,8 @@ writeFileSync(path.join(outputDirectory, 'health.json'), `${JSON.stringify({
 }, null, 2)}\n`);
 
 // Full EdgeOne builds materialize both live channels, all active/rollback ZIPs
-// and CHANGELOG before deployment. Static files intentionally shadow legacy
-// proxies: neither full downloads nor Range requests need runtime backsource.
+// and static-only CHANGELOG before deployment. Retained /ota/* files shadow
+// the dynamic fallback; no exact CHANGELOG proxy route may be deployed.
 const skipOtaCopy = process.env.YURI_UPDATE_SKIP_OTA_COPY === '1';
 const otaChannelsOnly = process.env.YURI_UPDATE_OTA_CHANNELS_ONLY === '1';
 if (process.env.YURI_UPDATE_OTA_FULL_SNAPSHOT === '1') {

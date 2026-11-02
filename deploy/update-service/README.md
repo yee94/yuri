@@ -245,12 +245,16 @@ Duplicate references download once. A second manifest read rejects a concurrentl
 changed source. Missing/corrupt resources, origin failure or a torn snapshot fail
 the build, leaving the previous EdgeOne deployment serving its complete snapshot.
 
-**Static assets intentionally shadow legacy proxy functions.** Normal update
-checks, release notes, complete downloads and byte-range resume all use EdgeOne
-local resources without runtime Vercel access. Existing URLs and installed
-clients need no migration. The allowlisted proxy remains only for historical
-paths absent from the retained snapshot; such a proxy response does not pass
-the new publication gate.
+**CHANGELOG is static-only; no same-path Edge Function is deployed.** A production
+deployment containing both `CHANGELOG.md` and its former exact proxy function
+still served the proxy, despite the asset being present. Do not rely on static
+precedence for exact function routes. The real-build test rejects collisions
+between static files and exact Edge Function routes before service publication.
+The dynamic `/ota/*` proxy remains only for historical paths absent from the
+retained snapshot; such a proxy response does not pass the publication gate.
+Normal update checks, release notes, complete downloads and byte-range resume
+use EdgeOne local resources without runtime Vercel access. Existing URLs and
+installed clients need no migration.
 
 A successful build writes `/ota-distribution.json`, listing sizes and SHA-256s
 of all materialized OTA files (no keys or encryption payloads). Release, OTA and
@@ -258,8 +262,11 @@ rollout workflows run `scripts/mobile-ota/verify-distribution.mjs` against both
 origins with the expected snapshot. EdgeOne verification requires this marker,
 downloads every retained ZIP, compares bytes with the snapshot (including
 encrypted artifacts), verifies exact `206` range bodies, and rejects
-`x-ota-proxy` responses. A matching check response alone is not publication
-success. The existing detectability gate still validates client decisions.
+`x-ota-proxy` responses. Metadata readiness, including CHANGELOG, is checked
+before ZIP transfers so deployment retries do not repeatedly download every
+retained bundle while an old metadata route is still active. A matching check
+response alone is not publication success. The existing detectability gate
+still validates client decisions.
 
 If Vercel deploys but EdgeOne build/verification fails, publication fails rather
 than claiming both are complete. Vercel retains the new authoritative snapshot;

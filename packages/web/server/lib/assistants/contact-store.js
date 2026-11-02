@@ -114,6 +114,13 @@ export function ensureContactSchema(db) {
   if (!boundaryColumns.has('assistant_after_ordinal')) db.exec('ALTER TABLE assistant_contact_context_boundary ADD COLUMN assistant_after_ordinal INTEGER NOT NULL DEFAULT 0');
   const watchColumns = new Set(db.prepare("SELECT name FROM pragma_table_info('assistant_contact_watch')").all().map((column) => column.name));
   if (!watchColumns.has('resume_allowed')) db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN resume_allowed INTEGER NOT NULL DEFAULT 1');
+  // Subscription lifetime is separate from notification permission and baseline status.
+  if (!watchColumns.has('active')) {
+    db.transaction(() => {
+      db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+      db.exec("UPDATE assistant_contact_watch SET active=0 WHERE status NOT IN ('busy','question')");
+    })();
+  }
   // Delivery watermark: assign prompt message ID so reused-session settle
   // only counts assistant tails that belong to this delivery.
   if (!watchColumns.has('message_id')) db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN message_id TEXT');
@@ -1255,6 +1262,7 @@ export function upsertContactWatch(db, {
   status,
   updatedAt,
   resumeAllowed = true,
+  active = true,
   messageID = undefined,
 }) {
   const nextMessageID = typeof messageID === 'string' && messageID.trim()
@@ -1262,13 +1270,13 @@ export function upsertContactWatch(db, {
     : (messageID === null ? null : undefined);
   if (nextMessageID === undefined) {
     db.prepare(
-      'INSERT INTO assistant_contact_watch(assistant_id,session_id,directory,status,updated_at,resume_allowed,message_id) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(assistant_id,session_id) DO UPDATE SET directory=excluded.directory,status=excluded.status,updated_at=excluded.updated_at,resume_allowed=excluded.resume_allowed',
-    ).run(assistantID, sessionID, directory || null, status, updatedAt, resumeAllowed ? 1 : 0);
+      'INSERT INTO assistant_contact_watch(assistant_id,session_id,directory,status,updated_at,resume_allowed,active,message_id) VALUES (?,?,?,?,?,?,?,NULL) ON CONFLICT(assistant_id,session_id) DO UPDATE SET directory=excluded.directory,status=excluded.status,updated_at=excluded.updated_at,resume_allowed=excluded.resume_allowed,active=excluded.active',
+    ).run(assistantID, sessionID, directory || null, status, updatedAt, resumeAllowed ? 1 : 0, active ? 1 : 0);
     return;
   }
   db.prepare(
-    'INSERT INTO assistant_contact_watch(assistant_id,session_id,directory,status,updated_at,resume_allowed,message_id) VALUES (?,?,?,?,?,?,?) ON CONFLICT(assistant_id,session_id) DO UPDATE SET directory=excluded.directory,status=excluded.status,updated_at=excluded.updated_at,resume_allowed=excluded.resume_allowed,message_id=excluded.message_id',
-  ).run(assistantID, sessionID, directory || null, status, updatedAt, resumeAllowed ? 1 : 0, nextMessageID);
+    'INSERT INTO assistant_contact_watch(assistant_id,session_id,directory,status,updated_at,resume_allowed,active,message_id) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(assistant_id,session_id) DO UPDATE SET directory=excluded.directory,status=excluded.status,updated_at=excluded.updated_at,resume_allowed=excluded.resume_allowed,active=excluded.active,message_id=excluded.message_id',
+  ).run(assistantID, sessionID, directory || null, status, updatedAt, resumeAllowed ? 1 : 0, active ? 1 : 0, nextMessageID);
 }
 
 const mapWatchRow = (row) => ({
@@ -1277,18 +1285,19 @@ const mapWatchRow = (row) => ({
   directory: row.directory,
   status: row.status,
   resumeAllowed: row.resume_allowed !== 0,
+  active: row.active !== 0,
   messageID: typeof row.message_id === 'string' && row.message_id.trim() ? row.message_id : null,
 });
 
 export function listWatchesBySession(db, sessionID) {
-  return db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, message_id FROM assistant_contact_watch WHERE session_id=?').all(sessionID)
+  return db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE session_id=?').all(sessionID)
     .map(mapWatchRow);
 }
 
 export function listInFlightWatches(db, assistantID) {
   const rows = typeof assistantID === 'string' && assistantID
-    ? db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, message_id FROM assistant_contact_watch WHERE assistant_id=?').all(assistantID)
-    : db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, message_id FROM assistant_contact_watch').all();
+    ? db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE assistant_id=? AND active=1').all(assistantID)
+    : db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE active=1').all();
   return rows
     .filter((row) => IN_FLIGHT_WATCH.has(row.status))
     .map(mapWatchRow);

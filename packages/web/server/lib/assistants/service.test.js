@@ -3121,6 +3121,157 @@ describe('assistants service', () => {
     busyService.close();
   });
 
+  it.each(['complete', 'error', 'cancelled'])('consumes a %s watch across later rounds and restart until explicitly watched again', async (status) => {
+    const directory = root();
+    let time = 20_000;
+    const resumes = [];
+    const options = {
+      clock: () => time,
+      runContactTurn: async ({ tools, userText, allowWatchSession }) => {
+        if (userText.includes('Internal assigned-session resume')) {
+          expect(allowWatchSession).toBe(!userText.includes('status: cancelled'));
+          expect(userText).toContain('watchState: released');
+          expect(userText).toContain('watchMode: one_shot');
+          expect(userText).toContain(`rewatchAllowed: ${allowWatchSession}`);
+          expect(userText).toContain('Later messages or execution rounds in this session will NOT automatically notify you');
+          expect(userText).toContain('Only a successful new watch_session call rearms monitoring');
+          resumes.push(userText);
+          return { text: '结果已汇报', bubbles: ['结果已汇报'] };
+        }
+        const result = await tools.find((tool) => tool.name === 'watch_session').execute('watch', { sessionID: 'ses_once' });
+        expect(result.isError).not.toBe(true);
+        return { text: '在听', bubbles: ['在听'], cards: [result.details.card] };
+      },
+    };
+    const client = { get: async ({ sessionID }) => ({ data: { id: sessionID, directory, status: { type: 'busy' } } }) };
+    let service = setup(directory, client, options);
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      await settleSend(service, assistant.id, { messageID: 'watch_once', parts: [{ type: 'text', text: '监听这个会话' }] });
+      expect(service.reportAssignedSessionSettle('ses_once', status)).toBe(true);
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_once', status, time));
+      expect(resumes).toHaveLength(1);
+      for (let index = 0; index < 50; index += 1) {
+        time += 1;
+        expect(service.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_once' } })).toBe(false);
+        expect(service.reportAssignedSessionSettle('ses_once', index % 2 ? 'error' : 'complete')).toBe(false);
+      }
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual([]);
+      expect(service.contactMessages(assistant.id).messages.flatMap((message) => message.parts).find((part) => part.type === 'card').status).toBe(status);
+      service.close();
+      service = setup(directory, client, options);
+      time += 1;
+      expect(service.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_once' } })).toBe(false);
+      expect(service.reportAssignedSessionSettle('ses_once', 'cancelled')).toBe(false);
+      await new Promise(setImmediate);
+      expect(resumes).toHaveLength(1);
+      await settleSend(service, assistant.id, { messageID: 'watch_again', parts: [{ type: 'text', text: '再监听一次' }] });
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_once']);
+      expect(service.reportAssignedSessionSettle('ses_once', 'complete')).toBe(true);
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_once', 'complete', time));
+      expect(resumes).toHaveLength(2);
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('a background result may explicitly rewatch only its own worker without reopening mutation tools', async () => {
+    const directory = root();
+    let time = 30_000;
+    let resumed = false;
+    const service = setup(directory, {
+      get: async ({ sessionID }) => ({ data: { id: sessionID, directory, status: { type: 'busy' } } }),
+    }, {
+      clock: () => time,
+      runContactTurn: async (input) => {
+        if (!resumed) {
+          resumed = true;
+          expect(input.allowWatchSession).toBe(true);
+          const watch = input.tools.find((tool) => tool.name === 'watch_session');
+          const denied = await watch.execute('other', { sessionID: 'ses_unrelated' });
+          expect(denied.details.error).toBe('validation_error');
+          let round = 0;
+          return realRunContactTurn({
+            ...input,
+            createChatCompletion: async ({ body }) => {
+              if (++round === 1) {
+                const names = body.tools.map((tool) => tool.function.name);
+                expect(names).toContain('watch_session');
+                expect(names).not.toContain('assign_session');
+                expect(names).not.toContain('stop_session');
+                expect(names).not.toContain('bash');
+                return toolBatch([['watch_session', { sessionID: 'ses_rewatch' }]]);
+              }
+              return { text: '还需要观察，重新监听一次。' };
+            },
+          });
+        }
+        return { text: '观察完成。', bubbles: ['观察完成。'] };
+      },
+    });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_rewatch', directory, status: 'busy' });
+      const priorDb = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+      try {
+        priorDb.prepare('UPDATE assistant_contact_watch SET message_id=? WHERE session_id=?').run('msg_old_delivery', 'ses_rewatch');
+      } finally { priorDb.close(); }
+      service.reportAssignedSessionSettle('ses_rewatch', 'complete');
+      const settled = await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_rewatch', 'complete', time));
+      expect(settled.error).toBeUndefined();
+      expect(settled.status).toBe('complete');
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_rewatch']);
+      const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+      try {
+        expect(db.prepare('SELECT message_id FROM assistant_contact_watch WHERE session_id=?').get('ses_rewatch').message_id).toBeNull();
+      } finally { db.close(); }
+      time += 1;
+      expect(service.processEvent({ type: 'session.idle', properties: { sessionID: 'ses_rewatch' } })).toBe(true);
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_rewatch', 'complete', time));
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual([]);
+      expect(service.contactMessages(assistant.id).messages.some((message) => message.text === '观察完成。')).toBe(true);
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('an explicit terminal-baseline watch waits for a new round without replaying the old result', async () => {
+    const directory = root();
+    let time = 40_000;
+    const resumes = [];
+    const service = setup(directory, {
+      get: async ({ sessionID }) => ({ data: { id: sessionID, directory, status: { type: 'idle' }, time: { completed: 1 } } }),
+    }, {
+      clock: () => time,
+      runContactTurn: async ({ userText, tools }) => {
+        if (userText.includes('Internal assigned-session resume')) {
+          resumes.push(userText);
+          return { text: '新一轮结果', bubbles: ['新一轮结果'] };
+        }
+        const result = await tools.find((tool) => tool.name === 'watch_session').execute('watch', { sessionID: 'ses_baseline' });
+        expect(result.details.watched.status).toBe('complete');
+        return { text: '继续观察', bubbles: ['继续观察'], cards: [result.details.card] };
+      },
+    });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      await settleSend(service, assistant.id, { messageID: 'baseline', parts: [{ type: 'text', text: '继续监听这个会话' }] });
+      expect(service.reportAssignedSessionSettle('ses_baseline', 'complete')).toBe(false);
+      expect(resumes).toHaveLength(0);
+      time += 1;
+      expect(service.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_baseline' } })).toBe(true);
+      expect(service.reportAssignedSessionSettle('ses_baseline', 'complete')).toBe(true);
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_baseline', 'complete', time));
+      expect(resumes).toHaveLength(1);
+      expect(service.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_baseline' } })).toBe(false);
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stop_session calls real session.abort and surfaces abort failures', async () => {
     const directory = root();
     const project = path.join(directory, 'app');
@@ -4137,6 +4288,9 @@ describe('assistants service', () => {
       await vi.waitFor(() => expect(first.snapshot().assistants[0].working).toBe(false));
       expect(resumes).toHaveLength(1);
       expect(first.contactMessages(assistant.id).messages.filter((message) => message.text === '清理完成。')).toHaveLength(1);
+      expect(second.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_shared' } })).toBe(false);
+      expect(second.processEvent({ type: 'session.error', properties: { sessionID: 'ses_shared', error: { name: 'UnknownError' } } })).toBe(false);
+      expect(resumes).toHaveLength(1);
     } finally {
       first.close();
       second.close();

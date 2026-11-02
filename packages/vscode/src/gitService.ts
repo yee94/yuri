@@ -699,7 +699,10 @@ async function getGitBranchesRaw(directory: string): Promise<GitBranchResult> {
   const result = await execGit(['branch', '-a', '-v', '--format=%(refname:short)|%(objectname:short)|%(upstream:short)|%(HEAD)'], directory);
   
   if (result.exitCode !== 0) {
-    return { all: [], current: '', branches: {} };
+    if (/not a git repository/i.test(result.stderr)) {
+      return { all: [], current: '', branches: {} };
+    }
+    throw new Error(result.stderr || 'Failed to read Git branches');
   }
 
   const lines = result.stdout.trim().split('\n').filter(Boolean);
@@ -724,6 +727,11 @@ async function getGitBranchesRaw(directory: string): Promise<GitBranchResult> {
     }
   }
 
+  if (!current) {
+    const head = await execGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], directory);
+    if (head.exitCode === 0) current = head.stdout.trim();
+    else if (head.exitCode !== 1) throw new Error(head.stderr || 'Failed to read Git HEAD');
+  }
   return { all, current, branches };
 }
 

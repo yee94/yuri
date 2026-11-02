@@ -3,7 +3,6 @@ import { useEvent } from '@reactuses/core'
 import { Icon } from '@/components/icon/Icon'
 import { useI18n } from '@/lib/i18n'
 import {
-  readSessionBranchLabel,
   readSessionChangeSummary,
   readSessionModelLabel,
 } from '@/lib/sessionChangeSummary'
@@ -16,7 +15,9 @@ import { useMobileAppActions } from '@/apps/mobileAppContext'
 import { isIPadApp } from '@/lib/platform'
 import { useGlobalSessionStatus } from '@/sync/sync-context'
 import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback'
-import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
+import { useGitBranchesQuery } from '@/queries/gitBranchQueries'
+import { ContactCardModelLine } from './ContactCardModelLine'
+import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantSessionCardProps = {
   card: AssistantContactSessionCardPart
@@ -79,9 +80,10 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
     ? liveSession.directory.trim()
     : card.directory
   const project = directoryName(directory)
-  const branch = readSessionBranchLabel(liveSession) || card.branch
+  const branches = useGitBranchesQuery(directory)
+  const branch = branches.data?.current?.trim() || null
   const model = readSessionModelLabel(liveSession)
-  const changes = readSessionChangeSummary(liveSession)
+  const changes = status === 'complete' || status === 'idle' ? readSessionChangeSummary(liveSession) : null
   const openSession = useEvent(() => {
     const live = findSessionById(card.sessionID)
     const nextDirectory = live?.directory || card.directory
@@ -109,7 +111,7 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
     >
       <div className={CONTACT_CARD_HEADER_CLASS}>
         <span className="flex min-w-0 items-center gap-2 text-[0.8em] leading-4 text-muted-foreground">
-          <Icon name="chat-thread" className="size-4 shrink-0" />
+          <Icon name="chat-thread" weight="medium" className="size-4 shrink-0" />
           <span className="truncate">{t('assistants.contact.card.session.label')}</span>
         </span>
         {statusLabelKey ? (
@@ -120,32 +122,35 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
         ) : null}
       </div>
       <h3 className={CONTACT_CARD_TITLE_CLASS} title={title}>{title}</h3>
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-[0.8em] leading-4">
-        <p className={cn('min-w-0 truncate text-foreground', branch && 'max-w-[45%] shrink-0')} title={directory}>{project}</p>
-        {branch ? <p className="flex min-w-0 items-center gap-1 text-muted-foreground" title={branch}><Icon name="git-branch" className="size-3 shrink-0" /><span className="truncate">{branch}</span></p> : null}
-      </div>
-      <div className={CONTACT_CARD_FOOTER_CLASS}>
-        <div className="flex min-w-0 items-center gap-2">
-          {changes ? (
-            <p className="flex min-w-0 items-baseline gap-x-2 overflow-hidden whitespace-nowrap text-[0.8em] leading-4 tabular-nums">
-              {changes?.additions !== undefined ? (
-                <span className="text-[var(--status-success)]">+{changes.additions}</span>
-              ) : null}
-              {changes?.deletions !== undefined ? (
-                <span className="text-[var(--status-error)]">−{changes.deletions}</span>
-              ) : null}
-              {changes?.files !== undefined ? (
-                <span className="text-muted-foreground">
-                  {changes.files === 1
-                    ? t('assistants.contact.card.session.changes.filesSingle', { count: changes.files })
-                    : t('assistants.contact.card.session.changes.filesPlural', { count: changes.files })}
-                </span>
-              ) : null}
-            </p>
-          ) : null}
-          <Icon name="arrow-right-s" className="ml-auto size-4 shrink-0 text-muted-foreground" />
+      <div data-contact-session-details="" className="row-start-3 row-end-5 flex min-w-0 flex-col gap-1.5 py-1">
+        <div data-contact-session-project="" className="flex h-4 min-w-0 flex-none items-center gap-2 text-[0.8em] leading-4">
+          <p className={cn('flex min-w-0 items-center gap-1.5 text-foreground', branch && 'max-w-[45%] shrink-0')} title={directory}>
+            <Icon name="folder" weight="medium" className="size-3.5 shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{project}</span>
+          </p>
+          {branch ? <p data-contact-session-branch="" className="flex min-w-0 items-center gap-1 text-muted-foreground" title={branch}><Icon name="git-branch" weight="medium" className="size-3 shrink-0" /><span className="min-w-0 truncate">{branch}</span></p> : null}
         </div>
-        {model ? <p className="truncate text-[0.75em] leading-4 text-muted-foreground" title={model}>{model}</p> : null}
+        {changes ? (
+          <p data-contact-session-changes="" className="flex h-4 min-w-0 flex-none items-center gap-1.5 overflow-hidden whitespace-nowrap text-[0.8em] leading-4 text-muted-foreground tabular-nums">
+            <Icon name="code" weight="medium" className="size-3.5 shrink-0" />
+            {changes.additions !== undefined ? (
+              <span className="text-[var(--status-success)]">+{changes.additions}</span>
+            ) : null}
+            {changes.deletions !== undefined ? (
+              <span className="text-[var(--status-error)]">−{changes.deletions}</span>
+            ) : null}
+            {changes.files !== undefined ? (
+              <span className="text-muted-foreground">
+                {changes.files === 1
+                  ? t('assistants.contact.card.session.changes.filesSingle', { count: changes.files })
+                  : t('assistants.contact.card.session.changes.filesPlural', { count: changes.files })}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
+        <div data-contact-session-bottom="" className="mt-auto flex h-4 min-w-0 flex-none items-center gap-2">
+          {model ? <ContactCardModelLine value={model} /> : null}
+          <Icon name="arrow-right-s" weight="medium" className="ml-auto size-4 shrink-0 text-muted-foreground" />
+        </div>
       </div>
     </article>
   )

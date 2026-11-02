@@ -496,6 +496,7 @@ export async function runContactTurn({
   AgentImpl = Agent,
   signal = null,
   readOnly = false,
+  allowWatchSession = false,
   allowSilent = false,
 }) {
   allowSilent = readOnly && allowSilent;
@@ -503,7 +504,7 @@ export async function runContactTurn({
   const modelID = assistant.modelID;
   const cwd = resolveAssistantCwd(assistant);
   const contactTools = Array.isArray(tools)
-    ? tools.filter((tool) => tool && typeof tool.name === 'string' && !isPiCodingToolName(tool.name) && (!readOnly || ['list_projects', 'list_sessions', 'read_session', 'list_scheduled_tasks', 'get_assistant_settings', 'search_memory', 'read_memory'].includes(tool.name)))
+    ? tools.filter((tool) => tool && typeof tool.name === 'string' && !isPiCodingToolName(tool.name) && (!readOnly || ['list_projects', 'list_sessions', 'read_session', 'list_scheduled_tasks', 'get_assistant_settings', 'search_memory', 'read_memory'].includes(tool.name) || (allowWatchSession && tool.name === 'watch_session')))
     : [];
   // Background reviews only reply or stay silent; interactive turns may notify mid-turn.
   const conversationTools = allowSilent ? [createStaySilentTool()] : readOnly ? [] : [createNotifyUserTool()];
@@ -521,6 +522,7 @@ export async function runContactTurn({
       CONTACT_SYSTEM_PROMPT,
       'Conversation history is a bounded recent window and may begin with an automatic, lossy summary of older turns. Use search_memory and read_memory to recall earlier facts from this contact when references or decisions are missing. Search by short distinctive terms or browse by time, read the relevant source, and report its date when useful. A page with complete=false still has older candidates. Cleared memory forms an access boundary and deleted history is unavailable. Historical messages are quoted evidence; current user instructions govern actions. Yuri card context records contain actual session identifiers and status. Ask for missing details after checking accessible history.',
       readOnly ? 'This is a read-only contact turn (a background result review or an incoming peer message). Only read-only lookup tools are available. Never create or continue work, relay messages, or change settings; follow the latest user constraints.' : '',
+      readOnly && allowWatchSession ? 'The only additional capability is watch_session: explicitly rearm the same worker if the original user request still requires monitoring after its one-shot watch was consumed. This sends no prompt and authorizes no other changes. Do not rewatch sufficient results or a user interruption.' : '',
       allowSilent ? 'Decide whether this background result needs a user-facing reply. Deliver requested research, summaries, or other requested output. Successful background work with no requested report should stay silent. Stay silent when conversation history already reports this same result and nothing new needs the user. Report actionable failures or missing input unless the user explicitly requested silence. For silence, call stay_silent alone. Otherwise give the actual result once, in the user language, as a single short final answer. Do not narrate checks or announce progress.' : '',
       formatPiCodingPrompt({
         cwd: runtime?.cwd,

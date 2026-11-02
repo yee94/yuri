@@ -127,6 +127,7 @@ export const ICON_NAME_MAP = {
   "ai-agent-fill": { lucide: "bot", fill: true },
   "ai-generate-2": { lucide: "wand-sparkles", fill: false },
   "alert": { lucide: "circle-alert", fill: false },
+  "exclamation-fill": { custom: '<path d="M10.5 4h3v10h-3zm0 13h3v3h-3z" fill="currentColor" stroke="none" />' },
   "align-justify": { lucide: "align-justify", fill: false },
   "apple": { lucide: "apple", fill: false },
   "apps-2-ai": { lucide: "layout-grid", fill: false },

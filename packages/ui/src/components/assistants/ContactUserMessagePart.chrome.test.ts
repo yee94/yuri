@@ -70,15 +70,20 @@ test.skipIf(!resolveChrome())('failed parts stay independently centered, have no
           document.documentElement.style.setProperty('--background', colors.surface.background);
           document.documentElement.style.setProperty('--foreground', colors.surface.foreground);
         })()`)
-        const markers = await page.evaluate<Array<{ x: number; y: number; centered: number; fill: string; dotFill: string }>>(`(() => [...document.querySelectorAll('[data-assistant-contact-send-error]')].map(el => {
+        const markers = await page.evaluate<Array<{ x: number; y: number; centered: number; fill: string; dotFill: string; icon: string | null; glyph: string }>>(`(() => [...document.querySelectorAll('[data-assistant-contact-send-error]')].map(el => {
           const r = el.getBoundingClientRect(), p = el.parentElement.getBoundingClientRect();
-          return { x: r.x + r.width / 2, y: r.y + r.height / 2, centered: Math.abs(r.y + r.height / 2 - p.y - p.height / 2), fill: getComputedStyle(el).backgroundColor, dotFill: getComputedStyle(el.querySelector('[data-assistant-contact-error-dot]')).backgroundColor };
+          const icon = el.querySelector('use').getAttribute('href');
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2, centered: Math.abs(r.y + r.height / 2 - p.y - p.height / 2), fill: getComputedStyle(el).backgroundColor, dotFill: getComputedStyle(el.querySelector('[data-assistant-contact-error-dot]')).backgroundColor, icon, glyph: document.querySelector(icon).innerHTML };
         }))()`)
         expect(markers).toHaveLength(2)
         for (const [index, marker] of markers.entries()) {
           expect(marker.centered).toBeLessThanOrEqual(0.5)
           expect(marker.fill).toBe('rgba(0, 0, 0, 0)')
-          expect(marker.dotFill).not.toBe('rgba(0, 0, 0, 0)')
+          expect(marker.dotFill).toBe('rgba(0, 0, 0, 0)')
+          expect(marker.icon).toBe('#yuri-exclamation-fill')
+          expect(marker.glyph).toContain('fill="currentColor"')
+          expect(marker.glyph).toContain('stroke="none"')
+          expect(marker.glyph).not.toMatch(/<circle|<ellipse/)
           await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: marker.x, y: marker.y })
           expect(await page.evaluate<string>(`getComputedStyle(document.elementFromPoint(${marker.x}, ${marker.y}).closest('button')).backgroundColor`)).toBe('rgba(0, 0, 0, 0)')
           await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab' })
