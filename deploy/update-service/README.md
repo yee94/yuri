@@ -205,6 +205,8 @@ Stable publishing also advances the same-major beta lane to the stable bundle un
 
 Build copies the entire `ota/` tree into `public/` (Vercel) or `dist/` (EdgeOne) and fails if either `ota/channels/beta.json` or `ota/channels/stable.json` is missing or invalid.
 
+Stable release service refreshes use `rollout.mjs --action snapshot` to retain the live manifests and every active/rollback mobile and desktop ZIP without changing generations, rollout state or native targets. Finalization shares the `mobile-ota-production` lock with OTA publishing, overlays this snapshot onto the prebuilt Vercel output, and aborts before deployment if any referenced file is unavailable. A source-only Vercel deploy is not safe: ZIPs are not committed to git. The following same-version OTA deployment reads the finalized stable release feed from `main`, rather than replacing it with the older feed in the release tag.
+
 ### Cache rules
 
 | Path | Cache-Control |

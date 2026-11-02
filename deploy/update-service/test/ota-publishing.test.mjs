@@ -16,6 +16,18 @@ import { promoteStableToBeta } from '../../../scripts/mobile-ota/channel-promoti
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
+test('stable release service deployment preserves live OTA before replacing static output', async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8');
+  const finalize = workflow.slice(workflow.indexOf('\n  finalize-release:'));
+  assert.match(finalize, /concurrency:\s+group: mobile-ota-production\s+cancel-in-progress: false/);
+  const deploy = finalize.slice(finalize.indexOf('      - name: Deploy update service to Vercel'));
+  assert.match(deploy, /node scripts\/mobile-ota\/rollout\.mjs --action snapshot --out/);
+  assert.match(deploy, /cp -R "\$SNAPSHOT_DIR\/ota\/\." "\$STATIC_DIR\/ota\/"/);
+  assert.ok(deploy.indexOf('--action snapshot') < deploy.indexOf('deploy --prebuilt --prod'));
+  const ota = workflow.slice(workflow.indexOf('  mobile-native-targets:'), workflow.indexOf('  publish-relay-docker-manual:'));
+  assert.match(ota, /git show FETCH_HEAD:deploy\/update-service\/release-manifest\.json > deploy\/update-service\/release-manifest\.json/);
+});
+
 test('publishing and rollout retain both majors, channels and referenced bundles', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ota-major-'));
   const channels = new Map();
@@ -74,6 +86,8 @@ test('publishing and rollout retain both majors, channels and referenced bundles
     return JSON.parse(channels.get(channel));
   };
   try {
+    await exec(process.execPath, ['scripts/mobile-ota/rollout.mjs', '--action', 'snapshot',
+      '--out', path.join(dir, 'empty-service-refresh')], { cwd: root, env });
     await publish('1.19.0', 'stable');
     assert.equal(JSON.parse(channels.get('beta')).activeBundle.releaseVersion, '1.19.0');
     const originalChannels = new Map(channels);
@@ -111,6 +125,20 @@ test('publishing and rollout retain both majors, channels and referenced bundles
     assert.equal(selectOtaMajor(paused, 2).activeBundle.rolloutPercent, 0);
     assert.deepEqual(selectOtaMajor(paused, 1), selectOtaMajor(oneAgain, 1));
     for (const id of bundles.keys()) await readFile(path.join(out, 'ota/bundles', `${id}.zip`));
+    const snapshotOut = path.join(dir, 'service-refresh');
+    await exec(process.execPath, ['scripts/mobile-ota/rollout.mjs', '--action', 'snapshot', '--out', snapshotOut], { cwd: root, env });
+    for (const [channel, contents] of channels) {
+      assert.deepEqual(JSON.parse(await readFile(path.join(snapshotOut, 'ota/channels', `${channel}.json`), 'utf8')), JSON.parse(contents));
+    }
+    for (const [id, contents] of bundles) {
+      assert.deepEqual(await readFile(path.join(snapshotOut, 'ota/bundles', `${id}.zip`)), contents);
+    }
+    const missingDesktop = one.activeBundle.desktop.bundleId;
+    const missingDesktopBytes = bundles.get(missingDesktop);
+    bundles.delete(missingDesktop);
+    await assert.rejects(() => exec(process.execPath, ['scripts/mobile-ota/rollout.mjs', '--action', 'snapshot',
+      '--out', path.join(dir, 'missing-bundle')], { cwd: root, env }), /Failed to download bundle.*HTTP 404/);
+    bundles.set(missingDesktop, missingDesktopBytes);
     const rollbackOut = path.join(dir, 'rollback');
     await exec(process.execPath, ['scripts/mobile-ota/rollout.mjs', '--action', 'rollback', '--major', '1', '--out', rollbackOut], { cwd: root, env });
     const rolledBack = selectOtaMajor(JSON.parse(await readFile(path.join(rollbackOut, 'ota/channels/beta.json'), 'utf8')), 1);

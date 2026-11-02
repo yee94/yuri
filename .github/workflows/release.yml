@@ -858,6 +858,9 @@ jobs:
             exit 0
           fi
 
+          git fetch origin main
+          git show FETCH_HEAD:deploy/update-service/release-manifest.json > deploy/update-service/release-manifest.json
+
           mkdir -p deploy/update-service/.vercel
           printf '%s\n' "{\"orgId\":\"${VERCEL_ORG_ID}\",\"projectId\":\"${VERCEL_PROJECT_ID}\"}" \
             > deploy/update-service/.vercel/project.json
@@ -1021,6 +1024,9 @@ jobs:
         ))
       }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: mobile-ota-production
+      cancel-in-progress: false
     env:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       DISCORD_UPDATE_ROLE_ID: ${{ secrets.DISCORD_UPDATE_ROLE_ID }}
@@ -1176,6 +1182,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN}" || -z "${VERCEL_ORG_ID}" || -z "${VERCEL_PROJECT_ID}" ]]; then
@@ -1183,9 +1190,24 @@ jobs:
             exit 0
           fi
           # Project has no rootDirectory; deploy the update-service package directory.
+          SNAPSHOT_DIR="$RUNNER_TEMP/update-service-ota"
+          node scripts/mobile-ota/rollout.mjs --action snapshot --out "$SNAPSHOT_DIR"
+
           mkdir -p deploy/update-service/.vercel
           printf '%s\n' "{\"orgId\":\"${VERCEL_ORG_ID}\",\"projectId\":\"${VERCEL_PROJECT_ID}\"}" > deploy/update-service/.vercel/project.json
-          npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" --cwd deploy/update-service
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
+          STATIC_DIR="deploy/update-service/.vercel/output/static"
+          if [[ ! -d "$STATIC_DIR" ]]; then
+            echo "Expected prebuilt static dir missing: $STATIC_DIR"
+            exit 1
+          fi
+          mkdir -p "$STATIC_DIR/ota"
+          cp -R "$SNAPSHOT_DIR/ota/." "$STATIC_DIR/ota/"
+          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
 
       - name: Send release to Discord

@@ -31,12 +31,12 @@ test('build emits an update manifest from the published release manifest and cha
     const betaChannel = JSON.parse(readFileSync(path.join(outputPath, 'ota', 'channels', 'beta.json'), 'utf8'));
     assert.equal(betaChannel.schemaVersion, 1);
     assert.equal(betaChannel.channel, 'beta');
-    assert.equal(betaChannel.activeBundle, null);
+    assert.deepEqual(betaChannel, JSON.parse(readFileSync(path.join(projectRoot, 'ota', 'channels', 'beta.json'), 'utf8')));
 
     const stableChannel = JSON.parse(readFileSync(path.join(outputPath, 'ota', 'channels', 'stable.json'), 'utf8'));
     assert.equal(stableChannel.schemaVersion, 1);
     assert.equal(stableChannel.channel, 'stable');
-    assert.equal(stableChannel.activeBundle, null);
+    assert.deepEqual(stableChannel, JSON.parse(readFileSync(path.join(projectRoot, 'ota', 'channels', 'stable.json'), 'utf8')));
   } finally {
     rmSync(outputPath, { recursive: true, force: true });
   }

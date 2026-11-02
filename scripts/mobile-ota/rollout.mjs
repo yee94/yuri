@@ -9,6 +9,7 @@
  * includes BOTH channel manifests and all referenced bundles.
  *
  * Actions:
+ *   --action snapshot (preserve both channels without changing rollout state)
  *   --action promote --percent N [--channel beta|stable]
  *   --action pause [--channel beta|stable]
  *   --action rollback [--channel beta|stable]
@@ -109,6 +110,7 @@ function parseArgs(argv) {
       case '--help':
       case '-h':
         console.log(`Usage (all actions accept --major X; defaults to the root release major):
+  node scripts/mobile-ota/rollout.mjs --action snapshot --out <dir>
   node scripts/mobile-ota/rollout.mjs --action promote --percent N --out <dir> [--channel beta|stable]
   node scripts/mobile-ota/rollout.mjs --action pause --out <dir> [--channel beta|stable]
   node scripts/mobile-ota/rollout.mjs --action rollback --out <dir> [--channel beta|stable]
@@ -493,6 +495,9 @@ async function main() {
     writeChannel = args.channel
 
     switch (args.action) {
+      case 'snapshot':
+        next = structuredClone(previous)
+        break
       case 'promote':
         next = applyPromote(previous, args.percent)
         break

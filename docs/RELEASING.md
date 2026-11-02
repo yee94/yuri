@@ -499,6 +499,8 @@ Vercel/EdgeOne 部署会 **整包替换** 静态输出。因此每次 assemble /
 
 OTA release 与 rollout 共用 concurrency group `mobile-ota-production`（`cancel-in-progress: false`），串行化所有生产 OTA 部署，避免 beta/stable 交错部署时用过期镜像覆盖新近写入的另一通道。
 
+稳定版 `finalize-release` 更新服务部署也共用该锁：先用 `rollout.mjs --action snapshot --out <dir>` 原样保留线上两通道、所有主版本和引用的移动端/桌面 ZIP，再覆盖进 Vercel prebuilt 输出。该动作不改变 generation、灰度或原生目标；任一引用包缺失都必须中止。禁止仅从 git 源码直接部署更新服务，仓库不保存 ZIP，整包替换会删掉仍被线上清单引用的包。后续同版本 OTA 部署从 `main` 读取已发布的稳定 feed，避免 release tag 内的旧 feed 覆盖新版本。
+
 ### 灰度 / 暂停 / 回滚 / 跨通道 promote
 
 GitHub Actions → **Shared Desktop and Mobile OTA Rollout**（`mobile-beta-rollout.yml`）`workflow_dispatch`：
@@ -544,6 +546,8 @@ node scripts/mobile-ota/rollout.mjs --action promote-channel --from beta --to st
 - 拉取线上 manifest 时：HTTP **404** 可从 generation 0 起步（并仍镜像另一通道）；**5xx / 其它错误必须中止**，禁止静默清空线上通道。
 
 ### 灾难恢复
+
+若 `finalize-release` 已发布 Release、但后续 OTA 因旧包 `404` 失败，先检查上一次完整 Vercel 部署的相同内容寻址 URL。确认全部引用包完整后恢复该部署，再只重跑原 Release 的失败 job；不要重复 npm / IPA 上传、移动 tag 或清空回滚记录。最后重新核验两个入口的稳定 feed、beta/stable OTA 与可检测性。
 
 1. GitHub prerelease `mobile-beta/v…` / `mobile-stable/v…` 上的 zip + channel json 可重新 assemble / 手动 overlay。
 2. `mobile-beta-rollout.yml` → `rollback` 将上一 generation 的 bundle 重新激活（内容寻址 zip 会从生产拉回 snapshot）。
