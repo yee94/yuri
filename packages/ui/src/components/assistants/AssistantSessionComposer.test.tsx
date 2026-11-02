@@ -50,13 +50,11 @@ let client: QueryClient;
 let draft = '';
 let mobile = false;
 let active = true;
-let working = false;
 let pending = false;
-const stop = vi.fn();
 const submit = vi.fn();
 const voiceSend = vi.fn();
 const render = () => root.render(<QueryClientProvider client={client}><main><form onSubmit={(event) => { event.preventDefault(); submit(); }}><AssistantSessionComposer
-  key={runtime.transport} active={active} working={working} pending={pending} layout={mobile ? 'inline' : 'stacked'} onStop={stop} stopLabel="Stop generating" value={draft} isMobile={mobile} autoResize={false} placeholder="normal input"
+  key={runtime.transport} active={active} pending={pending} layout={mobile ? 'inline' : 'stacked'} value={draft} isMobile={mobile} autoResize={false} placeholder="normal input"
   onChange={(value) => { draft = value; render(); }} onSubmit={submit} onVoiceSend={voiceSend}
 /></form></main></QueryClientProvider>);
 const input = () => host.querySelector('textarea')!;
@@ -76,7 +74,7 @@ const rows = () => Array.from(document.querySelectorAll<HTMLElement>('[role="opt
 
 beforeEach(async () => {
   runtime.transport = 'runtime-a'; runtime.dictationEnabled = true; runtime.load.mockReset().mockResolvedValue(snapshot()); submit.mockReset();
-  draft = ''; mobile = false; active = true; working = false; pending = false; stop.mockReset();
+  draft = ''; mobile = false; active = true; pending = false;
   voiceSend.mockReset(); speech.renders.mockClear(); speech.start.mockClear(); speech.confirm.mockClear(); speech.cancel.mockClear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -106,7 +104,7 @@ test.each([false, true])('sending keeps the input focused and editable without d
   await type('next message');
   await key('Enter');
   expect(submit).toHaveBeenCalledTimes(1);
-  await act(async () => { pending = false; working = true; render(); });
+  await act(async () => { pending = false; render(); });
   expect(input().value).toBe('next message');
   expect(document.activeElement).toBe(input());
 });
@@ -149,6 +147,16 @@ test('mobile ASR sends explicit final text, while edit gesture only updates the 
     expect(draft).toBe('先编辑');
     expect(voiceSend).not.toHaveBeenCalled();
     await act(async () => { draft = ''; render(); });
+    expect(document.activeElement).toBe(input());
+    for (const type of ['pointerdown', 'touchstart', 'contextmenu', 'selectstart']) {
+      const event = type === 'pointerdown'
+        ? new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 })
+        : new Event(type, { bubbles: true, cancelable: true });
+      await act(async () => { input().dispatchEvent(event); vi.advanceTimersByTime(300); });
+      expect(event.defaultPrevented).toBe(false);
+    }
+    expect(speech.start).toHaveBeenCalledTimes(1);
+    input().blur();
     await act(async () => { pointer('pointerdown', 200); vi.advanceTimersByTime(300); });
     await act(async () => { pointer('pointerup', 200); });
     await act(async () => speech.deliver('直接发送'));
@@ -223,7 +231,7 @@ test('inline contact centers the compact input and bottom-aligns measured multil
   const heightAtMeasurement: string[] = [];
   const renderInline = (value: string) => root.render(<AssistantSessionComposer
     active={false} layout="inline" isMobile value={value} onChange={() => {}} onSubmit={submit}
-    onAddFiles={() => {}} onStop={stop} working inputStyle={{ maxHeight: '128px' }}
+    onAddFiles={() => {}} inputStyle={{ maxHeight: '128px' }}
   />);
   await act(async () => renderInline(''));
   Object.defineProperty(input(), 'scrollHeight', { configurable: true, get: () => {
@@ -385,18 +393,26 @@ test('large bounded snapshots keep rendered rows capped and ordinary parent rend
 });
 
 
-test('working contact exposes stop while keeping the draft editable for a follow-up', async () => {
-  working = true;
-  await act(async () => render());
-  const button = host.querySelector<HTMLButtonElement>('[data-composer-stop]');
-  expect(button?.getAttribute('aria-label')).toBe('Stop generating');
-  expect(input().disabled).toBe(false);
-  await act(async () => button!.click());
-  expect(stop).toHaveBeenCalledTimes(1);
-  expect(submit).not.toHaveBeenCalled();
+test.each([false, true])('contact keeps only send through repeated messages and admission (mobile=%s)', async (isMobile) => {
+  mobile = isMobile;
   await type('A follow-up');
-  await key('Enter');
+  const send = () => host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+  expect(host.querySelector('[data-composer-stop]')).toBeNull();
+  expect(send().disabled).toBe(false);
+  await act(async () => send().click());
   expect(submit).toHaveBeenCalledTimes(1);
+  await act(async () => { pending = true; draft = ''; render(); });
+  expect(host.querySelector('[data-composer-stop]')).toBeNull();
+  expect(send().disabled).toBe(true);
+  expect(input().disabled).toBe(false);
+  await type('Another follow-up');
+  await act(async () => send().click());
+  expect(submit).toHaveBeenCalledTimes(1);
+  await act(async () => { pending = false; render(); });
+  expect(host.querySelector('[data-composer-stop]')).toBeNull();
+  expect(send().disabled).toBe(false);
+  await act(async () => send().click());
+  expect(submit).toHaveBeenCalledTimes(2);
 });
 
 

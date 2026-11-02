@@ -184,15 +184,24 @@ it('cancels on window blur', async () => {
     expect(speech.confirmDictation).not.toHaveBeenCalled();
 });
 
-it('starts a hold on the empty textarea after a short tap has focused it', async () => {
+it('preserves native input events after a short tap has focused the empty textarea', async () => {
     await act(async () => button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0, clientX: 200, clientY: 200 })));
     await pointer('pointerup');
     expect(document.activeElement).toBe(button);
+    for (const type of ['pointerdown', 'touchstart', 'contextmenu', 'selectstart', 'pointerup']) {
+        const event = type.startsWith('pointer')
+            ? new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 })
+            : new Event(type, { bubbles: true, cancelable: true });
+        await act(async () => button.dispatchEvent(event));
+        await act(async () => vi.advanceTimersByTime(500));
+        expect(event.defaultPrevented).toBe(false);
+    }
+    expect(speech.startDictation).not.toHaveBeenCalled();
+    expect(speech.confirmDictation).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+    button.blur();
     await pointer('pointerdown');
     expect(speech.startDictation).toHaveBeenCalledTimes(1);
-    await pointer('pointercancel');
-    await pointer('pointerdown');
-    expect(speech.startDictation).toHaveBeenCalledTimes(2);
 });
 
 it('keeps native selection for existing text and suppresses empty-input selection even after release', async () => {
@@ -208,6 +217,7 @@ it('keeps native selection for existing text and suppresses empty-input selectio
     expect(editingSelection.defaultPrevented).toBe(false);
 
     button.value = '';
+    button.blur();
     await pointer('pointerdown');
     for (const type of ['selectstart', 'contextmenu']) {
         const event = new Event(type, { bubbles: true, cancelable: true });
@@ -234,6 +244,16 @@ it('does not start capture when typing or paste fills the input during the hold 
     expect(button.value).toBe('粘贴的草稿');
 });
 
+it('does not start capture if the textarea gains focus during the hold delay', async () => {
+    await act(async () => button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 })));
+    button.focus();
+    await act(async () => vi.advanceTimersByTime(300));
+    await pointer('pointerup');
+    expect(speech.startDictation).not.toHaveBeenCalled();
+    expect(speech.confirmDictation).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+});
+
 it('blocks selection of compact placeholder text but leaves toolbar controls alone', async () => {
     const compact = document.createElement('div');
     compact.setAttribute('data-yuri-composer-compact-surface', 'true');
@@ -250,6 +270,30 @@ it('blocks selection of compact placeholder text but leaves toolbar controls alo
         attach.dispatchEvent(toolbarEvent);
         expect(toolbarEvent.defaultPrevented).toBe(false);
     }
+});
+
+it('keeps compact-surface holds available only while the textarea is unfocused', async () => {
+    const compact = document.createElement('div');
+    compact.setAttribute('data-yuri-composer-compact-surface', 'true');
+    const placeholder = document.createElement('span');
+    compact.append(placeholder);
+    containerRef.current!.append(compact);
+    button.focus();
+    for (const type of ['pointerdown', 'touchstart', 'contextmenu', 'selectstart']) {
+        const event = type === 'pointerdown'
+            ? new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 })
+            : new Event(type, { bubbles: true, cancelable: true });
+        await act(async () => placeholder.dispatchEvent(event));
+        expect(event.defaultPrevented).toBe(false);
+    }
+    await act(async () => vi.advanceTimersByTime(300));
+    expect(speech.startDictation).not.toHaveBeenCalled();
+    button.blur();
+    await act(async () => placeholder.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 })));
+    await act(async () => vi.advanceTimersByTime(300));
+    expect(speech.startDictation).toHaveBeenCalledTimes(1);
+    await pointer('pointerup');
+    expect(speech.confirmDictation).toHaveBeenCalledTimes(1);
 });
 
 it('keeps recording after capture loss and follows move/release outside the textarea', async () => {
@@ -304,13 +348,13 @@ it('removing disabled voice controls clears a pending hold and restores native i
     expect(speech.startDictation).not.toHaveBeenCalled();
 });
 
-it('prevents native touch selection on an empty input and blurs it only once a hold starts', async () => {
-    button.focus();
+it('prevents native touch selection and starts capture on an unfocused empty input', async () => {
     const touch = new Event('touchstart', { bubbles: true, cancelable: true });
     button.dispatchEvent(touch);
     expect(touch.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(button);
+    expect(document.activeElement).not.toBe(button);
     await pointer('pointerdown');
+    expect(speech.startDictation).toHaveBeenCalledTimes(1);
     expect(document.activeElement).not.toBe(button);
     await pointer('pointercancel');
     button.value = 'editable draft';

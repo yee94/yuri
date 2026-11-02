@@ -118,14 +118,13 @@ const SessionMentionPicker = React.forwardRef<PickerHandle, {
   </ComposerAutocompleteLayer>;
 });
 
-type Props = Omit<React.ComponentProps<typeof ChatPromptComposer>, 'onChange'> & {
+type Props = Omit<React.ComponentProps<typeof ChatPromptComposer>, 'onChange' | 'onStop' | 'stopLabel'> & {
   active: boolean;
-  working?: boolean;
   onChange: (value: string) => void;
   onVoiceSend?: (text: string) => void;
 };
 
-export const AssistantSessionComposer = ({ active, working = false, onChange, onVoiceSend, ...props }: Props) => {
+export const AssistantSessionComposer = ({ active, onChange, onVoiceSend, ...props }: Props) => {
   const { t } = useI18n();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const { enabled: holdToTalkEnabled, hint: dictationHint, onHintChange: setDictationHint } = useHoldToTalkInput({
@@ -224,7 +223,7 @@ export const AssistantSessionComposer = ({ active, working = false, onChange, on
     {holdToTalkEnabled && <MemoHoldToTalkComposer containerRef={containerRef} disabled={Boolean(props.pending || props.disabled)}
       onInsert={insertDictation} onSend={sendDictation} onRelease={ignoreDictationRelease}
       onHintChange={setDictationHint} />}
-    <ChatPromptComposer {...props} value={document.text} pending={props.pending || working}
+    <ChatPromptComposer {...props} value={document.text} pending={props.pending}
     placeholder={placeholder}
     disableInputWhilePending={false} inputRef={inputRef}
     onSubmit={() => { if (!props.pending) props.onSubmit(); }}

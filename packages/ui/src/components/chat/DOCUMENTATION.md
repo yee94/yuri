@@ -264,12 +264,13 @@ When enabled, it mounts
 `HoldToTalkComposer` keyed by DraftKey. The existing expanded card, compact pill,
 attachments and footer remain visible and unchanged; only the empty input's
 placeholder changes. A short tap focuses the existing textarea. Holding an empty,
-input for 300 ms records, whether or not it already has focus. Empty input touch
-ownership (`touch-action`, selection/callout suppression) is also focus-independent;
-native selection/context menus are blocked on the empty textarea and compact
-placeholder even before/after a hold. Toolbar controls are excluded. The empty
-state attribute scopes CSS so nonempty inputs regain native behavior. The 300 ms
-timer rechecks emptiness/editability before starting capture, including paste or
+unfocused input for 300 ms records. A focused textarea retains native touch,
+selection and context-menu behavior, including paste on an empty draft, in both
+Chat and Assistant composers. Empty input touch ownership (`touch-action`,
+selection/callout suppression) applies only while the textarea is unfocused,
+including the compact placeholder. Toolbar controls are excluded. The empty
+state attribute and focus selectors scope CSS so focused or nonempty inputs regain
+native behavior. The 300 ms timer rechecks focus/emptiness/editability before starting capture, including paste or
 keyboard input during the pending hold.
 An explicit non-passive `touchstart` listener prevents native touch selection on
 eligible empty input surfaces; a confirmed hold blurs the textarea to dismiss its

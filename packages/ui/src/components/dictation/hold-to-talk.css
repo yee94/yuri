@@ -1,6 +1,6 @@
-:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"] textarea,
-:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"] textarea::placeholder,
-:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"] [data-yuri-composer-compact-surface] {
+:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"]:not(:has(textarea:focus)) textarea,
+:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"]:not(:has(textarea:focus)) textarea::placeholder,
+:is(.yuri-mobile-composer, .yuri-hold-to-talk-container)[data-hold-to-talk-empty="true"]:not(:has(textarea:focus)) [data-yuri-composer-compact-surface] {
     touch-action: none;
     -webkit-touch-callout: none;
     -webkit-user-select: none;

@@ -9,7 +9,7 @@ const contactEvents = vi.hoisted(() => ({
   handler: null as ((event: Record<string, unknown>) => void) | null,
 }));
 const contactQueryState = vi.hoisted(() => ({ cardSharingBubble: false, extraMessages: 0, earlier: 0, imageFilePart: false as false | 'legacy' | 'cached', hasPreviousPage: false, isFetchingPreviousPage: false, previousPageError: null as Error | null, fetchPreviousPage: vi.fn(), hasMessageGap: false, isFillingMessageGap: false, retryMessageGap: vi.fn() }));
-const attachmentIO = vi.hoisted(() => ({ upload: vi.fn(), send: vi.fn(), abort: vi.fn(), display: vi.fn(), blob: vi.fn(), release: vi.fn() }));
+const attachmentIO = vi.hoisted(() => ({ upload: vi.fn(), send: vi.fn(), display: vi.fn(), blob: vi.fn(), release: vi.fn() }));
 const unreadUI = vi.hoisted(() => ({ settingsOpen: false }));
 const failureUI = vi.hoisted(() => ({ failed: false }));
 const translationReads = vi.hoisted(() => vi.fn((key: string) => key));
@@ -32,7 +32,7 @@ vi.mock('@/components/chat/ChatPromptComposer', () => ({
     <textarea value={props.value} onInput={(event) => props.onChange(event.currentTarget.value)} />
     <input type="file" onChange={(event) => props.onAddFiles(event.currentTarget.files)} />
     {props.attachments.map((attachment) => <span key={attachment.id} data-preview="">{attachment.name}</span>)}
-    <button type="button" data-stop="" hidden={!props.pending || !props.onStop} onClick={props.onStop}>Stop</button>
+    {props.pending && props.onStop ? <button type="button" data-stop="" onClick={props.onStop}>Stop</button> : null}
     <button type="button" data-send="" disabled={props.pending} onClick={props.onSubmit}>Send</button>
   </div>,
 }));
@@ -68,7 +68,6 @@ vi.mock('@/stores/useUIStore', () => {
   };
 });
 vi.mock('@/queries/assistantQueries', () => ({
-  abortAssistantSession: attachmentIO.abort,
   sendAssistantContactMessage: attachmentIO.send,
   useAssistantCapabilityQuery: () => ({ data: null }),
   useAssistantScheduledTasksQuery: (assistantID: string, enabled: boolean) => {
@@ -501,7 +500,8 @@ describe('AssistantConversationSurface scroll ownership', () => {
     }));
     expect(Array.from(host.querySelectorAll('[data-assistant-contact-text]')).map((node) => node.textContent)).toContain('我先检查配置，再保存修改。');
     expect(host.querySelector('[data-assistant-contact-processing]')).toBeTruthy();
-    expect(host.querySelector<HTMLButtonElement>('[data-stop]')?.hidden).toBe(false);
+    expect(host.querySelector('[data-stop]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-send]')?.disabled).toBe(false);
   });
 
   test('renders durable system errors as alerts outside assistant speech bubbles', async () => {
@@ -1006,30 +1006,42 @@ describe('AssistantConversationSurface scroll ownership', () => {
 });
 
 
-test('contact stop calls the assistant abort endpoint with a null session and retains working on failure', async () => {
-  attachmentIO.abort.mockRejectedValueOnce(new Error('Stop request failed'));
+test.each(['serverWorking', 'processing', 'activeContactTurn'] as const)('working contact remains send-only and admits multiple follow-ups (%s)', async (source) => {
+  attachmentIO.send.mockReset().mockResolvedValue({ revision: 2 });
   const { host, root } = await mountSurface();
-  const item = { ...assistant('assistant-a'), working: true };
+  const item: AssistantDTO = {
+    ...assistant('assistant-a'),
+    working: source === 'serverWorking',
+    activeContactTurn: source === 'activeContactTurn'
+      ? { turnID: 'active-turn', messageID: 'active-turn', status: 'running', admittedAt: 2 }
+      : null,
+  };
   await act(async () => root.render(<AssistantConversationSurface assistant={item} active />));
-  const stop = host.querySelector<HTMLButtonElement>('[data-stop]')!;
-  expect(stop.hidden).toBe(false);
-  await act(async () => stop.click());
-  expect(attachmentIO.abort).toHaveBeenCalledWith('assistant-a', expect.objectContaining({ sessionID: null, sessionGeneration: 0 }));
-  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Stop request failed');
-  expect(host.querySelector<HTMLButtonElement>('[data-stop]')!.hidden).toBe(false);
-  attachmentIO.abort.mockResolvedValueOnce(undefined);
-  await act(async () => stop.click());
-  expect(attachmentIO.abort).toHaveBeenCalledTimes(2);
-  // Successful HTTP admission also waits for authoritative idle; it must not invent it.
-  expect(host.querySelector<HTMLButtonElement>('[data-stop]')!.hidden).toBe(false);
-  await act(async () => root.render(<AssistantConversationSurface assistant={{ ...item, working: false }} active />));
-  expect(host.querySelector<HTMLButtonElement>('[data-stop]')!.hidden).toBe(true);
+  if (source === 'processing') await act(async () => contactEvents.handler?.({
+    type: 'contact-turn-start', assistantID: item.id, turnID: 'active-turn', occurredAt: 2,
+  }));
+  for (const text of ['Please continue', 'One more detail']) {
+    expect(host.querySelector('[data-stop]')).toBeNull();
+    expect(host.querySelector('[data-assistant-contact-processing]')).not.toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-send]')!.disabled).toBe(false);
+    await act(async () => {
+      const textarea = host.querySelector('textarea')!;
+      textarea.value = text;
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-send]')!.click());
+    expect(attachmentIO.send).toHaveBeenLastCalledWith(item.id, expect.any(String), { parts: [{ type: 'text', text }] });
+    expect(host.querySelector('textarea')!.value).toBe('');
+  }
+  expect(attachmentIO.send).toHaveBeenCalledTimes(2);
+  expect(attachmentIO.send.mock.calls[0][1]).not.toBe(attachmentIO.send.mock.calls[1][1]);
+  expect(useAssistantContactWorkingStore.getState().workingByID[item.id]).toBe(true);
+  expect(host.querySelector('[data-stop]')).toBeNull();
 });
 
-test.each(['sending', 'serverWorking', 'processing'] as const)('pending send preserves stop for active work (%s)', async (source) => {
+test.each(['sending', 'serverWorking', 'processing'] as const)('pending admission keeps send disabled without exposing stop (%s)', async (source) => {
   let finish!: (value: { revision: number }) => void;
   attachmentIO.send.mockReset().mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-  attachmentIO.abort.mockReset().mockResolvedValue(undefined);
   const { host, root } = await mountSurface();
   await act(async () => {
     const textarea = host.querySelector('textarea')!;
@@ -1043,10 +1055,7 @@ test.each(['sending', 'serverWorking', 'processing'] as const)('pending send pre
     if (source === 'processing') contactEvents.handler?.({ type: 'contact-turn-start', assistantID: 'assistant-a', turnID: 'turn-admitted', occurredAt: 2 });
   });
   try {
-    const stop = host.querySelector<HTMLButtonElement>('[data-stop]')!;
-    expect(stop.hidden).toBe(source === 'sending');
-    if (!stop.hidden) await act(async () => stop.click());
-    expect(attachmentIO.abort).toHaveBeenCalledTimes(source === 'sending' ? 0 : 1);
+    expect(host.querySelector('[data-stop]')).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[data-send]')!.disabled).toBe(true);
     expect(host.querySelector('[data-assistant-contact-processing]')).toBeNull();
   } finally {

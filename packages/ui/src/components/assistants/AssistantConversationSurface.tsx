@@ -20,7 +20,6 @@ import { cn } from '@/lib/utils'
 import { donateNativeAssistantInteraction } from '@/apps/MobileShareBridge'
 import { useUIStore } from '@/stores/useUIStore'
 import {
-  abortAssistantSession,
   confirmContactAdmissionByMessageID,
   sendAssistantContactMessage,
   useAssistantCapabilityQuery,
@@ -178,7 +177,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   })
   // The dialog unmounts with this surface, so release the global overlay flag here.
   React.useEffect(() => () => { setImagePreviewOpen(false) }, [setImagePreviewOpen])
-  const stoppingRef = React.useRef(false)
   React.useEffect(() => {
     uploadedRef.current.clear()
     retrySendsRef.current.clear()
@@ -533,21 +531,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   })
   const retrySend = useEvent((messageID: string) => { void submit(undefined, messageID) })
 
-  const stop = useEvent(async () => {
-    if (stoppingRef.current) return
-    stoppingRef.current = true
-    const controller = uploadControllerRef.current
-    setSendError(null)
-    try {
-      await abortAssistantSession(assistant.id, assistant)
-      // Working state converges from the server acknowledgement/SSE, never an optimistic stop.
-    } catch (error) {
-      if (!controller.signal.aborted) setSendError(error instanceof Error ? error.message : t('settings.mcp.page.toast.unexpectedError'))
-    } finally {
-      stoppingRef.current = false
-    }
-  })
-
   const loadFailed = contactQuery.isError && transcript.length === 0
   const empty = contactQuery.isSuccess && transcript.length === 0
   const optimisticByID = new Map(scopedOptimisticTurns.map((turn) => [turn.messageID, turn]))
@@ -835,9 +818,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
               value={draft}
               attachments={attachments}
               pending={sending}
-              working={processing || serverWorking}
-              onStop={processing || serverWorking ? () => { void stop() } : undefined}
-              stopLabel={t('chat.chatInput.actions.stopGeneratingAria')}
               isMobile={isMobile}
               placeholder={t('assistants.contact.placeholder', { name: displayName })}
               sendLabel={t('assistants.contact.send')}

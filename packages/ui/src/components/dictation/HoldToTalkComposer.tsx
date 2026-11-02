@@ -56,7 +56,7 @@ export function HoldToTalkComposer({ containerRef, disabled, onInsert, onSend, o
     const emptyInputForTarget = useEvent((target: EventTarget | null) => {
         if (disabled || !(target instanceof HTMLElement)) return null;
         const input = containerRef.current?.querySelector('textarea');
-        if (!input || input.value !== '' || input.disabled || input.readOnly) return null;
+        if (!input || input.value !== '' || input.disabled || input.readOnly || input.ownerDocument.activeElement === input) return null;
         if (target !== input && !target.closest('[data-yuri-composer-compact-surface]')) return null;
         if (target.closest('button, [data-composer-action]')) return null;
         return input;
