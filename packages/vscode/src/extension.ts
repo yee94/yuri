@@ -627,24 +627,23 @@ export async function activate(context: vscode.ExtensionContext) {
         const base = `${resolvedApiUrl.replace(/\/+$/, '')}/`;
         const url = new URL(pathname.replace(/^\/+/, ''), base);
         if (includeDirectory && workingDirectory) {
-          url.searchParams.set('directory', workingDirectory);
+          url.searchParams.set('location[directory]', workingDirectory);
         }
         return url.toString();
       };
 
       const probeTargets: Array<{ label: string; path: string; includeDirectory?: boolean; timeoutMs?: number }> = [
         { label: 'health', path: '/api/info', includeDirectory: false },
-        { label: 'healthFallback', path: '/global/health', includeDirectory: false },
         { label: 'config', path: '/api/config', includeDirectory: true },
-        { label: 'providers', path: '/api/config/providers', includeDirectory: true },
+        { label: 'providers', path: '/api/provider', includeDirectory: true },
         // Can be slower on large configs; keep the probe from producing false negatives.
         { label: 'agents', path: '/api/agent', includeDirectory: true, timeoutMs: 12000 },
         { label: 'commands', path: '/api/command', includeDirectory: true, timeoutMs: 10000 },
-        { label: 'project', path: '/api/project/current', includeDirectory: true },
-        { label: 'path', path: '/api/path', includeDirectory: true },
+        { label: 'project', path: '/api/project', includeDirectory: false },
+        { label: 'location', path: '/api/location', includeDirectory: true },
         // Session listing is what powers the sidebar. This helps diagnose "no sessions shown" bugs.
         { label: 'sessions', path: '/api/session', includeDirectory: true, timeoutMs: 12000 },
-        { label: 'sessionStatus', path: '/api/session/status', includeDirectory: true },
+        { label: 'sessionActive', path: '/api/session/active', includeDirectory: false },
       ];
 
       const probes = resolvedApiUrl

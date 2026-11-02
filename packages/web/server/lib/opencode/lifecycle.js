@@ -23,7 +23,6 @@ const HEALTH_CHECK_INTERVAL_OVERRIDE_MS = parsePositiveInt(process.env.YURI_OPEN
 const HEALTH_CHECK_RESULT_CACHE_MS = parsePositiveInt(process.env.YURI_OPENCODE_HEALTH_CACHE_MS, 750);
 // Official OpenCode 2.x exposes ServerInfo at GET /api/info (client.server.info).
 const OPENCODE_HEALTH_PATH = '/api/info';
-const OPENCODE_HEALTH_FALLBACK_PATH = '/global/health';
 const DEFAULT_OPENCODE_SERVE_PORT = 4096;
 // Polite SIGTERM window before SIGKILL for managed children (restart/OAuth/reload
 // need enough time for clean flush; do not shorten globally for Quit latency).
@@ -511,8 +510,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     return false;
   };
 
-  // v2 readiness lives at /api/info (ServerInfo.version); /global/health remains
-  // a probe fallback for older sidecars. Both require Basic auth from
+  // v2 readiness lives at /api/info (ServerInfo.version), with Basic auth from
   // getOpenCodeAuthHeaders(). Version admission rejects 1.x / missing / noise.
   // Health ok is reachability only — execution semantics live on runtimeContract.
   const fetchOpenCodeHealthResult = async (urlForPath, signal, options = {}) => {
@@ -526,31 +524,29 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     let lastGate = null;
     for (const headerCandidate of headerCandidates) {
       const { authenticated, ...headers } = headerCandidate;
-      for (const healthPath of [OPENCODE_HEALTH_PATH, OPENCODE_HEALTH_FALLBACK_PATH]) {
-        try {
-          const response = await fetch(urlForPath(healthPath), {
-            method: 'GET',
-            headers,
-            signal,
-          });
-          if (response.status === 401 || response.status === 403) {
-            sawUnauthorized = true;
-            continue;
-          }
-          if (!response.ok) continue;
-          const body = await response.json().catch(() => null);
-          const gate = evaluateOpenCodeHealthBody(body);
-          lastGate = gate;
-          if (gate.ok) {
-            return {
-              ok: true,
-              version: gate.version,
-              authenticated: authenticated !== false,
-              healthOk: true,
-            };
-          }
-        } catch {
+      try {
+        const response = await fetch(urlForPath(OPENCODE_HEALTH_PATH), {
+          method: 'GET',
+          headers,
+          signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          sawUnauthorized = true;
+          continue;
         }
+        if (!response.ok) continue;
+        const body = await response.json().catch(() => null);
+        const gate = evaluateOpenCodeHealthBody(body);
+        lastGate = gate;
+        if (gate.ok) {
+          return {
+            ok: true,
+            version: gate.version,
+            authenticated: authenticated !== false,
+            healthOk: true,
+          };
+        }
+      } catch {
       }
     }
     if (sawUnauthorized && !lastGate?.ok) {

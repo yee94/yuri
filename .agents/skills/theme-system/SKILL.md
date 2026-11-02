@@ -1,6 +1,6 @@
 ---
 name: theme-system
-description: Use when creating or modifying Yuri UI components, styling, colors, buttons, visual states, themes, or icons.
+description: Use when creating or modifying Yuri UI components, styling, dialogs and picker overlays, shortcut badges, colors, buttons, visual states, themes, or icons.
 ---
 
 # Theme System
@@ -9,6 +9,7 @@ description: Use when creating or modifying Yuri UI components, styling, colors,
 
 - Use semantic Yuri theme tokens; never hardcode hex colors or generic Tailwind palette colors.
 - Use shared UI primitives before introducing feature-local controls.
+- Keep one material owner per floating surface. Desktop list/search dialogs use the shared picker presentation; read the overlay reference below before editing them.
 - Use the shared `Button`; do not create button wrappers such as `ButtonSmall` or `ButtonLarge`.
 - Use the sprite-based `Icon`; never import icons directly from `@remixicon/react`.
 - Apply hover tokens only to interactive elements.
@@ -22,6 +23,7 @@ description: Use when creating or modifying Yuri UI components, styling, colors,
 | Choosing colors/tokens or reviewing styled examples | `references/tokens-and-examples.md` |
 | Adding, converting, storing, or generating icons | `references/icons.md` |
 | Adding built-in or custom themes | `references/adding-themes.md` |
+| Dialogs, searchable/list pickers, popup surfaces, or shortcut hints | `references/desktop-overlays.md` |
 
 Load every matching reference before editing. Settings work must also load `settings-ui-patterns`; user-facing or accessible text must load `locale-ui-patterns`.
 
@@ -85,3 +87,4 @@ DevTools inspect open/close can flip `(pointer: coarse)` / `(hover: none)` and t
 - Light/dark/high-contrast and long-text states remain legible.
 - Dense mobile controls either accept the 36px touch min or opt out under `mobile-pointer` (do not rely on Tailwind height alone).
 - Relevant visual/runtime validation and generated-asset checks ran.
+- Picker checks include computed list background/shadow, aligned content insets, long text, pinned actions and shared shortcut badges; a class-name check alone is not visual evidence.

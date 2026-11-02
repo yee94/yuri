@@ -2,7 +2,6 @@ import React from 'react'
 import type { Session } from '@/lib/opencode/v2-types';import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -173,7 +172,7 @@ export function ArchivedSessionsManager({
     : t('settings.yuri.archivedSessions.dialog.description')
 
   const body = (
-    <div className="space-y-3">
+    <div className="yuri-picker-list space-y-3">
       {selectedBucket ? (
         <Button
           type="button"
@@ -194,26 +193,26 @@ export function ArchivedSessionsManager({
         </div>
       ) : !selectedBucket ? (
         projectBuckets.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-4 typography-meta text-muted-foreground">
+          <div className="yuri-picker-empty rounded-lg border border-dashed border-border p-4 typography-meta text-muted-foreground">
             {t('settings.yuri.archivedSessions.dialog.empty')}
           </div>
         ) : (
-          <div className="space-y-1.5">
+          <div className="yuri-picker-rows space-y-1.5">
             {projectBuckets.map((bucket) => (
               <button
                 key={bucket.projectId}
                 type="button"
                 onClick={() => setSelectedProjectId(bucket.projectId)}
                 className={cn(
-                  'flex w-full items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-left',
+                  'yuri-picker-row flex w-full items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-left',
                   'hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
                 )}
               >
                 <Icon name="folder" className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <div className="typography-ui-label font-medium text-foreground truncate">{bucket.label}</div>
+                  <div className="yuri-picker-label typography-ui-label font-medium text-foreground truncate">{bucket.label}</div>
                   {bucket.path ? (
-                    <div className="typography-meta text-muted-foreground truncate">
+                    <div className="yuri-picker-meta typography-meta text-muted-foreground truncate">
                       {formatPathForDisplay(bucket.path)}
                     </div>
                   ) : null}
@@ -229,11 +228,11 @@ export function ArchivedSessionsManager({
           </div>
         )
       ) : selectedBucket.sessions.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-4 typography-meta text-muted-foreground">
+        <div className="yuri-picker-empty rounded-lg border border-dashed border-border p-4 typography-meta text-muted-foreground">
           {t('settings.yuri.archivedSessions.dialog.emptyProject')}
         </div>
       ) : (
-        <div className="space-y-1.5">
+        <div className="yuri-picker-rows space-y-1.5">
           {selectedBucket.sessions.map((session) => {
             const directory = resolveGlobalSessionDirectory(session)
             const activityMs = getSessionActivityMs(session)
@@ -241,13 +240,13 @@ export function ArchivedSessionsManager({
             return (
               <div
                 key={session.id}
-                className="flex flex-col gap-2 rounded-lg border border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3"
+                className="yuri-picker-row flex flex-col gap-2 rounded-lg border border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="typography-ui-label font-medium text-foreground truncate">
+                  <div className="yuri-picker-label typography-ui-label font-medium text-foreground truncate">
                     {session.title || t('sessions.sidebar.session.untitled')}
                   </div>
-                  <div className="typography-meta text-muted-foreground truncate">
+                  <div className="yuri-picker-meta typography-meta text-muted-foreground truncate">
                     {activityMs > 0 ? formatSessionCompactDateLabel(activityMs) : null}
                     {activityMs > 0 && directory ? ' · ' : null}
                     {directory ? formatPathForDisplay(directory) : null}
@@ -331,10 +330,9 @@ export function ArchivedSessionsManager({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{headerTitle}</DialogTitle>
-          <DialogDescription>{headerDescription}</DialogDescription>
+      <DialogContent presentation="picker">
+        <DialogHeader className="yuri-picker-header">
+          <DialogTitle className="yuri-picker-title truncate">{headerTitle}</DialogTitle>
         </DialogHeader>
         {body}
       </DialogContent>

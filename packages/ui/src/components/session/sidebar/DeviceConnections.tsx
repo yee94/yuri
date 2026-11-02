@@ -49,7 +49,7 @@ export function DeviceConnections() {
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner side="top" align="start" sideOffset={10} className="z-50">
-          <Popover.Popup className="w-72 max-w-[calc(100vw-24px)] origin-[var(--transform-origin)] overflow-hidden rounded-2xl border border-[var(--interactive-border)] bg-[var(--surface-elevated)] text-foreground shadow-lg outline-none transition-[opacity,transform] duration-150 data-[starting-style]:translate-y-1 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0">
+          <Popover.Popup className="yuri-mobile-overlay-surface yuri-popup-surface w-72 max-w-[calc(100vw-24px)] origin-[var(--transform-origin)] overflow-hidden rounded-2xl outline-none transition-[opacity,transform] duration-150 data-[starting-style]:translate-y-1 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0">
             <div className="flex items-center gap-2 px-4 pb-2 pt-4">
               <Popover.Title className="typography-ui-label font-medium">{t('settings.remoteInstances.quick.title')}</Popover.Title>
               {query.data && query.data.length > 0 ? <span className="typography-micro text-muted-foreground tabular-nums">{query.data.length}</span> : null}
@@ -67,7 +67,7 @@ export function DeviceConnections() {
               {query.data?.map((client) => {
                 const platform = client.devicePlatform?.toLowerCase();
                 return (
-                  <div key={client.id} className="flex items-center gap-3 rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-muted)] px-3 py-2.5">
+                  <div key={client.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5">
                     <span className="flex size-9 shrink-0 items-center justify-center text-muted-foreground">
                       <Icon name={platform === 'ios' ? 'device-ios' : platform === 'android' ? 'device-android' : 'device-desktop'} className="size-5" />
                     </span>

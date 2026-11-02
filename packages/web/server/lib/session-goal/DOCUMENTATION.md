@@ -41,6 +41,9 @@ synthetic `session.updated` so the loop can arm.
 
 ## Goal payload (`metadata.yuri.goal`)
 
+Live activity reads the V2 `session.active` client only. A failed active-session
+read remains unknown; it never calls the removed session-status endpoint.
+
 ```
 {
   id,                      // opaque per-logical-goal id; stale-write guard

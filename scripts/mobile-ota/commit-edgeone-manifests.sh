@@ -3,9 +3,12 @@
 # project builds a complete static distribution. Only channels/*.json enter git;
 # the EdgeOne build downloads and verifies all retained ZIPs and CHANGELOG from
 # Vercel before activation. Runs from a detached worktree; checkout is untouched.
+# After synchronization, explicitly invoke the production deployment hook; a
+# successful push alone does not establish that EdgeOne received a Git callback.
 #
 # Usage: commit-edgeone-manifests.sh <snapshot-dir> <commit-message-subject>
 set -euo pipefail
+node scripts/mobile-ota/trigger-edgeone-deploy.mjs --check
 
 SNAPSHOT_DIR="${1:?snapshot dir required}"
 SUBJECT="${2:?commit subject required}"
@@ -29,6 +32,7 @@ for attempt in 1 2 3 4 5; do
 
   if git -C "$WORKTREE" diff --quiet -- "$DEST_REL" && [[ "${EDGEONE_FORCE_DEPLOY:-}" != "1" ]]; then
     echo "EdgeOne channel manifests already up to date on main."
+    node scripts/mobile-ota/trigger-edgeone-deploy.mjs
     exit 0
   fi
 
@@ -40,6 +44,7 @@ for attempt in 1 2 3 4 5; do
 
   if git -C "$WORKTREE" push --quiet origin HEAD:main; then
     echo "Committed EdgeOne channel manifests to main."
+    node scripts/mobile-ota/trigger-edgeone-deploy.mjs
     exit 0
   fi
   echo "Push to main raced with another update (attempt $attempt/5); retrying." >&2

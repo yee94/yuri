@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './uk.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'commandPalette.error.files': 'Пошук файлів тимчасово недоступний.',
+  'commandPalette.error.filesPartial': 'Не вдалося знайти файли в деяких проєктах.',
   'remoteDesktop.title': 'Віддалений робочий стіл',
   'remoteDesktop.drag': 'Drag · Переміщення полотна',
   'remoteDesktop.cursor': 'Cursor · Керування комп’ютером',

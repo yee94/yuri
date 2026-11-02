@@ -138,10 +138,13 @@ is server-global, so every device token of a server sees the same badge.
 
 ## Modes
 
-- **Relay (default):** Host has no Apple key. Unless `YURI_PUSH_RELAY_URL` is set, the
-  Host maps the effective Relay `wss://`/`ws://` URL to the same host as `https://`/`http://`
-  `/v1/push/send` (register URL is `/v1/push/register-token`). A Relay switch re-registers
-  persisted tokens and binds them again before the first send.
+- **Relay (default):** Host has no Apple key. `YURI_PUSH_RELAY_URL` selects the Push
+  send URL independently. Without that override, a custom effective Relay `wss://`/`ws://`
+  URL maps to same-host `https://`/`http://` `/v1/push/send` (register URL is
+  `/v1/push/register-token`). The product default Workers Relay provides data transport
+  only: APNs and Live Activity delivery require a separate Push URL or direct credentials,
+  and no device tokens are sent to that Worker. A Push origin switch re-registers persisted
+  tokens and binds them again before the first send. Resolver failure leaves Push unavailable.
 - **Direct (fallback):** set `YURI_PUSH_RELAY_DISABLED=true` + `YURI_APNS_KEY_ID/
   TEAM_ID/P8` to sign+send from the server itself (HTTP/2 + ES256 JWT); no relay binding needed.
 

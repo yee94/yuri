@@ -66,6 +66,9 @@ error-reporting path as other manager actions. Contribution rows are dynamic ent
 registered individually in Settings search. The owning Plugins page remains the
 navigation entry. `GuiPluginCommands` is an independently filtered command-palette
 group with five-row previews and explicit expansion.
+Initial plugin discovery is silent in the palette: no loading row or empty group
+is shown. Loaded commands remain usable during discovery, and failures retain the
+existing error/retry entry.
 
 Plugin keyboard shortcuts and slash-command autocomplete are not supported in
 this first version. Command-palette and manager actions are the available command

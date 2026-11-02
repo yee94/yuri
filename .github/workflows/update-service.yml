@@ -9,6 +9,7 @@ on:
       - '!deploy/update-service/release-manifest.json'
       - 'scripts/mobile-ota/verify-distribution.mjs'
       - 'scripts/mobile-ota/commit-edgeone-manifests.sh'
+      - 'scripts/mobile-ota/trigger-edgeone-deploy.mjs'
       - '.github/workflows/mobile-beta-rollout.yml'
       - '.github/workflows/update-service.yml'
   workflow_dispatch:

@@ -2598,6 +2598,8 @@ export const dict = {
   'commandPalette.title': 'Global search',
   'commandPalette.error.sessions': 'Chat search could not load. Available results are still shown.',
   'commandPalette.error.messages': 'Message search could not load. Other results are still shown.',
+  'commandPalette.error.files': 'File search is temporarily unavailable.',
+  'commandPalette.error.filesPartial': 'Files could not be searched in some projects.',
   'commandPalette.group.messages': 'Messages',
   'commandPalette.index.progress': 'Indexing the last 30 days across all projects: {completed}/{total} conversations',
   'commandPalette.index.ready': 'All projects · last 30 days · {count} messages indexed',

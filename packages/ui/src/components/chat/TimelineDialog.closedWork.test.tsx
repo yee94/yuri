@@ -1,13 +1,20 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { TimelineDialog } from './TimelineDialog';
 
 const counters = vi.hoisted(() => ({
+  isMobile: false,
+  navigationSucceeds: true,
+  navigatedIDs: [] as string[],
+  turnOffsets: [] as number[],
+  latestCalls: 0,
+  canLoadEarlier: false,
+  loadEarlierCalls: 0,
   messageRecordsReads: 0,
   previewCalls: 0,
   fullTextCalls: 0,
@@ -70,7 +77,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 vi.mock('@/lib/device', () => ({
-  useDeviceInfo: () => ({ isMobile: true, isTablet: false }),
+  useDeviceInfo: () => ({ isMobile: counters.isMobile, isTablet: false }),
 }));
 
 vi.mock('./SessionSurfaceContext', () => ({
@@ -135,10 +142,10 @@ vi.mock('@/components/ui/dialog', () => {
     );
   };
 
-  const DialogContent = ({ children }: { children: React.ReactNode; className?: string }) => {
+  const DialogContent = ({ children, className, presentation }: { children: React.ReactNode; className?: string; presentation?: string }) => {
     const presence = React.useContext(PresenceContext);
     return (
-      <div data-testid="timeline-dialog-content" data-open={String(presence.open)}>
+      <div data-testid="timeline-dialog-content" data-open={String(presence.open)} data-presentation={presentation} className={className}>
         {children}
         {!presence.open && presence.mounted ? (
           <button type="button" data-testid="complete-exit" onClick={presence.completeExit}>
@@ -152,13 +159,22 @@ vi.mock('@/components/ui/dialog', () => {
   return {
     Dialog,
     DialogContent,
-    DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-    DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    DialogHeader: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
+    DialogTitle: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => <h2 {...props}>{children}</h2>,
     DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   };
 });
 
-describe('TimelineDialog closed-work gate', () => {
+vi.mock('@/components/ui/MobileResizableSheet', async () => {
+  const { Dialog, DialogContent } = await import('@/components/ui/dialog');
+  return { MobileResizableSheet: ({ open, onOpenChange, children, title }: {
+    open: boolean; onOpenChange: (open: boolean) => void; children: React.ReactNode; title?: React.ReactNode;
+  }) => <Dialog open={open} onOpenChange={onOpenChange}><DialogContent>
+    <div data-testid="timeline-mobile-sheet">{title}{children}</div>
+  </DialogContent></Dialog> };
+});
+
+describe.each([false, true])('TimelineDialog closed-work gate (mobile=%s)', (isMobile) => {
   let container: HTMLElement;
   let root: Root;
   let open: boolean;
@@ -178,14 +194,27 @@ describe('TimelineDialog closed-work gate', () => {
         <TimelineDialog
           open={isOpen}
           onOpenChange={setIsOpen}
-          sessionID="session-1"
-          directory="/tmp/project"
+            sessionID="session-1"
+            directory="/tmp/project"
+            onScrollToMessage={async (id) => { counters.navigatedIDs.push(id); return counters.navigationSucceeds; }}
+            onScrollByTurnOffset={(offset) => { counters.turnOffsets.push(offset); }}
+            onResumeToLatest={() => { counters.latestCalls += 1; }}
+            canLoadEarlier={counters.canLoadEarlier}
+            onLoadEarlier={() => { counters.loadEarlierCalls += 1; }}
         />
       </div>
     );
   };
 
   beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    counters.isMobile = isMobile;
+    counters.navigationSucceeds = true;
+    counters.navigatedIDs = [];
+    counters.turnOffsets = [];
+    counters.latestCalls = 0;
+    counters.canLoadEarlier = false;
+    counters.loadEarlierCalls = 0;
     counters.messageRecordsReads = 0;
     counters.previewCalls = 0;
     counters.fullTextCalls = 0;
@@ -244,20 +273,129 @@ describe('TimelineDialog closed-work gate', () => {
     expect(counters.messageRecordsReads).toBe(0);
     expect(counters.previewCalls).toBe(0);
 
-    await act(async () => {
-      setParentTick(1);
-    });
-    await act(async () => {
-      setParentTick(2);
-    });
-    counters.bumpMessages();
-    await act(async () => {
-      setParentTick(3);
-    });
+    for (let i = 1; i <= 50; i++) {
+      counters.bumpMessages();
+      await act(async () => { setParentTick(i); });
+    }
 
     expect(counters.messageRecordsReads).toBe(0);
     expect(counters.previewCalls).toBe(0);
     expect(counters.fullTextCalls).toBe(0);
+  });
+
+  test('uses a compact search/list surface with no description or help block', async () => {
+    for (let i = 0; i < 8; i++) counters.bumpMessages();
+    counters.messages[2].parts = [{ type: 'text', text: '这是一条用于检查长消息省略和操作按钮对齐的示例，不会访问真实会话。'.repeat(3) }];
+    await renderHost();
+    await act(async () => { setOpen(true); });
+    expect(Boolean(container.querySelector('[data-testid="timeline-mobile-sheet"]'))).toBe(isMobile);
+    if (!isMobile) expect(container.querySelector('[data-testid="timeline-dialog-content"]')?.getAttribute('data-presentation')).toBe('picker');
+    expect(container.querySelector('input')?.getAttribute('aria-label')).toBe('chat.timeline.searchPlaceholder');
+    expect(container.querySelector('.yuri-timeline-list')).not.toBeNull();
+    expect(container.textContent).not.toContain('chat.timeline.description');
+    expect(container.textContent).not.toContain('chat.timeline.help.');
+    expect(container.textContent).not.toContain('chat.timeline.actions.title');
+    expect(container.querySelector('button[aria-label="chat.timeline.actions.revertFromHere"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="chat.timeline.actions.forkFromHere"]')).not.toBeNull();
+    if (process.env.YURI_TEST_EVIDENCE_DIR) {
+      mkdirSync(process.env.YURI_TEST_EVIDENCE_DIR, { recursive: true });
+      writeFileSync(join(process.env.YURI_TEST_EVIDENCE_DIR, `timeline-${isMobile ? 'mobile' : 'desktop'}.html`), container.innerHTML);
+    }
+  });
+
+  test('message navigation keeps the timeline open on a failed jump and closes on success', async () => {
+    await renderHost();
+    await act(async () => { setOpen(true); });
+    counters.navigationSucceeds = false;
+    await act(async () => { container.querySelector<HTMLButtonElement>('.yuri-timeline-message')!.click(); });
+    expect(counters.navigatedIDs).toEqual(['user-1']);
+    expect(open).toBe(true);
+    counters.navigationSucceeds = true;
+    await act(async () => { container.querySelector<HTMLButtonElement>('.yuri-timeline-message')!.click(); });
+    expect(open).toBe(false);
+  });
+
+  test('retains compact previous-turn and latest navigation actions', async () => {
+    await renderHost();
+    await act(async () => { setOpen(true); });
+    const action = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('.yuri-timeline-toolbar button')].find(button => button.textContent === text)!;
+    await act(async () => { action('chat.timeline.actions.previousTurn').click(); });
+    expect(counters.turnOffsets).toEqual([-1]);
+    expect(open).toBe(false);
+    await act(async () => { setOpen(true); });
+    await act(async () => { action('chat.timeline.actions.latest').click(); });
+    expect(counters.latestCalls).toBe(1);
+    expect(open).toBe(false);
+  });
+
+  test('search keeps full-text filtering, looping arrows and Enter navigation', async () => {
+    counters.messages = [
+      { info: { id: 'needle-1', role: 'user', time: { created: 1000 } }, parts: [{ type: 'text', text: 'needle first' }] },
+      { info: { id: 'needle-2', role: 'user', time: { created: 2000 } }, parts: [{ type: 'text', text: `${'prefix '.repeat(20)}needle second` }] },
+      { info: { id: 'assistant', role: 'assistant', time: { created: 3000 } }, parts: [{ type: 'text', text: 'needle assistant' }] },
+    ];
+    await renderHost();
+    await act(async () => { setOpen(true); });
+    const input = container.querySelector<HTMLInputElement>('input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'needle');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.querySelectorAll('[data-timeline-message-id]')).toHaveLength(2);
+    expect(container.textContent).not.toContain('needle assistant');
+    const selected = () => container.querySelector('[data-timeline-message-id][data-selected="true"]')?.getAttribute('data-timeline-message-id');
+    expect(selected()).toBe('needle-1');
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })));
+    expect(selected()).toBe('needle-2');
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+    expect(selected()).toBe('needle-1');
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(counters.navigatedIDs).toEqual(['needle-1']);
+    expect(open).toBe(false);
+  });
+
+  test('revert remains separate from message navigation', async () => {
+    await renderHost();
+    await act(async () => { setOpen(true); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="chat.timeline.actions.revertFromHere"]')!.click(); });
+    expect(counters.revertCalls).toBe(1);
+    expect(counters.navigatedIDs).toEqual([]);
+    expect(open).toBe(false);
+  });
+
+  test('load-earlier preserves the existing row anchor through the shared scroll container', async () => {
+    counters.canLoadEarlier = true;
+    for (let i = 0; i < 19; i++) counters.bumpMessages();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('yuri-timeline-list')) return new DOMRect(0, 0, 600, 200);
+      if (this.dataset.timelineMessageId) {
+        const list = container.querySelector<HTMLElement>('.yuri-timeline-list')!;
+        const rows = [...list.querySelectorAll('[data-timeline-message-id]')];
+        return new DOMRect(0, rows.indexOf(this) * 38 - list.scrollTop, 600, 36);
+      }
+      return originalRect.call(this);
+    });
+    try {
+      await renderHost();
+      await act(async () => { setOpen(true); });
+      const list = container.querySelector<HTMLElement>('.yuri-timeline-list')!;
+      list.scrollTop = 200;
+      await act(async () => { container.querySelector<HTMLButtonElement>('.yuri-timeline-history button')!.click(); });
+      expect(counters.loadEarlierCalls).toBe(1);
+      counters.messages = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          info: { id: `earlier-${i}`, role: 'user', time: { created: Date.UTC(2024, 0, 1, 11, i) } },
+          parts: [{ type: 'text', text: `earlier ${i}` }],
+        })),
+        ...counters.messages,
+      ];
+      await act(async () => { setParentTick(parentTick + 1); });
+      expect(list.scrollTop).toBe(390);
+      expect(container.querySelector('[data-timeline-message-id="user-6"]')?.getBoundingClientRect().top).toBe(-10);
+    } finally {
+      rectSpy.mockRestore();
+    }
   });
 
   test('open → exit retain → fully exit → reopen uses presence lifecycle without closed work', async () => {
@@ -417,8 +555,9 @@ describe('TimelineDialog shell/body source contract', () => {
     'utf-8',
   );
 
-  test('body mounts only under DialogContent; pending gate owned by shell until settle', () => {
-    expect(source).toMatch(/DialogContent[\s\S]*TimelineDialogBody/);
+  test('body is hosted by desktop/mobile presence; pending gate is owned by the shell until settle', () => {
+    expect(source).toMatch(/<MobileResizableSheet[\s\S]*?\{body\}[\s\S]*?<\/MobileResizableSheet>/);
+    expect(source).toMatch(/<DialogContent[\s\S]*?\{body\}[\s\S]*?<\/DialogContent>/);
     expect(source).toContain('pendingActionGateRef');
     expect(source).toContain('pendingActionGenerationRef');
     expect(source).toContain('runPendingMessageAction');

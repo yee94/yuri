@@ -303,7 +303,7 @@ const SessionShortcutHint = React.memo(function SessionShortcutHint({
   return (
     <Kbd
       data-sidebar-shortcut-number={number}
-      className="h-3.5 min-w-0 shrink-0 rounded-full border-0 bg-[color-mix(in_srgb,var(--surface-foreground)_6%,transparent)] px-1.5 font-sans text-[10px] font-medium tracking-tight text-muted-foreground/65 shadow-none"
+      variant="hint"
       aria-hidden="true"
     >
       {isMacOS() ? `⌘${number}` : `Ctrl+${number}`}
@@ -1195,7 +1195,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           data-slot="dropdown-menu-content"
           finalFocus={() => (renamingFolderId || editingIdRef.current) ? false : true}
           style={{
-            backgroundColor: 'var(--surface-elevated)',
             color: 'var(--surface-elevated-foreground)',
           }}
           className={cn(dropdownMenuPopupClass, 'min-w-[180px]')}
@@ -1220,7 +1219,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   <ContextMenu.Popup
                     data-slot="dropdown-menu-sub-content"
                     style={{
-                      backgroundColor: 'var(--surface-elevated)',
                       color: 'var(--surface-elevated-foreground)',
                     }}
                     className={cn(dropdownMenuPopupClass, className)}

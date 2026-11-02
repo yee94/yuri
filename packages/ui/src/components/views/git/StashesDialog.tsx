@@ -1,11 +1,12 @@
 import React from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
+import { useDeviceInfo } from '@/lib/device';
 import { cn } from '@/lib/utils';
 import type { GitStashEntry } from '@/lib/api/types';
 import { applyGitStash, countGitStashFiles, dropGitStash, listGitStashes, popGitStash, stashGitChanges } from '@/lib/gitApi';
@@ -32,6 +33,7 @@ export const StashesDialog: React.FC<StashesDialogProps> = ({
   onChanged,
 }) => {
   const { t } = useI18n();
+  const { isMobile } = useDeviceInfo();
   const [stashes, setStashes] = React.useState<GitStashEntry[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [query, setQuery] = React.useState('');
@@ -123,16 +125,14 @@ export const StashesDialog: React.FC<StashesDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[70vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Icon name="archive-stack" className="h-5 w-5" />
+      <DialogContent presentation={isMobile ? 'default' : 'picker'} className={isMobile ? 'max-w-2xl max-h-[70vh] flex flex-col' : undefined}>
+        <DialogHeader className="yuri-picker-header">
+          <DialogTitle className="yuri-picker-title">
             {t('gitView.stashes.title')}
           </DialogTitle>
-          <DialogDescription>{t('gitView.stashes.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="mt-2 rounded-lg border border-border/60 bg-[var(--surface-elevated)] p-3">
+        <div className="yuri-picker-form">
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               value={message}
@@ -146,24 +146,24 @@ export const StashesDialog: React.FC<StashesDialogProps> = ({
               {t('gitView.stashes.actions.stashCurrentWithCount', { count: uncommittedFileCount })}
             </Button>
           </div>
-          <p className="typography-meta mt-2 text-muted-foreground">{t('gitView.stashes.includeUntrackedHint')}</p>
+          <p className="yuri-picker-meta typography-meta mt-2 text-muted-foreground">{t('gitView.stashes.includeUntrackedHint')}</p>
         </div>
 
-        <div className="relative mt-2">
+        <div className="yuri-picker-search relative mt-2">
           <Icon name="search" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('gitView.stashes.searchPlaceholder')} className="pl-9" />
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="yuri-picker-list flex-1 overflow-y-auto">
           {isLoading ? (
             <div className="flex items-center justify-center py-10 text-muted-foreground"><Icon name="loader-4" className="size-5 animate-spin" /></div>
           ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">{query ? t('gitView.stashes.empty.search') : t('gitView.stashes.empty.list')}</div>
           ) : filtered.map((stash, index) => (
-            <div key={stash.ref} className="group flex items-center gap-2 rounded py-1.5 transition-colors hover:bg-interactive-hover/30">
-              <div className="min-w-0 flex-1 pl-2">
-                <p className="typography-small truncate text-foreground">{stash.message || t('gitView.stashes.untitled')}</p>
-                <p className="typography-meta truncate text-muted-foreground">
+            <div key={stash.ref} className="yuri-picker-row group flex items-center gap-2 rounded py-1.5 transition-colors hover:bg-interactive-hover/30">
+              <div className="min-w-0 flex-1">
+                <p className="yuri-picker-label typography-small truncate text-foreground">{stash.message || t('gitView.stashes.untitled')}</p>
+                <p className="yuri-picker-meta typography-meta truncate text-muted-foreground">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span>{index === 0 && !query.trim() ? t('gitView.stashes.latestLabel') : t('gitView.stashes.itemNumber', { number: index + 1 })}</span>

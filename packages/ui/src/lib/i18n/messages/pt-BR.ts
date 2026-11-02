@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './pt-BR.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'commandPalette.error.files': 'A busca de arquivos está temporariamente indisponível.',
+  'commandPalette.error.filesPartial': 'Não foi possível buscar arquivos em alguns projetos.',
   'remoteDesktop.title': 'Área de trabalho remota',
   'remoteDesktop.drag': 'Drag · Mover tela',
   'remoteDesktop.cursor': 'Cursor · Controlar computador',

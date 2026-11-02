@@ -3,7 +3,6 @@ import { useEvent } from '@reactuses/core'
 import { Icon } from '@/components/icon/Icon'
 import { useI18n } from '@/lib/i18n'
 import {
-  formatSessionChangeCounts,
   readSessionBranchLabel,
   readSessionChangeSummary,
   readSessionModelLabel,
@@ -17,7 +16,7 @@ import { useMobileAppActions } from '@/apps/mobileAppContext'
 import { isIPadApp } from '@/lib/platform'
 import { useGlobalSessionStatus } from '@/sync/sync-context'
 import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback'
-import { CONTACT_SESSION_CARD_COVER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
+import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantSessionCardProps = {
   card: AssistantContactSessionCardPart
@@ -43,12 +42,12 @@ const statusKey = (status: string | null | undefined) => {
   return null
 }
 
-const statusChipClass = (status: string | null | undefined) => {
-  if (status === 'busy') return 'bg-[var(--status-info)]/10 text-[var(--status-info)]'
-  if (status === 'retry' || status === 'question') return 'bg-[var(--status-warning)]/10 text-[var(--status-warning)]'
-  if (status === 'error') return 'bg-[var(--status-error)]/10 text-[var(--status-error)]'
-  if (status === 'idle' || status === 'complete') return 'bg-[var(--status-success)]/10 text-[var(--status-success)]'
-  return 'bg-[var(--surface-muted)] text-muted-foreground'
+const statusTextClass = (status: string | null | undefined) => {
+  if (status === 'busy') return 'text-[var(--status-info)]'
+  if (status === 'retry' || status === 'question') return 'text-[var(--status-warning)]'
+  if (status === 'error') return 'text-[var(--status-error)]'
+  if (status === 'idle' || status === 'complete') return 'text-[var(--status-success)]'
+  return 'text-muted-foreground'
 }
 
 const directoryName = (directory: string) => {
@@ -57,8 +56,8 @@ const directoryName = (directory: string) => {
 }
 
 /**
- * Compact assistant-emitted session cover: short title, project, status,
- * optional model/branch/changes. The card itself opens the session.
+ * Assistant-emitted session receipt: live status, title, project and branch,
+ * with optional model/changes in a height-stable footer. The card opens the session.
  */
 export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card }) => {
   const { t } = useI18n()
@@ -76,7 +75,6 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
   const title = liveTitle || card.title || t('assistants.contact.card.session.untitled')
   const status = displayStatus(liveStatus?.type, card.status)
   const statusLabelKey = statusKey(status)
-  const working = status === 'busy' || status === 'retry'
   const directory = (typeof liveSession?.directory === 'string' && liveSession.directory.trim())
     ? liveSession.directory.trim()
     : card.directory
@@ -84,8 +82,6 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
   const branch = readSessionBranchLabel(liveSession) || card.branch
   const model = readSessionModelLabel(liveSession)
   const changes = readSessionChangeSummary(liveSession)
-  const changeCounts = formatSessionChangeCounts(changes)
-  const metaLine = [project, model, branch].filter((item): item is string => Boolean(item && item.trim()))
   const openSession = useEvent(() => {
     const live = findSessionById(card.sessionID)
     const nextDirectory = live?.directory || card.directory
@@ -111,33 +107,27 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
       onClick={openSession}
       onKeyDown={onActivateKeyDown}
     >
-      <div className="flex items-start gap-3">
-        <span className="relative inline-block size-10 shrink-0 leading-none" aria-hidden>
-          <span className="flex size-10 items-center justify-center rounded-xl bg-[var(--surface-muted)] text-foreground">
-            <Icon name="chat-3" className="size-5" />
-          </span>
-          {working ? (
-            <span
-              className="pointer-events-none absolute right-0 bottom-0 size-2.5 translate-x-0.5 translate-y-0.5 rounded-full bg-[var(--status-success)] ring-2 ring-[var(--surface-elevated)]"
-              data-assistant-working-dot=""
-              aria-hidden
-            />
-          ) : null}
+      <div className={CONTACT_CARD_HEADER_CLASS}>
+        <span className="flex min-w-0 items-center gap-2 text-[0.8em] leading-4 text-muted-foreground">
+          <Icon name="chat-thread" className="size-4 shrink-0" />
+          <span className="truncate">{t('assistants.contact.card.session.label')}</span>
         </span>
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <h3 className="min-w-0 flex-1 line-clamp-2 break-words typography-ui-label font-medium leading-5 text-foreground">{title}</h3>
-            {statusLabelKey ? (
-              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 typography-micro leading-none', statusChipClass(status))}>
-                {t(statusLabelKey)}
-              </span>
-            ) : null}
-          </div>
-          {metaLine.length > 0 ? (
-            <p className="truncate typography-micro font-normal leading-4 text-muted-foreground">{metaLine.join(' · ')}</p>
-          ) : null}
-          {changeCounts || (changes?.files !== undefined && changes.files > 0) ? (
-            <p className="flex flex-wrap items-baseline gap-x-1.5 typography-micro tabular-nums">
+        {statusLabelKey ? (
+          <span data-assistant-session-status="" className={cn('ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.75em] leading-4', statusTextClass(status))}>
+            <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+            {t(statusLabelKey)}
+          </span>
+        ) : null}
+      </div>
+      <h3 className={CONTACT_CARD_TITLE_CLASS} title={title}>{title}</h3>
+      <div className="mt-1 flex min-w-0 items-center gap-2 text-[0.8em] leading-4">
+        <p className={cn('min-w-0 truncate text-foreground', branch && 'max-w-[45%] shrink-0')} title={directory}>{project}</p>
+        {branch ? <p className="flex min-w-0 items-center gap-1 text-muted-foreground" title={branch}><Icon name="git-branch" className="size-3 shrink-0" /><span className="truncate">{branch}</span></p> : null}
+      </div>
+      <div className={CONTACT_CARD_FOOTER_CLASS}>
+        <div className="flex min-w-0 items-center gap-2">
+          {changes ? (
+            <p className="flex min-w-0 items-baseline gap-x-2 overflow-hidden whitespace-nowrap text-[0.8em] leading-4 tabular-nums">
               {changes?.additions !== undefined ? (
                 <span className="text-[var(--status-success)]">+{changes.additions}</span>
               ) : null}
@@ -153,7 +143,9 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
               ) : null}
             </p>
           ) : null}
+          <Icon name="arrow-right-s" className="ml-auto size-4 shrink-0 text-muted-foreground" />
         </div>
+        {model ? <p className="truncate text-[0.75em] leading-4 text-muted-foreground" title={model}>{model}</p> : null}
       </div>
     </article>
   )

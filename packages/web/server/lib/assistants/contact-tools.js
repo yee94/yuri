@@ -709,7 +709,7 @@ export function formatContactToolsPrompt(tools) {
     'When they explicitly want to only listen to an existing coding session without sending a prompt (监听会话 / watch session / monitor session), call watch_session with sessionID. A plain @session:id reference alone is context, not a watch request — do not call watch_session unless they asked to listen/watch/monitor.',
     'When they want to stop/abort a running coding session (停止会话 / stop session), call stop_session with sessionID — that calls real OpenCode session.abort.',
     names.has('schedule_task') ? 'When they want a scheduled task (排定时任务 / schedule daily ping), call schedule_task.' : '',
-    'When they want to tell another assistant (给 PeerQA 说一声 / message PeerQA), call message_assistant.',
+    names.has('message_assistant') ? 'When they want to tell another assistant (给 PeerQA 说一声 / message PeerQA), call message_assistant.' : '',
     'Call exactly one Yuri operation tool per response; coding tools may be batched.',
     'For multiple operations, resolve prerequisites first and execute one business operation per response; resets come first and assignment comes last.',
     'Prerequisite lookups (list_projects / list_sessions) may run before assign_session / watch_session / stop_session in the same turn. After a successful assign_session or watch_session the turn ends — never call them again in that turn, and do not keep looping tools.',
@@ -726,7 +726,7 @@ export function formatContactToolsPrompt(tools) {
     names.has('create_assistant') ? 'create_assistant reuses already-connected OpenCode providers (providerID/modelID). Mode is continuous.' : '',
     names.has('schedule_task') ? 'schedule_task writes the same payload as PUT /api/projects/:id/scheduled-tasks onto a registered project. It only creates new tasks.' : '',
     names.has('update_scheduled_task') ? 'To change existing scheduled tasks, call list_scheduled_tasks, then update_scheduled_task with the exact taskID and projectID. Update one task per call and pass only changed fields.' : '',
-    'message_assistant is read-only: it inserts into the other contact transcript. It never runs promptAsync or mutates sessions or files. Never assign through a peer message.',
+    names.has('message_assistant') ? 'message_assistant inserts a sourced peer message and queues one read-only reply from the recipient in their contact. It never runs promptAsync or mutates sessions or files. Recipient replies cannot relay messages or assign work.' : '',
     'A reply without the tool call does nothing — agreeing in Chinese (好的 / 我来创建 / 我去说一声) is not sending.',
     'Never say 已创建, 已发送, 已停止, created, scheduled, opened, watched, stopped, or sent unless the tool already returned success.',
     'With an empty registered catalog, first discover the user-requested workspace through list_sessions and directory lookups. Load project capabilities when available, register the directory, then assign work; use Settings only if registration support is unavailable.',
@@ -1373,6 +1373,10 @@ export function createContactTools({
             time: scheduled.time || scheduled.task?.schedule?.time || scheduled.task?.schedule?.times?.[0],
             timezone: scheduled.timezone || scheduled.task?.schedule?.timezone,
             prompt: scheduled.prompt || scheduled.task?.execution?.prompt || prompt,
+            cron: scheduled.cron ?? scheduled.task?.schedule?.cron ?? null,
+            date: scheduled.date ?? scheduled.task?.schedule?.date ?? null,
+            times: scheduled.times ?? scheduled.task?.schedule?.times ?? null,
+            weekdays: scheduled.weekdays ?? scheduled.task?.schedule?.weekdays ?? null,
           });
           emitCard(card);
           return {
@@ -1414,7 +1418,9 @@ export function createContactTools({
           const task = updated?.task || {};
           const card = createScheduleCardPart({ taskID: task.id || taskID, projectID, name: task.name || taskID,
             kind: task.schedule?.kind, time: task.schedule?.time || task.schedule?.times?.[0],
-            timezone: task.schedule?.timezone, prompt: task.execution?.prompt });
+            timezone: task.schedule?.timezone, prompt: task.execution?.prompt,
+            cron: task.schedule?.cron ?? null, date: task.schedule?.date ?? null,
+            times: task.schedule?.times ?? null, weekdays: task.schedule?.weekdays ?? null });
           emitCard(card);
           return { content: [{ type: 'text', text: JSON.stringify({ updated: true, task: summarizeScheduledTask(task, projectID) }) }], details: { card, updated }, terminate: false };
         } catch (error) { return toolFailure(error, 'update_scheduled_task_failed', 'Could not update that scheduled task.'); }
@@ -1424,9 +1430,9 @@ export function createContactTools({
       name: MESSAGE_ASSISTANT_TOOL_NAME,
       label: 'Message assistant',
       description: [
-        'Send a read-only peer message to another Yuri assistant contact.',
+        'Send a peer message to another Yuri assistant contact and wake them for one read-only reply.',
         'Resolve the recipient by display name (to/name) or toAssistantID.',
-        'Inserts into their contact transcript only. Never promptAsync. Never mutates sessions or files.',
+        'Keeps the sender attribution in their contact transcript. Never promptAsync. Recipient cannot relay or mutate sessions or files.',
       ].join(' '),
       parameters: messageAssistantParameters,
       execute: async (_toolCallId, params) => {
@@ -1446,7 +1452,7 @@ export function createContactTools({
             text,
           });
           return {
-            content: [{ type: 'text', text: `Sent to ${recipient.name}. They will see it in their contact.` }],
+            content: [{ type: 'text', text: `Sent to ${recipient.name}. A reply is queued in their contact; it has not completed yet.` }],
             details: { delivered, toAssistantID, toName: recipient.name, text },
             terminate: false,
           };

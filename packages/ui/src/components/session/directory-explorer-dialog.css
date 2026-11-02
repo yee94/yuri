@@ -1,0 +1,171 @@
+.yuri-directory-dialog {
+  max-height: min(42rem, 80dvh);
+}
+
+.yuri-directory-header {
+  flex-shrink: 0;
+  padding: 1rem var(--yuri-picker-header-end-inset, 1.5rem) 0.5rem 1.5rem;
+  text-align: left;
+}
+
+.yuri-directory-title {
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+
+.yuri-directory-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.yuri-directory-inputs {
+  flex-shrink: 0;
+  padding: 0 1.5rem 0.5rem;
+}
+
+.yuri-directory-field {
+  display: flex;
+  min-width: 0;
+  min-height: 2.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.yuri-directory-field + .yuri-directory-field {
+  margin-top: 0.25rem;
+}
+
+.yuri-directory-field [data-slot='input'] {
+  height: 2.25rem;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.yuri-directory-field:focus-within {
+  box-shadow: inset 0 -1px 0 var(--interactive-border);
+}
+
+.yuri-directory-results {
+  flex: 1;
+  min-height: 0;
+  max-height: min(28rem, 58dvh);
+}
+
+.yuri-directory-list {
+  overscroll-behavior: contain;
+  padding: 0.25rem 0.5rem 0.75rem;
+}
+
+.yuri-directory-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-directory-row + .yuri-directory-row {
+  margin-top: 0.125rem;
+}
+
+.yuri-directory-entry {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding-block: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.yuri-directory-entry:focus-visible {
+  outline: 1px solid var(--interactive-border);
+  outline-offset: 2px;
+}
+
+.yuri-directory-name {
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.25rem;
+}
+
+.yuri-directory-hidden-toggle,
+.yuri-directory-added,
+.yuri-directory-actions button {
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
+}
+
+.yuri-directory-empty {
+  padding: 2.5rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.yuri-directory-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 1.5rem 1rem;
+}
+
+.yuri-directory-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
+}
+
+.yuri-directory-actions {
+  display: flex;
+  margin-left: auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.yuri-directory-mobile .yuri-directory-inputs {
+  padding-inline: 1rem;
+}
+
+.yuri-directory-mobile .yuri-directory-results {
+  max-height: none;
+}
+
+.yuri-directory-mobile .yuri-directory-row {
+  padding-inline: 0.5rem;
+}
+
+.yuri-directory-mobile .yuri-directory-entry {
+  height: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.yuri-directory-mobile .yuri-directory-footer {
+  padding: 0.5rem 1rem;
+}
+
+.yuri-directory-mobile .yuri-directory-actions > button {
+  flex: 1;
+}
+
+.yuri-directory-mobile .yuri-directory-actions {
+  width: 100%;
+}

@@ -17,7 +17,7 @@ const createStorage = () => {
 
 describe('pairing relay preference', () => {
   test('uses the official Relay as the product default', () => {
-    expect(DEFAULT_PAIRING_RELAY_URL).toBe('wss://relay.openchamber.dev/ws');
+    expect(DEFAULT_PAIRING_RELAY_URL).toBe('wss://relay.useyuri.top/ws');
   });
 
   test('accepts websocket endpoints and rejects non-websocket URLs', () => {
@@ -43,5 +43,12 @@ describe('pairing relay preference', () => {
 
     writePairingRelayUrlPreference('wss://user:pass@relay.example/other', storage);
     expect(readPairingRelayUrlPreference(storage)).toBe('wss://relay.example/ws');
+  });
+
+  test('keeps a saved endpoint instead of replacing it with the new product default', () => {
+    const storage = createStorage();
+    storage.setItem('yuri.pairing.relayUrl.v1', 'wss://saved-relay.example/ws');
+    expect(readPairingRelayUrlPreference(storage)).toBe('wss://saved-relay.example/ws');
+    expect(readPairingRelayUrlPreference(createStorage())).toBeNull();
   });
 });

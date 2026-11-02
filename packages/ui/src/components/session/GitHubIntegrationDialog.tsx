@@ -369,7 +369,7 @@ export function GitHubIntegrationDialog({
       ) : (
         <>
           {/* Search */}
-          <div className="relative mt-2">
+          <div className="yuri-picker-search relative mt-2">
             <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               value={searchQuery}
@@ -382,7 +382,7 @@ export function GitHubIntegrationDialog({
           </div>
 
           {/* List Content */}
-          <div className="mt-2 h-[300px] overflow-hidden">
+          <div className="yuri-picker-list mt-2 h-[300px] overflow-hidden">
             <div className="h-full overflow-y-auto">
               {/* Loading */}
               {loading && (
@@ -410,7 +410,7 @@ export function GitHubIntegrationDialog({
                         key={`${issue.sourceRepo?.owner ?? ''}-${issue.sourceRepo?.repo ?? ''}-${issue.number}`}
                         onClick={() => handleSelectIssue(issue)}
                         className={cn(
-                          'w-full text-left px-2 py-1.5 rounded transition-colors',
+                          'yuri-picker-row w-full text-left px-2 py-1.5 rounded transition-colors',
                           selectedIssue?.number === issue.number
                             ? 'bg-interactive-selection text-interactive-selection-foreground'
                             : 'hover:bg-interactive-hover'
@@ -419,7 +419,7 @@ export function GitHubIntegrationDialog({
                         <div className="flex items-start gap-2">
                           <span className="text-muted-foreground shrink-0 typography-micro">#{issue.number}</span>
                           <div className="min-w-0 flex-1">
-                            <span className="typography-small line-clamp-2">{issue.title}</span>
+                             <span className="yuri-picker-label typography-small line-clamp-2">{issue.title}</span>
                             {issue.sourceRepo?.source === 'upstream' ? (
                               <span className="typography-micro px-1 py-0.5 rounded bg-status-info/10 text-status-info mt-0.5 inline-block">
                                 {issue.sourceRepo.owner}/{issue.sourceRepo.repo}
@@ -471,7 +471,7 @@ export function GitHubIntegrationDialog({
                           onClick={() => !blocked && handleSelectPr(pr)}
                           disabled={blocked}
                           className={cn(
-                            'w-full text-left px-2 py-1.5 rounded transition-colors',
+                            'yuri-picker-row w-full text-left px-2 py-1.5 rounded transition-colors',
                             selectedPr?.number === pr.number
                               ? 'bg-interactive-selection text-interactive-selection-foreground'
                               : blocked
@@ -482,7 +482,7 @@ export function GitHubIntegrationDialog({
                           <div className="flex items-start gap-2">
                             <span className="text-muted-foreground shrink-0 typography-micro">#{pr.number}</span>
                             <div className="min-w-0 flex-1">
-                              <span className="typography-small line-clamp-1">{pr.title}</span>
+                              <span className="yuri-picker-label typography-small line-clamp-1">{pr.title}</span>
                               <div className="flex items-center gap-2 mt-0.5">
                                 <span className="typography-micro text-muted-foreground">
                                   {pr.head} → {pr.base}
@@ -548,7 +548,7 @@ export function GitHubIntegrationDialog({
       )}>
         {/* Selected Issue/PR display - hidden on mobile (shown in header instead) */}
         {!isMobile && (selectedIssue || selectedPr) && (
-          <div className="flex items-center gap-2 px-2 h-8 rounded-md bg-muted/50 border border-border/50">
+          <div className="flex min-w-0 items-center gap-2">
             <Icon name="check" className="h-3.5 w-3.5 text-status-success shrink-0" />
             <span className="typography-small truncate max-w-[150px]">
               {selectedIssue
@@ -659,11 +659,10 @@ export function GitHubIntegrationDialog({
         </MobileOverlayPanel>
       ) : (
         <Dialog open={open} onOpenChange={onOpenChange}>
-          <DialogContent className="max-w-2xl max-h-[70vh] flex flex-col">
-            <DialogHeader className="flex flex-row items-center justify-between">
-              <div className="flex items-center gap-3">
-                <DialogTitle className="flex items-center gap-2 shrink-0">
-                  <Icon name="github" className="h-5 w-5" />
+          <DialogContent presentation="picker">
+            <DialogHeader className="yuri-picker-header">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <DialogTitle className="yuri-picker-title">
                   {t('session.githubIntegration.title')}
                 </DialogTitle>
                 
@@ -689,7 +688,7 @@ export function GitHubIntegrationDialog({
             {dialogContent}
 
             {/* Footer */}
-            <DialogFooter className="mt-1">
+            <DialogFooter className="yuri-picker-footer">
               {footerContent}
             </DialogFooter>
           </DialogContent>

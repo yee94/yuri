@@ -54,6 +54,10 @@ const parseScheduleCard = (value) => {
     time: string(value.time) || null,
     timezone: string(value.timezone) || null,
     prompt: string(value.prompt) || null,
+    ...(value.cron === undefined ? {} : { cron: string(value.cron) || null }),
+    ...(value.date === undefined ? {} : { date: string(value.date) || null }),
+    ...(value.times === undefined ? {} : { times: Array.isArray(value.times) ? value.times.map(string).filter(Boolean) : null }),
+    ...(value.weekdays === undefined ? {} : { weekdays: Array.isArray(value.weekdays) ? value.weekdays.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6) : null }),
   };
 };
 

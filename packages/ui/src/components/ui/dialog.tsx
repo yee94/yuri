@@ -4,6 +4,7 @@ import { Dialog as BaseDialog } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { useI18n } from '@/lib/i18n'
 import { Icon } from "@/components/icon/Icon";
+import './picker-dialog.css';
 
 let openDialogCount = 0;
 
@@ -73,6 +74,7 @@ const DialogOverlay = React.forwardRef<
 DialogOverlay.displayName = "DialogOverlay";
 
 type DialogContentProps = Omit<React.ComponentProps<typeof BaseDialog.Popup>, "children"> & {
+  presentation?: 'default' | 'picker'
   showCloseButton?: boolean
   overlayClassName?: string
   /** Extra classes for the fixed centering wrapper (e.g. top-offset command palettes). */
@@ -85,14 +87,16 @@ function DialogContent({
   overlayClassName,
   containerClassName,
   children,
-  showCloseButton = true,
+  showCloseButton,
+  presentation = 'default',
   ...props
 }: DialogContentProps) {
   const { t } = useI18n()
+  const hasCloseButton = showCloseButton ?? presentation !== 'picker'
 
   return (
     <DialogPortal>
-      <DialogOverlay className={cn("rounded-none", overlayClassName)} />
+      <DialogOverlay className={cn("rounded-none", presentation === 'picker' && "bg-transparent dark:bg-transparent", overlayClassName)} />
       <div
         className={cn(
           "fixed inset-0 z-50 flex justify-center pointer-events-none",
@@ -100,12 +104,13 @@ function DialogContent({
           // Callers can opt into top-offset layouts (e.g. command palette)
           // via containerClassName — avoid merging with `p-4`/`items-center`
           // so top padding utilities are not overridden by the padding shorthand.
-          containerClassName ?? "items-center p-4",
+          containerClassName ?? (presentation === 'picker' ? "block p-0" : "items-center p-4"),
         )}
       >
         <BaseDialog.Popup
           data-slot="dialog-content"
           data-state-slot="dialog"
+          data-presentation={presentation}
           className={cn(
             "app-region-no-drag relative pointer-events-auto bg-background text-foreground flex flex-col w-full max-w-lg max-h-full gap-4 rounded-xl border p-6 shadow-none overflow-y-auto pwa-dialog-content origin-center",
             "transition-all duration-150 ease-out",
@@ -117,12 +122,13 @@ function DialogContent({
             // whole popup uniformly — including scrolled content — and animates
             // via the existing transition-all.
             "data-[nested-dialog-open]:brightness-[0.55] dark:data-[nested-dialog-open]:brightness-[0.4]",
+            presentation === 'picker' && "yuri-picker-dialog yuri-mobile-overlay-surface yuri-mobile-overlay-surface--translucent yuri-composer-autocomplete-surface fixed left-1/2 top-[10vh] w-[min(42rem,calc(100vw-3rem))] max-w-none -translate-x-1/2 translate-y-0 gap-0 overflow-hidden rounded-3xl border-0 p-0",
             className
           )}
           {...props}
         >
         {children}
-        {showCloseButton && (
+        {hasCloseButton && (
           <BaseDialog.Close
             data-slot="dialog-close"
             className="ring-offset-background focus:ring-ring data-[open]:bg-interactive-active data-[open]:text-foreground absolute top-2 right-2 rounded-lg opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none text-muted-foreground hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"

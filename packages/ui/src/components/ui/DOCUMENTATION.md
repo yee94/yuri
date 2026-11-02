@@ -76,6 +76,78 @@ Consumers retain their own foreground content and business actions. Pointer move
 only update the active row, read geometry once at gesture start, and add no requests.
 Session reorder disables swipe through the existing drag context.
 
+# Desktop picker dialogs
+
+Desktop compact search/list surfaces use `DialogContent presentation="picker"`.
+This opt-in owns the global-search glass recipe, transparent scrim, top-offset
+position, radius and viewport bound. Ordinary `DialogContent` remains unchanged
+for confirmations, editors, Settings forms, permission flows and content viewers.
+Do not apply picker geometry globally or remove warnings needed to decide safely.
+
+Picker dialogs omit the corner close button by default. Escape, backdrop dismissal
+and any existing Cancel action remain the exit paths, subject to the owner's
+pending-action guards. Ordinary dialogs and mobile sheets keep their existing
+close controls. `showCloseButton` remains an explicit override. Picker headers
+use the normal content inset on the right; only an explicit close button reserves
+the extra end space through `--yuri-picker-header-end-inset`.
+
+`picker-dialog.css` owns the shared `yuri-picker-header`, `-title`, `-search`,
+`-list`, `-row`, `-label`, `-meta`, `-footer`, `-section` and `-section-title`
+classes. These are scoped under the picker surface, so shared mobile/page bodies
+can retain their own geometry. The default desktop width is 42rem (global search
+retains its wider excerpt layout), top offset 10vh, and maximum height the smaller
+of 42rem and 80dvh. Header/search/footer and row content align at 24px; the list's
+8px outer inset plus 16px row inset creates the same content edge. List wrappers
+stay transparent, without independent fills, decorative borders or shadows.
+
+Titles and primary list labels use 13px / 20px, metadata and group headings
+11px / 17px, group gaps 12px and row gaps 2px at the default root size. Existing
+compact single-line directory/global-search labels may use 12px. Keep only
+necessary controls and feedback; omit repetitive subtitles, decorative title
+icons, Actions headings and help cards. Keep creation semantics, errors,
+destructive consequences and permissions explicit. Pin search/actions outside
+the list scroll region, allow toolbar wrapping, and preserve independent action
+targets. Width changes must not shift the text alignment or clip rounded edges.
+
+Shortcut hints use `Kbd variant="hint"` or `ShortcutKbd variant="hint"`: the
+same 14px-high, 10px, neutral borderless badges as sidebar/global search.
+`ShortcutKbd` renders Command/Enter/arrows with the shared sprite `Icon` in hint
+mode, retaining accessible key names; Ctrl and ordinary letters stay text.
+Platform and remapped bindings remain authoritative. Default shortcut editors
+and keycap tone contracts are unchanged. Mobile keeps its existing sheet/page/dialog
+owner and touch sizing rather than inheriting this desktop presentation.
+
+The picker presentation covers global search, directory selection, timeline,
+GitHub Issue/PR and association selection, stashes, archived-session browsing,
+and keyboard-shortcut help. Focused tests cover the shared real portal, selection
+and hint rendering; visual checks must additionally cover production CSS in
+light/dark and a narrow window. Component/source checks alone cannot prove glass,
+alignment, scrollbar geometry or packaged-runtime behavior.
+
+# Anchored popup surfaces
+
+Menus (including submenus and context menus), desktop Select, Changed files,
+status overlays and device connections use
+`yuri-mobile-overlay-surface yuri-popup-surface`. The base owns blur/saturation;
+the modifier owns the shared translucent fill, foreground, fine edge and short
+shadow through `--yuri-popup-fill`, `--yuri-popup-edge` and `--yuri-popup-shadow`
+in `styles/mobile.css`. The fill shares `--yuri-overlay-translucent-fill` with
+picker dialogs; popup shadows are deliberately shorter and lighter. Theme
+surface colors remain authoritative. Avoid default inline opaque backgrounds
+or copied shadow utilities on popup roots. Explicit caller styles still win.
+
+Only the outer popup paints material. Scrolling lists and static rows stay
+transparent; existing hover/selected states remain interactive tokens. Headers,
+file-row boundaries (including virtual rows) and menu/Select separators use
+`--yuri-popup-divider` and `--yuri-popup-divider-width`: a half-pixel hairline,
+weaker than the outer rim, mixed from theme foreground rather than opaque
+`surface.subtle`. Tool-card lists outside popups keep their existing dividers. Keep
+positioning, portals, collision handling, focus, dismissal and scroll ownership
+with their existing primitives. Mobile Select keeps its sheet material and
+transparent inner content; inline work status stays material-free. Tooltips and
+ordinary dialogs retain their separate recipes. Reduced-transparency mode uses
+opaque elevated fill and disables blur in both themes while preserving the edge.
+
 # Command palette subscriptions
 
 The memoized CommandPalette observes session rows/status only while open or while
@@ -93,6 +165,39 @@ already fetched results rather than requesting another server page.
 Each row displays a localized date and time beside its title: the matching
 message's creation time for content hits, otherwise the session's update time
 (falling back to creation time). Missing or invalid timestamps stay hidden.
+
+Global-search layout is scoped by `data-global-search` in `command-palette.css`,
+including contributed plugin commands; shared Command primitives are unchanged.
+Groups have 12px separation, items have 2px separation, and headings leave 4px
+before their first item (at the default root size). Compact results use 12px
+labels and 11px descriptions; conversation rows use a 13px title, adjacent 10px
+timestamp, and a 12px/two-line snippet with source whitespace collapsed. Project
+and numeric-shortcut columns share the row's vertical center independently of
+title/snippet length. Mobile
+keeps 44px minimum hit targets and omits the numeric-shortcut column. Existing
+theme colors, selection tokens and the desktop glass surface remain authoritative.
+Conversation rows use 8px vertical padding. Sidebar and global-search shortcuts
+share `Kbd variant="hint"`: 14px-high neutral pills, 10px sans-serif labels, a 6%
+surface-foreground fill and muted-foreground/65 text. Search reserves platform-sized
+columns without overriding this shared recipe. Ordinary `Kbd`/`ShortcutKbd`
+rendering remains unchanged.
+
+File search uses the runtime Files API backed by the official V2 client, not
+the removed `/api/find/file` route. Confirmed missing locations are skipped
+without removing saved projects. Real total/partial failures retain other
+results and show a compact muted status, not a red directory-list alert.
+Arrow-key navigation loops across the first and last selectable result via cmdk's
+`loop` contract, including mobile hardware keyboards.
+
+The palette has no current-project scope or index-status banner. File search uses
+the runtime FilesAPI across saved projects and known worktrees, with at most four
+directory searches in flight and ten candidates per directory. Its Query key
+includes transport, generation, the canonical root set and query; cancellation
+stops queued work and rejects late results (FilesAPI does not expose request-level
+abort). Results deduplicate by absolute path and retain their source directory.
+Partial directory failures keep successful results and expose the existing file
+error notice; total failure remains a Query error. Search does not traverse the
+entire disk or depend on the currently selected project.
 
 # Render-count verification
 

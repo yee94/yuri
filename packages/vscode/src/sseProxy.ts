@@ -114,7 +114,7 @@ const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) =
 
 const getAbortReason = (signal: AbortSignal) => signal.reason ?? new DOMException('Aborted', 'AbortError');
 
-type OpenCodeSsePathname = '/api/event' | '/api/global/event';
+type OpenCodeSsePathname = '/api/event';
 
 /**
  * Normalize webview SSE paths onto v2 `/api/*` roots. Accept legacy `/event`
@@ -122,11 +122,7 @@ type OpenCodeSsePathname = '/api/event' | '/api/global/event';
  */
 const normalizeSsePath = (path: string): { pathname: OpenCodeSsePathname; searchParams: URLSearchParams; directory: string | null } => {
   const parsed = new URL(path, 'https://yuri.invalid');
-  const raw = parsed.pathname.replace(/\/+$/, '') || '/';
-  const pathname: OpenCodeSsePathname =
-    raw === '/api/global/event' || raw === '/global/event'
-      ? '/api/global/event'
-      : '/api/event';
+  const pathname: OpenCodeSsePathname = '/api/event';
   const directory = parsed.searchParams.get('directory');
   return {
     pathname,

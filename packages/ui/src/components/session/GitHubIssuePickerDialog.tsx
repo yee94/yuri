@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -400,7 +399,7 @@ export function GitHubIssuePickerDialog({
 
   const content = (
     <>
-      <div className="relative mt-2">
+      <div className="yuri-picker-search relative mt-2">
         <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder={t('session.githubIssuePicker.searchPlaceholder')}
@@ -412,7 +411,7 @@ export function GitHubIssuePickerDialog({
         />
       </div>
 
-      <div className={cn(isMobile ? 'min-h-0 mt-2' : 'flex-1 overflow-y-auto mt-2')}>
+      <div className={cn('yuri-picker-list', isMobile ? 'min-h-0 mt-2' : 'flex-1 overflow-y-auto mt-2')}>
           {!projectDirectory ? (
             <div className="text-center text-muted-foreground py-8">{t('session.githubIssuePicker.empty.noActiveProject')}</div>
           ) : null}
@@ -446,7 +445,7 @@ export function GitHubIssuePickerDialog({
           {directNumber && projectDirectory && github && connected ? (
             <div
               className={cn(
-                'group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
+                'yuri-picker-row group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
                 startingIssueNumber === directNumber && 'bg-interactive-selection/30'
               )}
               onClick={() => void startSession(directNumber)}
@@ -471,7 +470,7 @@ export function GitHubIssuePickerDialog({
             <div
               key={`${issue.sourceRepo?.owner ?? ''}-${issue.sourceRepo?.repo ?? ''}-${issue.number}`}
               className={cn(
-                'group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
+                'yuri-picker-row group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
                 startingIssueNumber === issue.number && 'bg-interactive-selection/30'
               )}
               onClick={() => void startSession(issue.number, issue.sourceRepo)}
@@ -480,7 +479,7 @@ export function GitHubIssuePickerDialog({
                 #{issue.number}
               </span>
               <div className="flex-1 min-w-0 ml-0.5">
-                <p className="typography-small text-foreground truncate">
+                <p className="yuri-picker-label typography-small text-foreground truncate">
                   {issue.title}
                 </p>
                 {issue.sourceRepo?.source === 'upstream' ? (
@@ -537,8 +536,7 @@ export function GitHubIssuePickerDialog({
       </div>
 
       {mode !== 'select' && (
-        <div className="mt-4 p-3 bg-muted/30 rounded-lg">
-          <p className="typography-meta text-muted-foreground font-medium mb-2">{t('session.githubIssuePicker.actions.sectionTitle')}</p>
+        <div className={isMobile ? 'mt-4 p-3 bg-muted/30 rounded-lg' : 'yuri-picker-footer'}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
             <div
               className="flex items-center gap-2 cursor-pointer"
@@ -570,7 +568,6 @@ export function GitHubIssuePickerDialog({
                 )}
               </button>
               <span className="typography-meta text-muted-foreground">{t('session.githubIssuePicker.actions.createInWorktree')}</span>
-              <span className="typography-meta text-muted-foreground/70 hidden sm:inline">(issue-&lt;number&gt;-&lt;slug&gt;)</span>
             </div>
             <div className="hidden sm:block sm:flex-1" />
             <div className="flex items-center gap-2">
@@ -615,15 +612,11 @@ export function GitHubIssuePickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[70vh] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <Icon name="github" className="h-5 w-5" />
+      <DialogContent presentation="picker">
+        <DialogHeader className="yuri-picker-header">
+          <DialogTitle className="yuri-picker-title">
             {title}
           </DialogTitle>
-          <DialogDescription>
-            {description}
-          </DialogDescription>
         </DialogHeader>
 
         {content}

@@ -31,7 +31,7 @@ image long-press, so contact conversations do not require a `ChatContainer` host
 
 ## Hold-to-talk input
 
-Mobile contact composers reuse the memoized `HoldToTalkComposer` shared with primary Chat: hold an empty textarea to record, release at center to edit, slide left to cancel or right to send. The dictation setting and capture/runtime support gate activation (VS Code is unsupported). Final recognition is passed explicitly into the existing contact admission path, retaining attachments, failed-send drafts and retry identity. Edit results use the reference-aware document commit. Text typed during finalization is preserved and receives the transcript without automatic submission. Inactive contacts unmount capture; the existing runtime/assistant key fences late results. Stable event callbacks isolate idle audio Hooks from ordinary typing; working contacts remain usable while admission-pending contacts disable dictation but keep text entry available.
+Mobile contact composers reuse the memoized `HoldToTalkComposer` shared with primary Chat: hold an empty textarea to record, release at center to edit, slide left to cancel or right to send. The dictation setting and capture/runtime support gate activation (VS Code is unsupported). Final recognition is passed explicitly into the existing contact admission path, retaining attachments, failed-message snapshots and retry identity. Edit results use the reference-aware document commit. Text typed during finalization is preserved and receives the transcript without automatic submission. Inactive contacts unmount capture; the existing runtime/assistant key fences late results. Stable event callbacks isolate idle audio Hooks from ordinary typing; working contacts remain usable while admission-pending contacts disable dictation but keep text entry available.
 
 ## Contact session references
 
@@ -60,9 +60,36 @@ Selection inserts ordinary editable message text in this format:
 @session:ses_example {"title":"Readable session title","sessionID":"ses_example","directory":"/workspace/project"}
 ```
 
-The token reuses `getSessionMentionToken`; JSON serialization escapes the title and directory. Selection only updates the existing contact draft. The user adds their watch/continue/stop instruction and sends through the existing text part; backend tools own `watch_session`, `assign_session` with `sessionID`, and `stop_session`. Message admission, attachment handling, failed-send draft retention, and retry message identity stay owned by `AssistantConversationSurface`. Picker UI resets across Assistant/runtime changes while the existing surface retains draft ownership. Web, Electron, VS Code, hosted mobile, and Capacitor use this shared React contact composer and runtime transport; the primary Chat native composer keeps its own path.
+The token reuses `getSessionMentionToken`; JSON serialization escapes the title and directory. Selection only updates the existing contact draft. The user adds their watch/continue/stop instruction and sends through the existing text part; backend tools own `watch_session`, `assign_session` with `sessionID`, and `stop_session`. Message admission, attachment handling, failed-message retention, and retry message identity stay owned by `AssistantConversationSurface`. Picker UI resets across Assistant/runtime changes while the existing surface retains draft ownership. Web, Electron, VS Code, hosted mobile, and Capacitor use this shared React contact composer and runtime transport; the primary Chat native composer keeps its own path.
 
 Focused `AssistantSessionComposer.test.tsx` covers selection, cancellation, IME/paste, mobile touch, query failure/retry, runtime isolation, and bounded row/request counts. `AssistantConversationSurface.scroll.test.tsx` verifies plain-text reference admission, failed-send preservation, and same-ID retry. Physical-device keyboard geometry and live assistant tool execution require integration validation.
+
+## Failed contact sends
+
+Each user text/file part owns its own vertically centered, transparent error
+trigger. Text and an image in the same send therefore show two indicators, not
+one indicator centered against the entire stack. Hover never paints a trigger
+background. No shadow/ring glow or outer outline is applied, including on focus;
+keyboard focus changes only the marker opacity. Click opens a Base UI Popover next to that trigger with the concrete
+error and the shared neutral `Button` retry action. The shared overlay surface
+owns elevation; viewport collisions may flip or shift the anchored popup.
+
+Submission transfers text, attachment previews and blob leases out of the
+composer immediately. Failed sends remain local transcript rows with per-message
+retry snapshots, not restored composer drafts or inline error/retry banners.
+Retry uses the original text, Files, attachment IDs and message ID, keeps the row
+and its local creation time in place, and does not touch the next draft. One send
+gate prevents concurrent retries across indicators. Admission/authoritative
+reconciliation releases the retry snapshot and its upload/blob resources;
+Assistant/runtime switches and unmount discard local retry state. These failed
+rows are not durable across unmount/restart. Shared web, Electron, VS Code,
+hosted-mobile and Capacitor surfaces use the same UI and existing transport.
+
+`ContactUserMessagePart.chrome.test.ts` checks independent centering, transparent
+hover, viewport bounds, adjacent popup placement, keyboard dismissal and retry at
+320/390/1024px in light/dark themes with production CSS. The contact surface tests
+cover upload/send failures, stable IDs/rows, multiple failures, attachment leases,
+new-draft preservation and 50 edits without failed-popup Hook reevaluation.
 
 ## English display naming
 
@@ -375,9 +402,10 @@ The Assistant conversation is a Grok-like **contact**, not an OpenCode coding ag
 **Session cards (this PR)**
 
 - Cards are first-class in-transcript UI (`type: 'card'`, `cardType` `session` | `assistant` | `schedule`), not markdown links and not Activity/tool rows.
-- A session card is a compact cover: short title, one metadata line (project / model / branch), status chip (`Working` / `完成` / `失败` / `需要你`), and non-zero live change counts (`summary.additions` / `deletions` / `files`). `+0 −0` and other all-zero summaries stay off. Assistant/schedule covers hug content (`w-fit min-w-0 max-w-[min(100%,15rem)]`); session covers may be wider (`max-w-[min(100%,20rem)]`) but are not a full-width strip — card width is capped by the parent transcript column. The whole softly elevated, inset-outlined cover is the hit target and opens the session through `openSessionWithFeedback` (phone: `openSession`; desktop: `setActiveMainTab('chat')` + `setCurrentSession` / `/session/$id`). No visible CTA button.
+- The three card types share one compact 10rem-high, 19rem-wide frame, capped at the transcript column width (`max-w-full min-w-0`), plus shared header/title/footer geometry in `contactCardChrome.ts`. Short titles and missing optional fields never change the frame height. Their surface, 1.35rem radius and horizontal/vertical padding match ordinary Assistant message bubbles: `surface.muted`, `px-4 py-2.5`, no resting border, inset outline, shadow or footer divider. Keyboard focus retains its visible ring. Titles stay on one line with ellipsis, including unbroken tokens; full values remain available in native titles. The outer rounded frame does not clip content or avatars. Assistant cards emphasize their own saved 32px avatar and name, with provider/model in two compact footer lines; conversation mode is not shown. Session receipts emphasize a text-and-dot status, title, one project/branch row, and non-zero live change counts (`summary.additions` / `deletions` / `files`) plus optional model in the footer. `+0 −0` and other all-zero summaries stay off. Schedule cards emphasize name, an optional single-line prompt and time alongside frequency/timezone; missing time is explicitly labelled, never inferred as the next run. All three layouts are shared by web, Electron, VS Code, hosted mobile and Capacitor. The whole message-like card is the hit target and opens the session through `openSessionWithFeedback` (phone: `openSession`; desktop: `setActiveMainTab('chat')` + `setCurrentSession` / `/session/$id`). No visible CTA button.
 - Assigned-session finish/error/question (SSE, session-goal settle, or boot/60s poll of in-flight watches) updates **that same card**. complete/error also kicks a server contact-lane continuation so the Agent summarizes or re-assigns; the user sees that spoken summary, not canned 「会话已完成/会话失败」. Legacy transcript rows whose text is `yuri.settle.*` are **not rendered**. The UI does not invent a second status banner. The worker session stays visible in Chat.
 - Cards persist in the Yuri-owned contact transcript (SQLite) and survive reload.
+- Schedule cards preserve optional `cron`, `date`, `times`, and `weekdays` alongside the legacy flat fields. `scheduleCardPresentation.ts` owns their type-specific presentation: raw Cron rule (not a missing clock), date + time for once, every configured daily time, and localized weekly weekdays. Rules/dates/multiple times use compact text rather than the large single-clock style; native titles expose complete values. No local-time conversion or next-run guess is introduced. Only legacy cards with omitted fields trigger the existing Assistant-scoped scheduled-task Query, once at the active conversation boundary, with a memoized project/task index. Match both project ID and task ID. Complete card snapshots remain historical snapshots; missing/deleted/failed live lookups leave the stored card intact. An unresolved legacy Cron card shows its known kind/timezone, never claims its valid schedule has no time. No task or transcript write/backfill occurs.
 - Contact attach supports images and files via paperclip, paste, and drag-drop, up to 25 MiB each. On Android the paperclip opens the shared photos/files half-sheet (`MobileAttachPickSheet`) before the system picker; iOS, desktop, and other mobile surfaces open the file picker directly. Android Capacitor photos use the native media picker, with the image file input as fallback. New attachments retain their original File and local Blob preview through upload and message admission; PUT returns `{ type: 'file', attachmentID, sha256, size, mime, filename? }` for the contact DB. Upload/send retries reuse uploadID/messageID, and completed uploads are reused while retrying admission. Images render inline; named file chips expose a download action. Historical URL parts retain direct web/data/blob image compatibility through the shared image-source resolver with no workspace-path authority.
 - The card slot is extensible. Later project / worktree / watch cards reuse `cardType`. Do not invent a second card system.
 - Cards are **assistant-emitted UI** (Grok-Bot style: title, status chip, metadata). The whole card is the hit target. The user never types `/card`. Insert: `assign_session` / `create_assistant` / `schedule_task` auto-cards, and API `POST /api/yuri/assistants/:id/contact/cards` for harness/tests.

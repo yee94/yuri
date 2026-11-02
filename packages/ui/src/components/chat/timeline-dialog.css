@@ -1,0 +1,170 @@
+.yuri-timeline-dialog {
+  max-height: min(42rem, 80dvh);
+}
+
+.yuri-timeline-header {
+  flex-shrink: 0;
+  padding: 1rem var(--yuri-picker-header-end-inset, 1.5rem) 0.5rem 1.5rem;
+  text-align: left;
+}
+
+.yuri-timeline-title,
+.yuri-timeline-mobile-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+
+.yuri-timeline-search {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  margin: 0 1rem 0.5rem;
+  padding: 0 0.5rem;
+}
+
+.yuri-timeline-search [data-slot='input'] {
+  height: 2.25rem;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.yuri-timeline-search:focus-within {
+  box-shadow: inset 0 -1px 0 var(--interactive-border);
+}
+
+.yuri-timeline-history {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding-bottom: 0.25rem;
+}
+
+.yuri-timeline-history button,
+.yuri-timeline-toolbar button {
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
+}
+
+.yuri-timeline-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.yuri-timeline-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.25rem 0.5rem 0.75rem;
+}
+
+.yuri-timeline-date {
+  margin-top: 0.75rem;
+  padding: 0 1rem 0.25rem;
+  font-size: 0.6875rem;
+  line-height: 1.0625rem;
+}
+
+.yuri-timeline-date:first-child {
+  margin-top: 0;
+}
+
+.yuri-timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0 0.5rem 0 1rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-timeline-row + .yuri-timeline-row {
+  margin-top: 0.125rem;
+}
+
+.yuri-timeline-message {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 2.25rem;
+  align-items: center;
+  column-gap: 0.75rem;
+  padding: 0.5rem 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.yuri-timeline-message:focus-visible {
+  outline: 1px solid var(--interactive-border);
+  outline-offset: 2px;
+}
+
+.yuri-timeline-time {
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+
+.yuri-timeline-preview {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yuri-timeline-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.125rem;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.yuri-timeline-row:hover .yuri-timeline-row-actions,
+.yuri-timeline-row:focus-within .yuri-timeline-row-actions,
+.yuri-timeline-row[data-selected='true'] .yuri-timeline-row-actions,
+.yuri-timeline-row[data-show-actions='true'] .yuri-timeline-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.yuri-timeline-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.25rem 1rem 0.75rem;
+}
+
+.yuri-timeline-empty {
+  padding: 2.5rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.yuri-timeline-mobile .yuri-timeline-search {
+  margin-inline: 1rem;
+  padding-inline: 0.75rem;
+  border-radius: var(--yuri-mobile-control-radius);
+}
+
+.yuri-timeline-mobile .yuri-timeline-message {
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  height: 2.75rem;
+  min-height: 2.75rem;
+  column-gap: 0.5rem;
+}
+
+.yuri-timeline-mobile .yuri-timeline-toolbar {
+  padding-bottom: 0.5rem;
+}

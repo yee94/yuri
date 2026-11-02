@@ -1,8 +1,19 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 // @ts-expect-error The server contract fixture is JavaScript and shared across the package boundary.
 import { assistantContractFixtures } from '../../../web/server/lib/assistants/contracts.js';
-import { AssistantAPIError, parseAssistantCapabilityDTO, parseAssistantContactPage, parseAssistantContactPeerAdmission, parseAssistantHistoryPage, parseCompactResponse, parseMessageAdmission, parseSessionBinding, parseShareOperation, parseAssistantSnapshotDTO } from './assistantDTO';
+// @ts-expect-error The server's card serializer is JavaScript; exercise the real transport boundary.
+import { createScheduleCardPart } from '../../../web/server/lib/assistants/cards.js';
+import { AssistantAPIError, parseAssistantCapabilityDTO, parseAssistantContactCardAdmission, parseAssistantContactPage, parseAssistantContactPeerAdmission, parseAssistantHistoryPage, parseCompactResponse, parseMessageAdmission, parseSessionBinding, parseShareOperation, parseAssistantSnapshotDTO } from './assistantDTO';
 describe('Assistant DTO parsing', () => {
+  test.each([
+    { kind: 'cron', cron: '0 9 1 * *', time: null },
+    { kind: 'once', date: '2026-12-01', time: '09:00' },
+    { kind: 'weekly', times: ['09:00', '18:00'], weekdays: [1, 3, 5] },
+  ])('preserves the server schedule snapshot across DTO parsing: $kind', (schedule) => {
+    const card = createScheduleCardPart({ taskID: 'task', projectID: 'project', name: 'Review', timezone: 'UTC', ...schedule });
+    expect(parseAssistantContactCardAdmission({ admitted: true, messageID: 'message', card }).card).toMatchObject(schedule);
+  });
+
   test('parses server contract fixtures across the web and UI boundary', () => {
     const serverBindingFixture = assistantContractFixtures.sessionBinding;
     const snapshot = parseAssistantSnapshotDTO({ revision: 1, enabled: true, assistants: [{ id: 'assistant-1', revision: 1, enabled: true, name: 'Assistant', defaultPrompt: '', workspacePath: '/project', effectiveWorkspacePath: '/project', managedWorkspacePath: '/managed', skillRoots: ['/legacy-skill'], providerID: 'provider', modelID: 'model', agent: null, mode: 'continuous', sessionID: 'ses-1', sessionGeneration: 2, historySessionIDs: ['ses-0'], historySessionCount: 1, createdAt: null, updatedAt: 2, tombstoneAt: null }] });

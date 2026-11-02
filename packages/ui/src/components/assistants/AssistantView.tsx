@@ -151,7 +151,7 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
         <AssistantWorkingAvatar name={assistantID} avatarSeed={avatarSeed} size={44} label={displayName} working={working} hoverTarget={hoverTarget} />
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate typography-ui-label leading-5', selected ? 'font-semibold' : 'font-medium')}>{displayName}</span>
-          <span className={cn(ASSISTANT_MESSAGE_PREVIEW_CLASS, 'mt-1 leading-5')}>{summary}</span>
+          <span className={cn(ASSISTANT_MESSAGE_PREVIEW_CLASS, 'mt-1 text-[length:calc(var(--text-micro)*0.9)] leading-5')}>{summary}</span>
         </span>
         <AssistantUnreadBadge count={unreadCount} className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
       </ContextMenuTrigger>
@@ -264,13 +264,14 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
     <div className="relative flex h-full min-h-0 overflow-clip bg-background" data-presentation="workspace">
       {isMobileSurface ? null : (
         <section className="flex h-full min-h-0 w-[clamp(16rem,22vw,20rem)] shrink-0 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-4 sm:px-5">
+          <header className="flex shrink-0 items-center gap-3 px-4 pb-1 pt-4 sm:px-5">
             <h1 className="min-w-0 truncate typography-ui-label font-semibold text-foreground">{t('assistants.title')}</h1>
             <AssistantMarkAllReadButton snapshot={snapshot} compact rowClassName="flex min-w-0 flex-1 justify-end" />
             <Button
               type="button"
-              variant="ghost"
-              size="icon"
+              variant="mobileGlass"
+              size="mobileIcon"
+              className="size-8 min-h-0 min-w-0 !shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2px_rgb(0_0_0/0.05)] dark:!shadow-[var(--yuri-mobile-glass-shadow)]"
               aria-label={t('assistants.settings.create')}
               onClick={openCreateSettings}
             >
@@ -278,7 +279,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
             </Button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 sm:px-4" role="listbox" aria-label={t('assistants.listAria')}>
-            <div className="flex flex-col gap-1 pt-3">
+            <div className="flex flex-col gap-1 pt-1">
               {contacts.map((item) => {
                 const selected = item.id === selectedAssistantID;
                 const itemPresentation = getAssistantPresentation(item.name);

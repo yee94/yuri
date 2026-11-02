@@ -104,7 +104,7 @@ const VirtualizedChangedFiles: React.FC<ChangedFilesListProps> = ({ files, curre
                             data-index={item.index}
                             ref={item.index === sampleIndex ? sampleRowRef : undefined}
                             // Divider as inset shadow keeps every row the same height.
-                            className={cn(item.index > 0 && 'shadow-[inset_0_1px_0_0_var(--surface-subtle)]')}
+                            className={cn(item.index > 0 && 'shadow-[inset_0_var(--yuri-popup-divider-width)_0_0_var(--yuri-popup-divider)]')}
                             style={{
                                 position: 'absolute',
                                 top: 0,

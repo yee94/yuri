@@ -321,6 +321,11 @@ export const mergeSessionDirectoryMetadata = (incoming: Session, existing?: Sess
   let changed = false;
   const next: typeof incomingRecord = { ...incomingRecord };
 
+  if (!incoming.model && existing.model) {
+    next.model = existing.model;
+    changed = true;
+  }
+
   // Some live session updates omit stable raw directory metadata; keep the
   // cached value so project grouping does not temporarily lose the session.
   if (!incomingDirectory && existingDirectory) {
@@ -445,6 +450,7 @@ const getSessionSignature = (session: Session): string => {
     session.time?.updated ?? 0,
     session.time?.archived ?? 0,
     session.share?.url ?? '',
+    JSON.stringify(session.model ?? null),
     JSON.stringify((session as Session & { metadata?: unknown }).metadata ?? null),
     String((session as Session & { hasChildren?: boolean }).hasChildren ?? false),
     resolveGlobalSessionDirectory(session) ?? '',
@@ -470,6 +476,7 @@ export const getSessionStructuralSignature = (session: Session): string => {
     session.time?.created ?? 0,
     session.time?.archived ?? 0,
     session.share?.url ?? '',
+    JSON.stringify(session.model ?? null),
     JSON.stringify(record.metadata ?? null),
     String(record.hasChildren ?? false),
     resolveGlobalSessionDirectory(session) ?? '',

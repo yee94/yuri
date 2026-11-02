@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { WORK_STATUS_PANEL_WIDTH, WORK_STATUS_SCROLLBAR_LANE } from './useWorkStatusVisibility';
 import { WorkStatusCompact } from './WorkStatusCompact';
+import { statusBarPopoverSurfaceClassName } from '../statusBarPopover';
 
 type Props = {
   sessionId: string | null;
@@ -13,6 +14,7 @@ type Props = {
 };
 
 const PANEL_TRANSITION_MS = 200;
+const WORK_STATUS_OVERLAY_WIDTH = 264;
 
 export const WorkStatusPanel: React.FC<Props> = ({ sessionId, directory, visible, overlay = false }) => {
   const { t } = useI18n();
@@ -57,12 +59,12 @@ export const WorkStatusPanel: React.FC<Props> = ({ sessionId, directory, visible
       className={cn(
         'absolute z-20 flex max-h-[calc(100%-1rem)] flex-col overflow-x-hidden overflow-y-auto scrollbar-hidden bg-transparent',
         overlay
-          ? 'top-3 z-30 max-h-[calc(100%-1.5rem)] rounded-lg bg-[var(--surface-elevated)]/95 px-1 backdrop-blur-md'
+          ? `top-3 z-30 max-h-[calc(100%-1.5rem)] rounded-xl p-2 ${statusBarPopoverSurfaceClassName}`
           : 'top-2',
       )}
       style={{
         right: WORK_STATUS_SCROLLBAR_LANE,
-        width: overlay || visible ? WORK_STATUS_PANEL_WIDTH : 0,
+        width: overlay ? WORK_STATUS_OVERLAY_WIDTH : visible ? WORK_STATUS_PANEL_WIDTH : 0,
         opacity: visible ? 1 : 0,
         transform: visible ? 'none' : overlay ? 'translateY(-6px)' : 'translateX(24px)',
         transitionProperty: overlay ? 'opacity, transform' : 'none',

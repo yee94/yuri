@@ -21,6 +21,53 @@ import { createProjectRegistry } from '../projects/registry.js';
 const call = (name, args) => ({ completion: { choices: [{ message: { content: '', tool_calls: [{ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] } });
 
 describe('HTTP → real contact Agent → project registry → worker admission', () => {
+  it('delivers a sourced peer message over HTTP and wakes only the recipient without worker or relay tools', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-peer-http-'));
+    const createWorker = vi.fn();
+    const promptWorker = vi.fn();
+    external.client = { session: { create: createWorker, prompt: promptWorker } };
+    const complete = vi.fn(async ({ body }) => {
+      expect(body.tools.map((tool) => tool.function.name)).not.toContain('message_assistant');
+      expect(body.tools.map((tool) => tool.function.name)).not.toContain('assign_session');
+      expect(JSON.stringify(body.messages)).toContain('老大你好');
+      return { completion: { choices: [{ message: { content: '小小白你好，收到了。' } }] } };
+    });
+    external.complete = complete;
+    const app = express(); app.use(express.json());
+    const runtime = registerAssistantRoutes(app, {
+      dbPath: path.join(directory, 'assistants.sqlite'), yuriDataDir: directory,
+      buildOpenCodeUrl: (pathname) => `http://upstream.invalid${pathname}`, getOpenCodeAuthHeaders: () => ({}),
+    });
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (route, body) => fetch(`${base}${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    try {
+      const sender = await (await post('/api/yuri/assistants', { name: '小小白', providerID: 'p', modelID: 'm' })).json();
+      const recipient = await (await post('/api/yuri/assistants', { name: '大白', providerID: 'p', modelID: 'm' })).json();
+      const input = { messageID: 'http_peer_hello', toAssistantID: recipient.id, text: '老大你好' };
+      const response = await post(`/api/yuri/assistants/${sender.id}/contact/dm`, input);
+      expect(response.status).toBe(201);
+      const admitted = await response.json();
+      expect(admitted).toMatchObject({ admitted: true, fromAssistantID: sender.id, toAssistantID: recipient.id });
+      expect(await runtime.service.whenContactTurnSettled(admitted.messageID)).toMatchObject({ status: 'complete' });
+      const page = await (await fetch(`${base}/api/yuri/assistants/${recipient.id}/contact/messages`)).json();
+      expect(page.messages.map((message) => message.role)).toEqual(['assistant', 'peer', 'assistant']);
+      expect(page.messages[1]).toMatchObject({ fromAssistantName: '小小白', text: '老大你好' });
+      expect(page.messages[2].text).toBe('小小白你好，收到了。');
+      expect((await (await post(`/api/yuri/assistants/${sender.id}/contact/dm`, input)).json()).replayed).toBe(true);
+      expect((await post(`/api/yuri/assistants/${sender.id}/contact/dm`, { ...input, text: 'changed' })).status).toBe(409);
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(createWorker).not.toHaveBeenCalled();
+      expect(promptWorker).not.toHaveBeenCalled();
+    } finally {
+      runtime.close(); server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      external.complete = null; external.client = null;
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('registers a cloned directory, sends hello and persists a real session card without manual Settings', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-project-http-'));
     const workspace = path.join(directory, 'cloned-app');

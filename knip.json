@@ -40,6 +40,7 @@
         "bin/yuri-push-relay.js",
         "src/index.js",
         "src/index.d.ts",
+        "src/worker.js",
         "src/push/index.js",
         "src/push/index.d.ts",
         "test/node-smoke.js",

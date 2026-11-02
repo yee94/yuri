@@ -21,7 +21,6 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
-import { useFileSearchStore } from '@/stores/useFileSearchStore';
 import { useDeviceInfo } from '@/lib/device';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -38,7 +37,7 @@ import { isMacOS, truncatePathMiddle } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { buildCommandPaletteFileSearchKey, scoreCommandPaletteFiles } from './commandPaletteFilesState';
+import { buildCommandPaletteFileSearchRoots, commandPaletteFileSearchQueryOptions, scoreCommandPaletteFiles } from './commandPaletteFilesState';
 import { openAndCreateTerminalTab } from '@/lib/terminalTabShortcuts';
 import { Kbd } from '@/components/ui/kbd';
 import './command-palette.css';
@@ -46,7 +45,7 @@ import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { sessionTitleSearchQueryOptions } from '@/queries/sessionTitleSearchQueries';
-import { sessionContentSearchQueryOptions, sessionContentIndexStatusOptions, type SessionContentSearchHit } from '@/queries/sessionContentSearchQueries';
+import { sessionContentSearchQueryOptions, type SessionContentSearchHit } from '@/queries/sessionContentSearchQueries';
 import { focusChatMessage } from '@/components/chat/hooks/useChatTurnNavigation';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { consumeMatchingPress, markMatchingPress } from './matchingPress';
@@ -60,8 +59,6 @@ type CommandEntry = {
   onSelect: () => void;
 };
 
-type FileHit = { path: string; name: string; relativePath: string };
-
 type CommandPaletteResultProps = {
   title: React.ReactNode;
   description?: React.ReactNode;
@@ -70,18 +67,18 @@ type CommandPaletteResultProps = {
 
 const CommandPaletteResult: React.FC<CommandPaletteResultProps> = ({ title, description, trailing }) => (
   <>
-    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+    <div className="flex min-w-0 flex-1 items-baseline gap-4">
       <span
         className={
           description
-            ? 'min-w-0 max-w-[58%] shrink-0 truncate typography-meta font-medium leading-4 text-foreground'
-            : 'min-w-0 flex-1 truncate typography-meta font-medium leading-4 text-foreground'
+            ? 'yuri-global-search-result-title min-w-0 max-w-[62%] shrink-0 truncate text-foreground'
+            : 'yuri-global-search-result-title min-w-0 flex-1 truncate text-foreground'
         }
       >
         {title}
       </span>
       {description ? (
-        <span className="min-w-0 flex-1 truncate typography-micro leading-4 text-muted-foreground/65">
+        <span className="yuri-global-search-result-detail min-w-0 flex-1 truncate text-muted-foreground/65">
           {description}
         </span>
       ) : null}
@@ -94,11 +91,16 @@ const CommandPaletteResult: React.FC<CommandPaletteResultProps> = ({ title, desc
   </>
 );
 
-const ITEM_CLASS = 'min-h-9 gap-2 rounded-lg px-3 py-2 typography-meta';
-const GROUP_CLASS =
-  'py-0 [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:font-normal [&_[cmdk-group-heading]]:text-muted-foreground';
+const ITEM_CLASS = 'yuri-global-search-compact';
 
-const SEARCH_MARK_CLASS = 'rounded-[3px] bg-[color-mix(in_srgb,var(--primary-base)_28%,transparent)] px-0.5 font-[inherit] text-foreground';
+const groupHeading = (title: string, count: number) => (
+  <span className="flex items-baseline gap-2">
+    <span>{title}</span>
+    <span className="yuri-global-search-group-count">{count}</span>
+  </span>
+);
+
+const SEARCH_MARK_CLASS = 'rounded-[3px] bg-[color-mix(in_srgb,var(--primary-base)_28%,transparent)] font-[inherit] text-foreground';
 
 /** Cherry-style mark: every whitespace term, case-insensitive, on the text that is actually shown. */
 function highlightSearchText(text: string, query: string): React.ReactNode {
@@ -156,7 +158,6 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   const activeProject = useProjectsStore((s) => s.getActiveProject());
   const projects = useProjectsStore((s) => s.projects);
   const effectiveDirectory = useEffectiveDirectory();
-  const searchFiles = useFileSearchStore((s) => s.searchFiles);
   const { files: filesApi } = useRuntimeAPIs();
   const { isMobile: deviceIsMobile } = useDeviceInfo();
   const isMobile = presentation === 'page' || deviceIsMobile;
@@ -175,11 +176,6 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   React.useEffect(() => {
     if (presentation === 'page' && isCommandPaletteOpen) inputRef.current?.focus({ preventScroll: true });
   }, [presentation, isCommandPaletteOpen]);
-
-  const currentRoot = React.useMemo(
-    () => (effectiveDirectory ? normalizePath(effectiveDirectory) : null),
-    [effectiveDirectory],
-  );
 
   const [query, setQuery] = React.useState('');
   const [expandedSearchGroups, setExpandedSearchGroups] = React.useState<{ query: string; groups: string[] }>({ query: '', groups: [] });
@@ -376,57 +372,16 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   // ---------------------------------------------------------------------------
   // File search
   // ---------------------------------------------------------------------------
-  const [fileResults, setFileResults] = React.useState<FileHit[]>([]);
-  const [fileResultsKey, setFileResultsKey] = React.useState('');
-  const [fileErrorKey, setFileErrorKey] = React.useState('');
-
-  const fileSearchKey = buildCommandPaletteFileSearchKey(currentRoot, trimmedQuery);
-
-  React.useEffect(() => {
-    if (!isCommandPaletteOpen) {
-      setFileResults([]);
-      setFileResultsKey('');
-      setFileErrorKey('');
-      return;
-    }
-    if (!fileSearchKey) {
-      setFileResults([]);
-      setFileResultsKey('');
-      setFileErrorKey('');
-      return;
-    }
-    if (!currentRoot) {
-      setFileResults([]);
-      setFileResultsKey('');
-      setFileErrorKey('');
-      return;
-    }
-    let cancelled = false;
-    setFileErrorKey('');
-    void searchFiles(currentRoot, trimmedQuery, 10, { type: 'file' })
-      .then((results) => {
-        if (cancelled) return;
-        setFileResults(
-          results.map((file) => ({
-            path: normalizePath(file.path),
-            name: file.name,
-            relativePath: file.relativePath,
-          })),
-        );
-        setFileResultsKey(fileSearchKey);
-        setFileErrorKey('');
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFileResults([]);
-          setFileResultsKey('');
-          setFileErrorKey(fileSearchKey);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isCommandPaletteOpen, currentRoot, trimmedQuery, fileSearchKey, searchFiles]);
+  const fileSearchRoots = React.useMemo(
+    () => buildCommandPaletteFileSearchRoots(projects, availableWorktreesByProject),
+    [projects, availableWorktreesByProject],
+  );
+  const contentScope = { transport: getRuntimeTransportIdentity(), generation: getRuntimeGeneration(), directory: '' };
+  const fileSearchOptions = commandPaletteFileSearchQueryOptions(filesApi, fileSearchRoots, trimmedQuery, contentScope);
+  const fileSearchQuery = useQuery({
+    ...fileSearchOptions,
+    enabled: observeResults && trimmedQuery.length > 0 && fileSearchRoots.length > 0,
+  });
 
   // ---------------------------------------------------------------------------
   // Filter visible items
@@ -453,12 +408,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     ...sessionTitleSearchQueryOptions(trimmedQuery),
     enabled: (isCommandPaletteOpen || retainResults) && (trimmedQuery.length > 0 || presentation === 'page'),
   });
-  const contentScope = { transport: getRuntimeTransportIdentity(), generation: getRuntimeGeneration(), directory: '' };
-  const navigationKey = JSON.stringify([contentScope.transport, contentScope.generation, currentRoot, liveTrimmed, isCommandPaletteOpen]);
+  const navigationKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed, isCommandPaletteOpen]);
   const [navigationSnapshot, setNavigationSnapshot] = React.useState<{ key: string; hits: SessionContentSearchHit[]; sessions: Session[] } | null>(null);
   const frozenResults = navigationSnapshot?.key === navigationKey ? navigationSnapshot : null;
   if (navigationSnapshot && !frozenResults) setNavigationSnapshot(null);
-  const contentIndex = useQuery({ ...sessionContentIndexStatusOptions(), enabled: isCommandPaletteOpen || retainResults });
   const contentSearchQuery = useQuery({
     ...sessionContentSearchQueryOptions(trimmedQuery, { scope: contentScope }),
     enabled: (isCommandPaletteOpen || retainResults) && trimmedQuery.length > 0 && contentScope !== null,
@@ -501,11 +454,9 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
 
   const scoredFiles = React.useMemo(() => {
     if (!isCommandPaletteOpen && !retainResults) return [];
-    if (liveTrimmed !== trimmedQuery || fileErrorKey === fileSearchKey) return [];
-    return scoreCommandPaletteFiles(fileResults, trimmedQuery, fileSearchKey, fileResultsKey);
-  }, [isCommandPaletteOpen, retainResults, fileResults, fileResultsKey, fileSearchKey, trimmedQuery, liveTrimmed, fileErrorKey]);
-
-  const isFileSearchStale = (isCommandPaletteOpen || retainResults) && fileSearchKey.length > 0 && fileResultsKey !== fileSearchKey && fileErrorKey !== fileSearchKey;
+    if (liveTrimmed !== trimmedQuery) return [];
+    return scoreCommandPaletteFiles(fileSearchQuery.data?.files ?? [], trimmedQuery);
+  }, [isCommandPaletteOpen, retainResults, fileSearchQuery.data, trimmedQuery, liveTrimmed]);
 
   // ---------------------------------------------------------------------------
   // Projects
@@ -523,7 +474,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     });
   }, [projects, liveTrimmed, hasQuery]);
 
-  const expansionKey = JSON.stringify([currentRoot, liveTrimmed]);
+  const expansionKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed]);
   const expandedGroups = expandedSearchGroups.query === expansionKey ? expandedSearchGroups.groups : [];
   const previewGroup = <T,>(group: string, items: T[]): T[] => (
     hasQuery && !expandedGroups.includes(group) ? items.slice(0, 5) : items
@@ -604,14 +555,18 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   });
 
   const handleOpenFile = useEvent(async (filePath: string) => {
-    if (!currentRoot) return;
+    const file = fileSearchQuery.data?.files.find((item) => item.path === filePath);
+    if (!file) return;
+    const transport = getRuntimeTransportIdentity();
+    const generation = getRuntimeGeneration();
     const validation = await validateContextFileOpen(filesApi, filePath);
+    if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration()) return;
     if (!validation.ok) {
       toast.error(getContextFileOpenFailureMessage(validation.reason));
       return;
     }
     if (mobileActions) mobileActions.openFile({ path: filePath });
-    else openContextFile(currentRoot, filePath);
+    else openContextFile(effectiveDirectory || file.directory, filePath);
     close();
   });
 
@@ -656,10 +611,12 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     return project?.label || (project?.path || directory).split('/').pop() || '';
   };
 
-  const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && Boolean(fileSearchKey) && fileErrorKey === fileSearchKey;
+  const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && (
+    fileSearchQuery.isError || Boolean(fileSearchQuery.data?.failedDirectories.length)
+  );
   const remoteResultsPending = hasQuery && (
     liveTrimmed !== trimmedQuery
-    || (Boolean(currentRoot) && isFileSearchStale)
+    || (fileSearchQuery.isFetching && !fileSearchQuery.isSuccess)
     || (titleSearchQuery.isFetching && !titleSearchQuery.isSuccess)
     || (contentScope !== null && contentSearchQuery.isFetching && !contentSearchQuery.isSuccess)
   );
@@ -689,7 +646,9 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
 
   const content = (
         <Command
+          loop
           shouldFilter={false}
+          style={{ '--yuri-search-shortcut-width': mac ? '1.75rem' : '3rem' } as React.CSSProperties}
           onKeyDownCapture={handleNumberShortcut}
           onPointerDownCapture={(event) => {
             const row = (event.target as Element).closest('[cmdk-item]');
@@ -715,14 +674,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               onBack={onBack ?? close}
             />
           ) : searchInput}
-          <CommandList aria-label={t('commandPalette.title')} className="overscroll-contain p-1.5">
-            <div className="px-3 py-2 typography-meta text-muted-foreground" aria-live="polite">
-              {contentIndex.isError || contentIndex.data?.phase === 'error' || contentIndex.data?.phase === 'partial'
-                ? t('commandPalette.index.partial')
-                : contentIndex.data?.phase === 'ready'
-                  ? t('commandPalette.index.ready', { count: contentIndex.data.messages })
-                  : t('commandPalette.index.progress', { completed: contentIndex.data?.completed ?? 0, total: contentIndex.data?.total ?? 0 })}
-            </div>
+          <CommandList aria-label={t('commandPalette.title')} className="yuri-global-search-results overscroll-contain">
             {resultsSettled && !fileSearchFailed && !titleSearchFailed && !contentSearchFailed && sessionsStatus !== 'loading' && sessionsStatus !== 'error' ? (
               <CommandEmpty className="py-10 text-center typography-meta text-muted-foreground">
                 {t('commandPalette.empty.noResults')}
@@ -733,7 +685,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
             {resultsSettled ? groupOrder.map((groupKey) => {
               if (groupKey === 'commands' && visibleCommands.length > 0) {
                 return (
-                  <CommandGroup key="commands" heading={t('settings.page.commands.title')} className={GROUP_CLASS}>
+                  <CommandGroup key="commands" heading={groupHeading(t('settings.page.commands.title'), scoredCommands.length)}>
                     {visibleCommands.map((cmd) => (
                       <CommandItem
                         key={cmd.id}
@@ -744,7 +696,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                         <CommandPaletteResult
                           title={highlightSearchText(cmd.title, liveTrimmed)}
                           trailing={!isMobile && cmd.shortcutId ? (
-                            <Kbd className="h-3.5 min-w-0 shrink-0 rounded-full border-0 bg-[color-mix(in_srgb,var(--surface-foreground)_6%,transparent)] px-1.5 font-sans text-[10px] font-medium tracking-tight text-muted-foreground/65 shadow-none">
+                            <Kbd variant="hint">
                               {shortcut(cmd.shortcutId)}
                             </Kbd>
                           ) : undefined}
@@ -757,7 +709,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               }
               if (groupKey === 'settings' && visibleSettings.length > 0) {
                 return (
-                  <CommandGroup key="settings" heading={t('settings.view.home.title')} className={GROUP_CLASS}>
+                  <CommandGroup key="settings" heading={groupHeading(t('settings.view.home.title'), scoredSettings.length)}>
                     {visibleSettings.map((cmd) => (
                       <CommandItem
                         key={cmd.id}
@@ -774,7 +726,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               }
               if (groupKey === 'sessions' && visibleConversations.length > 0) {
                 return (
-                  <CommandGroup key="sessions" heading={t('layout.mainTab.chat')} className={GROUP_CLASS}>
+                  <CommandGroup key="sessions" heading={groupHeading(t('layout.mainTab.chat'), conversationResults.length)}>
                     {visibleConversations.map(({ session, hit }, index) => {
                       const title = hit?.title || session.title || t('commandPalette.session.untitled');
                       const project = projectForSession(session);
@@ -786,27 +738,27 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                           key={hit ? `message:${session.id}:${hit.messageID}` : `session:${session.id}`}
                           value={hit ? `message:${session.id}:${hit.messageID}` : `session:${session.id}`}
                           onSelect={() => hit ? handleOpenContentHit(hit) : handleOpenSession(session)}
-                          className="flex-col items-stretch gap-1 rounded-lg px-3 py-2"
+                          className="yuri-global-search-session"
                           aria-keyshortcuts={!isMobile && index < 9 ? `${mac ? 'Meta' : 'Control'}+${index + 1}` : undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex min-w-0 flex-1 items-center gap-2">
-                              <span className="min-w-0 truncate typography-ui-label text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
+                          <div className="min-w-0">
+                            <div className="yuri-global-search-session-heading">
+                              <span className="yuri-global-search-session-title min-w-0 truncate text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
                               {hasTime ? (
-                                <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="shrink-0 whitespace-nowrap typography-micro text-muted-foreground">
+                                <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="yuri-global-search-session-time shrink-0 whitespace-nowrap text-muted-foreground">
                                   {conversationTimeFormatter.format(date)}
                                 </time>
                               ) : null}
                             </div>
-                            <span className="max-w-[28%] shrink-0 truncate typography-meta text-muted-foreground" title={project}>{project}</span>
-                            {!isMobile && index < 9 ? <Kbd className="h-5 min-w-8 shrink-0 rounded-full border-0 bg-interactive-selection px-2 text-muted-foreground shadow-none">{mac ? '⌘' : 'Ctrl+'}{index + 1}</Kbd> : null}
+                            {hit ? (
+                              <span className="yuri-global-search-session-excerpt text-muted-foreground">
+                                <span className="yuri-global-search-session-speaker">{t(hit.role === 'user' ? 'commandPalette.message.user' : 'commandPalette.message.assistant')}: </span>
+                                {highlightSearchText(hit.snippet.replace(/\s+/g, ' '), liveTrimmed)}
+                              </span>
+                            ) : null}
                           </div>
-                          {hit ? (
-                            <span className="line-clamp-3 whitespace-pre-wrap break-words typography-ui-label text-muted-foreground">
-                              <span className="font-medium">{t(hit.role === 'user' ? 'commandPalette.message.user' : 'commandPalette.message.assistant')}: </span>
-                              {highlightSearchText(hit.snippet, liveTrimmed)}
-                            </span>
-                          ) : null}
+                          <span className="yuri-global-search-session-project min-w-0 truncate text-muted-foreground" title={project}>{project}</span>
+                          {!isMobile && index < 9 ? <Kbd variant="hint" className="yuri-global-search-session-shortcut justify-self-end">{mac ? '⌘' : 'Ctrl+'}{index + 1}</Kbd> : null}
                         </CommandItem>
                       );
                     })}
@@ -816,9 +768,9 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               }
               if (groupKey === 'files' && visibleFiles.length > 0) {
                 return (
-                  <CommandGroup key="files" heading={t('layout.mainTab.files')} className={GROUP_CLASS}>
+                  <CommandGroup key="files" heading={groupHeading(t('layout.mainTab.files'), scoredFiles.length)}>
                     {visibleFiles.map((file) => {
-                      const display = truncatePathMiddle(file.relativePath || file.name, {
+                      const display = truncatePathMiddle(file.path, {
                         maxLength: 80,
                       });
                       return (
@@ -843,7 +795,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               }
               if (groupKey === 'projects' && visibleProjects.length > 0) {
                 return (
-                  <CommandGroup key="projects" heading={t('sessions.sidebar.projectsTitle')} className={GROUP_CLASS}>
+                  <CommandGroup key="projects" heading={groupHeading(t('sessions.sidebar.projectsTitle'), scoredProjects.length)}>
                     {visibleProjects.map((project) => {
                       const displayName = project.displayName;
                       return (
@@ -853,7 +805,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                           onSelect={() => handleOpenProject(project.id, project.path)}
                           className={ITEM_CLASS}
                         >
-                          <CommandPaletteResult title={highlightSearchText(displayName, liveTrimmed)} />
+                          <CommandPaletteResult
+                            title={highlightSearchText(displayName, liveTrimmed)}
+                            description={highlightSearchText(truncatePathMiddle(project.path, { maxLength: 80 }), liveTrimmed)}
+                          />
                         </CommandItem>
                       );
                     })}
@@ -870,7 +825,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
             {resultsSettled && sessionsStatus === 'error' ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
             {resultsSettled && titleSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
             {resultsSettled && contentSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.messages')}</div> : null}
-            {resultsSettled && fileSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('mobile.files.error.listFailed')}</div> : null}
+            {resultsSettled && fileSearchFailed ? <div data-file-search-notice role="status" className="px-4 py-2 text-xs text-muted-foreground">{t(fileSearchQuery.isError ? 'commandPalette.error.files' : 'commandPalette.error.filesPartial')}</div> : null}
           </CommandList>
         </Command>
   );
@@ -891,9 +846,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
         data-global-search="true"
         data-mobile={isMobile}
         data-page-scroll-lock="true"
+        presentation={isMobile ? 'default' : 'picker'}
         className={isMobile
           ? 'yuri-global-search-page yuri-global-search-mobile fixed inset-0 z-50 m-0 flex max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0'
-          : 'yuri-global-search yuri-mobile-overlay-surface yuri-mobile-overlay-surface--translucent yuri-composer-autocomplete-surface fixed left-1/2 top-[10vh] z-50 w-[min(56rem,calc(100vw-3rem))] max-w-none -translate-x-1/2 translate-y-0 gap-0 overflow-hidden rounded-3xl border-0 p-0'}
+          : 'yuri-global-search z-50 w-[min(56rem,calc(100vw-3rem))]'}
         containerClassName="block p-0"
         overlayClassName="bg-transparent dark:bg-transparent"
         showCloseButton={false}

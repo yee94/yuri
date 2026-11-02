@@ -493,6 +493,56 @@ describe('private relay compiled-process boundary', () => {
     socket.close();
   });
 
+  it.skipIf(!process.env.YURI_RELAY_WORKER_TEST_URL)('carries real encrypted Host/Client HTTP, SSE and authenticated WebSockets across Workers', { timeout: 30_000 }, async () => {
+    const relayUrl = process.env.YURI_RELAY_WORKER_TEST_URL;
+    if (!relayUrl) throw new Error('Worker test endpoint required');
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'yuri-worker-e2e-'));
+    vi.stubEnv('YURI_DATA_DIR', temp);
+    let origin: Awaited<ReturnType<typeof startOrigin>> | undefined;
+    let host: ReturnType<typeof startRelayHost> | undefined;
+    let client: ReturnType<typeof createRelayTunnelClient> | undefined;
+    cleanup = async () => {
+      client?.close(); host?.stop(); await origin?.stop();
+      await rm(temp, { recursive: true, force: true });
+    };
+    origin = await startOrigin();
+    const identity = await buildIdentity();
+    host = startRelayHost({ relayUrl, identity, getLocalPort: () => origin!.port,
+      batchWindowMs: 5, onStatus() {}, logger: { warn() {}, info() {} } });
+    client = createRelayTunnelClient({ relayUrl, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk,
+      batchWindowMs: 5, helloRetryMs: 50 });
+    await eventually(() => host!.getStatus().state === 'connected' && client!.getStatus().state === 'connected', 'Worker E2EE tunnel did not connect');
+
+    expect((await client.fetch('/api/event')).status).toBe(401);
+    const headers = { authorization: 'Bearer client-token' };
+    const httpResponse = await client.fetch('/api/e2e/http', { method: 'POST', headers, body: 'worker-stream-body' });
+    expect(await httpResponse.json()).toEqual({ body: 'worker-stream-body', hasRelayConnection: true });
+    const snapshot = await client.fetch('/api/e2e/initialization', { headers });
+    expect(await snapshot.json()).toEqual(initializationSnapshot);
+    const sse = await client.fetch('/api/e2e/sse', { headers });
+    const reader = sse.body!.getReader(); const chunks: Uint8Array[] = [];
+    while (true) { const item = await reader.read(); if (item.done) break; chunks.push(item.value); }
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(Buffer.concat(chunks).toString()).toBe('data: one\n\ndata: two\n\ndata: three\n\n');
+
+    const denied = client.openWebSocket('/api/remote-desktop/ws');
+    await expect(waitSocketOpen(denied)).rejects.toThrow();
+    const tokenResponse = await client.fetch('/auth/url-token', { method: 'POST', headers });
+    const { token } = await tokenResponse.json() as { token: string };
+    const socket = client.openWebSocket(`/api/remote-desktop/ws?yuri_url_token=${encodeURIComponent(token)}`);
+    await waitSocketOpen(socket);
+    const messages: Array<string | ArrayBuffer> = [];
+    socket.onmessage = ({ data }) => { messages.push(data); };
+    for (let index = 0; index < 50; index += 1) socket.send(`input:${index}`);
+    const image = new Uint8Array(1024 * 1024).fill(7);
+    socket.send(image); image.fill(0);
+    await eventually(() => messages.length === 51, 'Worker dropped or reordered encrypted remote desktop frames');
+    expect(messages.slice(0, 50)).toEqual(Array.from({ length: 50 }, (_, index) => `input:${index}`));
+    expect(new Uint8Array(messages[50] as ArrayBuffer)).toEqual(new Uint8Array(1024 * 1024).fill(7));
+    expect(origin.observedOrigins).toEqual([`http://127.0.0.1:${origin.port}`]);
+    socket.close();
+  });
+
   it('recovers HTTP and the retained SDK event pipeline after phone, Host, and combined disconnects', { timeout: 60_000 }, async () => {
     const temp = await mkdtemp(path.join(os.tmpdir(), 'yuri-relay-recovery-'));
     const binary = path.join(temp, 'yuri-relay');

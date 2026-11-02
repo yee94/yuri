@@ -1,0 +1,360 @@
+import { signal, computed, component } from 'eficy';
+import { Button, Input } from 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.js';
+import 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.css';
+
+const appearance = signal('light');
+const narrow = signal(false);
+const query = signal('');
+const scenario = signal('all');
+const expanded = signal<string[]>([]);
+const selected = signal('avatar');
+const opened = signal('');
+
+const examples = [
+  { id: 'popup', title: 'Popup 分隔线', time: '18:51', project: 'yuri', role: '助理', text: '我会对照 Changed files 弹层的实际样式，统一细边框与轻阴影，避免不同浮层之间的视觉差异。' },
+  { id: 'image', title: '图片问题排查与修复', time: '18:46', project: 'yuri', role: '助理', text: '图片服务已恢复，相关测试通过。我会再发起一次实际请求，确认图片能够正常生成和展示。' },
+  { id: 'avatar', title: '助手头像眨眼动效', time: '18:42', project: 'yuri', role: '你', text: '我希望新助理使用自己的专属头像，而不是通用的蓝色圆脸。眨眼动效只播放一次，不循环，并且不影响已有的工作状态动画。' },
+  { id: 'relay', title: 'relay 可用性检查', time: '18:42', project: 'yuri', role: '助理', text: '我检查了当前 Relay 的部署方式。支持 Cloudflare Workers 和只用 Cloudflare 代理现有服务器，是两种不同的方案。\n\n现有 Node.js 与 Docker 部署需要保留，连接管理与协议逻辑应分开处理。' },
+  { id: 'scroll', title: '安卓滚动条宽度偏移', time: '18:38', project: 'yuri', role: '助理', text: '我会只在安卓 App 中隐藏原生滚动条，保留正常滑动和现有浮层指示，不改变桌面浏览器的行为。' },
+];
+
+type GroupKey = 'plugins' | 'sessions' | 'commands' | 'settings' | 'files' | 'projects';
+type Result = {
+  id: string; group: GroupKey; title: string; time?: string; project?: string;
+  role?: string; text?: string; detail?: string; shortcut?: string;
+};
+
+const catalog: Result[] = [
+  { id: 'plugin-usage', group: 'plugins', title: '查看模型用量', detail: '用量插件提供的命令' },
+  { id: 'plugin-image', group: 'plugins', title: '打开图片生成面板', detail: '图片插件提供的命令' },
+  ...examples.map(row => ({ ...row, group: 'sessions' as const })),
+  { id: 'new-session', group: 'commands', title: '新建对话', shortcut: '⌘N' },
+  { id: 'open-settings', group: 'commands', title: '打开设置', shortcut: '⌘,' },
+  { id: 'add-project', group: 'commands', title: '添加项目' },
+  { id: 'appearance', group: 'settings', title: '外观' },
+  { id: 'model-settings', group: 'settings', title: '模型' },
+  { id: 'plugin-settings', group: 'settings', title: '插件' },
+  { id: 'file-palette', group: 'files', title: 'CommandPalette.tsx', detail: 'packages/ui/src/components/ui/CommandPalette.tsx' },
+  { id: 'file-commands', group: 'files', title: 'GuiPluginCommands.tsx', detail: 'packages/ui/src/components/gui-plugins/GuiPluginCommands.tsx' },
+  { id: 'project-yuri', group: 'projects', title: 'yuri', detail: 'workspace/yuri' },
+  { id: 'project-design', group: 'projects', title: 'design-system', detail: 'workspace/design-system' },
+];
+
+const groupDefinitions: { key: GroupKey; title: string; context?: string }[] = [
+  { key: 'plugins', title: '插件命令' },
+  { key: 'sessions', title: '对话' },
+  { key: 'commands', title: '命令' },
+  { key: 'settings', title: '设置' },
+  { key: 'files', title: '文件' },
+  { key: 'projects', title: '项目' },
+];
+
+const groups = computed(() => {
+  const terms = query.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return groupDefinitions.map(group => {
+    const matches = catalog.filter(row => {
+      if (row.group !== group.key) return false;
+      if (scenario.value === 'initial' && !['sessions', 'commands', 'plugins'].includes(row.group)) return false;
+      return terms.every(term => `${row.title} ${row.project || ''} ${row.text || ''} ${row.detail || ''}`.toLocaleLowerCase().includes(term));
+    });
+    const limit = scenario.value === 'all' ? 1 : 5;
+    return { ...group, total: matches.length, rows: expanded.value.includes(group.key) ? matches : matches.slice(0, limit) };
+  }).filter(group => group.total > 0);
+});
+const results = computed(() => groups.value.flatMap(group => group.rows));
+const totalResults = computed(() => groups.value.reduce((total, group) => total + group.total, 0));
+
+function setScenario(value: string) {
+  scenario.value = value;
+  query.value = value === 'screenshot' ? '我' : '';
+  selected.value = value === 'screenshot' ? 'avatar' : '';
+  opened.value = '';
+  expanded.value = [];
+}
+
+const Highlight = component(({ text }: { text: string }) => {
+  const terms = query.value.trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return <>{text}</>;
+  const escaped = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(${escaped.join('|')})`, 'gi');
+  return <>{text.split(pattern).map((part, index) => terms.some(term => term.toLocaleLowerCase() === part.toLocaleLowerCase())
+    ? <mark key={index}>{part}</mark> : <span key={index}>{part}</span>)}</>;
+});
+
+function moveSelection(direction: number) {
+  const rows = results.value;
+  if (!rows.length) return;
+  const current = rows.findIndex(row => row.id === selected.value);
+  const next = current < 0 ? (direction > 0 ? 0 : rows.length - 1) : (current + direction + rows.length) % rows.length;
+  selected.value = rows[next].id;
+  opened.value = '';
+}
+
+const App = component(() => {
+  const rows = results.value;
+  const activeId = rows.some(row => row.id === selected.value) ? selected.value : rows[0]?.id;
+  const sessionRows = rows.filter(row => row.group === 'sessions');
+  const activeRow = rows.find(row => row.id === activeId);
+  return (
+    <main className="search-review bg-background text-foreground" data-appearance={appearance.value}>
+      <style>{`
+        /* Standalone snapshots of Yuri's existing Carbonfox Light / Cursor Dark tokens. */
+        .search-review[data-appearance="light"] {
+          --surface-background:#FFFFFF; --surface-foreground:#161616;
+          --surface-muted:#F4F4F4; --surface-elevated:#f4f4f7;
+          --surface-muted-foreground:#868585; --interactive-border:#DCDCDC;
+          --interactive-selection:#cacfd87f; --interactive-hover:#43424214;
+          --primary-base:#0072C3; --surface-overlay:#00000020; color-scheme:light;
+        }
+        .search-review[data-appearance="dark"] {
+          --surface-background:#1a1a1a; --surface-foreground:#CCCCCCdd;
+          --surface-muted:#141414; --surface-elevated:#141414;
+          --surface-muted-foreground:#848484; --interactive-border:#8484841f;
+          --interactive-selection:#ffffff1d; --interactive-hover:#2A2A2A99;
+          --primary-base:#4c9df3; --surface-overlay:#00000099; color-scheme:dark;
+        }
+        .search-review {
+          --background:var(--surface-background); --foreground:var(--surface-foreground);
+          --muted:var(--surface-muted); --muted-foreground:var(--surface-muted-foreground);
+          --border:var(--interactive-border); --input:var(--interactive-border);
+          min-height:100dvh; padding:32px 28px 44px; box-sizing:border-box;
+          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+          background:var(--surface-muted); color:var(--surface-foreground);
+          -webkit-font-smoothing:antialiased;
+        }
+        .search-review * { box-sizing:border-box; }
+        .review-toolbar { max-width:896px; margin:0 auto 30px; display:flex; align-items:center; gap:16px; }
+        .review-name { flex:1; min-width:0; }
+        .review-name h1 { font-size:14px; line-height:22px; font-weight:600; margin:0; }
+        .review-name p { font-size:11px; line-height:18px; color:var(--surface-muted-foreground); margin:2px 0 0; }
+        .review-controls { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+        .review-toggle { display:flex; gap:2px; }
+        .search-review .review-button {
+          height:30px; min-height:30px; padding:0 10px; font-size:11px; border:0;
+          border-radius:7px; background:transparent; color:var(--surface-muted-foreground); box-shadow:none;
+        }
+        .search-review .review-button:hover { background:var(--interactive-hover); color:var(--surface-foreground); }
+        .search-review .review-button[aria-pressed="true"] { background:var(--interactive-selection); color:var(--surface-foreground); }
+        .search-review button:focus-visible, .search-review input:focus-visible {
+          outline:2px solid var(--surface-foreground); outline-offset:3px; box-shadow:none;
+        }
+        .preview-stage { max-width:896px; margin:0 auto; }
+        .preview-stage[data-narrow="true"] { max-width:390px; }
+        .search-panel {
+          border:1px solid color-mix(in srgb,var(--interactive-border) 75%,transparent);
+          border-radius:20px; background:var(--surface-background);
+          box-shadow:0 12px 36px -12px var(--surface-overlay),0 2px 8px -4px var(--surface-overlay);
+        }
+        .search-entry { display:flex; align-items:center; gap:14px; padding:19px 24px 13px; }
+        .search-label { flex-shrink:0; color:var(--surface-muted-foreground); font-size:12px; }
+        .search-review .query-input {
+          width:100%; min-width:0; height:30px; padding:0; border:0; border-radius:2px;
+          background:transparent; color:var(--surface-foreground); font-family:inherit;
+          font-size:17px; line-height:26px; font-weight:400; box-shadow:none;
+        }
+        .search-review .query-input:focus-visible { outline:0; box-shadow:none; }
+        .search-entry:focus-within { box-shadow:inset 0 -1px var(--interactive-border); }
+        .search-entry kbd { margin-left:auto; }
+        .scope-line {
+          display:flex; align-items:center; justify-content:space-between; gap:12px;
+          padding:0 24px 17px; font-size:11px; line-height:18px; color:var(--surface-muted-foreground);
+          border-bottom:1px solid color-mix(in srgb,var(--interactive-border) 65%,transparent);
+        }
+        .scope-description { display:flex; align-items:center; gap:14px; }
+        .index-count { white-space:nowrap; font-variant-numeric:tabular-nums; }
+        .scenario-toolbar { max-width:896px; margin:-12px auto 18px; display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+        .scenario-note { margin:0 0 0 auto; padding-left:12px; font-size:10px; line-height:18px; color:var(--surface-muted-foreground); }
+        .results-scroll { max-height:580px; overflow-y:auto; padding:16px 8px 14px; scrollbar-width:thin; scrollbar-color:var(--interactive-border) transparent; }
+        .result-group + .result-group { margin-top:12px; }
+        .result-group > .result-row + .result-row { margin-top:2px; }
+        .group-label { display:flex; align-items:center; gap:8px; padding:0 16px 4px; font-size:11px; line-height:17px; color:var(--surface-muted-foreground); }
+        .group-count { font-size:10px; font-variant-numeric:tabular-nums; }
+        .group-context { margin-left:4px; font-size:10px; }
+        .search-review .group-more { margin-left:auto; height:20px; min-height:20px; padding:0 3px; font-size:10px; }
+        .result-row {
+          display:grid; grid-template-columns:minmax(0,1fr) 82px 35px; column-gap:16px;
+          width:100%; padding:8px 16px; text-align:left; border:0; border-radius:10px;
+          background:transparent; color:inherit; font-family:inherit; cursor:pointer;
+        }
+        .result-row:hover { background:var(--interactive-hover); }
+        .result-row[aria-selected="true"] { background:color-mix(in srgb,var(--interactive-selection) 65%,transparent); }
+        .result-main { min-width:0; }
+        .result-heading { display:flex; align-items:baseline; gap:12px; min-width:0; line-height:20px; }
+        .result-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:550; }
+        .result-time { flex-shrink:0; color:var(--surface-muted-foreground); font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .result-excerpt {
+          display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+          margin:4px 0 0; font-size:12px; line-height:20px; font-weight:400;
+          color:color-mix(in srgb,var(--surface-foreground) 67%,var(--surface-background));
+          white-space:normal; overflow-wrap:anywhere;
+        }
+        .speaker { color:var(--surface-muted-foreground); margin-right:7px; font-size:11px; font-weight:400; }
+        .project-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; align-self:start; padding-top:2px; font-size:11px; line-height:18px; color:var(--surface-muted-foreground); text-align:right; }
+        .search-review kbd {
+          display:inline-flex; align-items:center; justify-content:center; align-self:start;
+          min-width:29px; height:19px; padding:0 5px; border:1px solid color-mix(in srgb,var(--interactive-border) 70%,transparent);
+          border-radius:5px; background:transparent; font-family:inherit; font-size:10px; line-height:17px;
+          font-weight:400; color:var(--surface-muted-foreground); white-space:nowrap;
+        }
+        .search-review .result-key, .search-review .command-key {
+          height:14px; min-width:0; padding:0 6px; border:0; border-radius:999px;
+          background:color-mix(in srgb,var(--surface-foreground) 6%,transparent);
+          color:color-mix(in srgb,var(--surface-muted-foreground) 65%,transparent);
+          font-family:inherit; font-size:10px; font-weight:500; line-height:1;
+          letter-spacing:-0.025em; box-shadow:none;
+        }
+        .result-key { justify-self:end; }
+        .result-row.compact { display:flex; align-items:center; gap:16px; min-height:36px; padding-top:8px; padding-bottom:8px; }
+        .compact .result-main { display:flex; flex:1; align-items:baseline; gap:18px; }
+        .compact .result-title { flex-shrink:0; max-width:62%; font-size:12px; line-height:20px; font-weight:400; }
+        .result-detail { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--surface-muted-foreground); }
+        .compact .command-key { margin-left:auto; align-self:center; min-width:35px; }
+        .search-review mark { background:color-mix(in srgb,var(--primary-base) 12%,transparent); color:var(--surface-foreground); border-radius:2px; padding:0; font-weight:inherit; }
+        .panel-footer {
+          display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;
+          min-height:42px; padding:10px 24px; font-size:10px; line-height:18px;
+          color:var(--surface-muted-foreground); border-top:1px solid color-mix(in srgb,var(--interactive-border) 65%,transparent);
+        }
+        .key-help { display:flex; align-items:center; gap:14px; }
+        .key-help span { display:flex; align-items:center; gap:5px; }
+        .search-review .key-help kbd { height:17px; min-width:18px; font-size:9px; }
+        .empty { padding:70px 16px; text-align:center; font-size:13px; }
+        .empty p { color:var(--surface-muted-foreground); font-size:12px; margin:10px 0 0; }
+        .review-notes { max-width:896px; margin:25px auto 0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:28px; }
+        .review-notes p { margin:0; font-size:11px; line-height:19px; color:var(--surface-muted-foreground); }
+        .review-notes strong { display:block; margin-bottom:4px; font-size:11px; font-weight:500; color:var(--surface-foreground); }
+        .preview-status { max-width:896px; margin:20px auto 0; font-size:10px; line-height:18px; color:var(--surface-muted-foreground); }
+        .preview-stage[data-narrow="true"] .search-entry { padding:18px 18px 12px; }
+        .preview-stage[data-narrow="true"] .scope-line { padding:0 18px 15px; align-items:start; }
+        .preview-stage[data-narrow="true"] .index-count { font-size:10px; }
+        .preview-stage[data-narrow="true"] .result-row { grid-template-columns:minmax(0,1fr) 42px; column-gap:10px; padding:8px 10px; min-height:44px; }
+        .preview-stage[data-narrow="true"] .result-key { display:none; }
+        .preview-stage[data-narrow="true"] .result-heading { gap:8px; }
+        .preview-stage[data-narrow="true"] .result-time { font-size:9px; }
+        .preview-stage[data-narrow="true"] .panel-footer { padding:10px 18px; }
+        .preview-stage[data-narrow="true"] .key-help { display:none; }
+        .preview-stage[data-narrow="true"] .group-context { display:none; }
+        .preview-stage[data-narrow="true"] .compact .result-main { gap:10px; }
+        .preview-stage[data-narrow="true"] .command-key { display:none; }
+        .preview-stage[data-narrow="true"] .compact .result-title { max-width:75%; }
+        @media(max-width:600px) {
+          .search-review { padding:22px 12px 28px; }
+          .review-toolbar { flex-wrap:wrap; gap:12px; margin-bottom:22px; }
+          .review-controls { width:100%; justify-content:space-between; }
+          .review-notes { grid-template-columns:1fr; gap:12px; margin-top:22px; }
+          .review-notes strong { display:inline; margin-right:8px; }
+          .result-row { grid-template-columns:minmax(0,1fr) 42px; column-gap:10px; padding:8px 10px; min-height:44px; }
+          .result-key,.key-help,.command-key,.group-context { display:none!important; }
+          .index-count { font-size:10px; }
+          .scenario-note { width:100%; margin:4px 0 0; padding-left:10px; }
+          .compact .result-main { gap:10px; }
+          .compact .result-title { max-width:75%; }
+          .search-entry { padding:18px 18px 12px; }
+          .scope-line { padding:0 18px 15px; }
+          .result-heading { gap:8px; }
+          .panel-footer { padding:10px 18px; }
+        }
+      `}</style>
+
+      <header className="review-toolbar">
+        <div className="review-name">
+          <h1>全局搜索 · 排版提案</h1>
+          <p>对话、命令、设置、文件、项目与插件命令，统一在一张列表中。</p>
+        </div>
+        <div className="review-controls">
+          <div className="review-toggle" role="group" aria-label="预览宽度">
+            <Button variant="ghost" className="review-button" aria-pressed={!narrow.value} onClick={() => { narrow.value = false; }}>桌面</Button>
+            <Button variant="ghost" className="review-button" aria-pressed={narrow.value} onClick={() => { narrow.value = true; }}>窄屏</Button>
+          </div>
+          <div className="review-toggle" role="group" aria-label="外观">
+            <Button variant="ghost" className="review-button" aria-pressed={appearance.value === 'light'} onClick={() => { appearance.value = 'light'; }}>浅色</Button>
+            <Button variant="ghost" className="review-button" aria-pressed={appearance.value === 'dark'} onClick={() => { appearance.value = 'dark'; }}>深色</Button>
+          </div>
+        </div>
+      </header>
+
+      <nav className="scenario-toolbar" aria-label="设计稿场景">
+        <Button variant="ghost" className="review-button" aria-pressed={scenario.value === 'all'} onClick={() => setScenario('all')}>全类型样例</Button>
+        <Button variant="ghost" className="review-button" aria-pressed={scenario.value === 'initial'} onClick={() => setScenario('initial')}>初始状态</Button>
+        <Button variant="ghost" className="review-button" aria-pressed={scenario.value === 'screenshot'} onClick={() => setScenario('screenshot')}>截图场景</Button>
+        <p className="scenario-note">{scenario.value === 'all' ? '六类排版同屏展示，不代表空搜索的默认结果' : scenario.value === 'initial' ? '无关键词时：插件命令、最近对话和常用命令' : scenario.value === 'screenshot' ? '还原“我”的正文命中场景' : '仅筛选本设计稿的演示数据'}</p>
+      </nav>
+
+      <section className="preview-stage" data-narrow={String(narrow.value)} aria-label="全局搜索排版预览">
+        <div className="search-panel" onKeyDown={event => {
+          if (event.nativeEvent.isComposing) return;
+          if ((event.target as HTMLElement).closest('[data-preview-action]')) return;
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault(); moveSelection(event.key === 'ArrowDown' ? 1 : -1);
+          } else if (event.key === 'Enter') {
+            event.preventDefault(); opened.value = rows.find(row => row.id === activeId)?.title || '';
+          } else if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+            const row = sessionRows[Number(event.key) - 1];
+            if (row) { event.preventDefault(); selected.value = row.id; opened.value = row.title; }
+          }
+        }}>
+          <div className="search-entry">
+            <label className="search-label" htmlFor="global-search-query">搜索</label>
+            <Input id="global-search-query" className="query-input" value={query.value} placeholder="搜索对话、命令、设置、文件或项目…" autoComplete="off" spellCheck={false}
+              onChange={event => { query.value = event.target.value; scenario.value = event.target.value.trim() ? 'search' : 'initial'; expanded.value = []; opened.value = ''; }} />
+            {query.value ? <Button variant="ghost" className="review-button" data-preview-action onClick={() => setScenario('initial')}>清空</Button> : null}
+          </div>
+          <div className="results-scroll">
+            <div role="listbox" aria-label="全局搜索结果">
+              {groups.value.map(group => <div className="result-group" key={group.key} role="group" aria-labelledby={`heading-${group.key}`}>
+                <div className="group-label">
+                  <span id={`heading-${group.key}`}>{group.title}</span>
+                  <span className="group-count">{group.total}</span>
+                  {group.context ? <span className="group-context">{group.context}</span> : null}
+                  {group.total > group.rows.length ? <Button variant="ghost" className="review-button group-more" data-preview-action
+                    onClick={() => { expanded.value = [...expanded.value, group.key]; }}>展开其余 {group.total - group.rows.length} 项</Button> : null}
+                </div>
+                {group.rows.map(row => {
+                  const isSession = row.group === 'sessions';
+                  const number = sessionRows.findIndex(session => session.id === row.id) + 1;
+                  return <button type="button" role="option" aria-selected={row.id === activeId}
+                    className={`result-row ${isSession ? '' : 'compact'}`} key={row.id} title={row.detail || row.title}
+                    aria-label={`${group.title}，${row.title}${row.time ? `，11月2日 ${row.time}` : ''}`}
+                    onFocus={() => { selected.value = row.id; }}
+                    onClick={() => { selected.value = row.id; opened.value = row.title; }}>
+                    {isSession ? <>
+                      <div className="result-main">
+                        <div className="result-heading">
+                          <span className="result-title" title={row.title}><Highlight text={row.title} /></span>
+                          <time className="result-time" dateTime={`2026-11-02T${row.time}:00`} title={`2026年11月2日 ${row.time}`}>11/2 {row.time}</time>
+                        </div>
+                        {scenario.value !== 'initial' && row.text ? <p className="result-excerpt"><span className="speaker">{row.role}</span><Highlight text={row.text.replace(/\s+/g, ' ')} /></p> : null}
+                      </div>
+                      <span className="project-name" title={row.project}>{row.project}</span>
+                      {number <= 9 ? <kbd className="result-key">⌘{number}</kbd> : <span />}
+                    </> : <>
+                      <div className="result-main">
+                        <span className="result-title"><Highlight text={row.title} /></span>
+                        {row.detail ? <span className="result-detail"><Highlight text={row.detail} /></span> : null}
+                      </div>
+                      {row.shortcut ? <kbd className="command-key">{row.shortcut}</kbd> : null}
+                    </>}
+                  </button>;
+                })}
+              </div>)}
+            </div>
+            {!rows.length ? <div className="empty">没有匹配的结果<p>试试“设置”“Command”或“yuri”。</p></div> : null}
+          </div>
+          <footer className="panel-footer">
+            <span>已展示 {rows.length} / {totalResults.value} 项</span>
+            <div className="key-help"><span><kbd>↑</kbd><kbd>↓</kbd>选择</span><span><kbd>↵</kbd>{activeRow?.group === 'commands' || activeRow?.group === 'plugins' ? '执行命令' : '打开'}</span><span><kbd>⌘ 数字</kbd>打开对话</span></div>
+          </footer>
+        </div>
+      </section>
+
+      <aside className="review-notes" aria-label="本次排版调整">
+        <p><strong>区分密度，不拆界面</strong>命令、设置、文件、项目与插件命令用紧凑单行；对话才保留时间与两行摘要。</p>
+        <p><strong>元信息各归其位</strong>文件与项目展示来源路径，命令展示快捷键，插件展示说明。搜索跨项目，不显示索引数量或范围说明。</p>
+        <p><strong>组间疏，组内紧</strong>组间留白 12px，条目间距 2px，标题与首条间距 4px。靠留白分组，不加分隔线或卡片。</p>
+      </aside>
+      <p className="preview-status" role="status">{opened.value ? `模拟打开「${opened.value}」；此预览不会跳转真实会话。` : '可输入关键词、用方向键选择、点击结果；支持浅深色与窄屏检查。示例内容，不连接真实搜索。'}</p>
+    </main>
+  );
+});
+
+export default App;

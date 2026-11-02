@@ -2569,6 +2569,8 @@ export const dict: Record<I18nKey, string> = {
   'commandPalette.description': '搜尋檔案、會話和命令。',
   'commandPalette.input.placeholder': '搜尋檔案、會話、命令...',
   'commandPalette.error.messages': '訊息搜尋無法載入，其他結果仍會顯示。',
+  'commandPalette.error.files': '檔案搜尋暫時無法使用。',
+  'commandPalette.error.filesPartial': '部分專案暫時無法搜尋檔案。',
   'commandPalette.group.messages': '訊息',
   'commandPalette.index.progress': '正在索引所有專案最近 30 天的對話：{completed}/{total}',
   'commandPalette.index.ready': '所有專案 · 最近 30 天 · 已索引 {count} 則訊息',

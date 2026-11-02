@@ -79,6 +79,103 @@ Layer 1 (`yuri-relay`) and Push (`yuri-push-relay`) are separate processes in on
 - Single-file Layer 1 bundle build: Bun. This repository uses Bun 1.3.14. Do not Bun-compile the Push entry; Docker runs it with Node 24.
 - Public deployment: a DNS name, TLS certificate, reverse proxy, and firewall policy appropriate for the deployment.
 
+### Cloudflare Workers
+
+Layer 1 also runs on Workers with a Durable Object. Node/Docker and Workers use
+the **same** routing, P-256 authentication, replay protection, admission limits,
+pair lifecycle and forwarding queues in `src/core.js`. Only HTTP/WebSocket I/O
+differs. Existing Yuri Hosts and Clients do not need a protocol or encryption change.
+This does not move the Node APNs Push service to Workers.
+
+From the repository root:
+
+```sh
+bun run --cwd packages/relay-server worker:dev
+bun run --cwd packages/relay-server worker:build
+```
+
+The commands use a pinned Wrangler through `npx`; no Wrangler dependency is added
+to the application. The build command is a dry run and creates no cloud resources.
+For a public staging deployment, authenticate locally first:
+
+```sh
+npx --yes wrangler@4.156.1 login
+bun run --cwd packages/relay-server worker:deploy
+```
+
+Alternatively supply `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` through
+the process environment. Use an account-scoped Workers Scripts Edit token; add
+Account Settings Read if needed for account discovery. Custom-domain deployment
+additionally needs the relevant zone permissions. Never put tokens in chat,
+source files, Wrangler configuration or command arguments.
+
+The default Worker name is `yuri-relay-worker`; change it or pass `--name` before
+deploying if that service already exists. Wrangler prints a `https://…workers.dev`
+URL; use the same hostname as `wss://…workers.dev/ws` in **Add a device**. This does
+not change the product default or replace existing saved pairing endpoints.
+Production may use a Cloudflare-managed custom domain via Wrangler `routes` with
+`custom_domain: true`. Do not check personal deployment domains/account IDs into
+the repository. Set them through a local configuration outside the repository or
+the Cloudflare dashboard.
+
+Operational boundaries:
+
+- A single Durable Object coordinates the deployment, preserving deployment-wide
+  limits. This is not a horizontally sharded implementation. Active routes and
+  replay/admission records are ephemeral, just like Node. Deployment/restart can
+  disconnect sockets; Hosts and Clients reconnect. Do not delete/recreate the
+  Durable Object binding or migration to perform a normal update or rollback.
+- This version uses **ordinary accepted WebSockets, not Hibernation**. Open
+  connections keep the object active and can incur duration charges even when
+  quiet. Free-plan quotas are finite; paid usage may exceed its base allocation.
+  Do not enable a paid plan without the account owner's approval.
+- Workers exposes no TCP pause/resume, send-completion callback or documented
+  `bufferedAmount`. Shared limits bound application-owned queues and frame sizes,
+  but cannot bound or observe Cloudflare's outbound runtime buffers. Node's TCP
+  backpressure guarantee does **not** apply to Workers. Benchmark slow receivers
+  and remote-desktop traffic before adopting it as a production replacement.
+- Cloudflare handles TCP admission and ping/pong frames. Node-only raw-TCP and
+  server-initiated heartbeat controls do not apply; existing Host/Client liveness
+  checks still apply. Per-IP limits use Cloudflare's `CF-Connecting-IP`, never
+  client-provided `X-Forwarded-For`.
+- Workers accepts complete frames before application code can reject them.
+  The default shared 128-KiB frame limit is enforced **after** runtime receipt.
+  Cloudflare ingress/WAF limits and account budgets remain important.
+- Only Layer 1 `/ws`, `/healthz`, and `/readyz` are provided. APNs notification
+  delivery requires an existing standalone Push service plus an explicit Host
+  `YURI_PUSH_RELAY_URL`, or is unavailable on this endpoint.
+- Observability and preview URLs are disabled in the supplied configuration.
+  Do not enable logging of WebSocket query strings: they contain Host signatures
+  and public keys. No Apple secrets, client bearer tokens or pairing keys are
+  required for Layer 1 deployment.
+
+`YURI_RELAY_PATH` defaults to `/ws`. Optional `YURI_RELAY_LIMITS_JSON` accepts an
+object of positive-integer overrides using the same camelCase names as `Limits`
+in `src/index.d.ts`. Invalid configuration fails closed. TCP-only overrides have
+no effect on Workers. Configure cloud variables in the dashboard or a local
+Wrangler config; `.dev.vars` and `.wrangler/` are ignored.
+
+Validate against a **dedicated** local or staging Worker (these tests intentionally
+trigger rejection limits; do not target a shared production Relay):
+
+```sh
+# Terminal 1: pin the local port.
+bun run --cwd packages/relay-server worker:dev --port 18787
+
+# Terminal 2: the same wire-contract suite runs against Node AND real workerd.
+YURI_RELAY_WORKER_TEST_URL=ws://127.0.0.1:18787/ws \
+  bun run --cwd packages/relay-server test:worker
+
+# Real Host/TypeScript Client, E2EE, authenticated HTTP/SSE and remote desktop.
+YURI_RELAY_WORKER_TEST_URL=ws://127.0.0.1:18787/ws \
+  bunx vitest run --project @yuriai/web \
+  packages/web/server/lib/relay/relay-server.e2e.test.ts -t 'across Workers'
+```
+
+Without `YURI_RELAY_WORKER_TEST_URL`, Worker network tests are explicitly skipped;
+adapter/unit tests and the Node protocol half still run. A local pass does not
+prove public DNS, regional connectivity, production quotas or slow-peer behavior.
+
 ## Install and quick start
 
 `yuri-relay` ships as an executable in the public `@yuriai/relay-server` package.

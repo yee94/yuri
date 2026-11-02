@@ -139,6 +139,39 @@ const applyIndex = async (value: SessionIndexSnapshot) => {
     await useGlobalSessionsStore.getState().syncSessionsForDirectories(['/repo']);
 };
 
+test('model-only index changes reach the catalog while unrelated rows retain references', async () => {
+    await applyIndex(snapshot(10));
+    const before = useGlobalSessionsStore.getState().activeSessions;
+    const next = snapshot(11);
+    next.directories[0].sessions[42].model = { providerID: 'p', id: 'model' };
+    await applyIndex(next);
+    const after = useGlobalSessionsStore.getState().activeSessions;
+    expect(after.filter((session, index) => session === before[index])).toHaveLength(299);
+    expect(after.find((session) => session.id === 'session-42')?.model).toEqual({ providerID: 'p', id: 'model' });
+});
+
+test('snapshot and live upsert publish model-only changes but 50 light events retain the list', () => {
+    const rows = snapshot(1).directories[0].sessions;
+    const store = useGlobalSessionsStore.getState();
+    store.applySnapshot(rows, []);
+    const model = { providerID: 'p', id: 'model' };
+    store.applySnapshot(rows.map((row, i) => i === 42 ? { ...row, model } : row), []);
+    expect(useGlobalSessionsStore.getState().activeSessions[42].model).toEqual(model);
+    store.upsertSession({ ...rows[42], model: { providerID: 'p', id: 'new' }, time: { ...rows[42].time, updated: 100 } });
+    const before = useGlobalSessionsStore.getState().activeSessions;
+    expect(before[42].model?.id).toBe('new');
+    expect(before.filter((row, i) => row === rows[i])).toHaveLength(299);
+    const notify = vi.fn();
+    const unsubscribe = useGlobalSessionsStore.subscribe((next, previous) => {
+        if (next.activeSessions !== previous.activeSessions) notify();
+    });
+    try {
+        for (let i = 0; i < 50; i++) store.upsertSession({ ...before[42], model: undefined });
+        expect(useGlobalSessionsStore.getState().activeSessions).toBe(before);
+        expect(notify).not.toHaveBeenCalled();
+    } finally { unsubscribe(); }
+});
+
 test('duplicate and newer equivalent index snapshots preserve all projection references', async () => {
     await applyIndex(snapshot(10));
     const before = useGlobalSessionsStore.getState();

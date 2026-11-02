@@ -35,7 +35,8 @@ describe('composerAutocompleteChrome', () => {
     const overlay = mobileStyles.match(/\.yuri-mobile-overlay-surface \{[\s\S]*?\n\}/)?.[0] ?? '';
     const catalog = mobileStyles.match(/\.yuri-composer-autocomplete-surface \{[\s\S]*?\n\}/)?.[0] ?? '';
     expect(overlay).toContain('backdrop-filter:');
-    expect(catalog).toContain('color-mix(in srgb, var(--surface-elevated) 22%, transparent)');
+    expect(catalog).toContain('var(--yuri-overlay-translucent-fill)');
+    expect(mobileStyles).toContain('--yuri-overlay-translucent-fill: color-mix(in srgb, var(--surface-elevated) 22%, transparent)');
     expect(catalog).not.toContain('var(--yuri-mobile-glass-fill)');
     expect(mobileStyles).toContain('.yuri-composer-autocomplete-row:active {');
     expect(mobileStyles).toContain('background: var(--yuri-mobile-press-fill)');

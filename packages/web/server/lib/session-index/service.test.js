@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionIndexService } from './service.js';
 import { applySessionIndexEvent } from './event-ingest.js';
+import { createSessionIndexSyncRuntime } from './sync-runtime.js';
 
 const tempDirectories = [];
 
@@ -32,6 +33,148 @@ afterEach(() => {
 });
 
 describe('Electron session index', () => {
+  it('uses the existing global startup sync to enrich cached models once without per-session reads', async () => {
+    const service = createService({ value: 'http://runtime-a.test' });
+    const now = Date.now();
+    service.upsert(session('cached', now));
+    const fetchFn = vi.fn(async (url) => {
+      expect(url.pathname).toBe('/session');
+      expect(url.searchParams.get('limit')).toBe('100');
+      expect(url.searchParams.has('directory')).toBe(false);
+      return Response.json({ data: [{ ...session('cached', now - 1), model: { providerID: 'p', id: 'backfilled' } }] });
+    });
+    const runtime = createSessionIndexSyncRuntime({ sessionIndexService: service, fetchFn,
+      buildOpenCodeUrl: (route) => `http://opencode.test${route}`,
+      getOpenCodeAuthHeaders: () => ({}), waitForOpenCodeReady: async () => true });
+    try {
+      runtime.enqueue([], { startup: true });
+      await vi.waitFor(() => expect(service.getHistoryBackfill()?.complete).toBe(true));
+      expect(runtime.snapshot().directories[0].sessions[0].model).toEqual({ providerID: 'p', id: 'backfilled' });
+      runtime.enqueue([], { startup: true });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally { runtime.stop(); service.close(); }
+  });
+
+  it('round-trips only the bounded model reference and preserves it through light refreshes and reopen', () => {
+    const service = createService({ value: 'http://runtime-a.test' });
+    const model = { providerID: 'openai', id: 'gpt-6.1-sol', variant: 'high' };
+    service.upsert({ ...session('model', 10), model: { ...model, credentials: 'not-a-model-field' } });
+    expect(service.snapshot().directories[0].sessions[0].model).toEqual(model);
+    expect(service.findBySessionId('model').model).toEqual(model);
+    expect(service.upsertAndReportChange({ ...session('model', 10), model })).toBe(false);
+    service.upsert(session('model', 20));
+    service.replaceDirectory({ directory: '/repo', sessions: [session('model', 30)] });
+    expect(service.snapshot().directories[0].sessions[0].model).toEqual(model);
+    const next = { providerID: 'provider', id: 'other' };
+    expect(service.upsertAndReportChange({ ...session('model', 40), model: next })).toBe(true);
+    service.close();
+    const reopened = createSessionIndexService({ dbPath: path.join(tempDirectories.at(-1), 'session-index.sqlite'),
+      getRuntimeConfig: () => ({ apiBaseUrl: 'http://runtime-a.test' }) });
+    try { expect(reopened.findBySessionId('model').model).toEqual(next); } finally { reopened.close(); }
+  });
+
+  it('updates models from ordered native events without changing activity and rejects stale refreshes', () => {
+    const runtimeRef = { value: 'http://runtime-a.test' };
+    const service = createService(runtimeRef);
+    try {
+      service.upsert(session('model', 10));
+      service.upsert(session('other', 20));
+      const before = service.snapshot();
+      const emit = (id, created, seq) => applySessionIndexEvent(service, {
+        type: 'session.model.selected', created, durable: { seq },
+        data: { sessionID: 'model', model: { providerID: 'p', id } },
+      });
+      expect(emit('new', 30, 5)).toBe(true);
+      expect(emit('new', 30, 5)).toBe(false);
+      expect(emit('old', 40, 4)).toBe(false);
+      expect(service.snapshot().directories[0].sessions.map((row) => [row.id, row.metadata.yuri.titleRefresh]))
+        .toEqual(before.directories[0].sessions.map((row) => [row.id, row.metadata.yuri.titleRefresh]));
+      service.replaceDirectory({ directory: '/repo', sessions: [session('other', 20),
+        { ...session('model', 25), model: { providerID: 'p', id: 'stale' } }] });
+      expect(service.findBySessionId('model').model).toEqual({ providerID: 'p', id: 'new' });
+      runtimeRef.value = 'http://runtime-b.test';
+      expect(emit('wrong-runtime', 50, 6)).toBe(false);
+      runtimeRef.value = 'http://runtime-a.test';
+      expect(service.findBySessionId('model').model.id).toBe('new');
+    } finally { service.close(); }
+  });
+
+  it('retains model event fences after reopening and merges alias models independently of title recency', () => {
+    const service = createService({ value: 'http://runtime-a.test' });
+    service.upsert(session('model', 10, '/alias'));
+    service.updateModel('model', { providerID: 'p', id: 'new' }, 40, 5);
+    service.upsert({ ...session('model', 50, '/real'), title: 'New title' });
+    service.close();
+    const reopened = createSessionIndexService({ dbPath: path.join(tempDirectories.at(-1), 'session-index.sqlite'),
+      getRuntimeConfig: () => ({ apiBaseUrl: 'http://runtime-a.test' }),
+      resolveDirectory: (directory) => directory === '/alias' ? '/real' : directory });
+    try {
+      expect(reopened.findBySessionId('model')).toMatchObject({ title: 'New title', model: { providerID: 'p', id: 'new' } });
+      expect(reopened.updateModel('model', { providerID: 'p', id: 'stale' }, 60, 4)).toBe(false);
+      expect(reopened.updateModel('model', { providerID: 'p', id: 'latest' }, 60, 6)).toBe(true);
+    } finally { reopened.close(); }
+  });
+
+  it('reports pure model changes, ignores malformed references and keeps duplicate model events write-free', () => {
+    const service = createService({ value: 'http://runtime-a.test' });
+    try {
+      const row = session('model', 10);
+      service.upsert(row);
+      for (const model of [null, {}, { providerID: 'p' }, { providerID: 'p', id: 'x'.repeat(513) }]) {
+        expect(service.upsertAndReportChange({ ...row, model })).toBe(false);
+      }
+      expect(service.upsertAndReportChange({ ...row, model: { providerID: 'p', id: 'm' } })).toBe(true);
+      service.updateModel('model', { providerID: 'p', id: 'm' }, 20, 5);
+      const db = new (createRequire(import.meta.url)('better-sqlite3'))(path.join(tempDirectories.at(-1), 'session-index.sqlite'));
+      db.exec("CREATE TRIGGER reject_duplicate_model BEFORE UPDATE ON session_summary BEGIN SELECT RAISE(ABORT, 'duplicate write'); END");
+      try {
+        for (let i = 0; i < 50; i++) expect(service.updateModel('model', { providerID: 'p', id: 'm' }, 20, 5)).toBe(false);
+      } finally { db.close(); }
+    } finally { service.close(); }
+  });
+
+  it('upgrades old rows without clearing history or pins and backfills only missing models atomically', () => {
+    const service = createService({ value: 'http://runtime-a.test' });
+    const key = service.getRuntimeKey();
+    service.upsert(session('missing', 10));
+    service.upsert({ ...session('live', 20), model: { providerID: 'p', id: 'live' } });
+    service.setPinned('missing', 5);
+    service.close();
+    const dbPath = path.join(tempDirectories.at(-1), 'session-index.sqlite');
+    const Database = createRequire(import.meta.url)('better-sqlite3');
+    const db = new Database(dbPath);
+    for (const column of ['model_json', 'model_updated_at', 'model_sequence']) {
+      if (db.prepare("SELECT name FROM pragma_table_info('session_summary') WHERE name = ?").get(column)) {
+        db.exec(`ALTER TABLE session_summary DROP COLUMN ${column}`);
+      }
+    }
+    db.prepare('INSERT OR REPLACE INTO session_index_meta VALUES (?, ?)')
+      .run(`history_backfill:${key}`, JSON.stringify({ complete: true }));
+    db.close();
+    const reopened = createSessionIndexService({ dbPath, getRuntimeConfig: () => ({ apiBaseUrl: 'http://runtime-a.test' }) });
+    try {
+      expect(reopened.snapshot().pinnedSessionIds).toEqual(['missing']);
+      expect(reopened.findBySessionId('missing').title).toBe('Session missing');
+      expect(reopened.getHistoryBackfill()).toBeNull();
+      reopened.upsert({ ...session('live', 20), model: { providerID: 'p', id: 'live' } });
+      const page = { expectedRuntimeKey: key, progress: { complete: true }, sessions: [
+        { ...session('missing', 1), title: 'stale title', model: { providerID: 'p', id: 'history' } },
+        { ...session('live', 1), model: { providerID: 'p', id: 'stale' } },
+      ] };
+      const writer = new Database(dbPath);
+      writer.exec("CREATE TRIGGER reject_model BEFORE UPDATE ON session_summary BEGIN SELECT RAISE(ABORT, 'injected model failure'); END");
+      expect(() => reopened.commitHistoryPage(page)).toThrow('injected model failure');
+      expect(reopened.findBySessionId('missing').model).toBeUndefined();
+      expect(reopened.getHistoryBackfill()).toBeNull();
+      writer.exec('DROP TRIGGER reject_model');
+      writer.close();
+      expect(reopened.commitHistoryPage(page)).toBe(true);
+      expect(reopened.findBySessionId('missing')).toMatchObject({ title: 'Session missing', model: { providerID: 'p', id: 'history' } });
+      expect(reopened.findBySessionId('live').model.id).toBe('live');
+      expect(reopened.getHistoryBackfill()).toEqual({ complete: true });
+    } finally { reopened.close(); }
+  });
+
   it('merges duplicate aliases by freshness, keeps the newest twenty and preserves independent pins', () => {
     const service = createService({ value: 'http://runtime-a.test' });
     service.replaceDirectory({ directory: '/alias', sessions: Array.from({ length: 20 }, (_, i) => session(`alias-${i}`, i + 1, '/alias')) });

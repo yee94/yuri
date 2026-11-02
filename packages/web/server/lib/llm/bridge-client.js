@@ -32,66 +32,89 @@ export async function prepareLlmBridgeDirectory({ pluginPath = BRIDGE_PLUGIN_PAT
   return directory;
 }
 
-/**
- * Removes bridge directories left by earlier builds or by the former per-process
- * temporary layout. A directory whose Location is still loaded upstream may be
- * in use by another host, so it stays until the upstream idle sweep unloads it.
- * Only failure to read the live inventory skips the whole pass.
- */
-export async function pruneStaleLlmBridgeDirectories({ client, keep, root = os.tmpdir(), fsLike = fs, signal }) {
-  const entries = await Promise.resolve().then(() => client.debug.location.list(signal ? { signal } : undefined)).catch(() => null);
-  if (!Array.isArray(entries)) return [];
-  const live = new Set(entries.map((entry) => entry?.directory && path.resolve(entry.directory)).filter(Boolean));
-  const names = await fsLike.readdir(root).catch(() => []);
-  const removed = [];
-  for (const name of names) {
-    if (!name.startsWith('yuri-inference-')) continue;
-    const directory = path.join(root, name);
-    if (directory === keep || live.has(directory)) continue;
-    const resolved = await fsLike.realpath(directory).catch(() => directory);
-    if (live.has(resolved)) continue;
-    await fsLike.rm(directory, { recursive: true, force: true }).then(() => removed.push(directory), () => undefined);
-  }
-  return removed;
-}
-
 let directoryPromise;
-let pruneStarted = false;
-export async function ensureLlmBridgeDirectory({ client } = {}) {
+export async function ensureLlmBridgeDirectory() {
   if (!directoryPromise) directoryPromise = prepareLlmBridgeDirectory()
     .catch(error => { directoryPromise = undefined; throw error; });
-  const directory = await directoryPromise;
-  if (client && !pruneStarted) {
-    pruneStarted = true;
-    // Cleanup is best effort and never delays inference.
-    void pruneStaleLlmBridgeDirectories({ client, keep: directory }).catch(() => undefined);
+  const pending = directoryPromise;
+  const directory = await pending;
+  try {
+    await fs.access(path.join(directory, '.opencode', 'plugins', 'yuri-llm.js'));
+    return directory;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    if (directoryPromise === pending) {
+      directoryPromise = prepareLlmBridgeDirectory()
+        .catch(error => { directoryPromise = undefined; throw error; });
+    }
+    return directoryPromise;
   }
-  return directory;
 }
 
 // The content-addressed directory may be shared with other hosts, so shutdown
 // only forgets it and never deletes it.
 export async function stopLlmBridgeDirectory() {
   directoryPromise = undefined;
-  pruneStarted = false;
 }
+
+// A Location inventory describes one OpenCode service, not every service using
+// this temporary root. Never delete peer directories based on that inventory.
+const bridgeReloads = new Map();
+const reloadBridgeLocation = ({ key, client, directory, ensureBridgeDirectory }) => {
+  const current = bridgeReloads.get(key);
+  if (current?.directory === directory) return current.promise;
+  const entry = { directory, promise: null };
+  entry.promise = Promise.resolve().then(async () => {
+    await ensureBridgeDirectory({ client });
+    await client.debug.location.evict({ location: { directory } });
+    await client.plugin.list({ location: { directory } });
+  }).finally(() => {
+    if (bridgeReloads.get(key) === entry) bridgeReloads.delete(key);
+  });
+  // A caller may cancel before subscribing; a shared repair can still finish.
+  void entry.promise.catch(() => undefined);
+  bridgeReloads.set(key, entry);
+  return entry.promise;
+};
+
+const awaitBridgeReload = async (promise, signal) => {
+  signal?.throwIfAborted();
+  if (!signal) return promise;
+  let abort;
+  const cancelled = new Promise((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try { return await Promise.race([promise, cancelled]); }
+  finally { signal.removeEventListener('abort', abort); }
+};
 
 export async function generateCleanCompletion({ buildOpenCodeUrl, getOpenCodeAuthHeaders, clientFactory,
   providerID, modelID, variant, messages, tools, cacheKey = randomUUID(), maxOutputTokens, signal,
   ensureBridgeDirectory = ensureLlmBridgeDirectory,
 }) {
   signal?.throwIfAborted();
-  const client = clientFactory?.() ?? OpenCode.make({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers: getOpenCodeAuthHeaders() });
+  const providedClient = clientFactory?.();
+  const baseUrl = providedClient ? null : buildOpenCodeUrl('/', '').replace(/\/$/, '');
+  const client = providedClient ?? OpenCode.make({ baseUrl, headers: getOpenCodeAuthHeaders() });
   const directory = await ensureBridgeDirectory({ client });
   const options = { location: { directory }, signal };
   const rpc = client.rpc(LlmBridge);
   // Loading this isolated Location activates only its own plugin file, without global config writes.
   await client.plugin.list({ location: { directory } }, { signal });
   let ready;
+  let reloaded = false;
   for (let attempt = 0; ; attempt++) {
     try { ready = await rpc.ready({}, options); break; }
     catch (error) {
-      if (signal?.aborted || error?.type !== 'rpc.unavailable' || attempt >= 20) throw error;
+      if (signal?.aborted || error?.type !== 'rpc.unavailable') throw error;
+      if (attempt >= 20) {
+        if (reloaded || typeof client.debug?.location?.evict !== 'function') throw error;
+        reloaded = true;
+        await awaitBridgeReload(reloadBridgeLocation({ key: baseUrl ?? client, client, directory, ensureBridgeDirectory }), signal);
+        attempt = -1;
+        continue;
+      }
       await new Promise((resolve, reject) => {
         const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
         const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 250);
@@ -100,6 +123,7 @@ export async function generateCleanCompletion({ buildOpenCodeUrl, getOpenCodeAut
       });
     }
   }
+  signal?.throwIfAborted();
   if (ready.version !== LLM_BRIDGE_VERSION) throw new Error('Incompatible Yuri LLM bridge');
   const result = await rpc.generate({ providerID, modelID, ...(variant ? { variant } : {}), messages,
     ...(tools ? { tools } : {}), cacheKey, ...(maxOutputTokens ? { maxOutputTokens } : {}),

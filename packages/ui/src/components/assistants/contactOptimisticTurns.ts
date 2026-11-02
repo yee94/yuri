@@ -435,8 +435,10 @@ export const contactSendErrorMessage = (
     if (error.code === 'no_provider') return labels.noProvider;
     if (error.code === 'admission_timeout' || error.code === 'generate_timeout') return labels.timedOut;
     if (error.message && error.message !== error.code) return error.message;
+    return `${labels.sendFailed}\n\n${error.code} (HTTP ${error.status})`;
   }
   if (isAbortError(error)) return labels.timedOut;
+  if (error instanceof Error && error.message.trim()) return error.message;
   return labels.sendFailed;
 };
 

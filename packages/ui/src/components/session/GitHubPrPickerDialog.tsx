@@ -3,7 +3,6 @@ import { useEvent } from '@reactuses/core';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -214,7 +213,7 @@ export function GitHubPrPickerDialog({
 
   const content = (
     <>
-      <div className="mt-2 flex items-center gap-3">
+      <div className="yuri-picker-search mt-2 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-0">
           <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -244,7 +243,7 @@ export function GitHubPrPickerDialog({
         </button>
       </div>
 
-      <div className={cn(isMobile ? 'min-h-0' : 'flex-1 overflow-y-auto')}>
+      <div className={cn('yuri-picker-list', isMobile ? 'min-h-0' : 'flex-1 overflow-y-auto')}>
           {!projectDirectory ? (
             <div className="text-center text-muted-foreground py-8">{t('session.githubPrPicker.empty.noActiveProject')}</div>
           ) : null}
@@ -278,7 +277,7 @@ export function GitHubPrPickerDialog({
           {directNumber && projectDirectory && github && connected ? (
             <div
               className={cn(
-                'group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
+                'yuri-picker-row group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
                 loadingPrNumber === directNumber && 'bg-interactive-selection/30'
               )}
               onClick={() => void attachPr(directNumber)}
@@ -303,13 +302,13 @@ export function GitHubPrPickerDialog({
             <div
               key={`${pr.sourceRepo?.owner ?? ''}-${pr.sourceRepo?.repo ?? ''}-${pr.number}`}
               className={cn(
-                'group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
+                'yuri-picker-row group flex items-center gap-2 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer',
                 loadingPrNumber === pr.number && 'bg-interactive-selection/30'
               )}
               onClick={() => void attachPr(pr.number, pr.sourceRepo)}
             >
               <div className="flex-1 min-w-0 ml-0.5">
-                <p className="typography-small text-foreground truncate">
+                <p className="yuri-picker-label typography-small text-foreground truncate">
                   <span className="text-muted-foreground mr-1">#{pr.number}</span>
                   {pr.title}
                 </p>
@@ -318,7 +317,7 @@ export function GitHubPrPickerDialog({
                     {pr.sourceRepo.owner}/{pr.sourceRepo.repo}
                   </span>
                 ) : null}
-                <p className="typography-meta text-muted-foreground truncate">{pr.head} → {pr.base}</p>
+                <p className="yuri-picker-meta typography-meta text-muted-foreground truncate">{pr.head} → {pr.base}</p>
               </div>
 
               <div className="flex-shrink-0 h-5 flex items-center mr-2">
@@ -392,15 +391,11 @@ export function GitHubPrPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[70vh] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <Icon name="github" className="h-5 w-5" />
+      <DialogContent presentation="picker">
+        <DialogHeader className="yuri-picker-header">
+          <DialogTitle className="yuri-picker-title">
             {title}
           </DialogTitle>
-          <DialogDescription>
-            {description}
-          </DialogDescription>
         </DialogHeader>
 
         {content}

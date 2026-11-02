@@ -223,8 +223,15 @@ Stable release service refreshes use `rollout.mjs --action snapshot` to retain t
 CI publishes a static snapshot: place zip artifacts under `ota/bundles/<bundleId>.zip` and update the matching `ota/channels/<channel>.json`. The Vercel origin (`updates.example.com`) is authoritative — CI deploys snapshots there via `vercel deploy --prebuilt`.
 
 The EdgeOne host (`updates-mirror.example.com`) keeps the existing Git project
-and public domain. CI deploys Vercel first, then commits both manifests to `main`
-via `scripts/mobile-ota/commit-edgeone-manifests.sh` to trigger its build. The
+and public domain. CI deploys Vercel first, then synchronizes both manifests to
+`main` via `scripts/mobile-ota/commit-edgeone-manifests.sh` and explicitly POSTs
+the main-branch deployment hook stored in `YURI_EDGEONE_DEPLOY_HOOK`. A successful
+Git push alone is not a deployment receipt. Unchanged manifests still invoke the
+hook, so a retry cannot silently skip a missing deployment. All three publishing
+jobs validate hook configuration before changing the Vercel distribution; a
+missing hook, rejected request or transport failure fails publication. Hook URLs
+are credentials: never print them or commit them to the repository. Requests do
+not follow redirects or automatically replay ambiguous POST failures. The
 EdgeOne build must expose `YURI_OTA_UPSTREAM_ORIGIN` (the verified Vercel HTTPS
 origin) to the build process, not only to runtime functions.
 
@@ -258,8 +265,8 @@ If Vercel deploys but EdgeOne build/verification fails, publication fails rather
 than claiming both are complete. Vercel retains the new authoritative snapshot;
 EdgeOne retains its previous working one. Retry the rollout workflow with
 `action: refresh-distribution`: it preserves version, generation, rollout and
-native targets, republishes the full Vercel snapshot and forces an EdgeOne Git
-build even when manifests are unchanged. No App rebuild, installer, TestFlight
+native targets, republishes the full Vercel snapshot and explicitly requests an
+EdgeOne build even when manifests are unchanged. No App rebuild, installer, TestFlight
 upload or new release version is needed. Do not deploy a git source-only Vercel
 build during recovery.
 
@@ -277,9 +284,16 @@ avoid recursive deployment. Normal release and rollout workflows already run
 the same distribution gate, so routine publishing needs no console login.
 
 One-time EdgeOne setup must point the Git project at `yee94/yuri`, branch
-`main`, root `deploy/update-service`, with production automatic deployment
-enabled and the build environment origin configured above. `edgeone.json`
-overrides console build/output settings. A retired/backup repository binding
+`main`, root `deploy/update-service`, with the build environment origin configured
+above. Create a deployment hook for `main` in project settings and save its URL
+as the repository Actions secret `YURI_EDGEONE_DEPLOY_HOOK` (inherited by the
+reusable rollout workflow). CI uses this hook rather than depending on Git push
+callbacks or commit skip directives. Keep Git automatic deployment disabled once
+the hook-driven workflows are active, so Actions owns the production lock and
+there are no competing Git-triggered builds. A hook acknowledgment is only a
+request receipt; the complete download, Range and current-code gates remain the
+authority for success. `edgeone.json` overrides console build/output settings.
+A retired/backup repository binding
 cannot receive current manifest commits; matching proxied OTA versions does
 not prove that the project deployed current code. Verify the distribution
 marker, not only its manifest version.

@@ -15,14 +15,21 @@ start or replace OpenCode to provide inference.
   restarts and concurrent hosts running the same bundle reuse one directory and
   one Location instead of adding one per process. The plugin file is replaced
   atomically only when its content differs. Shutdown never deletes this shared
-  directory. On first use per process, cleanup removes other `yuri-inference-*`
-  directories (older bundles and the former per-process layout) unless upstream
-  `debug.location.list` reports them loaded; an unreadable inventory skips the
-  pass. Cleanup is best effort and never delays inference.
+  directory. The Host never automatically deletes other `yuri-inference-*`
+  directories: one service's `debug.location.list` cannot establish that another
+  service is not using them. Older bundles remain for OS/operator cleanup.
+  Each use checks that the staged plugin still exists; a missing file is
+  restaged through one shared preparation flight without rereading bundles on
+  the normal warm path.
 - Calls use the official authenticated `client.rpc(LlmBridge)` transport, scoped
   to that directory. `ready` verifies protocol version 2 and runtime service availability; only RPC-not-ready
-  startup errors receive a bounded readiness retry. Generation is not rerun for
-  arbitrary transport errors, because a response may already have been produced.
+  startup errors receive a bounded readiness retry. Persistent `rpc.unavailable`
+  restages the plugin and evicts/reloads only that isolated Location once, then
+  repeats the bounded readiness check. Concurrent callers on one upstream share
+  that reload; cancelling one caller does not cancel another caller's repair.
+  Other Locations, user sessions and global configuration are untouched.
+  Generation is never replayed by this recovery, including ambiguous transport
+  failures, because a response may already have been produced.
 - `bridge-plugin.js` runs **inside external OpenCode**. It reads that Location's
   live `ModelResolver.Service` through the RPC caller's Location context. The
   external service itself resolves the selected model/variant, active integration
@@ -79,7 +86,8 @@ files. Web build, prepack and development API scripts build it. At runtime the
 Host copies its bytes into the temporary directory, including when the Host
 source lives in Electron ASAR; external OpenCode needs no access to ASAR or
 Yuri's node_modules. The bundle has no machine-specific source directory.
-Shutdown removes the owned directory; a failed staging operation cleans up.
+Shutdown forgets the cached directory without deleting it; failed staging only
+removes its own incomplete temporary file.
 
 ## Completion contract
 

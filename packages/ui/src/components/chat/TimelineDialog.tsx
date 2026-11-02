@@ -3,7 +3,6 @@ import { useEvent } from '@reactuses/core';
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
@@ -20,6 +19,9 @@ import { useDeviceInfo } from '@/lib/device';
 import { cn } from '@/lib/utils';
 import { useSessionSurface } from './SessionSurfaceContext';
 import { getTimelineActionAvailability } from './timelineActions';
+import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import './timeline-dialog.css';
 
 interface TimelineDialogProps {
     open: boolean;
@@ -40,7 +42,7 @@ type PendingTimelineAction = { type: 'revert' | 'fork'; messageId: string } | nu
 /**
  * Stable shell: always mounted by ChatContainer. Holds cross-open UI state only.
  * Expensive message subscription + list build live in TimelineDialogBody, which
- * mounts solely under DialogContent (Base UI portal presence / exit lifecycle).
+ * mounts solely under desktop Dialog or mobile sheet portal presence / exit lifecycle.
  *
  * Pending fork/revert gate lives on the shell (survives body remount during exit
  * / reopen) and stays locked until the in-flight promise settles. A generation
@@ -59,6 +61,8 @@ export const TimelineDialog: React.FC<TimelineDialogProps> = ({
     onLoadEarlier,
     onRevertMessage,
 }) => {
+    const { t } = useI18n();
+    const { isMobile } = useDeviceInfo();
     const [pendingAction, setPendingAction] = React.useState<PendingTimelineAction>(null);
     const [searchQuery, setSearchQuery] = React.useState('');
     const [selectedIndex, setSelectedIndex] = React.useState(0);
@@ -88,28 +92,53 @@ export const TimelineDialog: React.FC<TimelineDialogProps> = ({
 
     if (!sessionID) return null;
 
+    const body = (
+        <TimelineDialogBody
+            open={open}
+            onOpenChange={onOpenChange}
+            sessionID={sessionID}
+            directory={directory}
+            onScrollToMessage={onScrollToMessage}
+            onScrollByTurnOffset={onScrollByTurnOffset}
+            onResumeToLatest={onResumeToLatest}
+            canLoadEarlier={canLoadEarlier}
+            isLoadingEarlier={isLoadingEarlier}
+            onLoadEarlier={onLoadEarlier}
+            onRevertMessage={onRevertMessage}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            selectedIndex={selectedIndex}
+            onSelectedIndexChange={setSelectedIndex}
+            pendingAction={pendingAction}
+            runPendingMessageAction={runPendingMessageAction}
+        />
+    );
+
+    if (isMobile) {
+        return (
+            <MobileResizableSheet
+                id={`conversation-timeline:${sessionID}`}
+                open={open}
+                onOpenChange={onOpenChange}
+                title={<span className="yuri-timeline-mobile-title">{t('chat.timeline.title')}</span>}
+                ariaLabel={t('chat.timeline.title')}
+                closeAriaLabel={t('mobile.surface.closeAria')}
+                resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
+                className="yuri-timeline-mobile"
+                bodyClassName="yuri-timeline-body"
+            >
+                {body}
+            </MobileResizableSheet>
+        );
+    }
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[70vh] flex flex-col">
-                <TimelineDialogBody
-                    open={open}
-                    onOpenChange={onOpenChange}
-                    sessionID={sessionID}
-                    directory={directory}
-                    onScrollToMessage={onScrollToMessage}
-                    onScrollByTurnOffset={onScrollByTurnOffset}
-                    onResumeToLatest={onResumeToLatest}
-                    canLoadEarlier={canLoadEarlier}
-                    isLoadingEarlier={isLoadingEarlier}
-                    onLoadEarlier={onLoadEarlier}
-                    onRevertMessage={onRevertMessage}
-                    searchQuery={searchQuery}
-                    onSearchQueryChange={setSearchQuery}
-                    selectedIndex={selectedIndex}
-                    onSelectedIndexChange={setSelectedIndex}
-                    pendingAction={pendingAction}
-                    runPendingMessageAction={runPendingMessageAction}
-                />
+            <DialogContent
+                presentation="picker"
+                className="yuri-timeline-dialog"
+            >
+                {body}
             </DialogContent>
         </Dialog>
     );
@@ -334,37 +363,34 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
 
     return (
         <>
-            <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                    <Icon name="time" className="h-5 w-5" />
+            {!isMobile ? <DialogHeader className="yuri-timeline-header">
+                <DialogTitle className="yuri-timeline-title">
                     {t('chat.timeline.title')}
                 </DialogTitle>
-                <DialogDescription>
-                    {t('chat.timeline.description')}
-                </DialogDescription>
-            </DialogHeader>
+            </DialogHeader> : null}
 
-            <div className="relative mt-2">
-                <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <div className={cn('yuri-timeline-search', isMobile && 'yuri-mobile-glass-control')}>
+                <Icon name="search" className="size-4 shrink-0 text-muted-foreground" />
                 <Input
-                    autoFocus
+                    autoFocus={!isMobile}
+                    aria-label={t('chat.timeline.searchPlaceholder')}
+                    inputMode="search"
                     placeholder={t('chat.timeline.searchPlaceholder')}
                     value={searchQuery}
                     onChange={(e) => onSearchQueryChange(e.target.value)}
                     onKeyDown={handleSearchKeyDown}
-                    className="pl-9 w-full"
                 />
             </div>
 
             {canLoadEarlier && onLoadEarlier && (
-                <div className="flex justify-center py-1">
+                <div className="yuri-timeline-history">
                     <Button
                         type="button"
-                        variant="link"
-                        size="sm"
+                        variant="ghost"
+                        size="xs"
                         onClick={handleLoadEarlier}
                         disabled={isLoadingEarlier}
-                        className="h-auto px-1 py-0 text-muted-foreground hover:text-foreground"
+                        className="text-muted-foreground hover:text-foreground"
                     >
                         {isLoadingEarlier && (
                             <Icon name="loader-4" className="size-4 animate-spin" />
@@ -374,9 +400,9 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                 </div>
             )}
 
-            <div ref={listRef} className="flex-1 overflow-y-auto">
+            <ScrollableOverlay ref={listRef} outerClassName="yuri-timeline-scroll" className="yuri-timeline-list" aria-label={t('chat.timeline.title')}>
                 {filteredMessages.length === 0 ? (
-                    <div className="text-center text-muted-foreground py-8">
+                    <div className="yuri-timeline-empty text-center text-muted-foreground">
                         {searchQuery ? t('chat.timeline.empty.search') : t('chat.timeline.empty.session')}
                     </div>
                 ) : (
@@ -399,12 +425,8 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                         return (
                             <React.Fragment key={message.info.id}>
                                 {showDateGroup && (
-                                    <div className="sticky top-0 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-sm">
-                                        <div className="h-px flex-1 bg-border/60" />
-                                        <span className="typography-meta text-muted-foreground">
-                                            {dateGroup}
-                                        </span>
-                                        <div className="h-px flex-1 bg-border/60" />
+                                    <div className="yuri-timeline-date text-muted-foreground">
+                                        {dateGroup}
                                     </div>
                                 )}
                                 <div
@@ -412,36 +434,39 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                                         itemRefs.current[index] = element;
                                     }}
                                     data-timeline-message-id={message.info.id}
+                                    data-selected={isSelected}
+                                    data-show-actions={alwaysShowActions}
                                     className={cn(
-                                        "group flex items-center gap-3 py-1.5 hover:bg-interactive-hover/30 rounded transition-colors cursor-pointer",
-                                        isSelected && "bg-interactive-selection text-interactive-selection-foreground"
+                                        'yuri-timeline-row hover:bg-interactive-hover/30',
+                                        isSelected && 'bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]'
                                     )}
-                                    onClick={() => void navigateToMessage(message.info.id)}
                                     onMouseEnter={() => onSelectedIndexChange(index)}
                                 >
-                                    <span className={cn(
-                                        "typography-meta w-16 flex-shrink-0 text-right tabular-nums",
-                                        isSelected ? "text-interactive-selection-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                        {messageTime}
-                                    </span>
-                                    <p className={cn(
-                                        "flex-1 min-w-0 typography-micro truncate",
-                                        isSelected ? "text-interactive-selection-foreground" : "text-foreground"
-                                    )}>
-                                        {snippet ?? (preview || t('chat.timeline.noTextContent'))}
-                                        {!snippet && preview && preview.length >= 80 && '…'}
-                                    </p>
+                                    <button
+                                        type="button"
+                                        className="yuri-timeline-message"
+                                        aria-current={isSelected || undefined}
+                                        title={preview}
+                                        onFocus={() => onSelectedIndexChange(index)}
+                                        onClick={() => void navigateToMessage(message.info.id)}
+                                    >
+                                        <time className="yuri-timeline-time text-muted-foreground" dateTime={new Date(timestamp).toJSON() ?? undefined}>
+                                            {messageTime}
+                                        </time>
+                                        <span className="yuri-timeline-preview text-foreground">
+                                            {snippet ?? (preview || t('chat.timeline.noTextContent'))}
+                                        </span>
+                                    </button>
 
-                                    <div className="flex-shrink-0 h-5 flex items-center mr-2">
-                                        <div className={cn("gap-1", alwaysShowActions ? "flex" : "hidden group-hover:flex")}>
+                                    <div className="yuri-timeline-row-actions">
                                             {actionAvailability.revert ? <Tooltip>
                                                 <TooltipTrigger asChild>
                                                     <Button
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="size-5 text-muted-foreground hover:text-foreground"
+                                                        className="text-muted-foreground hover:text-foreground"
+                                                        aria-label={t('chat.timeline.actions.revertFromHere')}
                                                         aria-busy={pendingAction?.type === 'revert' && pendingAction.messageId === message.info.id}
                                                         disabled={pendingAction !== null}
                                                         onClick={(e) => {
@@ -464,7 +489,8 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="size-5 text-muted-foreground hover:text-foreground"
+                                                        className="text-muted-foreground hover:text-foreground"
+                                                        aria-label={t('chat.timeline.actions.forkFromHere')}
                                                         aria-busy={pendingAction?.type === 'fork' && pendingAction.messageId === message.info.id}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
@@ -481,54 +507,40 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                                                 </TooltipTrigger>
                                                 <TooltipContent sideOffset={6}>{t('chat.timeline.actions.forkFromHere')}</TooltipContent>
                                             </Tooltip> : null}
-                                        </div>
                                     </div>
                                 </div>
                             </React.Fragment>
                         );
                     })
                 )}
-            </div>
+            </ScrollableOverlay>
 
-            <div className="mt-4 p-3 bg-muted/30 rounded-lg">
-                <p className="typography-meta text-muted-foreground font-medium mb-2">{t('chat.timeline.actions.title')}</p>
-                <div className="mb-2 flex items-center gap-2">
-                    <button
+            {onScrollByTurnOffset || onResumeToLatest ? <div className="yuri-timeline-toolbar">
+                    {onScrollByTurnOffset ? <Button
                         type="button"
-                        className="text-[11px] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
+                        variant="ghost"
+                        size="xs"
+                        disabled={pendingAction !== null}
                         onClick={() => {
                             void onScrollByTurnOffset?.(-1);
                             onOpenChange(false);
                         }}
                     >
                         {t('chat.timeline.actions.previousTurn')}
-                    </button>
-                    <span className="text-muted-foreground/50">/</span>
-                    <button
+                    </Button> : null}
+                    {onResumeToLatest ? <Button
                         type="button"
-                        className="text-[11px] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"
+                        variant="ghost"
+                        size="xs"
+                        disabled={pendingAction !== null}
                         onClick={() => {
                             onResumeToLatest?.();
                             onOpenChange(false);
                         }}
                     >
                         {t('chat.timeline.actions.latest')}
-                    </button>
-                </div>
-                <div className="flex flex-col gap-1.5 typography-meta text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                        <span>{t('chat.timeline.help.clickMessage')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Icon name="arrow-go-back" className="h-4 w-4 flex-shrink-0" />
-                        <span>{t('chat.timeline.help.undoToPoint')}</span>
-                    </div>
-                    {actionAvailability.fork ? <div className="flex items-center gap-2">
-                        <Icon name="git-branch" className="h-4 w-4 flex-shrink-0" />
-                        <span>{t('chat.timeline.help.createSessionFromHere')}</span>
-                    </div> : null}
-                </div>
-            </div>
+                    </Button> : null}
+            </div> : null}
         </>
     );
 };

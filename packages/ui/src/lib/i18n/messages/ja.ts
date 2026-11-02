@@ -2598,6 +2598,8 @@ export const dict: Record<I18nKey, string> = {
   'commandPalette.description': 'ファイル、セッション、コマンドを検索します。',
   'commandPalette.input.placeholder': 'ファイル、セッション、コマンドを検索...',
   'commandPalette.error.messages': 'メッセージ検索を読み込めませんでした。ほかの結果は表示されたままです。',
+  'commandPalette.error.files': 'ファイル検索は一時的に利用できません。',
+  'commandPalette.error.filesPartial': '一部のプロジェクトでファイルを検索できませんでした。',
   'commandPalette.group.messages': 'メッセージ',
   'commandPalette.index.progress': '全プロジェクトの直近30日間を索引作成中：{completed}/{total}件の会話',
   'commandPalette.index.ready': '全プロジェクト · 直近30日間 · {count}件のメッセージを索引済み',

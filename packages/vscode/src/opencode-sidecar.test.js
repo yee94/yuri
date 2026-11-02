@@ -139,7 +139,7 @@ describe('evaluateSidecarExecutionAdmission (ticket 11)', () => {
 });
 
 describe('fetchOpenCodeHealth', () => {
-  test('probes /api/info with Basic auth before falling back to /global/health', async () => {
+  test('probes /api/info with Basic auth', async () => {
     const calls = [];
     globalThis.fetch = async (input, init) => {
       const url = String(input);
@@ -168,7 +168,7 @@ describe('fetchOpenCodeHealth', () => {
     expect(calls.some((call) => call.url.includes('secret'))).toBe(false);
   });
 
-  test('falls back to /global/health when /api/info is unavailable', async () => {
+  test('does not fall back to a removed health route when /api/info is unavailable', async () => {
     const calls = [];
     globalThis.fetch = async (input, init) => {
       const url = String(input);
@@ -190,13 +190,8 @@ describe('fetchOpenCodeHealth', () => {
 
     expect(calls).toEqual([
       'http://127.0.0.1:45678/api/info',
-      'http://127.0.0.1:45678/global/health',
     ]);
-    expect(result).toEqual({
-      healthy: true,
-      version: '2.0.12',
-      path: '/global/health',
-    });
+    expect(result).toBeNull();
   });
 
   test('rejects healthy 1.x version bodies instead of admitting the sidecar', async () => {

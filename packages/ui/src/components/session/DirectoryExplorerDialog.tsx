@@ -3,7 +3,6 @@ import { useEvent } from '@reactuses/core';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -26,6 +25,9 @@ import { useI18n } from '@/lib/i18n';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveDirectoryExplorerMobileLayout } from './directoryExplorerLayout';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { Kbd } from '@/components/ui/kbd';
+import './directory-explorer-dialog.css';
 
 interface DirectoryExplorerDialogProps {
   open: boolean;
@@ -344,9 +346,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   const hasHighlightedBrowseItem = Boolean(
     highlightedRow
   );
-  const submitModifierLabel = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-    ? '⌘'
-    : 'Ctrl';
+  const isMacShortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const submitActionLabel = isAlreadyAdded
     ? t('directoryExplorerDialog.actions.alreadyAdded')
     : isCloneMode
@@ -530,25 +530,29 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   });
 
   const showHiddenToggle = (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="xs"
+      aria-pressed={showHidden}
       onClick={() => setShowHidden((value) => !value)}
-      className="flex flex-shrink-0 items-center gap-2 rounded-lg px-2 py-1 typography-meta text-muted-foreground transition-colors hover:bg-interactive-hover/40"
+      className="yuri-directory-hidden-toggle shrink-0 text-muted-foreground"
     >
-      {showHidden ? <Icon name="checkbox" className="h-4 w-4 text-primary" /> : <Icon name="checkbox-blank" className="h-4 w-4" />}
+      <Icon name={showHidden ? 'checkbox' : 'checkbox-blank'} className="size-3.5" />
       {t('directoryExplorerDialog.toggle.showHidden')}
-    </button>
+    </Button>
   );
 
   const inputSection = (
-    <div className="px-2.5 py-1.5">
+    <div className="yuri-directory-inputs">
       {isCloneMode ? (
-        <div className="mb-1.5 flex items-center gap-1.5">
+        <div className="yuri-directory-field">
           <Input
             value={cloneRemoteUrl}
             onChange={(event) => setCloneRemoteUrl(event.target.value)}
             placeholder={t('directoryExplorerDialog.clone.remoteUrlPlaceholder')}
-            className="min-w-0 flex-1 border-border/60 bg-[var(--surface-elevated)] font-mono typography-ui-label shadow-none"
+            aria-label={t('directoryExplorerDialog.clone.remoteUrlPlaceholder')}
+            className="min-w-0 flex-1 font-mono"
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
@@ -563,15 +567,16 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
           />
         </div>
       ) : null}
-      <div className="relative">
-        <Icon name="folder-add" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/80" />
+      <div className="yuri-directory-field">
+        <Icon name="folder-add" className="size-4 shrink-0 text-muted-foreground" />
         <Input
           ref={inputRef}
           value={query}
           onChange={(event) => setQuery(normalizeSeparators(event.target.value))}
           onKeyDown={handleKeyDown}
           placeholder={t('directoryExplorerDialog.pathInput.placeholder')}
-          className="border-transparent bg-transparent pl-9 font-mono typography-ui-label shadow-none focus-visible:ring-0"
+          aria-label={t('directoryExplorerDialog.pathInput.placeholder')}
+          className="min-w-0 flex-1 font-mono"
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
@@ -582,30 +587,34 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   );
 
   const resultsSection = (
-    <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-[var(--surface-elevated)] shadow-sm dark:shadow-none">
-      <div className="max-h-[min(28rem,58vh)] overflow-y-auto p-2">
-        <div className="px-2 pb-1 pt-0.5 typography-meta font-medium uppercase tracking-wide text-muted-foreground/80">
-          {t('directoryExplorerDialog.browse.directories')}
-        </div>
+    <ScrollableOverlay
+      outerClassName="yuri-directory-results"
+      className="yuri-directory-list"
+      aria-label={t('directoryExplorerDialog.browse.directories')}
+      aria-busy={isLoading}
+      disableHorizontal
+    >
         {isLoading ? (
-          <div className="py-10 text-center typography-ui-label text-muted-foreground">
+          <div className="yuri-directory-empty text-center text-muted-foreground" role="status">
             {t('directoryExplorerDialog.browse.loading')}
           </div>
         ) : rows.length === 0 ? (
-          <div className="py-10 text-center typography-ui-label text-muted-foreground">
+          <div className="yuri-directory-empty text-center text-muted-foreground" role="status">
             {t('directoryExplorerDialog.browse.empty')}
           </div>
         ) : (
-          <div className="space-y-0.5">
+          <div>
             {rows.map((row, index) => {
               const isActive = index === highlightedIndex;
               return (
                 <div
                   key={row.value}
+                  data-directory-row={row.type}
+                  data-selected={isActive}
                   onMouseEnter={() => setHighlightedIndex(index)}
                   className={cn(
-                    'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-                    isActive && 'bg-interactive-selection text-interactive-selection-foreground',
+                    'yuri-directory-row',
+                    isActive && 'bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]',
                     !isActive && 'hover:bg-interactive-hover/50',
                   )}
                 >
@@ -620,7 +629,8 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
                     type="button"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => executeRow(row)}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    className="yuri-directory-entry"
+                    title={row.path ?? row.name}
                   >
                     {row.type === 'up' ? (
                       <Icon name="arrow-left-s" className="h-4 w-4 flex-shrink-0 text-muted-foreground/80" />
@@ -628,82 +638,81 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
                       <Icon name="folder-6" className="h-4 w-4 flex-shrink-0 text-muted-foreground/80" />
                     )}
                     <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <span className="truncate typography-ui-label text-foreground">{row.name}</span>
+                      <span className="yuri-directory-name truncate text-foreground">{row.name}</span>
                     </span>
                   </button>
                   {row.type === 'directory' && row.alreadyAdded ? (
-                    <span className="rounded-full border border-border/60 px-2 py-0.5 typography-meta text-muted-foreground">
+                    <span className="yuri-directory-added shrink-0 text-muted-foreground">
                       {t('directoryExplorerDialog.browse.addedBadge')}
                     </span>
                   ) : row.type === 'directory' ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onMouseDown={(event) => event.stopPropagation()}
                       onClick={(event) => handleQuickAdd(event, row.path)}
-                      className="flex-shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
                       title={t('directoryExplorerDialog.browse.quickAdd')}
+                      aria-label={t('directoryExplorerDialog.browse.quickAdd')}
                     >
                       <Icon name="add" className="h-3.5 w-3.5" />
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               );
             })}
           </div>
         )}
-      </div>
-    </div>
+    </ScrollableOverlay>
   );
 
   const content = (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="yuri-directory-content">
       {inputSection}
       {resultsSection}
     </div>
   );
 
-  const footerHints = (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 typography-micro text-muted-foreground">
-      <span className="inline-flex items-center gap-1">
-        <Icon name="arrow-up-s" className="h-3.5 w-3.5" />
-        <Icon name="arrow-down-s" className="-ml-1 h-3.5 w-3.5" />
+  const shortcutHints = !isMobile ? (
+    <div className="yuri-directory-shortcuts text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <Kbd variant="hint" className="gap-0.5" aria-label="↑ ↓">
+          <Icon name="arrow-up" className="size-2.5" />
+          <Icon name="arrow-down" className="size-2.5" />
+        </Kbd>
         {t('directoryExplorerDialog.footer.navigate')}
       </span>
-      <span className="inline-flex items-center gap-1">
-        <Icon name="corner-down-left" className="h-3.5 w-3.5" />
+      <span className="inline-flex items-center gap-1.5">
+        <Kbd variant="hint" aria-label="Enter">
+          <Icon name="corner-down-left" className="size-2.5" />
+        </Kbd>
         {t('directoryExplorerDialog.footer.select')}
       </span>
-      <span className="inline-flex items-center gap-1">
-        <span>{submitModifierLabel}</span>
-        <Icon name="corner-down-left" className="h-3.5 w-3.5" />
+      <span className="inline-flex items-center gap-1.5">
+        <Kbd variant="hint" className="gap-0.5" aria-label={isMacShortcut ? '⌘ Enter' : 'Ctrl Enter'}>
+          {isMacShortcut ? <Icon name="command" className="size-2.5" /> : 'Ctrl'}
+          <Icon name="corner-down-left" className="size-2.5" />
+        </Kbd>
         {t('directoryExplorerDialog.footer.add')}
       </span>
     </div>
-  );
+  ) : null;
 
   const renderFooter = () => (
-    <>
-      {!isMobile ? footerHints : null}
-      <div className={cn('flex w-full flex-row justify-end gap-2 sm:w-auto', isMobile && 'justify-stretch')}>
-        {isDesktop ? (
-          <Button variant="ghost" size="xs" onClick={handleOpenInFinder} disabled={isConfirming || isOpeningFinder || isCloneMode}>
-            {isOpeningFinder ? t('directoryExplorerDialog.actions.openingFinder') : t('directoryExplorerDialog.actions.openInFinder')}
-          </Button>
-        ) : null}
-        <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder} className={cn(isMobile && 'flex-1')}>
-          {isCloneMode ? t('directoryExplorerDialog.actions.addLocalProject') : t('directoryExplorerDialog.actions.cloneRepository')}
+    <div className="yuri-directory-actions">
+      {isDesktop ? (
+        <Button variant="ghost" size="xs" onClick={handleOpenInFinder} disabled={isConfirming || isOpeningFinder || isCloneMode}>
+          {isOpeningFinder ? t('directoryExplorerDialog.actions.openingFinder') : t('directoryExplorerDialog.actions.openInFinder')}
         </Button>
-        {isMobile ? (
-          <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject} className="flex-1">
-            {submitActionLabel}
-          </Button>
-        ) : (
-          <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject}>
-            {submitActionLabel}
-          </Button>
-        )}
-      </div>
-    </>
+      ) : null}
+      <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder}>
+        {isCloneMode ? t('directoryExplorerDialog.actions.addLocalProject') : t('directoryExplorerDialog.actions.cloneRepository')}
+      </Button>
+      <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject}>
+        {submitActionLabel}
+      </Button>
+    </div>
   );
 
   if (isMobile) {
@@ -713,7 +722,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
         open={open}
         onOpenChange={onOpenChange}
         title={(
-          <h2 className="truncate typography-ui-label font-semibold text-foreground">
+          <h2 className="yuri-directory-title truncate text-foreground">
             {t('directoryExplorerDialog.title')}
           </h2>
         )}
@@ -722,13 +731,10 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
         closeAriaLabel={t('mobile.surface.closeAria')}
         resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
         initiallyExpanded
+        className="yuri-directory-mobile"
       >
-        <div className="flex h-full min-h-0 flex-col gap-3">
-          <div className="flex min-h-0 flex-1 flex-col px-2">{content}</div>
-          <div className="shrink-0 border-t border-border/40 px-3 pb-4 pt-2">
-            <div className="flex flex-col gap-2">{renderFooter()}</div>
-          </div>
-        </div>
+        {content}
+        <div className="yuri-directory-footer">{renderFooter()}</div>
       </MobileResizableSheet>
     );
   }
@@ -736,20 +742,19 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex w-full max-w-xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[80vh]"
+        presentation="picker"
+        className="yuri-directory-dialog"
         initialFocus={false}
       >
-        <DialogHeader className="px-5 pb-2 pt-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <DialogTitle>{t('directoryExplorerDialog.title')}</DialogTitle>
-              <DialogDescription className="mt-2">{t('directoryExplorerDialog.description')}</DialogDescription>
-            </div>
+        <DialogHeader className="yuri-directory-header">
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <DialogTitle className="yuri-directory-title truncate">{t('directoryExplorerDialog.title')}</DialogTitle>
             {showHiddenToggle}
           </div>
         </DialogHeader>
-        <div className="min-h-0 flex-1 px-2 pb-0">{content}</div>
-        <DialogFooter className="flex w-full flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+        {content}
+        <DialogFooter className="yuri-directory-footer">
+          {shortcutHints}
           {renderFooter()}
         </DialogFooter>
       </DialogContent>

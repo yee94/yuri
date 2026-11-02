@@ -297,7 +297,7 @@ describe('contactOptimisticTurns', () => {
     expect(contactSendErrorMessage(
       new AssistantAPIError('upstream_error', 502),
       { noProvider: 'no provider', sendFailed: 'Could not send that message.', timedOut: 'The model did not reply in time.' },
-    )).toBe('Could not send that message.')
+    )).toBe('Could not send that message.\n\nupstream_error (HTTP 502)')
     expect(contactSendErrorMessage(
       new AssistantAPIError('no_provider', 400),
       { noProvider: 'no provider', sendFailed: 'Could not send that message.', timedOut: 'The model did not reply in time.' },
@@ -310,6 +310,10 @@ describe('contactOptimisticTurns', () => {
       new DOMException('The operation was aborted.', 'AbortError'),
       { noProvider: 'no provider', sendFailed: 'Could not send that message.', timedOut: 'The model did not reply in time.' },
     )).toBe('The model did not reply in time.')
+    expect(contactSendErrorMessage(
+      new Error('Connection refused'),
+      { noProvider: 'no provider', sendFailed: 'Could not send that message.', timedOut: 'The model did not reply in time.' },
+    )).toBe('Connection refused')
   })
 
   test('two rapid submit() attempts create one optimistic turn', () => {

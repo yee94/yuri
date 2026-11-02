@@ -27,6 +27,21 @@ their existing error feedback, and file previews own their local loading state.
 
 The full-text index startup screen keeps the same transparent 120 × 120 CSS-pixel logo at the viewport center as the desktop/web splash. Its progress ring is concentric with the logo; percentage, description, and background action occupy an independently scrolling area below it. The fullscreen dialog must not scale during entrance or exit, and progress/text changes must never reposition the logo.
 
+## Add-project directory picker
+
+`DirectoryExplorerDialog` shares the desktop global-search translucent overlay
+material. Its directory list is a transparent scrolling region, never a nested
+card with its own fill, border or shadow. Header, path field, directory content
+and footer use aligned 24px desktop / 16px mobile content insets. Local layout
+and compact type live in `src/components/session/directory-explorer-dialog.css`.
+Explanatory subtitles and directory headings are omitted. Desktop shortcut hints
+use the shared `Kbd variant="hint"` badges with sprite `Icon` keys; macOS shows
+Command, other platforms show Ctrl. The footer may wrap without squeezing its
+actions. Mobile omits keyboard hints and retains the controlled shared
+resizable sheet and 44px folder-navigation targets. Browsing, hidden folders,
+quick add, create/add, native folder selection and clone/identity behavior share
+the existing handlers across both layouts.
+
 ## Assistant avatars
 
 Assistant contact faces use the locally bundled procedural avatar

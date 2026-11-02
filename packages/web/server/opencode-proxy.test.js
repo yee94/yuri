@@ -48,12 +48,12 @@ describe('OpenCode proxy SSE forwarding', () => {
       const upstream = express();
       upstream.get('/api/location', (_req, res) => res.json({ project: { id: 'project-repo' } }));
       upstream.get('/api/session', (req, res) => {
-        expect(req.query.project).toBe('project-repo');
+        expect(req.query.project).toBeUndefined();
         expect(req.query.directory).toBeUndefined();
         res.json({ data: [session], cursor: {} });
       });
       upstream.get('/api/session/ses_alias', (_req, res) => res.json({ data: session }));
-      upstream.get('/api/global/event', (_req, res) => {
+      upstream.get('/api/event', (_req, res) => {
         res.setHeader('Content-Type', 'text/event-stream');
         res.end(`data: ${JSON.stringify({ directory: alias, payload: { type: 'session.updated', data: { info: session } } })}\n\n`);
       });
@@ -88,7 +88,7 @@ describe('OpenCode proxy SSE forwarding', () => {
     let seenAuthorization = null;
 
     const upstream = express();
-    upstream.get('/api/global/event', (req, res) => {
+    upstream.get('/api/event', (req, res) => {
       seenAuthorization = req.headers.authorization ?? null;
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'private, max-age=0');
@@ -133,7 +133,7 @@ describe('OpenCode proxy SSE forwarding', () => {
 
   it('returns 504 when the upstream SSE response headers exceed the connection timeout', async () => {
     const upstream = express();
-    upstream.get('/api/global/event', (_req, _res) => {});
+    upstream.get('/api/event', (_req, _res) => {});
     upstreamServer = await listen(upstream);
     const upstreamPort = upstreamServer.address().port;
 
@@ -158,7 +158,7 @@ describe('OpenCode proxy SSE forwarding', () => {
 
   it('ends an established SSE response when upstream remains idle', async () => {
     const upstream = express();
-    upstream.get('/api/global/event', (_req, res) => {
+    upstream.get('/api/event', (_req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.flushHeaders();
     });

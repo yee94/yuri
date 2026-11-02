@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "yuri-relay-worker",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "YURI_RELAY", "class_name": "YuriRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["YuriRelay"] }],
+  "observability": { "enabled": false },
+  "vars": { "YURI_RELAY_PATH": "/ws" }
+}

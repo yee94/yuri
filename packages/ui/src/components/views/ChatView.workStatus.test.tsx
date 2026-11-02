@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatView } from './ChatView';
+import { statusBarPopoverSurfaceClassName } from '../chat/statusBarPopover';
 
 const fixture = vi.hoisted(() => ({
     session: {
@@ -110,6 +111,10 @@ it('uses the current viewport on initial session entry and only shows inline at 
     expect(inline?.style.width).toBe('196px');
     expect(inline?.style.right).toBe('14px');
     expect(inline?.className).toContain('absolute');
+    expect(inline?.className).not.toContain('yuri-mobile-overlay-surface');
+    for (const shadowClass of statusBarPopoverSurfaceClassName.split(' ')) {
+        expect(inline?.classList.contains(shadowClass)).toBe(false);
+    }
     expect(host.querySelector('.absolute.inset-0')).not.toBeNull();
     expect(host.textContent).toContain('Project status');
     await act(async () => resize(1439));
@@ -153,6 +158,10 @@ it('retains manual overlay display below the breakpoint and excludes the right s
     await act(async () => root.render(<ChatView />));
     const overlay = host.querySelector<HTMLElement>('aside[aria-hidden="false"]');
     expect(overlay?.className).toContain('absolute');
+    expect(overlay?.className).not.toContain('bg-[var(--surface-elevated)]');
+    for (const shadowClass of statusBarPopoverSurfaceClassName.split(' ')) {
+        expect(overlay?.classList.contains(shadowClass)).toBe(true);
+    }
     expect(overlay?.textContent).toBe('Project status');
     fixture.ui.isRightSidebarOpen = true;
     await act(async () => root.render(<ChatView />));

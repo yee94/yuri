@@ -118,6 +118,7 @@ describe('Host events on proxied SSE', () => {
       }, cancel: async () => {}, releaseLock() {},
     }) } }));
     const response = await request(mountProxy({ subscribeGlobalUiEvent })).get(route).expect(200);
+    expect(new URL(globalThis.fetch.mock.calls[0][0]).pathname).toBe('/api/event');
     const events = response.text.trim().split('\n\n').map((block) => JSON.parse(block.slice(6)));
     expect(events).toEqual([{ directory: '/repo', payload: title }, { directory: '/repo', payload: metadata }, upstream]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);

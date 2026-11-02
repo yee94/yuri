@@ -338,7 +338,7 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
         align="start"
         sideOffset={6}
         collisionPadding={12}
-        className="w-[min(27rem,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto bg-[var(--surface-elevated)] p-0"
+        className="w-[min(27rem,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto bg-[var(--surface-elevated)] p-0 [&_[role=tab]]:capitalize"
       >
         <div className="sticky top-0 z-20 bg-[var(--surface-elevated)]/60 px-2 pt-1.5 pb-1.5 backdrop-blur-xl backdrop-saturate-150">
           <div className="h-9">

@@ -1787,6 +1787,8 @@ export const dict: Record<I18nKey, string> = {
   'chat.toolPart.copyOutputFailed': 'Nie udało się skopiować wyjścia',
   'commandPalette.description': 'Szukaj plików, sesji i poleceń.',
   'commandPalette.error.messages': 'Nie udało się wczytać wyszukiwania wiadomości. Pozostałe wyniki są nadal widoczne.',
+  'commandPalette.error.files': 'Wyszukiwanie plików jest tymczasowo niedostępne.',
+  'commandPalette.error.filesPartial': 'Nie udało się wyszukać plików w niektórych projektach.',
   'commandPalette.group.messages': 'Wiadomości',
   'commandPalette.index.progress': 'Indeksowanie ostatnich 30 dni we wszystkich projektach: {completed}/{total} rozmów',
   'commandPalette.index.ready': 'Wszystkie projekty · ostatnie 30 dni · {count} zindeksowanych wiadomości',

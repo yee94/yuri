@@ -150,6 +150,7 @@ describe('PendingChangesBar large change sets', () => {
       const rows = host.querySelectorAll('button[title^="chat.changedFiles.actions.openFileTitle"]');
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(200);
+      expect(host.querySelector('[data-index="1"]')?.className).toContain('var(--yuri-popup-divider)');
       expect(host.textContent).toContain(String(FILE_COUNT));
     } finally {
       for (const [key, descriptor] of Object.entries(previous)) {

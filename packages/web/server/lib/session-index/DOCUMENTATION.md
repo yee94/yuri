@@ -61,8 +61,17 @@ Rows are partitioned by a runtime key derived from the desktop
 `apiBaseUrl` (Electron falls back to the local sidecar URL so the key stays
 stable between server listen and window activation).
 `service.js` exclusively owns the WAL database and stores at most the
-newest 20 root-session summaries per runtime and directory. It never stores
-messages, attachments, permissions, provider data, or model metadata.
+newest 20 root-session summaries per runtime and directory. It also retains the
+minimal session `model: { providerID, id, variant? }` reference (each string is
+bounded to 512 characters), never messages, attachments, permissions, provider
+configuration, or model catalog metadata. Missing/invalid model fields in light
+refreshes preserve the prior reference. Model columns are added transactionally
+without clearing existing summaries, pins or historical synchronization markers.
+Native `session.model.selected` updates only an existing runtime-scoped model
+reference, not activity, directory recency or session ordering. Persisted event
+sequence/clock fences reject stale events and stale list models; exact event
+repeats are write-free. Alias reconciliation retains the newest known model
+independently of title recency. Snapshot and deep-link lookup both expose it.
 Sessions titled `smartfetch-secondary` are temporary SmartFetch model calls;
 the index excludes them from every snapshot and clears prior summaries when a
   matching session update arrives. Reserved leading tags `[Scheduled]`,
@@ -134,8 +143,13 @@ committed atomically in SQLite under the runtime key; empty success also records
 completion. Subsequent launches perform no upstream history reads after completion.
 Failure/shutdown preserves the last committed cursor for retry. Existing summaries
 win over backfill, and normal create/update/archive/delete events maintain the index.
-Existing databases without this marker receive one bounded backfill without being
-cleared. Manual directory refresh remains a separate explicit operation.
+The model-reference generation uses its own completion marker, so older indexes
+receive one bounded 30-day pass without clearing rows or their prior progress
+marker. Backfill fills only missing model references on existing summaries;
+titles, activity and already-known models win over historical reads. Model writes
+and the page cursor commit or roll back together. Older sessions acquire the
+reference through normal explicit directory refreshes. Manual directory refresh
+remains a separate explicit operation; cards never fetch messages to find models.
 
 The runtime processes explicit directory refreshes sequentially. OpenCode 2.x list is cursor-only (no
 `start` incremental); each directory fetches active-only pages (`limit=20`)

@@ -368,6 +368,8 @@ jobs:
     name: Deploy OTA to update service
     needs: [release-plan, build-ota]
     runs-on: ubuntu-latest
+    env:
+      EDGEONE_DEPLOY_HOOK: ${{ secrets.YURI_EDGEONE_DEPLOY_HOOK }}
     steps:
       - name: Require verified Yuri publishing identities
         shell: bash
@@ -379,6 +381,9 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v4
+
+      - name: Check EdgeOne deployment configuration
+        run: node scripts/mobile-ota/trigger-edgeone-deploy.mjs --check
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -433,7 +438,7 @@ jobs:
 
           rm -rf deploy/update-service/.vercel
 
-      - name: Trigger complete EdgeOne OTA distribution (git deploy)
+      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
         shell: bash
         env:
           CHANNEL: ${{ needs.release-plan.outputs.channel }}

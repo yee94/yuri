@@ -825,10 +825,6 @@ export const createSessionGoalRuntime = ({
     } catch {
       // Fall through.
     }
-    const statusMap = await openCodeFetch('/session/status', { directory }).catch(() => null);
-    const status = statusMap?.[sessionId];
-    const type = typeof status?.type === 'string' ? status.type.trim() : '';
-    if (type === 'idle' || type === 'busy' || type === 'retry') return type;
     return null;
   };
 

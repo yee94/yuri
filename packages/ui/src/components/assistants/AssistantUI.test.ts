@@ -685,6 +685,8 @@ describe('Assistant UI product contract', () => {
     expect(card).toContain('switchToChat: true');
     expect(card).toContain('findSessionById');
     expect(card).toContain('useGlobalSessionStatus');
+    expect(card).toContain('<Icon name="chat-thread"');
+    expect(card).not.toContain('<Icon name="chat-3"');
   });
 
   test('keeps primary-chat source-session and edit callbacks on ChatContainer, not the contact transcript', async () => {

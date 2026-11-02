@@ -269,7 +269,6 @@ export function resolveDetectedOpencodeCliPath(options: {
 
 // Official OpenCode 2.x exposes ServerInfo at GET /api/info (client.server.info).
 export const OPENCODE_HEALTH_PATH = '/api/info';
-export const OPENCODE_HEALTH_FALLBACK_PATH = '/global/health';
 export const OPENCODE_V1_MIGRATION_PATH = '/api/experimental/migration/v1';
 
 export type OpenCodeHealthResult = {
@@ -541,8 +540,7 @@ export async function fetchV1MigrationGate(
   }
 }
 
-// v2 readiness lives at /api/info (ServerInfo.version); /global/health remains
-// a probe fallback for older sidecars. Both require Basic auth (username `opencode`).
+// v2 readiness lives at /api/info (ServerInfo.version), with Basic auth (username `opencode`).
 // Never log the password — only the caller may record URL path and status.
 // Version admission rejects 1.x / missing / noise.
 export async function fetchOpenCodeHealth(
@@ -552,27 +550,24 @@ export async function fetchOpenCodeHealth(
 ): Promise<OpenCodeHealthResult | null> {
   const normalized = baseUrl.replace(/\/+$/, '');
   const headers = { Accept: 'application/json', ...authHeaders };
-  for (const healthPath of [OPENCODE_HEALTH_PATH, OPENCODE_HEALTH_FALLBACK_PATH]) {
-    try {
-      const response = await fetch(`${normalized}${healthPath}`, {
-        method: 'GET',
-        headers,
-        signal,
-      });
-      if (!response.ok) {
-        continue;
-      }
-      const body = await response.json().catch(() => null) as { healthy?: boolean; version?: unknown } | null;
-      const gate = evaluateOpenCodeHealthBody(body);
-      if (!gate.ok) {
-        continue;
-      }
-      return { healthy: true, version: gate.version, path: healthPath };
-    } catch {
-      // Try the next health path.
+  try {
+    const response = await fetch(`${normalized}${OPENCODE_HEALTH_PATH}`, {
+      method: 'GET',
+      headers,
+      signal,
+    });
+    if (!response.ok) {
+      return null;
     }
+    const body = await response.json().catch(() => null) as { healthy?: boolean; version?: unknown } | null;
+    const gate = evaluateOpenCodeHealthBody(body);
+    if (!gate.ok) {
+      return null;
+    }
+    return { healthy: true, version: gate.version, path: OPENCODE_HEALTH_PATH };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export type OpenCodeListeningParse =

@@ -162,6 +162,7 @@ const rejectAllPending = (pending: Map<number, PendingWaiter>, reason: Error) =>
 export const openChromeSession = async (opts?: {
   width?: number;
   height?: number;
+  hideScrollbars?: boolean;
 }): Promise<ChromeSession> => {
   const chromePath = resolveChrome();
   if (!chromePath) throw new Error('CHROME_UNAVAILABLE');
@@ -176,7 +177,7 @@ export const openChromeSession = async (opts?: {
     chrome = spawn(chromePath, [
       '--headless=new',
       '--disable-gpu',
-      '--hide-scrollbars',
+      ...(opts?.hideScrollbars === false ? [] : ['--hide-scrollbars']),
       '--remote-debugging-port=0',
       '--remote-allow-origins=*',
       `--user-data-dir=${userDataDir}`,

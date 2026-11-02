@@ -634,7 +634,8 @@ export const registerOpenCodeProxy = (app, deps) => {
     try {
       // Strip includeReasoning before building the upstream OpenCode path.
       const strippedUrl = stripIncludeReasoningParam(requestUrl);
-      const upstreamPath = toUpstreamOpenCodeApiPath(strippedUrl);
+      const eventUrl = new URL(strippedUrl, 'http://yuri.invalid');
+      const upstreamPath = `/api/event${eventUrl.search}`;
       const headers = normalizeForwardedDirectoryHeaders(
         collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders())
       );

@@ -96,15 +96,15 @@ function omitNonClientSourcesPlugin() {
 
 export default defineConfig(({ command }) => ({
   root: path.resolve(__dirname, '.'),
-  // Experimental Rolldown bundled dev: serve bundled chunks instead of per-module ESM.
+  // Opt-in experimental bundled dev; normal HMR uses per-module ESM to avoid build-queue stalls.
   experimental: {
-    bundledDev: true,
+    bundledDev: command === 'serve' && process.env.YURI_HMR_BUNDLED_DEV === '1',
   },
   plugins: [
     omitNonClientSourcesPlugin(),
     react(),
     // React Compiler via Rolldown Babel preset (plugin-react v6 no longer embeds Babel).
-    babel({
+    (command === 'build' || process.env.YURI_HMR_REACT_COMPILER === '1') && babel({
       presets: [reactCompilerPreset()],
     }),
     {
@@ -219,13 +219,17 @@ export default defineConfig(({ command }) => ({
       },
       external: ['node:child_process', 'node:fs', 'node:path', 'node:url'],
       output: {
-        codeSplitting: {
-          groups: [
-            {
-              name: resolveVendorChunkName,
-            },
-          ],
-        },
+        ...(command === 'build'
+          ? {
+              codeSplitting: {
+                groups: [
+                  {
+                    name: resolveVendorChunkName,
+                  },
+                ],
+              },
+            }
+          : {}),
         // Preserve warnings and errors in production while dropping renderer-only
         // diagnostic logs and their ordinary object payloads from shipped bundles.
         ...(command === 'build'

@@ -259,6 +259,28 @@ describe('contact tool protocol', () => {
 });
 
 describe('createContactTools', () => {
+  it.each([
+    { kind: 'cron', cron: '0 9 1 * *', timezone: 'UTC' },
+    { kind: 'once', date: '2026-12-01', time: '09:00', timezone: 'UTC' },
+    { kind: 'weekly', times: ['09:00', '18:00'], weekdays: [1, 3, 5], timezone: 'UTC' },
+  ])('emits the complete $kind schedule for both creation and update', async (schedule) => {
+    const task = { id: 'task', name: 'Review', schedule, execution: { prompt: 'Review' } };
+    const onCard = vi.fn();
+    const tools = createContactTools({
+      currentAssistant: { id: 'host', providerID: 'p', modelID: 'm' }, onCard,
+      scheduleTask: async () => ({ projectID: 'project', task }),
+      updateScheduledTask: async () => ({ task }),
+    });
+    for (const [name, params] of [
+      ['schedule_task', { name: 'Review', prompt: 'Review' }],
+      ['update_scheduled_task', { taskID: 'task', projectID: 'project' }],
+    ]) {
+      const result = await tools.find((tool) => tool.name === name).execute('call', params);
+      expect(result.details.card).toMatchObject({ ...schedule, taskID: 'task', projectID: 'project' });
+    }
+    expect(onCard).toHaveBeenCalledTimes(2);
+  });
+
   it('exposes create_assistant, schedule_task, and assign_session and returns success cards', async () => {
     const onCard = vi.fn();
     const clearContactMemory = vi.fn(async () => ({ reset: true, memoryCleared: true }));

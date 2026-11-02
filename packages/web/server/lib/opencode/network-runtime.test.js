@@ -49,7 +49,7 @@ describe('OpenCode network runtime', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/info');
   });
 
-  it('falls back to /global/health when /api/info is not healthy', async () => {
+  it('never falls back to a removed health route when /api/info is unavailable', async () => {
     const fetchMock = vi.fn(async (url) => {
       if (String(url).includes('/api/info')) {
         return new Response('not found', { status: 404 });
@@ -75,9 +75,9 @@ describe('OpenCode network runtime', () => {
       getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic Zml4dHVyZQ==' }),
     });
 
-    await expect(runtime.waitForReady('http://127.0.0.1:4096', 1000)).resolves.toBe(true);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/info');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/global/health');
+    await expect(runtime.waitForReady('http://127.0.0.1:4096', 1)).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([url]) => new URL(url).pathname === '/api/info')).toBe(true);
   });
 
   it('returns false when readiness fetch rejects', async () => {

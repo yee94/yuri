@@ -2,6 +2,20 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
+## Android native scrollbars
+
+On `html.yuri-capacitor-app.yuri-platform-android`, `mobile.css` hides native
+scrollbars on the root and descendants and resets `scrollbar-gutter` to `auto`.
+The global desktop track dimensions can otherwise consume content width when
+overflow appears; making the track thinner still permits layout shifts.
+Both `scrollbar-width` and `::-webkit-scrollbar` are covered for older WebViews.
+Overflow, touch scrolling, and existing custom overlay thumbs stay unchanged.
+This is independent of `mobile-pointer`, so pointer inspection or a connected
+mouse cannot bring the occupying track back. iOS and hosted/desktop browsers
+retain their existing behavior. `androidScrollbar.chrome.test.ts` checks the
+production CSS with classic scrollbar geometry, including chat's two-edge
+gutter and horizontal scrolling; physical Android validation remains required.
+
 ## Native QR scanner backdrop
 
 Android's bundled CameraX fallback renders behind the WebView. While
@@ -163,6 +177,21 @@ Legitimate glass fallbacks:
 Android System WebView should be Chromium **111+** for `color-mix()` and reliable translucency (`packages/mobile/HANDOFF.md`).
 
 Phone conversation headers (session chat and Assistant) share `--yuri-mobile-header-fade` for the overlay/collapsing gradient (`color-mix` of `--surface-background` at 85%). Change that token when the fade strength should shift; do not restyle one surface with a local mix.
+
+## Anchored popup glass
+
+`yuri-mobile-overlay-surface yuri-popup-surface` reuses the global overlay blur
+and saturation on every runtime. `--yuri-overlay-translucent-fill` is shared with
+desktop pickers/composer catalogs; `--yuri-popup-fill` references it. Popup-only
+`--yuri-popup-edge` and `--yuri-popup-shadow` provide a fine theme-foreground rim
+and short contact elevation instead of the large overlay's 48px shadow. Light
+and dark values live in `mobile.css`, not duplicated component utility strings.
+Internal header/row/menu lines use `--yuri-popup-divider` (6% light / 8% dark
+theme foreground) at `--yuri-popup-divider-width` (0.5px), softer than the rim.
+Virtual rows paint that same hairline as an inset shadow to preserve measurement.
+See `components/ui/DOCUMENTATION.md#anchored-popup-surfaces` for consumers and
+boundaries. The compound modifier is included in reduced-transparency rules so
+its specificity cannot defeat the opaque-fill/no-filter fallback.
 
 ## Shared notifications
 

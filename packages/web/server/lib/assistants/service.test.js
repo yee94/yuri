@@ -4664,11 +4664,228 @@ describe('assistants service', () => {
     service.close();
   });
 
+  it('wakes the recipient once for a peer DM without inserting a user row or calling OpenCode', async () => {
+    const turns = [];
+    const onContactTurnComplete = vi.fn();
+    const service = setup(root(), {}, {
+      onContactTurnComplete,
+      runContactTurn: async (turn) => {
+        turns.push(turn);
+        return { bubbles: ['收到了，你好！'] };
+      },
+    });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: '小小白' });
+      const recipient = service.createAssistant({ ...assistantInput, name: '大白' });
+      const delivered = service.deliverPeerMessage(sender.id, {
+        messageID: 'peer_greeting', toAssistantID: recipient.id, text: '老大你好',
+      });
+      expect(delivered.admitted).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({ assistant: { id: recipient.id }, readOnly: true });
+      expect(turns[0].userText).toContain('小小白');
+      expect(turns[0].userText).toContain('老大你好');
+      expect(service.contactMessages(recipient.id).messages.map((message) => message.role)).toEqual(['assistant', 'peer', 'assistant']);
+      expect(service.contactMessages(recipient.id).messages.at(-1).text).toBe('收到了，你好！');
+      expect(onContactTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ assistantID: recipient.id, status: 'complete' }));
+      const message = turns[0].tools.find((tool) => tool.name === 'message_assistant');
+      if (message) {
+        const blocked = await message.execute('loop', { toAssistantID: sender.id, text: 'ping back' });
+        expect(blocked.details.error).toBe('validation_error');
+      }
+      expect(service.contactMessages(sender.id).messages).toHaveLength(1);
+    } finally { service.close(); }
+  });
+
+  it('replays the same peer admission once, rejects conflicting identities and does not wake old inbox rows on restart', async () => {
+    const directory = root();
+    const runContactTurn = vi.fn(async () => ({ bubbles: ['你好'] }));
+    const service = setup(directory, {}, { runContactTurn });
+    const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+    const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+    const input = { messageID: 'peer_once', toAssistantID: recipient.id, text: 'hello' };
+    try {
+      service.deliverPeerMessage(sender.id, input);
+      expect(service.deliverPeerMessage(sender.id, input).replayed).toBe(true);
+      expect(() => service.deliverPeerMessage(sender.id, { ...input, text: 'changed' })).toThrow('idempotency_conflict');
+      expect(() => service.deliverPeerMessage(recipient.id, { ...input, toAssistantID: sender.id })).toThrow('idempotency_conflict');
+      await service.whenContactTurnSettled(input.messageID);
+      expect(service.deliverPeerMessage(sender.id, input).replayed).toBe(true);
+      expect(runContactTurn).toHaveBeenCalledTimes(1);
+    } finally { service.close(); }
+    const cold = setup(directory, {}, { runContactTurn });
+    try {
+      expect(cold.deliverPeerMessage(sender.id, input).replayed).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(runContactTurn).toHaveBeenCalledTimes(1);
+      expect(cold.contactMessages(recipient.id).messages.map((message) => message.role)).toEqual(['assistant', 'peer', 'assistant']);
+    } finally { cold.close(); }
+  });
+
+  it('rolls back failed peer persistence without waking the recipient and permits a clean retry', async () => {
+    const directory = root();
+    const runContactTurn = vi.fn(async () => ({ bubbles: ['hello'] }));
+    const service = setup(directory, {}, { runContactTurn });
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      db.exec(`CREATE TRIGGER fail_peer_part BEFORE INSERT ON assistant_contact_part
+        WHEN NEW.message_id='peer_rollback' BEGIN SELECT RAISE(ABORT, 'peer write failed'); END`);
+      const input = { messageID: 'peer_rollback', toAssistantID: recipient.id, text: 'hello' };
+      expect(() => service.deliverPeerMessage(sender.id, input)).toThrow('peer write failed');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(runContactTurn).not.toHaveBeenCalled();
+      expect(service.contactMessages(recipient.id).messages).toHaveLength(1);
+      expect(service.snapshot().assistants.find((item) => item.id === recipient.id).working).toBe(false);
+      db.exec('DROP TRIGGER fail_peer_part');
+      service.deliverPeerMessage(sender.id, input);
+      expect(await service.whenContactTurnSettled(input.messageID)).toMatchObject({ status: 'complete' });
+      expect(runContactTurn).toHaveBeenCalledTimes(1);
+    } finally { db.close(); service.close(); }
+  });
+
+  it('serializes peer replies with user turns, keeps captured models and leaves watches armed', async () => {
+    let release;
+    let started;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const ready = new Promise((resolve) => { started = resolve; });
+    const turns = [];
+    const directory = root();
+    const service = setup(directory, {}, {
+      runContactTurn: async (turn) => {
+        turns.push(turn);
+        if (turn.userText === 'hold') { started(); await gate; }
+        return { bubbles: [turn.userText === 'hold' ? 'first reply' : 'peer reply'] };
+      },
+    });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const user = await service.send(recipient.id, { messageID: 'user_hold', parts: [{ type: 'text', text: 'hold' }] });
+      await ready;
+      service.appendContactCard(recipient.id, { cardType: 'session', sessionID: 'ses_still_watched', directory, title: 'Work', status: 'busy' });
+      const peer = service.deliverPeerMessage(sender.id, { messageID: 'peer_queued', toAssistantID: recipient.id, text: 'hello' });
+      const current = service.snapshot().assistants.find((item) => item.id === recipient.id);
+      await service.updateAssistant(recipient.id, { expectedRevision: current.revision, modelID: 'new-model' });
+      expect(turns).toHaveLength(1);
+      release();
+      await service.whenContactTurnSettled(user.messageID);
+      await service.whenContactTurnSettled(peer.messageID);
+      expect(turns).toHaveLength(2);
+      expect(turns[0].history.some((item) => item.content.includes('hello'))).toBe(false);
+      expect(turns[1].history.some((item) => item.content === 'first reply')).toBe(true);
+      expect(turns[1].assistant.modelID).toBe('m');
+      const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+      try { expect(db.prepare('SELECT resume_allowed FROM assistant_contact_watch WHERE session_id=?').get('ses_still_watched').resume_allowed).toBe(1); }
+      finally { db.close(); }
+    } finally { release(); service.close(); }
+  });
+
+  it('runs peer replies through the real harness with no mutation or relay tools', async () => {
+    const createChatCompletion = vi.fn(async (input) => {
+      const names = (input.body.tools || []).map((tool) => tool.function.name);
+      expect(names).not.toContain('message_assistant');
+      expect(names).not.toContain('assign_session');
+      expect(names).not.toContain('load_tools');
+      expect(names).not.toContain('bash');
+      expect(input.body.messages.some((message) => typeof message.content === 'string' && message.content.includes('老大你好'))).toBe(true);
+      return { completion: { choices: [{ message: { content: '小小白你好，收到啦。' } }] } };
+    });
+    const service = setup(root(), {}, { runContactTurn: realRunContactTurn, createChatCompletion });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: '小小白' });
+      const recipient = service.createAssistant({ ...assistantInput, name: '大白' });
+      const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: '老大你好' });
+      expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'complete' });
+      expect(createChatCompletion).toHaveBeenCalledTimes(1);
+      expect(service.contactMessages(recipient.id).messages.at(-1).text).toBe('小小白你好，收到啦。');
+      expect(service.contactMessages(sender.id).messages).toHaveLength(1);
+    } finally { service.close(); }
+  });
+
+  it('settles a failed peer reply as an error without deleting the delivered message', async () => {
+    const onContactTurnComplete = vi.fn();
+    const service = setup(root(), {}, {
+      onContactTurnComplete,
+      runContactTurn: async () => { throw new Error('model unavailable'); },
+    });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
+      expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'error', error: 'model unavailable' });
+      expect(service.contactMessages(recipient.id).messages.at(-1).role).toBe('peer');
+      expect(service.snapshot().assistants.find((item) => item.id === recipient.id).working).toBe(false);
+      expect(onContactTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ assistantID: recipient.id, status: 'error', body: 'model unavailable' }));
+    } finally { service.close(); }
+  });
+
+  it('cancels an aborted peer reply and drops its late output', async () => {
+    let release;
+    let started;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const ready = new Promise((resolve) => { started = resolve; });
+    const service = setup(root(), {}, { runContactTurn: async () => { started(); await gate; return { bubbles: ['late reply'] }; } });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
+      await ready;
+      await service.abort(recipient.id, { sessionID: null, sessionGeneration: 0 });
+      release();
+      expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'cancelled' });
+      expect(service.contactMessages(recipient.id).messages.at(-1).role).toBe('peer');
+    } finally { release(); service.close(); }
+  });
+
+  it.each(['wipe', 'disable', 'remove'])('does not run a queued peer reply after recipient %s', async (action) => {
+    const runContactTurn = vi.fn(async () => ({ bubbles: ['should not run'] }));
+    const service = setup(root(), {}, { runContactTurn });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
+      if (action === 'wipe') service.resetContact(recipient.id);
+      if (action === 'disable') await service.updateAssistant(recipient.id, { expectedRevision: recipient.revision, enabled: false });
+      if (action === 'remove') service.removeAssistant(recipient.id, recipient.revision);
+      expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'cancelled' });
+      expect(runContactTurn).not.toHaveBeenCalled();
+    } finally { service.close(); }
+  });
+
+  it('does not republish a peer reply after its inbox message is wiped mid-turn', async () => {
+    let release;
+    let started;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const ready = new Promise((resolve) => { started = resolve; });
+    const service = setup(root(), {}, {
+      runContactTurn: async ({ onBubbleDelta }) => {
+        started(); await gate;
+        onBubbleDelta(0, 'late reply', true);
+        return { bubbles: ['late reply'] };
+      },
+    });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
+      await ready;
+      service.resetContact(recipient.id);
+      release();
+      expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'cancelled' });
+      expect(service.contactMessages(recipient.id).messages).toEqual([]);
+    } finally { release(); service.close(); }
+  });
+
   it('sends a read-only peer message from message_assistant without promptAsync', async () => {
     const prompts = [];
     const directory = root();
     const service = setup(directory, { promptAsync: async (input) => { prompts.push(input); return { response: { status: 204 } }; } }, {
-      runContactTurn: async ({ tools }) => {
+      runContactTurn: async ({ tools, assistant }) => {
+        if (assistant.name === 'PeerQA') return { bubbles: ['收到带话'] };
         const message = tools.find((tool) => tool.name === 'message_assistant');
         const result = await message.execute('call_1', { to: 'PeerQA', text: 'hello-from-assistant 写好了' });
         return {
@@ -4685,6 +4902,8 @@ describe('assistants service', () => {
       messageID: 'client_message_assistant',
       parts: [{ type: 'text', text: '给 PeerQA 说一声 hello-from-assistant 写好了' }],
     });
+    const peerMessage = service.contactMessages(recipient.id).messages.find((message) => message.role === 'peer');
+    await service.whenContactTurnSettled(peerMessage.messageID);
     expect(prompts).toEqual([]);
     expect(service.contactMessages(recipient.id).messages).toEqual([expect.objectContaining({
       role: 'assistant', text: "Hi, I'm PeerQA. How can I help you?",
@@ -4693,7 +4912,7 @@ describe('assistants service', () => {
       fromAssistantID: sender.id,
       fromAssistantName: 'DeepSeekQA',
       text: 'hello-from-assistant 写好了',
-    })]);
+    }), expect.objectContaining({ role: 'assistant', text: '收到带话' })]);
     const senderPage = service.contactMessages(sender.id);
     expect(senderPage.messages.some((message) => message.role === 'user')).toBe(true);
     expect(senderPage.messages.some((message) => message.text.includes('Sent to PeerQA'))).toBe(true);
@@ -4701,7 +4920,7 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('delivers a read-only peer DM into the recipient contact transcript without OpenCode', async () => {
+  it('delivers a peer DM and replies in the recipient contact transcript without OpenCode', async () => {
     const prompts = [];
     const directory = root();
     const service = setup(directory, { promptAsync: async (input) => { prompts.push(input); return { response: { status: 204 } }; } });
@@ -4719,8 +4938,9 @@ describe('assistants service', () => {
       toAssistantID: recipient.id,
     });
     expect(prompts).toEqual([]);
+    await service.whenContactTurnSettled(delivered.messageID);
     const page = service.contactMessages(recipient.id);
-    expect(page.messages).toHaveLength(2);
+    expect(page.messages).toHaveLength(3);
     expect(page.messages[1]).toMatchObject({
       role: 'peer',
       fromAssistantID: sender.id,
@@ -4733,7 +4953,7 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('rejects self-DMs and never treats peer inbox rows as composer turns', async () => {
+  it('rejects self-DMs and keeps peer replies distinct from composer turns', async () => {
     const service = setup();
     const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
     const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
@@ -4741,14 +4961,15 @@ describe('assistants service', () => {
       toAssistantID: sender.id,
       text: 'loop',
     })).toThrow('validation_error');
-    service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'ping' });
+    const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'ping' });
+    await service.whenContactTurnSettled(peer.messageID);
     const sent = await settleSend(service, recipient.id, {
       messageID: 'after-peer',
       parts: [{ type: 'text', text: 'hello' }],
     });
     expect(sent.admitted).toBe(true);
     const roles = service.contactMessages(recipient.id).messages.map((message) => message.role);
-    expect(roles).toEqual(['assistant', 'peer', 'user', 'assistant']);
+    expect(roles).toEqual(['assistant', 'peer', 'assistant', 'user', 'assistant']);
     service.close();
   });
 

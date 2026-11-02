@@ -18,6 +18,10 @@ type AppearanceSlice = {
   notifyOnCompletion: boolean;
   notifyOnError: boolean;
   notifyOnQuestion: boolean;
+  notifyOnPermission: boolean;
+  notifyOnScheduledTasks: boolean;
+  notifyOnAssistants: boolean;
+  notifyOnGoals: boolean;
   notificationTemplates: {
     completion: { title: string; message: string };
     error: { title: string; message: string };
@@ -67,6 +71,10 @@ export const startAppearanceAutoSave = (): void => {
     notifyOnCompletion: useUIStore.getState().notifyOnCompletion,
     notifyOnError: useUIStore.getState().notifyOnError,
     notifyOnQuestion: useUIStore.getState().notifyOnQuestion,
+    notifyOnPermission: useUIStore.getState().notifyOnPermission,
+    notifyOnScheduledTasks: useUIStore.getState().notifyOnScheduledTasks,
+    notifyOnAssistants: useUIStore.getState().notifyOnAssistants,
+    notifyOnGoals: useUIStore.getState().notifyOnGoals,
     notificationTemplates: useUIStore.getState().notificationTemplates,
     summarizeLastMessage: useUIStore.getState().summarizeLastMessage,
     summaryThreshold: useUIStore.getState().summaryThreshold,
@@ -123,6 +131,10 @@ export const startAppearanceAutoSave = (): void => {
       notifyOnCompletion: state.notifyOnCompletion,
       notifyOnError: state.notifyOnError,
       notifyOnQuestion: state.notifyOnQuestion,
+      notifyOnPermission: state.notifyOnPermission,
+      notifyOnScheduledTasks: state.notifyOnScheduledTasks,
+      notifyOnAssistants: state.notifyOnAssistants,
+      notifyOnGoals: state.notifyOnGoals,
       notificationTemplates: state.notificationTemplates,
       summarizeLastMessage: state.summarizeLastMessage,
       summaryThreshold: state.summaryThreshold,
@@ -184,6 +196,18 @@ export const startAppearanceAutoSave = (): void => {
     }
     if (current.notifyOnQuestion !== previous.notifyOnQuestion) {
       diff.notifyOnQuestion = current.notifyOnQuestion;
+    }
+    if (current.notifyOnPermission !== previous.notifyOnPermission) {
+      diff.notifyOnPermission = current.notifyOnPermission;
+    }
+    if (current.notifyOnScheduledTasks !== previous.notifyOnScheduledTasks) {
+      diff.notifyOnScheduledTasks = current.notifyOnScheduledTasks;
+    }
+    if (current.notifyOnAssistants !== previous.notifyOnAssistants) {
+      diff.notifyOnAssistants = current.notifyOnAssistants;
+    }
+    if (current.notifyOnGoals !== previous.notifyOnGoals) {
+      diff.notifyOnGoals = current.notifyOnGoals;
     }
     if (JSON.stringify(current.notificationTemplates) !== JSON.stringify(previous.notificationTemplates)) {
       diff.notificationTemplates = current.notificationTemplates;

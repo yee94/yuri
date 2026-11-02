@@ -53,20 +53,14 @@ export const createOpenCodeNetworkRuntime = (deps) => {
           Accept: 'application/json',
           ...getOpenCodeAuthHeaders(),
         };
-        for (const healthPath of ['/api/info', '/global/health']) {
-          const response = await fetch(`${baseUrl}${healthPath}`, {
-            method: 'GET',
-            headers,
-            signal: controller.signal,
-          });
-          if (response.ok) {
-            const body = await response.json().catch(() => null);
-            // Official 2.x /api/info is ServerInfo (version, no healthy);
-            // /global/health may still return { healthy, version }.
-            if (evaluateOpenCodeHealthBody(body).ok) {
-              return true;
-            }
-          }
+        const response = await fetch(`${baseUrl}/api/info`, {
+          method: 'GET',
+          headers,
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          const body = await response.json().catch(() => null);
+          if (evaluateOpenCodeHealthBody(body).ok) return true;
         }
       } catch {
       } finally {

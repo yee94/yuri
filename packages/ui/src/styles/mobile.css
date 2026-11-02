@@ -25,6 +25,16 @@
   --yuri-mobile-glass-highlight: rgb(255 255 255 / 0.6);
   --yuri-mobile-glass-blur: 20px;
   --yuri-mobile-glass-saturate: 1.25;
+  --yuri-overlay-translucent-fill: color-mix(in srgb, var(--surface-elevated) 22%, transparent);
+  --yuri-popup-fill: var(--yuri-overlay-translucent-fill);
+  --yuri-popup-edge: color-mix(in srgb, var(--surface-foreground) 12%, transparent);
+  --yuri-popup-divider: color-mix(in srgb, var(--surface-foreground) 6%, transparent);
+  --yuri-popup-divider-width: 0.5px;
+  --yuri-popup-shadow:
+    0 0 0 1px var(--yuri-popup-edge),
+    0 2px 4px -1px rgb(0 0 0 / 0.06),
+    0 8px 20px -6px rgb(0 0 0 / 0.12),
+    inset 0 1px 0 var(--yuri-mobile-glass-highlight);
   --yuri-mobile-glass-shadow:
     0 0 2px rgb(0 0 0 / 0.05),
     0 0 12px rgb(0 0 0 / 0.06),
@@ -33,11 +43,34 @@
     inset 0 0 0 0.5px var(--yuri-mobile-glass-highlight);
 }
 
+/* Android WebViews can reserve layout width for the global desktop scrollbar.
+   Hide native tracks (including legacy WebKit) without disabling scrolling;
+   existing overlay thumbs remain paint-only and do not need a gutter. */
+:root.yuri-capacitor-app.yuri-platform-android,
+:root.yuri-capacitor-app.yuri-platform-android * {
+  scrollbar-width: none !important;
+  scrollbar-gutter: auto !important;
+}
+
+:root.yuri-capacitor-app.yuri-platform-android::-webkit-scrollbar,
+:root.yuri-capacitor-app.yuri-platform-android *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 .dark {
   --yuri-mobile-glass-fill: rgb(38 38 44 / 0.66);
   --yuri-mobile-glass-highlight: rgb(255 255 255 / 0.18);
   --yuri-mobile-glass-blur: 20px;
   --yuri-mobile-glass-saturate: 1.2;
+  --yuri-popup-edge: color-mix(in srgb, var(--surface-foreground) 16%, transparent);
+  --yuri-popup-divider: color-mix(in srgb, var(--surface-foreground) 8%, transparent);
+  --yuri-popup-shadow:
+    0 0 0 1px var(--yuri-popup-edge),
+    0 2px 4px -1px rgb(0 0 0 / 0.18),
+    0 8px 20px -6px rgb(0 0 0 / 0.28),
+    inset 0 1px 0 var(--yuri-mobile-glass-highlight);
   --yuri-mobile-glass-shadow:
     0 0 2px rgb(0 0 0 / 0.3),
     0 0 12px rgb(0 0 0 / 0.28),
@@ -454,11 +487,23 @@
 /* Composer `/` `@` `#` catalogs: keep overlay elevation/blur, but a much
    thinner fill than --translucent (48%). A heavy wash hides the frost. */
 .yuri-composer-autocomplete-surface {
-  background: color-mix(in srgb, var(--surface-elevated) 22%, transparent);
+  background: var(--yuri-overlay-translucent-fill);
 }
 
 .dark .yuri-composer-autocomplete-surface {
-  background: color-mix(in srgb, var(--surface-elevated) 22%, transparent);
+  background: var(--yuri-overlay-translucent-fill);
+}
+
+/* Anchored popups share overlay frost, with a fine edge and shorter elevation. */
+.yuri-mobile-overlay-surface.yuri-popup-surface {
+  background: var(--yuri-popup-fill);
+  color: var(--surface-elevated-foreground);
+  box-shadow: var(--yuri-popup-shadow);
+}
+
+.yuri-popup-surface .yuri-popup-separator {
+  height: var(--yuri-popup-divider-width);
+  background: var(--yuri-popup-divider);
 }
 
 .yuri-composer-autocomplete-row {
@@ -2393,6 +2438,7 @@ button.yuri-mobile-worktree-label-trigger:active,
   .yuri-mobile-floating-action,
   .yuri-mobile-glass-control,
   .yuri-composer-autocomplete-surface,
+  .yuri-mobile-overlay-surface.yuri-popup-surface,
   .yuri-mobile-overlay-surface {
     background: var(--surface-elevated);
     -webkit-backdrop-filter: none;

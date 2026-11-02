@@ -7,6 +7,7 @@ import { AssistantSessionComposer } from './AssistantSessionComposer'
 import { Button } from '@/components/ui/button'
 import { uploadAssistantAttachment, type AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-upload'
 import { AssistantContactAttachment } from './AssistantContactAttachment'
+import { ContactUserMessagePart } from './ContactUserMessagePart'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { useRuntimeTransportIdentity } from '@/components/chat/imageSource'
 import type { ToolPopupContent } from '@/components/chat/message/types'
@@ -25,6 +26,7 @@ import {
   useAssistantCapabilityQuery,
   useAssistantContactMessagesQuery,
   useAssistantSnapshotQuery,
+  useAssistantScheduledTasksQuery,
   type AssistantDTO,
   type AssistantContactMessage,
 } from '@/queries/assistantQueries'
@@ -53,6 +55,7 @@ import {
 } from './contactOptimisticTurns'
 import { AssistantAssistantCard } from './AssistantAssistantCard'
 import { AssistantScheduleCard } from './AssistantScheduleCard'
+import { needsScheduleCardDetails } from './scheduleCardPresentation'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
@@ -138,7 +141,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   }
   const [draft, setDraft] = React.useState('')
   const [attachments, setAttachments] = React.useState<ContactComposerAttachment[]>([])
-  const retrySendRef = React.useRef<{ assistantID: string; text: string; attachments: ContactComposerAttachment[]; messageID: string } | null>(null)
+  const retrySendsRef = React.useRef(new Map<string, { assistantID: string; text: string; attachments: ContactComposerAttachment[] }>())
   const uploadedRef = React.useRef(new Map<string, AssistantAttachmentDescriptor>())
   const uploadControllerRef = React.useRef(new AbortController())
   React.useEffect(() => {
@@ -147,13 +150,16 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     return () => controller.abort()
   }, [assistant.id, transportIdentity])
   const previewUrlsRef = React.useRef(new Set<string>())
+  const [optimisticTurns, setOptimisticTurns] = React.useState<ContactOptimisticTurn[]>([])
   React.useEffect(() => {
     const next = new Set(attachments.map((attachment) => attachment.url))
+    for (const send of retrySendsRef.current.values()) {
+      for (const attachment of send.attachments) next.add(attachment.url)
+    }
     for (const url of previewUrlsRef.current) if (!next.has(url)) URL.revokeObjectURL(url)
     previewUrlsRef.current = next
-  }, [attachments])
+  }, [attachments, optimisticTurns])
   React.useEffect(() => () => { for (const url of previewUrlsRef.current) URL.revokeObjectURL(url) }, [])
-  const [optimisticTurns, setOptimisticTurns] = React.useState<ContactOptimisticTurn[]>([])
   const [turnPreviews, setTurnPreviews] = React.useState<ContactTurnPreview[]>([])
   const [sendError, setSendError] = React.useState<string | null>(null)
   // Shared image/mermaid preview — same ToolOutputDialog contract as ChatMessage.
@@ -175,7 +181,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const stoppingRef = React.useRef(false)
   React.useEffect(() => {
     uploadedRef.current.clear()
-    retrySendRef.current = null
+    retrySendsRef.current.clear()
     setOptimisticTurns([])
     setTurnPreviews([])
     setSendError(null)
@@ -185,6 +191,20 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const admissionRevisionByTurnIDRef = React.useRef(new Map<string, number>())
   const setContactWorking = useAssistantContactWorkingStore((state) => state.setWorking)
   const messages = contactQuery.data?.messages ?? EMPTY_CONTACT_MESSAGES
+  const needsScheduleLookup = React.useMemo(() => messages.some((message) => message.parts.some((part) => (
+    part.type === 'card' && part.cardType === 'schedule' && needsScheduleCardDetails(part)
+  ))), [messages])
+  const scheduledTasksQuery = useAssistantScheduledTasksQuery(assistant.id, active && needsScheduleLookup)
+  const scheduledTasksByProject = React.useMemo(() => {
+    const projects = new Map<string, Map<string, Record<string, unknown>>>()
+    for (const entry of scheduledTasksQuery.data?.tasks ?? []) {
+      if (!entry.task) continue
+      let tasks = projects.get(entry.projectID)
+      if (!tasks) { tasks = new Map(); projects.set(entry.projectID, tasks) }
+      tasks.set(entry.taskID, entry.task)
+    }
+    return projects
+  }, [scheduledTasksQuery.data])
   const scopedOptimisticTurns = scopeContactOptimisticTurns(optimisticTurns, assistant.id)
   const scopedTurnPreviews = scopeContactTurnPreviews(turnPreviews, assistant.id)
   const visibleMessages = mergeContactTranscript(messages, scopedOptimisticTurns, assistant.id, scopedTurnPreviews)
@@ -284,6 +304,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
 
   React.useEffect(() => {
     setSendError(null)
+    retrySendsRef.current.clear()
+    uploadedRef.current.clear()
     settledTurnIDsRef.current.clear()
     admissionRevisionByTurnIDRef.current = new Map()
     setOptimisticTurns((current) => scopeContactOptimisticTurns(current, assistant.id))
@@ -294,6 +316,12 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   }, [assistant.id, setImagePreviewOpen])
 
   React.useEffect(() => {
+    for (const message of messages) {
+      const send = retrySendsRef.current.get(message.messageID)
+      if (!send) continue
+      for (const attachment of send.attachments) uploadedRef.current.delete(`${send.assistantID}:${attachment.id}`)
+      retrySendsRef.current.delete(message.messageID)
+    }
     setOptimisticTurns((current) => reconcileContactOptimisticTurns(current, messages))
   }, [messages])
 
@@ -398,13 +426,13 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     event.preventDefault()
     void addFiles(files)
   })
-  const submit = useEvent(async (voiceText?: string) => {
+  const submit = useEvent(async (voiceText?: string, retryID?: string) => {
     const uploadController = uploadControllerRef.current
-    const text = voiceText ?? draft
-    const staged = attachments
     const sentAssistantID = assistant.id
-    const previous = retrySendRef.current
-    const retryID = previous?.assistantID === sentAssistantID && previous.text === text && previous.attachments === staged ? previous.messageID : null
+    const previous = retryID ? retrySendsRef.current.get(retryID) : undefined
+    if (retryID && (!previous || previous.assistantID !== sentAssistantID)) return
+    const text = previous?.text ?? voiceText ?? draft
+    const staged = previous?.attachments ?? attachments
     const begun = beginContactComposerSubmit({
       gate: sendGate,
       sending: contactOptimisticSending(scopedOptimisticTurns),
@@ -415,9 +443,9 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     })
     if (!begun.ok) return
     setContactWorking(sentAssistantID, true)
-    retrySendRef.current = { assistantID: sentAssistantID, text, attachments: staged, messageID: begun.messageID }
+    retrySendsRef.current.set(begun.messageID, { assistantID: sentAssistantID, text, attachments: staged })
     // All sends leave the field at once, like iMessage; attachment previews
-    // keep their composer-owned blob leases until admission.
+    // keep their send-owned blob leases until admission.
     const textOnly = staged.length === 0
     // A retry reuses its mounted row; only a fresh text bubble morphs out of the field.
     // Voice sends never painted their text in the field, so there is nothing to morph.
@@ -425,14 +453,18 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     pendingSendFlightRef.current = flightSource ? { messageID: begun.messageID, source: flightSource } : null
     setSendFlight(flightSource ? { scope: entryScope, messageID: begun.messageID } : null)
     flownMessageIDRef.current = flightSource ? begun.messageID : flownMessageIDRef.current
-    followLatest(flightSource ? { duration: CONTACT_SEND_FLIGHT_DURATION_S, ease: CONTACT_SEND_FLIGHT_VERTICAL_EASE } : undefined)
-    setDraft((current) => current === text ? '' : current)
-    setOptimisticTurns((current) => [...current.filter((turn) => turn.messageID !== begun.messageID), begun.turn])
+    if (!retryID) {
+      followLatest(flightSource ? { duration: CONTACT_SEND_FLIGHT_DURATION_S, ease: CONTACT_SEND_FLIGHT_VERTICAL_EASE } : undefined)
+      setDraft((current) => current === text ? '' : current)
+      setAttachments((current) => current.filter((attachment) => !staged.includes(attachment)))
+    }
+    setOptimisticTurns((current) => current.some((turn) => turn.messageID === begun.messageID)
+      ? current.map((turn) => turn.messageID === begun.messageID ? { ...begun.turn, createdAt: turn.createdAt } : turn)
+      : [...current, begun.turn])
     setSendError(null)
     const clearSentDraft = () => {
-      setAttachments((current) => current.filter((attachment) => !staged.includes(attachment)))
       staged.forEach((attachment) => uploadedRef.current.delete(`${sentAssistantID}:${attachment.id}`))
-      retrySendRef.current = null
+      retrySendsRef.current.delete(begun.messageID)
     }
     try {
       const descriptors: AssistantAttachmentDescriptor[] = []
@@ -495,13 +527,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
         timedOut: t('assistants.contact.timedOut'),
       })
       setOptimisticTurns((current) => markContactOptimisticFailed(current, begun.messageID, detail))
-      // Hand an early-cleared draft back for retry unless the user typed something new.
-      setDraft((current) => current === '' ? text : current)
-      setSendError(detail)
     } finally {
       sendGate.release()
     }
   })
+  const retrySend = useEvent((messageID: string) => { void submit(undefined, messageID) })
 
   const stop = useEvent(async () => {
     if (stoppingRef.current) return
@@ -614,6 +644,9 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
               const optimistic = optimisticByID.get(message.messageID)
               const preview = previewByTurnID.get(message.turnID)
               const failedPreviewRow = message.status === 'failed' && message.messageID.endsWith(':preview:failed')
+              const userPart = (content: React.ReactNode, key: string) => isUser ? (
+                <ContactUserMessagePart key={key} failedTurn={active ? optimistic : undefined} retryDisabled={sending} onRetry={retrySend}>{content}</ContactUserMessagePart>
+              ) : content
               if (message.status === 'error' || failedPreviewRow) {
                 return (
                   <React.Fragment key={renderKey}>
@@ -682,10 +715,10 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                         return <AssistantAssistantCard key={`${renderKey}:card:${index}`} card={part} assistant={snapshotQuery.data?.assistants.find((item) => item.id === part.assistantID)} active={active} />
                       }
                       if (part.type === 'card' && part.cardType === 'schedule') {
-                        return <AssistantScheduleCard key={`${renderKey}:card:${index}`} card={part} />
+                        return <AssistantScheduleCard key={`${renderKey}:card:${index}`} card={part} task={scheduledTasksByProject.get(part.projectID)?.get(part.taskID)} />
                       }
                       if (part.type === 'file') {
-                        return <AssistantContactAttachment key={`${renderKey}:file:${index}`} assistantID={assistant.id} part={part} onShowPopup={handleShowPopup} />
+                        return userPart(<AssistantContactAttachment key={`${renderKey}:file:${index}`} assistantID={assistant.id} part={part} onShowPopup={handleShowPopup} />, `${renderKey}:file:${index}`)
                       }
                       if (part.type === 'text' && isInternalSettleText(part.text)) {
                         // Legacy yuri.settle.* markers: card status already shows outcome.
@@ -696,7 +729,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                         // Only a standalone inline image gets media chrome; prose and
                         // ambiguous Markdown keep the ordinary text-bubble spacing.
                         const imageOnly = useMarkdown && /^!\[(?:\\.|[^\]\\\n])*\]\(\s*(?:<[^>\n]+>|[^\s()]+)(?:\s+"[^"\n]*")?\s*\)$/.test(part.text.trim())
-                        return (
+                        return userPart((
                           <div
                             key={`${renderKey}:text:${index}`}
                             aria-label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
@@ -729,15 +762,12 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                               />
                             ) : part.text}
                           </div>
-                        )
+                        ), `${renderKey}:text:${index}`)
                       }
                       return null
                     })}
                     {optimistic?.status === 'sending' ? (
                       <p className="absolute right-1 top-full mt-1 typography-micro text-muted-foreground/75">{t('assistants.contact.sending')}</p>
-                    ) : null}
-                    {optimistic?.status === 'failed' ? (
-                      <p className="px-1 typography-micro text-[var(--status-error)]">{optimistic.error || t('assistants.contact.sendFailed')}</p>
                     ) : null}
                     {readPosition?.messageID === message.messageID ? <AssistantReadMarker
                       key={`${transportIdentity}:${assistant.id}:${readPosition.generation}:${readPosition.ordinal}`}
@@ -786,7 +816,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
         data-assistant-contact-composer=""
       >
         {sendError ? (
-          <div className="chat-input-column mb-2 flex items-center gap-2"><p role="alert" className="typography-micro text-[var(--status-error)]">{sendError}</p>{retrySendRef.current ? <Button type="button" size="sm" variant="ghost" disabled={sending} onClick={() => void submit()}>{t('chat.history.retry')}</Button> : null}</div>
+          <div className="chat-input-column mb-2"><p role="alert" className="typography-micro text-[var(--status-error)]">{sendError}</p></div>
         ) : null}
         <form
           className={cn('relative w-full pt-1.5 pb-4', isMobile && 'bottom-safe-area yuri-mobile-composer')}
@@ -825,7 +855,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
               onRemoveAttachment={(id) => {
                 if (sending) return
                 uploadedRef.current.delete(`${assistant.id}:${id}`)
-                retrySendRef.current = null
                 setAttachments((current) => current.filter((attachment) => attachment.id !== id))
               }}
               onPaste={handlePaste}

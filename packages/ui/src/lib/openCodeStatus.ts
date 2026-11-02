@@ -232,21 +232,21 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
     if (!apiBase) return null;
     const url = new URL(pathname.replace(/^\/+/, ''), apiBase);
     if (includeDirectory && directory) {
-      url.searchParams.set('directory', directory);
+      url.searchParams.set('location[directory]', directory);
     }
     return url.toString();
   };
 
   const probeTargets: Array<{ label: string; path: string; includeDirectory?: boolean; timeoutMs?: number }> = [
-    { label: 'health', path: '/health', includeDirectory: false },
+    { label: 'health', path: '/info', includeDirectory: false },
     { label: 'config', path: '/config', includeDirectory: true },
-    { label: 'providers', path: '/config/providers', includeDirectory: true },
+    { label: 'providers', path: '/provider', includeDirectory: true },
     { label: 'agents', path: '/agent', includeDirectory: true, timeoutMs: 12000 },
     { label: 'commands', path: '/command', includeDirectory: true, timeoutMs: 10000 },
-    { label: 'project', path: '/project/current', includeDirectory: true },
-    { label: 'path', path: '/path', includeDirectory: true },
+    { label: 'project', path: '/project', includeDirectory: false },
+    { label: 'location', path: '/location', includeDirectory: true },
     { label: 'sessions', path: '/session', includeDirectory: true, timeoutMs: 12000 },
-    { label: 'sessionStatus', path: '/session/status', includeDirectory: true },
+    { label: 'sessionActive', path: '/session/active', includeDirectory: false },
   ];
 
   const probes = apiBase

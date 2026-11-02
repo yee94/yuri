@@ -2,7 +2,6 @@ import React from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -18,6 +17,7 @@ import { useI18n, type I18nKey } from "@/lib/i18n";
 import { isVSCodeRuntime } from "@/lib/desktop";
 import type { IconName } from "@/components/icon/icons";
 import { ShortcutKbd } from "@/components/ui/kbd";
+import { useDeviceInfo } from '@/lib/device';
 
 type ShortcutItem = {
   id?: string;
@@ -40,6 +40,7 @@ const renderShortcut = (id: string, fallbackCombo: string, overrides: Record<str
 
 export const HelpDialog: React.FC = () => {
   const { t } = useI18n();
+  const { isMobile } = useDeviceInfo();
   const isHelpDialogOpen = useUIStore((state) => state.isHelpDialogOpen);
   const setHelpDialogOpen = useUIStore((state) => state.setHelpDialogOpen);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
@@ -309,25 +310,21 @@ export const HelpDialog: React.FC = () => {
 
   return (
       <Dialog open={isHelpDialogOpen} onOpenChange={setHelpDialogOpen}>
-      <DialogContent className="max-w-2xl w-[min(42rem,calc(100vw-1.5rem))] max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Icon name="settings-3" className="h-5 w-5" />
+      <DialogContent presentation={isMobile ? 'default' : 'picker'} className={isMobile ? 'max-w-2xl w-[min(42rem,calc(100vw-1.5rem))] max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden' : undefined}>
+        <DialogHeader className="yuri-picker-header">
+          <DialogTitle className="yuri-picker-title">
             {t('helpDialog.title')}
           </DialogTitle>
-          <DialogDescription>
-            {t('helpDialog.description')}
-          </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto mt-3 pr-1">
-          <div className="space-y-4">
+        <div className="yuri-picker-list">
+          <div>
             {shortcuts.map((section) => (
-              <div key={section.categoryKey}>
-                <h3 className="typography-meta font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              <div key={section.categoryKey} className="yuri-picker-section">
+                <h3 className="yuri-picker-section-title text-muted-foreground">
                   {t(section.categoryKey)}
                 </h3>
-                <div className="space-y-1">
+                <div>
                   {section.items
                     .filter((shortcut) => !(isVSCode && shortcut.id === 'toggle_prompt_navigator'))
                     .map((shortcut) => {
@@ -338,17 +335,17 @@ export const HelpDialog: React.FC = () => {
                     return (
                       <div
                         key={shortcut.id || shortcut.descriptionKey}
-                        className="flex items-center justify-between py-1 px-2"
+                        className="yuri-picker-row yuri-help-shortcut-row"
                       >
                         <div className="flex items-center gap-2">
                           {shortcut.icon && (
                             <Icon name={shortcut.icon} className="h-3.5 w-3.5 text-muted-foreground" />
                           )}
-                          <span className="typography-meta">
+                          <span className="yuri-picker-label">
                             {t(shortcut.descriptionKey)}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
                           {(Array.isArray(displayKeys) ? displayKeys : [displayKeys]).map((keyCombo: string, i: number) => (
                             <React.Fragment key={`${keyCombo}-${i}`}>
                               {i > 0 && (
@@ -356,7 +353,7 @@ export const HelpDialog: React.FC = () => {
                                   {t('helpDialog.keyCombiner.or')}
                                 </span>
                               )}
-                              <ShortcutKbd shortcut={keyCombo} />
+                              <ShortcutKbd shortcut={keyCombo} variant="hint" />
                             </React.Fragment>
                           ))}
                         </div>
@@ -368,27 +365,6 @@ export const HelpDialog: React.FC = () => {
             ))}
           </div>
 
-          <div className="mt-4 p-2 bg-muted/30 rounded-xl">
-            <div className="flex items-start gap-2">
-              <Icon name="question" className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
-              <div className="typography-meta text-muted-foreground">
-                <p className="font-medium mb-1">{t('helpDialog.proTips.title')}</p>
-                <ul className="space-y-0.5 typography-meta">
-                  <li>
-                    • {t('helpDialog.proTips.commandPalette', {
-                      shortcut: formatShortcutForDisplay(getEffectiveShortcutCombos('open_command_palette', shortcutOverrides)[0] ?? ''),
-                    })}
-                  </li>
-                  <li>
-                    • {t('helpDialog.proTips.recentSessions')}
-                  </li>
-                  <li>
-                    • {t('helpDialog.proTips.themeCycling')}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
         </div>
       </DialogContent>
     </Dialog>

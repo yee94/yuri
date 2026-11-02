@@ -2,6 +2,103 @@
   max-height: min(42rem, 80dvh);
 }
 
+[data-global-search='true'] .yuri-global-search-results {
+  padding: 0.75rem 0.5rem;
+}
+
+[data-global-search='true'] [cmdk-group] {
+  padding: 0;
+}
+
+[data-global-search='true'] [cmdk-group] + [cmdk-group] {
+  margin-top: 0.75rem;
+}
+
+[data-global-search='true'] [cmdk-group-heading] {
+  padding: 0 1rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.0625rem;
+}
+
+[data-global-search='true'] .yuri-global-search-group-count {
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-global-search='true'] [cmdk-group-items] > [cmdk-item] + [cmdk-item] {
+  margin-top: 0.125rem;
+}
+
+[data-global-search='true'] [cmdk-item] {
+  min-height: 2.25rem;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+[data-global-search='true'] .yuri-global-search-result-title {
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.25rem;
+}
+
+[data-global-search='true'] .yuri-global-search-result-detail {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: 1.125rem;
+}
+
+[data-global-search='true'] [cmdk-item].yuri-global-search-session {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.125rem var(--yuri-search-shortcut-width, 1.75rem);
+  align-items: center;
+  column-gap: 1rem;
+  padding-block: 0.5rem;
+}
+
+[data-global-search='true'] .yuri-global-search-session-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.75rem;
+  line-height: 1.25rem;
+}
+
+[data-global-search='true'] .yuri-global-search-session-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+[data-global-search='true'] .yuri-global-search-session-time {
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-global-search='true'] .yuri-global-search-session-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+[data-global-search='true'] .yuri-global-search-session-speaker,
+[data-global-search='true'] .yuri-global-search-session-project {
+  font-size: 0.6875rem;
+  font-weight: 400;
+}
+
+[data-global-search='true'] .yuri-global-search-session-project {
+  text-align: right;
+}
+
 .yuri-global-search-page {
   height: min(100%, var(--search-viewport-height, 100dvh));
   padding-bottom: var(--yuri-safe-area-bottom, env(safe-area-inset-bottom, 0px));
@@ -55,6 +152,11 @@
   min-height: 44px;
 }
 
+.yuri-global-search-page [cmdk-item].yuri-global-search-session {
+  grid-template-columns: minmax(0, 1fr) 3rem;
+  column-gap: 0.625rem;
+}
+
 .yuri-global-search-page [data-slot='command-list'] {
   overscroll-behavior: contain;
   touch-action: pan-y;
@@ -62,7 +164,7 @@
 
 .yuri-global-search [data-slot='command-input-wrapper'] {
   flex-shrink: 0;
-  padding: 14px 16px 6px;
+  padding: 14px 24px 6px;
 }
 
 .yuri-global-search [data-slot='command-input-field'] {

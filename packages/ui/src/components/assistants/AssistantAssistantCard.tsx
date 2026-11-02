@@ -1,5 +1,6 @@
 import React from 'react'
 import { useEvent } from '@reactuses/core'
+import { Icon } from '@/components/icon/Icon'
 import { useI18n } from '@/lib/i18n'
 import { isIPadApp } from '@/lib/platform'
 import { useMobileAppActions } from '@/apps/mobileAppContext'
@@ -7,7 +8,7 @@ import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore'
 import type { AssistantContactAssistantCardPart, AssistantDTO } from '@/queries/assistantQueries'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { openAssistant } from '@/stores/useAssistantUIStore'
-import { CONTACT_CARD_COVER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
+import { CONTACT_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantAssistantCardProps = {
   card: AssistantContactAssistantCardPart
@@ -46,14 +47,17 @@ export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ 
       onClick={openContact}
       onKeyDown={onActivateKeyDown}
     >
-      <div className="flex items-center gap-3">
-        <span className="relative inline-block size-10 shrink-0 leading-none" aria-hidden>
-          <AssistantWorkingAvatar name={card.assistantID} avatarSeed={assistant?.avatarSeed} size={40} working={active ? Boolean(assistant?.working || assistant?.activeContactTurn) : undefined} showWorkingDot={false} followPointer={false} />
+      <div className={CONTACT_CARD_HEADER_CLASS}>
+        <span className="relative inline-block shrink-0 leading-none" aria-hidden>
+          <AssistantWorkingAvatar name={card.assistantID} avatarSeed={assistant?.avatarSeed} size={32} working={active ? Boolean(assistant?.working || assistant?.activeContactTurn) : undefined} showWorkingDot={false} followPointer={false} />
         </span>
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <h3 className="min-w-0 line-clamp-2 break-words typography-ui-label font-medium leading-5 text-foreground">{title}</h3>
-          <p className="truncate typography-micro font-normal leading-4 text-muted-foreground">{metadata}</p>
-        </div>
+        <span className="min-w-0 truncate text-[0.8em] leading-4 text-muted-foreground">{t('assistants.contact.card.assistant.label')}</span>
+        <Icon name="arrow-right-s" className="ml-auto size-4 shrink-0 text-muted-foreground" />
+      </div>
+      <h3 className={CONTACT_CARD_TITLE_CLASS} title={title}>{title}</h3>
+      <div className={CONTACT_CARD_FOOTER_CLASS} title={metadata}>
+        <p className="truncate text-[0.75em] leading-4 text-muted-foreground">{card.providerID}</p>
+        <p className="truncate text-[0.85em] leading-4 text-foreground">{card.modelID}</p>
       </div>
     </article>
   )

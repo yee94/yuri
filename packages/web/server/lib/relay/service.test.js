@@ -92,7 +92,7 @@ describe('resolveEffectiveRelayUrl', () => {
 
   it('prefers a valid env URL, then settings, then the default', () => {
     expect(resolveEffectiveRelayUrl()).toBe(PRODUCT_RELAY_URL);
-    expect(PRODUCT_RELAY_URL).toBe('wss://relay.openchamber.dev/ws');
+    expect(PRODUCT_RELAY_URL).toBe('wss://relay.useyuri.top/ws');
     expect(
       resolveEffectiveRelayUrl({
         settings: { privateRelay: { relayUrl: 'wss://settings.example/ws' } },
@@ -136,6 +136,19 @@ describe('relay service pairing endpoint', () => {
       service.stop();
     }
     expect(relayMocks.stops).toEqual(relayMocks.starts);
+  });
+
+  it('persists the product default for first pairing when no endpoint was saved', async () => {
+    const { service, settings } = createTestRelayService();
+    await settings.write({});
+    try {
+      const candidate = await service.ensureEnabledForPairing();
+      expect(candidate.relayUrl).toBe(PRODUCT_RELAY_URL);
+      expect(settings.current()).toMatchObject({ privateRelay: { enabled: true, relayUrl: PRODUCT_RELAY_URL } });
+      expect(relayMocks.starts).toEqual([PRODUCT_RELAY_URL]);
+    } finally {
+      service.stop();
+    }
   });
 
   it('appends a new pairing endpoint (multi-relay) while keeping the primary', async () => {

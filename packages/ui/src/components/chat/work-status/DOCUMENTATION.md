@@ -77,10 +77,15 @@ Changes opens the Git sidebar. Branch does not navigate.
 Layout exclusion applies to both inline and overlay modes, scoped to the displayed
 directory, without mutating the saved visibility preference.
 
-Width is fixed at 196px. Inline and overlay modes are both absolutely positioned; neither consumes flex width. Inline display requires a window viewport of at least
+Inline width is fixed at 196px; the overlay is wider (264px) with `p-2` and `rounded-xl` so the popup reads as its own surface. Inline and overlay modes are both absolutely positioned; neither consumes flex width. Inline display requires a window viewport of at least
 1440px, evaluated on the first render with `useMediaQuery`; it does not wait for
 chat-area measurements. Inline width and margins do not animate, so entering
 chat and crossing the breakpoint do not repeatedly reflow the transcript.
 Narrow windows retain the manually opened overlay with opacity/transform
 transitions. Mobile and VS Code keep the column disabled.
+Overlay mode reuses `statusBarPopoverSurfaceClassName` from `statusBarPopover.ts`,
+the same shared frosted popup material, fine outline and compact shadow as the
+Changed files popup. The `yuri-popup-surface` modifier keeps elevation below the
+larger picker dialog; reduced transparency restores an opaque elevated fill.
+Inline mode stays transparent and borderless.
 The header toggle uses `settings-2`.

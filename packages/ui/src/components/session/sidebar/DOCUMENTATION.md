@@ -1,5 +1,9 @@
 # Session Sidebar Documentation
 
+Sidebar numeric shortcuts and global-search hints share `Kbd variant="hint"`.
+The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neutral
+6% foreground fill; consumers do not maintain their own shortcut color/size recipe.
+
 ## Refactor result
 
 - Title shimmer requires the Host's `isGenerating` plus an unexpired
@@ -31,7 +35,8 @@
   The non-persisted
   `devicePairingRequested` UI intent opens the existing remote-instance pairing
   dialog and is consumed once by that page. Runtimes without `clientAuth` omit
-  this shortcut.
+  this shortcut. Its outer popup uses the shared `yuri-popup-surface` frost and
+  light elevation; device rows stay transparent rather than nested material cards.
 
 - Navigation loading includes live busy/retry descendants through `useSessionActivity`; a parent remains loading after its own reply completes while background subagents run. `useRunningSessionIds` uses the same shared tree projection for pinned/in-progress and always-visible rows. Execution reads the parent's own status. Manual transcript refresh remains available during busy/retry so missed terminal events cannot block recovery.
 - `SessionSidebar.tsx` now acts mainly as orchestration; core logic moved to focused hooks/components.

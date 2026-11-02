@@ -34,6 +34,11 @@ Runtime reset or a newly captured runtime clears that revision fence. Persistent
 startup seeds do not advance it. Pending deletions and loaded pagination tails
 keep their existing ownership and filtering rules.
 
+Global snapshot/live-upsert signatures include the session model reference,
+including variant. Model-only changes are not recency-only ticks: they must reach
+Assistant session cards. Lightweight live updates that omit a model preserve the
+known reference; repeated equivalent updates retain existing list references.
+
 The startup observer returns the projection's original state for equivalent
 snapshots; adding unchanged progress must not spread that state into a fresh
 object and notify every subscriber. The hydrate flight clears by its shared
@@ -76,6 +81,15 @@ while recovering symlink aliases. Page length alone cannot establish exhaustion.
 `packages/ui/src/stores` contains app-level Zustand stores for persistent UI state, runtime state, and feature caches.
 
 Not all state in the UI belongs here.
+
+Notification preferences in `useUIStore` are mirrored to the active runtime by
+`lib/appearanceAutoSave.ts`, including permission, scheduled-task, assistant and
+goal event switches. Local Zustand persistence alone is not authoritative for
+Host notification delivery: every notification switch must participate in the
+auto-save snapshot and diff. `lib/persistence.ts` applies confirmed server
+settings after saves and reloads. `appearanceAutoSave.test.ts` guards each
+switch's off/on round trip through the real auto-save and reconciliation path,
+including unrelated settings saves that must not resurrect a disabled event.
 
 `useUIStore.scheduledTaskOpenRequest` is a transient exact-task navigation intent,
 consumed once by the active scheduled-task host. It is excluded from persistence;

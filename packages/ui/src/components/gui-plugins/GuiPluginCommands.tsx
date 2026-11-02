@@ -15,7 +15,7 @@ export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect
     : snapshot.commands, [snapshot.commands, query]);
   const failure = error || inventory.find((plugin) => plugin.enabled && plugin.error)?.error
     || snapshot.plugins.find((plugin) => plugin.status === 'failed')?.error;
-  if (!commands.length && !loading && !failure) return null;
+  if (!commands.length && !failure) return null;
   const visible = expandedQuery === query ? commands : commands.slice(0, 5);
   const run = async (key: string) => {
     onSelect();
@@ -24,15 +24,17 @@ export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect
     }
   };
   return (
-    <CommandGroup heading={t('guiPlugins.commands')}>
-      {loading ? <CommandItem value="gui-plugin:loading" disabled><span role="status" aria-busy="true">{t('guiPlugins.loading')}</span></CommandItem> : null}
+    <CommandGroup heading={<span className="flex items-baseline gap-2">
+      <span>{t('guiPlugins.commands')}</span>
+      <span className="yuri-global-search-group-count">{commands.length}</span>
+    </span>}>
       {failure ? <CommandItem value="gui-plugin:retry" disabled={loading} onSelect={refresh}>
         <span role="alert" className="min-w-0 flex-1 break-words">{failure}</span><span>{t('guiPlugins.refresh')}</span>
       </CommandItem> : null}
       {visible.map((command) => <CommandItem key={command.key} value={`gui-plugin:${command.key}`}
-        className="min-h-9 gap-2 rounded-lg px-3 py-2 typography-meta" onSelect={() => void run(command.key)}>
-        <span className="min-w-0 flex-1 truncate">{command.title}</span>
-        {command.description ? <span className="max-w-[50%] truncate text-muted-foreground">{command.description}</span> : null}
+        className="yuri-global-search-compact min-h-9 gap-4 rounded-lg px-3 py-2 typography-meta" onSelect={() => void run(command.key)}>
+        <span className="yuri-global-search-result-title min-w-0 flex-1 truncate">{command.title}</span>
+        {command.description ? <span className="yuri-global-search-result-detail max-w-[50%] truncate text-muted-foreground">{command.description}</span> : null}
       </CommandItem>)}
       {visible.length < commands.length ? <CommandItem value="gui-plugin:show-more" onSelect={() => setExpandedQuery(query)}>
         {t('commandPalette.group.showMore', { count: commands.length - visible.length })}

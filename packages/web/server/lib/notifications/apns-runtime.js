@@ -2,9 +2,10 @@
 //
 // Device tokens are persisted per UI session (mirrors push-runtime.js). Delivery has two
 // modes, chosen at send time:
-//   - Relay (default): POST tokens + generic text to the same-origin Push service
-//     (`/v1/push/*` on the effective Relay host). The isolated Push process holds the
-//     project APNs key and signs+sends — so users configure nothing.
+//   - Relay (default): POST tokens + generic text to a configured Push service
+//     (`YURI_PUSH_RELAY_URL`, or `/v1/push/*` on a custom Relay host). The product
+//     default Workers Relay has no Push service. The isolated Push process holds
+//     the project APNs key and signs+sends.
 //   - Direct (fallback): sign an ES256 JWT with Node crypto and send over HTTP/2 ourselves,
 //     for self-hosters who set YURI_APNS_* and YURI_PUSH_RELAY_DISABLED=true.
 // Wired into the same trigger fanout as web push (see runtime.js); the relay carries only
@@ -784,8 +785,8 @@ export const createApnsRuntime = (deps) => {
       req.end(body);
     });
 
-  // Relay mode (default): the single APNs key lives in the isolated Push process on the same
-  // Relay origin (`/v1/push/*`), not on each user's server — so users configure nothing. The
+  // Relay mode (default): the single APNs key lives in the isolated Push process, not on
+  // each user's server. Custom Relay origins may serve Push at `/v1/push/*`. The
   // server just POSTs device tokens + generic text; Push signs + sends and reports which tokens
   // to drop. Direct mode (below) is the fallback for self-hosters who set YURI_APNS_*
   // and disable the relay.
@@ -812,14 +813,19 @@ export const createApnsRuntime = (deps) => {
         const resolved = await resolveEffectiveRelayUrl();
         if (typeof resolved === 'string' && resolved.trim()) {
           if (derivePushSendUrlFromRelayUrl(resolved)) relayWsUrl = resolved.trim();
-          else console.warn('[Push relay] resolver returned a non-WebSocket URL; Push Relay unavailable');
+          else {
+            console.warn('[Push relay] resolver returned a non-WebSocket URL; Push Relay unavailable');
+            return null;
+          }
         }
       } catch {
         console.warn('[Push relay] resolver failed; Push Relay unavailable');
+        return null;
       }
     }
-    const url = derivePushSendUrlFromRelayUrl(relayWsUrl) || derivePushSendUrlFromRelayUrl(DEFAULT_RELAY_URL);
-    if (!url) return null;
+    const url = derivePushSendUrlFromRelayUrl(relayWsUrl);
+    // The product Worker only forwards encrypted data; never send device tokens to it.
+    if (!url || url === derivePushSendUrlFromRelayUrl(DEFAULT_RELAY_URL)) return null;
     return buildRelayConfig(url);
   };
 

@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { CONTACT_CARD_TYPES, createSessionCardPart, parseContactCard, parseContactPart } from './cards.js'
+import { CONTACT_CARD_TYPES, createScheduleCardPart, createSessionCardPart, parseContactCard, parseContactPart } from './cards.js'
 
 describe('contact cards', () => {
+  it.each([
+    { kind: 'cron', cron: '0 9 1 * *', time: null },
+    { kind: 'once', date: '2026-12-01', time: '09:00' },
+    { kind: 'daily', times: ['09:00', '18:00'] },
+    { kind: 'weekly', times: ['09:00', '18:00'], weekdays: [1, 3, 5] },
+  ])('retains $kind schedule fields after persistence parsing', (schedule) => {
+    const card = createScheduleCardPart({ taskID: 'task', projectID: 'project', name: 'Review', timezone: 'UTC', ...schedule })
+    expect(parseContactPart(JSON.parse(JSON.stringify(card)))).toMatchObject(schedule)
+  })
+
   it('creates an extensible session card part', () => {
     const part = createSessionCardPart({
       sessionID: 'ses_1',

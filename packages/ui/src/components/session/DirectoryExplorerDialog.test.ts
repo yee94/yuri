@@ -34,7 +34,18 @@ describe('DirectoryExplorerDialog mobile layout', () => {
   test('keeps the show-hidden action in the mobile sheet header', () => {
     expect(componentSource).toContain('trailing={showHiddenToggle}');
     expect(componentSource).not.toContain('<div className="flex shrink-0 justify-end px-3">{showHiddenToggle}</div>');
-    expect(componentSource).toContain('{showHiddenToggle}\n          </div>');
+    expect(componentSource).toContain('aria-pressed={showHidden}');
+  });
+});
+
+describe('DirectoryExplorerDialog surface', () => {
+  test('shares the search glass surface without nesting a directory card', () => {
+    expect(componentSource).toContain('presentation="picker"');
+    expect(componentSource).toContain('outerClassName="yuri-directory-results"');
+    expect(componentSource).not.toContain('shadow-sm');
+    expect(componentSource).not.toContain('DialogDescription');
+    expect(componentSource).toContain('<Kbd variant="hint"');
+    expect(componentSource).toContain('name="corner-down-left"');
   });
 });
 

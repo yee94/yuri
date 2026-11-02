@@ -1201,7 +1201,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
               onClick={() => showMoreGroupSessions(group, groupKey, baseVisibleSessions.length, totalSessions)}
               disabled={isLoadingRemoteSessions}
               className={cn(
-                'text-left transition-colors hover:text-muted-foreground/80 disabled:pointer-events-none',
+                'text-left text-[length:calc(var(--text-ui-label)-1px)] font-normal transition-colors hover:text-muted-foreground/80 disabled:pointer-events-none',
                 isLoadingRemoteSessions && 'animate-pulse',
               )}
             >
@@ -1212,7 +1212,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
             <button
               type="button"
               onClick={() => resetGroupSessionLimit(groupKey)}
-              className="text-left transition-colors hover:text-muted-foreground/80"
+              className="text-left text-[length:calc(var(--text-ui-label)-1px)] font-normal transition-colors hover:text-muted-foreground/80"
             >
               {t('sessions.sidebar.group.showFewer')}
             </button>

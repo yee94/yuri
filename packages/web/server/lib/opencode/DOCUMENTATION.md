@@ -3,6 +3,12 @@
 ## Purpose
 This module provides OpenCode server integration utilities for the web server runtime, including configuration management and provider authentication.
 
+OpenCode upstream calls are V2-only: startup/readiness probes use `/api/info`
+without a legacy health fallback. Both Host SSE entrypoints forward upstream
+to `/api/event`; the Host-owned global WebSocket route is unchanged. Status
+diagnostics use provider/location/session-active V2 routes and location query
+encoding, not removed V1 endpoints.
+
 ## Entrypoints and structure
 - Pairing transport discovery includes the serving host's `serverName` (OS
   hostname), not the browser's machine name. The pairing form uses it as an

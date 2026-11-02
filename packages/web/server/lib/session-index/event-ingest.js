@@ -37,6 +37,12 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
 
   const baseType = normalizeSessionEventType(payload.type);
 
+  if (baseType === 'session.model.selected') {
+    if (isHostReady && !isHostReady()) return false;
+    const data = payload.data ?? properties;
+    return service.updateModel(data.sessionID, data.model, payload.created ?? observedAt, payload.durable?.seq);
+  }
+
   if (baseType === 'session.renamed') {
     if (isHostReady && !isHostReady()) return false;
     const data = payload.data ?? properties;

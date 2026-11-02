@@ -630,6 +630,28 @@ test('palette filters commands, closes before running, and exposes rejected acti
   expect(state.toast).toHaveBeenCalledWith('command failed');
 });
 
+test('palette discovery is silent until commands arrive, including while discovery continues', async () => {
+  state.context = { ...context(), host: null, requested: false, loading: true };
+  updateSnapshot({ plugins: [], commands: [] });
+  await render(<GuiPluginCommands query="" onSelect={() => {}} />);
+  expect(context().requestLoad).toHaveBeenCalledOnce();
+  expect(container.childElementCount).toBe(0);
+  updateSnapshot({ commands: [{ key: 'ready', title: 'Ready command', run: () => {} }] });
+  await render(<GuiPluginCommands query="" onSelect={() => {}} />);
+  expect(container.textContent).toContain('Ready command');
+  expect(container.textContent).not.toContain('guiPlugins.loading');
+  expect(container.querySelector('[role="status"]')).toBeNull();
+});
+
+test('silent palette discovery does not hide plugin failure and retry', async () => {
+  state.context = { ...context(), loading: false, error: 'plugin unavailable' };
+  updateSnapshot({ commands: [] });
+  await render(<GuiPluginCommands query="" onSelect={() => {}} />);
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('plugin unavailable');
+  await click('plugin unavailableguiPlugins.refresh');
+  expect(context().refresh).toHaveBeenCalledOnce();
+});
+
 test.each(['manager', 'commands'])('%s requests deferred plugins on entry and retries after runtime scope resets', async (entry) => {
   state.context = { ...context(), host: null, requested: false, loading: true };
   updateSnapshot({ plugins: [] });

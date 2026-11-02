@@ -50,6 +50,23 @@ test('a client created before desktop restore reads worktree agents from the cur
   expect(nativeFetch).toHaveBeenCalledOnce();
 });
 
+test('file search uses V2 fs/find with the requested location and entry envelope', async () => {
+  nativeFetch.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    expect(url.pathname).toBe('/api/fs/find');
+    expect(url.searchParams.get('location[directory]')).toBe(directory);
+    expect(url.searchParams.get('query')).toBe('alpha');
+    expect(url.searchParams.get('limit')).toBe('10');
+    expect(url.searchParams.get('type')).toBe('file');
+    return Response.json({ location: { directory }, data: [{ path: 'src/alpha.ts', type: 'file' }] });
+  });
+
+  await expect(opencodeClient.searchFiles('alpha', { directory, limit: 10, type: 'file' }))
+    .resolves.toEqual([expect.objectContaining({ path: `${directory}/src/alpha.ts`, relativePath: 'src/alpha.ts', isDirectory: false })]);
+  expect(nativeFetch).toHaveBeenCalledOnce();
+});
+
 test('a retained SDK client tunnels worktree catalog reads after a Host switch even when its captured origin is stale', async () => {
   configureRuntimeUrlResolver({ apiBaseUrl: 'https://previous-host.example' });
   opencodeClient.reconnectToRuntimeBaseUrl();

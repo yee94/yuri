@@ -2565,6 +2565,8 @@ export const dict: Record<I18nKey, string> = {
   'commandPalette.description': '搜索文件、会话和命令。',
   'commandPalette.input.placeholder': '搜索文件、会话、命令...',
   'commandPalette.error.messages': '消息搜索未能加载，其他结果仍然显示。',
+  'commandPalette.error.files': '文件搜索暂不可用。',
+  'commandPalette.error.filesPartial': '部分项目暂时无法搜索文件。',
   'commandPalette.group.messages': '消息',
   'commandPalette.index.progress': '正在索引全部项目最近 30 天的对话：{completed}/{total}',
   'commandPalette.index.ready': '全部项目 · 最近 30 天 · 已索引 {count} 条消息',

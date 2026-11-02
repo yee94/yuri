@@ -1,6 +1,6 @@
 # Relay Server Package Documentation
 
-`packages/relay-server/` owns the self-hosted Layer 1 Relay server, the isolated Push Relay process, the `yuri-relay` and `yuri-push-relay` CLIs, and the package release and deployment contract.
+`packages/relay-server/` owns the self-hosted Node and Cloudflare Workers Layer 1 Relay server, the isolated Push Relay process, the `yuri-relay` and `yuri-push-relay` CLIs, and the package release and deployment contract.
 
 ## Purpose and security boundary
 
@@ -11,6 +11,48 @@ Host and Client terminate the E2EE channel. Each Host authenticates Relay connec
 Relay v1 admission accepts anonymous Client route requests. Per-IP, global, pending-connection, raw-socket, frame, and queue limits bound that public entry point. Host-control upgrades are separately bounded per IP and per `serverId` so a Host reconnect loop cannot monopolize the listener; a limited Host-control upgrade is `4029` and does not replace a live control socket. Relay does not inspect Host or Client application versions — mixed app versions are a Host/Client concern, and unsupported Layer 1 fields are ignored rather than version-gated. Configure limits for the expected traffic volume and keep the Relay behind TLS. Pair queues pause the fast sender at half the per-connection byte limit so a slow peer applies TCP backpressure instead of filling memory until `4029`. Ready pairs send one frame per tick so one tunnel cannot monopolize the event loop.
 
 The Relay keeps process-local routing state only. Hosts reconnect after Relay restarts, and a control disconnect retains its Host route for the 30-second grace period.
+
+### Shared core and runtime ownership
+
+- `src/core.js` owns the common Layer 1 parser, P-256 verification, replay and
+  admission records, host/client/data routing, control epochs, grace/pending
+  timers, queue limits and fair forwarding. Both runtimes call it; there is no
+  separate Worker protocol implementation. `node:crypto` and `node:buffer` use
+  Workers' `nodejs_compat`. Verification passes a JWK directly to `crypto.verify`
+  so it works in both Node and workerd; crypto import/verify failures reject auth.
+- `src/index.js` owns Node HTTP/TCP admission, `ws` upgrades, heartbeat scheduling,
+  listener lifecycle and process snapshots. Its public API is unchanged.
+- `src/worker.js` owns the Worker entry and `YuriRelay` Durable Object. All
+  requests go to one named object (`relay-v1`), so core-wide limits remain global
+  to one deployment. Do not shard by host without explicitly changing those
+  limits. Object routing state is ephemeral; restarts reconnect, not restore.
+- `src/worker-socket.js` adapts Workers EventTarget sockets to core callbacks.
+  Binary delivery is explicitly `arraybuffer`; text/binary distinctions and byte
+  order are preserved. Runtime send exceptions feed the shared teardown path.
+
+Workers uses **ordinary WebSocket acceptance, not hibernation**. In-memory queues,
+timeouts and replay/admission records are not serialized. Open sockets keep the
+object active and billable. Workers has no application-visible TCP backpressure
+or send drain: Node's pause/resume and native-buffer guarantees are not portable.
+Core queue caps still apply, but cannot bound runtime-owned outbound buffers.
+Cloudflare owns raw TCP/ping-pong handling; core heartbeat scheduling remains
+Node-only. Host/Client keepalives and reconnection remain unchanged. A frame is
+size-checked after Cloudflare has fully received it, unlike `ws`'s parser limit.
+
+Workers trusts only `CF-Connecting-IP` supplied by Cloudflare's public ingress.
+No incoming `X-Forwarded-For` or application routing header can select a different
+object or bypass deployment-wide limits. Malformed/auth/limit rejections preserve
+the existing WebSocket close codes. Health output contains no route metadata.
+The Worker mounts no Push handlers and takes no Apple credentials. A Host using
+it needs an explicit separate `YURI_PUSH_RELAY_URL` for APNs delivery.
+
+`wrangler.jsonc` is shipped with the package and defines the binding and initial
+SQLite-class migration (available on Workers Free); the core does not use SQL.
+It deliberately contains no account ID, domain or credentials and disables
+observability/preview URLs. Normal redeploys retain binding and migration history;
+rollback redeploys a known-good version without deleting the namespace. Detailed
+auth, cost, local validation and deployment commands are in README's Cloudflare
+Workers section.
 
 Layer 1 and Push are separate processes in this package. Layer 1 never holds APNs credentials or the device-token database. Push never sees Relay tunnel frames, pairing secrets, or client bearer credentials. Give Apple secrets only to the Push process. SQLite token storage is single-instance: one Push process per database file.
 

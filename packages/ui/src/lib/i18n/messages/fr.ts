@@ -2303,6 +2303,8 @@ export const dict = {
   'commandPalette.description': 'Recherchez des fichiers, des sessions et des commandes.',
   'commandPalette.input.placeholder': 'Rechercher des fichiers, des sessions, des commandes...',
   'commandPalette.error.messages': 'La recherche dans les messages n’a pas pu se charger. Les autres résultats restent affichés.',
+  'commandPalette.error.files': 'La recherche de fichiers est temporairement indisponible.',
+  'commandPalette.error.filesPartial': 'La recherche de fichiers a échoué dans certains projets.',
   'commandPalette.group.messages': 'Messages',
   'commandPalette.index.progress': 'Indexation des 30 derniers jours de tous les projets : {completed}/{total} conversations',
   'commandPalette.index.ready': 'Tous les projets · 30 derniers jours · {count} messages indexés',

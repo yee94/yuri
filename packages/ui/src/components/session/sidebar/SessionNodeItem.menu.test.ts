@@ -9,6 +9,12 @@ const source = readFileSync(
 )
 
 describe('SessionNodeItem session menu', () => {
+  test('context menus keep the shared popup material unobscured', () => {
+    const menu = source.slice(source.indexOf('const contextMenuContent = ('), source.indexOf('<React.Fragment key={session.id}>'));
+    expect(menu).toContain('dropdownMenuPopupClass');
+    expect(menu).not.toContain('backgroundColor:');
+  })
+
   test('right-click menu exposes user transcript refresh', () => {
     expect(source).toContain("t('sessions.sidebar.session.menu.refreshTranscript')")
     expect(source).toContain('sync.refreshSessionTranscript')

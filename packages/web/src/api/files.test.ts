@@ -5,6 +5,8 @@ import type { RuntimeUrlQuery, RuntimeUrlResolver } from '@yuriai/ui/lib/runtime
 const runtimeFetchMock = vi.fn();
 const downloadMock = vi.fn();
 const readMock = vi.fn();
+const searchFilesMock = vi.hoisted(() => vi.fn());
+vi.mock('@yuriai/ui/lib/opencode/client', () => ({ opencodeClient: { searchFiles: searchFilesMock } }));
 vi.mock('@yuriai/ui/lib/runtime-file-resource', () => ({ readRuntimeFile: readMock }));
 vi.mock('@yuriai/ui/lib/runtime-file-download', () => ({ downloadRuntimeFile: downloadMock }));
 
@@ -29,6 +31,28 @@ const urls: RuntimeUrlResolver = {
 };
 
 describe('createWebFilesAPI', () => {
+  it('searches the requested project through the V2 client instead of the removed find/file route', async () => {
+    const { createWebFilesAPI } = await import('./files');
+    const api = createWebFilesAPI({ getDirectory: () => '/active-project' });
+    searchFilesMock.mockResolvedValueOnce([{ path: '/other-project/src/alpha.ts', relativePath: 'src/alpha.ts' }]);
+
+    await expect(api.search({ directory: '/other-project', query: 'alpha', maxResults: 10 }))
+      .resolves.toEqual([{ path: '/other-project/src/alpha.ts', preview: ['src/alpha.ts'] }]);
+    expect(searchFilesMock).toHaveBeenLastCalledWith('alpha', { directory: '/other-project', limit: 10, type: 'file' });
+  });
+
+  it('silently skips a directory confirmed missing without swallowing other failures', async () => {
+    const { createWebFilesAPI } = await import('./files');
+    const api = createWebFilesAPI({});
+    searchFilesMock.mockRejectedValueOnce({ _tag: 'LocationNotFoundError', location: { directory: '/deleted-worktree' } });
+    await expect(api.search({ directory: '/deleted-worktree', query: 'alpha' })).resolves.toEqual([]);
+
+    for (const error of [new Error('offline'), new Error('HTTP 404'), { _tag: 'UnauthorizedError' }]) {
+      searchFilesMock.mockRejectedValueOnce(error);
+      await expect(api.search({ directory: '/project', query: 'alpha' })).rejects.toBe(error);
+    }
+  });
+
   it('uses per-call workspace directory for stat and read requests', async () => {
     const { createWebFilesAPI } = await import('./files');
     const api = createWebFilesAPI({ urls, getDirectory: () => '/stale-workspace' });

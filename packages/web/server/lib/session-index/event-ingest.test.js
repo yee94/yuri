@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { applySessionIndexEvent } from './event-ingest.js';
 
 describe('session index event ingest', () => {
+  it('ingests native model selection through the existing-row mutation and respects Host readiness', () => {
+    const service = { updateModel: vi.fn(() => true) };
+    const model = { providerID: 'p', id: 'model', variant: 'high' };
+    const event = { payload: { type: 'session.model.selected', created: 20, durable: { seq: 5 }, data: { sessionID: 'session', model } } };
+    expect(applySessionIndexEvent(service, event, 30, { isHostReady: () => false })).toBe(false);
+    expect(service.updateModel).not.toHaveBeenCalled();
+    expect(applySessionIndexEvent(service, event, 30)).toBe(true);
+    expect(service.updateModel).toHaveBeenCalledWith('session', model, 20, 5);
+  });
+
   it('ingests native creation, user input and lifecycle without treating shutdown as completion', () => {
     const service = { upsertAndReportChange: vi.fn(() => true), touchActivity: vi.fn(() => true), updateStatus: vi.fn(() => true) };
     const emit = (type, data = {}) => applySessionIndexEvent(service, { directory: '/repo', payload: { type, created: 20, data: { sessionID: 'ses_native', ...data } } }, 30);

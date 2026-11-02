@@ -463,6 +463,34 @@ describe('apns runtime push relay derivation and re-register', () => {
     expect(registerUrls(fetchMock)).toEqual([]);
   });
 
+  it.each(['settings', 'env'])('does not derive Push from the product Worker selected through %s', async (source) => {
+    const relayUrl = 'wss://relay.useyuri.top/ws';
+    if (source === 'env') process.env.YURI_RELAY_URL = relayUrl;
+    let settings = source === 'settings' ? { privateRelay: { relayUrl } } : {};
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, results: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const runtime = createApnsRuntime(makeDeps({
+      readSettingsFromDiskMigrated: async () => settings,
+      writeSettingsToDisk: async (next) => { settings = next; },
+      resolveEffectiveRelayUrl: async () => resolveEffectiveRelayUrl({ settings }),
+    }));
+    await runtime.addOrUpdateApnsToken('s1', 'tokenA');
+    await runtime.sendApnsToAllUiSessions({ title: 'Ready' });
+    await expect(runtime.reRegisterAllTokens()).resolves.toEqual({ attempted: 0, succeeded: 0, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses a separately configured Push service with the default Workers data Relay', async () => {
+    process.env.YURI_PUSH_RELAY_URL = 'https://push.example/v1/push/send';
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, results: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const runtime = createApnsRuntime(makeDeps());
+    await runtime.addOrUpdateApnsToken('s1', 'tokenA');
+    await runtime.sendApnsToAllUiSessions({ title: 'Ready' });
+    expect(registerUrls(fetchMock)).toEqual(['https://push.example/v1/push/register-token']);
+    expect(sendUrls(fetchMock)).toEqual(['https://push.example/v1/push/send']);
+  });
+
   it('re-registers persisted tokens against the current relay', async () => {
     process.env.YURI_PUSH_RELAY_URL = 'https://relay-a.test/v1/push/send';
     const fetchMock = vi.fn(async () => jsonResponse({ ok: true, results: [] }));

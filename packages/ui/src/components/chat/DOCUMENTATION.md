@@ -670,9 +670,22 @@ them retain their combined `ready` / `loading` contract and scoped error gate.
 
 Expensive overlay bodies mount only under portal / motion **presence** (including exit retain until exit completes). Stable shells keep cross-open UI state without building lists while closed:
 
-- `TimelineDialog`: shell always mountable from `ChatContainer`; `TimelineDialogBody` (message subscription, preview/full-text, list build) lives only under `DialogContent` presence. Closed shell must perform no `useSessionMessageRecords` or preview work under parent rerenders. Fork/revert pending UI state and the reentry gate live on the shell (survive body remount through exit/reopen) and stay locked until the in-flight promise settles; a generation token prevents a late settle from clearing a newer scoped action.
+- `TimelineDialog`: shell always mountable from `ChatContainer`; `TimelineDialogBody` (message subscription, preview/full-text, list build) lives only under desktop `DialogContent` or `MobileResizableSheet` motion presence. Closed shell must perform no `useSessionMessageRecords` or preview work under parent rerenders. Fork/revert pending UI state and the reentry gate live on the shell (survive body remount through exit/reopen) and stay locked until the in-flight promise settles; a generation token prevents a late settle from clearing a newer scoped action.
 - `MobileModelPickerPanel`: shell owns query/expand/view chrome and `MobileResizableSheet`; `MobileModelPickerPanelBody` (provider/model row build + metadata formatting) mounts under MobileWindowMotion presence. Closed sheet builds no model rows under parent rerenders or provider churn.
 - `ModelControls` composes those pickers; desktop `DropdownMenuContent` / mobile sheet presence gates the expensive `ModelPickerList` path the same way.
+
+The timeline uses the same shared translucent overlay surface as global search on
+desktop, while mobile uses the standard resizable sheet and its header/close
+controls. `timeline-dialog.css` owns only layout, local type hierarchy and token-
+based interaction states: 13px previews, 10px timestamps, 11px date groups with
+12px separation, and 2px between rows at the default root size. No explanatory
+subtitle, Actions heading, help card or date-divider lines are rendered. Previous-
+turn/latest controls remain as a compact toolbar only when their callbacks exist.
+Search stays outside `ScrollableOverlay`; the existing list ref remains the only
+scroll-position owner, including initial-latest and load-earlier anchor handling.
+Rows expose message navigation separately from labeled revert/fork buttons, so
+clicking an action never navigates the row. Touch keeps navigation targets at
+least 44px tall and never hides row actions. Mobile opening does not force the IME.
 
 `lib/intlFormatters.ts` reuses three fixed `Intl.NumberFormat` configs (compact, compact-tokens-short, USD) keyed by app locale; locale change invalidates the slot cache. Date/time helpers (`formatReleaseDate`, `formatTimelineDateGroup`, `formatTimelineMessageTime`) intentionally format per call via `toLocale*` so system timezone stays dynamic — caching `DateTimeFormat` would freeze `resolvedOptions().timeZone` at first construction. ModelControls / mobile model rows take the NumberFormat path; timeline date labels keep the per-call date path.
 

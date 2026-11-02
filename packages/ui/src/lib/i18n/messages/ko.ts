@@ -2599,6 +2599,8 @@ export const dict: Record<I18nKey, string> = {
   'commandPalette.description': '파일, 세션, 명령을 검색합니다.',
   'commandPalette.input.placeholder': '파일, 세션, 명령 검색…',
   'commandPalette.error.messages': '메시지 검색을 불러오지 못했습니다. 다른 결과는 그대로 표시됩니다.',
+  'commandPalette.error.files': '파일 검색을 일시적으로 사용할 수 없습니다.',
+  'commandPalette.error.filesPartial': '일부 프로젝트에서 파일을 검색하지 못했습니다.',
   'commandPalette.group.messages': '메시지',
   'commandPalette.index.progress': '모든 프로젝트의 최근 30일 대화 색인 중: {completed}/{total}',
   'commandPalette.index.ready': '모든 프로젝트 · 최근 30일 · 메시지 {count}개 색인 완료',

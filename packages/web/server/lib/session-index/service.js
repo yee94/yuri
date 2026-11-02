@@ -43,6 +43,25 @@ const toTimestamp = (value) => (typeof value === 'number' && Number.isFinite(val
 
 const toBooleanInt = (value) => (value ? 1 : 0);
 
+const normalizeModel = (model) => {
+  const bounded = (value) => typeof value === 'string' && value.trim() && value.length <= 512;
+  if (!model || !bounded(model.providerID) || !bounded(model.id)) return null;
+  return { providerID: model.providerID, id: model.id,
+    ...(bounded(model.variant) ? { variant: model.variant } : {}) };
+};
+
+const modelFromJson = (value) => value ? normalizeModel(JSON.parse(value)) : null;
+
+const mergeModel = (summary, previous) => {
+  const usePrevious = previous?.modelJson && (!summary.modelJson
+    || summary.modelUpdatedAt < previous.modelUpdatedAt
+    || (summary.modelUpdatedAt === previous.modelUpdatedAt && previous.modelSequence != null));
+  return usePrevious ? { modelJson: previous.modelJson, modelUpdatedAt: previous.modelUpdatedAt,
+    modelSequence: previous.modelSequence } : {
+    modelJson: summary.modelJson, modelUpdatedAt: summary.modelUpdatedAt, modelSequence: previous?.modelSequence ?? null,
+  };
+};
+
 const getActivityUpdatedAt = (session) => {
   const activityUpdatedAt = session?.metadata?.yuri?.titleRefresh?.activityUpdatedAt;
   return Math.max(toTimestamp(activityUpdatedAt), toTimestamp(session?.time?.updated), toTimestamp(session?.time?.created));
@@ -62,6 +81,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
   const yuri = session.metadata?.yuri;
   const assistant = yuri?.assistant;
   const hideAssistantMarker = isContactAssignedSession(yuri);
+  const model = normalizeModel(session.model);
   return {
     id: session.id,
     directory,
@@ -74,6 +94,8 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
     hasChildren: typeof session.hasChildren === 'boolean' ? session.hasChildren : null,
     assistantID: hideAssistantMarker || typeof assistant?.assistantID !== 'string' ? null : assistant.assistantID,
     assistantName: hideAssistantMarker || typeof assistant?.name !== 'string' ? null : assistant.name,
+    modelJson: model ? JSON.stringify(model) : null,
+    modelUpdatedAt: model ? toTimestamp(session.time?.updated) : 0,
   };
 };
 
@@ -168,6 +190,11 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
   if (!sessionSummaryColumns.has('pinned_at')) {
     db.exec('ALTER TABLE session_summary ADD COLUMN pinned_at INTEGER');
   }
+  db.transaction(() => {
+    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER']]) {
+      if (!sessionSummaryColumns.has(column)) db.exec(`ALTER TABLE session_summary ADD COLUMN ${column} ${type}`);
+    }
+  })();
   db.prepare(`
     INSERT OR IGNORE INTO session_pin(runtime_key, session_id, pinned_at)
     SELECT runtime_key, session_id, pinned_at
@@ -209,11 +236,15 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
         if (!previous) { merged.set(row.session_id, row); continue; }
         const newest = row.updated_at > previous.updated_at ? row : previous;
         const status = row.status_changed_at > previous.status_changed_at ? row : previous;
+        const model = !previous.model_json || (row.model_json && (row.model_updated_at > previous.model_updated_at
+          || (row.model_updated_at === previous.model_updated_at && (row.model_sequence ?? -1) > (previous.model_sequence ?? -1))))
+          ? row : previous;
         merged.set(row.session_id, { ...newest,
           activity_updated_at: Math.max(row.activity_updated_at, previous.activity_updated_at),
           status: status.status, status_changed_at: status.status_changed_at,
           has_children: Math.max(row.has_children, previous.has_children),
           pinned_at: row.pinned_at ?? previous.pinned_at,
+          model_json: model.model_json, model_updated_at: model.model_updated_at, model_sequence: model.model_sequence,
         });
       }
       db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND directory IN (?, ?)').run(key, source.directory, target);
@@ -260,13 +291,15 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
   const deleteDirectoryRows = db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND directory = ?');
   const existingSummaryState = db.prepare(`
     SELECT session_id, has_children AS hasChildren, activity_updated_at AS activityUpdatedAt,
-      status, status_changed_at AS statusChangedAt, pinned_at AS pinnedAt
+      status, status_changed_at AS statusChangedAt, pinned_at AS pinnedAt,
+      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence
     FROM session_summary WHERE runtime_key = ? AND directory = ?
   `);
   const readSummary = db.prepare(`
     SELECT title, created_at AS createdAt, updated_at AS updatedAt,
       activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
-      parent_id AS parentID, has_children AS hasChildren
+      parent_id AS parentID, has_children AS hasChildren,
+      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence
     FROM session_summary
     WHERE runtime_key = ? AND directory = ? AND session_id = ?
   `);
@@ -278,12 +311,12 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     LIMIT 1 OFFSET ?
   `);
   const insertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence)
   `);
   const upsertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence)
     ON CONFLICT(runtime_key, directory, session_id) DO UPDATE SET
       title = excluded.title,
       created_at = excluded.created_at,
@@ -293,8 +326,14 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       parent_id = excluded.parent_id,
       has_children = excluded.has_children,
       assistant_id = excluded.assistant_id,
-      assistant_name = excluded.assistant_name
+      assistant_name = excluded.assistant_name,
+      model_json = excluded.model_json,
+      model_updated_at = excluded.model_updated_at,
+      model_sequence = excluded.model_sequence
   `);
+  const writeModel = db.prepare(`UPDATE session_summary
+    SET model_json = @modelJson, model_updated_at = @modelUpdatedAt, model_sequence = @modelSequence
+    WHERE runtime_key = @runtimeKey AND session_id = @id`);
   const setHasChildren = db.prepare(`
     UPDATE session_summary SET has_children = ?
     WHERE runtime_key = ? AND directory = ? AND session_id = ?
@@ -401,6 +440,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       const previous = previousStateByID.get(summary.id);
       insertSummary.run({
         ...summary,
+        ...mergeModel(summary, previous),
         activityUpdatedAt: Math.max(summary.activityUpdatedAt, toTimestamp(previous?.activityUpdatedAt)),
         pinnedAt: previous?.pinnedAt != null ? toTimestamp(previous.pinnedAt) : null,
         status: typeof previous?.status === 'string' ? previous.status : null,
@@ -455,6 +495,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       return { accepted: true, changed: true };
     }
     const existing = readSummary.get(key, summary.directory, summary.id);
+    const model = mergeModel(summary, existing);
     const activityUpdatedAt = options.preserveActivity === true && existing
       ? toTimestamp(existing.activityUpdatedAt)
       : Math.max(toTimestamp(existing?.activityUpdatedAt), summary.activityUpdatedAt);
@@ -466,8 +507,14 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
         && toTimestamp(existing.activityUpdatedAt) === activityUpdatedAt
         && toTimestamp(existing.archivedAt) === summary.archivedAt
         && (existing.parentID ?? null) === summary.parentID
-        && toBooleanInt(existing.hasChildren) === hasChildren;
-      if (unchanged) return { accepted: true, changed: false };
+        && toBooleanInt(existing.hasChildren) === hasChildren
+        && existing.modelJson === model.modelJson;
+      if (unchanged) {
+        if (existing.modelUpdatedAt !== model.modelUpdatedAt || existing.modelSequence !== model.modelSequence) {
+          writeModel.run({ ...model, runtimeKey: key, id: summary.id });
+        }
+        return { accepted: true, changed: false };
+      }
     } else {
       const cutoff = readRootRetentionCutoff.get(key, summary.directory, MAX_ROOT_SESSIONS - 1);
       const fallsOutsideBound = cutoff
@@ -482,6 +529,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     });
     upsertSummary.run({
       ...summary,
+      ...model,
       activityUpdatedAt,
       hasChildren,
       runtimeKey: key,
@@ -518,13 +566,15 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
           activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
           pinned_at AS pinnedAt,
           status, status_changed_at AS statusChangedAt, parent_id AS parentID,
-          has_children AS hasChildren, assistant_id AS assistantID, assistant_name AS assistantName
+          has_children AS hasChildren, assistant_id AS assistantID, assistant_name AS assistantName,
+          model_json AS modelJson
         FROM session_summary WHERE runtime_key = ? AND directory = ?
         ORDER BY activity_updated_at DESC, id DESC
       `).all(key, directory.directory)
         .map((session) => ({
           id: session.id,
           title: session.title,
+          ...(session.modelJson ? { model: modelFromJson(session.modelJson) } : {}),
           directory: directory.directory,
           time: {
             created: session.createdAt,
@@ -582,7 +632,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       SELECT directory, session_id AS id, title, created_at AS createdAt, updated_at AS updatedAt,
         activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
         parent_id AS parentID, has_children AS hasChildren,
-        assistant_id AS assistantID, assistant_name AS assistantName
+        assistant_id AS assistantID, assistant_name AS assistantName, model_json AS modelJson
       FROM session_summary
       WHERE runtime_key = ? AND session_id = ?
       ORDER BY activity_updated_at DESC, updated_at DESC
@@ -593,6 +643,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       id: row.id,
       directory: normalizeDirectory(row.directory),
       title: typeof row.title === 'string' ? row.title : '',
+      ...(row.modelJson ? { model: modelFromJson(row.modelJson) } : {}),
       createdAt: toTimestamp(row.createdAt),
       updatedAt: toTimestamp(row.updatedAt),
       activityUpdatedAt: toTimestamp(row.activityUpdatedAt),
@@ -615,6 +666,25 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     `).run(timestamp, runtimeKey(), sessionID, timestamp);
     return result.changes > 0;
   };
+
+  const updateModel = db.transaction((sessionID, model, observedAt, sequence) => {
+    const normalized = normalizeModel(model);
+    const timestamp = toTimestamp(observedAt);
+    if (!sessionID || !normalized || !timestamp) return false;
+    const key = runtimeKey();
+    const previous = db.prepare(`SELECT model_json AS modelJson, model_updated_at AS modelUpdatedAt,
+      model_sequence AS modelSequence FROM session_summary WHERE runtime_key = ? AND session_id = ?`).get(key, sessionID);
+    if (!previous) return false;
+    const seq = Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : null;
+    if (seq != null && previous.modelSequence != null
+      ? seq <= previous.modelSequence
+      : timestamp < previous.modelUpdatedAt) return false;
+    const modelJson = JSON.stringify(normalized);
+    if (previous.modelJson === modelJson && previous.modelUpdatedAt === timestamp && previous.modelSequence === seq) return false;
+    writeModel.run({ runtimeKey: key, id: sessionID, modelJson,
+      modelUpdatedAt: Math.max(timestamp, previous.modelUpdatedAt), modelSequence: seq });
+    return previous.modelJson !== modelJson;
+  });
 
   const rename = (sessionID, title, observedAt) => {
     if (typeof sessionID !== 'string' || !sessionID || typeof title !== 'string') return false;
@@ -688,7 +758,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
   `).run(runtimeKey(), directory).changes > 0;
 
   try { reconcileDirectoryAliases(runtimeKey()); } catch (error) { db.close(); throw error; }
-  const historyKey = () => `history_backfill:${runtimeKey()}`;
+  const historyKey = () => `history_backfill:model_ref_v1:${runtimeKey()}`;
   const getHistoryBackfill = () => {
     const row = db.prepare('SELECT value FROM session_index_meta WHERE key = ?').get(historyKey());
     return row ? JSON.parse(row.value) : null;
@@ -697,12 +767,17 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     if (expectedRuntimeKey !== runtimeKey()) return false;
     for (const session of sessions) {
       // Live events and already indexed summaries win over historical reads.
-      if (!findBySessionId(session.id)) {
+      const existing = findBySessionId(session.id);
+      if (!existing) {
         upsert(session);
         const directory = normalizeDirectory(session?.location?.directory ?? session?.directory);
         // The bounded 30-day import is not proof that older history is empty.
         db.prepare('UPDATE runtime_directory SET has_more = 1 WHERE runtime_key = ? AND directory = ? AND last_full_synced_at = 0')
           .run(expectedRuntimeKey, directory);
+      } else if (!existing.model && isVisibleSession(session) && !session.time?.archived) {
+        const model = normalizeModel(session.model);
+        if (model) writeModel.run({ runtimeKey: expectedRuntimeKey, id: session.id,
+          modelJson: JSON.stringify(model), modelUpdatedAt: toTimestamp(session.time?.updated), modelSequence: null });
       }
     }
     db.prepare('INSERT OR REPLACE INTO session_index_meta(key, value) VALUES (?, ?)')
@@ -719,6 +794,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     upsertAndReportChange,
     touchActivity,
     updateStatus,
+    updateModel,
     rename,
     move,
     setPinned,

@@ -608,6 +608,7 @@ jobs:
     env:
       OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
       OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
+      EDGEONE_DEPLOY_HOOK: ${{ secrets.YURI_EDGEONE_DEPLOY_HOOK }}
       MOBILE_APP_ID: com.yee94.yuri
       MAX_BUNDLE_BYTES: 25165824
     steps:
@@ -624,6 +625,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.create-release.outputs.source_sha }}
+
+      - name: Check EdgeOne deployment configuration
+        run: node scripts/mobile-ota/trigger-edgeone-deploy.mjs --check
 
       - name: Setup bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -882,7 +886,7 @@ jobs:
             --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
 
-      - name: Trigger complete EdgeOne OTA distribution (git deploy)
+      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
         shell: bash
         env:
           SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}

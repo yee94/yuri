@@ -59,6 +59,36 @@ it('keeps queued inbox compact and offers Send without execution configuration h
   expect(host.textContent).not.toContain('Inherits');
   expect(host.querySelector<HTMLButtonElement>('button[aria-label="steer"]')?.disabled).toBe(false);
 });
+it.each([false, true])('uses smaller regular-weight desktop actions without changing mobile typography (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  await render([inbox]);
+  expect(host.querySelector('button[aria-label="edit"] use')?.getAttribute('href')).toBe('#yuri-pencil');
+  expect(host.querySelector('button[aria-label="steer"] use')?.getAttribute('href')).toBe('#yuri-corner-down-left');
+  for (const name of ['pencil', 'corner-down-left', 'delete-bin']) {
+    expect(host.querySelector(`use[href="#yuri-${name}"]`)?.parentElement?.getAttribute('stroke-width')).toBe(name === 'pencil' ? '1.5' : '2');
+  }
+  for (const action of ['edit', 'steer']) {
+    const label = host.querySelector(`button[aria-label="${action}"] > span`);
+    expect(label?.classList.contains('font-normal')).toBe(!mobile);
+    expect(label?.classList.contains('text-[length:calc(var(--text-ui-label)-1px)]')).toBe(!mobile);
+    expect(label?.classList.contains('font-medium')).toBe(mobile);
+  }
+});
+it.each([false, true])('matches pending status typography to sibling actions (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  for (const state of ['queuing', 'steering', 'compaction']) {
+    const item: SessionComposerPendingItem = state === 'queuing'
+      ? { ...inbox, kind: 'pending-admission', phase: 'admitting' }
+      : { ...inbox, delivery: 'steer' };
+    await render([item], undefined, undefined, state === 'compaction');
+    const status = host.querySelector('[aria-live="polite"]');
+    expect(status).not.toBeNull();
+    expect(status?.classList.contains('font-normal')).toBe(!mobile);
+    expect(status?.classList.contains('text-[length:calc(var(--text-ui-label)-1px)]')).toBe(!mobile);
+    expect(status?.classList.contains('font-medium')).toBe(mobile);
+    expect(status?.classList.contains('text-[11px]')).toBe(mobile);
+  }
+});
 it.each([false, true])('allows editing a waiting native inbox item (mobile=%s)', async (mobile) => {
   fixture.mobile = mobile;
   await render([inbox]);

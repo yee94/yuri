@@ -7,6 +7,8 @@ import type {
 import { runtimeFetch } from '@yuriai/ui/lib/runtime-fetch';
 import { downloadRuntimeFile } from '@yuriai/ui/lib/runtime-file-download';
 import { readRuntimeFile } from '@yuriai/ui/lib/runtime-file-resource';
+import { opencodeClient } from '@yuriai/ui/lib/opencode/client';
+import { isLocationNotFoundError } from '@opencode/client';
 
 const normalizePath = (path: string): string => path.replace(/\\/g, '/');
 
@@ -78,38 +80,18 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
   },
 
   async search(payload: FileSearchQuery): Promise<FileSearchResult[]> {
-    const params = new URLSearchParams();
-
     const directory = normalizePath(payload.directory);
-    if (directory) {
-      params.set('directory', directory);
+    try {
+      const files = await opencodeClient.searchFiles(payload.query, {
+        directory,
+        limit: payload.maxResults,
+        type: 'file',
+      });
+      return files.map((file) => ({ path: file.path, preview: [file.relativePath] }));
+    } catch (error) {
+      if (isLocationNotFoundError(error)) return [];
+      throw error;
     }
-
-    params.set('query', payload.query);
-    params.set('dirs', 'false');
-    params.set('type', 'file');
-
-    if (typeof payload.maxResults === 'number' && Number.isFinite(payload.maxResults)) {
-      params.set('limit', String(payload.maxResults));
-    }
-
-    const response = await runtimeFetch('/api/find/file', {
-      query: params,
-      headers: directoryHeaders(getDirectory),
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error((error as { error?: string }).error || 'Failed to search files');
-    }
-
-    const result = (await response.json()) as string[];
-    const files = Array.isArray(result) ? result : [];
-
-    return files.map((relativePath) => ({
-      path: normalizePath(`${directory}/${relativePath}`),
-      preview: [normalizePath(relativePath)],
-    }));
   },
 
   async createDirectory(path: string): Promise<{ success: boolean; path: string }> {

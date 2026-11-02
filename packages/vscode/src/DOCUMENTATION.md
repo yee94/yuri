@@ -47,6 +47,9 @@ Question auto-delegation uses the Web-owned `pause-store` as well as the shared 
 
 OpenCode client/schema accept compatible 2.x updates and fresh CLI installs resolve latest stable 2.x; execution and
 startup compatibility require the **running service** to be 2.x at `2.0.20` or newer.
+Readiness probes use `/api/info` only. Diagnostics use V2 provider, location and
+active-session routes with `location[directory]`, without legacy health or API
+fallbacks.
 Existing compatible services are not downgraded. An unreadable service version stays
 unavailable even if the local CLI is compatible.
 
@@ -102,7 +105,9 @@ Skill discovery uses the official V2 `skill.list` SDK with the selected director
     `bridge-session-turn-page-runtime.ts`. Internal watchers stay full-fidelity.
 
 - `sseProxy.ts`
-  - Extension Host SSE proxy to OpenCode v2 `/api/event` and `/api/global/event`.
+  - Extension Host SSE proxy to OpenCode v2 `/api/event` only. Existing Host/global
+    input aliases normalize to that route before dispatch; no removed upstream
+    global-event endpoint is requested.
   - Legacy `/event` forms are rewritten to `/api/*` before joining the sidecar
     origin so upstream never loses the v2 prefix.
   - Reads `includeReasoning` from the webview path query; strips it before the

@@ -59,7 +59,9 @@ npm scope 使用用户已申请的 `@yuriai`，公开发布包为 `@yuriai/web` 
 
 原生发布、独立 Mobile Release 和 OTA 构建均将这两个 origin 注入 Electron、Capgo 和移动 UI：桌面与原生下载走 EdgeOne，UI 同时保留 EdgeOne/Vercel 两条检测地址。`scripts/verify-release-update-env.mjs` 在打包前拒绝空地址、占位符、路径错配及主镜像混用。首次补齐或更换原生更新地址必须重新发布安装包，线上配置无法修复已烘焙空地址的旧原生壳。
 
-EdgeOne 的一次性配置必须关联 **`yee94/yuri` 的 `main`**，根目录为 `deploy/update-service`，生产自动部署开启。不能继续绑定备份仓库；代理返回的最新 OTA 版本不能证明服务代码已更新。仓库内 `edgeone.json` 覆盖控制台构建/输出设置。之后正常发版全自动；仅更新服务代码也会由 `.github/workflows/update-service.yml` 在 `main` push 后先跑测试，再复用 `refresh-distribution` 原样刷新现有资源及两入口完整下载验证，不需要发新 App 或登录控制台。该自动入口排除清单 bot 提交，避免递归触发。
+EdgeOne 的一次性配置必须关联 **`yee94/yuri` 的 `main`**，根目录为 `deploy/update-service`，并为 `main` 创建部署钩子，将 URL 保存在仓库 Actions Secret `YURI_EDGEONE_DEPLOY_HOOK` 中。三个 OTA 发布入口在修改 Vercel 前检查该配置，随后同步清单并显式调用钩子；清单未变化也照常触发，不能把 push 成功当成 EdgeOne 已开始部署。钩子工作流启用后关闭 Git 生产自动部署，由 Actions 的生产锁统一调度，避免重复构建竞态；后续正常发版不需要登录控制台。钩子 URL 是凭据，不得写入仓库或日志。
+
+不能继续绑定备份仓库；代理返回的最新 OTA 版本不能证明服务代码已更新。仓库内 `edgeone.json` 覆盖控制台构建/输出设置。仅更新服务代码也会由 `.github/workflows/update-service.yml` 在 `main` push 后先跑测试，再复用 `refresh-distribution` 原样刷新现有资源及两入口完整下载验证，不需要发新 App。该自动入口排除清单 bot 提交，避免递归触发；部署请求成功后仍必须通过静态清单、完整下载、Range 以及服务源码版本验收。
 
 设定版本号：
 

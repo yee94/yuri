@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { generateCleanCompletion, prepareLlmBridgeDirectory, pruneStaleLlmBridgeDirectories } from './bridge-client.js';
+import { ensureLlmBridgeDirectory, generateCleanCompletion, prepareLlmBridgeDirectory, stopLlmBridgeDirectory } from './bridge-client.js';
 import { LLM_BRIDGE_VERSION } from './bridge-contract.js';
 
 describe('external OpenCode inference bridge', () => {
@@ -36,11 +36,101 @@ describe('external OpenCode inference bridge', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('passes the client to directory preparation so stale bridge cleanup can consult upstream', async () => {
+  it('passes the current client to the injected directory preparation', async () => {
     const client = { plugin: { list: async () => [] }, rpc: () => ({ ready: async () => ({ version: LLM_BRIDGE_VERSION }), generate: async () => ({ text: '', toolCalls: [] }) }) };
     const ensureBridgeDirectory = vi.fn(async () => '/isolated');
     await generateCleanCompletion({ clientFactory: () => client, ensureBridgeDirectory });
     expect(ensureBridgeDirectory).toHaveBeenCalledWith({ client });
+  });
+
+  it('reloads only the isolated Location when a recreated plugin is absent from the loaded runtime', async () => {
+    vi.useFakeTimers();
+    try {
+      let loaded = false;
+      const ready = vi.fn(async () => {
+        if (!loaded) throw { type: 'rpc.unavailable' };
+        return { version: LLM_BRIDGE_VERSION };
+      });
+      const generate = vi.fn(async () => ({ text: 'recovered', toolCalls: [] }));
+      const evict = vi.fn(async () => { loaded = true; });
+      const client = {
+        plugin: { list: vi.fn(async () => ({ data: [] })) },
+        debug: { location: { evict } },
+        rpc: () => ({ ready, generate }),
+      };
+      const ensureBridgeDirectory = vi.fn(async () => '/isolated/bridge');
+      const result = generateCleanCompletion({ clientFactory: () => client, ensureBridgeDirectory }).catch(error => error);
+      await vi.runAllTimersAsync();
+      expect(await result).toMatchObject({ text: 'recovered' });
+      expect(evict).toHaveBeenCalledExactlyOnceWith({ location: { directory: '/isolated/bridge' } });
+      expect(ensureBridgeDirectory).toHaveBeenCalledTimes(2);
+      expect(generate).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('bounds readiness recovery and never generates while RPC remains unavailable', async () => {
+    vi.useFakeTimers();
+    try {
+      const ready = vi.fn(async () => { throw { type: 'rpc.unavailable' }; });
+      const generate = vi.fn();
+      const evict = vi.fn(async () => {});
+      const client = { plugin: { list: async () => [] }, debug: { location: { evict } }, rpc: () => ({ ready, generate }) };
+      const result = generateCleanCompletion({ clientFactory: () => client, ensureBridgeDirectory: async () => '/isolated' }).catch(error => error);
+      await vi.runAllTimersAsync();
+      expect(await result).toMatchObject({ type: 'rpc.unavailable' });
+      expect(ready).toHaveBeenCalledTimes(42);
+      expect(evict).toHaveBeenCalledTimes(1);
+      expect(generate).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('shares recovery without letting a cancelled caller abort its peer or generate late', async () => {
+    vi.useFakeTimers();
+    try {
+      let loaded = false;
+      let release;
+      const ready = vi.fn(async () => {
+        if (!loaded) throw { type: 'rpc.unavailable' };
+        return { version: LLM_BRIDGE_VERSION };
+      });
+      const generate = vi.fn(async () => ({ text: 'recovered' }));
+      const evict = vi.fn(() => new Promise(resolve => { release = () => { loaded = true; resolve(); }; }));
+      const client = { plugin: { list: async () => [] }, debug: { location: { evict } }, rpc: () => ({ ready, generate }) };
+      const controller = new AbortController();
+      const input = { clientFactory: () => client, ensureBridgeDirectory: async () => '/isolated' };
+      const first = generateCleanCompletion({ ...input, signal: controller.signal }).catch(error => error);
+      const second = generateCleanCompletion(input);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(evict).toHaveBeenCalledTimes(1);
+      const reason = new Error('user cancelled');
+      controller.abort(reason);
+      expect(await first).toBe(reason);
+      release();
+      expect(await second).toMatchObject({ text: 'recovered' });
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['authentication_required', 'transport'])('does not reload a Location for %s readiness errors', async (type) => {
+    const error = { type };
+    const evict = vi.fn();
+    const generate = vi.fn();
+    const client = { plugin: { list: async () => [] }, debug: { location: { evict } }, rpc: () => ({ ready: async () => { throw error; }, generate }) };
+    await expect(generateCleanCompletion({ clientFactory: () => client, ensureBridgeDirectory: async () => '/isolated' })).rejects.toBe(error);
+    expect(evict).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('never replays generation even when it returns rpc.unavailable after readiness', async () => {
+    const error = { type: 'rpc.unavailable' };
+    const evict = vi.fn();
+    const generate = vi.fn(async () => { throw error; });
+    const client = { plugin: { list: async () => [] }, debug: { location: { evict } }, rpc: () => ({ ready: async () => ({ version: LLM_BRIDGE_VERSION }), generate }) };
+    await expect(generateCleanCompletion({ clientFactory: () => client, ensureBridgeDirectory: async () => '/isolated' })).rejects.toBe(error);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(evict).not.toHaveBeenCalled();
   });
 });
 
@@ -52,6 +142,8 @@ describe('bridge directory lifecycle', () => {
     return root;
   };
   afterEach(async () => {
+    await stopLlmBridgeDirectory();
+    vi.restoreAllMocks();
     await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
   });
 
@@ -74,23 +166,38 @@ describe('bridge directory lifecycle', () => {
     expect((await fs.readdir(path.join(second, '.opencode', 'plugins')))).toEqual(['yuri-llm.js']);
   });
 
-  it('prunes stale bridge directories except the current and upstream-loaded ones', async () => {
+  it('never deletes another upstream service\'s bridge directory', async () => {
     const root = await makeRoot();
-    const make = async (name) => { const dir = path.join(root, name); await fs.mkdir(dir); return dir; };
-    const keep = await make('yuri-inference-current');
-    const loaded = await make('yuri-inference-loaded');
-    const stale = await make('yuri-inference-AbC123');
-    const unrelated = await make('other-dir');
-    const client = { debug: { location: { list: vi.fn(async () => [{ directory: loaded }]) } } };
-    expect(await pruneStaleLlmBridgeDirectories({ client, keep, root })).toEqual([stale]);
-    expect((await fs.readdir(root)).sort()).toEqual([path.basename(unrelated), path.basename(keep), path.basename(loaded)].sort());
+    vi.spyOn(os, 'tmpdir').mockReturnValue(root);
+    const peer = path.join(root, 'yuri-inference-other-service');
+    await fs.mkdir(peer);
+    const list = vi.fn(async () => []);
+    await ensureLlmBridgeDirectory({ client: { debug: { location: { list } } } });
+    expect(list).not.toHaveBeenCalled();
+    expect(await fs.stat(peer)).toBeDefined();
   });
 
-  it('skips pruning when the upstream inventory cannot be read', async () => {
+  it('restages a deleted plugin instead of trusting a cached directory path', async () => {
     const root = await makeRoot();
-    await fs.mkdir(path.join(root, 'yuri-inference-stale'));
-    const client = { debug: { location: { list: vi.fn(async () => { throw new Error('503'); }) } } };
-    expect(await pruneStaleLlmBridgeDirectories({ client, keep: '/none', root })).toEqual([]);
-    expect(await fs.readdir(root)).toEqual(['yuri-inference-stale']);
+    vi.spyOn(os, 'tmpdir').mockReturnValue(root);
+    const directory = await ensureLlmBridgeDirectory();
+    const target = path.join(directory, '.opencode', 'plugins', 'yuri-llm.js');
+    const code = await fs.readFile(target);
+    await fs.rm(directory, { recursive: true });
+    expect(await ensureLlmBridgeDirectory()).toBe(directory);
+    expect(await fs.readFile(target)).toEqual(code);
+  });
+
+  it('checks warm staged assets without rereading the bundle or rewriting files', async () => {
+    const root = await makeRoot();
+    vi.spyOn(os, 'tmpdir').mockReturnValue(root);
+    const directory = await ensureLlmBridgeDirectory();
+    const read = vi.spyOn(fs, 'readFile');
+    const write = vi.spyOn(fs, 'writeFile');
+    const access = vi.spyOn(fs, 'access');
+    for (let index = 0; index < 50; index++) expect(await ensureLlmBridgeDirectory()).toBe(directory);
+    expect(access).toHaveBeenCalledTimes(50);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 });

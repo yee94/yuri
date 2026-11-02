@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/relay-server",
-  "version": "0.2.26-beta.4",
+  "version": "0.2.26-beta.5",
   "description": "Self-hosted private relay server for Yuri",
   "private": false,
   "type": "module",
@@ -40,14 +40,19 @@
   "files": [
     "bin",
     "src",
+    "wrangler.jsonc",
     "README.md",
     "DOCUMENTATION.md"
   ],
   "scripts": {
     "test": "vitest run",
+    "test:worker": "vitest run test/worker.test.js test/worker-parity.test.js",
+    "worker:dev": "npx --yes wrangler@4.156.1 dev --config wrangler.jsonc --local",
+    "worker:build": "npx --yes wrangler@4.156.1 deploy --config wrangler.jsonc --dry-run --outdir dist/worker",
+    "worker:deploy": "npx --yes wrangler@4.156.1 deploy --config wrangler.jsonc",
     "test:node": "node test/node-smoke.js",
-    "type-check": "node --check src/index.js && node --check src/cli.js && node --check bin/yuri-relay.js && node --check bin/cli-entry.js && node --check src/push/index.js && node --check src/push/server.js && node --check src/push/cli.js && node --check src/push/config.js && node --check src/push/schema.js && node --check src/push/crypto.js && node --check src/push/store.js && node --check src/push/cached-store.js && node --check src/push/store-worker.js && node --check src/push/guard.js && node --check src/push/apns.js && node --check bin/yuri-push-relay.js && node --check src/push/handler.js && node --check src/push/combined.js",
-    "lint": "node --check src/index.js && node --check src/cli.js && node --check bin/yuri-relay.js && node --check bin/cli-entry.js && node --check src/push/index.js && node --check src/push/server.js && node --check src/push/cli.js && node --check src/push/config.js && node --check src/push/schema.js && node --check src/push/crypto.js && node --check src/push/store.js && node --check src/push/cached-store.js && node --check src/push/store-worker.js && node --check src/push/guard.js && node --check src/push/apns.js && node --check bin/yuri-push-relay.js && node --check src/push/handler.js && node --check src/push/combined.js",
+    "type-check": "node --check src/core.js && node --check src/worker.js && node --check src/worker-socket.js && node --check src/index.js && node --check src/cli.js && node --check bin/yuri-relay.js && node --check bin/cli-entry.js && node --check src/push/index.js && node --check src/push/server.js && node --check src/push/cli.js && node --check src/push/config.js && node --check src/push/schema.js && node --check src/push/crypto.js && node --check src/push/store.js && node --check src/push/cached-store.js && node --check src/push/store-worker.js && node --check src/push/guard.js && node --check src/push/apns.js && node --check bin/yuri-push-relay.js && node --check src/push/handler.js && node --check src/push/combined.js",
+    "lint": "node --check src/core.js && node --check src/worker.js && node --check src/worker-socket.js && node --check src/index.js && node --check src/cli.js && node --check bin/yuri-relay.js && node --check bin/cli-entry.js && node --check src/push/index.js && node --check src/push/server.js && node --check src/push/cli.js && node --check src/push/config.js && node --check src/push/schema.js && node --check src/push/crypto.js && node --check src/push/store.js && node --check src/push/cached-store.js && node --check src/push/store-worker.js && node --check src/push/guard.js && node --check src/push/apns.js && node --check bin/yuri-push-relay.js && node --check src/push/handler.js && node --check src/push/combined.js",
     "build:standalone": "bun build --compile --outfile dist/yuri-relay bin/yuri-relay.js"
   },
   "dependencies": {

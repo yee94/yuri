@@ -72,7 +72,7 @@ describe('VS Code SSE proxy', () => {
 
     await proxy.run;
 
-    expect(fetchInput).toBe('http://127.0.0.1:4096/api/global/event');
+    expect(new URL(fetchInput).pathname).toBe('/api/event');
     expect(fetchInit.headers.Authorization).toBe('Bearer test-token');
     expect(fetchInit.headers['Last-Event-ID']).toBe('evt-0');
     expect(proxy.headers['content-type']).toContain('text/event-stream');
@@ -136,7 +136,7 @@ describe('VS Code SSE proxy', () => {
     await proxy.run;
 
     const url = new URL(fetchInput);
-    expect(url.pathname).toBe('/api/global/event');
+    expect(url.pathname).toBe('/api/event');
     expect(url.searchParams.get('x')).toBe('1');
     expect(url.searchParams.has('includeReasoning')).toBe(false);
   });

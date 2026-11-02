@@ -124,6 +124,11 @@ export type AssistantContactScheduleCardPart = {
   time: string | null;
   timezone: string | null;
   prompt: string | null;
+  /** Absent on legacy cards; null means the field is not used by this schedule. */
+  cron?: string | null;
+  date?: string | null;
+  times?: string[] | null;
+  weekdays?: number[] | null;
 };
 export type AssistantContactCardPart =
   | AssistantContactSessionCardPart
@@ -388,6 +393,13 @@ const parseContactPart = (value: unknown): AssistantContactPart => {
       time: nullableString(part.time ?? null, 'assistant_contact_part'),
       timezone: nullableString(part.timezone ?? null, 'assistant_contact_part'),
       prompt: nullableString(part.prompt ?? null, 'assistant_contact_part'),
+      ...(part.cron === undefined ? {} : { cron: nullableString(part.cron, 'assistant_contact_part') }),
+      ...(part.date === undefined ? {} : { date: nullableString(part.date, 'assistant_contact_part') }),
+      ...(part.times === undefined ? {} : { times: part.times === null ? null : Array.isArray(part.times) ? part.times.map((value) => string(value, 'assistant_contact_part')) : invalid('assistant_contact_part') }),
+      ...(part.weekdays === undefined ? {} : { weekdays: part.weekdays === null ? null : Array.isArray(part.weekdays) ? part.weekdays.map((value) => {
+        const day = number(value, 'assistant_contact_part');
+        return Number.isInteger(day) && day >= 0 && day <= 6 ? day : invalid('assistant_contact_part');
+      }) : invalid('assistant_contact_part') }),
     };
   }
   return invalid('assistant_contact_part');

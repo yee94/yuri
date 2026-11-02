@@ -13,3 +13,8 @@ Their explicit `yuri-relay` project name and named volumes are unchanged.
 Configuration and full commands: [Relay server guide](../../packages/relay-server/README.md).
 
 CI builds `deploy/relay/Dockerfile.relay` with the repository root as its context.
+
+Cloudflare Workers uses `packages/relay-server/wrangler.jsonc` and the same Layer 1
+core as Node/Docker. It does not deploy the APNs Push process. Local development,
+authentication, cost/transport limitations and public deployment commands are in
+the [Cloudflare Workers section](../../packages/relay-server/README.md#cloudflare-workers).

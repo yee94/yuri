@@ -9,6 +9,12 @@ Full project overview, screenshots, and all features: [github.com/yee94/yuri](ht
 
 ## Repository HMR development
 
+The web Files API (also used by Electron and hosted/native mobile) searches
+through the shared V2 client's `file.find` (`/api/fs/find`). A typed
+`LocationNotFoundError` skips a deleted project/worktree without a UI error;
+authentication, transport, and other failures still reject. Readiness uses
+`/api/info` only, never a legacy health fallback.
+
 Assistant and Summary AI inference uses the external OpenCode service through a
 built-in RPC plugin staged in an isolated temporary Location, never by editing
 global OpenCode config. `bun run build:llm-bridge` builds the self-contained plugin;
@@ -28,6 +34,16 @@ cleans up the failed process group before restarting, including descendants
 whose launcher has already exited. Ctrl-C stops both groups and cancels retries.
 Logs remain in the tmux pane. Restarting preserves Vite's dependency cache;
 `YURI_VITE_FORCE=1` remains an explicit cache-reset option.
+
+HMR skips React Compiler by default; use `YURI_HMR_REACT_COMPILER=1 bun run dev:web:hmr`
+when checking compiler-specific behavior. Production builds always retain the
+compiler, regardless of that development toggle. Package-based vendor chunk
+groups apply only to production builds: applying them to experimental bundled
+development merges lazy language stubs and eagerly triggers their compilation.
+Normal HMR uses per-module ESM. Experimental bundled development is opt-in via
+`YURI_HMR_BUNDLED_DEV=1`; its lazy-compilation queue can stall navigation while
+other tabs reconnect or compile entries. Neither development toggle changes
+production compilation or the OpenCode connection mode.
 
 By default the HMR API attaches to the same shared OpenCode service as the
 desktop app, so heavy dev traffic can slow the desktop too.
@@ -107,7 +123,7 @@ Point every Yuri Host at the Relay, then generate a Relay pairing link or enable
 YURI_RELAY_URL=wss://relay.example.com/ws yuri
 ```
 
-The **Add a device** dialog and Host default to `wss://relay.openchamber.dev/ws`. The Host persists the selected endpoint before creating the QR code; `YURI_RELAY_URL` remains authoritative when set. The creating client remembers the last effective endpoint locally.
+The **Add a device** dialog and Host default to `wss://relay.useyuri.top/ws`. The Host persists the selected endpoint before creating the QR code; `YURI_RELAY_URL` remains authoritative when set. The creating client remembers the last effective endpoint locally. Saved endpoints and existing pairings are not rewritten. The default Workers Relay does not provide APNs Push; configure `YURI_PUSH_RELAY_URL` separately when needed.
 
 Saved pairing candidates retain their endpoint snapshot, including the Relay URL. Mobile and Desktop clients reconnect through that saved endpoint until a new pairing flow replaces it. See [Yuri Relay Server](https://github.com/yee94/yuri/tree/main/packages/relay-server#readme) for bundle builds, reverse-proxy configuration, security, operations, and systemd guidance.
 

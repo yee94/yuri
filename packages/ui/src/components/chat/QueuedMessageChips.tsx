@@ -151,7 +151,7 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
             )}
             aria-label={t('chat.queuedMessage.removeAria')}
         >
-            <Icon name={removePending ? 'loader-4' : 'delete-bin'} className={cn(isMobile ? 'size-3' : 'size-3.5', removePending && 'animate-spin')} aria-hidden="true" />
+            <Icon name={removePending ? 'loader-4' : 'delete-bin'} weight="medium" className={cn(isMobile ? 'size-3' : 'size-3.5', removePending && 'animate-spin')} aria-hidden="true" />
         </button>
     );
 
@@ -213,8 +213,8 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                 {sendPending && !waitingForCompaction ? (
                     <span
                         className={cn(
-                            'inline-flex items-center gap-1 font-medium text-muted-foreground',
-                            isMobile ? 'h-7 text-[11px] leading-none' : 'h-6 typography-ui-label',
+                            'inline-flex items-center gap-1 text-muted-foreground',
+                            isMobile ? 'h-7 text-[11px] font-medium leading-none' : 'h-6 font-normal text-[length:calc(var(--text-ui-label)-1px)]',
                         )}
                         aria-live="polite"
                         aria-label={t('chat.queuedMessage.sendingAria')}
@@ -225,8 +225,8 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                 ) : pendingAdmission ? (
                     <span
                         className={cn(
-                            'inline-flex items-center gap-1 font-medium text-muted-foreground',
-                            isMobile ? 'h-7 text-[11px] leading-none' : 'h-6 typography-ui-label',
+                            'inline-flex items-center gap-1 text-muted-foreground',
+                            isMobile ? 'h-7 text-[11px] font-medium leading-none' : 'h-6 font-normal text-[length:calc(var(--text-ui-label)-1px)]',
                         )}
                         aria-live="polite"
                         aria-label={t('chat.queuedMessage.queuingAria')}
@@ -237,8 +237,8 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                 ) : waitingForCompaction ? (
                     <span
                         className={cn(
-                            'inline-flex items-center gap-1 font-medium text-muted-foreground',
-                            isMobile ? 'h-7 text-[11px] leading-none' : 'h-6 typography-ui-label',
+                            'inline-flex items-center gap-1 text-muted-foreground',
+                            isMobile ? 'h-7 text-[11px] font-medium leading-none' : 'h-6 font-normal text-[length:calc(var(--text-ui-label)-1px)]',
                         )}
                         aria-live="polite"
                         aria-label={t('chat.queuedMessage.waitingForCompactionAria')}
@@ -260,11 +260,11 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                             )}
                         >
                             <Icon
-                                name={editPending ? 'loader-4' : 'edit'}
+                                name={editPending ? 'loader-4' : 'pencil'}
                                 className={cn(isMobile ? 'size-3' : 'size-3.5', editPending && 'animate-spin')}
                                 aria-hidden="true"
                             />
-                            <span className={cn('font-medium capitalize', isMobile ? 'leading-none' : 'typography-ui-label')}>
+                            <span className={cn('capitalize', isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]')}>
                                 {t('chat.queuedMessage.edit')}
                             </span>
                         </button>
@@ -284,11 +284,12 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                             )}
                         >
                             <Icon
-                                name="send-plane"
+                                name="corner-down-left"
+                                weight="medium"
                                 className={cn(isMobile ? 'size-3' : 'size-3.5')}
                                 aria-hidden="true"
                             />
-                            <span className={cn('font-medium capitalize', isMobile ? 'leading-none' : 'typography-ui-label')}>
+                            <span className={cn('capitalize', isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]')}>
                                 {t('chat.queuedMessage.send')}
                             </span>
                         </button>
@@ -305,10 +306,11 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                             >
                                 <Icon
                                     name="time"
+                                    weight="medium"
                                     className={cn(isMobile ? 'size-3' : 'size-3.5')}
                                     aria-hidden="true"
                                 />
-                                <span className={cn('font-medium', isMobile ? 'leading-none' : 'typography-ui-label')}>
+                                <span className={isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]'}>
                                     {t('chat.queuedMessage.title')}
                                 </span>
                             </button>

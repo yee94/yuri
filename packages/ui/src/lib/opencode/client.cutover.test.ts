@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,23 @@ import type { ConfigEntry, SessionInfo } from './v2-types';
 const here = dirname(fileURLToPath(import.meta.url));
 
 describe('Phase 7 UI client cutover', () => {
+  test('search, diagnostics and startup never call removed OpenCode routes', () => {
+    const root = join(here, '../../../..');
+    const files = [
+      'ui/src/lib/openCodeStatus.ts',
+      'web/src/api/files.ts',
+      'web/server/lib/opencode/network-runtime.js',
+      'web/server/lib/opencode/lifecycle.js',
+      'web/server/lib/session-goal/runtime.js',
+      'vscode/src/extension.ts',
+      'vscode/src/opencode-sidecar.ts',
+    ];
+    for (const file of files) {
+      const source = readFileSync(join(root, file), 'utf8');
+      expect(source, file).not.toMatch(/['"]\/(?:api\/)?(?:find\/(?:file|text|symbol)|config\/providers|project\/current|session\/status|global\/health|path)['"]/);
+    }
+  });
+
   test('client facade files do not mention the 1.18 SDK or createOpencodeClient', () => {
     const files = ['client.ts', 'v2-types.ts'];
     for (const file of files) {
