@@ -514,7 +514,10 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
                     <div className="flex min-w-0 items-baseline gap-2">
                     <span
                       ref={(el) => { labelRefs.current[rowIndex] = el; }}
-                      className="relative block min-w-0 overflow-hidden file-mention-marquee-container"
+                      className={cn(
+                        'relative block min-w-0 overflow-hidden',
+                        isPath && isOverflowing && isSelected && 'file-mention-marquee-container',
+                      )}
                       style={isSelected ? {
                         ['--file-mention-marquee-width' as string]: `${marqueeWidth}px`,
                         ['--file-mention-marquee-duration' as string]: `${marqueeDuration}s`
