@@ -774,7 +774,9 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     return null;
   };
   const inferAssignedSessionSettleStatus = (getResult, messagesResult, { deliveryMessageID = null, activeBusy = null } = {}) => {
-    if (isMissing(getResult)) return 'complete';
+    // Another Host may share this watch store but use a different OpenCode database.
+    // Absence there is not an authoritative terminal result for the owning worker.
+    if (isMissing(getResult)) return null;
     if (getResult?.error) return null;
     // Authoritative active membership wins over stale get snapshots.
     if (activeBusy === true) return null;
@@ -787,7 +789,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     if (goal && goal.status === 'complete') return 'complete';
     const statusType = sessionStatusType(session);
     if (statusType === 'busy' || statusType === 'retry' || statusType === 'running') return null;
-    if (isMissing(messagesResult)) return 'complete';
+    if (isMissing(messagesResult)) return null;
     if (messagesResult?.error) return null;
     const items = messageListItems(messagesResult);
     if (!items) return null;

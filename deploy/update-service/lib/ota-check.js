@@ -269,12 +269,9 @@ async function loadChannelManifest(request, channel, options) {
 
 async function runUpdateCheck(request, parsedRequest, options) {
   const manifestBaseUrl = options.manifestBaseUrl;
-  // By default manifests and CHANGELOG load relative to the request origin
-  // (fast on Vercel, where they are static files). EdgeOne deployments must
-  // override this with the Vercel origin: /ota/* and /CHANGELOG.md on EdgeOne
-  // are reverse-proxied (or, if CHANGELOG is still a git-time static file,
-  // stale). Fetching either from an edge endpoint would loop or filter notes
-  // against an outdated changelog and omit releaseNotes.
+  // Complete Vercel and EdgeOne deployments serve current manifests and
+  // CHANGELOG from their own static snapshot. Explicit origin overrides are
+  // retained for callers that intentionally resolve a separate asset source.
   const assetBaseUrl = manifestBaseUrl ?? request.url;
   const manifest = await loadChannelManifest(request, parsedRequest.channel, options);
   if (manifest === null) {

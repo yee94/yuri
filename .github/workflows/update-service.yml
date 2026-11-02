@@ -1,0 +1,44 @@
+name: Update Service Distribution
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/update-service/**'
+      - '!deploy/update-service/ota/channels/**'
+      - '!deploy/update-service/release-manifest.json'
+      - 'scripts/mobile-ota/verify-distribution.mjs'
+      - 'scripts/mobile-ota/commit-edgeone-manifests.sh'
+      - '.github/workflows/mobile-beta-rollout.yml'
+      - '.github/workflows/update-service.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify update service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bunx vitest run --project @yuriai/update-service
+      - run: node scripts/mobile-ota/verify-detectability.mjs --fixtures-only
+
+  deploy:
+    name: Refresh existing OTA distribution
+    if: github.ref == 'refs/heads/main'
+    needs: verify
+    uses: ./.github/workflows/mobile-beta-rollout.yml
+    with:
+      action: refresh-distribution
+      channel: beta
+      verify_current_code: true
+    secrets: inherit

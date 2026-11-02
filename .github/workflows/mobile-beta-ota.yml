@@ -40,6 +40,7 @@ permissions:
 
 env:
   OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+  OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
   OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
   MOBILE_APP_ID: com.yee94.yuri
   MAX_BUNDLE_BYTES: 25165824 # 24 MiB
@@ -432,7 +433,7 @@ jobs:
 
           rm -rf deploy/update-service/.vercel
 
-      - name: Publish channel manifests to EdgeOne (git deploy)
+      - name: Trigger complete EdgeOne OTA distribution (git deploy)
         shell: bash
         env:
           CHANNEL: ${{ needs.release-plan.outputs.channel }}
@@ -440,6 +441,15 @@ jobs:
         run: |
           scripts/mobile-ota/commit-edgeone-manifests.sh /tmp/ota-snapshot \
             "chore(ota): publish ${CHANNEL} manifest ${VERSION} for EdgeOne"
+
+      - name: Verify full downloads and resume on both origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OTA_BASE_URL"
+          test -n "$OTA_MIRROR_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$OTA_BASE_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$OTA_MIRROR_URL" --require-local
 
       - name: Verify production OTA manifest + bundle
         shell: bash

@@ -8,11 +8,12 @@ import { AgentAvatar } from '@/components/chat/AgentAvatar';
 import { encodeAssistantAvatar, resolveAssistantAvatar } from '@/lib/assistant-avatar/recipe';
 import { assistantAvatarArtboard } from '@/lib/assistant-avatar/engine';
 import * as avatarEngine from '@/lib/assistant-avatar/engine';
-import { AssistantWorkingAvatar } from './AssistantWorkingAvatar';
+import { AssistantWorkingAvatar as LiveAssistantWorkingAvatar } from './AssistantWorkingAvatar';
 import { ProceduralAssistantAvatar } from './ProceduralAssistantAvatar';
 import { mountAvatarAnimation } from '@/lib/assistant-avatar/runtime';
 
 const globalStyles = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../index.css'), 'utf8');
+const AssistantWorkingAvatar = (props: React.ComponentProps<typeof LiveAssistantWorkingAvatar>) => <LiveAssistantWorkingAvatar {...props} blinkOnMount={false} />;
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('motion', () => import('../../../../../scripts/test/motion-frame-mock'));
@@ -70,6 +71,91 @@ function frame(timestamp: number) {
   frames.clear();
   pending.forEach((callback) => callback(timestamp));
 }
+
+test('a newly visible contact blinks once, restores its saved face and does not replay on updates or visibility return', async () => {
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('new-bot'), shape: 'star', color: 'coral' });
+  const render = (n: number, working = false) => root.render(<div data-update={n}><LiveAssistantWorkingAvatar name="new-bot" avatarSeed={seed} working={working} followPointer={false} /></div>);
+  await act(async () => render(0));
+  const pose = () => [...host.querySelectorAll('svg path')].map((path) => path.getAttribute('d'));
+  const initial = pose();
+  expect(frames.size).toBe(0);
+  await intersect(true);
+  expect(frames.size).toBe(1);
+  const start = performance.now();
+  frame(start + 68);
+  expect(pose()).not.toEqual(initial);
+  for (let i = 3; i < 30; i++) frame(start + i * 34);
+  expect(pose()).toEqual(initial);
+  expect(frames.size).toBe(0);
+  for (let i = 1; i <= 50; i++) await act(async () => render(i));
+  await intersect(false);
+  await intersect(true);
+  expect(frames.size).toBe(0);
+  const enter = () => host.querySelector('[data-avatar-motion]')!.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+  enter();
+  expect(frames.size).toBe(1);
+  for (let i = 1; i < 30; i++) frame(performance.now() + i * 34);
+  expect(frames.size).toBe(0);
+  await act(async () => render(51, true));
+  expect(frames.size).toBe(1);
+});
+
+test('first-appearance blink obeys reduced motion and the saved motion-off preference', async () => {
+  reduced = true;
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
+  await act(async () => root.render(<LiveAssistantWorkingAvatar name="reduced" working={false} followPointer={false} />));
+  await intersect(true);
+  expect(create).not.toHaveBeenCalled();
+  expect(frames.size).toBe(0);
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('off'), animate: false });
+  await act(async () => root.render(<LiveAssistantWorkingAvatar name="off" avatarSeed={seed} working={false} />));
+  expect(host.querySelector('img')).not.toBeNull();
+  expect(create).not.toHaveBeenCalled();
+});
+
+test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('interrupting a first-appearance blink releases frame work when %s', async (reason) => {
+  await act(async () => root.render(<LiveAssistantWorkingAvatar name="interrupt" working={false} followPointer={false} />));
+  await intersect(true);
+  frame(performance.now() + 34);
+  expect(frames.size).toBe(1);
+  if (reason === 'offscreen') await intersect(false);
+  if (reason === 'hidden') {
+    visible = 'hidden';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: true });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  if (reason === 'unmounted') await act(async () => root.render(null));
+  expect(frames.size).toBe(0);
+  if (reason === 'offscreen') {
+    await intersect(true);
+    expect(frames.size).toBe(0);
+  }
+});
+
+test('first-appearance blink composes over shared work without restarting other faces', () => {
+  const mount = (id: string, blinkOnMount: boolean) => {
+    const node = document.createElement('span');
+    host.append(node);
+    const animation = mountAvatarAnimation(node, { id, seed: 'same-face', animationKey: 'same-bot' });
+    animation.update({ active: true, motion: 'working', size: 32, blinkOnMount });
+    return { ...animation, pose: () => [...node.querySelectorAll('path')].map((path) => path.getAttribute('d')) };
+  };
+  const first = mount('first', false);
+  const start = performance.now();
+  for (let i = 1; i <= 10; i++) frame(start + i * 34);
+  const second = mount('second', true);
+  try {
+    frame(start + 11 * 34);
+    expect(second.pose()).not.toEqual(first.pose());
+    for (let i = 12; i <= 45; i++) frame(start + i * 34);
+    expect(second.pose()).toEqual(first.pose());
+    expect(frames.size).toBe(1);
+  } finally { first.dispose(); second.dispose(); }
+  expect(frames.size).toBe(0);
+});
 
 test('list and header idle faces follow an available mouse while transcript idle faces stay still', async () => {
   mouseAvailable = true;

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Commit the assembled OTA channel manifests to main so the git-deployed EdgeOne
-# project ships them next to its edge functions. Only the small channels/*.json
-# files are committed; bundle zips stay on Vercel and flow through the EdgeOne
-# proxy. Runs from a detached worktree, so the caller's checkout is untouched.
+# project builds a complete static distribution. Only channels/*.json enter git;
+# the EdgeOne build downloads and verifies all retained ZIPs and CHANGELOG from
+# Vercel before activation. Runs from a detached worktree; checkout is untouched.
 #
 # Usage: commit-edgeone-manifests.sh <snapshot-dir> <commit-message-subject>
 set -euo pipefail
@@ -27,7 +27,7 @@ for attempt in 1 2 3 4 5; do
   mkdir -p "$WORKTREE/$DEST_REL"
   cp "$CHANNELS_SRC/beta.json" "$CHANNELS_SRC/stable.json" "$WORKTREE/$DEST_REL/"
 
-  if git -C "$WORKTREE" diff --quiet -- "$DEST_REL"; then
+  if git -C "$WORKTREE" diff --quiet -- "$DEST_REL" && [[ "${EDGEONE_FORCE_DEPLOY:-}" != "1" ]]; then
     echo "EdgeOne channel manifests already up to date on main."
     exit 0
   fi
@@ -36,7 +36,7 @@ for attempt in 1 2 3 4 5; do
   git -C "$WORKTREE" \
     -c user.name="github-actions[bot]" \
     -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-    commit --quiet -m "$SUBJECT [skip ci]"
+    commit --quiet --allow-empty -m "$SUBJECT [skip ci]"
 
   if git -C "$WORKTREE" push --quiet origin HEAD:main; then
     echo "Committed EdgeOne channel manifests to main."

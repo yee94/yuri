@@ -69,6 +69,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let shared: ReturnType<typeof acquireWorkingTimeline> | null = null;
   let settling = false;
   let settleDeadline = 0;
+  let appeared = false;
   let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
   const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer;
   const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
@@ -99,7 +100,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
       const sample = live.advance((timestamp - previous) / 1000, source?.read(timestamp));
       renderer.paint(sample);
       previous = timestamp;
-      if (resting() && !sample.hovering && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
+      if (resting() && !sample.hovering && !sample.blinking && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
     }, () => {
       gaze = null;
       const point = pointer?.read();
@@ -117,7 +118,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   };
 
   return {
-    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean }) {
+    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean }) {
       if (disposed) return;
       const wasResting = resting();
       const wasSharing = sharing();
@@ -144,6 +145,11 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         player.setCompact(state.size < 48);
         player.setMotion(state.motion);
       } else if (!resting()) start();
+      if (next.blinkOnMount && !appeared) {
+        appeared = true;
+        start();
+        player?.blink();
+      }
     },
     hover() {
       if (disposed || !state.active) return;

@@ -14,6 +14,7 @@ type AssistantWorkingAvatarProps = {
   className?: string
   hoverTarget?: React.RefObject<HTMLElement | null>
   followPointer?: boolean
+  blinkOnMount?: boolean
 }
 
 /**
@@ -31,6 +32,7 @@ export const AssistantWorkingAvatar: React.FC<AssistantWorkingAvatarProps> = ({
   className,
   hoverTarget,
   followPointer,
+  blinkOnMount = true,
 }) => {
   const { t } = useI18n()
   const localWorking = useAssistantContactWorkingStore((state) => working !== undefined && Boolean(state.workingByID[name]))
@@ -42,7 +44,7 @@ export const AssistantWorkingAvatar: React.FC<AssistantWorkingAvatarProps> = ({
       style={{ width: box, minWidth: box, maxWidth: box, height: box, minHeight: box, maxHeight: box }}
       data-assistant-working-avatar=""
     >
-      <AgentAvatar kind="assistant" motion={working === undefined ? undefined : animated ? 'working' : 'idle'} name={avatarSeed ?? name} size={size} label={label} hoverTarget={hoverTarget} followPointer={followPointer} animationKey={name} />
+      <AgentAvatar kind="assistant" motion={working === undefined ? undefined : animated ? 'working' : 'idle'} name={avatarSeed ?? name} size={size} label={label} hoverTarget={hoverTarget} followPointer={followPointer} animationKey={name} blinkOnMount={blinkOnMount} />
       {working && showWorkingDot ? (
         <span
           className="pointer-events-none absolute right-0 bottom-0 size-2.5 translate-x-0.5 translate-y-0.5 rounded-full bg-[var(--status-success)] ring-2 ring-background"

@@ -67,13 +67,14 @@ test('EdgeOne build skips OTA seed tree and CHANGELOG so edge proxies are not sh
   }
 });
 
-test('EdgeOne build ships only OTA channel manifests so bundle zips keep flowing through the proxy', () => {
+test('legacy channels-only build remains explicit while production requires a complete snapshot', () => {
   const outputDirectory = `.test-dist-edgeone-channels-${process.pid}-${Date.now()}`;
   const outputPath = path.join(projectRoot, outputDirectory);
   const edgeoneConfig = JSON.parse(readFileSync(path.join(projectRoot, 'edgeone.json'), 'utf8'));
 
   try {
-    assert.match(edgeoneConfig.buildCommand, /YURI_UPDATE_OTA_CHANNELS_ONLY=1/);
+    assert.match(edgeoneConfig.buildCommand, /YURI_UPDATE_OTA_FULL_SNAPSHOT=1/);
+    assert.doesNotMatch(edgeoneConfig.buildCommand, /YURI_UPDATE_OTA_CHANNELS_ONLY/);
     assert.doesNotMatch(edgeoneConfig.buildCommand, /YURI_UPDATE_SKIP_OTA_COPY/);
 
     execFileSync(process.execPath, ['scripts/build.mjs'], {

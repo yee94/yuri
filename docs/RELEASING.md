@@ -55,9 +55,11 @@ npm scope 使用用户已申请的 `@yuriai`，公开发布包为 `@yuriai/web` 
 
 ### 更新源与客户端地址
 
-发布仓库必须配置 `YURI_OTA_BASE_URL`（Vercel 权威 HTTPS origin）、`YURI_OTA_MIRROR_URL`（EdgeOne HTTPS origin）及 `YURI_OTA_DETECTABILITY_BASES`（两者以逗号分隔）。EdgeOne 项目的环境变量 `YURI_OTA_UPSTREAM_ORIGIN` 指向 Vercel origin；项目根目录为 `deploy/update-service`，使用其中的 `edgeone.json`，部署后必须验证代理和更新接口可公开访问。
+发布仓库必须配置 `YURI_OTA_BASE_URL`（Vercel 权威 HTTPS origin）、`YURI_OTA_MIRROR_URL`（EdgeOne HTTPS origin）及 `YURI_OTA_DETECTABILITY_BASES`（两者以逗号分隔）。EdgeOne 的 **构建环境**必须可读 `YURI_OTA_UPSTREAM_ORIGIN`（Vercel origin），不能只配置给运行时函数；项目根目录为 `deploy/update-service`，使用其中的 `edgeone.json`。EdgeOne 构建取齐并校验完整线上快照后才发布，运行时检查、下载和续传不再依赖 Vercel。部署后必须验证两个入口公开可用及 EdgeOne 完整静态资源，不以代理返回 200 作为成功。
 
 原生发布、独立 Mobile Release 和 OTA 构建均将这两个 origin 注入 Electron、Capgo 和移动 UI：桌面与原生下载走 EdgeOne，UI 同时保留 EdgeOne/Vercel 两条检测地址。`scripts/verify-release-update-env.mjs` 在打包前拒绝空地址、占位符、路径错配及主镜像混用。首次补齐或更换原生更新地址必须重新发布安装包，线上配置无法修复已烘焙空地址的旧原生壳。
+
+EdgeOne 的一次性配置必须关联 **`yee94/yuri` 的 `main`**，根目录为 `deploy/update-service`，生产自动部署开启。不能继续绑定备份仓库；代理返回的最新 OTA 版本不能证明服务代码已更新。仓库内 `edgeone.json` 覆盖控制台构建/输出设置。之后正常发版全自动；仅更新服务代码也会由 `.github/workflows/update-service.yml` 在 `main` push 后先跑测试，再复用 `refresh-distribution` 原样刷新现有资源及两入口完整下载验证，不需要发新 App 或登录控制台。该自动入口排除清单 bot 提交，避免递归触发。
 
 设定版本号：
 
@@ -429,6 +431,8 @@ OTA tag 会创建 **GitHub prerelease**（`mobile-beta/v…` 或 `mobile-stable/
 
 每次 OTA 发布部署后，CI 会用 `scripts/mobile-ota/verify-detectability.mjs` 对 **Vercel 与 EdgeOne 两个客户端入口** 探活 `POST /v1/mobile/update/check`，任一失败即让发布 fail（带 ~3 分钟边缘缓存重试）。脚本先断言**双 fixture**（新式版本门 / 存量无门），再打线上。设备优先打 EdgeOne，只探 Vercel 会漏掉国内入口的 resolver 回归。
 
+此前还必须通过 `verify-distribution.mjs --snapshot <本次快照> --base <origin>`：两入口都下载并逐字节校验所有保留的移动端/桌面 ZIP（含回滚、其他主版本和加密包），并验证 Range 续传。EdgeOne 加 `--require-local`，要求新的 `/ota-distribution.json` 与实际文件一致且无 `x-ota-proxy`。旧代理即使能检查更新、下载成功也不能冒充本地完整分发。EdgeOne 构建等待最多约 7.5 分钟重试（不含传输耗时），未完成让发布失败。
+
 **Fixture A**（manifest 带 `minShellReleaseVersion: "1.18.3"`，active `1.18.3-beta.2`）：
 
 1. **旧 iOS 壳**：`nativeVersion: "1.18.2"`（剥离）+ `currentBundleId: "builtin"` → `install_native_required`
@@ -487,7 +491,7 @@ node scripts/mobile-release-plan.mjs --json
 3. `mobile-beta-ota.yml`（Shared Desktop and Mobile OTA Release）：
    - `release-plan`：从 tag 推导 `CHANNEL`（`mobile-beta/` → beta，`mobile-stable/` → stable）与 `VERSION`；再次校验资格；非 ota 则失败并提示改用 `v*`。
    - `build-ota`：`bun run --cwd packages/mobile build`（web 构建 + prepare，**不含** `cap sync`）→ `@capgo/cli bundle zip` → 可选 `CAPGO_PRIVATE_KEY_V2` 加密 → 24 MiB 上限 → `scripts/mobile-ota/assemble-snapshot.mjs --channel $CHANNEL`。默认灰度：双通道均 `100`（可 `workflow_dispatch` 覆盖 `rollout_percent`）。
-   - `deploy`：对 `deploy/update-service` 做 Vercel pull / `vercel build --prod` / 将 **完整** snapshot 的 `ota/` 覆盖进 `.vercel/output/static/ota/` / `vercel deploy --prebuilt --prod`，再 curl 校验 **两个** channel manifest（`beta.json` + `stable.json`）以及目标 channel 的 bundle。
+   - `deploy`：对 `deploy/update-service` 做 Vercel pull / `vercel build --prod` / 将 **完整** snapshot 的 `ota/` 覆盖进 `.vercel/output/static/ota/` / `vercel deploy --prebuilt --prod`；再提交清单触发 EdgeOne 构建完整静态快照，通过两入口完整下载、Range 和客户端可检测性门禁。
    - `archive`：GitHub **prerelease** 挂 zip 与对应 channel json。
 
 端点契约见 `deploy/update-service/README.md`（`/ota/channels/{beta,stable}.json`、`/ota/bundles/<id>.zip`、`POST /v1/mobile/update/check`）。仓库内种子：`deploy/update-service/ota/channels/beta.json` 与 `stable.json`。
@@ -516,6 +520,7 @@ GitHub Actions → **Shared Desktop and Mobile OTA Rollout**（`mobile-beta-roll
 | `set-min-shell-release-version` | 设置或清除 `activeBundle.minShellReleaseVersion`（传空字符串清除）。端内「一键 OTA」vs「跳转重装」的版本门 |
 | `set-min-native-build` | **DEPRECATED**。设置 `activeBundle.platforms.<platform>.minNativeBuild`（可升可降）。服务端判定已不再读取该字段；仅保留用于修复线上存量 manifest |
 | `promote-channel` | 将 `--from`（通常 beta）已验证的 activeBundle **原样**拷到 `--to`（通常 stable），仅换 `rolloutSalt` / `rolloutPercent`（默认 100）；内容寻址 zip 可复用 |
+| `refresh-distribution` | 原样保留线上版本、generation、灰度、原生目标和全部引用包，重部署 Vercel 并强制触发 EdgeOne 完整构建；用于补齐已发布版本、重试失败镜像，不重发 App |
 
 本地等价（写出 snapshot，再由 CI/人工部署）：
 
@@ -536,10 +541,10 @@ node scripts/mobile-ota/rollout.mjs --action promote-channel --from beta --to st
 - 无密钥时走明文 zip，`checksum` 为 **纯 64 位 hex（无 `sha256:` 前缀）**——原生插件按字面值比较自身摘要，带前缀会导致下载校验失败。脚本会自动剥掉输入的前缀。
 - 检查端点对加密 bundle 同时返回 `session_key` 与 `sessionKey` 两个键：Android 解析 `sessionKey`，iOS 解析 `session_key`。
 - 回滚加密 bundle 属于已知限制：回滚 zip 只能携带明文摘要，配置了公钥的壳无法校验，会自动回退到上一个成功 bundle。
-- zip **必须 < 24 MiB**；超限失败并提示迁移 COS。CI 部署 Vercel（权威源）后，由 `scripts/mobile-ota/commit-edgeone-manifests.sh` 把两个 channel manifest（仅 `channels/*.json`，几十 KB）提交到 `main` 的 `deploy/update-service/ota/channels/`，EdgeOne（`updates-mirror.example.com`，国内入口）通过 git 自动部署后本地即有 manifest；check 接口先读本地、缺失时回退 Vercel，国内用户不再依赖 Vercel 可达。bundle zip 不进 git，仍由 EdgeOne 边缘反向代理回源 Vercel（首次命中后 `immutable` 缓存）。提交步骤在每个 OTA 部署点（release / mobile-beta-ota / rollout）Vercel 部署之后执行，失败即让 job fail；这要求 `main` 允许 `github-actions[bot]` 直推。pause / rollback 在 EdgeOne 上需等待一次 git 部署（通常几分钟）才生效。服务端 bundle 分发支持 HTTP Range 断点续传（EdgeOne 代理已透传 `Range` / `Content-Range`，部分响应不落边缘缓存）。
-- 反向代理路径为**白名单**：`/ota/channels/*.json`、`/ota/bundles/*.zip`、`/CHANGELOG.md`。前两者是 OTA 快照，第三者供直接 GET。EdgeOne 的 `POST /v1/mobile/update/check` 必须从 Vercel 源拉 CHANGELOG（与 channel manifest 同一 `manifestBaseUrl`），不能读本机 `/CHANGELOG.md`：本机文件若仍是 git 部署静态资源，过滤区间对不上当前 OTA，更新对话框的「更新内容」会整段消失。代理路径必须精确匹配，不能放宽成通配符。
-- EdgeOne 构建只输出 `ota/channels/`（`YURI_UPDATE_OTA_CHANNELS_ONLY=1`），**不得**输出 `ota/bundles/`，否则 bundle 代理被静态资源遮蔽。
-- EdgeOne 构建**不得**输出静态 `CHANGELOG.md`（`YURI_UPDATE_SKIP_CHANGELOG_COPY=1`，已写进 `deploy/update-service/edgeone.json`）：EdgeOne 上静态资源会遮蔽同名 edge function，输出了静态文件代理就永远不生效。Vercel 仍需静态文件，它是权威源。
+- zip **必须 < 24 MiB**；超限失败并提示迁移 COS。CI 部署 Vercel（权威源）后，`scripts/mobile-ota/commit-edgeone-manifests.sh` 把两个 channel manifest 提交到 `main` 触发 EdgeOne Git 构建；ZIP 不进 git。提交失败让 job fail，要求 `main` 允许 `github-actions[bot]` 直推。
+- EdgeOne 使用 `YURI_UPDATE_OTA_FULL_SNAPSHOT=1`，构建阶段从 Vercel 取两通道、所有主版本 active/rollback 的移动端/桌面 ZIP 及最新 CHANGELOG，流式校验 ID/大小/摘要后输出完整 `dist/`。最多三个并行 ZIP 传输，同一包只取一次。源不可达、缺包、损坏或构建中清单变化必须失败，保留旧完整部署，不上线半份资源。
+- EdgeOne **刻意输出** `ota/bundles/` 和 `CHANGELOG.md` 覆盖旧代理；check 和 Capgo 接口只读本地，完整下载和 Range 续传均由静态服务处理，不再运行时回源 Vercel。旧白名单代理仅兼容不在当前保留快照内的历史路径，不能通过新发布门禁。用户原来的 EdgeOne 下载域名和路径不变，不需重装 App。
+- 仅改清单/下载分发可用 `refresh-distribution` 为已经发布的版本补齐资源。EdgeOne 失败时 Vercel 保留新权威快照、EdgeOne 继续提供旧完整快照；修复构建环境或源站后重试该动作，不改变版本与 generation。暂停/回滚仍要等 EdgeOne Git 部署成功，分发验证通过后才能声明两入口生效。
 
 ### 通道隔离保证
 

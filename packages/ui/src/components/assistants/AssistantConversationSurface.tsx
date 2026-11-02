@@ -679,7 +679,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                         return <AssistantSessionCard key={`${renderKey}:card:${index}`} card={part} />
                       }
                       if (part.type === 'card' && part.cardType === 'assistant') {
-                        return <AssistantAssistantCard key={`${renderKey}:card:${index}`} card={part} />
+                        return <AssistantAssistantCard key={`${renderKey}:card:${index}`} card={part} assistant={snapshotQuery.data?.assistants.find((item) => item.id === part.assistantID)} active={active} />
                       }
                       if (part.type === 'card' && part.cardType === 'schedule') {
                         return <AssistantScheduleCard key={`${renderKey}:card:${index}`} card={part} />

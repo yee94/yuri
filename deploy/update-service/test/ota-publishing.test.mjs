@@ -12,9 +12,44 @@ import { test } from 'vitest';
 import { selectOtaMajor } from '../lib/ota-manifest.js';
 import { handleMobileUpdateCheck } from '../lib/ota-check.js';
 import { promoteStableToBeta } from '../../../scripts/mobile-ota/channel-promotion.mjs';
+import { parse as parseYaml } from 'yaml';
 
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+
+test('every OTA publication requires complete local EdgeOne downloads, including same-version distribution repair', async () => {
+  for (const [name, job] of [['release.yml', 'mobile-native-targets'], ['mobile-beta-ota.yml', 'deploy'], ['mobile-beta-rollout.yml', 'rollout']]) {
+    const workflow = parseYaml(await readFile(path.join(root, '.github/workflows', name), 'utf8'));
+    const steps = workflow.jobs[job].steps;
+    const triggerIndex = steps.findIndex((step) => step.run?.includes('commit-edgeone-manifests.sh'));
+    const verifyIndex = steps.findIndex((step) => step.run?.includes('verify-distribution.mjs'));
+    assert.ok(triggerIndex >= 0 && verifyIndex > triggerIndex, `${name} must wait for complete EdgeOne distribution`);
+    const verify = steps[verifyIndex].run;
+    assert.match(verify, /--base "\$OTA_BASE_URL"/);
+    assert.match(verify, /--base "\$OTA_MIRROR_URL" --require-local/);
+    if (name === 'mobile-beta-rollout.yml') {
+      assert.ok(workflow.on.workflow_dispatch.inputs.action.options.includes('refresh-distribution'));
+      assert.match(steps[triggerIndex].env.EDGEONE_FORCE_DEPLOY, /refresh-distribution/);
+      assert.ok(steps.some((step) => /--action snapshot --channel "\$CHANNEL"/.test(step.run ?? '')));
+    }
+  }
+});
+
+test('service changes automatically refresh both origins without publishing a new App or recursively deploying manifests', async () => {
+  const workflow = parseYaml(await readFile(path.join(root, '.github/workflows/update-service.yml'), 'utf8'));
+  assert.deepEqual(workflow.on.push.branches, ['main']);
+  assert.ok(workflow.on.push.paths.includes('deploy/update-service/**'));
+  assert.ok(workflow.on.push.paths.includes('!deploy/update-service/ota/channels/**'));
+  assert.ok(workflow.on.push.paths.includes('!deploy/update-service/release-manifest.json'));
+  assert.equal(workflow.jobs.deploy.needs, 'verify');
+  assert.equal(workflow.jobs.deploy.uses, './.github/workflows/mobile-beta-rollout.yml');
+  assert.equal(workflow.jobs.deploy.with.action, 'refresh-distribution');
+  assert.equal(workflow.jobs.deploy.with.verify_current_code, true);
+  const rollout = parseYaml(await readFile(path.join(root, '.github/workflows/mobile-beta-rollout.yml'), 'utf8'));
+  assert.equal(rollout.on.workflow_call.inputs.action.type, 'string');
+  assert.equal(rollout.concurrency.group, 'mobile-ota-production');
+  assert.equal(rollout.concurrency['cancel-in-progress'], false);
+});
 
 test('stable release service deployment preserves live OTA before replacing static output', async () => {
   const workflow = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8');

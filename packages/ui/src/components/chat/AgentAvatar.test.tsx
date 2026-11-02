@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AgentAvatar } from './AgentAvatar';
 import { generatedAvatarDataUri } from '@/lib/generatedAvatar';
 
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 vi.mock('@/lib/generatedAvatar', async (original) => {
   const actual = await original<typeof import('@/lib/generatedAvatar')>();
   return { ...actual, generatedAvatarDataUri: vi.fn(actual.generatedAvatarDataUri) };
@@ -33,6 +35,15 @@ describe('AgentAvatar', () => {
     expect(generatedAvatarDataUri).not.toHaveBeenCalled();
     renderToStaticMarkup(<AgentAvatar kind="assistant" name="history-only" />);
     expect(generatedAvatarDataUri).toHaveBeenCalledTimes(1);
+  });
+
+  test('assistant custom recipes remain distinct from the legacy ID fallback', () => {
+    const seed = 'yuri-avatar:v1:star:capsule:coral:neutral:0:recruited';
+    const custom = renderToStaticMarkup(<AgentAvatar kind="assistant" name={seed} motion="idle" blinkOnMount />);
+    const fallback = renderToStaticMarkup(<AgentAvatar kind="assistant" name="recruited" />);
+    expect(custom).toContain('src="data:image/svg+xml');
+    expect(custom).not.toBe(fallback);
+    expect(custom).toContain(encodeURIComponent('#edb0a0'));
   });
 
   test('50 unrelated parent updates perform no avatar generation; identity changes regenerate once', async () => {

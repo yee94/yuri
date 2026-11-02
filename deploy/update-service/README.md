@@ -88,12 +88,12 @@ Or `bun run test` from this directory.
 
 ## EdgeOne transition compatibility
 
-`edgeone.json` and `edge-functions/` keep the retired
-previously configured feed available for already-installed clients.
-Its build command writes `dist/`, while Vercel continues to build `public/`.
-The EdgeOne project must permit public requests to its project domain; this
-transition feed uses the same stable release manifest and GitHub release assets
-as Vercel.
+`edgeone.json` and `edge-functions/` serve the preferred domestic OTA entrypoint
+and keep the legacy desktop feed available for installed clients. Its build
+command writes a complete static distribution to `dist/`, while Vercel builds
+`public/`. Both project domains must permit public requests. Legacy installer
+feeds continue to reference GitHub release assets; OTA ZIPs are local on both
+providers (see below).
 
 ## Mobile OTA endpoints
 
@@ -155,10 +155,10 @@ When `primaryAction` is `apply_ota` or `install_native_required`, the handler lo
 `/CHANGELOG.md` from the same origin as the channel manifest and attaches filtered
 `releaseNotes` (same extraction as `/v1/update/check`). The upper bound is the OTA
 `releaseVersion` for in-app apply, or `native.version` when the shell must reinstall.
-On EdgeOne that origin is the Vercel host — same-origin CHANGELOG is either a
-reverse-proxied fetch loop or a git-time static file that stops before the current
-OTA range, which omits `releaseNotes`. Missing or empty changelog content omits the
-field.
+Both Vercel and EdgeOne serve CHANGELOG from their own deployment. EdgeOne copies
+the current Vercel CHANGELOG at build time with the live OTA snapshot, not the
+potentially stale git-time copy. Update checks never wait for Vercel. Missing or
+empty changelog content omits the field.
 
 `isChannelRollback` is present (and `true`) only when all of the following hold:
 request `channel` is `stable`, device `currentBundleId` is a prerelease (contains `-`,
@@ -203,7 +203,7 @@ Schema summary (`schemaVersion: 1`):
 
 Stable publishing also advances the same-major beta lane to the stable bundle unless beta already has a higher release version. Beta keeps its channel identity, independent generation, two most recent rollback records (including their ZIPs), and other major lanes. The promoted bundle shares stable's mobile/desktop artifacts, rollout and shell gates. Full releases synchronize finalized native targets before deployment. Beta publishing never advances stable.
 
-Build copies the entire `ota/` tree into `public/` (Vercel) or `dist/` (EdgeOne) and fails if either `ota/channels/beta.json` or `ota/channels/stable.json` is missing or invalid.
+Vercel builds copy the source `ota/` tree into `public/`; CI overlays the full live snapshot before deployment. EdgeOne builds fetch a complete live snapshot into `dist/` as described below. Missing or invalid channel manifests fail either build.
 
 Stable release service refreshes use `rollout.mjs --action snapshot` to retain the live manifests and every active/rollback mobile and desktop ZIP without changing generations, rollout state or native targets. Finalization shares the `mobile-ota-production` lock with OTA publishing, overlays this snapshot onto the prebuilt Vercel output, and aborts before deployment if any referenced file is unavailable. A source-only Vercel deploy is not safe: ZIPs are not committed to git. The following same-version OTA deployment reads the finalized stable release feed from `main`, rather than replacing it with the older feed in the release tag.
 
@@ -212,19 +212,74 @@ Stable release service refreshes use `rollout.mjs --action snapshot` to retain t
 | Path | Cache-Control |
 | --- | --- |
 | `/ota/bundles/(.*)` (full GET) | `public, max-age=31536000, immutable` |
-| `/ota/bundles/(.*)` (client `Range` or upstream `206`) | `no-store` (never edge-cache partial bodies) |
-| `/ota/channels/(.*)` | `no-cache, max-age=0` (Vercel static); EdgeOne proxy uses `s-maxage=60` + stale-while-revalidate |
-| `/CHANGELOG.md` | Vercel static: `max-age=300`; EdgeOne proxy: same short TTL as channels (`s-maxage=60`) |
+| `/ota/bundles/(.*)` (static `Range`) | Provider-native byte-range serving; verified as `206` with exact bytes |
+| Legacy proxy partial responses | `no-store` (never edge-cache partial bodies) |
+| `/ota/channels/(.*)` | `no-cache, max-age=0` |
+| `/ota-distribution.json` | EdgeOne: `no-cache, max-age=0, must-revalidate` |
+| `/CHANGELOG.md` | Vercel static: `max-age=300`; EdgeOne: `max-age=0, must-revalidate` |
 
 ### Deploying bundles and channels
 
 CI publishes a static snapshot: place zip artifacts under `ota/bundles/<bundleId>.zip` and update the matching `ota/channels/<channel>.json`. The Vercel origin (`updates.example.com`) is authoritative — CI deploys snapshots there via `vercel deploy --prebuilt`.
 
-The EdgeOne host (`updates-mirror.example.com`) deploys from git and therefore only carries git-time seeds. To keep it current, EdgeOne reverse-proxies allowlisted paths to the Vercel origin:
+The EdgeOne host (`updates-mirror.example.com`) keeps the existing Git project
+and public domain. CI deploys Vercel first, then commits both manifests to `main`
+via `scripts/mobile-ota/commit-edgeone-manifests.sh` to trigger its build. The
+EdgeOne build must expose `YURI_OTA_UPSTREAM_ORIGIN` (the verified Vercel HTTPS
+origin) to the build process, not only to runtime functions.
 
-- `edge-functions/ota/[[default]].js` → `/ota/channels/*.json` and `/ota/bundles/*.zip`
-- `edge-functions/CHANGELOG.md.js` → exact `/CHANGELOG.md` (so mobile `releaseNotes` on EdgeOne match Vercel)
+`edgeone.json` enables `YURI_UPDATE_OTA_FULL_SNAPSHOT=1`. Before activation,
+`scripts/ota-distribution.mjs` fetches both live manifests, every referenced
+mobile/desktop active and rollback ZIP across all majors, and current CHANGELOG.
+Transfers are streamed with at most three concurrent ZIP downloads. Every ZIP
+must match its content-addressed ID and available size/checksum; encrypted ZIPs
+are verified by the ciphertext SHA-256 ID without changing Capgo metadata.
+Duplicate references download once. A second manifest read rejects a concurrently
+changed source. Missing/corrupt resources, origin failure or a torn snapshot fail
+the build, leaving the previous EdgeOne deployment serving its complete snapshot.
 
-Cache headers: channels and CHANGELOG use `s-maxage=60` + stale-while-revalidate; full bundles use `immutable`. For bundle paths only, the proxy forwards client `Range` and passes through `content-range` / `accept-ranges` so Capgo native resume works; channel and CHANGELOG paths never forward `Range`. Partial responses use `cache-control: no-store` so an edge never caches a byte-range body that would poison later full GETs. The proxy is path-allowlisted and surfaces upstream failures as `502` — it never fabricates an authoritative empty body.
+**Static assets intentionally shadow legacy proxy functions.** Normal update
+checks, release notes, complete downloads and byte-range resume all use EdgeOne
+local resources without runtime Vercel access. Existing URLs and installed
+clients need no migration. The allowlisted proxy remains only for historical
+paths absent from the retained snapshot; such a proxy response does not pass
+the new publication gate.
 
-**Static assets shadow edge functions on EdgeOne**, so the EdgeOne build (`edgeone.json`) sets `YURI_UPDATE_OTA_CHANNELS_ONLY=1` and `YURI_UPDATE_SKIP_CHANGELOG_COPY=1`. `dist/` contains `ota/channels/*.json` (small manifests that CI commits to `main` via `scripts/mobile-ota/commit-edgeone-manifests.sh`, so domestic clients never wait on Vercel) but never `ota/bundles/` or `CHANGELOG.md`, or those proxies would never run. The EdgeOne check endpoints read the local manifest first and fall back to the Vercel origin on a miss; release notes always come from Vercel. Vercel still emits everything as real static files (authoritative origin).
+A successful build writes `/ota-distribution.json`, listing sizes and SHA-256s
+of all materialized OTA files (no keys or encryption payloads). Release, OTA and
+rollout workflows run `scripts/mobile-ota/verify-distribution.mjs` against both
+origins with the expected snapshot. EdgeOne verification requires this marker,
+downloads every retained ZIP, compares bytes with the snapshot (including
+encrypted artifacts), verifies exact `206` range bodies, and rejects
+`x-ota-proxy` responses. A matching check response alone is not publication
+success. The existing detectability gate still validates client decisions.
+
+If Vercel deploys but EdgeOne build/verification fails, publication fails rather
+than claiming both are complete. Vercel retains the new authoritative snapshot;
+EdgeOne retains its previous working one. Retry the rollout workflow with
+`action: refresh-distribution`: it preserves version, generation, rollout and
+native targets, republishes the full Vercel snapshot and forces an EdgeOne Git
+build even when manifests are unchanged. No App rebuild, installer, TestFlight
+upload or new release version is needed. Do not deploy a git source-only Vercel
+build during recovery.
+
+### Automatic service-code deployment
+
+`.github/workflows/update-service.yml` tests update-service code changes pushed
+to `main`, then calls the same rollout workflow with `refresh-distribution`.
+This reuses the production lock, complete-snapshot deployment and both-origin
+download/Range gate. It additionally compares the marker's `sourceSha256`
+against this checkout's service code/configuration, so an older deployment with
+identical OTA assets cannot prematurely pass a service-code rollout. It does
+not build an App, change its version or upload an
+installer. Manifest-only bot commits are excluded from the push trigger to
+avoid recursive deployment. Normal release and rollout workflows already run
+the same distribution gate, so routine publishing needs no console login.
+
+One-time EdgeOne setup must point the Git project at `yee94/yuri`, branch
+`main`, root `deploy/update-service`, with production automatic deployment
+enabled and the build environment origin configured above. `edgeone.json`
+overrides console build/output settings. A retired/backup repository binding
+cannot receive current manifest commits; matching proxied OTA versions does
+not prove that the project deployed current code. Verify the distribution
+marker, not only its manifest version.

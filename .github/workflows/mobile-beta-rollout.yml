@@ -1,6 +1,22 @@
 name: Shared Desktop and Mobile OTA Rollout
 
 on:
+  workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      channel:
+        required: false
+        type: string
+        default: beta
+      major:
+        required: false
+        type: string
+      verify_current_code:
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       action:
@@ -15,6 +31,7 @@ on:
           - set-min-shell-release-version
           - set-min-native-build
           - promote-channel
+          - refresh-distribution
       percent:
         description: Rollout percent 0-100 (default 100)
         required: false
@@ -80,6 +97,7 @@ permissions:
 
 env:
   OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+  OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
   OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
 
 jobs:
@@ -121,6 +139,10 @@ jobs:
           set -euo pipefail
           OUT="$RUNNER_TEMP/ota-rollout-snapshot"
           case "$ACTION" in
+            refresh-distribution)
+              ARGS=(--action snapshot --channel "$CHANNEL" --out "$OUT")
+              WRITE_CHANNEL="$CHANNEL"
+              ;;
             promote-channel)
               ARGS=(--action promote-channel --from "$FROM" --to "$TO" --percent "${PERCENT:-100}" --out "$OUT")
               WRITE_CHANNEL="$TO"
@@ -222,15 +244,30 @@ jobs:
 
           rm -rf deploy/update-service/.vercel
 
-      - name: Publish channel manifests to EdgeOne (git deploy)
+      - name: Trigger complete EdgeOne OTA distribution (git deploy)
         shell: bash
         env:
           SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
           ACTION: ${{ inputs.action }}
           CHANNEL: ${{ steps.prepare.outputs.write_channel }}
+          EDGEONE_FORCE_DEPLOY: ${{ inputs.action == 'refresh-distribution' && '1' || '' }}
         run: |
           scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
             "chore(ota): ${ACTION} ${CHANNEL} manifest for EdgeOne"
+
+      - name: Verify full downloads and resume on both origins
+        shell: bash
+        env:
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+          VERIFY_CURRENT_CODE: ${{ inputs.verify_current_code }}
+        run: |
+          set -euo pipefail
+          test -n "$OTA_BASE_URL"
+          test -n "$OTA_MIRROR_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_BASE_URL"
+          ARGS=()
+          if [[ "$VERIFY_CURRENT_CODE" == "true" ]]; then ARGS+=(--require-current-code); fi
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_MIRROR_URL" --require-local "${ARGS[@]}"
 
       - name: Verify production channel after rollout
         shell: bash
@@ -271,7 +308,7 @@ jobs:
                 console.error('generation mismatch: got ' + m.generation + ' expected ' + expected);
                 process.exit(1);
               }
-              if (!(expected > previous)) {
+               if (process.env.ACTION !== 'refresh-distribution' && !(expected > previous)) {
                 throw new Error('generation did not increment');
               }
               if (process.env.ACTION !== 'set-native-target' && process.env.ACTIVE_BUNDLE_ID) {

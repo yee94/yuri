@@ -151,16 +151,23 @@ export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed:
   const timeline = createAssistantAvatarTimeline(recipe, seed, motion, compact, { randomizeShape, resting });
   const theme = themeFor(recipe, eyeColor);
   let hoverTime: number | null = null;
+  let blinkTime: number | null = null;
   return {
     setMotion: timeline.setMotion,
     setCompact: (next: boolean) => { compact = next; timeline.setCompact(next); },
     setResting: timeline.setResting,
     get isSettled() { return timeline.isSettled; },
     setGaze: timeline.setGaze,
-    blink: timeline.blink,
+    blink: () => { if (blinkTime === null) { timeline.blink(); blinkTime = 0; } },
     hover: () => { hoverTime ??= 0; },
     advance(dt: number, sharedFrame?: Frame) {
       const frame = sharedFrame ? { ...sharedFrame } : timeline.advance(dt);
+      if (blinkTime !== null) {
+        // Compose only the local eyelids over shared work; never restart its head pose.
+        if (sharedFrame) frame.eyes = timeline.advance(dt).eyes;
+        blinkTime += Math.min(0.1, Math.max(0, dt));
+        if (blinkTime >= 0.4) blinkTime = null;
+      }
       if (hoverTime !== null) {
         let left = Math.min(0.1, Math.max(0, dt));
         while (left > 1e-8) {
@@ -185,7 +192,7 @@ export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed:
         }
       }
       const model = modelFor(frame, theme, compact);
-      return { model, bounds: model.mode === 'sphere' ? sphereBounds(frame) : morphBounds(model), hoverScale, hovering: hoverTime !== null };
+      return { model, bounds: model.mode === 'sphere' ? sphereBounds(frame) : morphBounds(model), hoverScale, hovering: hoverTime !== null, blinking: blinkTime !== null };
     },
   };
 }

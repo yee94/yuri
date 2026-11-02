@@ -12,7 +12,7 @@ const contactQueryState = vi.hoisted(() => ({ cardSharingBubble: false, extraMes
 const attachmentIO = vi.hoisted(() => ({ upload: vi.fn(), send: vi.fn(), abort: vi.fn(), display: vi.fn(), blob: vi.fn(), release: vi.fn() }));
 const unreadUI = vi.hoisted(() => ({ settingsOpen: false }));
 const failureUI = vi.hoisted(() => ({ failed: false }));
-const avatarUI = vi.hoisted(() => ({ empty: false, loadFailed: false, peer: false, peerWorking: false }));
+const avatarUI = vi.hoisted(() => ({ empty: false, loadFailed: false, peer: false, peerWorking: false, recruited: false }));
 const previewIO = vi.hoisted(() => ({
   flagCalls: [] as boolean[],
   markdownOnShowPopup: null as ((content: Record<string, unknown>) => void) | null,
@@ -124,7 +124,7 @@ vi.mock('@/queries/assistantQueries', () => ({
           status: failureUI.failed && index === 0 ? 'error' : 'complete',
           fromAssistantID: avatarUI.peer ? 'peer-b' : null,
           fromAssistantName: avatarUI.peer ? 'Peer' : null,
-          parts: [{ type: 'text', text: `refetched ${index}` }],
+          parts: avatarUI.recruited ? [{ type: 'card', cardType: 'assistant', assistantID: 'recruited', name: 'New bot', providerID: 'provider', modelID: 'model', mode: 'continuous' }] : [{ type: 'text', text: `refetched ${index}` }],
           text: `refetched ${index}`,
           cards: [],
         })),
@@ -143,12 +143,12 @@ vi.mock('@/queries/assistantQueries', () => ({
     isFillingMessageGap: contactQueryState.isFillingMessageGap,
     retryMessageGap: contactQueryState.retryMessageGap,
   }),
-  useAssistantSnapshotQuery: () => ({ data: { assistants: avatarUI.peer ? [{ id: 'peer-b', name: 'Peer', working: avatarUI.peerWorking }] : [] } }),
+  useAssistantSnapshotQuery: () => ({ data: { assistants: avatarUI.recruited ? [{ id: 'recruited', avatarSeed: 'new-bot-face', working: false }] : avatarUI.peer ? [{ id: 'peer-b', name: 'Peer', working: avatarUI.peerWorking }] : [] } }),
 }));
 vi.mock('./assistantPresentation', () => ({
   getAssistantPresentation: (name: string) => ({ displayName: name, avatarEmoji: null }),
 }));
-vi.mock('./AssistantAssistantCard', () => ({ AssistantAssistantCard: () => null }));
+vi.mock('./AssistantAssistantCard', () => ({ AssistantAssistantCard: ({ assistant }: { assistant?: { avatarSeed?: string } }) => <span data-test-card-avatar={assistant?.avatarSeed} /> }));
 vi.mock('./AssistantScheduleCard', () => ({ AssistantScheduleCard: () => null }));
 vi.mock('./AssistantSessionCard', () => ({ AssistantSessionCard: () => null }));
 vi.mock('@/components/chat/AgentAvatar', () => ({
@@ -219,13 +219,26 @@ afterEach(async () => {
   contactQueryState.isFillingMessageGap = false;
   unreadUI.settingsOpen = false;
   failureUI.failed = false;
-  Object.assign(avatarUI, { empty: false, loadFailed: false, peer: false, peerWorking: false });
+  Object.assign(avatarUI, { empty: false, loadFailed: false, peer: false, peerWorking: false, recruited: false });
   previewIO.flagCalls.length = 0;
   previewIO.markdownOnShowPopup = null;
   vi.clearAllMocks();
 });
 
 describe('AssistantConversationSurface scroll ownership', () => {
+  test('recruitment cards resolve the new contact face without replacing the sender face', async () => {
+    contactQueryState.extraMessages = 1;
+    avatarUI.recruited = true;
+    const { host, root } = await mountSurface();
+    const sender = { ...assistant('assistant-a'), avatarSeed: 'speaking-bot-face' };
+    await act(async () => root.render(<AssistantConversationSurface assistant={sender} active />));
+    expect(host.querySelector('[data-test-card-avatar]')?.getAttribute('data-test-card-avatar')).toBe('new-bot-face');
+    expect(host.querySelector('[data-assistant-contact-role="assistant"] [data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('speaking-bot-face');
+    await act(async () => root.render(<AssistantConversationSurface assistant={{ ...sender, avatarSeed: 'edited-speaking-face' }} active />));
+    expect(host.querySelector('[data-assistant-contact-role="assistant"] [data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('edited-speaking-face');
+    expect(host.querySelector('[data-test-card-avatar]')?.getAttribute('data-test-card-avatar')).toBe('new-bot-face');
+  });
+
   test('message and processing avatars share the larger 32px size and aligned gutter', async () => {
     contactQueryState.extraMessages = 1;
     const { host } = await mountSurface();

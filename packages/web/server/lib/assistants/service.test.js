@@ -4297,7 +4297,72 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('reconciles a missing assigned session as complete and an assistant error as failed without settle bubbles', async () => {
+  it('does not let a Host on another OpenCode settle a shared worker as missing', async () => {
+    const directory = root();
+    const resumes = vi.fn(async () => ({ text: '会话记录已找不到', bubbles: ['会话记录已找不到'] }));
+    const completed = vi.fn(async () => ({ text: 'Actual worker result', bubbles: ['Actual worker result'] }));
+    let running = true;
+    const owner = setup(directory, {
+      active: async () => running ? { ses_running: { type: 'running' } } : {},
+      messages: async () => ({ data: [{
+        id: 'msg_result', type: 'assistant', finish: 'stop', time: { completed: 1 },
+        content: [{ type: 'text', text: 'Actual worker result' }],
+      }] }),
+    }, { clock: () => 9_000, runContactTurn: completed });
+    const other = setup(directory, {
+      get: async () => ({ error: { status: 404 } }),
+      messages: async () => ({ error: { status: 404 } }),
+    }, { runContactTurn: resumes });
+    try {
+      const assistant = owner.createAssistant(assistantInput);
+      owner.appendContactCard(assistant.id, {
+        cardType: 'session', sessionID: 'ses_running', directory, title: 'Still running', status: 'busy',
+      });
+      await other.reconcile();
+      await owner.reconcile();
+      expect(owner.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_running']);
+      expect(owner.contactMessages(assistant.id).messages.find((message) => message.parts[0]?.type === 'card')?.parts[0].status).toBe('busy');
+      expect(resumes).not.toHaveBeenCalled();
+      expect(completed).not.toHaveBeenCalled();
+
+      running = false;
+      await owner.reconcile();
+      await owner.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_running', 'complete', 9_000));
+      await other.reconcile();
+      await owner.reconcile();
+      expect(owner.snapshot().assistants[0].assignedSessionIDs).toEqual([]);
+      expect(completed).toHaveBeenCalledTimes(1);
+      expect(resumes).not.toHaveBeenCalled();
+    } finally {
+      owner.close();
+      other.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { error: { status: 404 } },
+    { _tag: 'SessionNotFoundError' },
+    { _tag: 'MessageNotFoundError' },
+  ])('keeps the watch when the message page is missing: %j', async (missing) => {
+    const directory = root();
+    const resumes = vi.fn();
+    const service = setup(directory, { messages: async () => missing }, { runContactTurn: resumes });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, {
+        cardType: 'session', sessionID: 'ses_unknown', directory, title: 'Unknown result', status: 'busy',
+      });
+      await service.reconcile();
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_unknown']);
+      expect(resumes).not.toHaveBeenCalled();
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a missing assigned session pending and reconciles an unrelated assistant error without settle bubbles', async () => {
     const directory = root();
     let time = 9_000;
     const resumes = [];
@@ -4344,23 +4409,20 @@ describe('assistants service', () => {
       status: 'busy',
     });
     await service.reconcile();
-    await Promise.all([
-      service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_gone', 'complete', 9_000)),
-      service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_fail', 'error', 9_000)),
-    ]);
+    await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_fail', 'error', 9_000));
     const cards = service.contactMessages(assistant.id).messages
       .filter((message) => message.parts.some((part) => part.type === 'card'))
       .map((message) => message.parts[0]);
-    expect(cards.find((card) => card.sessionID === 'ses_gone')?.status).toBe('complete');
+    expect(cards.find((card) => card.sessionID === 'ses_gone')?.status).toBe('busy');
     expect(cards.find((card) => card.sessionID === 'ses_fail')?.status).toBe('error');
     const texts = service.contactMessages(assistant.id).messages.map((message) => message.text);
     expect(texts.filter((text) => text === 'oc.settle.complete')).toHaveLength(0);
     expect(texts.filter((text) => text === 'oc.settle.error')).toHaveLength(0);
-    expect(texts).toEqual(expect.arrayContaining(['完成摘要', '失败摘要']));
-    expect(resumes.some((text) => text.includes('ses_gone') && text.includes('complete'))).toBe(true);
+    expect(texts).toContain('失败摘要');
+    expect(resumes.some((text) => text.includes('ses_gone'))).toBe(false);
     expect(resumes.some((text) => text.includes('ses_fail') && text.includes('error'))).toBe(true);
     expect(service.snapshot().assistants[0]).toMatchObject({
-      assignedSessionIDs: [],
+      assignedSessionIDs: ['ses_gone'],
       working: false,
     });
     const resumeCount = resumes.length;

@@ -1,5 +1,5 @@
 {
-  "buildCommand": "YURI_UPDATE_OUTPUT_DIR=dist YURI_UPDATE_OTA_CHANNELS_ONLY=1 YURI_UPDATE_SKIP_CHANGELOG_COPY=1 node scripts/build.mjs",
+  "buildCommand": "YURI_UPDATE_OUTPUT_DIR=dist YURI_UPDATE_OTA_FULL_SNAPSHOT=1 YURI_UPDATE_SKIP_CHANGELOG_COPY=1 node scripts/build.mjs",
   "installCommand": "echo 'no package dependencies'",
   "outputDirectory": "dist",
   "headers": [
@@ -17,7 +17,16 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=0, s-maxage=60, stale-while-revalidate=300"
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/ota-distribution.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, max-age=0, must-revalidate"
         }
       ]
     },

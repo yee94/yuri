@@ -25,9 +25,14 @@ the assistant ID as `animationKey`, independently of its saved recipe seed.
 `runtime.ts` is the non-React seam. `mountAvatarAnimation(host, { id, seed,
 animationKey?, randomizeShape?, eyeColor? })` returns only:
 
-- `update({ active, motion, size, followPointer? })`: update live state, preserving the player
+- `update({ active, motion, size, followPointer?, blinkOnMount? })`: update live state, preserving the player
   during continuous non-idle work/size changes. `active` is the view's intersecting, foreground,
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
+  `blinkOnMount` opts into one native blink on the first eligible update, consumed
+  for this renderer's lifetime. It does not replay on foreground/intersection return.
+  The player composes local blink eyes over shared working frames without resetting
+  the shared head timeline. Idle cleanup waits for the bounded .4-second blink;
+  no timer, recurring idle blink or per-frame React updates are introduced.
 - `hover()`: trigger the bounded existing shrink/rebound; eligible idle faces
   lazily start a resting player only for the hover excursion.
 - `dispose()`: idempotently release subscriptions/pointer ownership and remove
@@ -37,7 +42,7 @@ The React leaf owns standard observer/media/document Hooks; the runtime owns all
 imperative resources and per-frame DOM work. Mount paints a still face once.
 Inactive instances allocate no player or frame subscription. Idle faces without
 pointer following hold the exact reference static pose (looking up-right), with
-no player, pointer lease or frame work. Hover briefly animates that settled pose,
+no player, pointer lease or frame work outside an opted-in first-visible blink. Hover briefly animates that settled pose,
 then restores it and releases the player/clock. Returning from work to idle does
 the same cleanup. Mouse-capable list/header faces retain live gaze even when idle.
 Ambient navigation keeps its existing continuous shape cycle. Static React faces

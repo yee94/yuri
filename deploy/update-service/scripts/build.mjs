@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mirrorOtaDistribution } from './ota-distribution.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,9 +72,8 @@ async function resolveChangelogSource() {
 
 rmSync(outputDirectory, { recursive: true, force: true });
 mkdirSync(outputDirectory, { recursive: true });
-// EdgeOne serves /CHANGELOG.md through edge-functions/CHANGELOG.md.js and
-// static assets shadow edge functions — so the EdgeOne build must not emit
-// CHANGELOG.md. Vercel still needs the static file for origin + edge functions.
+// Legacy proxy-only builds omit CHANGELOG; full EdgeOne builds replace it with
+// the current origin copy together with all referenced OTA resources below.
 const skipChangelogCopy = process.env.YURI_UPDATE_SKIP_CHANGELOG_COPY === '1';
 if (!skipChangelogCopy) {
   const changelogSource = await resolveChangelogSource();
@@ -89,14 +89,16 @@ writeFileSync(path.join(outputDirectory, 'health.json'), `${JSON.stringify({
   latestVersion,
 }, null, 2)}\n`);
 
-// EdgeOne serves /ota/* through the edge reverse proxy (edge-functions/ota)
-// and static assets shadow edge functions there. The EdgeOne build therefore
-// emits only the small channel manifests (committed by CI) so domestic clients
-// never wait on Vercel; bundle zips stay un-emitted and keep flowing through
-// the proxy. Vercel serves the whole /ota/ tree as real static files.
+// Full EdgeOne builds materialize both live channels, all active/rollback ZIPs
+// and CHANGELOG before deployment. Static files intentionally shadow legacy
+// proxies: neither full downloads nor Range requests need runtime backsource.
 const skipOtaCopy = process.env.YURI_UPDATE_SKIP_OTA_COPY === '1';
 const otaChannelsOnly = process.env.YURI_UPDATE_OTA_CHANNELS_ONLY === '1';
-if (!skipOtaCopy) {
+if (process.env.YURI_UPDATE_OTA_FULL_SNAPSHOT === '1') {
+  if (!process.env.YURI_OTA_UPSTREAM_ORIGIN) throw new Error('YURI_OTA_UPSTREAM_ORIGIN is required for a complete EdgeOne OTA build');
+  const snapshot = await mirrorOtaDistribution({ outputDirectory, upstreamOrigin: process.env.YURI_OTA_UPSTREAM_ORIGIN });
+  console.log(`Verified complete EdgeOne OTA distribution: ${snapshot.files.length} static files`);
+} else if (!skipOtaCopy) {
   const otaSource = path.join(projectRoot, 'ota');
   if (otaChannelsOnly) {
     cpSync(path.join(otaSource, 'channels'), path.join(outputDirectory, 'ota', 'channels'), { recursive: true });

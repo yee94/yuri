@@ -36,6 +36,10 @@ desktop app, so heavy dev traffic can slow the desktop too.
 worktrees under `data/hmr/opencode/`. Global OpenCode config stays shared, and the
 shared `auth.json` seeds credentials on first start only. The isolated instance
 does not see desktop sessions, and it costs a second OpenCode process.
+It also isolates Yuri settings, assistants and scheduled-task state under
+`data/hmr/yuri/` (or `YURI_HMR_DATA_DIR/yuri/`). Configure development projects
+there separately; existing desktop state is neither copied nor modified.
+Hosts connected to different OpenCode databases must not share assistant watches.
 
 ## Install
 

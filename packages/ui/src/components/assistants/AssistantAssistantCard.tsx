@@ -1,23 +1,25 @@
 import React from 'react'
 import { useEvent } from '@reactuses/core'
-import { Icon } from '@/components/icon/Icon'
 import { useI18n } from '@/lib/i18n'
 import { isIPadApp } from '@/lib/platform'
 import { useMobileAppActions } from '@/apps/mobileAppContext'
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore'
-import type { AssistantContactAssistantCardPart } from '@/queries/assistantQueries'
+import type { AssistantContactAssistantCardPart, AssistantDTO } from '@/queries/assistantQueries'
+import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { openAssistant } from '@/stores/useAssistantUIStore'
 import { CONTACT_CARD_COVER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantAssistantCardProps = {
   card: AssistantContactAssistantCardPart
+  assistant?: Pick<AssistantDTO, 'avatarSeed' | 'working' | 'activeContactTurn'>
+  active?: boolean
 }
 
 /**
  * Assistant-emitted card for a newly created contact. Opens that assistant.
  * Not a slash command.
  */
-export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ card }) => {
+export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ card, assistant, active = true }) => {
   const { t } = useI18n()
   const mobileActions = useMobileAppActions()
   const isPhoneShell = Boolean(mobileActions && !isIPadApp())
@@ -46,9 +48,7 @@ export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ 
     >
       <div className="flex items-center gap-3">
         <span className="relative inline-block size-10 shrink-0 leading-none" aria-hidden>
-          <span className="flex size-10 items-center justify-center rounded-xl bg-[var(--surface-muted)] text-foreground">
-            <Icon name="robot-2" className="size-5" />
-          </span>
+          <AssistantWorkingAvatar name={card.assistantID} avatarSeed={assistant?.avatarSeed} size={40} working={active ? Boolean(assistant?.working || assistant?.activeContactTurn) : undefined} showWorkingDot={false} followPointer={false} />
         </span>
         <div className="min-w-0 flex-1 space-y-0.5">
           <h3 className="min-w-0 line-clamp-2 break-words typography-ui-label font-medium leading-5 text-foreground">{title}</h3>

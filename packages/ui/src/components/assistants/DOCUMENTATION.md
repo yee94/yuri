@@ -204,7 +204,7 @@ List/header faces follow the mouse, including while idle, when the reactive
 that capability they hold the reference static up-right idle pose. Transcript,
 processing, empty and error faces explicitly disable pointer following on every
 device. These static-idle faces allocate no player, pointer lease or frame callback
-until hover; its bounded resting player is released after restoring the exact
+outside their first-visible blink or hover; the bounded resting player is released after restoring the exact
 static pose. Work completion also returns them to that pose and releases live work.
 The player and state machine persist through continuous non-idle motion changes,
 so those transitions use the source bridge/springs. Only intersecting,
@@ -266,7 +266,7 @@ motion-off faces attach none. No hover state, parent rerender, extra timer or
 per-pointermove work is introduced.
 
 Performance contract: 20 visible live faces share one pair of Motion read/render
-callbacks at up to 30 paints/second each; pointer-disabled idle faces outside hover and
+callbacks at up to 30 paints/second each; pointer-disabled idle faces outside first-visible blink/hover and
 static/standalone history faces schedule zero work;
 50 unrelated parent renders cause zero observer rebinds or frame writes. Live
 faces do not serialize an unused static SVG URI. Focused recipe, frame-clock and
@@ -291,6 +291,20 @@ saving preserves the stored face. All contact avatar surfaces and native share
 PNG handoffs use this seed, falling back to the assistant ID for older servers.
 Working subscriptions remain keyed by assistant ID, independently of the seed.
 This selected-entity action is intentionally absent from Settings search.
+
+New-contact result cards resolve the **created** assistant from the conversation's
+existing snapshot and pass its saved `avatarSeed` to `AssistantWorkingAvatar`,
+falling back to its ID until that snapshot arrives. The surrounding message keeps
+the speaking assistant's identity; recruiting a contact never replaces the sender
+or current header. There is no uploaded/custom-image field in the current contract.
+
+Live contact faces opt into one first-visible blink per mounted identity/recipe.
+The runtime consumes it once, so ordinary renders and visibility return cannot
+loop it. The native blink is composed locally over shared working head motion;
+idle pointer-disabled faces release their player/clock after the bounded blink
+(at most .4 seconds of animation time). Hover and subsequent work remain available.
+Offscreen/hidden/reduced-motion faces do not play it, and saved motion-off faces
+remain static images with no observers. Standalone history/pickers do not opt in.
 
 ## Contact message time separators
 

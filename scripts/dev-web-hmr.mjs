@@ -86,7 +86,7 @@ const uiPort = process.env.YURI_HMR_UI_PORT || '5180';
 const backendPort = process.env.YURI_HMR_API_PORT || '3902';
 const hmrHost = process.env.YURI_HMR_HOST || '127.0.0.1';
 // Keep the HMR session index separate from desktop and normal CLI runtimes.
-// Settings and authentication continue using the normal development data dir.
+// Settings and authentication use the normal data dir unless OpenCode is isolated.
 const hmrSessionIndexDir = path.resolve(
   process.env.YURI_HMR_DATA_DIR || path.join(repoRoot, 'data', 'hmr'),
 );
@@ -155,6 +155,7 @@ if (isolateOpenCode) {
   const isolatedAuth = path.join(xdgDataHome, 'opencode', 'auth.json');
   if (existsSync(sharedAuth) && !existsSync(isolatedAuth)) copyFileSync(sharedAuth, isolatedAuth);
   Object.assign(isolatedOpenCodeEnv, {
+    YURI_DATA_DIR: path.join(hmrSessionIndexDir, 'yuri'),
     YURI_OPENCODE_SHARED_SERVICE: '0',
     YURI_OPENCODE_PORT: process.env.YURI_HMR_OPENCODE_PORT || '4196',
     XDG_DATA_HOME: xdgDataHome,

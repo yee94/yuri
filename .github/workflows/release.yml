@@ -882,7 +882,7 @@ jobs:
             --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
 
-      - name: Publish channel manifests to EdgeOne (git deploy)
+      - name: Trigger complete EdgeOne OTA distribution (git deploy)
         shell: bash
         env:
           SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
@@ -891,6 +891,19 @@ jobs:
         run: |
           scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
             "chore(ota): publish ${OTA_CHANNEL} manifest ${VERSION} for EdgeOne"
+
+      - name: Verify full downloads and resume on both origins
+        shell: bash
+        env:
+          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+          OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+        run: |
+          set -euo pipefail
+          test -n "$OTA_BASE_URL"
+          test -n "$OTA_MIRROR_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_BASE_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_MIRROR_URL" --require-local
 
       - name: Verify client update detectability
         env:
