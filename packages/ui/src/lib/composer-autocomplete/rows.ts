@@ -71,6 +71,7 @@ export type MentionAgentRowSource = {
 export type MentionSessionRowSource = {
   id: string;
   title?: string | null;
+  directory?: string | null;
 };
 
 export type MentionPathRowSource = {
@@ -125,6 +126,7 @@ export const buildMentionRows = ({
     rows.push({
       id: `session:${session.id}`,
       title: session.title || untitledSession,
+      trailingLabel: session.directory?.split(/[\\/]/).filter(Boolean).pop(),
       badge: sessionBadge,
       iconName: resolveSessionMentionIconName(),
     });

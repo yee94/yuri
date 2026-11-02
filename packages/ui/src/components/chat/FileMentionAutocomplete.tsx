@@ -511,6 +511,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
                     )}
                   </span>
                   <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-baseline gap-2">
                     <span
                       ref={(el) => { labelRefs.current[rowIndex] = el; }}
                       className="relative block min-w-0 overflow-hidden file-mention-marquee-container"
@@ -537,6 +538,12 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
                         </span>
                       )}
                     </span>
+                    {row.trailingLabel ? (
+                      <span className={cn('max-w-[40%] shrink-0 truncate text-muted-foreground', isMobile ? 'typography-micro' : 'typography-meta')}>
+                        {row.trailingLabel}
+                      </span>
+                    ) : null}
+                    </div>
                     {row.subtitle ? (
                       <div className={cn('truncate text-muted-foreground', isMobile ? 'typography-micro' : 'typography-meta')}>
                         {highlightAutocompleteQuery(row.subtitle, normalizedSearchQuery)}

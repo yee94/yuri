@@ -17,6 +17,7 @@ export type ComposerAutocompleteListRow = {
   id: string;
   title: string;
   subtitle?: string;
+  trailingLabel?: string;
   badge?: string;
   iconName: IconName;
   agentName?: string;
