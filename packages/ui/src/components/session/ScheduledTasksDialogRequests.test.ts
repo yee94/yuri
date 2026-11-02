@@ -289,7 +289,7 @@ describe('ScheduledTasksDialog queries', () => {
       readFile(join(directory, '../../mobile/MobileTabBar.tsx'), 'utf8'),
       readFile(join(directory, '../../styles/mobile.css'), 'utf8'),
     ]);
-    expect(phoneShellContent).toContain('tabBarCovered={scheduledEditorActive || searchOpen}');
+    expect(phoneShellContent).toContain('tabBarCovered={scheduledEditorActive || searchOpen || remoteDesktopActive}');
     expect(tabRootContent).toContain('showTabBar?: boolean;');
     expect(tabRootContent).toContain('data-mobile-navigation-dock-underlay="true"');
     expect(tabRootContent).toContain('inert={topSecondaryPage || nativeTabBarAdopted ? true : undefined}');

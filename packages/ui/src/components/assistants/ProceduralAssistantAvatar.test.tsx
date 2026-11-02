@@ -98,6 +98,8 @@ test('list and header idle faces follow an available mouse while transcript idle
   expect(transcriptPose()).toEqual(initial);
   Object.assign(mouseMedia, { matches: false });
   await act(async () => mouseMedia.dispatchEvent(new Event('change')));
+  expect(frames.size).toBe(1);
+  frame(performance.now() + 1600);
   expect(frames.size).toBe(0);
   Object.assign(mouseMedia, { matches: true });
   await act(async () => mouseMedia.dispatchEvent(new Event('change')));
@@ -367,6 +369,8 @@ test('50 unrelated parent renders cause no new observers or frame writes; live s
   expect(frames.size).toBe(1);
   frame(performance.now() + 34);
   await act(async () => render(52, false));
+  expect(frames.size).toBe(1);
+  frame(performance.now() + 1600);
   expect(still()).toEqual(initial);
   expect(frames.size).toBe(0);
 });

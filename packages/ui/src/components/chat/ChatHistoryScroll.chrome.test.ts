@@ -198,7 +198,9 @@ window.addEventListener('error',e=>{
         } else if (fastEntry) {
             await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 180, y: 200 }] });
             await page.evaluate('new Promise(requestAnimationFrame)');
+            await page.evaluate('void (window.firstHistoryTouchMove = new Promise(resolve => document.querySelector("[data-history-scroller]").addEventListener("touchmove", () => requestAnimationFrame(resolve), {once:true})))');
             await page.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 180, y: 280 }] });
+            await page.evaluate('window.firstHistoryTouchMove');
             expect((await page.evaluate<Sample>('window.historyScrollFixture.sample()')).pinned,
                 'the first new drag must release entry-stick before the next fling frame').toBe(false);
             // Frame-paced, equal-distance samples give Chromium a real fling

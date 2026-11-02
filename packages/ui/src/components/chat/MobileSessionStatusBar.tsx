@@ -492,8 +492,8 @@ export function SessionItem({
             }}
             className={cn(
               "flex w-full min-h-[56px] items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors select-none",
-              "active:bg-[var(--interactive-selection)]",
-              longPressHandlers.pressed && "bg-[var(--interactive-active)] scale-[0.99]",
+              "active:bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]",
+              longPressHandlers.pressed && "bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)] scale-[0.99]",
               isCurrent ? "bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]" : "hover:bg-[var(--interactive-hover)]"
             )}
             style={MOBILE_LONG_PRESS_STYLE}
@@ -587,8 +587,8 @@ function ProjectFilterChip({
       className={cn(
         "flex min-h-[40px] shrink-0 select-none items-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none whitespace-nowrap transition-colors",
         isActive
-          ? "border-transparent bg-[var(--primary-base)] text-[var(--primary-foreground)] font-medium"
-          : "border-[var(--interactive-border)] bg-[var(--surface-subtle)] text-[var(--surface-foreground)] active:bg-[var(--interactive-hover)]"
+          ? "border-transparent bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)] text-[var(--surface-foreground)] font-medium"
+          : "border-[var(--interactive-border)] bg-transparent text-[var(--surface-foreground)] active:bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]"
       )}
     >
       {leadingIcon}
@@ -1297,7 +1297,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       : null;
 
     return (
-      <section key={group.key} className="overflow-hidden rounded-xl">
+      <section key={group.key} className="rounded-xl">
         {isRoot ? (
           <div
             data-mobile-long-press-trigger={actionKey}

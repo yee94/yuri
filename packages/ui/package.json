@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/ui",
-  "version": "0.2.25-beta.8",
+  "version": "0.2.26-beta.1",
   "private": true,
   "type": "module",
   "main": "src/main.tsx",
@@ -58,7 +58,7 @@
     "@simplewebauthn/browser": "13.3.0",
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-router": "^1.170.23",
-    "@tanstack/react-virtual": "3.14.21",
+    "@tanstack/react-virtual": "3.14.25",
     "@xenova/transformers": "^2.17.2",
     "@yuriai/opencode-gui-client": "npm:@opencode/client@2.2.0",
     "@yuriai/opencode-gui-schema": "npm:@opencode/schema@2.2.0",

@@ -59,6 +59,7 @@ export const useSessionParts = (messageID: string) => (
 export const useSessionErrorAt = (_sessionID?: string, _directory?: string) => undefined;
 export const useSessionPermissions = () => [];
 export const useSessionQuestions = () => [];
+export const useSessionLatestTodos = () => undefined;
 export const useScopedBlockingPermissions = () => [];
 export const useScopedBlockingQuestions = () => [];
 export const useSessions = () => [];

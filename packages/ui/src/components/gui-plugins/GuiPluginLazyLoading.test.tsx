@@ -102,7 +102,7 @@ async function until(assertion: () => void) {
 async function start(sheet = false) {
   await act(async () => root.render(<QueryClientProvider client={client}><GuiPluginsProvider><FileFixture sheet={sheet} /></GuiPluginsProvider></QueryClientProvider>));
   await until(() => {
-    expect(context.inventory).toEqual([{ id: 'preview', enabled: true }]);
+    expect(context.inventory).toEqual([{ id: 'preview', enabled: true, source: plugin.source }]);
     expect(context.loading).toBe(false);
   });
   expect(context.requested).toBe(false);

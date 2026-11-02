@@ -84,14 +84,14 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
 
-test.each(['keyboard', 'button'] as const)('%s sending keeps the mobile input focused and editable without duplicate admission', async (entry) => {
-  mobile = true;
+test.each([false, true])('sending keeps the input focused and editable without duplicate admission (mobile=%s)', async (isMobile) => {
+  mobile = isMobile;
   await type('hello');
   input().focus();
   const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
   host.querySelector('[data-composer-send]')!.dispatchEvent(press);
-  expect(press.defaultPrevented).toBe(true);
-  if (entry === 'keyboard') {
+  expect(press.defaultPrevented).toBe(isMobile);
+  if (!isMobile) {
     await key('Enter');
   } else {
     const button = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
@@ -109,6 +109,17 @@ test.each(['keyboard', 'button'] as const)('%s sending keeps the mobile input fo
   await act(async () => { pending = false; working = true; render(); });
   expect(input().value).toBe('next message');
   expect(document.activeElement).toBe(input());
+});
+
+test('mobile Enter retains newline ownership instead of submitting', async () => {
+  mobile = true;
+  await type('hello');
+  const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  await act(async () => input().dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(false);
+  expect(submit).not.toHaveBeenCalled();
+  await type('hello\nnext', 10, 'insertLineBreak');
+  expect(draft).toBe('hello\nnext');
 });
 
 test('mobile ASR stays idle through 50 edits and delivers into the latest draft without sending', async () => {

@@ -10,8 +10,8 @@ const indexCss = readFileSync(
 
 const shimmerRule = indexCss.match(/\.animate-text-shimmer \{[\s\S]*?\n\}/)?.[0] ?? '';
 const reducedMotionRule = indexCss.match(
-  /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.animate-text-shimmer \{[\s\S]*?\n {2}\}/,
-)?.[0] ?? '';
+  /@media \(prefers-reduced-motion: reduce\) \{(?:(?!@media)[\s\S])*?\.animate-text-shimmer \{([^}]*)\}/,
+)?.[1] ?? '';
 
 describe('live text shimmer', () => {
   test('keeps a muted clip-text sweep with a plain foreground highlight', () => {

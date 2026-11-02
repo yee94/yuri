@@ -423,6 +423,8 @@ Capacitor 移动端支持 **web bundle OTA**（Capgo-style，自托管在 update
 
 OTA tag 会创建 **GitHub prerelease**（`mobile-beta/v…` 或 `mobile-stable/v…`），仅作灾难恢复归档（zip + 对应 channel json）。**禁止**成为 `/releases/latest`，也**禁止**写入稳定桌面/Android 自动更新 feed。
 
+桌面指纹对照 `mobile-release-plan` 选出的最近可达原生 tag：仅 UI 独占的锁定依赖及其传递依赖变化时，沿用该 tag 的 lock 字节，兼容既有线上指纹。所有非 UI workspace 的依赖（含开发、可选、peer、别名与传递依赖）仍保守保护；共享依赖、未知解析或锁格式变化使用当前 lock，不能借此通过 OTA-only。壳源码和原有其他指纹输入仍使用当前文件，不受此归一化影响。
+
 ### 客户端可检测性验证（detectability probe）
 
 每次 OTA 发布部署后，CI 会用 `scripts/mobile-ota/verify-detectability.mjs` 对 **Vercel 与 EdgeOne 两个客户端入口** 探活 `POST /v1/mobile/update/check`，任一失败即让发布 fail（带 ~3 分钟边缘缓存重试）。脚本先断言**双 fixture**（新式版本门 / 存量无门），再打线上。设备优先打 EdgeOne，只探 Vercel 会漏掉国内入口的 resolver 回归。

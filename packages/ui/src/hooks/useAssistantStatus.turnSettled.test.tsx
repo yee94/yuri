@@ -44,6 +44,7 @@ vi.mock('@/sync/sync-context', () => ({
   useSessionParts: (messageId: string) => mocks.partsByMessageId[messageId] ?? [],
   useSessionPermissions: () => [],
   useSessionQuestions: () => [],
+  useSessionLatestTodos: () => undefined,
   useSessionStatus: () => ({ type: 'busy' }),
   useDirectorySync: (selector: (state: { session_execution_recovery: Record<string, { reason: string }> }) => unknown) => selector({
     session_execution_recovery: mocks.recovering ? { 'session-1': { reason: 'shutdown' } } : {},
