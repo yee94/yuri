@@ -932,12 +932,8 @@ const RemoteSettingsSection = ({
   <SettingsGroup
     itemId={itemId}
     className="yuri-settings-detail-group"
-    label={action ? (
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0">{label}</div>
-        <div className="shrink-0">{action}</div>
-      </div>
-    ) : label}
+    label={label}
+    actions={action}
     description={description}
   >
     <div className="yuri-settings-group-row">{children}</div>
@@ -2269,7 +2265,7 @@ export const RemoteInstancesPage: React.FC = () => {
             itemId="remote-instances.client-auth"
             label={t('settings.remoteInstances.clientAuth.title')}
             action={(
-              <div className="flex shrink-0 items-center gap-2 pt-0.5">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button type="button" size="xs" className="!font-normal" onClick={() => { setDirectError(null); setDirectImportDialogOpen(true); }} disabled={directSaving}>
                   {t('settings.remoteInstances.direct.import.action')}
                 </Button>
@@ -2390,8 +2386,8 @@ export const RemoteInstancesPage: React.FC = () => {
           itemId="remote-instances.instances"
           label={t('settings.remoteInstances.sidebar.title')}
           action={visibleDirectHosts.length > 0 || instances.length > 0 ? (
-            <div className="flex shrink-0 items-center gap-2 pt-0.5">
-              <Button type="button" variant="secondary" size="xs" className="!font-normal" onClick={() => setSshAddDialogOpen(true)}>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button type="button" size="xs" className="!font-normal" onClick={() => setSshAddDialogOpen(true)}>
                 <Icon name="add" className="h-3.5 w-3.5" />
                 {t('settings.remoteInstances.sidebar.actions.addSshInstance')}
               </Button>

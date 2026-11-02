@@ -33,7 +33,7 @@ import {
 } from '@/lib/scheduledTasksApi';
 import { ScheduledTaskEditorDialog } from './ScheduledTaskEditorDialog';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useEvent } from '@reactuses/core';
+import { useEvent, useIntersectionObserver } from '@reactuses/core';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { queryClient, queryKeys } from '@/lib/queryRuntime';
 import { useMobileBackRoute } from '@/mobile/mobileBackNavigation';
@@ -346,6 +346,8 @@ export function ScheduledTasksWorkspace({
   const [contextMenuTaskIdentity, setContextMenuTaskIdentity] = React.useState<string | null>(null);
   const [dropdownMenuTaskIdentity, setDropdownMenuTaskIdentity] = React.useState<string | null>(null);
   const [historyTaskFilter, setHistoryTaskFilter] = React.useState<TaskIdentity | null>(null);
+  const historyLoadMoreRef = React.useRef<HTMLDivElement | null>(null);
+  const [historyScrollRoot, setHistoryScrollRoot] = React.useState<HTMLElement | null>(null);
   const mobileNavigationSurfaceRef = React.useRef<HTMLDivElement | null>(null);
   const mobileNavigationUnderlayRef = React.useRef<HTMLDivElement | null>(null);
   // `mobile-tab` shares the mobile layout but is hosted as a root tab page:
@@ -353,6 +355,9 @@ export function ScheduledTasksWorkspace({
   // close/back wiring against the dialog open flag.
   const isMobileTab = presentation === 'mobile-tab';
   const isMobilePanel = presentation === 'mobile-panel' || isMobileTab;
+  const setHistoryScrollContainer = useEvent((element: HTMLDivElement | null) => {
+    setHistoryScrollRoot(isMobileTab ? element?.closest<HTMLElement>('[role="tabpanel"]') ?? null : element);
+  });
 
   React.useEffect(() => {
     if (!isMobileTab) return;
@@ -441,6 +446,17 @@ export function ScheduledTasksWorkspace({
     getNextPageParam: (lastPage) => lastPage.complete ? undefined : lastPage.nextCursor ?? undefined,
     refetchOnMount: 'always',
   });
+  const canLoadMoreHistory = open && workspaceView === 'history' && editorMode === 'closed'
+    && Boolean(historyScrollRoot) && runsQuery.hasNextPage && !runsQuery.isFetching && !runsQuery.error;
+  useIntersectionObserver(
+    canLoadMoreHistory ? historyLoadMoreRef : null,
+    useEvent((entries: IntersectionObserverEntry[]) => {
+      if (canLoadMoreHistory && entries.some((entry) => entry.isIntersecting)) {
+        void runsQuery.fetchNextPage({ cancelRefetch: false });
+      }
+    }),
+    { root: historyScrollRoot, rootMargin: '0px 0px 240px 0px' },
+  );
   const runs = React.useMemo(() => {
     const seen = new Set<string>();
     const result: ScheduledTaskRun[] = [];
@@ -1084,7 +1100,7 @@ export function ScheduledTasksWorkspace({
           </div>
         </header>
 
-        <div className={cn(
+        <div ref={setHistoryScrollContainer} className={cn(
           isMobileTab
             // No nested scroll region: tabpanel is the only vertical scroller.
             // One page-gap after tab (History) or after filter row (Tasks).
@@ -1096,7 +1112,7 @@ export function ScheduledTasksWorkspace({
         )}>
           <div className={cn(
             'mx-auto w-full',
-            isMobileTab ? 'max-w-[26rem]' : 'max-w-4xl border-t border-border/40 pt-4',
+            isMobileTab ? 'max-w-[26rem]' : 'max-w-4xl pt-4',
           )}>
           {workspaceView === 'history' ? (
             <div className="space-y-3">
@@ -1372,22 +1388,17 @@ export function ScheduledTasksWorkspace({
                       <Button variant="outline" size="sm" onClick={() => void handleRetryRuns()}>{t('sessions.scheduledTasks.history.retry')}</Button>
                     </div>
                   ) : null}
-                  {runsQuery.hasNextPage ? (
-                    <div className={cn('flex justify-center', isMobilePanel ? 'pt-2' : 'border-t border-border/40 px-4 py-3')}>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className={cn(isMobilePanel && 'min-h-11')}
-                        disabled={runsQuery.isFetchingNextPage}
-                        onClick={() => void runsQuery.fetchNextPage()}
-                      >
-                        {runsQuery.isFetchingNextPage ? <Icon name="loader-4" className="size-4 animate-spin motion-reduce:animate-none" /> : <Icon name="history" className="size-4" />}
-                        {runsQuery.isFetchingNextPage ? t('sessions.scheduledTasks.history.loadingMore') : t('sessions.scheduledTasks.history.loadMore')}
-                      </Button>
-                    </div>
-                  ) : null}
                 </div>
               )}
+              {runsQuery.hasNextPage ? (
+                <div ref={historyLoadMoreRef} className="flex min-h-px justify-center">
+                  {runsQuery.isFetchingNextPage ? (
+                    <span role="status" aria-label={t('sessions.scheduledTasks.history.loadingMore')} className="py-1 text-muted-foreground">
+                      <Icon name="loader-4" className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : (
           <>

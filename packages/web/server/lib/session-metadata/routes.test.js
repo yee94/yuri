@@ -6,6 +6,8 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionMetadataStore, registerSessionMetadataRoutes } from './routes.js';
+import { createSessionIndexService } from '../session-index/service.js';
+import { projectSessionWithStoredMap } from './session-projection.js';
 
 const tempDirs = [];
 
@@ -78,6 +80,48 @@ describe('registerSessionMetadataRoutes', () => {
         },
       },
     });
+  });
+
+  it('persists scheduled-fork detachment through the Host route and directory index rebuild', async () => {
+    const dataDir = makeDataDir();
+    const metadata = { custom: { keep: true }, yuri: {
+      scheduledTask: { taskID: 'task-1', runID: 'run-1' },
+      titleRefresh: { activityUpdatedAt: 10 },
+    } };
+    const source = { id: 'ses_source', title: '[Scheduled] Morning Sync', location: { directory: '/repo' }, time: { created: 1, updated: 10 }, metadata };
+    const fork = { ...source, id: 'ses_fork', title: 'Morning Sync (fork #1)', time: { created: 20, updated: 20 },
+      fork: { sessionID: source.id, boundary: { type: 'through', messageID: 'msg_last' } } };
+    const records = new Map([source, fork].map((session) => [session.id, structuredClone(session)]));
+    const storeOptions = {
+      dataDir,
+      recordReader: async (id) => structuredClone(records.get(id)),
+      recordWriter: async (id, next) => { records.set(id, { ...records.get(id), metadata: structuredClone(next) }); },
+    };
+    const store = createSessionMetadataStore(storeOptions);
+    const { app } = mount({ sessionMetadataStore: store });
+    const indexOptions = { dbPath: path.join(dataDir, 'session-index.sqlite') };
+    const index = createSessionIndexService(indexOptions);
+    try {
+      // Renaming alone leaves both records excluded, even after a refresh.
+      index.replaceDirectory({ directory: '/repo', sessions: [...records.values()] });
+      expect(index.snapshot().directories[0].sessions).toEqual([]);
+      await store.setSessionMetadata(fork.id, metadata);
+
+      const response = await request(app).put('/api/yuri/sessions/ses_fork/metadata')
+        .send({ directory: '/repo', patch: { yuri: { scheduledTask: null } } }).expect(200);
+
+      expect(response.body.metadata).toEqual({ custom: metadata.custom, yuri: { titleRefresh: metadata.yuri.titleRefresh } });
+      const reopenedStore = createSessionMetadataStore(storeOptions);
+      await expect(reopenedStore.get(fork.id)).resolves.toEqual(response.body.metadata);
+      expect(records.get(source.id)).toEqual(source);
+      index.replaceDirectory({ directory: '/repo', sessions: [...records.values()].map((session) =>
+        projectSessionWithStoredMap(session, reopenedStore.getSnapshotSync())) });
+      expect(index.snapshot().directories[0].sessions.map((session) => session.id)).toEqual([fork.id]);
+    } finally { index.close(); }
+    const reopenedIndex = createSessionIndexService(indexOptions);
+    try {
+      expect(reopenedIndex.snapshot().directories[0].sessions.map((session) => session.id)).toEqual([fork.id]);
+    } finally { reopenedIndex.close(); }
   });
 
   it('rejects a blank session id and a non-object patch with 400', async () => {

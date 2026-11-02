@@ -128,7 +128,8 @@ const normalizePath = (value: string): string => {
 const EMPTY_ACTIVE_SESSIONS: Session[] = [];
 
 export const CommandPalette = React.memo(function CommandPalette({ presentation = 'dialog', onBack }: { presentation?: 'dialog' | 'page'; onBack?: () => void }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const conversationTimeFormatter = new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' });
   const mobileActions = useMobileAppActions();
 
   const isCommandPaletteOpen = useUIStore((s) => s.isCommandPaletteOpen);
@@ -777,6 +778,9 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                     {visibleConversations.map(({ session, hit }, index) => {
                       const title = hit?.title || session.title || t('commandPalette.session.untitled');
                       const project = projectForSession(session);
+                      const timestamp = hit?.createdAt ?? session.time?.updated ?? session.time?.created;
+                      const date = new Date(timestamp ?? NaN);
+                      const hasTime = Number.isFinite(date.getTime());
                       return (
                         <CommandItem
                           key={hit ? `message:${session.id}:${hit.messageID}` : `session:${session.id}`}
@@ -786,7 +790,14 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                           aria-keyshortcuts={!isMobile && index < 9 ? `${mac ? 'Meta' : 'Control'}+${index + 1}` : undefined}
                         >
                           <div className="flex min-w-0 items-center gap-3">
-                            <span className="min-w-0 flex-1 truncate typography-ui-label text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span className="min-w-0 truncate typography-ui-label text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
+                              {hasTime ? (
+                                <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="shrink-0 whitespace-nowrap typography-micro text-muted-foreground">
+                                  {conversationTimeFormatter.format(date)}
+                                </time>
+                              ) : null}
+                            </div>
                             <span className="max-w-[28%] shrink-0 truncate typography-meta text-muted-foreground" title={project}>{project}</span>
                             {!isMobile && index < 9 ? <Kbd className="h-5 min-w-8 shrink-0 rounded-full border-0 bg-interactive-selection px-2 text-muted-foreground shadow-none">{mac ? '⌘' : 'Ctrl+'}{index + 1}</Kbd> : null}
                           </div>

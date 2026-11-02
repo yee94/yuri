@@ -44,7 +44,7 @@ export function SettingsGroup({
   return (
     <section className={cn('yuri-settings-group', className)} aria-label={ariaLabel}>
       {actions ? (
-        <SettingsActionHeader actions={actions}>
+        <SettingsActionHeader className="py-0" actions={actions}>
           {label ? <div className="yuri-settings-group-label" data-settings-label-script={labelScript}>{label}</div> : null}
         </SettingsActionHeader>
       ) : label ? (

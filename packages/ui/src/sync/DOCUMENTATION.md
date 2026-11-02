@@ -177,8 +177,15 @@ Fork reads native `message.list` pages through the scoped client, independently 
 
 User forks of scheduled-task conversations persist a title without the leading
 `[Scheduled]` tag before entering the sidebar, preserving the task name and native
-fork suffix. The source task conversation stays isolated. Rename failure fails
-the fork-opening flow rather than reporting a hidden fork as successfully opened.
+fork suffix. They also remove the inherited `yuri.scheduledTask` ownership through
+the Host metadata merge-patch route, including when the title was already renamed.
+The confirmed response replaces any create-event row before navigation. A single
+nonblocking directory sync refills the Host index: creation was excluded and a
+native rename cannot insert an unknown row. Ordinary forks do not request this
+sync. The source task conversation stays isolated. Rename or metadata-write
+failure fails the fork-opening flow rather than reporting a hidden fork as opened;
+the created fork remains upstream for recovery. Index-sync failure preserves the
+visible fork and can be retried through the normal project session sync.
 
 ## Structured execution error presentation
 

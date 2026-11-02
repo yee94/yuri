@@ -2,6 +2,7 @@ import React from 'react';
 import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import { isCapacitorApp } from '@/lib/platform';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
+import { openNewSessionDraftForActiveLayout } from '@/mobile/useMobileNavigationStore';
 import { isMobileOverlayFocusRestoreSuppressed } from '@/lib/mobileOverlayFocusRestore';
 import { canUseNativeMediaPick, pickNativeMediaFiles, NATIVE_MEDIA_PICK_LIMIT, usesAndroidAttachPickSheet } from '@/lib/native-media-pick';
 import { MobileAttachPickSheet } from './MobileAttachPickSheet';
@@ -1381,7 +1382,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const draftEstablishing = useSessionUIStore((s) => s.newSessionDraft.draftEstablishing ?? false);
     // Establishing prelude + claimed submission both own the draft send surface.
     const draftBusy = draftSubmitting || draftEstablishing;
-    const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
     const setDraftPermissionAutoAcceptEnabled = useSessionUIStore((s) => s.setDraftPermissionAutoAcceptEnabled);
     const permissionAutoAccept = usePermissionStore((s) => s.autoAccept);
     const permissionAutoAcceptSaving = usePermissionStore((s) => s.saving);
@@ -1686,7 +1686,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 );
             },
             sendQueued: (request) => dispatchQueuedMessage(request.sessionID ?? '', { delivery: request.options?.delivery === 'steer' ? 'steer' : undefined, queueItemID: request.queueItemID, manual: request.manual, scope: request.queueScope ? { state: 'bound', ...request.queueScope } : undefined }),
-            create: async () => openNewSessionDraft(),
+            create: async () => openNewSessionDraftForActiveLayout(),
             compact: async (request) => opencodeClient.summarizeSession(request.sessionID ?? '', request.providerID ?? '', request.modelID ?? '', request.directory),
             abort: (request) => {
                 if (request.sessionID) promoteQueueHeadOnAbort(request.sessionID);
@@ -1695,7 +1695,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         },
         shortcuts: {
             cycle: (direction) => primaryCycleAgentRef.current(direction),
-            new: () => openNewSessionDraft(),
+            new: () => openNewSessionDraftForActiveLayout(),
             abort: () => {
                 if (primarySessionID) promoteQueueHeadOnAbort(primarySessionID);
                 return sessionActions.abortCurrentOperation(primarySessionID ?? '');
@@ -7049,7 +7049,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                             iconSizeClass={iconSizeClass}
                             onSetDraftEnabled={setDraftPermissionAutoAcceptEnabled}
                             onSetSessionEnabled={setSessionAutoAccept}
-                            onOpenSessionFirst={openNewSessionDraft}
+                            onOpenSessionFirst={openNewSessionDraftForActiveLayout}
                             onToggleFailed={handlePermissionAutoAcceptToggleFailed}
                         />
                     ) : null}
@@ -7123,7 +7123,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                         iconSizeClass={iconSizeClass}
                         onSetDraftEnabled={setDraftPermissionAutoAcceptEnabled}
                         onSetSessionEnabled={setSessionAutoAccept}
-                        onOpenSessionFirst={openNewSessionDraft}
+                        onOpenSessionFirst={openNewSessionDraftForActiveLayout}
                         onToggleFailed={handlePermissionAutoAcceptToggleFailed}
                     />
                 ) : null}

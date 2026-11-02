@@ -52,25 +52,31 @@ Every ordinary setting uses one of these structures:
 
 ## Manual save actions
 
-`SettingsActionHeader` owns the common sticky title/action layout. Place it first
+`SettingsActionHeader` owns the common non-sticky title/action layout. Place it first
 inside the editor's scroll content; put the primary save/create action last on the
 right, and secondary actions before it. Delete uses a localized, labelled icon
 button. Keep the existing validation, dirty, pending, and error behavior with the
 editor; the header owns presentation only and must not perform or aggregate writes.
 Long action labels wrap within the action area on narrow/mobile surfaces.
-The header has no bottom divider; spacing separates it from the grouped card.
+The header scrolls with its editor and has no overlay background, stacking layer,
+or bottom divider; spacing separates it from the grouped card.
 
-Independent sections pass `actions` to `SettingsGroup`. Its title and actions stick
-only within that section, so saving voice synthesis, recognition, or one prompt
-never saves an unrelated group. Whole-page editors use a single header spanning
+Independent sections pass `actions` to `SettingsGroup`. Its title and actions stay
+in normal document flow and scroll with the card; group headers never stick or
+cover their rows. Saving voice synthesis, recognition, or one prompt never saves
+an unrelated group. Whole-page editors use a single header spanning
 the complete form. Do not put the only save control after a long editor or list.
+Group action headers omit the whole-page header's vertical padding and retain the
+shared section-to-card gap. Remote-instance section actions use compact `xs`,
+normal-weight neutral buttons consistently across device, SSH, network, and
+remote-desktop groups.
 Existing mobile navigation action portals remain the owner when supplied; do not
 render a second save button in the content header. Instant-apply controls retain
 their existing mutation behavior.
 
 Verify top/bottom scroll positions, narrow layouts, and that each action still
-uses its owning editor's state. CSS stickiness must be tested in the actual scroll
-container, not inferred from DOM order alone.
+uses its owning editor's state. Titles and actions must scroll away with their
+content rather than remain pinned above other Settings rows.
 
 ## Typography hierarchy
 

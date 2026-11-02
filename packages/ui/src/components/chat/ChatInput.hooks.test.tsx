@@ -12,6 +12,23 @@ import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { VoiceActivityIcon } from '@/components/dictation/VoiceActivityIcon';
 import { cn } from '@/lib/utils';
+import { useSessionUIStore } from '@/sync/session-ui-store';
+import * as mobileNavigation from '@/mobile/useMobileNavigationStore';
+import { createChatInputControllerWiring } from './chatInputSurfaceWiring';
+import type { ChatInputSurface } from './chatInputSurface';
+
+vi.mock('@/sync/session-ui-store', async () => {
+    const { create } = await import('zustand');
+    return { useSessionUIStore: create<{
+        currentSessionId: string | null;
+        currentSessionDirectory: string | null;
+        newSessionDraft: { open: boolean };
+        openNewSessionDraft: () => void;
+    }>((set) => ({
+        currentSessionId: null, currentSessionDirectory: null, newSessionDraft: { open: false },
+        openNewSessionDraft: () => set({ currentSessionId: null, newSessionDraft: { open: true } }),
+    })) };
+});
 
 const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ChatInput.tsx'), 'utf8');
 const ast = ts.createSourceFile('ChatInput.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -20,6 +37,7 @@ let resizeListener = '';
 let dictationTailEffect = '';
 let primaryCatalog = '';
 let modelControls = '';
+let primaryCreate = '';
 const visit = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node)) declarations.set(node.name.getText(ast), `const ${node.getText(ast)};`);
     if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEventListener'
@@ -32,6 +50,9 @@ const visit = (node: ts.Node) => {
         const selection = value.properties.find(prop => prop.name?.getText(ast) === 'selection') as ts.PropertyAssignment;
         const catalog = (selection.initializer as ts.ObjectLiteralExpression).properties.find(prop => prop.name?.getText(ast) === 'catalog') as ts.PropertyAssignment;
         primaryCatalog = catalog.initializer.getText(ast);
+        const backend = value.properties.find(prop => prop.name?.getText(ast) === 'backend') as ts.PropertyAssignment;
+        const create = (backend.initializer as ts.ObjectLiteralExpression).properties.find(prop => prop.name?.getText(ast) === 'create') as ts.PropertyAssignment;
+        primaryCreate = create.initializer.getText(ast);
     }
     if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === 'MemoModelControls'
         && node.getText(ast).includes('min-w-0 flex-1 justify-end')) modelControls = node.getText(ast);
@@ -48,6 +69,47 @@ function surface<Props extends object>(body: string, scope: Record<string, unkno
 const host = document.createElement('div');
 const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); vi.restoreAllMocks(); });
+
+it.each([true, false])('/new opens the visible draft through the production primary backend (phone shell: %s)', async (phone) => {
+    const sessionBefore = useSessionUIStore.getState();
+    const navigationBefore = mobileNavigation.useMobileNavigationStore.getState();
+    const unregister = phone ? mobileNavigation.registerPhoneShellMount() : () => {};
+    const openDraft = vi.spyOn(sessionBefore, 'openNewSessionDraft').mockImplementation(() => {
+        useSessionUIStore.setState({ currentSessionId: null, newSessionDraft: { ...sessionBefore.newSessionDraft, open: true } });
+    });
+    useSessionUIStore.setState({ currentSessionId: 'ses_previous', currentSessionDirectory: '/repo' });
+    mobileNavigation.useMobileNavigationStore.setState({
+        activeTab: 'projects',
+        secondary: { kind: 'chat', routes: [{ key: 'chat-primary', sessionId: 'ses_previous', directory: '/repo' }] },
+    });
+    const create = new Function('openNewSessionDraft', ...Object.keys(mobileNavigation), `return (${primaryCreate});`)(
+        openDraft, ...Object.values(mobileNavigation),
+    );
+    const wiring = createChatInputControllerWiring({
+        kind: 'primary', surfaceID: 'primary', active: true,
+        sessionID: 'ses_previous', directory: '/repo',
+        draftKey: { transportIdentity: 'test', owner: { kind: 'session', ownerID: 'ses_previous' } },
+        transportIdentity: 'test', runtimeGeneration: 1,
+        selection: { value: {}, flush: async () => {} },
+        backend: { create }, deliveryTarget: { kind: 'primary' },
+    } as ChatInputSurface)!;
+    try {
+        await wiring.shortcut('new');
+        expect(openDraft).toHaveBeenCalledOnce();
+        expect(useSessionUIStore.getState().currentSessionId).toBeNull();
+        expect(useSessionUIStore.getState().newSessionDraft.open).toBe(true);
+        if (phone) {
+            expect(mobileNavigation.useMobileNavigationStore.getState().secondary).toEqual({ kind: 'draft' });
+        } else {
+            expect(mobileNavigation.useMobileNavigationStore.getState().secondary?.kind).toBe('chat');
+        }
+    } finally {
+        unregister();
+        openDraft.mockRestore();
+        useSessionUIStore.setState(sessionBefore);
+        mobileNavigation.useMobileNavigationStore.setState(navigationBefore);
+    }
+});
 
 it('uses the shared filled recording disc in the compact mobile composer', async () => {
     const Surface = surface<{ desktopRecording: boolean }>(`

@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { SettingsActionHeader } from './SettingsActionHeader';
 
 import {
   SettingsField,
@@ -42,6 +43,50 @@ describe('SettingsGroup', () => {
     );
 
     expect(markup).not.toContain('data-settings-label-script');
+  });
+
+  test.each(['Remote Instances', 'Desktop Network Access', 'Remote desktop'])(
+    'uses the same title tokens and compact action header for %s', (label) => {
+      const markup = renderToStaticMarkup(
+        <SettingsGroup label={label} actions={<button type="button">Add</button>}>
+          <SettingsRow label="Instance">Ready</SettingsRow>
+        </SettingsGroup>,
+      );
+      const container = document.createElement('div');
+      container.innerHTML = markup;
+      const header = container.querySelector('[data-settings-action-header]')!;
+
+      expect(header.classList.contains('py-0')).toBe(true);
+      expect(header.classList.contains('py-3')).toBe(false);
+      expect(header.classList.contains('sticky')).toBe(false);
+      expect(header.classList.contains('top-0')).toBe(false);
+      expect(header.classList.contains('z-10')).toBe(false);
+      expect(header.classList.contains('bg-background')).toBe(false);
+      const title = header.querySelector('.yuri-settings-group-label')!;
+      expect(title.className).toBe('yuri-settings-group-label');
+      expect(title.getAttribute('style')).toBeNull();
+      expect(title.getAttribute('data-settings-label-script')).toBe('latin');
+      expect(title.textContent).toBe(label);
+      expect(header.querySelector('button')?.textContent).toBe('Add');
+      expect(header.nextElementSibling?.classList.contains('yuri-settings-group-card')).toBe(true);
+    },
+  );
+
+  test('keeps whole-page editor actions in normal flow without a covering background', () => {
+    const markup = renderToStaticMarkup(
+      <SettingsActionHeader actions={<button type="button">Save</button>}>
+        Editor
+      </SettingsActionHeader>,
+    );
+    const container = document.createElement('div');
+    container.innerHTML = markup;
+    const header = container.querySelector('header')!;
+
+    for (const className of ['sticky', 'fixed', 'top-0', 'z-10', 'bg-background']) {
+      expect(header.classList.contains(className)).toBe(false);
+    }
+    expect(header.classList.contains('py-3')).toBe(true);
+    expect(header.textContent).toBe('EditorSave');
   });
 
   test('keeps a single field label and description inside its card', () => {

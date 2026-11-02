@@ -177,7 +177,7 @@ export const DesktopLanAccessSettings: React.FC = () => {
   }
 
   return (
-    <SettingsGroup className="yuri-settings-detail-group" label={t('settings.yuri.desktopNetwork.title')} actions={<Button type="button" size="sm" onClick={handleSaveAndRestart} disabled={saveDisabled} aria-busy={isSaving}>{isSaving ? t('settings.common.actions.saving') : t('settings.yuri.desktopNetwork.actions.saveAndRestart')}</Button>}>
+    <SettingsGroup className="yuri-settings-detail-group" label={t('settings.yuri.desktopNetwork.title')} actions={<Button type="button" size="xs" className="!font-normal" onClick={handleSaveAndRestart} disabled={saveDisabled} aria-busy={isSaving}>{isSaving ? t('settings.common.actions.saving') : t('settings.yuri.desktopNetwork.actions.saveAndRestart')}</Button>}>
       <SettingsRow
         itemId="remote-instances.desktop-ui-password"
         label={<label htmlFor="desktop-ui-password">{t('settings.yuri.desktopPassword.field.password')}</label>}

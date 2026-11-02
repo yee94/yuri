@@ -7,7 +7,7 @@ const searchSessions = vi.hoisted(() => vi.fn(async (_query: string) => [
   { id: 'session-1', title: 'Recent conversation', time: { updated: 1 } },
 ]));
 
-vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: 'en-US' }) }));
 vi.mock('@/components/ui', () => ({ toast: { error: vi.fn() } }));
 vi.mock('@/lib/worktreeSessionCreator', () => ({ createWorktreeSession: vi.fn() }));
 vi.mock('@/lib/terminalTabShortcuts', () => ({ openAndCreateTerminalTab: vi.fn() }));
@@ -104,6 +104,10 @@ test('page presentation has a focused search header and results without dialog c
     expect(searchSessions).toHaveBeenCalledWith('');
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(host.textContent).toContain('Recent conversation');
+    const time = host.querySelector('time')!;
+    expect(time.dateTime).toBe(new Date(1).toISOString());
+    expect(time.textContent).toBe(new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' }).format(1));
+    expect(time.previousElementSibling?.textContent).toBe('Recent conversation');
     expect(input.closest('[data-slot="command-input-field"]')?.className).toContain('yuri-mobile-glass-control');
     expect(input.closest('[data-slot="command-input-field"]')?.className).not.toContain('ring-');
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
@@ -117,9 +121,31 @@ test('page presentation has a focused search header and results without dialog c
   }
 });
 
+test.each([
+  { time: { created: 1234 }, expected: new Date(1234).toISOString() },
+  { time: undefined, expected: null },
+  { time: { updated: NaN }, expected: null },
+])('handles a session timestamp $time without inventing a time', async ({ time, expected }) => {
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', ''], [{ id: 'session-time', title: 'Timestamp conversation', time }]);
+  useUIStore.getState().setCommandPaletteOpen(true);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><CommandPalette presentation="page" /></QueryClientProvider>));
+    const row = host.querySelector('[data-value="session:session-time"]')!;
+    expect(row).not.toBeNull();
+    expect(row.querySelector('time')?.getAttribute('datetime') ?? null).toBe(expected);
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    client.clear(); host.remove();
+  }
+});
+
 test('combines title and body matches in five unified rows, freezes navigation and resets expansion', async () => {
   searchSessions.mockResolvedValue(Array.from({ length: 30 }, (_, i) => ({
-    id: `session-${i}`, title: `matching conversation ${i}`, time: { updated: i },
+    id: `session-${i}`, title: `matching conversation ${i}`, time: { updated: 1000 + i },
   })));
   const host = document.createElement('div');
   document.body.append(host);
@@ -144,6 +170,8 @@ test('combines title and body matches in five unified rows, freezes navigation a
     const bodyRow = host.querySelector('[cmdk-item][data-value^="message:"]')!;
     expect(bodyRow.textContent).toContain('matching conversation 1');
     expect(bodyRow.textContent).toContain('matching body result');
+    expect(bodyRow.querySelector('time')?.dateTime).toBe(new Date(1).toISOString());
+    expect(host.querySelector('[data-value="session:session-0"] time')?.getAttribute('datetime')).toBe(new Date(1000).toISOString());
     expect(host.textContent).not.toContain('old matching body');
     expect(bodyRow.querySelectorAll('mark')).toHaveLength(2);
     expect(host.textContent).not.toContain('commandPalette.group.messages');

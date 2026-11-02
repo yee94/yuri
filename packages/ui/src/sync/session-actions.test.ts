@@ -14,6 +14,7 @@ import { INITIAL_STATE } from "./types"
 import type { DirectoryStore } from "./child-store"
 import type { Message, OpencodeClient, Part, Session } from "@/lib/opencode/v2-types"
 import { opencodeClient } from "@/lib/opencode/client"
+import { isVisibleGlobalSession } from "@/stores/globalSessions"
 
 type RestoredAttachment = { url: string; mimeType: string; filename: string }
 type DraftCommitCall = {
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => {
   const scopedClientDirectories: string[] = []
   const registeredSessionDirectories: Array<{ sessionID: string; directory: string }> = []
   const globalUpsertedSessions: unknown[] = []
+  const globalDirectorySyncs: string[][] = []
   const abortBlockEvents: Array<{ event: "begin" | "clear"; scope: Record<string, unknown>; token: string }> = []
   const pendingSendTransitions: Array<{ state: "mark" | "clear"; sessionId: string; messageID: string }> = []
   const hostTurnPageCalls: Array<Record<string, unknown>> = []
@@ -50,6 +52,7 @@ const mocks = vi.hoisted(() => {
     sessionStatusResult: {} as Record<string, { type: "idle" | "busy" | "retry"; attempt?: number; message?: string; next?: number }> | null,
     sessionDeleteMessageFailureID: null as string | null,
     sessionForkResult: null as Session | null,
+    globalDirectorySyncHook: null as (() => Promise<void>) | null,
     clearAttachedFilesCalls: 0,
     abortReject: false,
     editWaitHook: null as ((signal?: AbortSignal) => Promise<void>) | null,
@@ -283,6 +286,7 @@ const mocks = vi.hoisted(() => {
     scopedClientDirectories,
     registeredSessionDirectories,
     globalUpsertedSessions,
+    globalDirectorySyncs,
     abortBlockEvents,
     pendingSendTransitions,
     hostTurnPageCalls,
@@ -644,6 +648,11 @@ vi.mock("@/stores/useGlobalSessionsStore", () => ({
       archivedSessions: mocks.globalArchivedSessions,
       upsertSession: (session: unknown) => {
         mocks.globalUpsertedSessions.push(session)
+      },
+      syncSessionsForDirectories: async (directories: Iterable<string>) => {
+        mocks.globalDirectorySyncs.push([...directories])
+        await mocks.state.globalDirectorySyncHook?.()
+        return { activeSessions: mocks.globalActiveSessions, archivedSessions: mocks.globalArchivedSessions }
       },
     }),
   },
@@ -1703,6 +1712,8 @@ describe("resolveForkMessageId", () => {
 describe("forkSession input restoration", () => {
   beforeEach(() => {
     replyCalls.length = 0
+    mocks.globalDirectorySyncs.length = 0
+    mocks.state.globalDirectorySyncHook = null
     mocks.clearAttachedFilesCalls = 0
     setCurrentSessionCalls.length = 0
     mocks.uiCurrentSessionId = "session-a"
@@ -1732,6 +1743,7 @@ describe("forkSession input restoration", () => {
     expect(mocks.clearAttachedFilesCalls).toBe(0)
     expect(inputState.attachedFiles).toEqual([{ url: "file:///existing.txt", mimeType: "text/plain", filename: "existing.txt" }])
     expect(inputState.pendingInputText).toBe("existing draft")
+    expect(mocks.globalDirectorySyncs).toEqual([])
   })
 
   test("persists a visible title before opening a scheduled-task fork", async () => {
@@ -1750,6 +1762,79 @@ describe("forkSession input restoration", () => {
     })
     expect(sessionStore.getState().session.find((session) => session.id === "forked-session")?.title).toBe("Morning Sync (fork #1)")
     expect(sourceSession.title).toBe("[Scheduled] Morning Sync")
+    expect(mocks.globalDirectorySyncs).toEqual([["/test/project"]])
+  })
+
+  test.each(["[Scheduled] Morning Sync (fork #1)", "Morning Sync (fork #1)"])("detaches inherited task ownership before displaying %s", async (title) => {
+    const metadata = { unrelated: { keep: true }, yuri: {
+      scheduledTask: { taskID: "task-1", runID: "run-1" },
+      titleRefresh: { activityUpdatedAt: 1 },
+    } }
+    const sourceSession = { id: "session-a", title: "[Scheduled] Morning Sync", metadata, time: { created: 1 } } as Session
+    mocks.sessionForkResult = {
+      ...sourceSession, id: "forked-session", title, time: { created: 2 },
+      fork: { sessionID: "session-a", boundary: { type: "through", messageID: "message-a" } },
+    } as Session
+    const visibleFork = {
+      ...mocks.sessionForkResult, title: "Morning Sync (fork #1)",
+      metadata: { unrelated: metadata.unrelated, yuri: { titleRefresh: metadata.yuri.titleRefresh } },
+    }
+    mocks.sessionUpdateResult = { data: visibleFork }
+    // A create event may already have inserted the still-hidden fork.
+    const sessionStore = createStore({}, { session: [mocks.sessionForkResult, sourceSession], session_status: { "session-a": { type: "idle" } } })
+    const { forkSession, setActionRefs } = await import("./session-actions")
+    setActionRefs(mockSdk as unknown as OpencodeClient, createChildStores([["/test/project", sessionStore]]), () => "/current/project")
+
+    await expect(forkSession("session-a", 1)).resolves.toBe(true)
+
+    expect(replyCalls.find((call) => call.method === "session.update")?.params).toMatchObject({
+      sessionID: "forked-session", metadata: { yuri: { scheduledTask: null } }, directory: "/test/project",
+    })
+    const fork = sessionStore.getState().session.find((session) => session.id === "forked-session")!
+    expect(isVisibleGlobalSession(fork)).toBe(true)
+    expect(fork.metadata).toEqual(visibleFork.metadata)
+    expect(isVisibleGlobalSession(sourceSession)).toBe(false)
+    expect(sourceSession.metadata).toEqual(metadata)
+    expect(mocks.globalDirectorySyncs).toEqual([["/test/project"]])
+    expect(replyCalls.filter((call) => call.method === "session.update").slice(1).every((call) =>
+      !(call.params.metadata as { yuri?: { scheduledTask?: unknown } })?.yuri?.scheduledTask,
+    )).toBe(true)
+  })
+
+  test("does not open or sync a fork when removing task ownership fails", async () => {
+    const sourceSession = { id: "session-a", title: "Morning Sync", time: { created: 1 } } as Session
+    mocks.sessionForkResult = { id: "forked-session", title: "Morning Sync (fork #1)", metadata: { yuri: { scheduledTask: { taskID: "task-1" } } }, time: { created: 2 } } as Session
+    const sessionStore = createStore({}, { session: [sourceSession] })
+    const { forkSession, setActionRefs } = await import("./session-actions")
+    setActionRefs(mockSdk as unknown as OpencodeClient, createChildStores([["/test/project", sessionStore]]), () => "/current/project")
+    vi.mocked(opencodeClient.updateSession).mockRejectedValueOnce(new Error("metadata unavailable"))
+
+    await expect(forkSession("session-a", 1)).rejects.toThrow("metadata unavailable")
+
+    expect(setCurrentSessionCalls).toEqual([])
+    expect(sessionStore.getState().session).toEqual([sourceSession])
+    expect(mocks.globalDirectorySyncs).toEqual([])
+  })
+
+  test.each(["pending", "failed"])("keeps the scheduled fork open while directory sync is %s", async (outcome) => {
+    const sourceSession = { id: "session-a", title: "[Scheduled] Morning Sync", time: { created: 1 } } as Session
+    mocks.sessionForkResult = { id: "forked-session", title: "[Scheduled] Morning Sync (fork #1)", time: { created: 2 } } as Session
+    mocks.sessionUpdateResult = { data: { ...mocks.sessionForkResult, title: "Morning Sync (fork #1)" } }
+    let finishSync = () => {}
+    const pendingSync = new Promise<void>((resolve) => { finishSync = resolve })
+    mocks.state.globalDirectorySyncHook = async () => {
+      if (outcome === "failed") throw new Error("index unavailable")
+      await pendingSync
+    }
+    const sessionStore = createStore({}, { session: [sourceSession] })
+    const { forkSession, setActionRefs } = await import("./session-actions")
+    setActionRefs(mockSdk as unknown as OpencodeClient, createChildStores([["/test/project", sessionStore]]), () => "/current/project")
+    try {
+      await expect(forkSession("session-a", 1)).resolves.toBe(true)
+      expect(mocks.uiCurrentSessionId).toBe("forked-session")
+      expect(isVisibleGlobalSession(sessionStore.getState().session.find((session) => session.id === "forked-session")!)).toBe(true)
+      expect(mocks.globalDirectorySyncs).toEqual([["/test/project"]])
+    } finally { finishSync() }
   })
 
   test("copies the full history when the session status entry is missing", async () => {

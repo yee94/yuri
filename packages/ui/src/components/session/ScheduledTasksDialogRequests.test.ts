@@ -208,6 +208,8 @@ describe('ScheduledTasksDialog queries', () => {
     expect(workspaceContent).toContain("isMobilePanel ? 'h-11 min-h-11' : '!h-9 !min-h-9'");
     expect(workspaceContent).toContain("initial={reduceMotion ? { opacity: 1, width: 0 } : { opacity: 0, width: 0, x: 24 }}");
     expect(workspaceContent).toContain('motion-reduce:transition-none');
+    expect(workspaceContent).toContain("isMobileTab ? 'max-w-[26rem]' : 'max-w-4xl pt-4'");
+    expect(workspaceContent).not.toContain('max-w-4xl border-t border-border/40 pt-4');
     expect(editorContent).toContain('motion-reduce:animate-none');
     expect(editorContent).toContain('groupedCardClassName');
     expect(editorContent).toContain('const mobileGroupedPanel = mobilePanel || mobileTab;');

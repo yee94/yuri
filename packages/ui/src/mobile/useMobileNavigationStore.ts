@@ -307,6 +307,15 @@ export const registerPhoneShellMount = (): (() => void) => {
   return () => { phoneShellMounts -= 1; };
 };
 
+/** Keep draft selection and its visible page under the active layout's owner. */
+export const openNewSessionDraftForActiveLayout = (options?: OpenDraftOptions): void => {
+  if (phoneShellMounts > 0) {
+    useMobileNavigationStore.getState().openDraft(options);
+    return;
+  }
+  useSessionUIStore.getState().openNewSessionDraft(options);
+};
+
 /** Phone shell pushes `/btw` as a page; every other layout keeps the ContextPanel tab / sheet. */
 export const pushPhoneBtw = (target: MobileBtwRoute): boolean =>
   phoneShellMounts > 0 && useMobileNavigationStore.getState().pushBtw(target);

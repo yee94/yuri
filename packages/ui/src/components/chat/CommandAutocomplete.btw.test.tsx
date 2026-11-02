@@ -42,3 +42,23 @@ test('btw discovery requires an existing session', async () => {
     commandContext={{ sessionID: null, hasMessages: false, hasNewDraft: true }} />));
   expect(document.body.textContent).not.toContain('/btw');
 });
+
+test.each(['touch', 'Enter', 'native'] as const)('/new submits exactly once from mobile %s selection', async (selection) => {
+  useUIStore.setState({ isMobile: true });
+  const ref = React.createRef<CommandAutocompleteHandle>();
+  const select = vi.fn();
+  await act(async () => root.render(<CommandAutocomplete ref={ref} searchQuery="new" directory="/repo" onCommandSelect={select} onClose={() => {}}
+    commandContext={{ sessionID: 'session-a', hasMessages: true, hasNewDraft: false }} />));
+  expect(document.body.textContent).toContain('/new');
+  await act(async () => {
+    if (selection === 'Enter') ref.current!.handleKeyDown('Enter');
+    else if (selection === 'native') ref.current!.acceptIndex(0, true);
+    else {
+      const row = document.querySelector<HTMLElement>('.cursor-pointer')!;
+      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', clientX: 20, clientY: 20 }));
+      row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerType: 'touch', clientX: 20, clientY: 20 }));
+      row.click();
+    }
+  });
+  expect(select).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'new', source: 'yuri' }), true);
+});

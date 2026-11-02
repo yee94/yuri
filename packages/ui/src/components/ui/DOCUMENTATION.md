@@ -90,6 +90,9 @@ matching content message for its snippet and navigation target. The five-row
 preview and “show more” count operate on these unique sessions. Content search
 limits are applied by the Host after session deduplication; expansion reveals the
 already fetched results rather than requesting another server page.
+Each row displays a localized date and time beside its title: the matching
+message's creation time for content hits, otherwise the session's update time
+(falling back to creation time). Missing or invalid timestamps stay hidden.
 
 # Render-count verification
 

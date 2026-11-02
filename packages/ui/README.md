@@ -219,6 +219,14 @@ The file-reference and mobile binary tests cover skipped reads/writes, explicit
 actions, plugin precedence, stat failures and stale completions. They do not prove
 real OS app opening, native mobile downloads or remote/Relay transfer behavior.
 
+## Scheduled-task history
+
+Scheduled-task history loads the next 20 runs automatically within 240px of the
+scroll boundary, using the workspace/sheet scroller or the mobile root tabpanel.
+There is no load-more action row; only an in-flight status spinner appears below
+the list. Requests are serialized and pause while hidden, refreshing, or in error.
+Failed pagination preserves loaded rows and the existing explicit retry action.
+
 ## Validation
 
 Use `bun run --cwd packages/ui type-check`, `lint`, and `test`.

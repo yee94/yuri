@@ -3329,9 +3329,16 @@ export async function forkSession(sessionId: string, operationId: number, messag
       return false
     }
 
-    if (forkedSession.title?.startsWith('[Scheduled]')) {
+    const inheritedTask = (getSessionMetadata(forkedSession).yuri as {
+      scheduledTask?: { taskID?: unknown }
+    } | undefined)?.scheduledTask
+    const hasScheduledTitle = forkedSession.title?.startsWith('[Scheduled]') === true
+    const isScheduledTaskFork = hasScheduledTitle
+      || (typeof inheritedTask?.taskID === 'string' && inheritedTask.taskID.length > 0)
+    if (isScheduledTaskFork) {
       forkedSession = await opencodeClient.updateSession(forkedSession.id, {
-        title: forkedSession.title.replace(/^\[Scheduled\]\s*/, ''),
+        ...(hasScheduledTitle ? { title: forkedSession.title?.replace(/^\[Scheduled\]\s*/, '') } : {}),
+        metadata: { yuri: { scheduledTask: null } },
       }, directory)
       if (!isCurrentFork()) {
         if (activeForkCopy?.operationId === operationId) activeForkCopy = null
@@ -3346,8 +3353,10 @@ export async function forkSession(sessionId: string, operationId: number, messag
     const searchResult = Binary.search(sessions, forkedSession.id, (s) => s.id)
     if (!searchResult.found) {
       sessions.splice(searchResult.index, 0, forkedSession)
-      store.setState({ session: sessions })
+    } else {
+      sessions[searchResult.index] = forkedSession
     }
+    store.setState({ session: sessions })
     setForkTransitionTarget(operationId, forkedSession.id)
     const viewingSessionId = useSessionUIStore.getState().currentSessionId
     const shouldFollowFork =
@@ -3362,6 +3371,12 @@ export async function forkSession(sessionId: string, operationId: number, messag
       forkedSession = await markForkSessionAsLatest(forkedSession, directory)
     } catch (error) {
       console.warn("[session-actions] failed to promote forked session", error)
+    }
+    if (isScheduledTaskFork && isCurrentFork()) {
+      // Creation was hidden from the index; rename alone cannot insert its row.
+      void useGlobalSessionsStore.getState().syncSessionsForDirectories([directory]).catch((error) => {
+        console.warn("[session-actions] failed to sync scheduled-task fork", error)
+      })
     }
   } catch (error) {
     if (activeForkCopy?.operationId === operationId) activeForkCopy = null

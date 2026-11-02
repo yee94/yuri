@@ -17,7 +17,7 @@ function RemoteDesktopSettingsContent() {
     ? t('common.loading') : granted ? t('settings.remoteDesktop.granted') : t('settings.remoteDesktop.required');
   return (
     <SettingsGroup label={t('remoteDesktop.title')} description={t('settings.remoteDesktop.devices')}
-      actions={<Button size="sm" disabled={busy} onClick={() => { mutation.reset(); void query.refetch(); }}>{t('settings.remoteDesktop.recheck')}</Button>}>
+      actions={<Button size="xs" className="!font-normal" disabled={busy} onClick={() => { mutation.reset(); void query.refetch(); }}>{t('settings.remoteDesktop.recheck')}</Button>}>
       <SettingsToggleRow itemId="remote-instances.remote-desktop" label={t('settings.remoteDesktop.enable')}
         ariaLabel={t('settings.remoteDesktop.enable')} description={t('settings.remoteDesktop.description')}
         checked={status?.enabled === true} disabled={busy || !status || (!status.enabled && !status.ready)}
