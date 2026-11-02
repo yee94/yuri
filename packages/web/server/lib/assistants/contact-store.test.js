@@ -637,7 +637,7 @@ describe('contact latest message preview', () => {
     db.close();
   });
 
-  it('never stores error rows or replaces the latest message preview with an error', () => {
+  it('stores recoverable errors without replacing the latest message preview', () => {
     const db = openDb();
     const assistantID = 'asst_preview_err';
     const user = insert(db, assistantID, { role: 'user', text: 'hi' });
@@ -652,16 +652,19 @@ describe('contact latest message preview', () => {
       text: 'hi',
       fallbackKind: null,
     });
-    expect(db.prepare('SELECT * FROM assistant_contact_message WHERE message_id=?').get(err.messageID)).toBeUndefined();
-    expect(db.prepare('SELECT * FROM assistant_contact_part WHERE message_id=?').all(err.messageID)).toEqual([]);
+    expect(listContactMessages(db, assistantID).messages.at(-1)).toMatchObject({ messageID: err.messageID, status: 'error', text: 'No connected model' });
+    expect(db.prepare('SELECT * FROM assistant_contact_part WHERE message_id=?').all(err.messageID)).toHaveLength(1);
     db.close();
   });
 
-  it('atomically purges legacy error messages and parts on startup', () => {
+  it('atomically purges only superseded legacy errors on startup', () => {
     const db = openDb();
     const user = insert(db, 'legacy', { role: 'user', text: 'keep' });
     const legacy = insert(db, 'legacy', { role: 'assistant', text: 'old failure' });
+    const newer = insert(db, 'legacy', { role: 'user', text: 'newer' });
     db.prepare("UPDATE assistant_contact_message SET status='error' WHERE message_id=?").run(legacy.messageID);
+    const latest = insert(db, 'other', { role: 'assistant', text: 'latest failure' });
+    db.prepare("UPDATE assistant_contact_message SET status='error' WHERE message_id=?").run(latest.messageID);
     db.exec(`CREATE TRIGGER fail_error_cleanup BEFORE DELETE ON assistant_contact_message
       WHEN OLD.status = 'error' BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END;`);
     expect(() => ensureContactSchema(db)).toThrow('cleanup failed');
@@ -669,9 +672,31 @@ describe('contact latest message preview', () => {
     db.exec('DROP TRIGGER fail_error_cleanup');
     ensureContactSchema(db);
     ensureContactSchema(db);
-    expect(listContactMessages(db, 'legacy').messages.map((message) => message.messageID)).toEqual([user.messageID]);
+    expect(listContactMessages(db, 'legacy').messages.map((message) => message.messageID)).toEqual([user.messageID, newer.messageID]);
+    expect(listContactMessages(db, 'other').messages.at(-1)).toMatchObject({ messageID: latest.messageID, status: 'error' });
     expect(db.prepare('SELECT * FROM assistant_contact_part WHERE message_id=?').all(legacy.messageID)).toEqual([]);
     db.close();
+  });
+
+  it.each(['user', 'assistant', 'peer'])('atomically replaces errors on a new %s message, isolating contacts', (role) => {
+    const db = openDb();
+    try {
+      const previous = insert(db, 'a', { role: 'assistant', text: 'old failure', status: 'error' });
+      const current = insert(db, 'a', { role: 'assistant', text: 'new failure', status: 'error' });
+      insert(db, 'b', { role: 'assistant', text: 'other failure', status: 'error' });
+      expect(listContactMessages(db, 'a').messages.map((message) => message.text)).toEqual(['new failure']);
+      db.exec(`CREATE TRIGGER reject_new_part BEFORE INSERT ON assistant_contact_part
+        WHEN NEW.message_id = 'failed_write' BEGIN SELECT RAISE(ABORT, 'write failed'); END;`);
+      expect(() => insert(db, 'a', { role, messageID: 'failed_write', text: 'new update' })).toThrow('write failed');
+      expect(listContactMessages(db, 'a').messages.map((message) => message.text)).toEqual(['new failure']);
+      expect(db.prepare('SELECT * FROM assistant_contact_message WHERE message_id=?').get('failed_write')).toBeUndefined();
+      insert(db, 'a', { role, text: 'new update' });
+      expect(listContactMessages(db, 'a').messages.map((message) => message.text)).toEqual(['new update']);
+      expect(listContactMessages(db, 'b').messages.at(-1).text).toBe('other failure');
+      for (const id of [previous.messageID, current.messageID]) {
+        expect(db.prepare('SELECT * FROM assistant_contact_part WHERE message_id=?').all(id)).toEqual([]);
+      }
+    } finally { db.close(); }
   });
 
   it('uses attachment and card fallbackKind when there is no spoken text', () => {
@@ -841,7 +866,7 @@ describe('contact read watermark / unread', () => {
       status: 'error',
       text: 'boom',
       parts: [{ type: 'text', text: 'boom' }],
-    })).toBe(true);
+    })).toBe(false);
     expect(isContactUnreadCountableMessage({
       role: 'peer',
       status: 'complete',

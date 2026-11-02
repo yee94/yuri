@@ -355,13 +355,200 @@ describe('assistants service', () => {
     service.close();
   });
 
+  it('renames itself through the real unified settings tool loop and preserves the contact across restart', async () => {
+    const directory = root();
+    const tips = [];
+    const create = vi.fn();
+    let round = 0;
+    let revisionBeforeNoop;
+    let snapshotBeforeNoop;
+    let service = setup(directory, { create }, {
+      onRevisionTip: (tip) => tips.push(tip),
+      runContactTurn: realRunContactTurn,
+      createChatCompletion: async ({ body }) => {
+        round++;
+        const names = body.tools.map((tool) => tool.function.name);
+        if (round === 1) {
+          expect(names).toContain('update_assistant_settings');
+          expect(names).not.toContain('update_name');
+          expect(names).not.toContain('update_avatar');
+          expect(names).not.toContain('update_default_prompt');
+          return toolBatch([['get_assistant_settings', {}]]);
+        }
+        expect(names).toContain('update_assistant_settings');
+        if (round === 2) return toolBatch([['update_assistant_settings', { settings: { name: '  小薄荷  ' } }, 'rename-self']]);
+        if (round === 3) {
+          expect(body.messages.find((message) => message.tool_call_id === 'rename-self')?.content).toContain('小薄荷');
+          const snapshot = service.snapshot();
+          revisionBeforeNoop = snapshot.assistants.find((item) => item.name === '小薄荷').revision;
+          snapshotBeforeNoop = snapshot.revision;
+          expect(tips.some((tip) => tip.revision === snapshotBeforeNoop)).toBe(true);
+          return toolBatch([['update_assistant_settings', { settings: { name: '小薄荷' } }, 'same-name']]);
+        }
+        if (round === 4) {
+          expect(body.messages.find((message) => message.tool_call_id === 'same-name')?.content).toMatch(/updated.*false/);
+          expect(service.snapshot().revision).toBe(snapshotBeforeNoop);
+          return toolBatch([['get_assistant_settings', {}, 'read-renamed']]);
+        }
+        expect(body.messages.find((message) => message.tool_call_id === 'read-renamed')?.content).toContain('name: 小薄荷');
+        return { text: '以后我就叫小薄荷。' };
+      },
+    });
+    const own = service.createAssistant({ ...assistantInput, defaultPrompt: 'Research persona' });
+    const peer = service.createAssistant({ ...assistantInput, name: 'Peer' });
+    try {
+      const sent = await settleSend(service, own.id, { messageID: 'rename-self', text: '我要让你给自己改个名字。' });
+      expect(sent.settled.status).toBe('complete');
+      expect(round).toBe(5);
+      const renamed = service.snapshot().assistants.find((item) => item.id === own.id);
+      expect(renamed).toMatchObject({ id: own.id, name: '小薄荷', revision: own.revision + 1, avatarSeed: own.avatarSeed, defaultPrompt: own.defaultPrompt, providerID: own.providerID, modelID: own.modelID, workspacePath: own.workspacePath, sessionID: own.sessionID, sessionGeneration: own.sessionGeneration });
+      expect(renamed.revision).toBe(revisionBeforeNoop);
+      expect(service.snapshot().assistants.find((item) => item.id === peer.id)).toEqual(peer);
+      expect(create).not.toHaveBeenCalled();
+      const messages = service.contactMessages(own.id).messages;
+      expect(messages[0].text).toBe(greetingText);
+      expect(messages.at(-1).text).toBe('以后我就叫小薄荷。');
+      service.close();
+      service = setup(directory, {}, { runContactTurn: async ({ assistant }) => {
+        expect(assistant.name).toBe('小薄荷');
+        return { text: '名字还在。', bubbles: ['名字还在。'] };
+      } });
+      expect(service.snapshot().assistants.find((item) => item.id === own.id)).toEqual(renamed);
+      expect(service.contactMessages(own.id).messages).toEqual(messages);
+      expect((await settleSend(service, own.id, { messageID: 'name-after-restart', text: '你叫什么？' })).settled.status).toBe('complete');
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the stored name and revision tip unchanged when a self rename write fails', async () => {
+    const directory = root();
+    const tips = [];
+    let result;
+    const service = setup(directory, {}, {
+      onRevisionTip: (tip) => tips.push(tip),
+      runContactTurn: async ({ tools }) => {
+        const snapshot = service.snapshot();
+        await Promise.resolve();
+        const tipCount = tips.length;
+        result = await tools.find((tool) => tool.name === 'update_assistant_settings').execute('rename-failed', { settings: { name: 'Not saved' } });
+        await Promise.resolve();
+        expect(service.snapshot().revision).toBe(snapshot.revision);
+        expect(tips).toHaveLength(tipCount);
+        return { text: '没改成功。', bubbles: ['没改成功。'] };
+      },
+    });
+    const own = service.createAssistant(assistantInput);
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      db.exec(`CREATE TRIGGER reject_name BEFORE UPDATE OF name ON assistant_v2
+        BEGIN SELECT RAISE(ABORT, 'name write failed'); END`);
+      await settleSend(service, own.id, { messageID: 'failed-rename', text: '给自己改名' });
+      expect(result).toMatchObject({ isError: true, details: { error: 'update_assistant_settings_failed' } });
+      expect(service.snapshot().assistants.find((item) => item.id === own.id)).toMatchObject({ name: own.name, revision: own.revision, updatedAt: own.updatedAt, avatarSeed: own.avatarSeed, sessionID: own.sessionID });
+    } finally {
+      db.close();
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])('rolls back a failed workspace settings write and reports cleanup failure=%s', async (cleanupFails) => {
+    const directory = root();
+    const project = path.join(directory, 'project');
+    fs.mkdirSync(project);
+    const remove = vi.fn(async () => {
+      if (cleanupFails) throw new Error('remove failed');
+    });
+    let created = 0;
+    let result;
+    const service = setup(directory, { create: async () => ({ id: `settings-session-${++created}` }), remove }, {
+      runContactTurn: async ({ tools }) => {
+        result = await tools.find((tool) => tool.name === 'update_assistant_settings').execute('workspace-write', { settings: { name: 'Not saved', workspacePath: project } });
+        return { text: '没改成功。', bubbles: ['没改成功。'] };
+      },
+    });
+    const own = service.createAssistant(assistantInput);
+    await service.ensure(own.id);
+    const before = service.snapshot().assistants[0];
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      db.exec(`CREATE TRIGGER reject_workspace BEFORE UPDATE OF workspace_path ON assistant_v2
+        BEGIN SELECT RAISE(ABORT, 'workspace write failed'); END`);
+      await settleSend(service, own.id, { messageID: 'workspace-write', text: '更新工作目录' });
+      expect(result).toMatchObject({ isError: true, details: { error: cleanupFails ? 'upstream_error' : 'update_assistant_settings_failed' } });
+      expect(remove).toHaveBeenCalledWith({ sessionID: 'settings-session-2' });
+      expect(service.snapshot().assistants[0]).toMatchObject({ name: before.name, revision: before.revision, workspacePath: before.workspacePath, sessionID: before.sessionID, sessionGeneration: before.sessionGeneration, historySessionCount: 0 });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM assistant_session_history').get().count).toBe(0);
+    } finally { db.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('updates every editable setting together, preserves omitted fields and supports clearing defaults', async () => {
+    const directory = root();
+    const workspacePath = path.join(directory, 'project');
+    fs.mkdirSync(workspacePath);
+    let phase = 0;
+    let expected;
+    let turnFailure;
+    const create = vi.fn(async () => ({ id: crypto.randomUUID() }));
+    let service = setup(directory, { create }, {
+      runContactTurn: async ({ tools, assistant }) => {
+        try {
+          const update = tools.find((tool) => tool.name === 'update_assistant_settings');
+          if (phase === 0) {
+            const settings = { name: 'Mint', avatarSeed: 'saved-recipe', defaultPrompt: 'Research in Chinese', providerID: 'new-provider', modelID: 'new-model', agent: 'general', variant: 'high', mode: 'stateless', workspacePath: fs.realpathSync(workspacePath) };
+            const result = await update.execute('all-settings', { settings });
+            expect(result.isError).not.toBe(true);
+            expect(result.details).toMatchObject({ updated: true, settings });
+            expected = settings;
+            expect(create.mock.calls[0][0]).toMatchObject({ title: '[Assistant] Mint', model: { id: 'new-model', providerID: 'new-provider', variant: 'high' }, agent: 'general' });
+          } else if (phase === 1) {
+            expect(assistant).toMatchObject(expected);
+            const before = service.snapshot().assistants.find((item) => item.id === assistant.id);
+            const invalid = await update.execute('invalid-workspace', { settings: { name: 'Do not save', workspacePath: path.dirname(directory) } });
+            expect(invalid).toMatchObject({ isError: true, details: { error: 'workspace_forbidden' } });
+            expect(service.snapshot().assistants.find((item) => item.id === assistant.id)).toEqual(before);
+            const cleared = { defaultPrompt: '', agent: null, variant: null, mode: 'continuous', workspacePath: null };
+            const result = await update.execute('clear-defaults', { settings: cleared });
+            expected = { ...expected, ...cleared };
+            expect(result.details).toMatchObject({ updated: true, settings: expected });
+          } else {
+            expect(assistant).toMatchObject(expected);
+            await update.execute('set-variant', { settings: { variant: 'high' } });
+            const changed = await update.execute('change-model', { settings: { modelID: 'another-model' } });
+            expect(changed.details.settings).toMatchObject({ modelID: 'another-model', variant: null, name: 'Mint', avatarSeed: 'saved-recipe' });
+          }
+          phase++;
+          return { text: 'Saved.', bubbles: ['Saved.'] };
+        } catch (error) { turnFailure = error; throw error; }
+      },
+    });
+    const own = service.createAssistant(assistantInput);
+    const peer = service.createAssistant({ ...assistantInput, name: 'Peer' });
+    try {
+      for (let index = 0; index < 3; index++) {
+        const sent = await settleSend(service, own.id, { messageID: `settings-${index}`, text: '更新设置' });
+        if (turnFailure) throw turnFailure;
+        expect(sent.settled.status).toBe('complete');
+      }
+      expect(phase).toBe(3);
+      expect(service.snapshot().assistants.find((item) => item.id === peer.id)).toEqual(peer);
+      const saved = service.snapshot().assistants.find((item) => item.id === own.id);
+      expect(saved.historySessionCount).toBe(1);
+      service.close();
+      service = setup(directory);
+      expect(service.snapshot().assistants.find((item) => item.id === own.id)).toEqual(saved);
+    } finally { service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it('persists self avatar tool changes, supports restore and leaves peers untouched', async () => {
     const directory = root();
     let result;
-    let params = {};
+    let params = { settings: { avatarSeed: null } };
     const service = setup(directory, {}, {
       runContactTurn: async ({ tools }) => {
-        result = await tools.find((tool) => tool.name === 'update_avatar').execute('avatar', params);
+        result = await tools.find((tool) => tool.name === 'update_assistant_settings').execute('avatar', params);
         return { text: 'done', bubbles: ['done'] };
       },
     });
@@ -369,10 +556,10 @@ describe('assistants service', () => {
     const peer = service.createAssistant({ ...assistantInput, name: 'Peer' });
     try {
       await settleSend(service, own.id, { messageID: 'avatar_random', parts: [{ type: 'text', text: '给自己换个头像' }] });
-      expect(result.details).toMatchObject({ updated: true, previousAvatarSeed: own.avatarSeed });
-      expect(result.details.avatarSeed).not.toBe(own.avatarSeed);
-      expect(service.snapshot().assistants.find((a) => a.id === own.id).avatarSeed).toBe(result.details.avatarSeed);
-      params = { seed: own.avatarSeed };
+      expect(result.details.updated).toBe(true);
+      expect(result.details.settings.avatarSeed).not.toBe(own.avatarSeed);
+      expect(service.snapshot().assistants.find((a) => a.id === own.id).avatarSeed).toBe(result.details.settings.avatarSeed);
+      params = { settings: { avatarSeed: own.avatarSeed } };
       await settleSend(service, own.id, { messageID: 'avatar_restore', parts: [{ type: 'text', text: '恢复头像' }] });
       expect(service.snapshot().assistants.find((a) => a.id === own.id)).toMatchObject({ avatarSeed: own.avatarSeed, sessionID: own.sessionID });
       expect(service.snapshot().assistants.find((a) => a.id === peer.id)).toMatchObject({ avatarSeed: peer.avatarSeed, revision: peer.revision });
@@ -391,7 +578,7 @@ describe('assistants service', () => {
     let result;
     let service = setup(directory, {}, {
       runContactTurn: async ({ tools }) => {
-        result = await tools.find((tool) => tool.name === 'update_avatar').execute('avatar', {});
+        result = await tools.find((tool) => tool.name === 'update_assistant_settings').execute('avatar', { settings: { avatarSeed: null } });
         return { text: 'done', bubbles: ['done'] };
       },
     });
@@ -403,13 +590,13 @@ describe('assistants service', () => {
         random.mockImplementation((max) => max === AVATAR_COLORS.length ? index : 0);
         await settleSend(service, own.id, { messageID: `avatar-${color}`, parts: [{ type: 'text', text: '换个头像' }] });
         expect(result.details.updated).toBe(true);
-        expect(result.details.avatarSeed).toMatch(/^yuri-avatar:v1:/);
-        expect(resolveAssistantAvatar(result.details.avatarSeed)).toMatchObject({ color, shape: 'round', eyes: 'capsule', expression: 'neutral', animate: true });
+        expect(result.details.settings.avatarSeed).toMatch(/^yuri-avatar:v1:/);
+        expect(resolveAssistantAvatar(result.details.settings.avatarSeed)).toMatchObject({ color, shape: 'round', eyes: 'capsule', expression: 'neutral', animate: true });
         expect(service.snapshot().assistants.find((bot) => bot.id === peer.id).avatarSeed).toBe('legacy-peer');
       }
       service.close();
       service = setup(directory);
-      expect(service.snapshot().assistants.find((bot) => bot.id === own.id).avatarSeed).toBe(result.details.avatarSeed);
+      expect(service.snapshot().assistants.find((bot) => bot.id === own.id).avatarSeed).toBe(result.details.settings.avatarSeed);
       expect(service.snapshot().assistants.find((bot) => bot.id === peer.id).avatarSeed).toBe('legacy-peer');
     } finally {
       random.mockRestore();
@@ -573,7 +760,6 @@ describe('assistants service', () => {
     service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_race', directory, status: 'busy' })
     service.processEvent({ type: 'session.idle', properties: { sessionID: 'ses_race' } })
     service.processEvent({ type: 'session.error', properties: { sessionID: 'ses_race', error: { name: 'MessageAbortedError' } } })
-    await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_race', 'complete', 42))
     await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_race', 'cancelled', 42))
     expect(runContactTurn).toHaveBeenCalledTimes(1)
     expect(resumes[0]).toContain('status: cancelled')
@@ -1573,7 +1759,7 @@ describe('assistants service', () => {
 
   it('applies the complete workspace patch and creates metadata with the final name', async () => {
     const directory = root(); const other = path.join(directory, 'other'); fs.mkdirSync(other); let created; const service = setup(directory, { create: async (input) => { created = input; return { data: { id: 'ses_workspace' } }; } }); const assistant = service.createAssistant(assistantInput);
-    const updated = await service.updateAssistant(assistant.id, { expectedRevision: 1, workspacePath: other, name: 'Renamed', defaultPrompt: 'P', providerID: 'provider-2', modelID: 'model-2', agent: 'agent-2', enabled: false }); expect(updated).toMatchObject({ name: 'Renamed', defaultPrompt: 'P', providerID: 'provider-2', modelID: 'model-2', agent: 'agent-2', enabled: false, sessionID: 'ses_workspace' }); expect(updated).not.toHaveProperty('skillRoots');
+    const updated = await service.updateAssistant(assistant.id, { expectedRevision: 1, workspacePath: other, name: 'Renamed', defaultPrompt: 'P', providerID: 'provider-2', modelID: 'model-2', agent: 'agent-2', enabled: false }); expect(updated).toMatchObject({ name: 'Renamed', defaultPrompt: 'P', providerID: 'provider-2', modelID: 'model-2', agent: 'agent-2', enabled: true, sessionID: 'ses_workspace' }); expect(updated).not.toHaveProperty('skillRoots');
     // v2 create uses location.directory + title prefix; archive metadata write is unavailable.
     expect(created).toMatchObject({ title: '[Assistant] Renamed', location: { directory: fs.realpathSync(other) } });
     service.close();
@@ -1784,8 +1970,63 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('permits a disabled assistant to be re-enabled through an editable CAS patch', async () => {
-    const service = setup(); const assistant = service.createAssistant({ ...assistantInput, enabled: false }); const updated = await service.updateAssistant(assistant.id, { expectedRevision: 1, enabled: true, name: 'Enabled again' }); expect(updated).toMatchObject({ enabled: true, name: 'Enabled again', revision: 2 }); service.close();
+  it('ignores legacy enable flags on create and update and still accepts contact messages', async () => {
+    const service = setup();
+    try {
+      const assistant = service.createAssistant({ ...assistantInput, enabled: false });
+      expect(assistant.enabled).toBe(true);
+      const updated = await service.updateAssistant(assistant.id, { expectedRevision: 1, enabled: false, name: 'Always available' });
+      expect(updated).toMatchObject({ enabled: true, name: 'Always available', revision: 2 });
+      expect((await settleSend(service, assistant.id, { messageID: 'legacy-disabled', text: 'hello' })).settled.status).toBe('complete');
+    } finally { service.close(); }
+  });
+
+  it('restores legacy disabled contacts once without changing their settings or transcript', async () => {
+    const directory = root();
+    let service = setup(directory);
+    const own = service.createAssistant({ ...assistantInput, defaultPrompt: 'Keep me', avatarSeed: 'saved-face' });
+    const peer = service.createAssistant({ ...assistantInput, name: 'Peer' });
+    const messages = service.contactMessages(own.id).messages;
+    const revision = service.snapshot().revision;
+    service.close();
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    db.prepare('UPDATE assistant_v2 SET enabled=0 WHERE assistant_id=?').run(own.id);
+    db.close();
+    try {
+      service = setup(directory);
+      const restored = service.snapshot();
+      expect(restored.revision).toBe(revision + 1);
+      expect(restored.assistants.find((item) => item.id === own.id)).toMatchObject({ ...own, enabled: true, revision: own.revision + 1, updatedAt: expect.any(Number) });
+      expect(restored.assistants.find((item) => item.id === peer.id)).toEqual(peer);
+      expect(service.contactMessages(own.id).messages).toEqual(messages);
+      service.close();
+      service = setup(directory);
+      expect(service.snapshot()).toEqual(restored);
+      expect((await settleSend(service, own.id, { messageID: 'restored-enabled', text: 'hello' })).settled.status).toBe('complete');
+    } finally { service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('rolls back all legacy disabled contact normalization when a stored row rejects the write', () => {
+    const directory = root();
+    let service = setup(directory);
+    const own = service.createAssistant(assistantInput);
+    service.createAssistant({ ...assistantInput, name: 'Peer' });
+    const before = service.snapshot();
+    const messages = service.contactMessages(own.id).messages;
+    service.close();
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      db.exec(`UPDATE assistant_v2 SET enabled=0;
+        CREATE TRIGGER reject_restore BEFORE UPDATE OF enabled ON assistant_v2
+        WHEN OLD.name='Peer' BEGIN SELECT RAISE(ABORT, 'restore failed'); END`);
+      expect(() => setup(directory)).toThrow('restore failed');
+      expect(db.prepare('SELECT enabled, revision FROM assistant_v2 ORDER BY name').all()).toEqual([{ enabled: 0, revision: 1 }, { enabled: 0, revision: 1 }]);
+      expect(Number(db.prepare("SELECT value FROM assistant_meta WHERE key='revision'").get().value)).toBe(before.revision);
+      db.exec('DROP TRIGGER reject_restore');
+      service = setup(directory);
+      expect(service.snapshot().assistants.every((item) => item.enabled)).toBe(true);
+      expect(service.contactMessages(own.id).messages).toEqual(messages);
+    } finally { db.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
   });
 
   it('defaults assistants to continuous mode and persists a mode patch', async () => {
@@ -3467,7 +3708,7 @@ describe('assistants service', () => {
     }
   });
 
-  it('reads and persists defaultPrompt via get_assistant_settings / update_default_prompt', async () => {
+  it('reads and persists defaultPrompt via get_assistant_settings / update_assistant_settings', async () => {
     const directory = root();
     const tips = [];
     const harnessTurns = [];
@@ -3489,19 +3730,18 @@ describe('assistants service', () => {
             defaultPrompt: 'Base persona',
             providerID: 'p',
             modelID: 'm',
-            enabled: true,
           });
           expect(result.content[0].text).toContain('Base persona');
           phase = 'write';
           return { text: 'Current default prompt loaded.', bubbles: ['Current default prompt loaded.'] };
         }
         if (phase === 'write') {
-          const update = tools.find((tool) => tool.name === 'update_default_prompt');
-          const unchanged = await update.execute('call_same', { prompt: 'Base persona' });
-          expect(unchanged.details).toMatchObject({ updated: false, unchanged: true, defaultPrompt: 'Base persona' });
+          const update = tools.find((tool) => tool.name === 'update_assistant_settings');
+          const unchanged = await update.execute('call_same', { settings: { defaultPrompt: 'Base persona' } });
+          expect(unchanged.details).toMatchObject({ updated: false, settings: { defaultPrompt: 'Base persona' } });
           const beforeRevision = service.snapshot().assistants.find((item) => item.id === assistant.id).revision;
-          const saved = await update.execute('call_set', { prompt: 'Reply only in Chinese.' });
-          expect(saved.details).toMatchObject({ updated: true, defaultPrompt: 'Reply only in Chinese.' });
+          const saved = await update.execute('call_set', { settings: { defaultPrompt: 'Reply only in Chinese.' } });
+          expect(saved.details).toMatchObject({ updated: true, settings: { defaultPrompt: 'Reply only in Chinese.' } });
           expect(saved.terminate).toBe(false);
           const after = service.snapshot().assistants.find((item) => item.id === assistant.id);
           expect(after.defaultPrompt).toBe('Reply only in Chinese.');
@@ -3540,7 +3780,7 @@ describe('assistants service', () => {
     expect(harnessTurns.some((turn) => turn.phase === 'next' && turn.defaultPrompt === 'Reply only in Chinese.')).toBe(true);
     expect(harnessTurns[0].toolNames).toEqual(expect.arrayContaining([
       'get_assistant_settings',
-      'update_default_prompt',
+      'update_assistant_settings',
     ]));
     service.close();
   });
@@ -3550,7 +3790,7 @@ describe('assistants service', () => {
     const service = setup(directory, {}, {
       runContactTurn: async ({ tools }) => {
         const get = tools.find((tool) => tool.name === 'get_assistant_settings');
-        const update = tools.find((tool) => tool.name === 'update_default_prompt');
+        const update = tools.find((tool) => tool.name === 'update_assistant_settings');
         const seen = await get.execute('call_peer_get', { to: 'OpenCode 配置助手' });
         expect(seen.details.settings).toMatchObject({
           name: 'OpenCode 配置助手',
@@ -3558,12 +3798,11 @@ describe('assistants service', () => {
         });
         const saved = await update.execute('call_peer_set', {
           to: 'OpenCode 配置助手',
-          prompt: 'new peer persona',
+          settings: { defaultPrompt: 'new peer persona' },
         });
         expect(saved.details).toMatchObject({
           updated: true,
-          defaultPrompt: 'new peer persona',
-          name: 'OpenCode 配置助手',
+          settings: { defaultPrompt: 'new peer persona', name: 'OpenCode 配置助手' },
         });
         return { text: 'Updated peer.', bubbles: ['Updated peer.'] };
       },
@@ -3583,28 +3822,28 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('retries update_default_prompt once on revision_conflict and reports persistent conflict', async () => {
+  it('retries update_assistant_settings once on revision_conflict and reports persistent conflict', async () => {
     const directory = root();
     let host;
     let mode = 'retry_success';
     const service = setup(directory, {}, {
       runContactTurn: async ({ tools }) => {
-        const update = tools.find((tool) => tool.name === 'update_default_prompt');
+        const update = tools.find((tool) => tool.name === 'update_assistant_settings');
         if (mode === 'retry_success') {
           // Concurrent name write lands during the pre-CAS yield → first CAS conflicts, retry succeeds.
-          const pending = update.execute('call_retry', { prompt: 'After conflict retry' });
+          const pending = update.execute('call_retry', { settings: { defaultPrompt: 'After conflict retry' } });
           await service.updateAssistant(host.id, {
             expectedRevision: service.snapshot().assistants.find((item) => item.id === host.id).revision,
             name: 'ConcurrentRename',
           });
           const result = await pending;
-          expect(result.details).toMatchObject({ updated: true, defaultPrompt: 'After conflict retry' });
+          expect(result.details).toMatchObject({ updated: true, settings: { defaultPrompt: 'After conflict retry' } });
           expect(result.details.error).toBeUndefined();
           mode = 'retry_fail';
           return { text: 'Retried ok.', bubbles: ['Retried ok.'] };
         }
         // Two concurrent writes during attempt 0 and attempt 1 yields → both CAS fail.
-        const pending = update.execute('call_fail', { prompt: 'Should fail' });
+        const pending = update.execute('call_fail', { settings: { defaultPrompt: 'Should fail' } });
         await service.updateAssistant(host.id, {
           expectedRevision: service.snapshot().assistants.find((item) => item.id === host.id).revision,
           name: 'BumpOne',
@@ -4206,6 +4445,157 @@ describe('assistants service', () => {
     service.close();
   });
 
+  it.each(['session.execution.succeeded', 'session.idle', 'session.status'])('waits for background descendants before the assigned result and receipt: %s', async (type) => {
+    const directory = root();
+    let active = { ses_nested: { type: 'running' } };
+    const resumes = vi.fn(async () => ({ bubbles: ['最终报告已写入。'] }));
+    const service = setup(directory, {
+      active: async () => active,
+      get: async ({ sessionID }) => ({ data: {
+        id: sessionID,
+        parentID: sessionID === 'ses_nested' ? 'ses_child' : sessionID === 'ses_child' ? 'ses_root' : undefined,
+        status: { type: 'idle' },
+      } }),
+      messages: async () => ({ data: [
+        { id: 'msg_final', type: 'assistant', time: { created: 20, completed: 21 }, finish: 'stop', content: [{ type: 'text', text: '最终报告已写入 vault。' }] },
+        { id: 'msg_old', type: 'assistant', time: { created: 10, completed: 11 }, finish: 'stop', content: [{ type: 'text', text: '已交给后台子 agent，正在处理。' }] },
+      ] }),
+    }, { clock: () => 5_000, runContactTurn: resumes });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_root', directory, title: 'Research', status: 'busy' });
+      service.processEvent({ type, properties: { sessionID: 'ses_root', status: { type: 'idle' } } });
+      await service.reconcile();
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_root']);
+      expect(resumes).not.toHaveBeenCalled();
+      expect(service.contactMessages(assistant.id).messages.flatMap((message) => message.cards)).toEqual([expect.objectContaining({ status: 'busy' })]);
+
+      active = {};
+      service.processEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'ses_nested' } });
+      await vi.waitFor(() => expect(resumes).toHaveBeenCalledTimes(1));
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_root', 'complete', 5_000));
+      expect(resumes.mock.calls[0][0].userText).toContain('最终报告已写入 vault。');
+      expect(resumes.mock.calls[0][0].userText).not.toContain('正在处理');
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual([]);
+      const cards = service.contactMessages(assistant.id).messages.flatMap((message) => message.cards);
+      expect(cards).toHaveLength(2);
+      expect(cards[1]).toMatchObject({ cardType: 'session', sessionID: 'ses_root', status: 'complete' });
+      service.processEvent({ type, properties: { sessionID: 'ses_root', status: { type: 'idle' } } });
+      await service.reconcile();
+      expect(resumes).toHaveBeenCalledTimes(1);
+      expect(service.contactMessages(assistant.id).messages.flatMap((message) => message.cards)).toHaveLength(2);
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('watch_session baselines an idle parent with an active background child as busy', async () => {
+    const directory = root();
+    let active = { ses_child: { type: 'running' } };
+    const resumes = [];
+    const prompt = vi.fn();
+    const service = setup(directory, {
+      active: async () => active,
+      prompt,
+      get: async ({ sessionID }) => ({ id: sessionID, parentID: sessionID === 'ses_child' ? 'ses_root' : undefined, directory, status: { type: 'idle' } }),
+      messages: async () => ({ data: [{ id: 'msg_done', type: 'assistant', finish: 'stop', time: { completed: 10 }, content: [{ type: 'text', text: 'Done' }] }] }),
+    }, {
+      clock: () => 5_000,
+      runContactTurn: async ({ tools, userText }) => {
+        if (userText.includes('Internal assigned-session resume')) {
+          resumes.push(userText);
+          return { bubbles: ['Done'] };
+        }
+        const result = await tools.find((tool) => tool.name === 'watch_session').execute('watch', { sessionID: 'ses_root' });
+        expect(result.details.watched.status).toBe('busy');
+        return { bubbles: ['Watching'], cards: [result.details.card] };
+      },
+    });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      await settleSend(service, assistant.id, { messageID: 'watch_family', parts: [{ type: 'text', text: 'Watch this session' }] });
+      await service.reconcile();
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_root']);
+      expect(resumes).toHaveLength(0);
+      active = {};
+      service.processEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'ses_child' } });
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_root', 'complete', 5_000));
+      expect(resumes).toHaveLength(1);
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not probe family activity for 50 ordinary streaming deltas', async () => {
+    const directory = root();
+    const active = vi.fn(async () => ({}));
+    const service = setup(directory, { active });
+    try {
+      await service.reconcile();
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_stream', directory, status: 'busy' });
+      for (let index = 0; index < 50; index += 1) {
+        service.processEvent({ type: 'session.text.delta', data: { sessionID: 'ses_stream', delta: 'x' } });
+      }
+      expect(active).not.toHaveBeenCalled();
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([null, { error: { status: 503 } }, { ses_child: { type: 'unknown' } }])('keeps the watch and receipt pending when activity is unknown: %j', async (unknown) => {
+    const directory = root();
+    const active = vi.fn(async () => unknown);
+    const resumes = vi.fn(async () => ({ bubbles: ['Done'] }));
+    const service = setup(directory, { active }, { clock: () => 5_000, runContactTurn: resumes });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_unknown', directory, status: 'busy' });
+      service.processEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'ses_unknown' } });
+      await service.reconcile();
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_unknown']);
+      expect(resumes).not.toHaveBeenCalled();
+      expect(service.contactMessages(assistant.id).messages.flatMap((message) => message.cards)).toHaveLength(1);
+      active.mockResolvedValue({});
+      service.processEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'ses_unknown' } });
+      await vi.waitFor(() => expect(resumes).toHaveBeenCalledTimes(1));
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_unknown', 'complete', 5_000));
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('recovery waits for an idle watched child and its active descendants, without waiting for its unrelated parent', async () => {
+    const directory = root();
+    let active = { ses_nested: { type: 'running' }, ses_parent: { type: 'running' } };
+    const resumes = vi.fn(async () => ({ bubbles: ['Done'] }));
+    const service = setup(directory, {
+      active: async () => active,
+      get: async ({ sessionID }) => ({ id: sessionID, parentID: sessionID === 'ses_nested' ? 'ses_child' : sessionID === 'ses_child' ? 'ses_parent' : undefined, status: { type: 'idle' } }),
+      messages: async () => ({ data: [{ id: 'msg_done', type: 'assistant', finish: 'stop', time: { completed: 10 }, content: [{ type: 'text', text: 'Done' }] }] }),
+    }, { clock: () => 5_000, runContactTurn: resumes });
+    try {
+      const assistant = service.createAssistant(assistantInput);
+      service.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_child', directory, status: 'busy' });
+      await service.reconcile();
+      expect(resumes).not.toHaveBeenCalled();
+      expect(service.snapshot().assistants[0].assignedSessionIDs).toEqual(['ses_child']);
+      active = { ses_parent: { type: 'running' } };
+      service.processEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'ses_nested' } });
+      await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_child', 'complete', 5_000));
+      expect(resumes).toHaveBeenCalledTimes(1);
+      expect(service.contactMessages(assistant.id).messages.flatMap((message) => message.cards)).toHaveLength(2);
+    } finally {
+      service.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('subscribes assigned sessions so idle updates the card, resumes contact LLM, and skips canned settle bubbles', async () => {
     const directory = root();
     let time = 5_000;
@@ -4284,8 +4674,10 @@ describe('assistants service', () => {
       const assistant = first.createAssistant(assistantInput);
       first.appendContactCard(assistant.id, { cardType: 'session', sessionID: 'ses_shared', directory, title: 'Cleanup', status: 'busy' });
       expect(first.processEvent({ type: 'session.idle', properties: { sessionID: 'ses_shared' } })).toBe(true);
-      expect(second.processEvent({ type: 'session.idle', properties: { sessionID: 'ses_shared' } })).toBe(false);
-      await vi.waitFor(() => expect(first.snapshot().assistants[0].working).toBe(false));
+      expect(second.processEvent({ type: 'session.idle', properties: { sessionID: 'ses_shared' } })).toBe(true);
+      await vi.waitFor(() => expect(resumes).toHaveLength(1));
+      await first.reconcile();
+      await second.reconcile();
       expect(resumes).toHaveLength(1);
       expect(first.contactMessages(assistant.id).messages.filter((message) => message.text === '清理完成。')).toHaveLength(1);
       expect(second.processEvent({ type: 'session.execution.started', properties: { sessionID: 'ses_shared' } })).toBe(false);
@@ -4337,7 +4729,7 @@ describe('assistants service', () => {
     }
   });
 
-  it('lets an assigned-session follow-up stay silent without progress, unread, or notification', async () => {
+  it('lets an assigned-session follow-up stay silent with only its completion receipt and no spoken notification', async () => {
     const directory = root();
     let time = 7_000;
     const onContactTurnComplete = vi.fn();
@@ -4361,7 +4753,9 @@ describe('assistants service', () => {
       const settled = await service.whenContactTurnSettled(assignedSessionResumeMessageID(assistant.id, 'ses_quiet', 'complete', 7_000));
       expect(settled).toMatchObject({ status: 'complete', silent: true });
       expect(backgroundTurns[0]).toMatchObject({ readOnly: true, allowSilent: true });
-      expect(service.contactMessages(assistant.id).messages).toHaveLength(before);
+      const messages = service.contactMessages(assistant.id).messages;
+      expect(messages).toHaveLength(before + 1);
+      expect(messages.at(-1).cards).toEqual([expect.objectContaining({ sessionID: 'ses_quiet', status: 'complete' })]);
       expect(onContactTurnComplete).not.toHaveBeenCalled();
       expect(service.snapshot().assistants[0].working).toBe(false);
     } finally {
@@ -4971,7 +5365,9 @@ describe('assistants service', () => {
       const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
       const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
       expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'error', error: 'model unavailable' });
-      expect(service.contactMessages(recipient.id).messages.at(-1).role).toBe('peer');
+      const messages = service.contactMessages(recipient.id).messages;
+      expect(messages.find((message) => message.messageID === peer.messageID)?.role).toBe('peer');
+      expect(messages.at(-1)).toMatchObject({ role: 'assistant', status: 'error', text: 'model unavailable' });
       expect(service.snapshot().assistants.find((item) => item.id === recipient.id).working).toBe(false);
       expect(onContactTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ assistantID: recipient.id, status: 'error', body: 'model unavailable' }));
     } finally { service.close(); }
@@ -4995,7 +5391,7 @@ describe('assistants service', () => {
     } finally { release(); service.close(); }
   });
 
-  it.each(['wipe', 'disable', 'remove'])('does not run a queued peer reply after recipient %s', async (action) => {
+  it.each(['wipe', 'remove'])('does not run a queued peer reply after recipient %s', async (action) => {
     const runContactTurn = vi.fn(async () => ({ bubbles: ['should not run'] }));
     const service = setup(root(), {}, { runContactTurn });
     try {
@@ -5003,7 +5399,6 @@ describe('assistants service', () => {
       const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
       const peer = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: 'hello' });
       if (action === 'wipe') service.resetContact(recipient.id);
-      if (action === 'disable') await service.updateAssistant(recipient.id, { expectedRevision: recipient.revision, enabled: false });
       if (action === 'remove') service.removeAssistant(recipient.id, recipient.revision);
       expect(await service.whenContactTurnSettled(peer.messageID)).toMatchObject({ status: 'cancelled' });
       expect(runContactTurn).not.toHaveBeenCalled();
@@ -5307,7 +5702,7 @@ describe('assistants service', () => {
     service.close();
   });
 
-  it('delivers contact errors without persisting a transcript message', async () => {
+  it('persists contact errors across restart until a new message overwrites them', async () => {
     const directory = root();
     const events = [];
     const service = setup(directory, {}, {
@@ -5328,6 +5723,7 @@ describe('assistants service', () => {
     expect(page.messages.map((message) => ({ role: message.role, status: message.status, text: message.text }))).toEqual([
       { role: 'assistant', status: 'complete', text: greetingText },
       { role: 'user', status: 'complete', text: 'hi' },
+      { role: 'assistant', status: 'error', text: 'No connected model' },
     ]);
     expect(service.snapshot().assistants[0]).toMatchObject({ working: false, activeContactTurn: null });
     expect(events).toContainEqual(expect.objectContaining({
@@ -5338,13 +5734,79 @@ describe('assistants service', () => {
     const restarted = setup(directory, {}, {
       runContactTurn: async () => ({ text: 'ok', bubbles: ['ok'] }),
     });
-    expect(restarted.contactMessages(assistant.id).messages.map((message) => message.text)).toEqual([greetingText, 'hi']);
+    expect(restarted.contactMessages(assistant.id).messages.map((message) => message.text)).toEqual([greetingText, 'hi', 'No connected model']);
     await restarted.send(assistant.id, {
       messageID: 'after_failure', parts: [{ type: 'text', text: 'again' }],
     });
+    expect(restarted.contactMessages(assistant.id).messages.some((message) => message.status === 'error')).toBe(false);
     await restarted.whenContactTurnSettled('after_failure');
     expect(restarted.contactMessages(assistant.id).messages.map((message) => message.text)).toEqual([greetingText, 'hi', 'again', 'ok']);
     restarted.close();
+  });
+
+  it.each(['throw', 'empty'])('persists %s background failures and clears them on the next assistant update', async (failure) => {
+    const directory = root();
+    let failBackground = true;
+    const service = setup(directory, {}, {
+      listProjects: async () => [{ id: 'project', path: directory }],
+      upsertScheduledTask: async (_project, task) => ({ task: { ...task, id: 'task' } }),
+      syncScheduledTaskProject: async () => {},
+      runContactTurn: async ({ readOnly, tools }) => {
+        if (!readOnly) {
+          await tools.find((tool) => tool.name === 'schedule_task').execute('schedule', {
+            name: 'Daily task', prompt: 'Research', time: '18:00', timezone: 'UTC',
+          });
+          return { bubbles: ['Scheduled'] };
+        }
+        if (failBackground) {
+          if (failure === 'throw') throw new Error('Model unavailable');
+          return { bubbles: [] };
+        }
+        return { bubbles: ['Recovered'] };
+      },
+    });
+    try {
+      const owner = service.createAssistant(assistantInput);
+      await settleSend(service, owner.id, { messageID: 'schedule', parts: [{ type: 'text', text: 'Schedule' }] });
+      const run = { id: 'failure', projectId: 'project', taskId: 'task', taskName: 'Task', status: 'success', sessionId: 'worker', directory, startedAt: Date.now(), finishedAt: Date.now() };
+      await service.reportScheduledTaskResult(run);
+      expect(service.contactMessages(owner.id).messages.at(-1)).toMatchObject({
+        status: 'error', text: failure === 'throw' ? 'Model unavailable' : 'Assistant returned no text',
+      });
+      failBackground = false;
+      await service.reportScheduledTaskResult({ ...run, id: 'recovery' });
+      expect(service.contactMessages(owner.id).messages.at(-1)?.text).toBe('Recovered');
+      expect(service.contactMessages(owner.id).messages.some((message) => message.status === 'error')).toBe(false);
+      expect(service.contactMessages(owner.id).messages.filter((message) => message.role === 'user')).toHaveLength(1);
+    } finally {
+      service.close();
+    }
+  });
+
+  it('keeps live error feedback and settles activity when persisting the error fails', async () => {
+    const directory = root();
+    const events = [];
+    const service = setup(directory, {}, {
+      onContactTurnEvent: (event) => events.push(event),
+      runContactTurn: async () => { throw new Error('Model unavailable'); },
+    });
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const owner = service.createAssistant(assistantInput);
+      db.exec(`CREATE TRIGGER reject_error BEFORE INSERT ON assistant_contact_message
+        WHEN NEW.status = 'error' BEGIN SELECT RAISE(ABORT, 'write failed'); END;`);
+      const result = await settleSend(service, owner.id, { messageID: 'failed_write', parts: [{ type: 'text', text: 'Hi' }] });
+      expect(result.settled).toMatchObject({ status: 'error', error: 'Model unavailable' });
+      expect(service.snapshot().assistants[0]).toMatchObject({ working: false, activeContactTurn: null });
+      expect(service.contactMessages(owner.id).messages.map((message) => message.text)).toEqual([greetingText, 'Hi']);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'yuri:contact-turn-end', properties: expect.objectContaining({ status: 'error' }) }));
+      expect(warning).toHaveBeenCalledWith('[assistants] contact error could not be persisted');
+    } finally {
+      warning.mockRestore();
+      db.close();
+      service.close();
+    }
   });
 
   it('bumps revision when queued contact turn becomes running', async () => {
@@ -5489,10 +5951,11 @@ describe('assistants service', () => {
       && event.properties?.status === 'error'
       && event.properties?.turnID === 'client_no_provider'
     ))).toBe(true);
-    // User row stays; error feedback is delivered only through the live event.
+    // User row stays; error feedback is also recoverable without the live event.
     expect(service.contactMessages(assistant.id).messages.map((message) => ({ role: message.role, status: message.status }))).toEqual([
       { role: 'assistant', status: 'complete' },
       { role: 'user', status: 'complete' },
+      { role: 'assistant', status: 'error' },
     ]);
     service.close();
   });

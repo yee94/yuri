@@ -25,8 +25,39 @@ export function completionEvent(payload) {
   return null;
 }
 
+/** Read process activity and its authoritative ancestry once, with bounded metadata concurrency. */
+export async function readSessionFamilyActivity({ loadActiveSessionIds, loadParent }) {
+  const membership = await loadActiveSessionIds();
+  if (!membership || typeof membership[Symbol.iterator] !== 'function') throw new Error('Unknown session activity');
+  const parents = new Map();
+  const parentOf = (id) => {
+    if (!parents.has(id)) parents.set(id, Promise.resolve().then(() => loadParent(id)).then((parent) => {
+      if (parent !== null && (typeof parent !== 'string' || !parent)) throw new Error('Unknown session ancestry');
+      return parent;
+    }));
+    return parents.get(id);
+  };
+  const activeRoots = new Set();
+  const activeSessions = new Set(membership);
+  const ids = [...activeSessions];
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+    while (cursor < ids.length) {
+      let id = ids[cursor++];
+      const seen = new Set();
+      while (id) {
+        if (seen.has(id)) throw new Error('Cyclic session ancestry');
+        seen.add(id);
+        activeRoots.add(id);
+        id = await parentOf(id);
+      }
+    }
+  }));
+  return { activeRoots, activeSessions, parentOf };
+}
+
 /** Runtime-local completion barrier shared by Host fanout and VS Code. */
-export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, onReady, retryMs = 2000 }) {
+export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, onReady, retryMs = 2000, rootsOnly = true, deduplicate = true }) {
   const pending = new Map();
   const delivered = new Set();
   const running = new Set();
@@ -50,39 +81,13 @@ export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, o
     const version = revision;
     const generation = epoch;
     const current = () => !disposed && epoch === generation && revision === version;
-    const membership = await loadActiveSessionIds();
-    if (!membership || typeof membership[Symbol.iterator] !== 'function') throw new Error('Unknown session activity');
-    const active = new Set(membership);
-    if (!current()) return;
-    const parents = new Map();
-    const parentOf = (id) => {
-      if (!parents.has(id)) parents.set(id, Promise.resolve().then(() => loadParent(id)).then((parent) => {
-        if (parent !== null && (typeof parent !== 'string' || !parent)) throw new Error('Unknown session ancestry');
-        return parent;
-      }));
-      return parents.get(id);
-    };
     // A running ID can belong to any pending root, including through idle ancestors.
-    const activeRoots = new Set();
-    const ids = [...active];
-    let cursor = 0;
-    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
-      while (cursor < ids.length) {
-        let id = ids[cursor++];
-        const seen = new Set();
-        while (id) {
-          if (seen.has(id)) throw new Error('Cyclic session ancestry');
-          seen.add(id);
-          activeRoots.add(id);
-          id = await parentOf(id);
-        }
-      }
-    }));
+    const { activeRoots, parentOf } = await readSessionFamilyActivity({ loadActiveSessionIds, loadParent });
     for (const [id, candidate] of pending) {
       if (!current()) return;
       const parent = await parentOf(id);
       if (!current() || pending.get(id) !== candidate) continue;
-      if (parent) { pending.delete(id); continue; }
+      if (rootsOnly && parent) { pending.delete(id); continue; }
       if (activeRoots.has(id)) continue;
       const isCurrent = () => current() && pending.get(id) === candidate;
       const handled = await onReady(candidate.payload, isCurrent);
@@ -90,7 +95,7 @@ export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, o
       // fanout must not make that same completion eligible a second time.
       if (handled === false || pending.get(id) !== candidate) continue;
       pending.delete(id);
-      delivered.add(id);
+      if (deduplicate) delivered.add(id);
       running.delete(id);
     }
   };
@@ -122,6 +127,7 @@ export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, o
   };
 
   return {
+    flush: drain,
     observe(event, payload) {
       if (disposed || !event) return Promise.resolve();
       revision += 1;
@@ -135,7 +141,7 @@ export function createFamilyCompletionGate({ loadActiveSessionIds, loadParent, o
       } else if (kind === 'cancel') {
         running.delete(sessionId);
         pending.delete(sessionId);
-        delivered.add(sessionId);
+        if (deduplicate) delivered.add(sessionId);
       } else if (kind === 'complete') {
         running.delete(sessionId);
         if (!delivered.has(sessionId)) {

@@ -109,11 +109,12 @@ test('route ID owns displayed and saved assistant while the Settings tab selecti
   expect(useAssistantUIStore.getState().settingsSelectedAssistantID).toBe('asst_settings_tab');
 });
 
-test('model selection shares the name/enabled card and no manual share-default control remains', async () => {
+test('model selection shares the name card and no enable or manual share-default control remains', async () => {
   await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
   const card = host.querySelector('#assistant-name')?.closest('.yuri-settings-group-card');
   expect(card?.querySelector('[data-settings-item="assistants.model"]')).not.toBeNull();
-  expect(card?.textContent).toContain('assistants.settings.enabled');
+  expect(host.textContent).not.toContain('assistants.settings.enabled');
+  expect(host.querySelector('[role="checkbox"]')).toBeNull();
   expect(host.querySelector('[data-settings-item="assistants.default-share"]')).toBeNull();
   expect(host.textContent).not.toContain('assistants.settings.defaultShare');
 });

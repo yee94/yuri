@@ -9,7 +9,6 @@ const pageSource = () => readFile(join(directory, 'AssistantsSettingsPage.tsx'),
 
 /** Mirrors page `draftFromAssistant` — settings draft owns only editable fields. */
 const draftFromAssistant = (assistant: AssistantDTO): AssistantDraft => ({
-  enabled: assistant.enabled,
   name: assistant.name,
   defaultPrompt: assistant.defaultPrompt,
   workspacePath: assistant.workspacePath,
@@ -20,7 +19,6 @@ const draftFromAssistant = (assistant: AssistantDTO): AssistantDraft => ({
 
 /** Mirrors page `toAssistantSettingsUpdateDraft`. */
 const toAssistantSettingsUpdateDraft = (draft: AssistantDraft): AssistantDraft => ({
-  enabled: draft.enabled,
   name: draft.name,
   defaultPrompt: draft.defaultPrompt,
   workspacePath: draft.workspacePath,
@@ -156,7 +154,6 @@ describe('AssistantsSettingsPage draft → save payload', () => {
     expect(payload.variant).toBe('fast');
     expect(Object.hasOwn(payload, 'mode')).toBe(false);
     expect(payload).toMatchObject({
-      enabled: true,
       name: 'Contact',
       defaultPrompt: 'Be helpful',
       workspacePath: '/project',
@@ -168,7 +165,6 @@ describe('AssistantsSettingsPage draft → save payload', () => {
 
   test('create payload includes variant and omits agent/mode', async () => {
     const createDraft: AssistantDraft = {
-      enabled: true,
       name: 'New contact',
       defaultPrompt: 'Hello',
       workspacePath: null,
@@ -192,6 +188,7 @@ describe('AssistantsSettingsPage draft → save payload', () => {
     expect(Object.hasOwn(payload, 'agent')).toBe(false);
     expect(payload.variant).toBe('high');
     expect(Object.hasOwn(payload, 'mode')).toBe(false);
+    expect(Object.hasOwn(payload, 'enabled')).toBe(false);
   });
 
   test('default selection clears a stored variant in the PATCH payload', async () => {
@@ -208,6 +205,9 @@ describe('AssistantsSettingsPage draft → save payload', () => {
     const save = source.slice(source.indexOf('const save = useEvent'), source.indexOf('const remove = useEvent'));
 
     expect(emptyDraft).not.toMatch(/\bagent\s*:/);
+    expect(source).not.toContain('assistants.settings.enabled');
+    expect(source).not.toContain('draft.enabled');
+    expect(emptyDraft).not.toMatch(/\benabled\s*:/);
     expect(emptyDraft).toContain('variant: defaultModel?.variant ?? null');
     expect(emptyDraft).not.toMatch(/\bmode\s*:/);
     expect(draftFrom).not.toMatch(/\bagent\s*:/);

@@ -641,7 +641,7 @@ describe('Assistant UI product contract', () => {
     expect(backend).toContain('dependencies.assertAuthoritative();');
     expect(backend).toContain('await dependencies.ensureSnapshot(dependencies.signal)');
     expect(backend).toContain('await dependencies.updateAssistant(latest');
-    expect(backend).toContain('enabled: current.enabled');
+    expect(backend).not.toContain('enabled: current.enabled');
     expect(backend).toContain('workspacePath: current.workspacePath');
     expect(backend).toContain("new AssistantAPIError('revision_conflict', 409)");
     expect(backend).toContain('dependencies.readSnapshot()?.assistants.find');

@@ -67,7 +67,8 @@ describe('assistant-only progressive business tools', () => {
       if (round === 1) {
         expect(names(body)).toContain('assign_session');
         expect(names(body)).toContain('load_tools');
-        for (const name of ['register_project', 'create_assistant', 'update_avatar', 'schedule_task', 'update_scheduled_task']) expect(names(body)).not.toContain(name);
+        for (const name of ['register_project', 'create_assistant', 'schedule_task', 'update_scheduled_task']) expect(names(body)).not.toContain(name);
+        expect(names(body)).toContain('update_assistant_settings');
         expect(JSON.stringify(body)).not.toContain('register_project');
         return call('load_tools', { domain: 'yuri.projects' });
       }
@@ -143,7 +144,7 @@ describe('assistant-only progressive business tools', () => {
     const tools = [...createContactTools({}), ...createYuriContactTools({ registerProject })];
     await turn(tools, async ({ body }) => {
       expect(names(body)).toContain('list_scheduled_tasks');
-      for (const name of ['load_tools', 'register_project', 'create_assistant', 'schedule_task', 'update_avatar']) expect(names(body)).not.toContain(name);
+      for (const name of ['load_tools', 'register_project', 'create_assistant', 'schedule_task', 'update_assistant_settings']) expect(names(body)).not.toContain(name);
       return { text: 'Reviewed.' };
     }, { readOnly: true });
     expect(registerProject).not.toHaveBeenCalled();

@@ -17,6 +17,38 @@ const setup = (overrides = {}) => {
 };
 
 describe('family completion authority', () => {
+  it('bounds ancestor reads to four and deduplicates a shared parent across 40 active children', async () => {
+    const children = Array.from({ length: 40 }, (_, index) => `child-${index}`);
+    let concurrent = 0;
+    let peak = 0;
+    const loadActiveSessionIds = vi.fn(async () => children);
+    const loadParent = vi.fn(async (id) => {
+      concurrent += 1;
+      peak = Math.max(peak, concurrent);
+      await Promise.resolve();
+      concurrent -= 1;
+      return id === 'root' ? null : 'root';
+    });
+    const { onReady } = setup({ loadActiveSessionIds, loadParent });
+    await gate.observe(event('complete', 'root'), {});
+    expect(onReady).not.toHaveBeenCalled();
+    expect(loadActiveSessionIds).toHaveBeenCalledTimes(1);
+    expect(loadParent).toHaveBeenCalledTimes(41);
+    expect(loadParent.mock.calls.filter(([id]) => id === 'root')).toHaveLength(1);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
+  it('can monitor an explicitly watched child subtree without notifying its ancestors', async () => {
+    const { state, onReady } = setup({ rootsOnly: false });
+    state.active = ['root', 'nested'];
+    await gate.observe(event('complete', 'child'), { id: 'child' });
+    expect(onReady).not.toHaveBeenCalled();
+    state.active = ['root'];
+    await gate.observe(event('changed', 'nested'), {});
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(onReady.mock.calls[0][0]).toEqual({ id: 'child' });
+  });
+
   it('waits for an idle parent and all nested descendants, then emits only the parent once', async () => {
     const { state, onReady } = setup();
     state.active = ['child', 'nested', 'other'];

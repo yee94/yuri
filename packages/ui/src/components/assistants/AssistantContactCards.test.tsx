@@ -136,6 +136,18 @@ describe('typed contact card presentation', () => {
     expect(markup).toContain('p/m')
   })
 
+  test('parent idle does not complete a family-pending card or expose its old diff', () => {
+    state.status = { type: 'idle' }
+    state.liveSession = { title: 'Background research', directory: '/repo', branch: '', model: { providerID: 'p', id: 'm' }, summary: { additions: 12, deletions: 3, files: 2 } }
+    const pending = renderToStaticMarkup(<AssistantSessionCard card={sessionCard} />)
+    expect(pending).toContain('Working')
+    expect(pending).not.toContain('data-contact-session-changes')
+    const receipt = renderToStaticMarkup(<AssistantSessionCard card={{ ...sessionCard, status: 'complete' }} />)
+    expect(receipt).toContain('Complete')
+    expect(receipt).toContain('+12')
+    expect(receipt).toContain('−3')
+  })
+
   test('directory branch authority overrides stale card data, including successful no-branch and unknown reads', () => {
     for (const current of ['main', 'feature/updated']) {
       state.branches = { current }
@@ -151,7 +163,7 @@ describe('typed contact card presentation', () => {
   })
 
   test.each([
-    ['cancelled', 'busy', 'Cancelled'], ['complete', 'busy', 'Working'], ['busy', 'idle', 'Complete'],
+    ['cancelled', 'busy', 'Cancelled'], ['complete', 'busy', 'Working'], ['busy', 'idle', 'Working'],
     ['error', 'idle', 'Failed'], ['question', 'idle', 'Needs you'], ['busy', 'retry', 'Retrying'],
   ])('retains status authority: saved %s / live %s', (saved, live, label) => {
     state.status = { type: live }

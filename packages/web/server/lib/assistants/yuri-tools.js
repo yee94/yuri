@@ -1,7 +1,7 @@
 export function createYuriContactToolGroups(tools) {
   return [
     { id: 'yuri.projects', description: 'Register an existing workspace before opening a coding session.', names: ['register_project'] },
-    { id: 'yuri.assistants', description: 'Create a Bot or change its avatar.', names: ['create_assistant', 'update_avatar'] },
+    { id: 'yuri.assistants', description: 'Create another Bot.', names: ['create_assistant'] },
     { id: 'yuri.tasks', description: 'Create or update scheduled tasks (including pause/resume).', names: ['schedule_task', 'update_scheduled_task'] },
   ].map(({ id, description, names }) => ({ id, description, tools: tools.filter((tool) => names.includes(tool.name)) }))
     .filter((group) => group.tools.length > 0);

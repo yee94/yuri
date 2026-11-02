@@ -15,7 +15,7 @@ const selectionDraft = (current: AssistantDTO, desired: AssistantSelection): Ass
   const providerID = desired.providerID ?? current.providerID;
   const modelID = desired.modelID ?? current.modelID;
   const modelChanged = providerID !== current.providerID || modelID !== current.modelID;
-  return { enabled: current.enabled, name: current.name, defaultPrompt: current.defaultPrompt, workspacePath: current.workspacePath, providerID, modelID, agent: desired.agent ?? null, variant: modelChanged ? null : desired.variant ?? null, mode: current.mode };
+  return { name: current.name, defaultPrompt: current.defaultPrompt, workspacePath: current.workspacePath, providerID, modelID, agent: desired.agent ?? null, variant: modelChanged ? null : desired.variant ?? null, mode: current.mode };
 };
 
 export const commitAssistantSelection = async (identity: AssistantSelectionIdentity, desired: AssistantSelection, dependencies: AssistantSelectionBackendDependencies): Promise<void> => {

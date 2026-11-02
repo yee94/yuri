@@ -85,6 +85,7 @@ import { createYuriContactTools } from './yuri-tools.js';
 import { resolveAssistantCwd } from './pi-tools.js';
 import { loadConnectedCatalog, parseModelRef } from '../llm/catalog.js';
 import { buildAssistantSessionMetadata } from '../session-metadata/system-session.js';
+import { completionEvent, createFamilyCompletionGate, readSessionFamilyActivity } from '../notifications/family-completion-gate.js';
 
 const require = createRequire(import.meta.url);
 const SCHEMA_VERSION = 14;
@@ -329,7 +330,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   })();
   const assistant = (assistantID) => db.prepare('SELECT * FROM assistant_v2 WHERE assistant_id=?').get(assistantID);
   const editable = (assistantID) => { const row = assistant(assistantID); if (!row || row.tombstone_at) fail('not_found'); return row; };
-  const active = (assistantID) => { const row = editable(assistantID); if (!enabled() || !row.enabled) fail('assistant_disabled'); return row; };
+  const active = editable;
   const workspaceFor = (assistantID) => path.join(dataDir, 'assistant-workspaces', assistantID);
   const contained = (candidate, root) => candidate === root || candidate.startsWith(`${root}${path.sep}`);
   const roots = () => [path.resolve(dataDir, 'assistant-workspaces'), ...getAllowedRoots().filter((root) => typeof root === 'string').map((root) => path.resolve(root))];
@@ -407,7 +408,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     return {
       id: row.assistant_id,
       revision: row.revision,
-      enabled: Boolean(row.enabled),
+      enabled: true,
       name: row.name,
       defaultPrompt: row.default_prompt,
       avatarSeed: row.avatar_seed ?? row.assistant_id,
@@ -522,6 +523,17 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     db.prepare("INSERT OR REPLACE INTO assistant_meta(key,value) VALUES ('schema_version',?)").run(String(SCHEMA_VERSION));
   };
   migrate();
+  try {
+    db.transaction(() => {
+      const restored = db.prepare('UPDATE assistant_v2 SET enabled=1, revision=revision+1, updated_at=? WHERE enabled!=1 AND tombstone_at IS NULL').run(now());
+      if (restored.changes) bump();
+    })();
+  } catch (error) {
+    closed = true;
+    contactAttachmentMigration.controller.abort();
+    db.close();
+    throw error;
+  }
   // V2: OpenCode projection is the sole message-body authority. Legacy mirror /
   // backfill tables may still exist for leftover rows but are never written or
   // read for history serving.
@@ -606,7 +618,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   // Assigned-session complete/error/cancelled resumes the contact LLM (no canned settle bubble).
   // Assigned after inContactTurnLane exists; reportAssignedSession only schedules via this ref.
   const assignedSessionResumeRef = { schedule: null };
-  const reportAssignedSession = (sessionID, status, resumeOrOpts = true) => {
+  const commitAssignedSession = (sessionID, status, resumeOrOpts = true) => {
     const opts = plainObject(resumeOrOpts)
       ? resumeOrOpts
       : { resume: resumeOrOpts !== false };
@@ -660,6 +672,19 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           active: !assignedSessionResumeStatus(status),
           ...(watch.messageID ? { messageID: watch.messageID } : {}),
         });
+        if (status === 'complete' && resume && watch.resumeAllowed) {
+          const card = findAssignedSessionCard(watch.assistantID, sessionID);
+          if (card) insertContactMessage(db, {
+            messageID: `${assignedSessionResumeMessageID(watch.assistantID, sessionID, status, updatedAt)}:receipt`,
+            assistantID: watch.assistantID,
+            role: 'assistant',
+            turnID: assignedSessionResumeMessageID(watch.assistantID, sessionID, status, updatedAt),
+            createdAt: updatedAt,
+            ordinal: nextContactOrdinal(db, watch.assistantID),
+            status: 'complete',
+            parts: [{ ...card, status: 'complete' }],
+          });
+        }
         // complete/error/user-interrupt cancelled: hand result back to contact LLM.
         // question: card only (worker waiting). stop_session passes resume=false.
         // Never insert oc.settle.* canned transcript bubbles.
@@ -714,6 +739,49 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       if (!Array.isArray(nested) && typeof nested === 'object') return nested;
     }
     return value;
+  };
+  const assignedFamilyAuthority = {
+    loadActiveSessionIds: async () => {
+      const membership = activeMapOf(await client().session.active());
+      if (!membership || Object.values(membership).some((entry) => entry?.type !== 'running')) {
+        throw new Error('Unknown session activity');
+      }
+      return Object.keys(membership);
+    },
+    loadParent: async (sessionID) => {
+      const result = await client().session.get({ sessionID });
+      const session = sessionRecord(result);
+      if (!session || result?.error || isMissing(result) || !nonEmptyString(session.id)) {
+        throw new Error('Unknown session ancestry');
+      }
+      return session.parentID ?? null;
+    },
+  };
+  const assignedCompletion = createFamilyCompletionGate({
+    ...assignedFamilyAuthority,
+    rootsOnly: false,
+    deduplicate: false,
+    onReady: ({ sessionID, options }, isCurrent) => {
+      if (closed || !isCurrent()) return false;
+      commitAssignedSession(sessionID, 'complete', options);
+      return true;
+    },
+  });
+  const reportAssignedSession = (sessionID, status, resumeOrOpts = true) => {
+    if (status !== 'complete' || sessionAbortInflight.has(sessionID)) {
+      if (status === 'busy') void assignedCompletion.observe({ kind: 'running', sessionId: sessionID });
+      if (status === 'error' || status === 'cancelled') {
+        void assignedCompletion.observe({ kind: 'cancel', sessionId: sessionID });
+      }
+      return commitAssignedSession(sessionID, status, resumeOrOpts);
+    }
+    const options = plainObject(resumeOrOpts) ? resumeOrOpts : { resume: resumeOrOpts !== false };
+    const eligible = listWatchesBySession(db, sessionID).some((watch) => watch.active
+      && watch.status !== 'complete' && watch.status !== 'error' && watch.status !== 'cancelled'
+      && !(options.requireExecutionOwned && watch.messageID));
+    if (!eligible) return false;
+    void assignedCompletion.observe({ kind: 'complete', sessionId: sessionID }, { sessionID, options });
+    return true;
   };
   const goalOfSession = (session) => {
     const goal = session?.metadata?.yuri?.goal;
@@ -841,26 +909,18 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       return;
     }
     if (watches.length === 0) return;
-    // One active query per reconcile — authoritative busy membership map.
-    let activeMap = null;
-    let activeKnown = false;
+    // One family snapshot per reconcile, shared by every watched worker.
+    let activeSessions;
     try {
-      const api = client();
-      if (typeof api.session?.active === 'function') {
-        const raw = await api.session.active();
-        activeMap = activeMapOf(raw);
-        activeKnown = activeMap != null;
-      }
+      ({ activeSessions } = await readSessionFamilyActivity(assignedFamilyAuthority));
     } catch {
-      activeKnown = false;
+      return;
     }
     if (closed) return;
     for (const watch of watches) {
       if (closed) return;
       try {
-        const activeBusy = activeKnown
-          ? Object.prototype.hasOwnProperty.call(activeMap, watch.sessionID)
-          : null;
+        const activeBusy = activeSessions.has(watch.sessionID);
         if (activeBusy === true) continue;
         const directory = resolveWatchDirectory(watch);
         if (!directory) continue;
@@ -889,10 +949,16 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         // One failed watch must not block unrelated watches.
       }
     }
+    await assignedCompletion.flush();
   };
   const processEvent = (event) => {
     const payload = event?.payload?.payload ?? event?.payload ?? event;
     if (!plainObject(payload) || typeof payload.type !== 'string') return false;
+    const boundary = completionEvent(payload);
+    if (boundary) void assignedCompletion.observe(
+      boundary.kind === 'complete' ? { ...boundary, kind: 'changed' } : boundary,
+      payload,
+    );
     const body = eventBody(payload);
     // Message lifecycle still requires a body; execution/status may carry sessionID on body only.
     if (payload.type === 'message.updated') {
@@ -1331,14 +1397,30 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     };
   };
   const unsubscribeEvents = typeof globalEventHub?.subscribeEvent === 'function' ? globalEventHub.subscribeEvent(processEvent) : null;
-  const updateContactAvatar = async (assistantID, seed) => {
-    const avatarSeed = seed === undefined ? randomAvatarSeed(id()) : string(seed, 256, true);
+  const updateContactSettings = async (selfID, input) => {
+    if (!plainObject(input)) fail('validation_error');
+    const { assistantID = selfID, ...patch } = input;
+    const fields = new Set(['name', 'avatarSeed', 'defaultPrompt', 'providerID', 'modelID', 'agent', 'variant', 'mode', 'workspacePath']);
+    if (!Object.keys(patch).length || Object.keys(patch).some((key) => !fields.has(key))) fail('validation_error');
+    for (const key of Object.keys(patch)) {
+      if (key === 'avatarSeed' && patch[key] === null) patch[key] = randomAvatarSeed(id());
+      else if (key === 'workspacePath') patch[key] = patch[key] === null ? null : workspace(patch[key], assistantID);
+      else if (key === 'mode') {
+        if (!['continuous', 'stateless'].includes(patch[key])) fail('validation_error');
+      } else if (key === 'agent' || key === 'variant') patch[key] = patch[key] === null ? null : string(patch[key], 256, true);
+      else patch[key] = string(patch[key], key === 'defaultPrompt' ? 200_000 : 256, key !== 'defaultPrompt');
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       const current = output(editable(assistantID));
-      if (current.avatarSeed === avatarSeed) return { updated: false, avatarSeed, previousAvatarSeed: current.avatarSeed };
+      const next = { ...patch };
+      if ((next.providerID !== undefined && next.providerID !== current.providerID) || (next.modelID !== undefined && next.modelID !== current.modelID)) {
+        if (next.variant === undefined) next.variant = null;
+      }
+      if (Object.entries(next).every(([key, value]) => current[key] === value)) return { updated: false, assistant: current };
+      await Promise.resolve();
       try {
-        const updated = await updateAssistant(assistantID, { expectedRevision: current.revision, avatarSeed });
-        return { updated: true, avatarSeed: updated.avatarSeed, previousAvatarSeed: current.avatarSeed };
+        const updated = await updateAssistant(assistantID, { expectedRevision: current.revision, ...next });
+        return { updated: true, assistant: updated };
       } catch (error) {
         if (error?.code !== 'revision_conflict' || attempt === 1) throw error;
       }
@@ -1366,7 +1448,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       const avatarSeed = input.avatarSeed === undefined
         ? randomAvatarSeed(assistantID, 'round')
         : string(input.avatarSeed, 256, true);
-      db.prepare('INSERT INTO assistant_v2 (assistant_id,revision,enabled,name,default_prompt,workspace_path,provider_id,model_id,agent,variant,mode,current_session_id,session_generation,created_at,updated_at,tombstone_at,avatar_seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(assistantID, 1, input.enabled === false ? 0 : 1, string(input.name, 256, true), input.defaultPrompt ? string(input.defaultPrompt, 200_000) : '', workspacePath, string(input.providerID, 256, true), string(input.modelID, 256, true), input.agent == null ? null : string(input.agent, 256), input.variant == null ? null : string(input.variant, 256), mode, null, 0, at, at, null, avatarSeed);
+      db.prepare('INSERT INTO assistant_v2 (assistant_id,revision,enabled,name,default_prompt,workspace_path,provider_id,model_id,agent,variant,mode,current_session_id,session_generation,created_at,updated_at,tombstone_at,avatar_seed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(assistantID, 1, 1, string(input.name, 256, true), input.defaultPrompt ? string(input.defaultPrompt, 200_000) : '', workspacePath, string(input.providerID, 256, true), string(input.modelID, 256, true), input.agent == null ? null : string(input.agent, 256), input.variant == null ? null : string(input.variant, 256), mode, null, 0, at, at, null, avatarSeed);
       insertContactMessage(db, {
         messageID: `${assistantID}:greeting`, assistantID, role: 'assistant',
         turnID: `${assistantID}:greeting`, bubbleIndex: 0, createdAt: at,
@@ -1402,7 +1484,46 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     })().finally(() => { defaultAssistantFlight = null; });
     return defaultAssistantFlight;
   };
-  const updateAssistant = async (assistantID, input) => { const row = editable(assistantID); const allowed = new Set(['expectedRevision', 'enabled', 'name', 'avatarSeed', 'defaultPrompt', 'providerID', 'modelID', 'agent', 'variant', 'mode', 'workspacePath']); if (!plainObject(input) || !Number.isInteger(input.expectedRevision) || Object.keys(input).some((key) => !allowed.has(key))) fail('validation_error'); const next = { avatarSeed: input.avatarSeed === undefined ? row.avatar_seed : string(input.avatarSeed, 256, true), enabled: input.enabled === undefined ? row.enabled : input.enabled ? 1 : 0, name: input.name === undefined ? row.name : string(input.name, 256, true), prompt: input.defaultPrompt === undefined ? row.default_prompt : string(input.defaultPrompt, 200_000), provider: input.providerID === undefined ? row.provider_id : string(input.providerID, 256, true), model: input.modelID === undefined ? row.model_id : string(input.modelID, 256, true), agent: input.agent === undefined ? row.agent : input.agent === null ? null : string(input.agent, 256), variant: input.variant === undefined ? row.variant : input.variant === null ? null : string(input.variant, 256), mode: input.mode === undefined ? (row.mode === 'stateless' ? 'stateless' : 'continuous') : input.mode === 'continuous' || input.mode === 'stateless' ? input.mode : fail('validation_error'), workspacePath: input.workspacePath === undefined ? row.workspace_path : input.workspacePath == null ? null : workspace(input.workspacePath, assistantID) }; const nextRow = { ...row, workspace_path: next.workspacePath, name: next.name }; effectiveWorkspace(nextRow); const workspaceChanged = next.workspacePath !== row.workspace_path; if (workspaceChanged && row.current_session_id) archiveSession(assistantID, row.current_session_id); const created = workspaceChanged ? await createSession(nextRow) : null; const result = db.prepare('UPDATE assistant_v2 SET avatar_seed=?,enabled=?,name=?,default_prompt=?,provider_id=?,model_id=?,agent=?,variant=?,mode=?,workspace_path=?,current_session_id=?,session_generation=session_generation+?,revision=revision+1,updated_at=? WHERE assistant_id=? AND revision=? AND session_generation=? AND tombstone_at IS NULL').run(next.avatarSeed, next.enabled, next.name, next.prompt, next.provider, next.model, next.agent, next.variant, next.mode, next.workspacePath, created?.sessionID ?? row.current_session_id, workspaceChanged ? 1 : 0, now(), assistantID, input.expectedRevision, row.session_generation); if (!result.changes) fail('revision_conflict'); bump(); return output(assistant(assistantID)); };
+  const updateAssistant = async (assistantID, input) => {
+    const row = editable(assistantID);
+    const allowed = new Set(['expectedRevision', 'enabled', 'name', 'avatarSeed', 'defaultPrompt', 'providerID', 'modelID', 'agent', 'variant', 'mode', 'workspacePath']);
+    if (!plainObject(input) || !Number.isInteger(input.expectedRevision) || Object.keys(input).some((key) => !allowed.has(key))) fail('validation_error');
+    const next = {
+      avatarSeed: input.avatarSeed === undefined ? row.avatar_seed : string(input.avatarSeed, 256, true),
+      name: input.name === undefined ? row.name : string(input.name, 256, true),
+      prompt: input.defaultPrompt === undefined ? row.default_prompt : string(input.defaultPrompt, 200_000),
+      provider: input.providerID === undefined ? row.provider_id : string(input.providerID, 256, true),
+      model: input.modelID === undefined ? row.model_id : string(input.modelID, 256, true),
+      agent: input.agent === undefined ? row.agent : input.agent === null ? null : string(input.agent, 256),
+      variant: input.variant === undefined ? row.variant : input.variant === null ? null : string(input.variant, 256),
+      mode: input.mode === undefined ? (row.mode === 'stateless' ? 'stateless' : 'continuous') : input.mode === 'continuous' || input.mode === 'stateless' ? input.mode : fail('validation_error'),
+      workspacePath: input.workspacePath === undefined ? row.workspace_path : input.workspacePath == null ? null : workspace(input.workspacePath, assistantID),
+    };
+    const nextRow = { ...row, workspace_path: next.workspacePath, name: next.name, provider_id: next.provider, model_id: next.model, agent: next.agent, variant: next.variant };
+    effectiveWorkspace(nextRow);
+    if (row.revision !== input.expectedRevision) fail('revision_conflict');
+    const workspaceChanged = next.workspacePath !== row.workspace_path;
+    const created = workspaceChanged ? await createSession(nextRow) : null;
+    try {
+      db.transaction(() => {
+        const result = db.prepare('UPDATE assistant_v2 SET avatar_seed=?,enabled=1,name=?,default_prompt=?,provider_id=?,model_id=?,agent=?,variant=?,mode=?,workspace_path=?,current_session_id=?,session_generation=session_generation+?,revision=revision+1,updated_at=? WHERE assistant_id=? AND revision=? AND session_generation=? AND tombstone_at IS NULL').run(next.avatarSeed, next.name, next.prompt, next.provider, next.model, next.agent, next.variant, next.mode, next.workspacePath, created?.sessionID ?? row.current_session_id, workspaceChanged ? 1 : 0, now(), assistantID, input.expectedRevision, row.session_generation);
+        if (!result.changes) fail('revision_conflict');
+        if (workspaceChanged && row.current_session_id) archiveSession(assistantID, row.current_session_id, effectiveWorkspace(row));
+        bump();
+      })();
+    } catch (error) {
+      if (created) {
+        try {
+          const cleanup = await invokeSession(() => client().session.remove({ sessionID: created.sessionID }));
+          if (cleanup?.error && !isMissing(cleanup)) fail('upstream_error');
+        } catch {
+          fail('upstream_error', 'Settings were not saved; cleanup of the newly created session failed. Read live settings before retrying.');
+        }
+      }
+      throw error;
+    }
+    return output(assistant(assistantID));
+  };
   const compact = async (assistantID, input) => { const row = active(assistantID); if (!plainObject(input) || input.sessionID !== row.current_session_id || input.sessionGeneration !== row.session_generation || !row.current_session_id) fail('revision_conflict'); let target = row; let result = await invokeSession(() => client().session.compact({ sessionID: target.current_session_id })); if (isMissing(result)) { await restoreOnce(row, row.current_session_id, row.session_generation); target = active(assistantID); result = await invokeSession(() => client().session.compact({ sessionID: target.current_session_id })); } if (result?.error || (result?.data !== true && result?.id == null && result?.type !== 'compaction')) fail('upstream_error'); return { binding: binding(active(assistantID)), summarized: true }; };
   const sendWithConfig = async ({ row, sessionID, directory, config, parts, messageID, restore }) => {
     const sendPrompt = async (targetSessionID, targetConfig) => invokeSession(async () => {
@@ -1513,6 +1634,27 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   const contactBubbleMessageID = (userMessageID, bubbleIndex) => `${userMessageID}:bubble:${bubbleIndex + 1}`;
   const contactCardMessageID = (userMessageID, index) => `${userMessageID}:card:${index + 1}`;
 
+  const persistContactTurnError = (assistantID, { messageID, turnID, detail }) => {
+    try {
+      db.transaction(() => {
+        const errorID = `${messageID}:error`;
+        if (getContactMessage(db, errorID)) return;
+        insertContactMessage(db, {
+          messageID: errorID,
+          assistantID,
+          role: 'assistant',
+          turnID,
+          createdAt: now(),
+          ordinal: nextContactOrdinal(db, assistantID),
+          status: 'error',
+          parts: [{ type: 'text', text: detail }],
+        });
+      }).immediate();
+    } catch {
+      console.warn('[assistants] contact error could not be persisted');
+    }
+  };
+
   const persistPublishedContactBubble = (assistantID, { userMessageID, turnID, bubbleIndex, text }) => {
     const trimmed = typeof text === 'string' ? text.trim() : '';
     if (!trimmed || trimmed.startsWith('oc.settle.')) return false;
@@ -1578,6 +1720,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           updatedAt: now(),
           messageID: deliveryMessageID || null,
         });
+        if (deliveryMessageID) void assignedCompletion.observe({ kind: 'running', sessionId: card.sessionID });
       }
       bump();
       db.exec('COMMIT');
@@ -1685,6 +1828,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             updatedAt: now(),
             messageID: deliveryMessageID || null,
           });
+          if (deliveryMessageID) void assignedCompletion.observe({ kind: 'running', sessionId: card.sessionID });
         }
       });
       bump();
@@ -2318,11 +2462,20 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       signal: params.signal,
       includeMessages: true,
     });
+    let status = resolved.status;
+    if (status === 'complete') {
+      try {
+        const { activeRoots } = await readSessionFamilyActivity(assignedFamilyAuthority);
+        if (activeRoots.has(sessionID)) status = 'busy';
+      } catch {
+        status = 'busy';
+      }
+    }
     return {
       sessionID: resolved.sessionID,
       directory: resolved.directory,
       title: resolved.title,
-      status: resolved.status,
+      status,
       watched: true,
       reused: true,
     };
@@ -2788,23 +2941,21 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       }),
     };
   };
-  const findAssignedSessionCardTitle = (assistantID, sessionID) => {
-    const rows = db.prepare(
-      'SELECT p.part_json FROM assistant_contact_part p JOIN assistant_contact_message m ON m.message_id=p.message_id WHERE m.assistant_id=?',
-    ).all(assistantID);
-    for (const row of rows) {
-      let part;
-      try { part = parseContactPart(parse(row.part_json)); } catch { continue; }
-      if (part?.type === 'card' && part.cardType === 'session' && part.sessionID === sessionID) {
-        return typeof part.title === 'string' && part.title.trim() ? part.title.trim() : null;
-      }
-    }
-    return null;
+  const findAssignedSessionCard = (assistantID, sessionID) => {
+    const row = db.prepare(`
+      SELECT p.part_json FROM assistant_contact_part p
+      JOIN assistant_contact_message m ON m.message_id=p.message_id
+      WHERE m.assistant_id=? AND json_extract(p.part_json, '$.cardType')='session'
+        AND json_extract(p.part_json, '$.sessionID')=?
+      ORDER BY m.ordinal DESC LIMIT 1
+    `).get(assistantID, sessionID);
+    return row ? parseContactPart(parse(row.part_json)) : null;
   };
+  const findAssignedSessionCardTitle = (assistantID, sessionID) => findAssignedSessionCard(assistantID, sessionID)?.title ?? null;
   const extractLastWorkerAssistantText = (messages, maxChars = ASSIGNED_SESSION_RESUME_WORKER_TEXT_MAX) => {
     if (!Array.isArray(messages)) return '';
     const limit = Number.isFinite(maxChars) && maxChars > 0 ? Math.floor(maxChars) : ASSIGNED_SESSION_RESUME_WORKER_TEXT_MAX;
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
+    for (let index = 0; index < messages.length; index += 1) {
       const entry = messages[index];
       const info = entry?.info ?? entry;
       if (info?.role !== 'assistant') continue;
@@ -2925,7 +3076,6 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         resolveContactTurnSettlement(messageID, { status: 'error', error: 'not_found' });
         return;
       }
-      if (scheduledRun && (!enabled() || !live.enabled)) { finishCancelled(); return; }
       if (
         getContactMessage(db, `${messageID}:bubble:1`)
         || getContactMessage(db, `${messageID}:error`)
@@ -2970,7 +3120,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
               finishCancelled();
               return;
             }
-            workerText = extractLastWorkerAssistantText(scheduledRun ? [...(projectionEntries(messagesResult, sessionID) ?? rows)].reverse() : rows);
+            workerText = extractLastWorkerAssistantText(projectionEntries(messagesResult, sessionID) ?? rows);
           }
         }
       } catch {
@@ -3056,49 +3206,6 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
               : assistantID;
             return output(editable(targetID));
           },
-          updateAvatar: (seed) => updateContactAvatar(assistantID, seed),
-          updateAssistantSettings: async (patch = {}) => {
-            const normalizePrompt = (value) => {
-              if (typeof value !== 'string') fail('validation_error');
-              if (value.length > 200_000) fail('validation_error');
-              return value.trim();
-            };
-            const targetID = typeof patch?.assistantID === 'string' && patch.assistantID.trim()
-              ? patch.assistantID.trim()
-              : assistantID;
-            let lastError = null;
-            for (let attempt = 0; attempt < 2; attempt++) {
-              const current = output(editable(targetID));
-              if (!Object.prototype.hasOwnProperty.call(patch, 'defaultPrompt')) {
-                fail('validation_error');
-              }
-              const nextPrompt = normalizePrompt(patch.defaultPrompt);
-              if (current.defaultPrompt === nextPrompt) {
-                return {
-                  updated: false,
-                  unchanged: true,
-                  defaultPrompt: current.defaultPrompt,
-                  assistant: current,
-                };
-              }
-              await Promise.resolve();
-              try {
-                const updated = await updateAssistant(targetID, {
-                  expectedRevision: current.revision,
-                  defaultPrompt: nextPrompt,
-                });
-                return {
-                  updated: true,
-                  defaultPrompt: updated.defaultPrompt,
-                  assistant: updated,
-                };
-              } catch (error) {
-                lastError = error;
-                if (error?.code !== 'revision_conflict') throw error;
-              }
-            }
-            throw lastError;
-          },
           currentAssistant: assistantSnapshot,
           onCard: (card) => {
             if (contactResetThisTurn) return;
@@ -3139,7 +3246,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         }
         if (scheduledRun) {
           const current = assistant(assistantID);
-          if (!current || current.tombstone_at || !enabled() || !current.enabled) { finishCancelled(); return; }
+          if (!current || current.tombstone_at) { finishCancelled(); return; }
         }
         if (generated?.silent === true) {
           if (scheduledRun) db.prepare('INSERT OR IGNORE INTO assistant_scheduled_result(assistant_id, run_id, status) VALUES (?,?,?)').run(assistantID, scheduledRun.id, 'silent');
@@ -3159,6 +3266,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           ].filter((card, index, list) => list.findIndex((item) => contactCardIdentity(item) === contactCardIdentity(card)) === index);
         if (bubbles.length === 0 && cards.length === 0) {
           const detail = 'Assistant returned no text';
+          persistContactTurnError(assistantID, { messageID, turnID, detail });
           settleActiveContactTurn(assistantID, turnID, { bumpRevision: true });
           emitContactTurnEvent('yuri:contact-turn-end', {
             assistantID,
@@ -3205,6 +3313,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           ? error.message.trim()
           : (error?.code || 'upstream_error');
         const statusCode = error?.code === 'no_provider' ? 'no_provider' : (error?.code || 'upstream_error');
+        persistContactTurnError(assistantID, { messageID, turnID, detail });
         settleActiveContactTurn(assistantID, turnID, { bumpRevision: true });
         emitContactTurnEvent('yuri:contact-turn-end', {
           assistantID,
@@ -3236,7 +3345,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       WHERE t.project_id=? AND t.task_id=? AND a.tombstone_at IS NULL AND t.created_at<=?`).all(run.projectId, run.taskId, run.startedAt);
     await Promise.all(owners.map(async (owner) => {
       const assistantID = owner.assistant_id;
-      if (!enabled() || !owner.enabled || db.prepare('SELECT 1 FROM assistant_scheduled_result WHERE assistant_id=? AND run_id=?').get(assistantID, run.id)) return;
+      if (db.prepare('SELECT 1 FROM assistant_scheduled_result WHERE assistant_id=? AND run_id=?').get(assistantID, run.id)) return;
       const messageID = `scheduled_${assistantID}_${run.id}`;
       if (getContactMessage(db, `${messageID}:bubble:1`) || getContactMessage(db, `${messageID}:error`)) return;
       scheduleAssignedSessionResume({ assistantID, sessionID: run.sessionId, status: run.status === 'success' ? 'complete' : 'error', directory: run.directory, scheduledRun: run });
@@ -3339,7 +3448,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         }
         if (peer) {
           const live = assistant(row.assistant_id);
-          if (!live || live.tombstone_at || !live.enabled || !getContactMessage(db, messageID)) { finishCancelled(); return; }
+          if (!live || live.tombstone_at || !getContactMessage(db, messageID)) { finishCancelled(); return; }
         }
         markActiveContactTurnRunning(row.assistant_id, turnID);
         // Load the LLM window when the lane runs — not at admit time — so a
@@ -3440,51 +3549,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
                 : row.assistant_id;
               return output(editable(assistantID));
             },
-            updateAvatar: (seed) => updateContactAvatar(row.assistant_id, seed),
-            // Persist defaultPrompt via updateAssistant CAS; one revision_conflict retry.
-            updateAssistantSettings: async (patch = {}) => {
-              const normalizePrompt = (value) => {
-                if (typeof value !== 'string') fail('validation_error');
-                if (value.length > 200_000) fail('validation_error');
-                return value.trim();
-              };
-              const assistantID = typeof patch?.assistantID === 'string' && patch.assistantID.trim()
-                ? patch.assistantID.trim()
-                : row.assistant_id;
-              let lastError = null;
-              for (let attempt = 0; attempt < 2; attempt++) {
-                const current = output(editable(assistantID));
-                if (!Object.prototype.hasOwnProperty.call(patch, 'defaultPrompt')) {
-                  fail('validation_error');
-                }
-                const nextPrompt = normalizePrompt(patch.defaultPrompt);
-                if (current.defaultPrompt === nextPrompt) {
-                  return {
-                    updated: false,
-                    unchanged: true,
-                    defaultPrompt: current.defaultPrompt,
-                    assistant: current,
-                  };
-                }
-                // Yield so a concurrent UI PATCH can land before CAS (and tests can inject).
-                await Promise.resolve();
-                try {
-                  const updated = await updateAssistant(assistantID, {
-                    expectedRevision: current.revision,
-                    defaultPrompt: nextPrompt,
-                  });
-                  return {
-                    updated: true,
-                    defaultPrompt: updated.defaultPrompt,
-                    assistant: updated,
-                  };
-                } catch (error) {
-                  lastError = error;
-                  if (error?.code !== 'revision_conflict') throw error;
-                }
-              }
-              throw lastError;
-            },
+            updateAssistantSettings: (patch) => updateContactSettings(row.assistant_id, patch),
             currentAssistant: assistantSnapshot,
             onCard: (card) => {
               if (contactResetThisTurn) return;
@@ -3547,6 +3612,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             ].filter((card, index, list) => list.findIndex((item) => contactCardIdentity(item) === contactCardIdentity(card)) === index);
           if (bubbles.length === 0 && cards.length === 0) {
             const detail = 'Assistant returned no text';
+            persistContactTurnError(row.assistant_id, { messageID, turnID, detail });
             settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
             emitContactTurnEvent('yuri:contact-turn-end', {
               assistantID: row.assistant_id,
@@ -3607,6 +3673,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             ? error.message.trim()
             : (error?.code || 'upstream_error');
           const statusCode = error?.code === 'no_provider' ? 'no_provider' : (error?.code || 'upstream_error');
+          persistContactTurnError(row.assistant_id, { messageID, turnID, detail });
           settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
           emitContactTurnEvent('yuri:contact-turn-end', {
             assistantID: row.assistant_id,
@@ -3789,6 +3856,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           updatedAt: now(),
           messageID: deliveryMessageID || null,
         });
+        if (deliveryMessageID) void assignedCompletion.observe({ kind: 'running', sessionId: card.sessionID });
       }
       bump();
       db.exec('COMMIT');
@@ -4019,6 +4087,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     }
   };
   return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
+    assignedCompletion.dispose();
     cancelAssignedResumes({});
     sessionAbortInflight.clear();
     pendingAssignMessageIDs.clear();

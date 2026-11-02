@@ -128,7 +128,8 @@ describe('AssistantView contact surface', () => {
       expect(header).toContain("aria-label={t('assistants.settings.create')}")
       expect(header).toContain('<Icon name="add"')
     }
-    expect(desktopHeader).toContain('size="icon"')
+    expect(desktopHeader).toContain('size="mobileIcon"')
+    expect(desktopHeader).toContain('variant="mobileGlass"')
     expect(desktopHeader).toContain('min-w-0 truncate')
     expect(desktopHeader).toContain('<AssistantMarkAllReadButton snapshot={snapshot} compact rowClassName="flex min-w-0 flex-1 justify-end" />')
     expect(desktopHeader).toContain('onClick={openCreateSettings}')

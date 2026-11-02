@@ -85,7 +85,6 @@ type AssistantListItemProps = {
   assistantID: string;
   displayName: string;
   selected: boolean;
-  enabled: boolean;
   editLabel: string;
   deleteLabel: string;
   onSelect: () => void;
@@ -102,7 +101,6 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
   assistantID,
   displayName,
   selected,
-  enabled,
   editLabel,
   deleteLabel,
   onSelect,
@@ -143,7 +141,6 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
               selected
                 ? 'border-border/50 bg-[var(--surface-elevated)]'
                 : 'border-transparent hover:bg-interactive-hover',
-              !enabled && 'opacity-65',
             )}
           />
         }
@@ -259,7 +256,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
   if (workspaceState === 'onboarding') return renderState('ai-agent', t('assistants.onboarding.title'), t('assistants.onboarding.description'), <Button onClick={openCreateSettings}>{t('assistants.onboarding.action')}</Button>);
   if (!snapshot || !assistant) return renderState('cloud-off', t('assistants.state.unavailable'));
   const presentation = getAssistantPresentation(assistant.name);
-  const warning = !assistant.enabled ? t('assistants.state.assistantDisabled') : snapshotQuery.isError ? t('assistants.state.staleSnapshot') : null;
+  const warning = snapshotQuery.isError ? t('assistants.state.staleSnapshot') : null;
   return (
     <div className="relative flex h-full min-h-0 overflow-clip bg-background" data-presentation="workspace">
       {isMobileSurface ? null : (
@@ -292,7 +289,6 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
                     summary={getAssistantMessagePreview(item.latestMessagePreview, t)}
                     displayName={itemPresentation.displayName}
                     selected={selected}
-                    enabled={item.enabled}
                     editLabel={t('assistants.menu.edit')}
                     deleteLabel={t('assistants.settings.delete')}
                     assignedSessionIDs={item.assignedSessionIDs}

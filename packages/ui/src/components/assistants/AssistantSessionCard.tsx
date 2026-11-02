@@ -26,9 +26,9 @@ type AssistantSessionCardProps = {
 const displayStatus = (liveType: string | undefined, persisted: string | null | undefined) => {
   if (persisted === 'cancelled') return persisted
   if (liveType === 'busy' || liveType === 'retry') return liveType
-  if (persisted === 'error' || persisted === 'question' || persisted === 'complete') return persisted
+  if (persisted === 'error' || persisted === 'question' || persisted === 'complete' || persisted === 'busy' || persisted === 'retry') return persisted
   if (liveType === 'idle') return 'complete'
-  if (persisted === 'busy' || persisted === 'retry' || persisted === 'idle') return persisted
+  if (persisted === 'idle') return persisted
   return persisted || 'busy'
 }
 

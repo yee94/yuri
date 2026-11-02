@@ -198,16 +198,16 @@ describe('createContactStreamFn', () => {
 
   it('uses the model reply after saving a prompt and keeps the stock tool confirmation private', async () => {
     const tools = createContactTools({
-      updateAssistantSettings: async () => ({ updated: true, defaultPrompt: '简洁回复' }),
+      updateAssistantSettings: async () => ({ updated: true, assistant: { id: 'a', defaultPrompt: '简洁回复' } }),
       currentAssistant: { id: 'a', name: 'Config' },
     })
     const completion = vi.fn(async ({ body }) => {
-      const result = body.messages.find((m) => m.role === 'tool' && m.name === 'update_default_prompt')
+      const result = body.messages.find((m) => m.role === 'tool' && m.name === 'update_assistant_settings')
       if (result) {
-        expect(result.content).toContain('Default prompt saved.')
+        expect(result.content).toContain('简洁回复')
         return { text: '提示词已保存，接下来的对话会按这个设置回复。' }
       }
-      return toolBatch([notifyCall('我来保存这个默认提示词。'), ['update_default_prompt', { prompt: '简洁回复' }]])
+      return toolBatch([notifyCall('我来保存这个默认提示词。'), ['update_assistant_settings', { settings: { defaultPrompt: '简洁回复' } }]])
     })
     const onBubbleDelta = vi.fn()
     const result = await runContactTurn({
@@ -228,7 +228,7 @@ describe('createContactStreamFn', () => {
       .mockResolvedValueOnce(toolBatch([notifyCall('我先确认设置。'), ['get_assistant_settings', {}]]))
       .mockImplementationOnce(async () => {
         controller.abort()
-        return toolBatch([notifyCall('这条迟到消息应丢弃。'), ['update_default_prompt', { prompt: 'late' }]])
+        return toolBatch([notifyCall('这条迟到消息应丢弃。'), ['update_assistant_settings', { settings: { defaultPrompt: 'late' } }]])
       })
     await expect(runContactTurn({
       assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '确认设置',
@@ -806,7 +806,7 @@ describe('runContactTurn', () => {
         history: [], userText: '再建个会话去修这个问题', tools,
         projects: [{ id: 'project', path: workspace }], skillHomeDir: home, createChatCompletion,
       })
-      expect(result.tools.map((tool) => tool.name)).toEqual([...PI_CODING_TOOL_NAMES, ...tools.map((tool) => tool.name).filter((name) => !['create_assistant', 'update_avatar', 'schedule_task', 'update_scheduled_task'].includes(name)), 'load_tools', 'notify_user'])
+      expect(result.tools.map((tool) => tool.name)).toEqual([...PI_CODING_TOOL_NAMES, ...tools.map((tool) => tool.name).filter((name) => !['create_assistant', 'schedule_task', 'update_scheduled_task'].includes(name)), 'load_tools', 'notify_user'])
       expect(assignWork).toHaveBeenCalledTimes(1)
       expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_mixed' })])
       // Assignment terminates mutations; a tools-disabled completion summarizes the result.
@@ -1773,15 +1773,15 @@ describe('runContactTurn bubble index continuity', () => {
   it('real Agent: multi-segment spoken preambles then terminal tool confirm append after published prefix', async () => {
     const bubbleDeltas = []
     // Two independent short spokens (each tool turn); confirm-only tool text appends at end.
-    // update_default_prompt is terminate:false so a plain final closes the agent loop.
+    // update_assistant_settings is terminate:false so a plain final closes the agent loop.
     const createChatCompletion = completionFromReplies([
       sayThen('我先看一下', 'list_sessions', { query: 'login' }),
-      sayThen('马上改人设', 'update_default_prompt', { prompt: 'be brief' }),
+      sayThen('马上改人设', 'update_assistant_settings', { settings: { defaultPrompt: 'be brief' } }),
       '改好了',
     ])
     const tools = createContactTools({
       listSessions: async () => ({ sessions: [] }),
-      updateAssistantSettings: async ({ defaultPrompt }) => ({ defaultPrompt, updated: true }),
+      updateAssistantSettings: async ({ defaultPrompt }) => ({ assistant: { id: 'asst_x', defaultPrompt }, updated: true }),
       currentAssistant: { id: 'asst_x', name: 'A', providerID: 'p', modelID: 'm', defaultPrompt: '' },
     })
     const result = await runContactTurn({
@@ -1799,7 +1799,7 @@ describe('runContactTurn bubble index continuity', () => {
     expect(result.bubbles).toHaveLength(3)
     expect(result.bubbles.slice(0, doneBubbles.length)).toEqual(doneBubbles)
     expect(result.bubbles.join('')).not.toMatch(/Default prompt/i)
-    expect(result.bubbles.join('\n')).not.toContain('update_default_prompt')
+    expect(result.bubbles.join('\n')).not.toContain('update_assistant_settings')
   })
 
   it('real Agent: missed-tool retry keeps pre-retry spoken bubbles in the final array', async () => {

@@ -125,13 +125,19 @@ export function ensureContactSchema(db) {
   // only counts assistant tails that belong to this delivery.
   if (!watchColumns.has('message_id')) db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN message_id TEXT');
   // Attachment table ownership lives in contact-attachments.ensureContactAttachmentSchema.
-  // Errors are live feedback, not history. Remove legacy rows and their bodies atomically.
+  // Recover the latest error, but remove legacy errors superseded by newer contact updates.
   db.transaction(() => {
+    const superseded = `SELECT m.message_id FROM assistant_contact_message m
+      WHERE m.status = 'error' AND EXISTS (
+        SELECT 1 FROM assistant_contact_message newer
+        WHERE newer.assistant_id = m.assistant_id
+          AND (newer.ordinal > m.ordinal OR (newer.ordinal = m.ordinal AND newer.message_id > m.message_id))
+      )`;
     db.exec(`
       DELETE FROM assistant_contact_part WHERE message_id IN (
-        SELECT message_id FROM assistant_contact_message WHERE status = 'error'
+        ${superseded}
       );
-      DELETE FROM assistant_contact_message WHERE status = 'error';
+      DELETE FROM assistant_contact_message WHERE message_id IN (${superseded});
     `);
   })();
 }
@@ -283,7 +289,7 @@ export function isContactVisiblePart(part) {
 
 /**
  * True when a contact row should contribute to unreadCount.
- * Counts complete/error assistant replies and user-facing peer DMs that have
+ * Counts complete assistant replies and user-facing peer DMs that have
  * ≥1 visible part (per-part settle filter). User messages, blank rows,
  * settle-only markers, and non-visible roles are excluded.
    * Token-level SSE deltas never create rows. Each published spoken bubble
@@ -294,7 +300,7 @@ export function isContactUnreadCountableMessage(message) {
   const role = message.role;
   if (role !== 'assistant' && role !== 'peer') return false;
   const status = typeof message.status === 'string' ? message.status : 'complete';
-  if (status !== 'complete' && status !== 'error') return false;
+  if (status !== 'complete') return false;
   const parts = Array.isArray(message.parts) ? message.parts : [];
   if (parts.length > 0) return parts.some(isContactVisiblePart);
   // Parts-less fixtures: treat top-level text like a single text part.
@@ -344,7 +350,7 @@ export function countContactUnread(db, assistantID, watermark = null) {
      FROM assistant_contact_message m
      WHERE m.assistant_id = ?
        AND m.role IN ('assistant', 'peer')
-       AND m.status IN ('complete', 'error')
+        AND m.status = 'complete'
        AND ${afterSql}
        AND ${contactUnreadHasVisiblePartSql('m.message_id')}`,
   ).get(assistantID, mark.ordinal, mark.ordinal, mark.messageID);
@@ -460,7 +466,7 @@ export function getContactUnreadSnapshots(db, assistantIDs) {
      FROM assistant_contact_message m
      INNER JOIN marks ON marks.assistant_id = m.assistant_id
      WHERE m.role IN ('assistant', 'peer')
-       AND m.status IN ('complete', 'error')
+        AND m.status = 'complete'
        AND (
          m.ordinal > marks.mark_ordinal
          OR (m.ordinal = marks.mark_ordinal AND m.message_id > marks.mark_message_id)
@@ -750,6 +756,7 @@ export function sanitizeContactPreviewText(text, maxChars = CONTACT_PREVIEW_MAX_
  */
 export function buildContactMessagePreview(message) {
   if (!message || typeof message !== 'object') return null;
+  if (message.status === 'error') return null;
   const sourceRole = message.role;
   if (sourceRole !== 'user' && sourceRole !== 'assistant' && sourceRole !== 'peer') return null;
   const parts = Array.isArray(message.parts) ? message.parts : [];
@@ -872,6 +879,7 @@ const CONTACT_PREVIEW_CANDIDATE_SQL = `
   FROM assistant_contact_message m
   WHERE m.assistant_id = ?
     AND m.role IN ('user', 'assistant', 'peer')
+    AND m.status != 'error'
     AND NOT (
       EXISTS (
         SELECT 1 FROM assistant_contact_part p
@@ -1031,16 +1039,21 @@ export function insertContactMessage(db, {
   fromAssistantID = null,
   fromAssistantName = null,
 }) {
-  if (status === 'error') return;
-  db.prepare(
-    'INSERT INTO assistant_contact_message(message_id,assistant_id,role,turn_id,bubble_index,created_at,ordinal,status,from_assistant_id,from_assistant_name) VALUES (?,?,?,?,?,?,?,?,?,?)',
-  ).run(messageID, assistantID, role, turnID, bubbleIndex, createdAt, ordinal, status, fromAssistantID, fromAssistantName);
-  parts.forEach((part, index) => {
-    const serialized = serializeContactPart(part, index);
+  db.transaction(() => {
+    db.prepare(`DELETE FROM assistant_contact_part WHERE message_id IN (
+      SELECT message_id FROM assistant_contact_message WHERE assistant_id=? AND status='error'
+    )`).run(assistantID);
+    db.prepare("DELETE FROM assistant_contact_message WHERE assistant_id=? AND status='error'").run(assistantID);
     db.prepare(
-      'INSERT INTO assistant_contact_part(message_id,part_id,ordinal,part_json) VALUES (?,?,?,?)',
-    ).run(messageID, serialized.id, index + 1, json(serialized));
-  });
+      'INSERT INTO assistant_contact_message(message_id,assistant_id,role,turn_id,bubble_index,created_at,ordinal,status,from_assistant_id,from_assistant_name) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    ).run(messageID, assistantID, role, turnID, bubbleIndex, createdAt, ordinal, status, fromAssistantID, fromAssistantName);
+    parts.forEach((part, index) => {
+      const serialized = serializeContactPart(part, index);
+      db.prepare(
+        'INSERT INTO assistant_contact_part(message_id,part_id,ordinal,part_json) VALUES (?,?,?,?)',
+      ).run(messageID, serialized.id, index + 1, json(serialized));
+    });
+  })();
 }
 
 /**

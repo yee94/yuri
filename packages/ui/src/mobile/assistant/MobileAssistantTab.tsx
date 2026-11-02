@@ -122,7 +122,6 @@ type MobileAssistantCardProps = {
   assistantID: string;
   displayName: string;
   summary: string;
-  enabled: boolean;
   editLabel: string;
   deleteLabel: string;
   onOpen: () => void;
@@ -138,7 +137,6 @@ function MobileAssistantCard({
   assistantID,
   displayName,
   summary,
-  enabled,
   editLabel,
   deleteLabel,
   onOpen,
@@ -164,7 +162,7 @@ function MobileAssistantCard({
               aria-selected="false"
               data-mobile-press-feedback="soft"
               className={cn('yuri-mobile-assistant-card relative z-10 motion-reduce:transition-none',
-                swipe.dragging ? 'transition-none' : 'transition-transform duration-150 ease-out', !enabled && 'opacity-65')}
+                swipe.dragging ? 'transition-none' : 'transition-transform duration-150 ease-out')}
               onClick={swipe.handleSelect}
               onPointerDown={swipe.handlePointerDown}
               onPointerMove={swipe.handlePointerMove}
@@ -278,7 +276,6 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
                 unreadCount={assistant.unreadCount ?? 0}
                 displayName={displayName}
                 summary={summary}
-                enabled={assistant.enabled}
                 editLabel={editLabel}
                 deleteLabel={deleteLabel}
                 assignedSessionIDs={assistant.assignedSessionIDs}

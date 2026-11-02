@@ -16,7 +16,6 @@ import { SettingsSidebarLayout } from '@/components/sections/shared/SettingsSide
 import { SettingsField, SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
 import { SettingsActionHeader } from '@/components/sections/shared/SettingsActionHeader';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -79,7 +78,6 @@ const resolveDefaultAssistantModel = (): { providerID: string; modelID: string; 
 const emptyDraft = (defaultName = ''): AssistantDraft => {
   const defaultModel = resolveDefaultAssistantModel();
   return {
-    enabled: true,
     name: defaultName,
     avatarSeed: createDefaultAssistantAvatarSeed(crypto.randomUUID()),
     defaultPrompt: '',
@@ -92,7 +90,6 @@ const emptyDraft = (defaultName = ''): AssistantDraft => {
 
 const draftFromAssistant = (assistant: AssistantDTO): AssistantDraft => ({
   avatarSeed: assistant.avatarSeed ?? assistant.id,
-  enabled: assistant.enabled,
   name: assistant.name,
   defaultPrompt: assistant.defaultPrompt,
   workspacePath: assistant.workspacePath,
@@ -107,7 +104,6 @@ const draftFromAssistant = (assistant: AssistantDTO): AssistantDraft => ({
  */
 const toAssistantSettingsUpdateDraft = (draft: AssistantDraft): AssistantDraft => ({
   avatarSeed: draft.avatarSeed,
-  enabled: draft.enabled,
   name: draft.name,
   defaultPrompt: draft.defaultPrompt,
   workspacePath: draft.workspacePath,
@@ -557,9 +553,6 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
             <SettingsGroup>
                 <SettingsRow itemId="assistants.name" label={t('assistants.settings.name')}>
                   <Input id="assistant-name" value={draft.name} onChange={(event) => patchDraft('name', event.target.value)} className="min-w-0 flex-1" />
-                </SettingsRow>
-                <SettingsRow label={t('assistants.settings.enabled')}>
-                  <Checkbox checked={draft.enabled} onChange={(value) => patchDraft('enabled', value)} ariaLabel={t('assistants.settings.enabled')} />
                 </SettingsRow>
                  <SettingsRow itemId="assistants.model" label={t('assistants.settings.model')}>
                    <ModelSelector providerId={draft.providerID} modelId={draft.modelID} variant={draft.variant ?? ''} providers={catalogProviders} onChange={(providerID, modelID, variant) => setDraft((current) => ({ ...current, providerID, modelID, variant: variant || null }))} className="yuri-settings-inline-value" />
