@@ -56,6 +56,14 @@ The UI calls JPEG fallback “Compatibility stream”, not “Encrypted tunnel�
 
 Control always stays on the authenticated WS, including when video is P2P. `protocol.js` bounds and projects pointer coordinates, scroll deltas, text (1024 UTF-16 code units), key names, SDP (64 KiB), and ICE candidate fields. There is no arbitrary shell/keycode/file/clipboard API. WS messages are capped at 96 KiB; input is serialized with at most 32 queued commands and 150 messages/second. The native helper checks permission and active display again, and accepts only its own bounded JSON command vocabulary.
 
+The Relay transport immediately flushes this exact socket's outbound data in
+both directions instead of applying the ordinary 150ms trailing batch window.
+This covers signaling/input, JPEG fallback and decode ACKs without changing
+message order, authorization, framing or old-peer compatibility. Each updated
+sender removes its own direction's intentional delay; a mixed-version connection
+may still wait on the older sender. WebRTC media and capture/ACK limits are
+unchanged. See the Relay module's scheduling/byte-ownership contract.
+
 ## Mobile interaction and performance
 
 The Projects homepage plus menu ends with a Remote desktop icon/action after instance choices. The chat header overflow menu exposes the same action. `MobileApp` owns one open state and one shared entry handler; the homepage receives it through `MobilePhoneShell` and its Projects container. `RemoteDesktopPanel` now renders an opaque, viewport-filling standalone page in a body portal, not a sheet/dialog. It registers `remote-desktop-page` as its own root route with `useMobileBackRoute`, reusing the shared hosted-browser history and native Back coordinator. Back returns to the unchanged source tab/chat; it does not pop the retained chat route. The underlying shell is inert, the native dock is covered and the native composer uses the existing reference-counted cover. Root route gestures remain enabled for this page while underlying header navigation is blocked. Closing/unmounting releases the connection and native cover.

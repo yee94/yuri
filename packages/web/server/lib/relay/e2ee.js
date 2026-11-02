@@ -175,14 +175,14 @@ export const createFrameDecryptor = (key) => {
       if (frame[0] !== ENCRYPTED_FRAME_VERSION) {
         throw new RelayCryptoError('unsupported encrypted frame version');
       }
-      const iv = frame.slice(1, ENCRYPTED_FRAME_HEADER_BYTES);
+      const iv = frame.subarray(1, ENCRYPTED_FRAME_HEADER_BYTES);
       const counter = readCounter(iv, IV_PREFIX_BYTES);
       if (counter <= lastCounter) {
         throw new RelayCryptoError('frame counter regression');
       }
       let plaintext;
       try {
-        plaintext = await subtle.decrypt({ name: 'AES-GCM', iv }, key, frame.slice(ENCRYPTED_FRAME_HEADER_BYTES));
+        plaintext = await subtle.decrypt({ name: 'AES-GCM', iv }, key, frame.subarray(ENCRYPTED_FRAME_HEADER_BYTES));
       } catch {
         throw new RelayCryptoError('frame decryption failed');
       }

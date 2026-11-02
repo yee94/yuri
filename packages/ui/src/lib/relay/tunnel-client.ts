@@ -200,7 +200,7 @@ type ActiveChannel = {
   streams: Map<number, StreamHandler>;
   assembler: ReturnType<typeof createFragmentAssembler>;
   nextStreamId(): number;
-  send(frame: Uint8Array): void;
+  send(frame: Uint8Array, immediate?: boolean): void;
   dead: boolean;
 };
 
@@ -488,14 +488,16 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
         assembler,
         nextStreamId: () => allocator.next(),
         dead: false,
-        send(frame: Uint8Array): void {
+        send(frame: Uint8Array, immediate = false): void {
           if (channelObj.dead) return;
           const frameType = frame[0] & ~TUNNEL_FRAGMENT_FLAG;
           if (frameType !== TunnelFrameType.Ping && frameType !== TunnelFrameType.Pong) {
             lastSentAt = Date.now();
           }
-          if (localBatcher) localBatcher.enqueue(frame);
-          else sendEncryptedPlaintext(frame);
+          if (localBatcher) {
+            localBatcher.enqueue(frame);
+            if (immediate) localBatcher.flush();
+          } else sendEncryptedPlaintext(frame);
         },
       };
       channel = channelObj;
@@ -854,6 +856,8 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
   };
 
   const openTunnelWebSocket = (pathWithQuery: string, protocols?: string[], headers?: Record<string, string>): RelayTunnelWebSocket => {
+    const { path, query } = splitPathQuery(pathWithQuery);
+    const immediate = path === '/api/remote-desktop/ws';
     let readyState = WS_CONNECTING;
     let channelRef: ActiveChannel | null = null;
     let streamId = 0;
@@ -873,20 +877,17 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
         }
         if (typeof data === 'string') {
           for (const frame of encodeFragmentedMessage(TunnelFrameType.WsText, streamId, textEncoder.encode(data))) {
-            channelRef.send(frame);
+            channelRef.send(frame, immediate);
           }
           return;
         }
         const bytes =
           data instanceof ArrayBuffer
-            ? new Uint8Array(data.slice(0))
-            : (() => {
-                const copy = new Uint8Array(data.byteLength);
-                copy.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-                return copy;
-              })();
+            ? new Uint8Array(data)
+            : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        // Encoding copies synchronously; callers may reuse their input after send returns.
         for (const frame of encodeFragmentedMessage(TunnelFrameType.WsBinary, streamId, bytes)) {
-          channelRef.send(frame);
+          channelRef.send(frame, immediate);
         }
       },
       close(code = 1000, reason = '') {
@@ -992,7 +993,6 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
           settleClose(1012, error.message, true);
         },
       });
-      const { path, query } = splitPathQuery(pathWithQuery);
       // The host sets the WS Origin itself (to the loopback origin it dials); the
       // client's window.location.origin is unreliable in WKWebView, so we don't send it.
       const openPayload: TunnelWsOpenPayload = {

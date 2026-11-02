@@ -1,4 +1,4 @@
-import { DOUBLE_TAP_DISTANCE_PX, DOUBLE_TAP_MS, LONG_PRESS_MS, TAP_MAX_MS, TAP_SLOP_PX, isDoubleTap } from '@/lib/touch-gestures/tap';
+import { LONG_PRESS_MS, TAP_MAX_MS, isDoubleTap } from '@/lib/touch-gestures/tap';
 import type { DesktopInput } from './connection';
 
 type Point = { x: number; y: number };

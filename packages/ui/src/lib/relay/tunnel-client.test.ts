@@ -260,6 +260,11 @@ const attachMiniHost = (endpoint: FakeEndpoint, hostPrivateKey: CryptoKey, optio
       sendFrame(encodeTunnelFrame(TunnelFrameType.WsText, frame.streamId, textEncoder.encode(`echo:${text}`)));
       return;
     }
+    if (frame.frameType === TunnelFrameType.WsBinary) {
+      const complete = assembler.push(frame);
+      if (complete) sendFrame(encodeTunnelFrame(TunnelFrameType.WsBinary, frame.streamId, complete));
+      return;
+    }
     if (frame.frameType === TunnelFrameType.WsClose) {
       sendFrame(encodeTunnelFrame(TunnelFrameType.WsClose, frame.streamId, frame.payload));
     }
@@ -789,6 +794,22 @@ describe('createRelayTunnelClient', () => {
     const burstWireMessages = clientBinaryCount() - baseline;
     expect(burstWireMessages).toBeLessThan(BURST / 3);
     expect(burstWireMessages).toBeGreaterThan(0);
+  });
+
+  test.each([true, false])('remote desktop bypasses the batch window in order (batch=%s)', async (batch) => {
+    const { client } = await setupClient({ batch }, { batchWindowMs: 1_000, pingIntervalMs: 60_000 });
+    track(client);
+    const socket = client.openWebSocket('/api/remote-desktop/ws?yuri_url_token=test');
+    await new Promise<void>((resolve) => { socket.onopen = resolve; });
+    const echoes: Array<string | ArrayBuffer> = [];
+    socket.onmessage = ({ data }) => { echoes.push(data); };
+    for (let i = 0; i < 50; i += 1) socket.send(`input:${i}`);
+    const backing = new Uint8Array([99, 1, 2, 3, 99]);
+    socket.send(new DataView(backing.buffer, 1, 3));
+    backing.fill(0);
+    await vi.waitFor(() => expect(echoes).toHaveLength(51), { timeout: 500, interval: 5 });
+    expect(echoes.slice(0, 50)).toEqual(Array.from({ length: 50 }, (_, i) => `echo:input:${i}`));
+    expect(new Uint8Array(echoes[50] as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   test('leading edge: a single frame after idle is delivered immediately, not a window later', async () => {

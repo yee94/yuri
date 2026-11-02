@@ -131,6 +131,27 @@ describe('negotiated JSON response compression', () => {
   });
 });
 
+describe('remote desktop send scheduling', () => {
+  it.each(['/api/remote-desktop/ws', '/api/event/ws'])('only remote desktop requests immediate data flushes: %s', async (path) => {
+    FakeWebSocket.reset();
+    const sent = [];
+    const host = createTunnelHost({ connectionId: 'scheduling', getLocalPort: () => 9,
+      sendFrame: (frame, immediate) => { sent.push({ ...decodeTunnelFrame(frame), immediate }); },
+      getBufferedAmount: () => 0, createWebSocket: (url, protocols) => new FakeWebSocket(url, protocols) });
+    try {
+      await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsOpen, 1, encodeJsonPayload({ path, query: '' })));
+      const socket = FakeWebSocket.instances[0];
+      socket.emit('open');
+      for (let i = 0; i < 50; i += 1) socket.emit('message', Buffer.from(`ack:${i}`), false);
+      socket.emit('message', Buffer.alloc(MAX_TUNNEL_PAYLOAD_BYTES + 1, 7), true);
+      await waitFor(() => sent.length === 53);
+      const data = sent.filter((frame) => [TunnelFrameType.WsText, TunnelFrameType.WsBinary].includes(frame.frameType));
+      expect(data.every((frame) => frame.immediate === (path === '/api/remote-desktop/ws'))).toBe(true);
+      expect(data.slice(0, 50).map((frame) => textDecoder.decode(frame.payload))).toEqual(Array.from({ length: 50 }, (_, i) => `ack:${i}`));
+    } finally { host.close(); }
+  });
+});
+
 describe('isTunnelWsPathAllowed', () => {
   it('allows exact terminal/dictation/event sockets and preview proxy prefix', () => {
     expect(isTunnelWsPathAllowed('/api/terminal/ws')).toBe(true);

@@ -28,6 +28,7 @@ export class TunnelCodecError extends Error {
 export interface TunnelFrame {
   frameType: TunnelFrameTypeValue;
   streamId: number;
+  /** Read-only view into the decoded frame; its backing bytes must not be recycled or mutated. */
   payload: Uint8Array;
   /** True when this frame is a fragment and more fragments of the same message follow. */
   hasMoreFragments: boolean;
@@ -69,7 +70,7 @@ export const decodeTunnelFrame = (frame: Uint8Array): TunnelFrame => {
   return {
     frameType,
     streamId,
-    payload: frame.slice(TUNNEL_FRAME_HEADER_BYTES),
+    payload: frame.subarray(TUNNEL_FRAME_HEADER_BYTES),
     hasMoreFragments,
   };
 };
@@ -92,7 +93,7 @@ export const decodeJsonPayload = <T>(payload: Uint8Array, validate: (parsed: unk
   return parsed;
 };
 
-/** Split a body/message into payload-sized chunks. Empty input yields one empty chunk. */
+/** Split into read-only byte views. The source must remain unchanged until consumed; empty input yields one empty chunk. */
 export const chunkPayload = (bytes: Uint8Array, chunkSize = MAX_TUNNEL_PAYLOAD_BYTES): Uint8Array[] => {
   if (chunkSize <= 0 || chunkSize > MAX_TUNNEL_PAYLOAD_BYTES) {
     throw new TunnelCodecError('invalid chunk size');
@@ -100,7 +101,7 @@ export const chunkPayload = (bytes: Uint8Array, chunkSize = MAX_TUNNEL_PAYLOAD_B
   if (bytes.length === 0) return [new Uint8Array(0)];
   const chunks: Uint8Array[] = [];
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    chunks.push(bytes.slice(offset, offset + chunkSize));
+    chunks.push(bytes.subarray(offset, offset + chunkSize));
   }
   return chunks;
 };
@@ -207,14 +208,14 @@ export const encodeFrameBatch = (frames: Uint8Array[]): Uint8Array => {
   return out;
 };
 
-/** Decodes a batch-envelope plaintext into its ordered tunnel frames. */
+/** Decodes a batch-envelope plaintext into ordered read-only views of that plaintext. */
 export const decodeFrameBatch = (plaintext: Uint8Array): Uint8Array[] => {
   if (plaintext.length < 1) {
     throw new TunnelCodecError('empty batch plaintext');
   }
   const tag = plaintext[0];
   if (tag === BATCH_CONTAINER_TAG_SINGLE) {
-    return [plaintext.slice(1)];
+    return [plaintext.subarray(1)];
   }
   if (tag !== BATCH_CONTAINER_TAG_BATCH) {
     throw new TunnelCodecError(`unknown batch container tag ${tag}`);
@@ -235,7 +236,7 @@ export const decodeFrameBatch = (plaintext: Uint8Array): Uint8Array[] => {
     if (offset + length > plaintext.length) {
       throw new TunnelCodecError('truncated batch frame body');
     }
-    frames.push(plaintext.slice(offset, offset + length));
+    frames.push(plaintext.subarray(offset, offset + length));
     offset += length;
   }
   if (frames.length === 0) {

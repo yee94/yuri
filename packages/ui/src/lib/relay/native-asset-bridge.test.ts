@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { Buffer as NodeBuffer } from 'node:buffer';
 
 import {
   NATIVE_RELAY_ASSET_BRIDGE_KEY,
@@ -11,6 +12,7 @@ import {
 afterEach(() => {
   delete (globalThis as Record<string, unknown>)[NATIVE_RELAY_ASSET_BRIDGE_KEY];
   resetNativeRelayAssetBridgeCacheForTests();
+  vi.unstubAllGlobals();
 });
 
 describe('isNativeRelayAssetBridge', () => {
@@ -31,6 +33,40 @@ describe('isNativeRelayAssetBridge', () => {
 });
 
 describe('resolveNativeRelayAssetBridge', () => {
+  test.each(['native', 'buffer', 'legacy'] as const)('Capacitor encoding preserves byte views and write backpressure (%s)', async (encoding) => {
+    let finishWrite: (() => void) | undefined;
+    const append = vi.fn(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    const plugin = {
+      create: async ({ assetId }: { assetId: string }) => ({ assetId, url: `yuri-asset://v/${assetId}` }),
+      append,
+      finish: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
+    };
+    vi.stubGlobal('window', { Capacitor: { isNativePlatform: () => true, Plugins: { YuriVirtualAsset: plugin } } });
+    if (encoding !== 'buffer') vi.stubGlobal('Buffer', undefined);
+    const bridge = await resolveNativeRelayAssetBridge();
+    expect(bridge).not.toBeNull();
+    const opened = await bridge!.openAsset({ assetId: 'test_asset', mimeType: 'image/png' });
+    const storage = new Uint8Array(512 * 1024 + 16);
+    for (let i = 0; i < storage.length; i++) storage[i] = i % 256;
+    const bytes = storage.subarray(7, storage.length - 9);
+    const expected = NodeBuffer.from(bytes).toString('base64');
+    const toBase64 = vi.fn(function (this: Uint8Array) { return NodeBuffer.from(this).toString('base64'); });
+    Object.defineProperty(bytes, 'toBase64', { configurable: true, value: encoding === 'native' ? toBase64 : undefined });
+    let settled = false;
+    const pending = Promise.resolve(bridge!.writeChunk(opened.assetId, bytes)).then(() => { settled = true; });
+    await Promise.resolve();
+    expect(append).toHaveBeenCalledExactlyOnceWith({ assetId: opened.assetId, chunk: expected });
+    expect(settled).toBe(false);
+    expect(toBase64).toHaveBeenCalledTimes(encoding === 'native' ? 1 : 0);
+    finishWrite!();
+    await pending;
+    await bridge!.endAsset(opened.assetId);
+    await bridge!.releaseAsset(opened.assetId);
+    expect(plugin.finish).toHaveBeenCalledExactlyOnceWith({ assetId: opened.assetId });
+    expect(plugin.cancel).toHaveBeenCalledExactlyOnceWith({ assetId: opened.assetId });
+  });
+
   test('prefers the explicit global install', async () => {
     const bridge = {
       openAsset: async () => ({ assetId: 'g', url: 'global-url' }),

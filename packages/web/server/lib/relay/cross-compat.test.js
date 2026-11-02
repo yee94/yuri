@@ -2,7 +2,7 @@
 // modules in packages/ui/src/lib/relay. bun runs TS directly, so import the TS
 // client handshake and drive a full TS-client <-> JS-host exchange both ways.
 
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHostHandshake, exportPublicKeyJwk, generateEcdhKeyPair } from './e2ee.js';
 import { createClientHandshake } from '../../../../ui/src/lib/relay/handshake.ts';
@@ -22,6 +22,47 @@ import {
 import { TunnelFrameType as TsFrameType } from '../../../../ui/src/lib/relay/protocol.ts';
 
 describe('relay JS-host <-> TS-client cross compatibility', () => {
+  it('both decryptors accept offset byte views without ciphertext copies or counter loss', async () => {
+    const keys = await generateEcdhKeyPair();
+    const host = createHostHandshake(keys.privateKey);
+    const client = await createClientHandshake(await exportPublicKeyJwk(keys.publicKey));
+    const hostAction = await host.handleText(client.helloText);
+    const clientAction = await client.handleText(hostAction.replyText);
+    for (const [sender, receiver] of [[clientAction.channel, hostAction.channel], [hostAction.channel, clientAction.channel]]) {
+      const message = new Uint8Array(64 * 1024).fill(7);
+      const frame = await sender.encryptor.encrypt(message);
+      const backing = new Uint8Array(frame.length + 16);
+      backing.set(frame, 7);
+      const view = backing.subarray(7, 7 + frame.length);
+      const copy = vi.spyOn(view, 'slice');
+      try {
+        expect(await receiver.decryptor.decrypt(view)).toEqual(message);
+        expect(copy).not.toHaveBeenCalled();
+        await expect(receiver.decryptor.decrypt(view)).rejects.toThrow('frame counter regression');
+      } finally { copy.mockRestore(); }
+      const valid = await sender.encryptor.encrypt(new Uint8Array([9]));
+      const tampered = valid.slice();
+      tampered[tampered.length - 1] ^= 1;
+      await expect(receiver.decryptor.decrypt(tampered)).rejects.toThrow('frame decryption failed');
+      expect(await receiver.decryptor.decrypt(valid)).toEqual(new Uint8Array([9]));
+    }
+  });
+
+  it.each([
+    ['TS', tsEncodeBatch, tsDecodeBatch, tsDecode],
+    ['JS', jsEncodeBatch, jsDecodeBatch, jsDecode],
+  ])('%s codec decodes views without copying or exposing adjacent frame bytes', (_name, encodeBatch, decodeBatch, decode) => {
+    const first = tsEncode(TsFrameType.HttpBody, 1, new Uint8Array([1, 2]));
+    const second = tsEncode(TsFrameType.HttpBody, 3, new Uint8Array([3]));
+    const batch = encodeBatch([first, second]);
+    const backing = new Uint8Array(batch.length + 16);
+    backing.set(batch, 9);
+    const frames = decodeBatch(backing.subarray(9, 9 + batch.length));
+    expect(frames.every((frame) => frame.buffer === backing.buffer)).toBe(true);
+    expect(frames.map((frame) => decode(frame).payload)).toEqual([new Uint8Array([1, 2]), new Uint8Array([3])]);
+    expect(frames.every((frame) => decode(frame).payload.buffer === backing.buffer)).toBe(true);
+  });
+
   it('completes a handshake and exchanges frames both ways', async () => {
     const hostKeys = await generateEcdhKeyPair();
     const hostPubJwk = await exportPublicKeyJwk(hostKeys.publicKey);

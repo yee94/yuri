@@ -108,7 +108,7 @@ const isWsClosePayload = (parsed) => Boolean(parsed && typeof parsed === 'object
  * @param {{
  *   connectionId: string,
  *   getLocalPort: () => number,
- *   sendFrame: (plaintextFrame: Uint8Array) => void | Promise<void>,
+ *   sendFrame: (plaintextFrame: Uint8Array, immediate?: boolean) => void | Promise<void>,
  *   getBufferedAmount: () => number,
  *   createWebSocket?: (url: string, protocols: string[] | undefined, options: { headers: Record<string, string> }) => import('ws').WebSocket,
  * }} deps
@@ -139,9 +139,9 @@ export const createTunnelHost = ({
     return wsOutboundChain;
   };
 
-  const send = async (frame) => {
+  const send = async (frame, immediate = false) => {
     if (closed) return;
-    await sendFrame(frame);
+    await sendFrame(frame, immediate);
   };
 
   const sendJson = (frameType, streamId, payload) =>
@@ -400,7 +400,7 @@ export const createTunnelHost = ({
         for (const frame of encodeFragmentedMessage(frameType, streamId, bytes)) {
           await waitForBackpressure(null);
           if (streams.get(streamId) !== stream || closed) return;
-          await send(frame);
+          await send(frame, open.path === '/api/remote-desktop/ws');
         }
       });
     });

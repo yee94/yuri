@@ -199,10 +199,12 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
             connectionId,
             getLocalPort: resolveLocalPort,
             getBufferedAmount: () => socket.bufferedAmount,
-            sendFrame: (plaintextFrame) => {
+            sendFrame: (plaintextFrame, immediate = false) => {
               if (dataSockets.get(connectionId) !== entry || socket.readyState !== WebSocket.OPEN) return;
-              if (entry.batcher) entry.batcher.enqueue(plaintextFrame);
-              else sendEncryptedPlaintext(plaintextFrame);
+              if (entry.batcher) {
+                entry.batcher.enqueue(plaintextFrame);
+                if (immediate) entry.batcher.flush();
+              } else sendEncryptedPlaintext(plaintextFrame);
             },
           });
           if (action.replyText) socket.send(action.replyText);

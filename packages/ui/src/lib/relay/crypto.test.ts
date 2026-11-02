@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   base64UrlToBytes,
@@ -41,6 +41,22 @@ describe('relay crypto', () => {
     const reply = new TextEncoder().encode('hello from host');
     const decryptedReply = await clientReceives.decrypt(await hostToClient.encrypt(reply));
     expect(new TextDecoder().decode(decryptedReply)).toBe('hello from host');
+  });
+
+  test('decrypts an offset frame without copying its IV or ciphertext', async () => {
+    const { clientKeys, hostKeys } = await setupSession();
+    const message = new Uint8Array(MAX_PLAINTEXT_FRAME_BYTES).fill(7);
+    const frame = await createFrameEncryptor(clientKeys.clientToHost).encrypt(message);
+    const padded = new Uint8Array(frame.length + 20).fill(99);
+    padded.set(frame, 7);
+    const view = padded.subarray(7, 7 + frame.length);
+    const copy = vi.spyOn(view, 'slice');
+    const decryptor = createFrameDecryptor(hostKeys.clientToHost);
+    try {
+      expect(await decryptor.decrypt(view)).toEqual(message);
+      expect(copy).not.toHaveBeenCalled();
+      await expect(decryptor.decrypt(view)).rejects.toThrow('frame counter regression');
+    } finally { copy.mockRestore(); }
   });
 
   test('different nonce yields incompatible keys', async () => {

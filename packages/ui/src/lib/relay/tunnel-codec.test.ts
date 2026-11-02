@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 
 import {
   MAX_TUNNEL_PAYLOAD_BYTES,
@@ -144,6 +144,34 @@ describe('tunnel codec', () => {
     const decoded = decodeFrameBatch(encodeFrameBatch(frames));
     expect(decoded.length).toBe(frames.length);
     decoded.forEach((frame, index) => expect(frame).toEqual(frames[index]));
+  });
+
+  test('a 1 MiB message uses bounded byte views during chunking and batch decoding', () => {
+    const backing = randomBytes(1024 * 1024 + 20);
+    const bytes = backing.subarray(7, backing.length - 13);
+    const chunks = chunkPayload(bytes);
+    expect(chunks.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(bytes.byteLength);
+    expect(chunks.every((chunk) => chunk.buffer === backing.buffer)).toBe(true);
+    const frames = encodeFragmentedMessage(TunnelFrameType.WsBinary, 3, bytes);
+    const assembler = createFragmentAssembler();
+    let result: Uint8Array | null = null;
+    for (const frame of frames) {
+      const batch = encodeFrameBatch([frame]);
+      const envelope = new Uint8Array(batch.byteLength + 16);
+      envelope.set(batch, 9);
+      const [decoded] = decodeFrameBatch(envelope.subarray(9, 9 + batch.byteLength));
+      const parsed = decodeTunnelFrame(decoded);
+      expect(decoded.buffer).toBe(envelope.buffer);
+      expect(parsed.payload.buffer).toBe(envelope.buffer);
+      expect(parsed.payload.byteLength).toBe(frame.byteLength - 5);
+      result = assembler.push(parsed);
+    }
+    expect(result).toEqual(bytes);
+    const multi = encodeFrameBatch([
+      encodeTunnelFrame(TunnelFrameType.HttpBody, 1, new Uint8Array([1])),
+      encodeTunnelFrame(TunnelFrameType.HttpBody, 3, new Uint8Array([2])),
+    ]);
+    expect(decodeFrameBatch(multi).every((frame) => frame.buffer === multi.buffer)).toBe(true);
   });
 
   test('single-frame batch uses the compact tag with 1 byte of overhead', () => {

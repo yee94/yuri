@@ -328,7 +328,7 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
     void (async () => {
       const pathname = new URL(req.url ?? '/', 'http://origin').pathname;
       if (pathname === '/api/dictation/ws') return;
-      if (pathname !== '/api/terminal/ws' || !await requestSecurity.isRequestOriginAllowed(req)) {
+      if (!['/api/terminal/ws', '/api/remote-desktop/ws'].includes(pathname) || !await requestSecurity.isRequestOriginAllowed(req)) {
         requestSecurity.rejectWebSocketUpgrade(socket, 403, 'Forbidden');
         return;
       }
@@ -441,6 +441,57 @@ async function verifyStreamingAsrOverRelay() {
 describe('private relay compiled-process boundary', () => {
   let cleanup: (() => Promise<void>) | undefined;
   afterEach(async () => { try { await cleanup?.(); } finally { cleanup = undefined; vi.unstubAllEnvs(); } });
+
+  it.each([
+    { clientBatch: true, hostBatch: true },
+    { clientBatch: true, hostBatch: false },
+    { clientBatch: false, hostBatch: true },
+  ])('does not batch-delay remote desktop through real auth and Relay ($clientBatch/$hostBatch)', { timeout: 30_000 }, async ({ clientBatch, hostBatch }) => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'yuri-relay-desktop-latency-'));
+    const binary = path.join(temp, 'yuri-relay');
+    let relay: Awaited<ReturnType<typeof startCompiledRelay>> | undefined;
+    let origin: Awaited<ReturnType<typeof startOrigin>> | undefined;
+    let host: ReturnType<typeof startRelayHost> | undefined;
+    let client: ReturnType<typeof createRelayTunnelClient> | undefined;
+    cleanup = async () => {
+      client?.close();
+      host?.stop();
+      await Promise.all([origin?.stop(), stopRelay(relay)]);
+      await rm(temp, { recursive: true, force: true });
+    };
+    const entrypoint = fileURLToPath(new URL('../../../../relay-server/bin/yuri-relay.js', import.meta.url));
+    const compile = spawn('bun', ['build', '--compile', entrypoint, '--outfile', binary], { stdio: 'ignore' });
+    expect((await once(compile, 'exit'))[0]).toBe(0);
+    relay = await startCompiledRelay(binary, await freePort());
+    origin = await startOrigin();
+    const identity = await buildIdentity();
+    host = startRelayHost({ relayUrl: relay.url, identity, getLocalPort: () => origin!.port,
+      batch: hostBatch, batchWindowMs: 2_000, onStatus() {}, logger: { warn() {}, info() {} } });
+    client = createRelayTunnelClient({ relayUrl: relay.url, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk,
+      batch: clientBatch, batchWindowMs: 2_000, pingIntervalMs: 60_000 });
+    await eventually(() => host!.getStatus().state === 'connected' && client!.getStatus().state === 'connected', 'tunnel did not connect');
+    const unauthorized = client.openWebSocket('/api/remote-desktop/ws');
+    await expect(waitSocketOpen(unauthorized)).rejects.toThrow();
+    const tokenResponse = await client.fetch('/auth/url-token', { method: 'POST', headers: { authorization: 'Bearer client-token' } });
+    expect(tokenResponse.status).toBe(200);
+    const { token } = await tokenResponse.json() as { token: string };
+    const socket = client.openWebSocket(`/api/remote-desktop/ws?yuri_url_token=${encodeURIComponent(token)}`);
+    await waitSocketOpen(socket);
+    const messages: Array<string | ArrayBuffer> = [];
+    socket.onmessage = ({ data }) => { messages.push(data); };
+    const start = performance.now();
+    for (let i = 0; i < 50; i += 1) socket.send(`input:${i}`);
+    const frame = new Uint8Array(1024 * 1024).fill(7);
+    socket.send(frame);
+    frame.fill(0);
+    await eventually(() => messages.length === 51, 'remote desktop data waited for the batch window', 1_000);
+    const elapsedMs = performance.now() - start;
+    expect(messages.slice(0, 50)).toEqual(Array.from({ length: 50 }, (_, i) => `input:${i}`));
+    expect(new Uint8Array(messages[50] as ArrayBuffer)).toEqual(new Uint8Array(1024 * 1024).fill(7));
+    console.info('Relay remote desktop scheduling', { clientBatch, hostBatch, messages: messages.length, elapsedMs });
+    expect(origin.observedOrigins).toEqual([`http://127.0.0.1:${origin.port}`]);
+    socket.close();
+  });
 
   it('recovers HTTP and the retained SDK event pipeline after phone, Host, and combined disconnects', { timeout: 60_000 }, async () => {
     const temp = await mkdtemp(path.join(os.tmpdir(), 'yuri-relay-recovery-'));

@@ -86,8 +86,10 @@ type CapacitorVirtualAssetPlugin = {
 };
 
 const bytesToBase64 = (bytes: Uint8Array): string => {
+  const nativeBytes = bytes as Uint8Array & { toBase64?: () => string };
+  if (typeof nativeBytes.toBase64 === 'function') return nativeBytes.toBase64();
   if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
   }
   let binary = '';
   const chunkSize = 0x8000;

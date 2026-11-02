@@ -127,6 +127,33 @@ Desktop startup restore selects its transport once, like mobile: when Relay wins
 
 The E2EE and framing logic exists twice: TypeScript in `packages/ui/src/lib/relay/` (shared by the client and the normative reference) and a JavaScript mirror in this module (the host, which is plain JS ESM). They **must stay byte-compatible** — a client encrypted by one must decrypt on the other. A cross-compatibility test (`cross-compat.test.js`) imports the TS modules directly and exercises a full TS-client ↔ JS-host exchange. Any change to the wire format, frame codec, handshake, or batching must update both sides and keep that test green (`bunx vitest run --project @yuriai/web packages/web/server/lib/relay/cross-compat.test.js`). Compiled Host/Client e2e: `bunx vitest run --project @yuriai/web packages/web/server/lib/relay/relay-server.e2e.test.ts`.
 
+## Remote desktop scheduling and byte ownership
+
+Both senders immediately flush data for the exact `/api/remote-desktop/ws`
+stream after enqueueing it. Input, signaling, JPEG and decode ACKs therefore
+have **zero intentional batch-window delay**, even during continuous traffic.
+Pending frames still flush in their original order through the same serialized
+encrypt/send chain and plaintext-size checks; this is not a priority queue that
+overtakes older data. Other HTTP/SSE/WS traffic keeps the 150ms batching policy.
+No wire fields, handshake capabilities, authentication or direct-runtime behavior
+change. Mixed-version peers remain compatible; only an updated sender removes
+its direction's delay. WebRTC media is unaffected.
+
+Crypto IV/ciphertext, decoded batch/frame payloads and outbound chunks use bounded
+byte views instead of `slice()` copies. Decrypted buffers remain owned by their
+message and are never reused; consumers treat these views as read-only. Encoders
+still snapshot outgoing bytes synchronously, so WebSocket callers may mutate their
+input after `send()` returns. Public binary WS events retain an independent,
+exact-length ArrayBuffer; fragment assembly still allocates the complete message.
+
+The cost model is payload bytes × framing/decryption copy layers × message rate.
+A local 1MiB fragmented E2EE round trip removed 85 `slice()` allocations totaling
+4,194,967 bytes; this does not remove WebCrypto, envelope or assembly allocations.
+Tests cover offset views, byte fidelity, tamper/replay rejection, 50-message bursts,
+legacy peers, unchanged ordinary-WS batching and authenticated compiled-Relay
+round trips with a deliberately enlarged batch window. These are controlled local
+checks, not physical-iPhone/WAN latency or battery measurements.
+
 ## Runtime integration (client)
 
 Relay mode plugs into the existing client transport layer rather than a parallel path: `runtime-switch` activates the tunnel singleton, `runtime-fetch` routes runtime requests and product SSE streamed responses through it, `runtime-url` builds browser-consumed URLs, `runtime-socket` opens tunneled WebSockets, and `runtime-auth` mints the URL-scoped token through the tunnel. Direct-URL connections and the Electron realtime-proxy path are unaffected.
