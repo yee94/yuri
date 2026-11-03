@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { downloadWeixinMedia } from './media.js';
 
 // Wire-format reference: Tencent/openclaw-weixin (MIT), docs/protocol.md.
 // This is a Yuri transport, not an OpenClaw runtime or a WorkBuddy login client.
@@ -84,6 +85,7 @@ export function createWeixinAPI({ fetchImpl = fetch } = {}) {
     }
   };
   return {
+    downloadMedia: (source, signal) => downloadWeixinMedia(source, { fetchImpl, signal }),
     getQRCode: (signal, localTokens = []) => request(API_ORIGIN, '/ilink/bot/get_bot_qrcode?bot_type=3', {
       body: { local_token_list: localTokens.slice(0, 10) }, signal,
     }),

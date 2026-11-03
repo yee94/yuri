@@ -18,11 +18,15 @@ the pinned list. Existing snapshot events distribute confirmed changes to client
 
 ## WeChat message channel
 
-Each saved Bot has a Host-owned, QR-authorized text channel configured in the final
+Each saved Bot has a Host-owned, QR-authorized message channel configured in the final
 **Message channels** settings group. It admits only the QR-confirmed owner through
 the existing `send()` pipeline and reads committed public replies through the internal
 `channelPage()` feed. Bindings, private credentials, durable receipts/outbox and
 process leases are owned by `weixin/`, not ordinary Session delivery or UI state.
+Rich input reuses contact attachments for images/files and untranscribed audio/video;
+platform voice transcripts and bounded unknown share fields reach the model as
+user content, with structured metadata encoded as TOON. Receiving an article link
+does not imply that its body was fetched. See the channel documentation for limits.
 See `weixin/DOCUMENTATION.md` for authorization, shared-context/output semantics,
 restart ambiguity, local disconnect and the explicit platform-verification limits.
 An existing local WeChat connection can be moved to an unbound Bot only through

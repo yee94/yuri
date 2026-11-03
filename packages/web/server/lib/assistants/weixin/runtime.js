@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createWeixinAPI, WeixinError, weixinOrigin } from './api.js';
 import { createWeixinStore } from './store.js';
 import { createWeixinTyping } from './typing.js';
+import { normalizeWeixinInput, prepareWeixinInput } from './inbound.js';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const messageID = (account, peer, id) => `weixin:${digest(JSON.stringify([account, peer, id]))}`;
@@ -16,11 +17,11 @@ const feedback = (language, kind) => {
   const messages = language.startsWith('zh') ? {
     interrupted: 'Yuri 主机已重启，上一条请求可能未完成。请先检查任务状态，再决定是否重试。',
     failed: '助理未能完成这条请求，请在 Yuri 中查看具体错误后重试。',
-    textOnly: '当前微信通道仅支持文字，请发送文字消息。',
+    empty: '这条微信消息没有可读取的内容，请重发文字、图片或文章链接。',
   } : {
     interrupted: 'The Yuri host restarted. The previous request may be incomplete. Check its status before retrying.',
     failed: 'The bot could not complete this request. Check the error in Yuri before retrying.',
-    textOnly: 'This WeChat connection currently accepts text messages only. Please send a text message.',
+    empty: 'This WeChat message has no readable content. Please resend text, an image, or an article link.',
   };
   return messages[kind];
 };
@@ -45,12 +46,12 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
   const logins = new Map();
   const receivers = new Map();
   const bindingWork = new Map();
+  const inboundWork = new Map();
   const operations = new Set();
   const recovered = new Set();
   const retiring = new Set();
   const lifetime = new AbortController();
   let closed = false;
-  let ticking = false;
   let ownsLease = false;
   let closePromise;
   const track = (promise) => {
@@ -102,11 +103,11 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
           if (!msg || typeof msg !== 'object') continue;
           // The QR-confirmed owner is the only principal allowed to execute tools.
           if (msg.message_type !== 1 || msg.from_user_id !== binding.peer_id || msg.group_id) continue;
-          if (typeof msg.message_id !== 'string' || !msg.message_id || msg.message_id.length > 256) continue;
-          const text = Array.isArray(msg.item_list) ? msg.item_list.filter((item) => item?.type === 1)
-            .map((item) => typeof item.text_item?.text === 'string' ? item.text_item.text : '').join('\n').trim() : '';
+          const platformID = typeof msg.message_id === 'string' && msg.message_id ? msg.message_id
+            : Array.isArray(msg.item_list) ? msg.item_list.find((item) => typeof item?.msg_id === 'string' && item.msg_id)?.msg_id : '';
+          if (!platformID || platformID.length > 256) continue;
           const context = typeof msg.context_token === 'string' && msg.context_token.length <= 65_536 ? msg.context_token : '';
-          messages.push({ id: messageID(binding.account_id, binding.peer_id, msg.message_id), text: text.length <= 20_000 ? text : '', context });
+          messages.push({ id: messageID(binding.account_id, binding.peer_id, platformID), ...normalizeWeixinInput(msg), context });
         }
         // Persist receipt and context before acknowledging the platform cursor.
         store.accept(binding, cursor || binding.cursor, messages);
@@ -123,6 +124,41 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
         setError(binding, error);
         if (safeError(error) === 'auth_expired') return;
         await pause(Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5)), signal);
+      }
+    }
+  };
+
+  const processIncoming = async (binding, generation) => {
+    for (const receipt of store.pending(binding.epoch)) {
+      if (!isCurrent(binding)) return;
+      if (!receipt.text && !receipt.payload) {
+        store.enqueue(binding.epoch, `${receipt.id}:empty`, feedback(binding.language, 'empty'));
+        store.finishTurn(receipt.id);
+        continue;
+      }
+      try {
+        const receiverSignal = receivers.get(binding.assistant_id)?.controller.signal;
+        const signal = receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal;
+        const assertCurrent = () => {
+          if (!isCurrent(binding) || signal.aborted || store.get(binding.assistant_id)?.status === 'expired'
+            || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== generation) throw new WeixinError('cancelled');
+        };
+        const parts = await prepareWeixinInput(receipt, { api, service, assistantID: binding.assistant_id, signal, assertCurrent });
+        await refreshAllowedRoots();
+        assertCurrent();
+        // Fence the crash gap. Never replay admitted tool side effects on restart.
+        store.markInbox(receipt.id, 'admitted');
+        const result = await service.send(binding.assistant_id, {
+          messageID: receipt.id, parts, language: binding.language,
+        });
+        if (isCurrent(binding) && result.replayed) {
+          store.enqueue(binding.epoch, `${receipt.id}:interrupted`, feedback(binding.language, 'interrupted'));
+          store.finishTurn(receipt.id);
+        }
+      } catch {
+        if (!isCurrent(binding)) return;
+        store.enqueue(binding.epoch, `${receipt.id}:failed`, feedback(binding.language, 'failed'));
+        store.finishTurn(receipt.id);
       }
     }
   };
@@ -145,31 +181,12 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       }));
     });
     store.collect(binding, page, deliveries);
-
-    for (const receipt of store.pending(binding.epoch)) {
-      if (!isCurrent(binding)) return;
-      if (!receipt.text) {
-        store.enqueue(binding.epoch, `${receipt.id}:text-only`, feedback(binding.language, 'textOnly'));
-        store.finishTurn(receipt.id);
-        continue;
-      }
-      // Fence the crash gap. Never replay admitted tool side effects on restart.
-      store.markInbox(receipt.id, 'admitted');
-      try {
-        await refreshAllowedRoots();
-        if (!isCurrent(binding)) return;
-        const result = await service.send(binding.assistant_id, {
-          messageID: receipt.id, parts: [{ type: 'text', text: receipt.text }], language: binding.language,
-        });
-        if (isCurrent(binding) && result.replayed) {
-          store.enqueue(binding.epoch, `${receipt.id}:interrupted`, feedback(binding.language, 'interrupted'));
-          store.finishTurn(receipt.id);
-        }
-      } catch {
-        if (!isCurrent(binding)) return;
-        store.enqueue(binding.epoch, `${receipt.id}:failed`, feedback(binding.language, 'failed'));
-        store.finishTurn(receipt.id);
-      }
+    if (!inboundWork.has(binding.assistant_id)) {
+      const work = track(processIncoming(binding, page.generation)).catch((error) => setError(binding, error));
+      inboundWork.set(binding.assistant_id, work);
+      void work.finally(() => {
+        if (inboundWork.get(binding.assistant_id) === work) inboundWork.delete(binding.assistant_id);
+      }).catch(() => {});
     }
     const current = store.get(binding.assistant_id);
     if (!isCurrent(binding) || current.status === 'expired' || !current.context_token) return;
@@ -209,36 +226,33 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       void track(typing.clear());
       return;
     }
-    if (ticking) return;
-    ticking = true;
-    try {
-      const bindings = store.list();
-      const ids = new Set(bindings.map((binding) => binding.assistant_id));
-      for (const id of receivers.keys()) if (!ids.has(id)) stopReceiver(id);
-      for (const binding of bindings) {
-        if (!recovered.has(binding.epoch)) {
-          store.recover(binding.epoch, feedback(binding.language, 'interrupted'));
-          if (store.hasUnknown(binding.epoch)) store.patch(binding.epoch, { error: 'delivery_unknown' });
-          recovered.add(binding.epoch);
-        }
-        if (binding.status !== 'expired' && !retiring.has(binding.assistant_id) && !receivers.has(binding.assistant_id)) {
-          const controller = new AbortController();
-          const entry = { controller };
-          receivers.set(binding.assistant_id, entry);
-          entry.done = track(receive(binding, controller.signal)).finally(() => {
-            if (receivers.get(binding.assistant_id) === entry) receivers.delete(binding.assistant_id);
-          }).catch(() => {});
-        }
+    const bindings = store.list();
+    const ids = new Set(bindings.map((binding) => binding.assistant_id));
+    for (const id of receivers.keys()) if (!ids.has(id)) stopReceiver(id);
+    for (const binding of bindings) {
+      if (!recovered.has(binding.epoch)) {
+        store.recover(binding.epoch, feedback(binding.language, 'interrupted'));
+        if (store.hasUnknown(binding.epoch)) store.patch(binding.epoch, { error: 'delivery_unknown' });
+        recovered.add(binding.epoch);
       }
-      // One slow Bot cannot prevent another account receiving or replying.
-      await Promise.allSettled(bindings.map((binding) => {
-        const work = processBinding(binding).catch((error) => setError(binding, error));
-        bindingWork.set(binding.assistant_id, work);
-        return work.finally(() => {
-          if (bindingWork.get(binding.assistant_id) === work) bindingWork.delete(binding.assistant_id);
-        });
-      }));
-    } finally { ticking = false; }
+      if (binding.status !== 'expired' && !retiring.has(binding.assistant_id) && !receivers.has(binding.assistant_id)) {
+        const controller = new AbortController();
+        const entry = { controller };
+        receivers.set(binding.assistant_id, entry);
+        entry.done = track(receive(binding, controller.signal)).finally(() => {
+          if (receivers.get(binding.assistant_id) === entry) receivers.delete(binding.assistant_id);
+        }).catch(() => {});
+      }
+    }
+    // One slow Bot cannot prevent another account receiving or replying.
+    await Promise.allSettled(bindings.map((binding) => {
+      if (bindingWork.has(binding.assistant_id) || retiring.has(binding.assistant_id)) return;
+      const work = processBinding(binding).catch((error) => setError(binding, error));
+      bindingWork.set(binding.assistant_id, work);
+      return work.finally(() => {
+        if (bindingWork.get(binding.assistant_id) === work) bindingWork.delete(binding.assistant_id);
+      });
+    }));
   };
 
   const status = (assistantID) => {
@@ -369,7 +383,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     logins.get(assistantID)?.controller.abort();
     logins.delete(assistantID);
     try {
-      await Promise.allSettled([stopReceiver(sourceAssistantID), bindingWork.get(sourceAssistantID), typing.forget(sourceAssistantID)]);
+      await Promise.allSettled([stopReceiver(sourceAssistantID), bindingWork.get(sourceAssistantID), inboundWork.get(sourceAssistantID), typing.forget(sourceAssistantID)]);
       assertOwner();
       // Revalidate after draining: deletion or a stale confirmation must not move credentials.
       service.channelPage(sourceAssistantID, { tipOnly: true });

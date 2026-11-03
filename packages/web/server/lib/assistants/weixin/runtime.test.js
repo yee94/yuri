@@ -6,6 +6,7 @@ import { createWeixinRuntime } from './runtime.js';
 import { createWeixinStore } from './store.js';
 import { WeixinError } from './api.js';
 import { createAssistantsService } from '../service.js';
+import { normalizeWeixinInput } from './inbound.js';
 
 const closers = [];
 afterEach(async () => { while (closers.length) await closers.pop()(); });
@@ -116,6 +117,20 @@ describe('Weixin Host runtime', () => {
     expect(JSON.stringify(f.runtime.status('bot'))).not.toMatch(/test-token|context-1|owner|account/);
     expect(fs.statSync(f.directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(path.join(f.directory, 'channel.sqlite')).mode & 0o777).toBe(0o600);
+  });
+
+  it('uses the reference client item-level stable ID fallback and never fetches unauthorized media', async () => {
+    const f = fixture({ configureAPI: (api) => { api.downloadMedia = vi.fn(); } });
+    const media = { type: 2, image_item: { media: { encrypt_query_param: 'private-reference' } } };
+    f.updates.push([
+      { ...inbound('stranger', 'other-owner'), item_list: [media] },
+      { ...inbound('group'), group_id: 'group', item_list: [media] },
+      { ...inbound(), message_id: undefined, item_list: [{ type: 1, msg_id: 'item-123', text_item: { text: 'item ID message' } }] },
+      { ...inbound(), message_id: 'item-123', item_list: [{ type: 1, text_item: { text: 'item ID message' } }] },
+    ]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(1));
+    expect(f.api.downloadMedia).not.toHaveBeenCalled();
   });
 
   it('restarts without another scan, keeps deduplication and does not replay admitted tool work', async () => {
@@ -356,13 +371,13 @@ describe('Weixin Host runtime', () => {
     await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
   });
 
-  it('non-text input gives a text-only reply without invoking bot tools', async () => {
+  it('passes non-text metadata to the bot without pretending unavailable image bytes were read', async () => {
     const f = fixture();
     f.updates.push([{ ...inbound(), item_list: [null, { type: 2, image_item: { media: {} } }] }]);
     await f.bind();
-    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalled());
-    expect(f.api.sendText.mock.calls[0][1].text).toContain('仅支持文字');
-    expect(f.service.send).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalled());
+    expect(f.service.send.mock.calls[0][1].parts[0].text).toContain('unavailable');
+    expect(f.service.send.mock.calls[0][1].parts[0].text).toContain('image');
   });
 
   it('reuses the actual Yuri contact pipeline for WeChat → bot → durable reply', async () => {
@@ -392,6 +407,128 @@ describe('Weixin Host runtime', () => {
     expect(f.api.sendText.mock.calls[0][1].text).toBe('收到：测试文字');
     expect(service.contactMessages(bot.id, { limit: 20 }).messages.some((message) => message.text === '测试文字')).toBe(true);
     await vi.waitFor(() => expect(f.api.sendTyping.mock.calls.map((call) => call[2])).toEqual([1, 2]));
+  });
+
+  it('routes images, text documents, voice transcripts and share metadata through real contact storage and execution exactly once', async () => {
+    const directory = root();
+    let runtime;
+    const runContactTurn = vi.fn(async () => ({ bubbles: ['已收到图片、文档与分享信息'] }));
+    const service = createAssistantsService({
+      dbPath: path.join(directory, 'assistants.sqlite'), dataDir: directory,
+      buildOpenCodeUrl: () => 'http://127.0.0.1:1', getOpenCodeAuthHeaders: () => ({}),
+      getAllowedRoots: () => [directory], runContactTurn,
+      onContactTurnEvent: (event) => runtime?.onTurnEvent(event),
+      createChatCompletion: async () => ({ choices: [] }),
+    });
+    closers.push(() => service.close());
+    const bot = service.createAssistant({ name: '多模态测试', providerID: 'p', modelID: 'm' });
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6D/8AAAAASUVORK5CYII=', 'base64');
+    const f = fixture({ directory: path.join(directory, 'weixin'), service, configureAPI: (api) => {
+      api.downloadMedia = vi.fn(async (source) => source.kind === 'image'
+        ? { buffer: png, mime: 'image/png', filename: 'weixin.png' }
+        : { buffer: Buffer.from('文档正文'), mime: 'text/plain', filename: 'notes.txt' });
+    } });
+    runtime = f.runtime;
+    const message = { ...inbound(), item_list: [
+      { type: 1, text_item: { text: '看看这些内容' } },
+      { type: 2, image_item: { media: { encrypt_query_param: 'private-image', aes_key: 'private-key' } } },
+      { type: 4, file_item: { file_name: 'notes.txt', media: { encrypt_query_param: 'private-document', aes_key: 'private-key' } } },
+      { type: 3, voice_item: { text: '顺便读一下这篇公众号文章' } },
+      { type: 99, share: { title: '文章标题', url: 'https://mp.weixin.qq.com/s/example', description: '摘要' } },
+    ] };
+    f.updates.push([message, message]);
+    await f.bind(bot.id);
+    await vi.waitFor(() => expect(runContactTurn).toHaveBeenCalledTimes(1));
+    const parts = runContactTurn.mock.calls[0][0].userParts;
+    expect(parts.filter((part) => part.type === 'file')).toEqual([
+      expect.objectContaining({ mime: 'image/png', url: `data:image/png;base64,${png.toString('base64')}` }),
+      expect.objectContaining({ mime: 'text/plain', url: `data:text/plain;base64,${Buffer.from('文档正文').toString('base64')}` }),
+    ]);
+    expect(parts.at(-1).text).toContain('文章标题');
+    expect(parts.at(-1).text).toContain('顺便读一下这篇公众号文章');
+    const history = service.contactMessages(bot.id, { limit: 20 });
+    const user = history.messages.find((message) => message.role === 'user');
+    expect(user.parts.filter((part) => part.type === 'file')).toHaveLength(2);
+    expect(JSON.stringify(history)).not.toMatch(/private-key|private-image|private-document|data:image/);
+    const attachment = user.parts.find((part) => part.mime === 'image/png');
+    expect((await service.getAssistantContactAttachment(bot.id, attachment.attachmentID)).buffer).toEqual(png);
+    expect(f.api.downloadMedia).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalled());
+  });
+
+  it('resumes a durable pending media receipt after restart without polling the message again', async () => {
+    const directory = root();
+    const store = createWeixinStore(directory);
+    const binding = store.bind({ assistant_id: 'bot', account_id: 'account', peer_id: 'owner', token: 'test-token',
+      base_url: 'https://ilinkai.weixin.qq.com', language: 'en', generation: 0, ordinal: 0, updated_at: 0 });
+    const input = normalizeWeixinInput({ ...inbound(), item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'private-ref' } } }] });
+    store.accept(binding, 'persisted-cursor', [{ id: 'persisted-media-id', ...input }]);
+    store.close();
+    const f = fixture({ directory, configureAPI: (api) => { api.downloadMedia = vi.fn(async () => ({ buffer: Buffer.from('data'), mime: 'image/png', filename: 'image.png' })); } });
+    f.service.putAssistantContactAttachment = vi.fn(async () => ({ type: 'file', attachmentID: 'att_image', mime: 'image/png', size: 4 }));
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(1));
+    expect(f.service.send.mock.calls[0][1]).toMatchObject({ messageID: 'persisted-media-id', parts: expect.arrayContaining([expect.objectContaining({ attachmentID: 'att_image' })]) });
+    expect(f.api.getQRCode).not.toHaveBeenCalled();
+  });
+
+  it('keeps sending replies while media downloads; isolates other bindings and fences late completion after disconnect', async () => {
+    let completeDownload;
+    const f = fixture({ configureAPI: (api) => {
+      api.downloadMedia = vi.fn(() => new Promise((resolve) => { completeDownload = resolve; }));
+      api.getQRStatus.mockImplementation(async (_origin, qr) => ({ status: 'confirmed', bot_token: 'test-token',
+        ilink_bot_id: qr, ilink_user_id: 'owner', baseurl: 'https://ilinkai.weixin.qq.com' }));
+      let qrNumber = 0;
+      api.getQRCode.mockImplementation(async () => ({ qrcode: `qr-${++qrNumber}`, qrcode_img_content: 'https://example.com/scan' }));
+    } });
+    f.service.putAssistantContactAttachment = vi.fn();
+    await f.bind();
+    await f.bind('other-bot');
+    let imageReceived = false;
+    let otherReceived = false;
+    closers.push(() => completeDownload?.({ buffer: Buffer.from('late'), mime: 'image/png', filename: 'late.png' }));
+    f.api.getUpdates.mockImplementation(async (binding, signal) => {
+      if (!imageReceived && binding.assistant_id === 'bot') {
+        imageReceived = true;
+        return { msgs: [{ ...inbound(), item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'private-ref' } } }] }], get_updates_buf: 'next' };
+      }
+      if (!otherReceived && binding.assistant_id === 'other-bot') {
+        otherReceived = true;
+        return { msgs: [inbound('other', 'owner', 'other bot request')], get_updates_buf: 'next' };
+      }
+      return abortable(signal);
+    });
+    await vi.waitFor(() => expect(completeDownload).toBeTypeOf('function'), { timeout: 3000 });
+    f.reply('bot', 'earlier task result');
+    f.reply('other-bot', 'another result');
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
+    expect(f.api.downloadMedia).toHaveBeenCalledTimes(1);
+    await f.runtime.disconnect('bot');
+    completeDownload({ buffer: Buffer.from('late'), mime: 'image/png', filename: 'late.png' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(f.service.putAssistantContactAttachment).not.toHaveBeenCalled();
+    expect(f.service.send).toHaveBeenCalledTimes(1);
+    expect(f.service.send.mock.calls[0][0]).toBe('other-bot');
+  });
+
+  it.each(['history-reset', 'auth-expired'])('does not admit media prepared across %s', async (change) => {
+    let completeDownload;
+    const f = fixture({ configureAPI: (api) => {
+      api.downloadMedia = vi.fn(() => new Promise((resolve) => { completeDownload = resolve; }));
+    } });
+    f.service.putAssistantContactAttachment = vi.fn();
+    closers.push(() => completeDownload?.({ buffer: Buffer.from('late'), mime: 'image/png', filename: 'late.png' }));
+    f.updates.push([{ ...inbound(), item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'private-ref' } } }] }]);
+    await f.bind();
+    await vi.waitFor(() => expect(completeDownload).toBeTypeOf('function'));
+    if (change === 'history-reset') f.pages.set('bot', { generation: 1, messages: [] });
+    else {
+      f.api.getUpdates.mockRejectedValueOnce(new WeixinError('auth_expired'));
+      await vi.waitFor(() => expect(f.runtime.status('bot').status).toBe('expired'));
+    }
+    completeDownload({ buffer: Buffer.from('late'), mime: 'image/png', filename: 'late.png' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(f.service.putAssistantContactAttachment).not.toHaveBeenCalled();
+    expect(f.service.send).not.toHaveBeenCalled();
   });
 
   it.each(['error', 'cancelled'])('clears typing on a live %s terminal event without sending a placeholder text', async (status) => {

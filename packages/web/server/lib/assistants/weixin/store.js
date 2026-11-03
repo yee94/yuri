@@ -34,6 +34,9 @@ export function createWeixinStore(directory) {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(epoch, state, sequence);
     CREATE TABLE IF NOT EXISTS lease (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, expires_at INTEGER NOT NULL);`);
+  if (!db.prepare('PRAGMA table_info(inbox)').all().some((column) => column.name === 'payload')) {
+    db.exec("ALTER TABLE inbox ADD COLUMN payload TEXT NOT NULL DEFAULT ''");
+  }
   const get = (assistantID) => db.prepare('SELECT * FROM binding WHERE assistant_id=?').get(assistantID) ?? null;
   const patch = (epoch, values) => {
     const allowed = new Set(['cursor', 'context_token', 'generation', 'ordinal', 'status', 'error', 'updated_at']);
@@ -68,7 +71,7 @@ export function createWeixinStore(directory) {
       }
       const epoch = randomUUID();
       // Keep receipt IDs across moves so a replay cannot execute tools in the new Bot.
-      db.prepare("UPDATE inbox SET epoch=?,state='done',text='' WHERE epoch=?").run(epoch, source.epoch);
+      db.prepare("UPDATE inbox SET epoch=?,state='done',text='',payload='' WHERE epoch=?").run(epoch, source.epoch);
       db.prepare('DELETE FROM outbox WHERE epoch=?').run(source.epoch);
       db.prepare(`UPDATE binding SET assistant_id=?,epoch=?,generation=?,ordinal=?,language=?,updated_at=?,status='connected',error=NULL WHERE epoch=?`)
         .run(assistantID, epoch, generation, ordinal, language, updatedAt, source.epoch);
@@ -77,7 +80,7 @@ export function createWeixinStore(directory) {
     accept: db.transaction((binding, cursor, messages) => {
       if (get(binding.assistant_id)?.epoch !== binding.epoch) return;
       for (const message of messages) {
-        db.prepare('INSERT OR IGNORE INTO inbox(id,epoch,text) VALUES (?,?,?)').run(message.id, binding.epoch, message.text);
+        db.prepare('INSERT OR IGNORE INTO inbox(id,epoch,text,payload) VALUES (?,?,?,?)').run(message.id, binding.epoch, message.text, message.payload || '');
         if (message.context) patch(binding.epoch, { context_token: message.context });
       }
       patch(binding.epoch, { cursor });
@@ -85,11 +88,11 @@ export function createWeixinStore(directory) {
     pending: (epoch) => db.prepare("SELECT * FROM inbox WHERE epoch=? AND state='pending' ORDER BY rowid LIMIT 20").all(epoch),
     backlog: (epoch) => db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE epoch=? AND state IN ('pending','admitted')").get(epoch).count,
     markInbox: (id, state) => db.prepare('UPDATE inbox SET state=? WHERE id=?').run(state, id),
-    finishTurn: (id) => db.prepare("UPDATE inbox SET state='done',text='' WHERE id=?").run(id),
+    finishTurn: (id) => db.prepare("UPDATE inbox SET state='done',text='',payload='' WHERE id=?").run(id),
     recover: db.transaction((epoch, text) => {
       for (const row of db.prepare("SELECT id FROM inbox WHERE epoch=? AND state='admitted'").all(epoch)) {
         enqueue(epoch, `${row.id}:interrupted`, text);
-        db.prepare("UPDATE inbox SET state='done',text='' WHERE id=?").run(row.id);
+        db.prepare("UPDATE inbox SET state='done',text='',payload='' WHERE id=?").run(row.id);
       }
       // A process exit during HTTP send cannot prove whether Weixin accepted it.
       db.prepare("UPDATE outbox SET state='unknown' WHERE epoch=? AND state='sending'").run(epoch);

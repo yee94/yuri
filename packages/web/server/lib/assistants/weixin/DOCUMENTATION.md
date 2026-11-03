@@ -1,4 +1,4 @@
-# WeChat text channel
+# WeChat message channel
 
 This Host-owned channel connects a QR-authorized personal WeChat account to one
 existing Yuri Bot. It uses Tencent's public `openclaw-weixin` iLink wire reference,
@@ -15,6 +15,12 @@ service protocol. No OpenClaw runtime or new dependency is installed.
   retry/ambiguity and shutdown. `routes.js` exposes authenticated settings only.
 - `typing.js`: optional per-binding live typing state, ticket lifetime, bounded
   refresh/backoff and serialized cancellation; no persisted presence or UI state.
+- `inbound.js`: bounded inbound content projection, private media references,
+  partial-success attachment admission and TOON model/transcript context.
+- `media.js`: deadline/byte-bounded official CDN downloads, AES-128-ECB decoding
+  and MIME identification; no arbitrary URL fetch or credential forwarding.
+- `toon.js`: local JSON-only TOON encoder (objects, lists, primitive/tabular
+  arrays); no new dependency, key folding, raw-string emission or decoding API.
 - `assistants/service.channelPage()` is an internal bounded, ascending durable
   output seam. It validates the Bot and uses the contact-store generation. It does
   not expose credentials or replace the contact execution engine.
@@ -109,7 +115,9 @@ Incoming receipt, reply context and platform cursor commit together before calli
 `service.send()`. Namespaced IDs keep admission idempotent across duplicates and
 restarts. Incoming and outgoing work is separate from the long-poll receiver; pending
 plus admitted receipt count applies backpressure at 100, with 20 admissions per pass.
-Each active account has one receiver and one outbound scheduler. The process lease
+Each active account has one receiver, one serial input-preparation worker and one
+outbound scheduler. Media downloads do not block same-account replies or another
+account's preparation/sending. The process lease
 renews every 2 seconds and expires after 60 seconds; another process sharing this
 data directory cannot steal a live account. After any network wait, epoch/lease
 checks fence stale writes. Cross-machine copies of credentials/data are unsupported.
@@ -119,9 +127,63 @@ sent. Subsequent **public assistant replies**, including App-initiated and backg
 task replies, sync to the paired owner. Plain text is sent as text; current cards
 become title/name text, not interactive WeChat cards or deeplinks. Internal settle
 markers are omitted and failures use a safe generic message, never raw tool errors.
-Media input gets a text-only explanation and never invokes tools. Generation reset
-drops queued output from the previous transcript. An already submitted HTTP request
+Generation reset drops queued output from the previous transcript. An already submitted HTTP request
 cannot be recalled, including during disconnect/reset.
+
+### Rich inbound content
+
+- Plain text retains the ordinary text path. Every recognized image, voice, file
+  and video item is represented; mixed items no longer silently lose media. An
+  item-level `msg_id` is accepted when the top-level message ID is absent, matching
+  the reference client. Sender/group/ID authorization runs before normalization
+  or media access.
+- Images download/decrypt and enter the existing `putAssistantContactAttachment`
+  pipeline with deterministic receipt/item upload IDs. The transcript stores opaque
+  attachment descriptors, not data URLs, CDN capabilities or AES keys. Existing
+  contact materialization supplies bytes to vision-capable models; choosing a
+  non-vision model does not acquire image understanding through this channel.
+  Thumbnail-only references are labelled as thumbnails; URL-only image references
+  still pass the same fixed-CDN validation. Neither permits arbitrary web fetching.
+- Voice uses platform `voice_item.text` when present, without a duplicate audio
+  download. Otherwise the original audio is retained as an attachment and marked
+  **not transcribed**. No SILK decoder, automatic ASR provider, guessed transcript
+  or new speech dependency is installed. Video similarly retains the original file,
+  not a claim of audiovisual understanding. Text files use the existing gateway's
+  bounded inline-text path; other document formats retain normal attachment/model
+  limitations rather than being represented as extracted text.
+- Unknown item types and top-level content extensions retain bounded structured
+  data, including share titles, descriptions and article URLs **if supplied by the
+  platform**. JSON-valued strings are projected structurally; XML remains quoted
+  external text (no XML/entity expansion or URL fetching). Inline quote titles,
+  IDs, substring metadata and supplied content are retained; an ID-only quote does
+  not invent a cached body. This is not a guessed public article-item schema.
+- Structure becomes TOON in an ordinary user text part, explicitly labelled as
+  external content. Transport/authentication fields, media references/keys, bearer
+  values and known sensitive URL parameters are excluded; raw upstream errors never
+  reach the model/transcript. Links or metadata are not evidence that article
+  contents were retrieved. The channel does not automatically fetch arbitrary
+  article links or bypass WeChat login/risk controls. If iLink never delivers a
+  share card, Yuri cannot recover it from the user's WeChat client.
+- Bounds: 20 top-level items, eight downloads, nesting limits, a 24,000-character
+  metadata budget (8,000 per string), and 20,000 ordinary text characters per
+  message. Truncation is explicit. Each file is capped at 20 MiB to match the LLM
+  gateway, and each turn at 50 MiB. Downloads are serial per account, have a
+  20-second deadline, reject redirects, and only accept HTTPS at the known
+  `novac2c.cdn.weixin.qq.com/c2c/download` endpoint. Unknown CDN hosts degrade to
+  metadata with an unavailable marker rather than widening the fetch boundary.
+- One failed download/storage operation does not discard text, transcripts,
+  share fields or successful attachments. Missing bytes and original-only media
+  have explicit status. Byte/metadata limits are degradation, not empty success.
+
+The private inbox gains an additive `payload` column (old rows default to empty).
+It stores normalized metadata and bounded media capabilities before advancing the
+cursor, allowing pre-admission work to resume after restart with stable upload IDs.
+After admission the existing no-tool-replay recovery rule applies. Completed,
+recovered and transferred receipts clear both text and private payload; disconnect
+deletes them. Download cancellation and post-await binding/lease/auth/generation
+checks prevent stale preparation from admitting a message after disconnect, move,
+expiry or transcript reset. Successfully staged attachments follow the existing
+contact attachment lifecycle, including its normal unreferenced-object behavior.
 
 Replies are split by Unicode code points into at most 3500-character segments;
 stable client IDs and ordered outbox rows survive restart. This is not a server-side
@@ -194,6 +256,11 @@ Focused tests cover wire behavior, business errors, QR fencing, owner isolation,
 dedup, restart, conflicting bindings, process lease, shutdown, generation changes,
 unknown delivery, HTTP protection, confirmed moves, failed-write rollback,
 cursor/dedup preservation, concurrent/stale moves, typing cancellation/stale completions,
-and real contact-pipeline execution with a fake WeChat service. Real-account
+and real contact-pipeline execution with a fake WeChat service. Rich-input coverage
+includes AES key encodings, SSRF/redirect/size boundaries, partial success,
+TOON quoting, synthetic unknown share fields, voice transcripts, private-field
+redaction, durable receipt migration/rollback/restart and real attachment storage.
+Synthetic article extension fixtures are not evidence of a live platform schema.
+Real-account
 QR/verification, phone-visible delivery and typing presentation still require
 manual testing; mocks and builds are not evidence of platform acceptance.
