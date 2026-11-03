@@ -142,7 +142,10 @@ cannot be recalled, including during disconnect/reset.
 ### Rich inbound content
 
 - Plain text retains the ordinary text path. Item protocol IDs (`msg_id`) and
-  envelope fields such as timestamps do not create a separate TOON text part.
+  envelope fields such as timestamps, completion/routing fields, root/parent IDs,
+  and empty button lists do not create a separate TOON text part. Private-only
+  extensions are omitted after projection; actual share fields, quotes and
+  nonempty buttons still retain their content.
   Every recognized image, voice, file
   and video item is represented; mixed items no longer silently lose media. An
   item-level `msg_id` is accepted when the top-level message ID is absent, matching
@@ -197,10 +200,12 @@ expiry or transcript reset. Successfully staged attachments follow the existing
 contact attachment lifecycle, including its normal unreferenced-object behavior.
 
 Replies are split by Unicode code points into at most 3500-character segments;
-stable client IDs and ordered outbox rows survive restart. This is not a server-side
-exactly-once guarantee. An uncertain HTTP result is marked **delivery unknown** and
-blocks later output until the owner explicitly retries. New inbound context may
-unblock a known rejected reply but never automatically retries an unknown send.
+stable client IDs and ordered pending outbox rows survive restart. This is not a server-side
+exactly-once guarantee. An uncertain HTTP result is marked **delivery unknown**;
+it and definitively blocked replies remain durable but do not block later pending
+output, Bot execution or receiving. Later successful sends do not hide unresolved
+delivery errors. New inbound context may unblock a known rejected reply but never
+automatically retries an unknown send.
 Authentication expiry stays expired until new authorization; receiver network errors
 retry with 1–30 second capped backoff. Users can manually retry other blocked sends.
 The platform's reply-context lifetime and active-push quota are not specified here.

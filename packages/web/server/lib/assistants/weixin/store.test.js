@@ -17,6 +17,27 @@ const bind = (store, assistant_id = 'bot') => store.bind({ assistant_id, account
   base_url: 'https://ilinkai.weixin.qq.com', language: 'zh-CN', generation: 0, ordinal: 0, updated_at: 1 });
 
 describe('WeChat structured receipt persistence', () => {
+  it('bypasses failed/unknown sends across restart without dropping them or changing pending order', () => {
+    const dir = directory();
+    let store = createWeixinStore(dir);
+    cleanup.push(() => store.close());
+    const binding = bind(store);
+    for (const id of ['unknown', 'blocked', 'second', 'third']) store.enqueue(binding.epoch, id, id);
+    store.markDelivery('unknown', 'unknown');
+    store.markDelivery('blocked', 'blocked');
+    store.close();
+    store = createWeixinStore(dir);
+    expect(store.nextDelivery(binding.epoch)).toMatchObject({ id: 'second', state: 'pending' });
+    store.sent('second');
+    expect(store.nextDelivery(binding.epoch)).toMatchObject({ id: 'third', state: 'pending' });
+    expect(store.hasUnknown(binding.epoch)).toBe(true);
+    expect(store.hasBlocked(binding.epoch)).toBe(true);
+    store.retry(binding.epoch);
+    expect(store.nextDelivery(binding.epoch)).toMatchObject({ id: 'unknown', state: 'pending' });
+    store.sent('unknown');
+    expect(store.nextDelivery(binding.epoch)).toMatchObject({ id: 'blocked', state: 'pending' });
+  });
+
   it('adds the payload column to an existing text-only database without losing cursor, receipts or binding', () => {
     const dir = directory();
     let store = createWeixinStore(dir);

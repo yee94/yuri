@@ -479,6 +479,44 @@ describe('enterprise channel runtime', () => {
     expect(f.adapter.send.mock.calls[0][0].id).toBe(deliveryID);
   });
 
+  it.each(['wecom', 'feishu', 'dingtalk'])('a failed %s card does not block later text or Bot input', async (provider) => {
+    const f = fixture({ includeDingtalk: true });
+    f.adapter.send.mockImplementation(async ({ text }) => {
+      if (text === 'Article notes') throw Object.assign(new Error('rejected'), { code: 'validation_error' });
+    });
+    await f.save('bot', provider);
+    const connection = await f.connected('bot', provider);
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'card', text: '', cards: [{ cardType: 'session', title: 'Article notes', sessionID: 'ses_article' }], status: 'complete' },
+      { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.adapter.send.mock.calls.some(([input]) => input.text === 'Note saved')).toBe(true));
+    expect(f.runtime.status('bot', provider)).toMatchObject({ status: 'connected', error: 'delivery_failed' });
+    await connection.onMessage({ id: 'next', senderID: 'owner', chatType: 'private', text: 'Next task' });
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    expect(f.adapter.send.mock.calls.filter(([input]) => input.text === 'Note saved')).toHaveLength(1);
+  });
+
+  it('continues later output after an uncertain card send, including after restart, without resending the card', async () => {
+    const f = fixture();
+    f.adapter.send.mockRejectedValueOnce(Object.assign(new Error('timeout'), { ambiguous: true }));
+    await f.save();
+    await f.connected();
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'card', text: '', cards: [{ title: 'Article notes' }], status: 'complete' },
+      { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.adapter.send).toHaveBeenCalledTimes(2));
+    expect(f.adapter.send.mock.calls.map(([input]) => input.text)).toEqual(['Article notes', 'Note saved']);
+    expect(f.runtime.status('bot', 'wecom').error).toBe('delivery_unknown');
+    await f.runtime.close();
+    const restarted = fixture({ directory: f.directory });
+    restarted.reply('bot', 'Later result', 3);
+    await vi.waitFor(() => expect(restarted.adapter.send).toHaveBeenCalledOnce());
+    expect(restarted.adapter.send.mock.calls[0][0].text).toBe('Later result');
+    expect(restarted.runtime.status('bot', 'wecom').error).toBe('delivery_unknown');
+  });
+
   it.each(['auth_failed', 'connection_replaced'])('keeps %s sticky instead of hot-looping reconnects', async (code) => {
     const f = fixture();
     f.adapter.connect.mockRejectedValue(Object.assign(new Error('rejected'), { code }));

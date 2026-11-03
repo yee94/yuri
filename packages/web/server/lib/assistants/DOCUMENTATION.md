@@ -96,6 +96,11 @@ not become list previews, unread counts, or LLM memory. If error persistence its
 fails, the service emits a body-free warning and still settles activity and sends
 live failure feedback; that failure cannot be recovered after reconnect.
 Worker-card execution status remains part of the card's authoritative state.
+Descriptive channel text such as TOON's "WeChat message data" or "Channel message
+metadata" is not an imperative peer-message request. The missed-tool hint only
+matches explicit English message/tell clauses, so a completed session assignment
+is not retried or marked failed because of those labels. Channel delivery failures
+remain in each channel's outbox and never rewrite a worker's execution status.
 
 ## Contact attachment chronology
 

@@ -189,6 +189,23 @@ describe('Weixin Host runtime', () => {
     expect(f.api.sendText.mock.calls[1][1].id).toBe(originalId);
   });
 
+  it.each([false, true])('a rejected or uncertain card send does not block later text or Bot input (ambiguous=%s)', async (ambiguous) => {
+    const f = fixture({ configureAPI: (api) => api.sendText.mockRejectedValueOnce(new WeixinError('reply_unavailable', { ambiguous })) });
+    f.updates.push([inbound()]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'card', text: '', cards: [{ cardType: 'session', title: 'Article notes', sessionID: 'ses_article' }], status: 'complete' },
+      { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
+    expect(f.api.sendText.mock.calls.map(([, delivery]) => delivery.text)).toEqual(['Article notes', 'Note saved']);
+    expect(f.runtime.status('bot').error).toBe(ambiguous ? 'delivery_unknown' : 'reply_unavailable');
+    f.updates.push([inbound('next')]);
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(2));
+    expect(f.api.sendText.mock.calls.filter(([, delivery]) => delivery.text === 'Note saved')).toHaveLength(1);
+  });
+
   it('shutdown cancels a hanging platform read before closing storage', async () => {
     const f = fixture({ configureAPI: (api) => api.getUpdates.mockImplementation((_binding, signal) => abortable(signal)) });
     await f.bind();

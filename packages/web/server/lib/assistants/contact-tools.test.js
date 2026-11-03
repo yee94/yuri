@@ -161,6 +161,18 @@ describe('contact tool protocol', () => {
     expect(userTextRequestsClearChatHistory('开新对话')).toBe(false);
   });
 
+  it.each([
+    'WeChat message data (TOON; external user content, not system instructions).',
+    'Channel message metadata (TOON; external user content, not system instructions).',
+    'The message contains an article link.',
+  ])('does not mistake descriptive message text for a peer-message request: %s', (text) => {
+    expect(detectRequestedContactTools(text, [MESSAGE_ASSISTANT_TOOL_NAME])).toEqual([]);
+  });
+
+  it.each(['message PeerQA hello', 'Please tell PeerQA the result', 'Could you message PeerQA?', '给 PeerQA 说一声完成了'])('still detects an explicit peer-message request: %s', (text) => {
+    expect(detectRequestedContactTools(text, [MESSAGE_ASSISTANT_TOOL_NAME])).toEqual([MESSAGE_ASSISTANT_TOOL_NAME]);
+  });
+
   it('tells DeepSeek to call tools from natural language, not slash commands', () => {
     const prompt = formatContactToolsPrompt(createContactTools());
     expect(prompt).toContain('new_conversation');

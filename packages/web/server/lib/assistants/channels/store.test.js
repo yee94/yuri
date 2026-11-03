@@ -176,9 +176,9 @@ describe('enterprise channel private store', () => {
     store.markDelivery('out', 'sending');
     store.recover(binding.epoch, 'interrupted feedback');
     expect(store.pending(binding.epoch)).toEqual([expect.objectContaining({ id: 'pending', text: 'still pending' })]);
-    // The earlier indeterminate send stays at the head and is never bypassed.
+    // An indeterminate send stays durable but does not block interruption feedback.
     expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({
-      id: 'out', text: 'reply', state: 'unknown',
+      id: 'admitted:interrupted', text: 'interrupted feedback', state: 'pending',
     }));
     expect(store.hasUnknown(binding.epoch)).toBe(true);
     const db = new Database(path.join(dir, 'channel.sqlite'));
@@ -189,7 +189,8 @@ describe('enterprise channel private store', () => {
     expect(db.prepare("SELECT state FROM outbox WHERE id='out'").get().state).toBe('unknown');
     // retry re-queues definitively failed rows only; unknown stays unknown.
     store.retry(binding.epoch);
-    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'out', state: 'unknown' }));
+    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'admitted:interrupted', state: 'pending' }));
+    expect(db.prepare("SELECT state FROM outbox WHERE id='out'").get().state).toBe('unknown');
   });
 
   it('drops queued output from an older transcript generation and keeps stable IDs idempotent', () => {
@@ -218,30 +219,39 @@ describe('enterprise channel private store', () => {
     store.markDelivery('out', 'sending');
     store.failDelivery('out');
     expect(store.hasBlocked(binding.epoch)).toBe(true);
-    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'out', state: 'blocked' }));
+    expect(store.nextDelivery(binding.epoch)).toBeUndefined();
     store.retry(binding.epoch);
     expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'out', state: 'pending' }));
     store.markDelivery('out', 'unknown');
     store.retry(binding.epoch);
     expect(store.hasUnknown(binding.epoch)).toBe(true);
-    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'out', state: 'unknown' }));
+    expect(store.nextDelivery(binding.epoch)).toBeUndefined();
     expect(store.hasReceipt('missing')).toBe(false);
   });
 
-  it('preserves outbox order behind an unknown send until it is explicitly resolved', () => {
-    const store = createAssistantChannelStore(directory());
+  it('preserves pending output order across restart while bypassing durable failed/unknown sends', () => {
+    const dir = directory();
+    let store = createAssistantChannelStore(dir);
     cleanup.push(() => store.close());
     const binding = bind(store);
     store.collect(binding, { generation: 0, ordinal: 0 }, [
       { id: 'first', text: 'first' },
+      { id: 'failed', text: 'failed' },
       { id: 'second', text: 'second' },
+      { id: 'third', text: 'third' },
     ], 1);
     store.markDelivery('first', 'unknown');
-    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'first', state: 'unknown' }));
-    store.retry(binding.epoch);
-    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'first', state: 'unknown' }));
-    store.sent('first');
+    store.markDelivery('failed', 'blocked');
+    store.close();
+    store = createAssistantChannelStore(dir);
     expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'second', state: 'pending' }));
+    store.sent('second');
+    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'third', state: 'pending' }));
+    expect(store.hasUnknown(binding.epoch)).toBe(true);
+    expect(store.hasBlocked(binding.epoch)).toBe(true);
+    store.retry(binding.epoch);
+    expect(store.nextDelivery(binding.epoch)).toEqual(expect.objectContaining({ id: 'failed', state: 'pending' }));
+    expect(store.hasUnknown(binding.epoch)).toBe(true);
   });
 
   it('leases one process at a time and expires a dead owner', () => {

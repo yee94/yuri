@@ -266,11 +266,12 @@ removes all three rows, receipts and deliveries in one transaction.
 - **Unknown delivery:** a crash or abort during `sending`, or an ambiguous adapter
   error, marks the row `unknown`. It is never automatically resent and status
   reports `delivery_unknown`. `retry` only reconnects and does not clear it.
-  Definitively failed rows may be retried explicitly. The outbox is strictly
-  ordered: an `unknown` or `blocked` head is never bypassed, so later replies wait
-   until the owner disconnects and configures the channel again (or a blocked row
-   is explicitly retried). Saving the same account/owner preserves unknown rows;
-   disconnecting discards that channel's queued replies as well as its credentials.
+  Definitively failed rows may be retried explicitly after capped automatic attempts.
+  Pending rows retain their sequence order, but `unknown` and `blocked` rows are
+  bypassed so one failed notification cannot prevent later replies or Bot execution.
+  Their durable state and error indicator survive later successful sends and restart.
+  Saving the same account/owner preserves unknown rows; disconnecting discards that
+  channel's queued replies as well as its credentials.
 - **Reconnect:** connection failures retry with 1–30 second capped exponential
   backoff. Authentication failure and SDK `connection_replaced` become a sticky
   `error` until an explicit save or retry, so bad credentials or mutual-kick loops

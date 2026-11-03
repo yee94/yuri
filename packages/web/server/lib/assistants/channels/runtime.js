@@ -478,9 +478,8 @@ export function createAssistantChannelsRuntime({
       if (!row || row.epoch !== binding.epoch || isSticky(row)) return;
       const delivery = store.nextDelivery(binding.epoch);
       if (!delivery) return;
-      // Head-of-line ordering: unknown/blocked rows are never bypassed. retry
-      // may re-queue a definitively failed row, but never an unknown one.
-      if (delivery.state !== 'pending') return;
+      // Only pending output is eligible; failed/unknown rows stay durable without
+      // blocking later replies. Unknown sends are never automatically retried.
       if (!adapter) {
         store.patch(binding.epoch, { status: 'error', error: 'unsupported_provider', updated_at: clock() });
         return;

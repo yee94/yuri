@@ -4,7 +4,7 @@ import { CONTACT_ATTACHMENT_TURN_BUDGET_BYTES } from '../contact-attachments.js'
 
 const kinds = { 1: 'text', 2: 'image', 3: 'voice', 4: 'file', 5: 'video' };
 const privateField = /token|ticket|aes|encrypt|authorization|cookie|password|secret|credential|signature|^sig$|(?:^|_)auth(?:_|$)|(?:^|_)key$|full_url|^media$|^thumb_media$|^base_info$|^__proto__$|^constructor$|^prototype$/i;
-const envelope = new Set(['item_list', 'message_id', 'from_user_id', 'to_user_id', 'message_type', 'message_state', 'seq', 'session_id', 'client_id', 'create_time_ms', 'update_time_ms', 'delete_time_ms', 'group_id', 'run_id']);
+const envelope = new Set(['item_list', 'message_id', 'msg_id', 'from_user_id', 'to_user_id', 'message_type', 'message_state', 'seq', 'session_id', 'client_id', 'create_time_ms', 'update_time_ms', 'delete_time_ms', 'group_id', 'run_id', 'root_id', 'parent_id', 'is_completed', 'at_bot_username_list']);
 
 function contentProjection() {
   let remaining = 24_000;
@@ -64,14 +64,16 @@ export function normalizeWeixinInput(message) {
     const body = item[`${kind}_item`];
     if (kind === 'text' && typeof body?.text === 'string' && !quoted) texts.push(body.text);
     const index = items.length;
-    const details = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'ref_msg' && key !== 'msg_id' && !envelope.has(key) && !(kind === 'text' && key === 'text_item')));
+    const details = Object.fromEntries(Object.entries(item).filter(([key, value]) => key !== 'ref_msg' && !envelope.has(key)
+      && !(key === 'button_item_list' && Array.isArray(value) && value.length === 0)
+      && !(kind === 'text' && key === 'text_item')));
     if (kind === 'text' && body && typeof body === 'object') {
       const extraTextFields = Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'text'));
       if (Object.keys(extraTextFields).length) details.text_item = extraTextFields;
     }
     const content = projection.visit(quoted ? { ...details, text_item: item.text_item } : details);
     const entry = { ...content, kind, ...(quoted ? { quoted: true } : {}) };
-    if (kind !== 'text' || quoted || Object.keys(details).some((key) => key !== 'type')) items.push(entry);
+    if (kind !== 'text' || quoted || Object.keys(content || {}).some((key) => key !== 'type')) items.push(entry);
     if (['image', 'voice', 'file', 'video'].includes(kind)) {
       entry.mediaStatus = 'unavailable';
       if (kind === 'voice') entry.transcription = typeof entry.voice_item?.text === 'string' && entry.voice_item.text.trim() ? 'provided' : 'unavailable';

@@ -104,12 +104,13 @@ export function createWeixinStore(directory) {
       for (const delivery of deliveries) enqueue(binding.epoch, delivery.id, delivery.text);
       patch(binding.epoch, { generation: page.generation, ordinal: page.ordinal });
     }),
-    nextDelivery: (epoch) => db.prepare("SELECT * FROM outbox WHERE epoch=? AND state!='sent' ORDER BY sequence LIMIT 1").get(epoch),
+    nextDelivery: (epoch) => db.prepare("SELECT * FROM outbox WHERE epoch=? AND state='pending' ORDER BY sequence LIMIT 1").get(epoch),
     markDelivery: (id, state) => db.prepare('UPDATE outbox SET state=? WHERE id=?').run(state, id),
     sent: (id) => db.prepare("UPDATE outbox SET state='sent',text='' WHERE id=?").run(id),
     retry: (epoch) => db.prepare("UPDATE outbox SET state='pending' WHERE epoch=? AND state IN ('unknown','blocked')").run(epoch),
     unblock: (epoch) => db.prepare("UPDATE outbox SET state='pending' WHERE epoch=? AND state='blocked'").run(epoch),
     hasUnknown: (epoch) => Boolean(db.prepare("SELECT 1 FROM outbox WHERE epoch=? AND state='unknown' LIMIT 1").get(epoch)),
+    hasBlocked: (epoch) => Boolean(db.prepare("SELECT 1 FROM outbox WHERE epoch=? AND state='blocked' LIMIT 1").get(epoch)),
     acquire: (owner, now) => Boolean(db.prepare(`INSERT INTO lease(id,owner,expires_at) VALUES (1,?,?)
       ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
       WHERE lease.owner=excluded.owner OR lease.expires_at<=?`).run(owner, now + 60_000, now).changes),

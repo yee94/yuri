@@ -12,6 +12,16 @@ const prepare = async (message, overrides = {}) => {
 };
 
 describe('WeChat rich input projection', () => {
+  it('keeps a real plain-text envelope as one text part without transport-only metadata', async () => {
+    const message = { message_id: 'message-id', root_id: 0, parent_id: 0,
+      item_list: [{ type: 1, create_time_ms: 123, update_time_ms: 123, is_completed: true,
+        msg_id: 'item-id', button_item_list: [], at_bot_username_list: [],
+        text_item: { text: 'https://mp.weixin.qq.com/s/example' } }] };
+    const result = await prepare(message);
+    expect(result.receipt.payload).toBe('');
+    expect(result.parts).toEqual([{ type: 'text', text: 'https://mp.weixin.qq.com/s/example' }]);
+  });
+
   it('does not turn ordinary text item protocol IDs into a TOON message', async () => {
     const message = { message_id: 'message-id', from_user_id: 'owner', create_time_ms: 123,
       item_list: [{ type: 1, msg_id: 'item-id', create_time_ms: 123, text_item: { text: 'halo' } }] };
@@ -26,6 +36,16 @@ describe('WeChat rich input projection', () => {
     const result = await prepare(message);
     expect(result.parts).toEqual([{ type: 'text', text: '你好\nworld' }]);
     expect(result.api.downloadMedia).not.toHaveBeenCalled();
+  });
+
+  it('omits private-only text fields but retains actual button and article content', async () => {
+    const plain = await prepare({ item_list: [{ type: 1, text_item: { text: 'hello' }, private_token: 'not-content' }] });
+    expect(plain.parts).toEqual([{ type: 'text', text: 'hello' }]);
+    const rich = await prepare({ root_id: 0, parent_id: 0, article: { title: 'Article', url: 'https://mp.weixin.qq.com/s/example' },
+      item_list: [{ type: 1, text_item: { text: 'hello' }, button_item_list: [{ title: 'Open article' }] }] });
+    expect(rich.parts.at(-1).text).toContain('Open article');
+    expect(rich.parts.at(-1).text).toContain('Article');
+    expect(rich.parts.at(-1).text).not.toMatch(/root_id|parent_id/);
   });
 
   it('keeps every mixed item, inline quote and article extension as data while stripping transport secrets', async () => {

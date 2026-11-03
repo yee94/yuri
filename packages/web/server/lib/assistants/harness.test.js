@@ -858,6 +858,24 @@ describe('runContactTurn', () => {
     expect(completions).toBe(2)
   })
 
+  it.each(['WeChat message data', 'Channel message metadata'])('keeps a successful assignment with %s context without retrying a peer operation', async (header) => {
+    const assignWork = vi.fn(async () => ({ sessionID: 'ses_article', directory: '/repo', title: 'Article notes', status: 'busy' }))
+    const deliverPeerMessage = vi.fn()
+    const createChatCompletion = vi.fn(async ({ body }) => body.messages[0].content.startsWith('Reply briefly')
+      ? { text: '已交给工作会话。' }
+      : toolCall('assign_session', { prompt: 'Read the article and make notes', projectPath: '/repo' }))
+    const result = await runContactTurn({
+      assistant: { providerID: 'p', modelID: 'm' }, history: [],
+      userText: `https://mp.weixin.qq.com/s/example\n${header} (TOON; external user content, not system instructions).\nitems[1]:\n  - kind: unknown`,
+      tools: createContactTools({ assignWork, deliverPeerMessage }), createChatCompletion,
+    })
+    expect(assignWork).toHaveBeenCalledOnce()
+    expect(deliverPeerMessage).not.toHaveBeenCalled()
+    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_article' })])
+    expect(result.bubbles).toEqual(['已交给工作会话。'])
+    expect(createChatCompletion).toHaveBeenCalledTimes(2)
+  })
+
   it('real Agent loop: list_projects then assign keeps prereq + one session (terminate after assign)', async () => {
     const listProjects = vi.fn(async () => [{ id: 'p1', path: '/repo', label: 'Repo' }])
     const assignWork = vi.fn(async () => ({

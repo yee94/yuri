@@ -206,7 +206,8 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
         signal: receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal });
       if (!isCurrent(binding) && !(retiring.has(binding.assistant_id) && canControl(binding))) return;
       store.sent(delivery.id);
-      store.patch(binding.epoch, { error: null, updated_at: clock() });
+      store.patch(binding.epoch, { error: store.hasUnknown(binding.epoch) ? 'delivery_unknown'
+        : store.hasBlocked(binding.epoch) ? 'reply_unavailable' : null, updated_at: clock() });
     } catch (error) {
       if (!isCurrent(binding)) {
         if (retiring.has(binding.assistant_id) && canControl(binding)) {

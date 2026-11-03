@@ -202,7 +202,7 @@ export function createAssistantChannelStore(directory) {
         .run(page.generation, page.ordinal, updatedAt, binding.epoch);
     }),
     nextDelivery: (epoch) => db.prepare(
-      "SELECT * FROM outbox WHERE epoch=? AND state!='sent' ORDER BY sequence LIMIT 1",
+      "SELECT * FROM outbox WHERE epoch=? AND state='pending' ORDER BY sequence LIMIT 1",
     ).get(epoch),
     markDelivery: (id, state) => db.prepare('UPDATE outbox SET state=? WHERE id=?').run(state, id),
     sent: (id) => db.prepare("UPDATE outbox SET state='sent',text='',target='' WHERE id=?").run(id),

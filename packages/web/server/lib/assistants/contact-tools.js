@@ -160,7 +160,7 @@ const SCHEDULE_TASK_INTENT = /排定时任务|排个?定时任务|定时任务|s
 const ASSIGN_SESSION_INTENT = /(?:建|开)(?:一个|个)?(?:新)?(?:编码\s*)?(?:session|会话)|继续(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|open (?:a )?(?:coding )?session|continue (?:the |this |that )?(?:coding )?session|assign_session/giu;
 const WATCH_SESSION_INTENT = /监听(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|关注(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|watch (?:the |this |that )?(?:coding )?session|monitor (?:the |this |that )?(?:coding )?session|watch_session/giu;
 const STOP_SESSION_INTENT = /停止(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|中止(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|打断(?:这个|该|那个)?(?:编码\s*)?(?:session|会话)|stop (?:the |this |that )?(?:coding )?session|abort (?:the |this |that )?(?:coding )?session|stop_session/giu;
-const MESSAGE_ASSISTANT_INTENT = /给[^。\n]{1,40}说(?:一声)?|跟[^。\n]{1,24}说(?:一声)?|告诉(?!我)[^。\n]{1,40}|说一声|message (?:the )?(?:assistant|peer)|(?:tell|message)\s+[A-Za-z0-9._-]+|send (?:a )?message to/iu;
+const MESSAGE_ASSISTANT_INTENT = /给[^。\n]{1,40}说(?:一声)?|跟[^。\n]{1,24}说(?:一声)?|告诉(?!我)[^。\n]{1,40}|说一声|(?:^|[。！？.!?\n])\s*(?:(?:please|can you|could you|would you)\s+)*(?:tell|message)\s+[A-Za-z0-9._-]+|send (?:a )?message to/iu;
 // Explicit wipe only — must stay stricter than the safe clear-memory intent.
 // `g` so hasClearChatHistoryIntent can walk matches and honor nearby negation.
 const CLEAR_CHAT_HISTORY_INTENT = /(?:清空|清除|删除)(?:聊天|对话)记录|wipe (?:the )?chat(?: history)?|delete (?:the )?(?:chat|conversation) history|clear (?:the )?(?:chat|conversation) history/giu;
