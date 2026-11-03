@@ -41,9 +41,11 @@ acceptance test.
 Desktop right-click and mobile long-press share `AssistantContactMenu` with Pin / Unpin,
 Edit and Delete. Mobile rows retain their existing swipe edit/delete actions.
 `AssistantPinnedContacts` displays the single pinned Bot above ordinary rows as a
-centered 76px face with a truncated name, live working dot and unread badge. Pinning
+centered 64px face in a tile capped at 112px wide, with a truncated name, live working dot and unread badge. Pinning
 another Bot automatically replaces the previous one. The region shares the catalog scroll owner; no separate card, heading or
 scroller is introduced. Selection uses the existing neutral theme surface.
+The mobile catalog removes the pinned group's top padding and uses a 4px tile
+top inset; desktop retains the 8px group and 12px tile top insets.
 
 `partitionAssistantContacts` selects the Host-owned pin; legacy multiple-pin
 snapshots display only the latest `pinnedAt` (source order breaks ties), returning

@@ -1,23 +1,25 @@
 # GUI plugin UI boundary
 
-`GuiPluginTitlebarItems` renders official global `TitlebarItem` contributions in
-the persistent desktop/Web left titlebar controls, VS Code's header and mobile
-root/session headers. It remains independent of session selection and does not
-request early loading or introduce a new startup gate. Entries use shared neutral
-buttons, accessible title/label, hover labels, busy/pressed states and bounded
-horizontal overflow. Passive items are status text, not clickable buttons. Official
-icon names reuse available Yuri sprites (including `globe` → `global`). Entries
-prefer the owning package's top-level `package.json` `icon`, matched by the exact
-inventory `source.target` or absolute local `source.path`, never by GUI ID. Only
-sources with visible contributions join the existing batched, runtime/directory-scoped
-registry Query; artwork does not delay activation or request early GUI loading.
-Package images render as alpha CSS masks filled with `currentColor`, so theme,
-pressed and inherited text colors apply without executing or injecting SVG markup.
-HTTPS artwork must allow anonymous CORS for CSS masks. While loading or after an
-image failure, entries use their built-in icon, or label when unmapped. Busy state
-still takes precedence. Builtin/SDK sources have no package artwork lookup.
-Plugin-owned labels
-remain under the plugin's i18n. Native actions retain the existing main/IPC policy.
+`GuiPluginTitlebarItems` consumes official global `TitlebarItem` contributions.
+Web/desktop renders them as full-width icon-and-label navigation rows below Bots,
+before pinned/in-progress sessions, rather than duplicating them in the left
+titlebar. VS Code retains its header presentation; mobile root/session headers
+retain compact controls and the mobile session drawer uses navigation rows.
+Entries remain independent of session selection and do not request early loading
+or introduce a startup gate. Navigation rows use the surrounding shared ghost
+Button style and compact controls retain neutral solid buttons. Busy/pressed,
+accessible title/label and passive status semantics are preserved.
+Settings → Plugins uses the package's top-level `package.json.icon`, not nested
+`magpie.icon`. GUI sidebar/titlebar entries instead use official `IconName` strings
+resolved to available Yuri sprites (including `globe` → `global`) in current text
+color. They never query or substitute package artwork. Busy still uses a spinner.
+Unknown icons preserve the label. Plugin-owned labels remain under the plugin's
+i18n. Native actions retain the existing main/IPC policy.
+
+An entry is an action, not a global page registration. Official `Panel` content is
+session-scoped, and `dialogs.open` means a modal, not a full main-workspace page.
+This host does not reinterpret either API as a global page or intercept
+`system.openExternal` to embed an arbitrary URL.
 
 File previews render inside the existing FilesView tab or MobileFileDetail body.
 File previews and standalone plugin panels share the mobile edge-to-edge marker;
@@ -61,7 +63,21 @@ standalone panels, and manager settings mounts select readiness by that exact ID
 unrelated plugin reloads preserve their foreign DOM. Do not infer ownership from
 the contribution key prefix: official plugin IDs are strings without a no-colon
 constraint, so IDs such as `demo` and `demo:tools` can share a prefix.
-Mount failures appear inline; cleanup failures are reported through the shared
+Mount failures reuse `FilePreviewError` / `FilePreviewState`: the same centered,
+theme-aware SVG and wrapping text canvas used by file/Eficy preview errors, not a
+top error row. The foreign container is cleared and hidden until a new mount identity
+or revision retries it. Global pages also use that canvas after host-reported plugin
+failure removes the contribution, and have a React boundary with the same fallback.
+Global pages reuse the `WorkspaceSurface` component with ContextPanel: inset spacing,
+rounded corners, clipped content and the same theme-aware inset ring/material.
+Healthy global pages have no host title, Back button or status chrome. A plugin
+may render its own compact navigation inside that surface; frame history and
+address synchronization remain plugin-owned rather than using Yuri's history.
+Detailed host diagnostics remain in Settings; the global failure canvas shows generic
+localized copy rather than exposing plugin error payloads. Cross-origin iframe document
+errors are not observable by this React/Solid boundary; plugin-owned frame protocols
+must report those failures explicitly rather than guessing success from `load`.
+Cleanup failures are reported through the shared
 toast while the container is still cleared. Locale changes update fallback copy
 without remounting foreign content. Discovery, bundle download and activation
 failures stay silent outside plugin settings: no file-view banner/retry row,
@@ -99,9 +115,10 @@ entry points; contributed shortcut bindings are not installed by this UI.
 
 The provider initially fetches inventory, then preloads active enabled GUI plugins
 at browser idle (2s timeout, 1s timer fallback). A visible, active file bridge,
-the mounted Plugins manager, or the open command-palette plugin group calls
-`requestLoad()` to bypass that wait. Closed command palettes and inactive/inert/hidden
-file views do not initiate demand themselves. Demand is retained for the current
+or the mounted Plugins manager calls `requestLoad()` to bypass that wait.
+The command palette only consumes the provider's live command snapshot; opening,
+typing, and reopening never initiate plugin loading or wait for activation.
+Inactive/inert/hidden file views do not initiate demand themselves. Demand is retained for the current
 runtime so closing and reopening a file reuses the installed host and bundle queries.
 Persistent code is revalidated before installation; its transport and freshness
 contract belongs to `lib/gui-plugins/DOCUMENTATION.md`.

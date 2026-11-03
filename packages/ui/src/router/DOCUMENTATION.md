@@ -11,6 +11,7 @@ These are **siblings**, not children of a session:
 | **schedule** | `/schedule` · `/schedule/history` · `/schedule/tasks/$p/$t` · `…/agent/$focus` | Schedule workspace only |
 | **assistant** | `/assistant` · `/assistant/$id` · `…/agent/$focus` | Assistant workspace only |
 | **settings** | `/settings/$slug[/$entity]` | Settings overlay only |
+| **plugin** | `/plugins/$pluginId/$pageId` | Desktop global Solid plugin placement only |
 
 **Invalid product URLs (must not be written):**
 
@@ -23,6 +24,13 @@ Legacy nested forms still **parse** into top-level `schedule` / `assistant` kind
 
 At most one of: session shell · plan · schedule · assistant · settings  
 MainLayout never keep-alive-mounts Chat under schedule/assistant/plan.
+
+Plugin pages are also exclusive; their identity is transient UI selection plus a
+credential-free route. Back restores the preceding main tab. Browser history can
+restore page identity before plugins finish loading. The immersive placement adds
+no header/back/loading/retry chrome; rendering failures use the shared centered
+preview-error SVG and text, while detailed diagnostics stay in plugin settings. It never
+opens an external browser. Runtime switching clears the selection.
 
 ## Session tools only under session
 

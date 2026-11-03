@@ -17,7 +17,13 @@ vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: state
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
 vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (select: (value: { currentSessionId: string }) => unknown) => select({ currentSessionId: state.session.id }) }));
 vi.mock('@/sync/sync-context', () => ({ useCurrentSessionEntity: () => state.session }));
-vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (value: { isMobile: boolean }) => unknown) => select({ isMobile: false }) }));
+vi.mock('@/stores/useUIStore', () => {
+  const value = { isMobile: false, activeMainTab: 'chat', activeGuiPage: null };
+  return { useUIStore: Object.assign((select: (state: typeof value) => unknown) => select(value), {
+    getState: () => value,
+    subscribe: () => () => {},
+  }) };
+});
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ locale: 'en', t: (key: string) => key }) }));
 vi.mock('@/components/chat/fileReferenceActions', () => ({ openFileReference: vi.fn(async () => {}), getFileReferenceLinkLimit: () => 100 }));
 vi.mock('@/lib/opencode/gui', () => ({ createGuiClient: () => ({ plugin: { list: state.list, gui: state.gui } }) }));

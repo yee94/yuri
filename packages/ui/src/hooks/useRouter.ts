@@ -138,6 +138,11 @@ export function useRouter(): void {
         }
 
         // 2. Exclusive primaries schedule / assistant — no session path binding
+        if (route.tab === 'plugin' && route.guiPageKey) {
+          if (!useUIStore.getState().isMobile) useUIStore.getState().openGuiPage(route.guiPageKey);
+          else setActiveMainTab('chat');
+          return;
+        }
         if (route.tab === 'schedule' || route.tab === 'assistant') {
           setActiveMainTab(route.tab);
           if (route.tab === 'assistant' && route.assistantId) {
@@ -208,7 +213,7 @@ export function useRouter(): void {
     const pathState = parseRoute();
     const tab = uiState.activeMainTab;
     // Retained chat drafts must not override the active exclusive primary.
-    const isExclusive = tab === 'schedule' || tab === 'assistant';
+    const isExclusive = tab === 'schedule' || tab === 'assistant' || tab === 'plugin';
     const isNewSession = !isExclusive && Boolean(sessionState.newSessionDraft?.open)
       && !sessionState.currentSessionId;
     const assistantId = isExclusive && tab === 'assistant' ? getSelectedAssistantID() : null;
@@ -221,6 +226,7 @@ export function useRouter(): void {
       // resetAppForRuntimeEndpointChange so this fallback cannot re-pin a
       // previous-runtime conversation.
       isNewSession,
+      guiPageKey: tab === 'plugin' ? uiState.activeGuiPage : null,
       sessionId: isExclusive || isNewSession
         ? null
         : (sessionState.currentSessionId ?? pathState.sessionId),
@@ -298,7 +304,7 @@ export function useRouter(): void {
             : (route.sessionId
               ?? useSessionUIStore.getState().currentSessionId
               ?? getCurrentAppState().sessionId),
-          tab: route.tab ?? useUIStore.getState().activeMainTab,
+          tab: route.tab === 'plugin' && useUIStore.getState().isMobile ? 'chat' : route.tab ?? useUIStore.getState().activeMainTab,
           settingsPath: route.settingsPath ?? useUIStore.getState().settingsPage,
           diffFile: route.isNewSession
             ? null
@@ -445,6 +451,7 @@ export function useRouter(): void {
     let prevSettingsOpen: boolean = useUIStore.getState().isSettingsDialogOpen;
     let prevSettingsPath: string = useUIStore.getState().settingsPage;
     let prevDiffFile: string | null = useUIStore.getState().pendingDiffFile;
+    let prevGuiPage = useUIStore.getState().activeGuiPage;
 
     const unsubscribe = useUIStore.subscribe((state) => {
       // Skip if we're currently applying a route
@@ -453,18 +460,20 @@ export function useRouter(): void {
       }
 
       const tabChanged = state.activeMainTab !== prevTab;
+      const pageChanged = state.activeGuiPage !== prevGuiPage && state.activeMainTab === 'plugin';
       const settingsOpenChanged = state.isSettingsDialogOpen !== prevSettingsOpen;
       const settingsPathChanged = state.settingsPage !== prevSettingsPath;
       const diffFileChanged = state.pendingDiffFile !== prevDiffFile && state.activeMainTab === 'diff';
 
       // Update tracking vars
       prevTab = state.activeMainTab;
+      prevGuiPage = state.activeGuiPage;
       prevSettingsOpen = state.isSettingsDialogOpen;
       prevSettingsPath = state.settingsPage;
       prevDiffFile = state.pendingDiffFile;
 
       // Only sync if something relevant changed
-      if (tabChanged || settingsOpenChanged || settingsPathChanged || diffFileChanged) {
+      if (tabChanged || pageChanged || settingsOpenChanged || settingsPathChanged || diffFileChanged) {
         syncURLFromState();
       }
     });

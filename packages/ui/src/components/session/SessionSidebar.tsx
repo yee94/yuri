@@ -4,6 +4,7 @@ import type { Session } from '@/lib/opencode/v2-types';
 import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 import { useI18n } from '@/lib/i18n';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopShell } from '@/lib/desktop';
@@ -44,7 +45,6 @@ import { useSidebarPersistence } from './sidebar/hooks/useSidebarPersistence';
 import { useProjectRepoStatus } from './sidebar/hooks/useProjectRepoStatus';
 import { useProjectSessionLists } from './sidebar/hooks/useProjectSessionLists';
 import { createSessionOwnershipIndex } from './sidebar/sessionOwnership';
-import { getGitHubPrStatusKey, usePrVisualSummaryByKeys, useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
@@ -102,8 +102,6 @@ import {
   requestSidebarVisualSelection,
   syncSidebarVisualSelection,
 } from "./sidebar/sidebarVisualSelection";
-import { useRuntimeAPIs } from "@/hooks/useRuntimeAPIs";
-import { useGitHubAuthQuery } from "@/queries/githubAuthQueries";
 import { subscribeYuriEvents } from "@/lib/yuriEvents";
 import {
   announceSessionSwitchIntent,
@@ -186,32 +184,6 @@ const readStoredStringArrayMap = (key: string): Map<string, string[]> => {
   }
 };
 
-type PrVisualState = "draft" | "open" | "blocked" | "merged" | "closed";
-
-type PrIndicator = {
-  visualState: PrVisualState;
-  number: number;
-  url: string | null;
-  state: "open" | "closed" | "merged";
-  draft: boolean;
-  title: string | null;
-  base: string | null;
-  head: string | null;
-  checks: {
-    state: "success" | "failure" | "pending" | "unknown";
-    total: number;
-    success: number;
-    failure: number;
-    pending: number;
-  } | null;
-  canMerge: boolean | null;
-  mergeableState: string | null;
-  repo: {
-    owner: string;
-    repo: string;
-  } | null;
-};
-
 const buildKnownSessionDirectories = (
   projects: Array<{ path: string }>,
   availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
@@ -252,7 +224,6 @@ const isKnownActiveSessionDirectory = (
   return knownDirectories.has(directory);
 };
 
-const SIDEBAR_PR_NO_PR_RETRY_MS = 5 * 60_000;
 
 const EMPTY_SUBTREE_SET: Set<string> = new Set();
 const EMPTY_PATH_LIST: string[] = [];
@@ -305,7 +276,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const [sessionSearchQuery, setSessionSearchQuery] = React.useState("");
   const sessionSearchContainerRef = React.useRef<HTMLDivElement | null>(null);
   const sessionSearchInputRef = React.useRef<HTMLInputElement | null>(null);
-  const retriedNoPrStatusKeysRef = React.useRef<Set<string>>(new Set());
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState("");
   const [editingProjectDialogId, setEditingProjectDialogId] = React.useState<
@@ -1390,18 +1360,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     projectSessionDirectories,
   ]);
 
-  const { github } = useRuntimeAPIs();
-  const githubAuthQuery = useGitHubAuthQuery();
-  const githubAuthStatus = githubAuthQuery.data ?? null;
-  const githubAuthChecked = githubAuthQuery.isFetched;
   const gitRepoStatus = useGitRepoStatusMap(isVisible ? normalizedProjectPaths : EMPTY_PATH_LIST);
-  const ensurePrStatusEntry = useGitHubPrStatusStore(
-    (state) => state.ensureEntry,
-  );
-  const setPrStatusParams = useGitHubPrStatusStore((state) => state.setParams);
-  const refreshPrStatusTargets = useGitHubPrStatusStore(
-    (state) => state.refreshTargets,
-  );
 
   useProjectRepoStatus({
     normalizedProjects,
@@ -2062,127 +2021,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     sessionSwitchIntent,
   ]);
 
-  const prLookupKeys = React.useMemo(() => {
-    const keys = new Set<string>();
-    sectionsForSidebarRender.forEach((section) => {
-      if (collapsedProjects.has(section.project.id)) return;
-      section.groups.forEach((group) => {
-        if (collapsedGroups.has(`${section.project.id}:${group.id}`)) return;
-        const directory = normalizePath(group.directory ?? null);
-        const branch =
-          group.branch?.trim() || gitBranches.get(directory || "")?.trim();
-        if (!directory || !branch) {
-          return;
-        }
-        keys.add(getGitHubPrStatusKey(directory, branch));
-      });
-    });
-    return [...keys];
-  }, [collapsedGroups, collapsedProjects, gitBranches, sectionsForSidebarRender]);
-
-  const prVisualSummaryMap = usePrVisualSummaryByKeys(prLookupKeys);
-
-  React.useEffect(() => {
-    if (!isVisible || !githubAuthChecked || !githubAuthStatus?.connected || !github) {
-      return;
-    }
-
-    const missingTargets: Array<{
-      directory: string;
-      branch: string;
-      remoteName?: string | null;
-    }> = [];
-    const now = Date.now();
-
-    sectionsForSidebarRender.forEach((section) => {
-      if (collapsedProjects.has(section.project.id)) {
-        return;
-      }
-
-      section.groups.forEach((group) => {
-        if (collapsedGroups.has(`${section.project.id}:${group.id}`)) {
-          return;
-        }
-        const directory = normalizePath(group.directory ?? null);
-        const branch =
-          group.branch?.trim() || gitBranches.get(directory || "")?.trim();
-        if (!directory || !branch) {
-          return;
-        }
-        const key = getGitHubPrStatusKey(directory, branch);
-        const entry = useGitHubPrStatusStore.getState().entries[key];
-        const hasPr = Boolean(entry?.status?.pr);
-        const retryKey = `${directory}::${branch}`;
-        const noPrLastCheckedAt = Math.max(
-          entry?.lastRefreshAt ?? 0,
-          entry?.lastDiscoveryPollAt ?? 0,
-        );
-        const shouldRetryNoPr = Boolean(
-          entry?.isInitialStatusResolved &&
-          !hasPr &&
-          (!retriedNoPrStatusKeysRef.current.has(retryKey) ||
-            now - noPrLastCheckedAt >= SIDEBAR_PR_NO_PR_RETRY_MS),
-        );
-
-        if (!entry || !entry.isInitialStatusResolved || shouldRetryNoPr) {
-          if (shouldRetryNoPr) {
-            retriedNoPrStatusKeysRef.current.add(retryKey);
-          }
-          missingTargets.push({ directory, branch });
-        }
-      });
-    });
-
-    if (missingTargets.length === 0) {
-      return;
-    }
-
-    const uniqueTargets = new Map<
-      string,
-      { directory: string; branch: string; remoteName?: string | null }
-    >();
-    missingTargets.forEach((target) => {
-      const key = getGitHubPrStatusKey(
-        target.directory,
-        target.branch,
-        target.remoteName ?? null,
-      );
-      if (!uniqueTargets.has(key)) {
-        uniqueTargets.set(key, target);
-      }
-    });
-
-    uniqueTargets.forEach((target, key) => {
-      ensurePrStatusEntry(key);
-      setPrStatusParams(key, {
-        directory: target.directory,
-        branch: target.branch,
-        remoteName: target.remoteName ?? null,
-        canShow: true,
-        github,
-        githubAuthChecked,
-        githubConnected: githubAuthStatus.connected,
-      });
-    });
-
-    void refreshPrStatusTargets([...uniqueTargets.values()], {
-      silent: true,
-      markInitialResolved: true,
-    });
-  }, [
-    collapsedProjects,
-    collapsedGroups,
-    ensurePrStatusEntry,
-    github,
-    githubAuthChecked,
-    githubAuthStatus?.connected,
-    gitBranches,
-    isVisible,
-    refreshPrStatusTargets,
-    sectionsForSidebarRender,
-    setPrStatusParams,
-  ]);
-
   const renderSessionNode = useStableRenderCallback(
     (
       node: SessionNode,
@@ -2288,27 +2126,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     [collectDirectoriesForProjectId],
   );
 
-  const prVisualStateByDirectoryBranch = React.useMemo(() => {
-    const result = new Map<string, PrIndicator>();
-    for (const [key, summary] of prVisualSummaryMap) {
-      result.set(key, {
-        visualState: summary.visualState as PrVisualState,
-        number: summary.number,
-        url: summary.url,
-        state: summary.prState as "open" | "closed" | "merged",
-        draft: summary.draft,
-        title: summary.title,
-        base: summary.base,
-        head: summary.head,
-        checks: summary.checks as PrIndicator["checks"],
-        canMerge: summary.canMerge,
-        mergeableState: summary.mergeableState,
-        repo: summary.repo,
-      });
-    }
-    return result;
-  }, [prVisualSummaryMap]);
-
   const handleGroupReorder = useEvent((group: SessionGroup, sessionIds: string[], activeSessionId: string, overSessionId: string, activityBySessionId: Readonly<Record<string, number>>) => {
     const scopeKey = group.folderScopeKey ?? normalizePath(group.directory ?? null);
     if (scopeKey) void reorderSessions(scopeKey, sessionIds, activeSessionId, overSessionId, activityBySessionId)
@@ -2394,7 +2211,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         openSidebarMenuKey={openSidebarMenuKey}
         liveSessionById={liveSessionById}
         alwaysVisibleSessionIds={alwaysVisibleSessionIds}
-        prVisualStateByDirectoryBranch={prVisualStateByDirectoryBranch}
         onToggleCollapsedGroup={handleGroupCollapse}
         dragHandleProps={dragHandleProps}
         scrollContainerRef={scrollContainerRef}
@@ -2440,7 +2256,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       openSidebarMenuKey,
       liveSessionById,
       alwaysVisibleSessionIds,
-      prVisualStateByDirectoryBranch,
       handleGroupCollapse,
     ],
   );
@@ -2531,6 +2346,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
                   {isVisible ? <AssistantNavigationActivity /> : null}
                 </span>
               </Button> : null}
+              <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
             </div>
           </>
         ) : null}

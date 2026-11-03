@@ -7,10 +7,10 @@ import { NativeGuiSession } from './native';
 import type { NativeGuiBridge } from './native-types';
 
 const hosts: GuiPluginHost[] = [];
-function host(focusFile?: (path: string, directory: string) => Promise<void>) {
+function host(focusFile?: (path: string, directory: string) => Promise<void>, openPage?: (key: string) => boolean) {
     const files: FilesAPI = { listDirectory: vi.fn(async () => ({ directory: '/work', entries: [] })), search: vi.fn(async () => []), createDirectory: vi.fn(), readFile: vi.fn(async (path) => ({ path, content: path })) };
     const rpc = vi.fn();
-    const result = new GuiPluginHost({ client: { rpc } as unknown as OpenCodeClient, files, queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }), storage: localStorage, transport: 'test-runtime', locale: 'en', mode: 'dark', narrow: false, focusFile });
+    const result = new GuiPluginHost({ client: { rpc } as unknown as OpenCodeClient, files, queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }), storage: localStorage, transport: 'test-runtime', locale: 'en', mode: 'dark', narrow: false, focusFile, openPage });
     hosts.push(result);
     return result;
 }
@@ -18,6 +18,100 @@ const bundle = (setup: string, revision = '1', declarations = ''): PluginGuiBund
 afterEach(() => { for (const item of hosts.splice(0)) item.dispose(); localStorage.clear(); document.body.replaceChildren(); });
 
 describe('GUI plugin host with the actual official Solid SDK', () => {
+    it('mounts global pages through the shared Solid owner with own options, independent of sessions', () => {
+        const open = vi.fn(() => true);
+        const value = host(undefined, open);
+        const counts = { renders: 0, cleanups: 0, ownConfig: false };
+        Reflect.set(globalThis, '__guiPageCounts', counts);
+        try {
+            const code = bundle(`
+                const pages = ctx.use(G.Contract.define('yuri.pages'));
+                ctx.add(G.Registry.define('yuri.page'), { id:'main',title:'Usage',render(){
+                    globalThis.__guiPageCounts.renders++;
+                    const own = G.usePlugin();
+                    globalThis.__guiPageCounts.ownConfig = own === ctx && own.options.apiKey === 'fixture-only-key';
+                    S.onCleanup(()=>globalThis.__guiPageCounts.cleanups++);
+                    const node=document.createElement('input'); node.value='local state'; return node;
+                }});
+                ctx.add(G.TitlebarItem,()=>({id:'open',label:'Usage',icon:'window-analytics',pressed:pages().value.current()==='main',run(){pages().value.open('main')}}));
+                ctx.add(G.Command,{id:'foreign',title:'Foreign',run(){pages().value.open('other:main')}});
+            `);
+            value.install('one', { ...code, options: { apiKey: 'fixture-only-key' } });
+            const key = JSON.stringify(['one', 'main']);
+            expect(value.getSnapshot().pages).toEqual([{ key, pluginId: 'one', title: 'Usage', icon: undefined }]);
+            expect(JSON.stringify(value.getSnapshot())).not.toContain('fixture-only-key');
+            value.runTitlebarItem(value.getSnapshot().titlebarItems[0].key);
+            expect(open).toHaveBeenCalledExactlyOnceWith(key);
+            value.runCommand('one.foreign');
+            expect(open).toHaveBeenCalledTimes(1);
+            value.setPage(key);
+            expect(value.getSnapshot().titlebarItems[0].pressed).toBe(true);
+            const node = document.createElement('div'); document.body.append(node);
+            const stop = value.mountPage(key, node);
+            const input = node.querySelector('input');
+            expect(counts.ownConfig).toBe(true);
+            for (let i = 0; i < 50; i++) value.setSession({ id: `s${i}`, directory: '/work' });
+            value.setSession(undefined);
+            expect(node.querySelector('input')).toBe(input);
+            expect(counts).toEqual({ renders: 1, cleanups: 0, ownConfig: true });
+            value.setPage(undefined);
+            expect(value.getSnapshot().titlebarItems[0].pressed).toBe(false);
+            stop(); stop();
+            expect(counts.cleanups).toBe(1);
+            expect(node.children).toHaveLength(0);
+            value.mountPage(key, node);
+            value.uninstall('one');
+            expect(counts.cleanups).toBe(2);
+            expect(node.children).toHaveLength(0);
+            expect(value.getSnapshot().pages).toEqual([]);
+        } finally { Reflect.deleteProperty(globalThis, '__guiPageCounts'); }
+    });
+
+    it('isolates page ids, replaces mounts, rejects reserved contracts and keeps mobile inactive', () => {
+        const open = vi.fn(() => true);
+        const value = host(undefined, open);
+        const code = bundle(`
+            const api=ctx.use(G.Contract.define('yuri.pages'));
+            ctx.add(G.Registry.define('yuri.page'),{id:'main',title:ctx.id,render:()=>document.createElement('input')});
+            ctx.add(G.Command,{id:'open',title:'Open',run(){if(api().status==='active')api().value.open('main')}});
+        `);
+        value.install('one:two', code); value.install('one', code);
+        const [first, second] = value.getSnapshot().pages;
+        expect(first.key).not.toBe(second.key);
+        const node = document.createElement('div');
+        value.mountPage(first.key, node);
+        expect(node.children).toHaveLength(1);
+        value.install('one:two', { ...code, revision: '2' });
+        expect(node.children).toHaveLength(0);
+        value.setAppearance({ locale: 'en', mode: 'dark', narrow: true });
+        value.runCommand('one.open');
+        value.mountPage(second.key, node);
+        expect(node.children).toHaveLength(0);
+        expect(open).not.toHaveBeenCalled();
+        value.setAppearance({ locale: 'en', mode: 'dark', narrow: false });
+        value.runCommand('one.open');
+        expect(open).toHaveBeenCalledExactlyOnceWith(second.key);
+        value.install('invalid', bundle(`ctx.add(G.Registry.define('yuri.page'),{id:'bad',title:'Bad'})`));
+        expect(value.getSnapshot().plugins.find((p)=>p.id==='invalid')?.status).toBe('failed');
+        value.install('reserved', bundle(`ctx.provide(G.Contract.define('yuri.pages'),{})`));
+        expect(value.getSnapshot().plugins.find((p)=>p.id==='reserved')?.status).toBe('failed');
+        value.install('wrong-token', bundle(`ctx.use(G.Registry.define('yuri.pages'))`));
+        expect(value.getSnapshot().plugins.find((p)=>p.id==='wrong-token')?.status).toBe('failed');
+        expect(value.getSnapshot().pages).toHaveLength(2);
+        value.dispose();
+        expect(value.getSnapshot().pages).toEqual([]);
+    });
+
+    it('attributes page render failures without clearing unrelated pages', async () => {
+        const value = host(undefined, () => true);
+        value.install('broken', bundle(`ctx.add(G.Registry.define('yuri.page'),{id:'main',title:'Bad',render(){throw new Error('render failed')}})`));
+        value.install('healthy', bundle(`ctx.add(G.Registry.define('yuri.page'),{id:'main',title:'Good',render:()=>null})`));
+        value.mountPage(JSON.stringify(['broken','main']), document.createElement('div'));
+        await Promise.resolve();
+        expect(value.getSnapshot().plugins.find((p)=>p.id==='broken')?.status).toBe('failed');
+        expect(value.getSnapshot().pages.map((p)=>p.pluginId)).toEqual(['healthy']);
+    });
+
     it('supports global titlebar actions, reactive fields, busy guards and lifecycle without a session', async () => {
         const value = host();
         const counts = { reads: 0, runs: 0 };

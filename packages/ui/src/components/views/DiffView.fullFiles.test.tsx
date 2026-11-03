@@ -91,6 +91,27 @@ describe('full-file diff switch at the production entry boundary', () => {
         } finally { await f.dispose(); }
     });
 
+    test('Git Changes preloads expandable full contents but keeps unchanged lines collapsed by default', async () => {
+        const f = fixture();
+        try {
+            await f.render(false, { preloadFullFiles: true });
+            await act(async () => f.complete.resolve(full));
+            expect(f.git.getGitDiff).not.toHaveBeenCalled();
+            expect(f.git.getGitFileDiff).toHaveBeenCalledTimes(1);
+            expect(f.viewerProps.at(-1)).toMatchObject({ ...full, expandUnchanged: false });
+            const mounted = f.host.querySelector('[data-viewer]');
+            await f.render(true, { preloadFullFiles: true });
+            expect(f.viewerProps.at(-1)?.expandUnchanged).toBe(true);
+            expect(f.git.getGitFileDiff).toHaveBeenCalledTimes(1);
+            expect(f.host.querySelector('[data-viewer]')).toBe(mounted);
+            await f.render(false, { preloadFullFiles: true });
+            expect(f.viewerProps.at(-1)?.expandUnchanged).toBe(false);
+            expect(f.git.getGitFileDiff).toHaveBeenCalledTimes(1);
+            expect(source).toContain('const [loadFullFiles, setLoadFullFiles] = React.useState(false)');
+            expect(source).toContain('preloadFullFiles={preloadFullFiles}');
+        } finally { await f.dispose(); }
+    });
+
     test('shows full-file load failure and retry while retaining the rendered patch', async () => {
         const f = fixture();
         try {

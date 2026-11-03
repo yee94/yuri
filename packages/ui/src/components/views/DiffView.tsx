@@ -604,6 +604,7 @@ interface MultiFileDiffEntryProps {
     onOpenFile?: (filePath: string) => void;
     staged?: boolean;
     loadFullFiles?: boolean;
+    preloadFullFiles?: boolean;
     initialDiffData?: DiffData | null;
     focusLine?: number | null;
     showFileActions?: boolean;
@@ -630,6 +631,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     onOpenFile,
     staged = false,
     loadFullFiles = false,
+    preloadFullFiles = false,
     initialDiffData = null,
     focusLine = null,
     showFileActions = true,
@@ -658,7 +660,8 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
 
     const descriptor = React.useMemo(() => describeChange(file), [file]);
     const renderSideBySide = layout === 'side-by-side';
-    const desiredContextMode: DiffContextMode = loadFullFiles ? 'full' : 'patch';
+    const needsFullFiles = preloadFullFiles || loadFullFiles;
+    const desiredContextMode: DiffContextMode = needsFullFiles ? 'full' : 'patch';
     const fileStatusKey = `${file.index}:${file.working_dir}:${file.insertions}:${file.deletions}`;
     const turnChangeFileQuery = useSessionTurnChangeFileQuery({
         sessionID: turnChangesRequest?.sessionID ?? '',
@@ -744,8 +747,8 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         setIsLoading(true);
 
         let cancelled = false;
-        const contextLines = loadFullFiles ? FULL_CONTEXT_DIFF_LINES : DEFAULT_CONTEXT_DIFF_LINES;
-        const fetchPromise = isImageFile(file.path) || loadFullFiles
+        const contextLines = needsFullFiles ? FULL_CONTEXT_DIFF_LINES : DEFAULT_CONTEXT_DIFF_LINES;
+        const fetchPromise = isImageFile(file.path) || needsFullFiles
             ? git.getGitFileDiff(directory, { path: file.path, staged })
             : git.getGitDiff(directory, { path: file.path, staged, contextLines });
         const timeoutMs = DIFF_REQUEST_TIMEOUT_MS;
@@ -795,7 +798,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
             cancelled = true;
             clearTimeout(timeoutId);
         };
-    }, [desiredContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, initialDiffData, isExpanded, isMounted, loadFullFiles, setDiff, staged]);
+    }, [desiredContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, initialDiffData, isExpanded, isMounted, needsFullFiles, setDiff, staged]);
 
     const handleToggle = React.useCallback(() => {
         handleOpenChange(!isExpanded);
@@ -1088,7 +1091,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const [pinnedStackedTarget, setPinnedStackedTarget] = React.useState<string | null>(null);
     const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(() => new Set());
     const [mountedStackedFiles, setMountedStackedFiles] = React.useState<Set<string>>(() => new Set());
-    const [loadFullFiles, setLoadFullFiles] = React.useState(preloadFullFiles);
+    const [loadFullFiles, setLoadFullFiles] = React.useState(false);
     const [scrollRequestNonce, setScrollRequestNonce] = React.useState(0);
     const [activeDiffScope, setActiveDiffScope] = React.useState(diffScope);
 
@@ -1797,6 +1800,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                                     onOpenFile={openDiffFilePreview}
                                     staged={getFileStaged(file.path)}
                                     loadFullFiles={loadFullFiles}
+                                    preloadFullFiles={preloadFullFiles}
                                     initialDiffData={activeDiffScope === 'turn' ? lastTurnDiffData.get(file.path) ?? null : null}
                                     focusLine={file.path === (targetFilePath?.trim() || displayFile) ? (targetLine ?? displayFocusLine) : null}
                                     showFileActions={activeDiffScope !== 'turn'}

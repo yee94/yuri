@@ -19,10 +19,11 @@ import { createGuiToasts } from './toast';
 import { saveGuiFile } from './save';
 import { createPreviewActions, PREVIEW_ACTIONS_CONTRACT, PreviewActionsContext } from './preview-actions';
 import type { toast } from 'sonner';
+import { GUI_PAGE_REGISTRY, GUI_PAGES_CONTRACT, guiPageKey, validateGuiPage, type GuiPage, type GuiPagesAPI } from './pages';
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
-type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void> };
+type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
 type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
 type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run'> & { key: string; pluginId: string; actionable: boolean };
@@ -31,6 +32,7 @@ export type GuiPluginSnapshot = Readonly<{
     commands: readonly Readonly<CommandView>[];
     titlebarItems: readonly Readonly<TitlebarView>[];
     panels: readonly Readonly<PanelView>[];
+    pages: readonly Readonly<{ key: string; pluginId: string; title: string; icon?: Gui.IconName }>[];
     settings: readonly Readonly<{ key: string; pluginId: string; title: string }>[];
     menuItems: readonly Readonly<{ key: string; pluginId?: string; title: string; description?: string; run: () => void }>[];
     activePanel: string | null;
@@ -47,6 +49,7 @@ type Instance = {
     iconChanges: ReturnType<typeof createSignal<number>>; iconError?: string;
     commands: CommandView[]; panels: PanelEntry[]; settings: Gui.SettingsPage[]; menus: Gui.SessionPanelMenuItem[];
     titlebarItems: (TitlebarView & { run?: Gui.TitlebarItem['run'] })[];
+    pages: GuiPage[];
 };
 type LayoutState = { open: string[]; active: string | null; shown: boolean; scroll: Map<string, { x: number; y: number }> };
 const unsupported = (name: string): never => { throw new NativeGuiError('GUI_PLUGIN_UNSUPPORTED', `Unsupported GUI host API: ${name}`); };
@@ -87,13 +90,14 @@ export class GuiPluginHost {
     private changes = createSignal(0);
     private views = createSignal(0);
     private session = createSignal<Gui.MountedSession>();
+    private currentPage = createSignal<string>();
     private appearance: ReturnType<typeof createSignal<Appearance>>;
     private layouts = new Map<string, LayoutState>();
     private files?: GuiPluginFiles;
     private storage: GuiPluginStorage;
     private ended = false;
     private contracts = new Map<string, { live: ReturnType<typeof createSignal<Gui.Live<unknown>>>; generation: number; provider?: Instance }>();
-    private snapshot: GuiPluginSnapshot = Object.freeze({ plugins: Object.freeze([]), commands: Object.freeze([]), titlebarItems: Object.freeze([]), panels: Object.freeze([]), settings: Object.freeze([]), menuItems: Object.freeze([]), activePanel: null });
+    private snapshot: GuiPluginSnapshot = Object.freeze({ plugins: Object.freeze([]), commands: Object.freeze([]), titlebarItems: Object.freeze([]), panels: Object.freeze([]), pages: Object.freeze([]), settings: Object.freeze([]), menuItems: Object.freeze([]), activePanel: null });
     private screen: Gui.SessionScreen;
     private viewExports: GuiViewExports;
 
@@ -140,11 +144,15 @@ export class GuiPluginHost {
         this.appearance[1]({ ...input });
     }
 
+    setPage(key: string | undefined): void {
+        if (!this.ended) this.currentPage[1](key);
+    }
+
     install(id: string, bundle: PluginGuiBundle, native?: NativeGuiSession): void {
         const previous = this.instances.get(id);
         if (this.ended || (previous?.status === 'active' && previous.revision === bundle.revision && previous.native?.active !== false)) { native?.dispose(); return; }
         if (previous) { this.instances.delete(id); this.release(previous); }
-        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], settings: [], menus: [] };
+        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menus: [] };
         this.instances.set(id, instance);
         try {
             if (id === 'yuri' || id.startsWith('yuri.')) throw new Error('The yuri namespace is reserved to the host');
@@ -200,7 +208,7 @@ export class GuiPluginHost {
         instance.cleanups.clear();
         guardCleanups(instance.root, (error) => { instance.error ??= String(error); });
         try { instance.dispose?.(); } catch (error) { instance.error ??= String(error); }
-        instance.contributions.clear(); instance.commands = []; instance.titlebarItems = []; instance.panels = []; instance.settings = []; instance.menus = [];
+        instance.contributions.clear(); instance.commands = []; instance.titlebarItems = []; instance.panels = []; instance.pages = []; instance.settings = []; instance.menus = [];
         this.fileIcons.remove(instance.id);
         for (const entry of this.contracts.values()) if (entry.provider === instance) {
             entry.provider = undefined;
@@ -288,6 +296,18 @@ export class GuiPluginHost {
         const previewActionsLive = liveAccessor((): Gui.Live<typeof previewActions> => instance.controller.signal.aborted
             ? { status: 'inactive', reason: 'disabled' }
             : { status: 'active', generation: 1, value: previewActions });
+        const pages: GuiPagesAPI = {
+            open: (id) => {
+                if (instance.controller.signal.aborted || this.appearance[0]().narrow || !instance.pages.some((page) => page.id === id)) return false;
+                return this.options.openPage?.(guiPageKey(instance.id, id)) ?? false;
+            },
+            current: () => {
+                const key = this.currentPage[0]();
+                return instance.pages.find((page) => guiPageKey(instance.id, page.id) === key)?.id;
+            },
+        };
+        const pagesLive = liveAccessor((): Gui.Live<GuiPagesAPI> => instance.controller.signal.aborted || !this.options.openPage || this.appearance[0]().narrow
+            ? { status: 'inactive', reason: 'disabled' } : { status: 'active', generation: 1, value: pages });
         const context = partial<Gui.SetupContext<Gui.Plugin.Definition>>('ctx', {
             id: instance.id, options, signal: instance.controller.signal, client: this.options.client, storage, stores,
             toast: createGuiToasts(instance.controller.signal, this.options.toast),
@@ -338,7 +358,7 @@ export class GuiPluginHost {
             list: <T>(registry: Gui.Registry<T>) => this.list(registry),
             provide: (token, value) => {
                 if (instance.controller.signal.aborted || readSolidContext(LifetimeContext)?.ended) return () => {};
-                if (isViewExportContract(token.id) || token.id === PREVIEW_ACTIONS_CONTRACT) throw new Error('Preview/export contracts are provided only by the Yuri host');
+                if (isViewExportContract(token.id) || token.id === PREVIEW_ACTIONS_CONTRACT || token.id === GUI_PAGES_CONTRACT) throw new Error('Preview/export/page contracts are provided only by the Yuri host');
                 if (token.kind !== 'contract' || !(token.id === instance.id || token.id.startsWith(`${instance.id}.`))) throw new Error('Contract must belong to the providing plugin');
                 const entry = this.contract(token.id);
                 if (entry.provider) throw new Error(`Contract already provided: ${token.id}`);
@@ -346,7 +366,9 @@ export class GuiPluginHost {
                 entry.live[1]({ status: 'active', value, generation: ++entry.generation });
                 return this.own(instance, () => { if (entry.provider !== instance) return; entry.provider = undefined; entry.live[1]({ status: 'inactive', reason: instance.status === 'failed' ? 'failed' : 'disabled' }); });
             },
-            use: <T extends Gui.Token>(token: T) => (token.id === PREVIEW_ACTIONS_CONTRACT
+            use: <T extends Gui.Token>(token: T) => (token.id === GUI_PAGES_CONTRACT
+                ? token.kind === 'contract' ? pagesLive : unsupported('pages token must be a Contract')
+                : token.id === PREVIEW_ACTIONS_CONTRACT
                 ? token.kind === 'contract' ? previewActionsLive : unsupported('preview actions token must be a Contract')
                 : isViewExportContract(token.id)
                 ? token.kind === 'contract' ? this.viewExports.use(token.id, instance.controller.signal) : unsupported('export token must be a Contract')
@@ -388,11 +410,16 @@ export class GuiPluginHost {
         if (instance.status !== 'active') return;
         const commands: CommandView[] = [], panels: PanelEntry[] = [], settings: Gui.SettingsPage[] = [], menus: Gui.SessionPanelMenuItem[] = [];
         const titlebarItems: Instance['titlebarItems'] = [];
+        const pages: GuiPage[] = [];
         const session = this.session[0]();
         for (const contribution of instance.contributions) {
             if (contribution.registry === GUI_FILE_ICON_REGISTRY) continue;
             const value = contribution.read(); if (value === undefined) continue;
-            if (contribution.registry === Gui.Command.id) {
+            if (contribution.registry === GUI_PAGE_REGISTRY) {
+                const page = validateGuiPage(value);
+                if (pages.some((entry) => entry.id === page.id)) throw new Error('Duplicate yuri.page id');
+                pages.push(page);
+            } else if (contribution.registry === Gui.Command.id) {
                 const command = value as Gui.Command;
                 if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
             } else if (contribution.registry === Gui.TitlebarItem.id) {
@@ -415,7 +442,7 @@ export class GuiPluginHost {
             }
         }
         for (const entry of panels) void entry.tab.title;
-        instance.commands = commands; instance.titlebarItems = titlebarItems; instance.panels = panels; instance.settings = settings; instance.menus = menus;
+        instance.commands = commands; instance.titlebarItems = titlebarItems; instance.panels = panels; instance.pages = pages; instance.settings = settings; instance.menus = menus;
         untrack(() => this.views[1]((value) => value + 1));
     }
 
@@ -432,6 +459,7 @@ export class GuiPluginHost {
             plugins: freezeRows(instances.map(({ id, revision, status, error, errorCode, iconError }) => ({ id, revision, status, error: error ?? iconError, ...(errorCode ? { errorCode } : {}) }))),
             commands: freezeRows(active.flatMap((instance) => instance.commands.filter((command) => !command.hidden))), panels: freezeRows(panels),
             titlebarItems: freezeRows(active.flatMap((instance) => instance.titlebarItems.map(({ run: _run, ...item }) => item))),
+            pages: freezeRows(active.flatMap((instance) => instance.pages.map((page) => ({ key: guiPageKey(instance.id, page.id), pluginId: instance.id, title: page.title, icon: page.icon })))),
             settings: freezeRows(active.flatMap((instance) => instance.settings.map((page) => ({ key: `${instance.id}:${page.id}`, pluginId: instance.id, title: page.title })))),
             menuItems: freezeRows(active.flatMap((instance) => instance.menus.map((menu) => ({ key: `${instance.id}:${menu.id}`, pluginId: instance.id, title: menu.title, description: menu.description, run: () => { void this.invoke(instance, () => menu.run()); } })))),
             activePanel: layout?.shown && panels.some((panel) => panel.key === layout.active) ? layout.active : null,
@@ -616,6 +644,14 @@ export class GuiPluginHost {
         for (const instance of this.instances.values()) {
             const page = instance.settings.find((page) => `${instance.id}:${page.id}` === key);
             if (page) return this.mount(instance, element, () => page.render({}));
+        }
+        return () => {};
+    }
+    mountPage(key: string, element: HTMLElement): () => void {
+        if (this.appearance[0]().narrow) return () => {};
+        for (const instance of this.instances.values()) {
+            const page = instance.pages.find((page) => guiPageKey(instance.id, page.id) === key);
+            if (page) return this.mount(instance, element, () => page.render());
         }
         return () => {};
     }

@@ -27,7 +27,9 @@ vi.mock('@/lib/instanceScopedStorage', () => ({ instanceScopedStorageKey: (key: 
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: state.files }) }));
 vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (select: (value: { currentSessionId: string }) => unknown) => select({ currentSessionId: state.session.id }) }));
 vi.mock('@/sync/sync-context', () => ({ useCurrentSessionEntity: () => state.session }));
-vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (value: { isMobile: boolean }) => unknown) => select({ isMobile: false }) }));
+vi.mock('@/stores/useUIStore', () => ({ useUIStore: Object.assign((select: (value: { isMobile: boolean }) => unknown) => select({ isMobile: false }), {
+  getState: () => ({ isMobile: false, activeMainTab: 'chat', activeGuiPage: null }), subscribe: () => () => {},
+}) }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ locale: 'en', t: (key: string) => key }) }));
 vi.mock('@/components/chat/fileReferenceActions', () => ({ openFileReference: vi.fn(async () => {}) }));
 vi.mock('@/lib/opencode/gui', () => ({ createGuiClient: () => ({ plugin: { list: state.list, gui: state.gui } }) }));

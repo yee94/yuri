@@ -145,6 +145,7 @@ const BACKGROUND_READ_EXACT_PATHS = new Set([
   '/api/config/themes',
   '/api/experimental/session',
   '/api/session/status',
+  '/api/form',
   '/api/session-folders',
   '/api/github/pr/status',
   '/api/yuri/session-index',
@@ -266,6 +267,11 @@ export const getRuntimeRequestPriority = (
   if (method.toUpperCase() !== 'GET' || !isRuntimeRequestUrl(rawUrl)) return undefined;
   const pathname = runtimeRequestPathname(rawUrl);
   if (!pathname) return undefined;
+  if (pathname === '/api/session' || pathname === '/api/yuri/content-search') {
+    const query = new URL(rawUrl, 'http://yuri.local').searchParams;
+    if ((pathname === '/api/session' && query.has('search'))
+      || (pathname === '/api/yuri/content-search' && query.get('q')?.trim())) return 'high';
+  }
   const interactiveSessionMatch = pathname.match(INTERACTIVE_SESSION_READ_PATH);
   if (interactiveSessionMatch?.[1] && isInteractiveSessionId(interactiveSessionMatch[1])) {
     return 'high';

@@ -28,7 +28,7 @@ export const CommitInput: React.FC<CommitInputProps> = ({
   const { t } = useI18n();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
-  const minimumHeight = compact ? 64 : MIN_HEIGHT;
+  const minimumHeight = compact ? 48 : MIN_HEIGHT;
 
   // Auto-resize based on content (layout phase to avoid mount flicker)
   React.useLayoutEffect(() => {
@@ -62,7 +62,7 @@ export const CommitInput: React.FC<CommitInputProps> = ({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder ?? t('gitView.commit.messagePlaceholder')}
-      rows={compact ? 3 : 1}
+      rows={compact ? 2 : 1}
       disabled={disabled}
       autoCorrect={hasTouchInput ? 'on' : 'off'}
       autoCapitalize={hasTouchInput ? 'sentences' : 'off'}
@@ -72,7 +72,7 @@ export const CommitInput: React.FC<CommitInputProps> = ({
         compact ? [
           'appearance-none rounded-md px-2 py-1.5 text-xs leading-4',
           'bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))]',
-          'ring-1 ring-inset ring-border/60 transition duration-200 ease-out',
+          'ring-1 ring-inset ring-border/60 transition-[background-color,box-shadow] duration-200 ease-out',
           'hover:[&:not(:focus)]:bg-[color-mix(in_srgb,var(--surface-foreground)_4%,var(--background))] hover:[&:not(:focus)]:ring-transparent',
           'focus:ring-1 focus:ring-[var(--interactive-focus-ring)] focus-visible:outline-none',
         ] : [

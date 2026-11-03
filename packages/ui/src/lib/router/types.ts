@@ -10,6 +10,7 @@ export interface RouteState {
   /** True for `/session/new` draft surface (mutually exclusive with sessionId). */
   isNewSession: boolean;
   tab: MainTab | null;
+  guiPageKey?: string | null;
   settingsPath: string | null;
   settingsEntityId: string | null;
   diffFile: string | null;

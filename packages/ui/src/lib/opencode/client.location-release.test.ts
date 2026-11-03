@@ -53,6 +53,42 @@ describe("location release generated SDK chain", () => {
     expect(requests.filter((r) => new URL(r.url).pathname === "/api/debug/location")).toHaveLength(1)
   })
 
+  it("does not repeat default-Location reads for every explicit directory during a 51-scope recovery", async () => {
+    const directories = Array.from({ length: 51 }, (_, i) => `/project-${i}`)
+    const requests = respond([], [], directories)
+    await Promise.all(directories.flatMap((directory) => [
+      opencodeClient.listPendingQuestions({ directories: [directory] }),
+      opencodeClient.listPendingPermissions({ directories: [directory] }),
+    ]))
+    const snapshots = requests.filter((r) => ["/api/form", "/api/permission/request"].includes(new URL(r.url).pathname))
+    expect(snapshots).toHaveLength(102)
+    expect(snapshots.every((r) => new URL(r.url).searchParams.has("location[directory]"))).toBe(true)
+    expect(requests.filter((r) => new URL(r.url).pathname === "/api/debug/location")).toHaveLength(1)
+  })
+
+  it("retains default-Location reads for callers that do not supply a directory scope", async () => {
+    const requests = respond()
+    await opencodeClient.listPendingQuestions()
+    await opencodeClient.listPendingPermissions()
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/api/form", "/api/permission/request"])
+    expect(requests.every((r) => !new URL(r.url).searchParams.has("location[directory]"))).toBe(true)
+  })
+
+  it.each(["/api/form", "/api/permission/request"])("scoped %s failure rejects while the other snapshot remains readable", async (failedPath) => {
+    const requests = respond([], [], ["/live"])
+    const respondNormally = transport.fetch.getMockImplementation()!
+    transport.fetch.mockImplementation(async (input, init) => {
+      const request = new Request(input, init)
+      if (new URL(request.url).pathname === failedPath) return new Response("unavailable", { status: 503 })
+      return respondNormally(input, init)
+    })
+    const questions = () => opencodeClient.listPendingQuestions({ directories: ["/live"] })
+    const permissions = () => opencodeClient.listPendingPermissions({ directories: ["/live"] })
+    await expect(failedPath === "/api/form" ? questions() : permissions()).rejects.toThrow()
+    await expect(failedPath === "/api/form" ? permissions() : questions()).resolves.toEqual([])
+    expect(requests.every((r) => new URL(r.url).pathname === "/api/debug/location" || new URL(r.url).searchParams.get("location[directory]") === "/live")).toBe(true)
+  })
+
   it("rejects unreadable inventory without probing historical scopes", async () => {
     const requests: Request[] = []
     transport.fetch.mockImplementation(async (input, init) => {

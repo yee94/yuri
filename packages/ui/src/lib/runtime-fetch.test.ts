@@ -68,6 +68,16 @@ describe('buildRuntimeFetchUrl', () => {
 });
 
 describe('runtime request priority', () => {
+  test('search snapshots outrank startup form recovery without prioritizing catalogs or mutations', () => {
+    expect(getRuntimeRequestPriority('GET', '/api/session?search=alpha&limit=30')).toBe('high');
+    expect(getRuntimeRequestPriority('GET', '/api/yuri/content-search?q=alpha&limit=30')).toBe('high');
+    expect(getRuntimeRequestPriority('GET', '/api/form?location%5Bdirectory%5D=%2Frepo')).toBe('low');
+    expect(getRuntimeRequestPriority('GET', '/api/session?limit=30')).toBeUndefined();
+    expect(getRuntimeRequestPriority('GET', '/api/yuri/content-search')).not.toBe('high');
+    expect(getRuntimeRequestPriority('POST', '/api/session?search=alpha')).toBeUndefined();
+    expect(getRuntimeRequestPriority('GET', 'https://external.example/api/session?search=alpha')).toBeUndefined();
+  });
+
   test('prioritizes only session detail and message reads needed for the selected chat', () => {
     const previous = getRuntimeUrlResolver();
     try {

@@ -4,14 +4,15 @@ import type { useGuiPlugins } from '@/lib/gui-plugins/react';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/components/ui';
 import { GuiPreviewActions } from './GuiPreviewActions';
+import { FilePreviewError } from '@/components/ui/FilePreviewError';
 
 type Host = NonNullable<ReturnType<typeof useGuiPlugins>['host']>;
 
 /** React owns this empty container; the host exclusively owns its descendants. */
-export function GuiPluginMount({ host, contributionKey, kind, revision, fallback, actions }: {
+export const GuiPluginMount = React.memo(function GuiPluginMount({ host, contributionKey, kind, revision, fallback, actions }: {
   host: Host;
   contributionKey: string;
-  kind: 'panel' | 'settings';
+  kind: 'panel' | 'settings' | 'page';
   revision?: string;
   fallback?: React.ReactNode;
   actions?: HTMLElement;
@@ -40,7 +41,7 @@ export function GuiPluginMount({ host, contributionKey, kind, revision, fallback
       try {
         dispose = kind === 'panel'
           ? host.mountPanel(contributionKey, node, actionTarget)
-          : host.mountSettings(contributionKey, node);
+          : kind === 'page' ? host.mountPage(contributionKey, node) : host.mountSettings(contributionKey, node);
       } catch (cause) {
         node.replaceChildren();
         setError({ cause });
@@ -71,9 +72,9 @@ export function GuiPluginMount({ host, contributionKey, kind, revision, fallback
   return (
     <div className={`relative flex flex-1 flex-col ${pending ? 'min-h-[240px]!' : 'min-h-0'}`}>
       {kind === 'panel' && !actions ? <div className="absolute right-3 top-3 z-30 flex items-center gap-1"><GuiPreviewActions target={localActions} /></div> : null}
-      {error ? <div role="alert" className="p-3 text-[var(--status-error)]">{error.cause instanceof Error ? error.cause.message : t('guiPlugins.error')}</div> : null}
-      <div ref={container} className="min-h-0 flex-1 overflow-auto" data-gui-plugin-mount={kind} />
+      {error ? <FilePreviewError message={error.cause instanceof Error ? error.cause.message : t('guiPlugins.error')} /> : null}
+      <div ref={container} className={`min-h-0 flex-1 overflow-auto${error ? ' hidden' : ''}`} data-gui-plugin-mount={kind} />
       {pending ? <div className="absolute inset-0 flex">{fallback}</div> : null}
     </div>
   );
-}
+});

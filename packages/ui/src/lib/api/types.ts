@@ -612,7 +612,7 @@ export interface FileReadResult {
 
 export interface FilesAPI {
   listDirectory(path: string, options?: ListDirectoryOptions): Promise<DirectoryListResult>;
-  search(payload: FileSearchQuery): Promise<FileSearchResult[]>;
+  search(payload: FileSearchQuery, options?: { signal?: AbortSignal }): Promise<FileSearchResult[]>;
   createDirectory(path: string): Promise<{ success: boolean; path: string }>;
   statFile?(path: string, options?: FileReadOptions): Promise<{ path: string; isFile: boolean; size: number; mtimeMs?: number; isBinary?: boolean; sha256?: string; mimeType?: string; filename?: string }>;
   readFile?(path: string, options?: FileReadOptions): Promise<FileReadResult>;

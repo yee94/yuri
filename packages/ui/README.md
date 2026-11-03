@@ -15,6 +15,11 @@ Turn snapshots do not offer this switch: partial historical patches must never b
 hydrated from the current working tree. Other Pierre consumers remain compact by
 default. Covered by `src/components/views/DiffView.fullFiles.test.tsx`.
 
+Single-file previews opened from Git Changes preload complete file versions but
+start with unchanged regions collapsed. Pierre's separators expand nearby context
+on click; the toolbar's full-file switch expands or collapses all unchanged lines
+without fetching those preloaded versions again.
+
 ## Default themes
 
 New preferences use Cursor Dark (`cursor-dark`) and Carbonfox Light
@@ -198,18 +203,22 @@ Desktop `ChatWorkspace` owns two full-height columns: the primary conversation
 (including its session header and terminal dock) and the preview `ContextPanel`.
 The primary header's folder action and the existing right-sidebar shortcut
 toggle the preview independently of its tabs. Opening without a selection shows
-a localized select-file SVG empty state; closing the last tab returns to that
-state, while the panel close action hides the entire preview without deleting tabs.
+a localized select-file SVG empty state; closing the last tab hides the entire
+preview and its nested rail, while the panel close action hides it without deleting tabs.
 An additional close shortcut on an already-empty preview closes the panel, not
 the OS window. The session overflow menu omits the redundant Changes panel entry;
 Git changes remain available in the preview's Git rail.
 The preview toolbar owns its always-visible joined Git/Files icon group
 (one rounded outline with internal dividers), expand and
 close actions. The preview's expand/restore button uses paired diagonal arrows and
-toggles a full-workspace
-preview without changing the saved split width, tabs, or conversation draft.
-Expanded previews use the same `p-1.5` inset on all four sides; restoring keeps
-the original split-layout spacing.
+toggles the same full-workspace preview used when dragging leaves less than 350px
+for the conversation. Both use normal layout flow, identical spacing, the restore
+icon and an active resize handle. Dragging right can restore either fullscreen
+entry; the restore button returns to the last fitting split width (clamped to
+leave 350px for the conversation). Tabs and conversation drafts stay mounted.
+Split and expanded previews retain a `py-1.5` vertical inset. Their internal
+toolbar subtracts both density-scaled insets from the conversation header height, keeping tabs
+and toolbar buttons on the same vertical centerline. Both retain the split layout's horizontal spacing.
 The file-tree search uses a compact 28px field with a 14px icon and a fine focus
 ring and a subtle local-background fill (2% foreground, 4% on hover), not a dark
 elevated plate; filtering, clear-to-refocus, and existing file actions stay available.
@@ -243,9 +252,10 @@ In light mode, the header's selected tabs and Git/Files segments use a local
 aligned with the theme's tint. Dark selection and editor text-selection tokens
 are unchanged. Header hover/press use the same neutral tint at 6%/10%, so a
 selected segment never flashes the theme's unrelated accent tint on interaction.
-Desktop Git rails use compact Changes/Commit titles, a three-line textarea with a
-64px minimum that grows with content, and shared xs actions. The textarea matches
+Desktop Git rails use compact Changes/Commit titles, a two-line textarea with a
+48px minimum that grows with content, and shared xs actions. The textarea matches
 the file-search field's inset edge, theme-derived fill and hover/focus feedback.
+Its transitions exclude geometry so clearing a long message restores the minimum height.
 Only the commit section adds a small bottom inset (`pb-1`); the outer scroll surface
 adds none. Mobile keeps the existing title, 38px field and touch sizing;
 staging/index-mutation guards, generation, gitmoji and commit/push remain unchanged.

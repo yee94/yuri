@@ -213,6 +213,8 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
         focusFile: async (path, directory) => {
           if (!controller.signal.aborted) await openFileReference(path, false, { effectiveDirectory: directory });
         },
+        openPage: (key) => !controller.signal.aborted && getRuntimeTransportIdentity() === transport
+          && !useUIStore.getState().isMobile && useUIStore.getState().openGuiPage(key),
       });
       setResource({ transport, host: loaded });
     }).catch((error: unknown) => { if (!controller.signal.aborted) setHostError({ transport, error: message(error) }); });
@@ -227,7 +229,20 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
   React.useLayoutEffect(() => {
     host?.setSession(sessionID && directory ? { id: sessionID, directory } : undefined);
   }, [host, sessionID, directory]);
-  React.useLayoutEffect(() => { host?.setAppearance({ locale, mode, narrow }); }, [host, locale, mode, narrow]);
+  React.useLayoutEffect(() => {
+    if (narrow && useUIStore.getState().activeMainTab === 'plugin') useUIStore.getState().closeGuiPage();
+    host?.setAppearance({ locale, mode, narrow });
+  }, [host, locale, mode, narrow]);
+  React.useLayoutEffect(() => {
+    const syncPage = () => {
+      const state = useUIStore.getState();
+      host?.setPage(state.activeMainTab === 'plugin' ? state.activeGuiPage ?? undefined : undefined);
+    };
+    syncPage();
+    return useUIStore.subscribe((state, previous) => {
+      if (state.activeMainTab !== previous.activeMainTab || state.activeGuiPage !== previous.activeGuiPage) syncPage();
+    });
+  }, [host]);
 
   const subscribe = React.useMemo(() => host ? (listener: () => void) => host.subscribe(listener) : noopSubscribe, [host]);
   const getSnapshot = React.useMemo(() => host ? () => host.getSnapshot() : getEmptySnapshot, [host]);

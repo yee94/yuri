@@ -67,6 +67,25 @@ test('file search uses V2 fs/find with the requested location and entry envelope
   expect(nativeFetch).toHaveBeenCalledOnce();
 });
 
+test.each(['direct', 'relay'])('file search cancellation reaches the %s transport', async (transport) => {
+  const controller = new AbortController();
+  let transportSignal: AbortSignal | null | undefined;
+  const respond = async (input: string | URL | Request, init?: RequestInit) => {
+    transportSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    return Response.json({ location: { directory }, data: [] });
+  };
+  nativeFetch.mockImplementation(respond);
+  if (transport === 'relay') {
+    adoptRelayTunnel({ relayUrl: 'wss://relay.example', serverId: 'remote-host', hostEncPubJwk: {} }, {
+      fetch: vi.fn(respond), close: () => {}, getStatus: () => ({ state: 'connected' }), subscribeStatus: () => () => {},
+      openWebSocket: () => { throw new Error('unused'); },
+    });
+  }
+  await opencodeClient.searchFiles('alpha', { directory, limit: 10, type: 'file', signal: controller.signal });
+  controller.abort();
+  expect(transportSignal?.aborted).toBe(true);
+});
+
 test('a retained SDK client tunnels worktree catalog reads after a Host switch even when its captured origin is stale', async () => {
   configureRuntimeUrlResolver({ apiBaseUrl: 'https://previous-host.example' });
   opencodeClient.reconnectToRuntimeBaseUrl();

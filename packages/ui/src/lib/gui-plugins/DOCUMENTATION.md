@@ -23,6 +23,28 @@ Provider 的会话目录来自 `useCurrentSessionEntity(sessionID)` 的匹配会
 
 ## 首批兼容范围
 
+### Yuri 全局主内容页面
+
+官方没有全局页面注册点。`Registry.define<GuiPage>('yuri.page')` 与
+`Contract.define<GuiPagesAPI, 'yuri.pages'>('yuri.pages')` 是明确的 Yuri 补充契约，
+仍使用官方 add/use，不增加 SDK 字段。Page 为 `{ id, title, icon?, render() }`，
+render 返回 Solid JSX/HTMLElement；Pages 为 `open(本插件页面id): boolean`、
+`current(): 本插件当前页面id | undefined`。不能打开其他插件的页面或覆盖宿主 Contract。
+
+这里只新增 placement：`GuiPluginMount(kind='page')` 和文件后缀/Eficy 的 panel、
+settings 共用 host.mount、PluginContext、Solid owner、options、错误归属和清理。
+React 只拥有空容器；插件可返回 iframe，也可自行渲染 DOM。无会话也可用，
+普通会话变动和无关 React 更新不重挂，只有选中页面、host、所属 revision 变化才重挂。
+关闭、停用、替换、切 runtime 释放 owner 与插件监听。全局容器沉浸式铺满，
+没有宿主标题、返回按钮、加载状态或重试按钮；渲染失败时复用文件/Eficy 的
+`FilePreviewError` 居中 SVG 与文字兜底，详细诊断仍在插件设置中，
+不会回退外部浏览器。`/plugins/$pluginId/$pageId` 只包含身份，不包含配置。
+全局页只用于桌面/Web 桌面布局和 VS Code；移动端契约 inactive、不挂载页面。
+
+options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/持久缓存。
+同文档第三方 JS 不是安全沙箱；iframe 的认证、来源校验和跨域策略由插件拥有，
+宿主不读取其他插件的 AK，不拦截 openExternal，不伪造全局 Cookie。
+
 支持下面的窗口能力子集，不等于官方 Desktop API 全兼容：
 
 | 能力 | 首批边界 |
@@ -174,7 +196,7 @@ GUI inventory 采用**当前连接服务的全局插件列表**。不把项目 p
 
 启动不依赖 GUI inventory、client、host 或插件代码。应用通过 `ready` 提供主界面就绪条件：桌面/Web 等初始 splash 撤除且配置初始化完成，移动端等已连接的主界面配置初始化完成。Provider 保留 children，双 rAF 后再启用 inventory Query；显式文件需求也不能绕过这个首屏绘制门槛。门槛对当前 transport 首次绘制生效，配置恢复期间 `ready` 暂时回落不卸载已运行的 host；切换 transport 仍隔离并销毁旧宿主。移动 HTML 自带 120×120 Logo，位于 React root 内，在应用模块尚未执行时可见，首次 React commit 自然替换，不使用定时移除。
 
-存在 enabled 且服务端 active 的 GUI 时，通过 `requestIdleCallback`（最长等待 2 秒；不支持时延后 1 秒）启动预加载，不再等第一次点击。`useGuiPlugins()` 保留 `requested` 与幂等 `requestLoad()`；文件预览、命令面板或插件管理器的显式需求只跳过空闲等待。宿主动态导入前再让出绘制机会；`scheduling.ts` 串行调度已取得 bundle 的同步安装，每个插件独立跨双 rAF/任务边界，不把网络/IPC 等待加入串行队列。加载当前服务 inventory 中所有 enabled 且 active 的 `features.gui` 插件，不扫描历史项目，不按文件后缀推定能力；禁用项不下载。关闭入口保留需求、host 和已安装实例，重开复用同一 Query/cache；成功空 inventory 仍撤销 host。空闲、绘制和安装任务随停用、transport 切换或卸载取消，并在执行前再次核对 transport；inventory 在动态导入前后及响应后检查 generation。
+存在 enabled 且服务端 active 的 GUI 时，通过 `requestIdleCallback`（最长等待 2 秒；不支持时延后 1 秒）启动预加载，不再等第一次点击。`useGuiPlugins()` 保留 `requested` 与幂等 `requestLoad()`；文件预览或插件管理器的显式需求只跳过空闲等待。命令面板只消费启动阶段注册的命令快照，不触发加载，也不等待全部插件就绪。宿主动态导入前再让出绘制机会；`scheduling.ts` 串行调度已取得 bundle 的同步安装，每个插件独立跨双 rAF/任务边界，不把网络/IPC 等待加入串行队列。加载当前服务 inventory 中所有 enabled 且 active 的 `features.gui` 插件，不扫描历史项目，不按文件后缀推定能力；禁用项不下载。关闭入口保留需求、host 和已安装实例，重开复用同一 Query/cache；成功空 inventory 仍撤销 host。空闲、绘制和安装任务随停用、transport 切换或卸载取消，并在执行前再次核对 transport；inventory 在动态导入前后及响应后检查 generation。
 
 GUI inventory、代码下载、缓存版本校验和安装全部后台静默执行，不显示全局 Dialog、手机 Sheet 或加载 toast，不提供“后台继续”入口。下载进度不另设全局计数或展示计时器；网络取消和迟到隔离仍由 Query/client 的生命周期负责。
 
@@ -182,7 +204,7 @@ inventory、host、bundle 失败由 Provider 的 `LoadErrors` 使用现有 toast
 
 这是共享 Solid/DOM 主线程宿主的协作调度，不是 Worker 并行执行：单个第三方 CJS 求值或同步 setup 仍可产生长任务，无法被调度器抢占。保证的是主界面先完成绘制、不同插件之间让出绘制、异步下载互不阻塞；不承诺任意第三方同步代码的硬 CPU 时限。
 
-需求一直保留至 transport 改变或 Provider 卸载。Provider 通过 `useSyncExternalStore` 直接订阅 runtime endpoint 事件，不依赖父组件或会话状态重绘来发现切换。切换清零 `requested`、取消旧 client 并销毁 host，迟到 inventory/bundle 不得进入新 host；新实例没有 GUI 时保持空宿主。仍挂载的入口观察 `requested` 并重新调用 `requestLoad()`。未请求时 `refresh()` 只刷新列表和偏好；已请求时可重试 host、bundle 与失败 setup，成功插件依靠原 host 的 revision 去重保持挂载。
+需求一直保留至 transport 改变或 Provider 卸载。Provider 通过 `useSyncExternalStore` 直接订阅 runtime endpoint 事件，不依赖父组件或会话状态重绘来发现切换。切换清零 `requested`、取消旧 client 并销毁 host，迟到 inventory/bundle 不得进入新 host；新实例没有 GUI 时保持空宿主。仍挂载的文件预览和插件管理入口观察 `requested` 并重新调用 `requestLoad()`，命令面板继续只读新快照。未请求时 `refresh()` 只刷新列表和偏好；已请求时可重试 host、bundle 与失败 setup，成功插件依靠原 host 的 revision 去重保持挂载。
 
 `loading` 覆盖 inventory pending、偏好未解析，以及已请求后的 host/bundle 首次获取与同步安装等待，失败结束该阶段等待。已有 bundle 的后台读取不再因 `isFetching` 进入加载态；window-only 同 revision 的 active 插件在安装/绘制调度之前直接复用，不重复 setup、render 或丢失面板状态。failed 实例仍可通过显式刷新重试，Electron native acquire/lease 检查保持原有行为。全局错误通过 `error` 暴露，bundle 错误保留在 `inventory[].error`，setup/render 失败由 `snapshot.plugins` 表达。各插件独立安装和失败；入口应在 host/snapshot 就绪变化时尝试链接，不以全部插件的 `loading` 结束作为成功插件可用的门槛。
 

@@ -7,6 +7,15 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { expect, test, vi } from 'vitest';
 
+test('sidebar does not depend on GitHub auth or PR discovery for its session tree', () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const imports = ast.statements.filter(ts.isImportDeclaration).map(node => node.moduleSpecifier.getText(ast));
+    expect(imports.some(path => /githubAuthQueries|useGitHubPrStatusStore/i.test(path))).toBe(false);
+    expect(source).not.toContain('refreshPrStatusTargets');
+    expect(source).not.toContain('prVisualStateByDirectoryBranch');
+});
+
 test('project actions preserve the memo boundary through 50 catalog updates and use the latest loader', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');

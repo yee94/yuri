@@ -118,6 +118,7 @@ export type ParsedAppPath =
   | ParsedSchedulePath
   | ParsedAssistantPath
   | ParsedSettingsPath
+  | { kind: 'plugin'; pluginId: string; pageId: string }
   | { kind: 'new' }
   | { kind: 'connect' }
   | { kind: 'unknown' };
@@ -156,6 +157,10 @@ export function normalizeDiffScope(scope: string | null | undefined): DiffScope 
 
 export function buildNewSessionPath(): string {
   return NEW_SESSION_PATH;
+}
+
+export function buildPluginPagePath(pluginId: string, pageId: string): string {
+  return `/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(pageId)}`;
 }
 
 export function buildConnectPath(): string {
@@ -366,6 +371,13 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
     return { kind: 'new' };
   }
   if (pathname === '/connect') return { kind: 'connect' };
+
+  const pluginMatch = pathname.match(/^\/plugins\/([^/]+)\/([^/]+)\/?$/);
+  if (pluginMatch) {
+    try {
+      return { kind: 'plugin', pluginId: decodeURIComponent(pluginMatch[1]), pageId: decodeURIComponent(pluginMatch[2]) };
+    } catch { return { kind: 'unknown' }; }
+  }
 
   const settingsMatch = pathname.match(/^\/settings(?:\/([^/]+)(?:\/([^/]+))?)?$/);
   if (settingsMatch) {

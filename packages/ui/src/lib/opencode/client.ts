@@ -2017,8 +2017,6 @@ class OpencodeService {
    * "server returned no pending permissions".
    */
   async listPendingPermissions(options?: { directories?: Array<string | null | undefined> }): Promise<PermissionRequest[]> {
-    const fetches: Array<Promise<PermissionRequest[]>> = [];
-
     const fetchForDirectory = async (directory?: string | null): Promise<PermissionRequest[]> => {
       const result = await this.client.permission.request.list(locationOf(directory));
       if (!result || !Array.isArray(result.data)) {
@@ -2030,14 +2028,12 @@ class OpencodeService {
       });
     };
 
-    // Try unscoped first (server may return global pending items).
-    fetches.push(fetchForDirectory(null));
-
-    for (const directory of await this.resolveBlockingRequestDirectories(options?.directories)) {
-      fetches.push(fetchForDirectory(directory));
-    }
-
-    const results = await Promise.all(fetches);
+    // V2 lists are Location-scoped. An explicit scope must not also read the
+    // default Location once for every directory participating in recovery.
+    const directories = options?.directories === undefined
+      ? [null]
+      : await this.resolveBlockingRequestDirectories(options.directories);
+    const results = await Promise.all(directories.map(fetchForDirectory));
     const merged: PermissionRequest[] = [];
     const seenIds = new Set<string>();
 
@@ -2101,8 +2097,6 @@ class OpencodeService {
    * Only those rows map onto QuestionRequest. Other forms stay on FormCard.
    */
   async listPendingQuestions(options?: { directories?: Array<string | null | undefined> }): Promise<QuestionRequest[]> {
-    const fetches: Array<Promise<QuestionRequest[]>> = [];
-
     const fetchForDirectory = async (directory?: string | null): Promise<QuestionRequest[]> => {
       const result = await this.client.form.list(locationOf(directory));
       if (!result || !Array.isArray(result.data)) {
@@ -2120,14 +2114,10 @@ class OpencodeService {
       });
     };
 
-    // Try unscoped first (server may return global pending items).
-    fetches.push(fetchForDirectory(null));
-
-    for (const directory of await this.resolveBlockingRequestDirectories(options?.directories)) {
-      fetches.push(fetchForDirectory(directory));
-    }
-
-    const results = await Promise.all(fetches);
+    const directories = options?.directories === undefined
+      ? [null]
+      : await this.resolveBlockingRequestDirectories(options.directories);
+    const results = await Promise.all(directories.map(fetchForDirectory));
     const merged: QuestionRequest[] = [];
     const seenIds = new Set<string>();
 
@@ -2652,6 +2642,7 @@ class OpencodeService {
       respectGitignore?: boolean;
       dirs?: boolean;
       type?: 'file' | 'directory';
+      signal?: AbortSignal;
     }
   ): Promise<ProjectFileSearchHit[]> {
     const directory = typeof options?.directory === 'string' && options.directory.trim().length > 0
@@ -2659,13 +2650,15 @@ class OpencodeService {
       : this.currentDirectory;
     const normalizedDirectory = directory ? normalizeFsPath(directory) : null;
 
+    options?.signal?.throwIfAborted();
     try {
       const response = await this.client.file.find({
         query,
         ...locationOf(directory),
         limit: typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : undefined,
         type: options?.type,
-      });
+      }, { signal: options?.signal });
+      options?.signal?.throwIfAborted();
 
       const items = Array.isArray(response?.data) ? response.data : [];
       return items.map<ProjectFileSearchHit>((item) => {
@@ -2684,7 +2677,7 @@ class OpencodeService {
         };
       });
     } catch (error) {
-      console.error('Failed to search files:', error);
+      if (!options?.signal?.aborted) console.error('Failed to search files:', error);
       throw error;
     }
   }

@@ -39,7 +39,9 @@ const menuItems = () => Array.from(document.querySelectorAll<HTMLElement>('[role
 test('pinned contacts show large faces, names, selection, unread and live work, and navigate normally', async () => {
   const select = vi.fn(); const edit = vi.fn(); const remove = vi.fn();
   await render(<AssistantPinnedContacts contacts={[assistant]} selectedAssistantID="a" onSelect={select} onEdit={edit} onDelete={remove} />);
-  expect(host.querySelector('[data-avatar-size="76"][data-working="true"]')).not.toBeNull();
+  expect(host.querySelector('[data-avatar-size="64"][data-working="true"]')).not.toBeNull();
+  expect(host.querySelector('[data-assistant-pinned="a"]')?.classList.contains('max-w-28')).toBe(true);
+  expect(host.querySelector('[role="group"]')?.classList.contains('yuri-assistant-pinned-contacts')).toBe(true);
   expect(host.querySelector('[aria-selected="true"]')?.getAttribute('title')).toBe(assistant.name);
   expect(host.textContent).toContain(assistant.name);
   expect(host.querySelector('[data-assistant-unread-count]')?.textContent).toBe('4');

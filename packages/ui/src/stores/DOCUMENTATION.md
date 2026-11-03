@@ -1,5 +1,9 @@
 # UI Stores
 
+The session sidebar no longer reads or refreshes `useGitHubPrStatusStore`; its
+PR-only visual-summary selector/cache has been removed. Retained explicit GitHub
+workflows own any PR demand, not session-tree lifecycle or persisted PR entries.
+
 Assistant catalog partitions derive `isDefaultShareTarget` from their first enabled
 entry in authoritative snapshot order, both on refresh and persisted-cache restore.
 The legacy `defaultShareAssistant` field remains readable for compatibility but
@@ -62,13 +66,32 @@ success or failure. These are in-flight handles, not an additional snapshot cach
 
 `useUIStore.contextPanelByDirectory` owns preview visibility independently from
 tab selection. `openContextPanel` can open an empty preview; `toggleContextPanel`
-never creates a placeholder tab or clears cached files. Closing the last tab keeps
-the preview open, and closing an already-empty preview via the tab-close action
+never creates a placeholder tab or clears cached files. Closing the last tab closes
+the whole preview, including its nested Files/Git rail. Closing an explicitly empty preview via the tab-close action
 dismisses it before window-close fallback. Explicit empty previews survive
 persistence and session workspace restoration; filtering transient-only BTW tabs
 still cannot persist an open phantom surface. `isRightSidebarOpen` now controls
 the Files/Git/Browser rail nested inside the desktop preview, not an outer column.
 Its toggle never changes preview visibility. Session snapshots retain both flags.
+
+With no saved workspace-panel state, the desktop workspace opens its empty preview
+and Files/Git rail on Git Changes when the first directory becomes available.
+`initializeWorkspacePanels` materializes that initial directory only when the rail
+is open and no directory panel has been saved; existing closed panels and rail tab
+selections remain authoritative. Mobile keeps its drawers closed on startup.
+The desktop preview keeps `py-1.5` outer vertical padding in both split and expanded
+mode; its internal header subtracts the combined 0.75rem inset (including the
+shared `--padding-scale` density multiplier) from
+`--yuri-header-height`, aligning its tabs and buttons with the conversation header's centerline.
+The surface outline is an inset ring rather than a layout border, so it does not
+offset the preview header by a pixel.
+The persisted `expanded` flag is the explicit fullscreen request; `ChatWorkspace`
+also derives fullscreen when the remaining conversation width falls below 350px.
+`ContextPanel` uses one effective fullscreen presentation for both, without an
+absolute overlay. Automatic fullscreen still reports its numeric requested width,
+not Infinity, so dragging back can restore the split. Resize moves stay local;
+only the final width is persisted. The restore button uses the last fitting split
+width and the workspace's current maximum split width, scoped to the directory.
 
 `useOpenInAppsStore` caches the desktop machine's installed editor catalog, not the
 active Host's apps. Discovery remains behind local-page Electron IPC but is also
@@ -330,7 +353,7 @@ windows do not inherit the local theme.
 
 `useModelPickerSectionsStore` persists model-picker section collapse choices for the empty-search view. `ModelPickerList` starts active-search results expanded, keeps collapse choices component-local during that search, and clears them when the search ends.
 
-`useUIStore` keeps context-panel tab *content* directory-scoped (`contextPanelByDirectory`), but the *open* state of the right workspace (context panel for subagent/file preview/diff, plus right sidebar git/files) is session-correlated. `syncWorkspacePanelsForSessionSwitch()` captures the previous session snapshot into in-memory `sessionWorkspacePanelById` and restores the next session (or closes panels when there is no snapshot). Callers that leave a real session must invoke it: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
+`useUIStore` keeps context-panel tab *content* directory-scoped (`contextPanelByDirectory`), but the *open* state of the right workspace (context panel for subagent/file preview/diff, plus right sidebar git/files) is session-correlated. `syncWorkspacePanelsForSessionSwitch()` captures the previous session snapshot into in-memory `sessionWorkspacePanelById` and restores the next session (or closes panels when there is no snapshot). The initial selection, before any session snapshot exists, preserves the startup workspace layout instead of closing it. Callers that leave a real session must invoke it: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
 
 Exact tool patches selected from `edit`, `multiedit`, `write`, and `apply_patch` rows live in the transient `contextToolDiffByDirectory` map. Edit-style and write-style rows retain one file, while an `apply_patch` row retains every renderable file from that invocation. The persisted tab keeps only its target path, turn message, and focus line; regular diff navigation, scope changes, tab close, and runtime switches clear the transient patches.
 

@@ -2,12 +2,13 @@ import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { ChatPromptComposer } from '@/components/chat/ChatPromptComposer';
 import { ComposerQuoteChips } from '@/components/chat/ComposerQuoteChips';
-import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
 import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { useChatAutoFollow } from '@/hooks/useChatAutoFollow';
 import { isPhoneBtwScopeOpen } from '@/mobile/useMobileNavigationStore';
 import { ensureNativeComposerCover, releaseNativeComposerCover, BTW_SHEET_NATIVE_COMPOSER_COVER } from '@/lib/nativeComposerCover';
 import { useI18n } from '@/lib/i18n';
@@ -32,7 +33,12 @@ const BTW_MOBILE_TEXT_CLASS = 'box-border w-full whitespace-pre-wrap break-words
 
 export type BtwComposerFoot = 'panel' | 'page' | 'sheet';
 
-function BtwTurnView({ turn, isLast, scope }: { turn: SessionBtwTurn; isLast: boolean; scope: SessionBtwScope }) {
+const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, directory }: {
+  turn: SessionBtwTurn;
+  isLast: boolean;
+  sessionId: string;
+  directory: SessionBtwScope['directory'];
+}) {
   const { t } = useI18n();
   const error = turn.error === 'empty response' || turn.error === 'session.btw failed'
     ? t('chat.btw.failed')
@@ -59,19 +65,20 @@ function BtwTurnView({ turn, isLast, scope }: { turn: SessionBtwTurn; isLast: bo
     </p> : null}
     {cancelled ? <p role="status" className="typography-meta text-muted-foreground">{t('chat.btw.cancelled')}</p> : null}
     {turn.answer ? <div className="min-w-0 text-foreground">
-      <SimpleMarkdownRenderer content={turn.answer} enableFileReferences={false} />
+      <MarkdownRenderer content={turn.answer} messageId={`btw:${sessionId}:${turn.id}`}
+        isAnimated={false} isStreaming={false} variant="assistant" enableFileReferences={false} />
     </div> : null}
     {!turn.pending && (turn.answer || (isLast && (error || cancelled))) ? <div className="-ml-2 flex items-center gap-0.5">
       {turn.answer ? <Button type="button" variant="ghost" size="xs" onClick={copy} aria-label={t('contextSidebar.actions.copy')}>
         <Icon name="file-copy" className="size-3.5" />
       </Button> : null}
-      {isLast ? <Button type="button" variant="ghost" size="xs" onClick={() => void useSessionBtwStore.getState().retry(scope)}
+      {isLast ? <Button type="button" variant="ghost" size="xs" onClick={() => void useSessionBtwStore.getState().retry({ sessionId, directory })}
         aria-label={t('contextPanel.preview.actions.retry')}>
         <Icon name="refresh" className="size-3.5" />
       </Button> : null}
     </div> : null}
   </div>;
-}
+});
 
 function BtwComposer({
   scope,
@@ -149,25 +156,32 @@ function BtwComposer({
  * Self-contained side conversation. Only the side turns render here; the main
  * session history is never loaded, and nothing is requested until a send.
  */
-export function BtwPanel({ scope, foot = 'panel' }: { scope: SessionBtwScope; foot?: BtwComposerFoot }) {
+export function BtwPanel({ scope, foot = 'panel', active = true }: { scope: SessionBtwScope; foot?: BtwComposerFoot; active?: boolean }) {
   const { t } = useI18n();
   const key = getSessionBtwKey(scope);
   const turns = useSessionBtwStore((state) => (state.entries[key] ?? EMPTY_SESSION_BTW_ENTRY).turns);
   const quotes = useSessionBtwStore((state) => (state.entries[key] ?? EMPTY_SESSION_BTW_ENTRY).quotes);
   const pending = turns.some((turn) => turn.pending);
-  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const { scrollRef, notifyContentChange } = useChatAutoFollow({
+    enabled: active,
+    currentSessionId: scope.sessionId,
+    viewportKey: `btw:${key}`,
+    sessionMessageCount: turns.length,
+    sessionIsWorking: pending,
+    isMobile: foot !== 'panel',
+  });
   const lastTurn = turns[turns.length - 1];
   React.useLayoutEffect(() => {
-    const element = scrollRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [turns.length, lastTurn?.answer, lastTurn?.pending]);
+    notifyContentChange('structural');
+  }, [turns.length, lastTurn?.answer, lastTurn?.pending, notifyContentChange]);
   return <section className="flex h-full min-h-0 min-w-0 flex-col text-foreground" aria-label={t('chat.btw.title')}>
-    <div ref={scrollRef} className="overlay-scrollbar-container min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
-      {turns.length === 0
-        ? <p className="typography-meta text-muted-foreground">{t('chat.btw.description')}</p>
-        : <div className="flex flex-col gap-5">
-          {turns.map((turn, index) => <BtwTurnView key={turn.id} turn={turn} isLast={index === turns.length - 1} scope={scope} />)}
-        </div>}
+    <div ref={scrollRef} data-btw-transcript className="overlay-scrollbar-container min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+      <div className="flex flex-col gap-5">
+        {turns.length === 0
+          ? <p className="typography-meta text-muted-foreground">{t('chat.btw.description')}</p>
+          : turns.map((turn, index) => <BtwTurnView key={turn.id} turn={turn} isLast={index === turns.length - 1}
+            sessionId={scope.sessionId} directory={scope.directory} />)}
+      </div>
     </div>
     <BtwComposer key={key} scope={scope} pending={pending} quotes={quotes} foot={foot} />
   </section>;

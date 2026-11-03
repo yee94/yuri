@@ -1,9 +1,13 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
-const api = vi.hoisted(() => ({ generateSessionAside: vi.fn() }));
-const language = vi.hoisted(() => ({ locale: 'en' }));
+const api = vi.hoisted(() => ({ generateSessionAside: vi.fn(), renderMarkdown: vi.fn() }));
+const language = vi.hoisted(() => ({ locale: 'en', listeners: new Set<() => void>() }));
 vi.mock('@/lib/opencode/client', () => ({
   opencodeClient: {
     generateSessionAside: api.generateSessionAside,
@@ -11,7 +15,16 @@ vi.mock('@/lib/opencode/client', () => ({
     applySendSelection: vi.fn(async () => {}),
   },
 }));
-vi.mock('@/components/chat/MarkdownRenderer', () => ({ SimpleMarkdownRenderer: ({ content }: { content: string }) => <div data-markdown>{content}</div> }));
+vi.mock('@/components/chat/MarkdownRenderer', () => {
+  const render = (props: { content: string; messageId?: string; isStreaming?: boolean }) => {
+    api.renderMarkdown(props);
+    return <div data-markdown data-message-id={props.messageId}>{props.content}</div>;
+  };
+  return {
+    MarkdownRenderer: (props: Parameters<typeof render>[0]) => render(props),
+    SimpleMarkdownRenderer: ({ content }: { content: string }) => render({ content }),
+  };
+});
 vi.mock('@/components/ui', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => ({ ok: true })) }));
 vi.mock('@/components/ui/ModelLogo', () => ({ ModelLogo: () => <span data-model-logo /> }));
@@ -49,7 +62,13 @@ vi.mock('@/lib/i18n', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/i18n')>();
   const { dict } = await import('@/lib/i18n/messages/en');
   const { dict: chinese } = await import('@/lib/i18n/messages/zh-CN');
-  return { ...original, useI18n: () => ({ t: (key: keyof typeof dict) => (language.locale === 'zh-CN' ? chinese : dict)[key], locale: language.locale }) };
+  return { ...original, useI18n: () => {
+    const locale = React.useSyncExternalStore((listener) => {
+      language.listeners.add(listener);
+      return () => { language.listeners.delete(listener); };
+    }, () => language.locale);
+    return { t: (key: keyof typeof dict) => (locale === 'zh-CN' ? chinese : dict)[key], locale };
+  } };
 });
 
 import { BtwComposerSurface, BtwPanel } from './BtwPanel';
@@ -93,6 +112,112 @@ const typeAndEnter = async (text: string) => {
 };
 
 describe('Btw side conversation panel', () => {
+  test('the production ContextPanel boundary retains answer DOM and drafts across tab and rail switches', async () => {
+    const path = join(dirname(fileURLToPath(import.meta.url)), 'ContextPanel.tsx');
+    const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let expression: ts.Expression | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isJsxExpression(node) && node.expression?.getText(source).startsWith('tabs.filter(')
+        && node.expression.getText(source).includes('<BtwPanel')) expression = node.expression;
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(expression, 'BTW must have a retained tab boundary, not activeNonChatContent').toBeDefined();
+    const output = ts.transpileModule(`return (${expression!.getText(source)});`, {
+      compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const renderTabs = new Function('React', 'BtwPanel', 'tabs', 'activeTab', 'previewVisible', 'directoryKey', 'btwSessionId', 't', output) as (
+      react: typeof React, panel: typeof BtwPanel, tabs: { id: string; mode: string }[],
+      activeTab: { id: string }, visible: boolean, directory: string, sessionId: string, t: (key: string) => string,
+    ) => React.ReactNode;
+    const tabs = [{ id: 'btw-tab', mode: 'btw' }, { id: 'file-tab', mode: 'file' }];
+    const render = async (tab: string, visible = true, sessionId = scope.sessionId, mountedTabs = tabs) => {
+      await act(async () => root.render(<>{renderTabs(React, BtwPanel, mountedTabs, { id: tab }, visible, '/repo', sessionId, (key) => key)}</>));
+    };
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Settled code', error: null, pending: false }] },
+    } });
+    await render('btw-tab');
+    const answer = host.querySelector('[data-markdown]');
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Unsent draft');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    for (let index = 0; index < 3; index++) {
+      await render('file-tab');
+      await render('btw-tab');
+      await render('btw-tab', false);
+      await render('btw-tab');
+      expect(host.querySelector('[data-markdown]')).toBe(answer);
+      expect(host.querySelector('textarea')).toBe(textarea);
+      expect(textarea.value).toBe('Unsent draft');
+    }
+    await render('btw-tab', true, 'session-b');
+    expect(host.querySelector('[data-markdown]')).toBeNull();
+    expect(host.querySelector('textarea')).not.toBe(textarea);
+    await render('file-tab', true, 'session-b', [tabs[1]!]);
+    expect(host.querySelector('textarea')).toBeNull();
+  });
+
+  test('answers use the session rich renderer with a stable turn identity', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: '```jsonc\n{}\n```', error: null, pending: false }] },
+    } });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    expect(api.renderMarkdown).toHaveBeenLastCalledWith(expect.objectContaining({
+      messageId: expect.stringContaining('t1'),
+      isStreaming: false,
+      variant: 'assistant',
+      enableFileReferences: false,
+    }));
+  });
+
+  test('answer arrival does not drag a reader back to the bottom', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Earlier answer', error: null, pending: false }] },
+    } });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    const scroller = host.querySelector<HTMLDivElement>('[data-btw-transcript]')!;
+    let top = 100;
+    const writes = vi.fn((value: number) => { top = value; });
+    Object.defineProperties(scroller, {
+      scrollTop: { configurable: true, get: () => top, set: writes },
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 2000 },
+    });
+    await act(async () => scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true })));
+    writes.mockClear();
+    await act(async () => useSessionBtwStore.setState((state) => ({ entries: {
+      ...state.entries,
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [...state.entries[getSessionBtwKey(scope)]!.turns,
+        { id: 't2', quotes: [], question: 'Next?', answer: 'New answer', error: null, pending: false }] },
+    } })));
+    expect(writes).not.toHaveBeenCalled();
+    expect(top).toBe(100);
+  });
+
+  test('50 parent and staged-quote updates do not rerender settled answers', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Settled code', error: null, pending: false }] },
+    } });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    const answer = host.querySelector('[data-markdown]');
+    api.renderMarkdown.mockClear();
+    for (let index = 0; index < 50; index++) {
+      await act(async () => {
+        useSessionBtwStore.getState().addQuote(scope, `quote ${index}`);
+        root.render(<BtwPanel scope={{ ...scope }} />);
+      });
+    }
+    expect(api.renderMarkdown).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-markdown]')).toBe(answer);
+    api.generateSessionAside.mockResolvedValueOnce({ text: 'Next answer' });
+    await typeAndEnter('Next?');
+    expect(api.renderMarkdown.mock.calls.filter(([props]) => props.content === 'Settled code')).toHaveLength(1);
+    expect(host.querySelector('[data-markdown]')).toBe(answer);
+  });
+
   test('focuses after opening settles and does not steal focus on subsequent updates', async () => {
     const frames: FrameRequestCallback[] = [];
     const request = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -185,7 +310,10 @@ describe('Btw side conversation panel', () => {
     } });
     await act(async () => root.render(<BtwPanel scope={scope} />));
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('Answer generation failed. Please retry.');
-    language.locale = 'zh-CN';
+    await act(async () => {
+      language.locale = 'zh-CN';
+      language.listeners.forEach((listener) => listener());
+    });
     await act(async () => root.render(<BtwPanel scope={{ ...scope }} />));
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('生成回答失败，请重试。');
     await act(async () => button('重试')!.click());

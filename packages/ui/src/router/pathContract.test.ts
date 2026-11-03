@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildPluginPagePath,
   SESSION_TOOL_TABS,
   buildNewSessionPath,
   buildSchedulePath,
@@ -11,6 +12,11 @@ import {
 } from './pathContract';
 
 describe('pathContract — session paths', () => {
+  test('global plugin identities round-trip without session or configuration', () => {
+    const path = buildPluginPagePath('@example/plugin', 'usage:main');
+    expect(parseAppPath(path)).toEqual({ kind: 'plugin', pluginId: '@example/plugin', pageId: 'usage:main' });
+    expect(parseAppPath('/plugins/%GG/main')).toEqual({ kind: 'unknown' });
+  });
   test('chat is default and does not occupy a path segment', () => {
     expect(buildSessionPath({ sessionId: 'abc' })).toBe('/session/abc');
     expect(buildSessionPath({ sessionId: 'abc', tab: 'chat' })).toBe('/session/abc');

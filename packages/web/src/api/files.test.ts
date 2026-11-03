@@ -31,6 +31,14 @@ const urls: RuntimeUrlResolver = {
 };
 
 describe('createWebFilesAPI', () => {
+  it('forwards file-search cancellation to the official client', async () => {
+    const { createWebFilesAPI } = await import('./files');
+    const controller = new AbortController();
+    searchFilesMock.mockResolvedValueOnce([]);
+    await createWebFilesAPI({}).search({ directory: '/project', query: 'alpha' }, { signal: controller.signal });
+    expect(searchFilesMock).toHaveBeenLastCalledWith('alpha', expect.objectContaining({ signal: controller.signal }));
+  });
+
   it('searches the requested project through the V2 client instead of the removed find/file route', async () => {
     const { createWebFilesAPI } = await import('./files');
     const api = createWebFilesAPI({ getDirectory: () => '/active-project' });

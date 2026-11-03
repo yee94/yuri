@@ -30,7 +30,9 @@ vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: state
 vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (select: (value: object) => unknown) => select({ currentSessionId: state.sessionID }) }));
 vi.mock('@/sync/sync-context', () => ({ useCurrentSessionEntity: (id: string | null) => id ? state.sessions[id] ?? null : null }));
 vi.mock('@/stores/useDirectoryStore', () => ({ useDirectoryStore: (select: (value: object) => unknown) => select({ currentDirectory: state.directory }) }));
-vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (value: object) => unknown) => select({ isMobile: false }) }));
+vi.mock('@/stores/useUIStore', () => ({ useUIStore: Object.assign((select: (value: object) => unknown) => select({ isMobile: false }), {
+  getState: () => ({ isMobile: false, activeMainTab: 'chat', activeGuiPage: null }), subscribe: () => () => {},
+}) }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ locale: 'en', t: (key: string) => key }) }));
 vi.mock('@/components/chat/fileReferenceActions', () => ({ openFileReference: vi.fn(async () => {}) }));
 vi.mock('@/lib/opencode/gui', () => ({ createGuiClient: (signal: AbortSignal) => { state.signals.push(signal); return { plugin: { list: state.list, gui: state.gui } }; } }));
@@ -41,8 +43,8 @@ vi.mock('@/components/gui-plugins/GuiPluginSurface', () => ({ GuiPluginSurface: 
 } }));
 vi.mock('./host', () => { state.hostImports(); return {
   GuiPluginHost: class {
-    snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], settings: [], menuItems: [], activePanel: null };
-    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn();
+    snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null };
+    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn();
     subscribe = () => () => {};
     getSnapshot = () => this.snapshot;
     constructor(options: { focusFile: (path: string, directory: string) => Promise<void> }) {

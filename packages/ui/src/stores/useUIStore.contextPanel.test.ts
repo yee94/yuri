@@ -17,6 +17,61 @@ beforeEach(() => {
 });
 
 describe('useUIStore context panel tabs', () => {
+  test.each(['before', 'after'])('opens Git Changes with no saved settings when initial session selection happens %s panel initialization', (selectionOrder) => {
+    const initial = useUIStore.getInitialState();
+    useUIStore.setState({
+      isRightSidebarOpen: initial.isRightSidebarOpen,
+      rightSidebarTab: initial.rightSidebarTab,
+    });
+    const store = useUIStore.getState();
+    const select = () => store.syncWorkspacePanelsForSessionSwitch({
+      previousSessionId: null,
+      nextSessionId: 'first-session',
+      nextDirectory: '/repo',
+    });
+    if (selectionOrder === 'before') select();
+    store.initializeWorkspacePanels('/repo/');
+    if (selectionOrder === 'after') select();
+    expect(useUIStore.getState()).toMatchObject({
+      isRightSidebarOpen: true,
+      rightSidebarTab: 'git',
+      contextPanelByDirectory: { '/repo': { isOpen: true, tabs: [], activeTabId: null } },
+    });
+    const unchanged = useUIStore.getState();
+    store.initializeWorkspacePanels('/repo');
+    store.initializeWorkspacePanels('/other');
+    expect(useUIStore.getState()).toBe(unchanged);
+  });
+
+  test('does not open the preview without a directory or with a saved closed rail', () => {
+    const store = useUIStore.getState();
+    store.setRightSidebarOpen(true);
+    store.initializeWorkspacePanels('');
+    expect(useUIStore.getState().contextPanelByDirectory).toEqual({});
+    store.setRightSidebarOpen(false);
+    store.initializeWorkspacePanels('/repo');
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: null, nextSessionId: 'first-session', nextDirectory: '/repo' });
+    expect(useUIStore.getState().contextPanelByDirectory).toEqual({});
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(false);
+  });
+
+  test.each([false, true])('preserves saved preview visibility (%s) and rail selection on startup', async (isOpen) => {
+    const store = useUIStore.getState();
+    store.openContextPanel('/repo');
+    if (!isOpen) store.closeContextPanel('/repo');
+    store.setRightSidebarTab('files');
+    const options = useUIStore.persist.getOptions();
+    const saved = options.partialize!(useUIStore.getState());
+    const restored = await options.migrate!(saved, options.version!);
+    useUIStore.setState(restored as Partial<ReturnType<typeof useUIStore.getState>>);
+    const unchanged = useUIStore.getState();
+    store.initializeWorkspacePanels('/repo');
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: null, nextSessionId: 'first-session', nextDirectory: '/repo' });
+    expect(useUIStore.getState()).toBe(unchanged);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(isOpen);
+    expect(useUIStore.getState().rightSidebarTab).toBe('files');
+  });
+
   test('allows a 240px inner rail while preserving its 360px default and manually resized width', () => {
     const store = useUIStore.getState();
     useUIStore.setState({ rightSidebarWidth: 360, hasManuallyResizedRightSidebar: false });
@@ -237,7 +292,7 @@ describe('useUIStore context panel tabs', () => {
     expect(tabs[0]?.readOnly).toBe(false);
   });
 
-  test('closing the last tab leaves an empty preview and the next close dismisses the panel', () => {
+  test('closing the last tab collapses the panel immediately', () => {
     const directory = '/repo';
 
     useUIStore.getState().openContextPanelTab(directory, { mode: 'context' });
@@ -259,12 +314,24 @@ describe('useUIStore context panel tabs', () => {
     expect(closedLast).toBe(true);
     const after = useUIStore.getState().contextPanelByDirectory[directory];
     expect(after?.tabs).toHaveLength(0);
-    expect(after?.isOpen).toBe(true);
-
-    expect(useUIStore.getState().closeActiveContextPanelTab(directory)).toBe(true);
-    expect(useUIStore.getState().contextPanelByDirectory[directory]?.isOpen).toBe(false);
+    expect(after?.isOpen).toBe(false);
 
     expect(useUIStore.getState().closeActiveContextPanelTab(directory)).toBe(false);
+  });
+
+  test.each(['context', 'file', 'diff', 'file-diff', 'chat', 'browser', 'preview', 'btw'] as const)('closing the last %s tab collapses only its directory panel and persists it closed', (mode) => {
+    const store = useUIStore.getState();
+    store.openContextFile('/other', '/other/keep.ts');
+    const other = useUIStore.getState().contextPanelByDirectory['/other'];
+    store.openContextPanelTab('/repo', { mode, targetPath: '/repo/a.ts' });
+    const tab = useUIStore.getState().contextPanelByDirectory['/repo'].tabs[0];
+    store.closeContextPanelTab('/repo', 'unknown');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(true);
+    store.closeContextPanelTab('/repo', tab.id);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: false, tabs: [], activeTabId: null });
+    expect(useUIStore.getState().contextPanelByDirectory['/other']).toBe(other);
+    const saved = useUIStore.persist.getOptions().partialize!(useUIStore.getState()) as Pick<ReturnType<typeof useUIStore.getState>, 'contextPanelByDirectory'>;
+    expect(saved.contextPanelByDirectory['/repo'].isOpen).toBe(false);
   });
 
   test('the nested file-tree toggle never closes or reopens preview panels', () => {

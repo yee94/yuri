@@ -18,7 +18,7 @@ import { getRuntimeKey } from '@/lib/runtime-switch';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
 
 /** Main column tab. Product exclusive primaries: chat(session) | schedule | assistant. */
-export type MainTab = 'chat' | 'git' | 'diff' | 'terminal' | 'files' | 'diagram' | 'schedule' | 'assistant';
+export type MainTab = 'chat' | 'git' | 'diff' | 'terminal' | 'files' | 'diagram' | 'schedule' | 'assistant' | 'plugin';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
 export type RightSidebarTab = 'git' | 'files' | 'browser';
 export type ContextPanelMode = 'diff' | 'file-diff' | 'file' | 'context' | 'chat' | 'preview' | 'browser' | 'btw';
@@ -517,6 +517,7 @@ const closeContextPanelTab = (
   return {
     ...current,
     tabs: nextTabs,
+    isOpen: current.isOpen && nextTabs.length > 0,
     activeTabId: nextActiveTabId,
     touchedAt: Date.now(),
   };
@@ -747,6 +748,8 @@ interface UIStore {
   isSessionSwitcherOpen: boolean;
   isSessionDropdownOpen: boolean;
   activeMainTab: MainTab;
+  activeGuiPage: string | null;
+  guiPageReturnTab: MainTab;
   mainTabGuard: MainTabGuard | null;
   sidebarOpenBeforeFullscreenTab: boolean | null;
   pendingDiffFile: string | null;
@@ -905,6 +908,7 @@ interface UIStore {
   setRightSidebarOpen: (open: boolean) => void;
   setRightSidebarWidth: (width: number) => void;
   setRightSidebarTab: (tab: RightSidebarTab) => void;
+  initializeWorkspacePanels: (directory: string) => void;
   /**
    * Capture workspace panels for the previous session and restore the next
    * session's right sidebar / context panel (subagent, git, file preview).
@@ -938,6 +942,8 @@ interface UIStore {
   setSessionSwitcherOpen: (open: boolean) => void;
   setSessionDropdownOpen: (open: boolean) => void;
   setActiveMainTab: (tab: MainTab) => boolean;
+  openGuiPage: (key: string) => boolean;
+  closeGuiPage: () => boolean;
   prepareForRuntimeSwitch: (runtimeKey?: string | null) => void;
   restoreForRuntimeSwitch: (runtimeKey?: string | null) => void;
   setMainTabGuard: (guard: MainTabGuard | null) => void;
@@ -1108,7 +1114,7 @@ export const useUIStore = create<UIStore>()(
         isSidebarOpen: true,
         sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
         hasManuallyResizedLeftSidebar: false,
-        isRightSidebarOpen: false,
+        isRightSidebarOpen: true,
         rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT_WIDTH,
         hasManuallyResizedRightSidebar: false,
         rightSidebarTab: 'git',
@@ -1122,6 +1128,8 @@ export const useUIStore = create<UIStore>()(
         isSessionSwitcherOpen: false,
         isSessionDropdownOpen: false,
         activeMainTab: 'chat',
+        activeGuiPage: null,
+        guiPageReturnTab: 'chat',
         mainTabGuard: null,
         sidebarOpenBeforeFullscreenTab: null,
         pendingDiffFile: null,
@@ -1346,6 +1354,21 @@ export const useUIStore = create<UIStore>()(
           set({ rightSidebarTab: tab });
         },
 
+        initializeWorkspacePanels: (directory) => {
+          const key = normalizeContextPanelDirectoryKey((directory || '').trim());
+          if (!key) return;
+          set((state) => {
+            if (!state.isRightSidebarOpen || Object.keys(state.contextPanelByDirectory).length > 0) {
+              return state;
+            }
+            return {
+              contextPanelByDirectory: {
+                [key]: { ...touchContextPanelState(undefined), isOpen: true },
+              },
+            };
+          });
+        },
+
         syncWorkspacePanelsForSessionSwitch: ({
           previousSessionId,
           previousDirectory,
@@ -1368,6 +1391,9 @@ export const useUIStore = create<UIStore>()(
             }
 
             const nextSnapshot = nextId ? sessionWorkspacePanelById[nextId] : undefined;
+            if (!previousId && !nextSnapshot && Object.keys(sessionWorkspacePanelById).length === 0) {
+              return state;
+            }
             const contextPanelByDirectory = applySessionWorkspacePanelToDirectory(
               state.contextPanelByDirectory,
               nextDirectory,
@@ -1925,6 +1951,17 @@ export const useUIStore = create<UIStore>()(
           return true;
         },
 
+        openGuiPage: (key) => {
+          const state = get();
+          if (state.mainTabGuard && !state.mainTabGuard('plugin')) return false;
+          activeMainTabByRuntime.set(runtimeMemoryKey(), 'plugin');
+          set({ activeMainTab: 'plugin', activeGuiPage: key,
+            guiPageReturnTab: state.activeMainTab === 'plugin' ? state.guiPageReturnTab : state.activeMainTab,
+            isSettingsDialogOpen: false, mobileSessionPanelOpen: false });
+          return true;
+        },
+        closeGuiPage: () => get().setActiveMainTab(get().guiPageReturnTab),
+
         prepareForRuntimeSwitch: (runtimeKey?: string | null) => {
           activeMainTabByRuntime.set(runtimeMemoryKey(runtimeKey), get().activeMainTab);
           set({ contextToolDiffByDirectory: {} });
@@ -1932,7 +1969,7 @@ export const useUIStore = create<UIStore>()(
 
         restoreForRuntimeSwitch: (runtimeKey?: string | null) => {
           const restored = activeMainTabByRuntime.get(runtimeMemoryKey(runtimeKey)) ?? 'chat';
-          set({ activeMainTab: restored });
+          set({ activeMainTab: restored === 'plugin' ? 'chat' : restored, activeGuiPage: null, guiPageReturnTab: 'chat' });
         },
 
         setPendingDiffFile: (filePath, staged = false, scope = null, targetLine) => {
@@ -2952,7 +2989,7 @@ export const useUIStore = create<UIStore>()(
           isBottomTerminalExpanded: state.isBottomTerminalExpanded,
           bottomTerminalHeight: state.bottomTerminalHeight,
           isSessionSwitcherOpen: state.isSessionSwitcherOpen,
-          activeMainTab: state.activeMainTab,
+          activeMainTab: state.activeMainTab === 'plugin' ? 'chat' : state.activeMainTab,
           sidebarSection: state.sidebarSection,
           settingsPage: state.settingsPage,
           settingsHasOpenedOnce: state.settingsHasOpenedOnce,

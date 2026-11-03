@@ -74,6 +74,19 @@ Automatic enter-revalidation (`loadMessages` tail → `refreshTranscriptFromAuth
 
 ## Global content search
 
+Explicit-directory blocking-request recovery reads forms/permissions only for live
+Locations in that scope. It does not repeat a default-Location read per directory:
+the synthetic 51-live-directory regression fixture requires 102 snapshots rather
+than 204. This is not a fixed startup request count or a filesystem scan: actual
+recovery depends on known candidate sessions and the loaded Location inventory.
+Pending questions/permissions serve sidebar indicators, actionable request cards
+and background request notifications; historical idle status alone cannot prove
+that a directory has no pending requests. Unscoped callers retain
+their default-Location read. Inventory/snapshot failures still throw so reconnect
+preserves prior state; question and permission failures remain isolated. Search
+snapshots carry high Chromium request priority while form/permission recovery is
+low priority; these are browser hints, not a relay scheduling guarantee.
+
 The Host now owns the production index; see `packages/web/server/lib/content-search/DOCUMENTATION.md`. Search calls `/api/yuri/content-search` without a directory restriction and receives session titles and directories from the server. Opening a conversation is not required. The palette opens directly into search without index-count, progress or current-project scope chrome; search failures remain visible. Content queries refresh while open to discover background writes. Runtime-scoped Query keys prevent cross-host result reuse.
 
 `ContentIndexOnboarding` mounts in the connected web/desktop and mobile shells and renders the shared `OnboardingScreen` content-index step. The Host's durable first-initialization completion marker determines whether onboarding is needed; later incremental refreshes and retries never clear it or reopen the step. Authoritative startup verification still checks for background backfill; no browser flag or app-version heuristic certifies completeness. Query polls only through startup verification/backfill, then stops after success or a runtime-local background dismissal. Failed refreshes retain progress and show automatic-retry guidance. A runtime switch resets dismissal and checks the new Host. Older Hosts without this status contract and VS Code's direct OpenCode connection do not show the step. See the Host documentation for timestamp and checkpoint semantics.
@@ -1991,7 +2004,7 @@ Rules:
 3. Scope-sensitive session actions use `getAuthoritativeDirectoryForSession()`, which resolves worktree metadata, session attachments, sync metadata, and global session metadata.
 4. `session-ui-store.ts` should delegate to `session-actions.ts` for these mutations instead of duplicating SDK calls.
 5. `setCurrentSession()` announces a monotonic session-switch intent before directory resolution or store publication. Delayed visual/transition callbacks must validate that intent and silently discard stale work. Optional `skipMessageFetch` skips the same-tick transcript fetch for callers that own the subsequent load (fork).
-6. On a real session id change, `setCurrentSession()` also calls `useUIStore.syncWorkspacePanelsForSessionSwitch()` so right-side workspace panels (context/subagent chat, file preview, git changes sidebar) hide when leaving a session and restore when returning. `openNewSessionDraft()` must call the same helper when clearing a real session for Welcome/draft, because it does not go through `setCurrentSession()`. Tab content remains directory-cached; only open/active visibility is session-scoped.
+6. On a real session id change, `setCurrentSession()` also calls `useUIStore.syncWorkspacePanelsForSessionSwitch()` so right-side workspace panels (context/subagent chat, file preview, git changes sidebar) hide when leaving a session and restore when returning. The initial selection before any session snapshot exists preserves the startup layout, including the zero-settings Git Changes rail. `openNewSessionDraft()` must call the same helper when clearing a real session for Welcome/draft, because it does not go through `setCurrentSession()`. Tab content remains directory-cached; only open/active visibility is session-scoped.
 7. Edit staging restores the composer from the visible user-message snapshot captured at click time. Primary send interrupts a busy turn, waits for idle, and commits the native V2 history boundary with `files:false` before admitting the optimistic replacement. Pre-commit failures retain the draft; confirmed commit removes the old tail in conversation order. A replacement-send failure keeps the draft for ordinary retry. Leaving the session disarms `stagedMessageEdit`.
 8. Sidebar previous/next navigation follows the rendered sidebar order. `SessionSidebar` publishes pinned rows plus logically visible project rows to `session-navigation.ts`; keyboard and native-menu actions share that registry and update the explicit session Focus before committing current-session authority. Adjacent navigation concatenates those rings (pinned first) and wraps across both sections, never falling through to hidden project rows.
 9. Global Mod+1…9 navigation is session-row based, not project based. `SessionSidebar` combines the currently revealed pinned rows with logically visible project rows, caps the visual order at nine, and publishes it through `sidebar-numbered-navigation.ts`. The numbered activation preserves the selected row's exact Pinned/Project Focus identity.

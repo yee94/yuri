@@ -1,7 +1,7 @@
 import React from 'react';
 import { GuiPluginCommands } from '@/components/gui-plugins/GuiPluginCommands';
 import { useEvent, useEventListener } from '@reactuses/core';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Command,
   CommandEmpty,
@@ -37,7 +37,7 @@ import { isMacOS, truncatePathMiddle } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { buildCommandPaletteFileSearchRoots, commandPaletteFileSearchQueryOptions, scoreCommandPaletteFiles } from './commandPaletteFilesState';
+import { commandPaletteFileSearchQueryOptions, scoreCommandPaletteFiles } from './commandPaletteFilesState';
 import { openAndCreateTerminalTab } from '@/lib/terminalTabShortcuts';
 import { Kbd } from '@/components/ui/kbd';
 import './command-palette.css';
@@ -131,6 +131,7 @@ const EMPTY_ACTIVE_SESSIONS: Session[] = [];
 
 export const CommandPalette = React.memo(function CommandPalette({ presentation = 'dialog', onBack }: { presentation?: 'dialog' | 'page'; onBack?: () => void }) {
   const { t, locale } = useI18n();
+  const queryClient = useQueryClient();
   const conversationTimeFormatter = new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' });
   const mobileActions = useMobileAppActions();
 
@@ -152,6 +153,8 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   const setCurrentSession = useSessionUIStore((s) => s.setCurrentSession);
 
   const observeResults = isCommandPaletteOpen || retainResults;
+  const currentSessionId = useSessionUIStore((s) => observeResults ? s.currentSessionId : null);
+  const currentSessionDirectory = useSessionUIStore((s) => observeResults ? s.currentSessionDirectory : null);
   const activeSessions = useGlobalSessionsStore((s) => observeResults ? s.activeSessions : EMPTY_ACTIVE_SESSIONS);
   const sessionsStatus = useGlobalSessionsStore((s) => observeResults ? s.status : 'idle');
   const currentDirectory = useDirectoryStore((s) => s.currentDirectory);
@@ -372,16 +375,19 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   // ---------------------------------------------------------------------------
   // File search
   // ---------------------------------------------------------------------------
-  const fileSearchRoots = React.useMemo(
-    () => buildCommandPaletteFileSearchRoots(projects, availableWorktreesByProject),
-    [projects, availableWorktreesByProject],
+  const fileSearchDirectory = React.useMemo(
+    () => currentSessionId && currentSessionDirectory
+      && resolveProjectForSessionDirectory(projects, availableWorktreesByProject, currentSessionDirectory)
+      ? normalizePath(currentSessionDirectory) : null,
+    [currentSessionId, currentSessionDirectory, projects, availableWorktreesByProject],
   );
-  const contentScope = { transport: getRuntimeTransportIdentity(), generation: getRuntimeGeneration(), directory: '' };
-  const fileSearchOptions = commandPaletteFileSearchQueryOptions(filesApi, fileSearchRoots, trimmedQuery, contentScope);
-  const fileSearchQuery = useQuery({
-    ...fileSearchOptions,
-    enabled: observeResults && trimmedQuery.length > 0 && fileSearchRoots.length > 0,
-  });
+  const transport = getRuntimeTransportIdentity();
+  const generation = getRuntimeGeneration();
+  const contentScope = React.useMemo(() => ({ transport, generation, directory: '' }), [transport, generation]);
+  const fileSearchOptions = React.useMemo(
+    () => commandPaletteFileSearchQueryOptions(filesApi, fileSearchDirectory, trimmedQuery, contentScope),
+    [filesApi, fileSearchDirectory, trimmedQuery, contentScope],
+  );
 
   // ---------------------------------------------------------------------------
   // Filter visible items
@@ -404,18 +410,37 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     });
   }, [settingsEntries, liveTrimmed, hasQuery]);
 
+  const searchEnabled = isCommandPaletteOpen && liveTrimmed === trimmedQuery;
+  const titleSearchOptions = React.useMemo(() => sessionTitleSearchQueryOptions(trimmedQuery, { transport }), [trimmedQuery, transport]);
   const titleSearchQuery = useQuery({
-    ...sessionTitleSearchQueryOptions(trimmedQuery),
-    enabled: (isCommandPaletteOpen || retainResults) && (trimmedQuery.length > 0 || presentation === 'page'),
+    ...titleSearchOptions,
+    enabled: searchEnabled && (trimmedQuery.length > 0 || presentation === 'page'),
   });
   const navigationKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed, isCommandPaletteOpen]);
   const [navigationSnapshot, setNavigationSnapshot] = React.useState<{ key: string; hits: SessionContentSearchHit[]; sessions: Session[] } | null>(null);
   const frozenResults = navigationSnapshot?.key === navigationKey ? navigationSnapshot : null;
   if (navigationSnapshot && !frozenResults) setNavigationSnapshot(null);
+  const contentSearchOptions = React.useMemo(
+    () => sessionContentSearchQueryOptions(trimmedQuery, { scope: contentScope }),
+    [trimmedQuery, contentScope],
+  );
   const contentSearchQuery = useQuery({
-    ...sessionContentSearchQueryOptions(trimmedQuery, { scope: contentScope }),
-    enabled: (isCommandPaletteOpen || retainResults) && trimmedQuery.length > 0 && contentScope !== null,
+    ...contentSearchOptions,
+    enabled: searchEnabled && trimmedQuery.length > 0,
   });
+  const fileSearchQuery = useQuery({
+    ...fileSearchOptions,
+    enabled: searchEnabled && trimmedQuery.length > 0 && fileSearchDirectory !== null
+      && !titleSearchQuery.isPending && !contentSearchQuery.isPending,
+  });
+  React.useEffect(() => {
+    if (searchEnabled) return;
+    // Disabling an observer does not abort its request. Stop obsolete searches
+    // during the debounce/exit window while retaining settled cached rows.
+    for (const queryKey of [titleSearchOptions.queryKey, contentSearchOptions.queryKey, fileSearchOptions.queryKey]) {
+      void queryClient.cancelQueries({ queryKey, exact: true });
+    }
+  }, [queryClient, searchEnabled, titleSearchOptions, contentSearchOptions, fileSearchOptions]);
   const contentHits = React.useMemo<SessionContentSearchHit[]>(
     () => frozenResults?.hits ?? contentSearchQuery.data ?? [],
     [frozenResults, contentSearchQuery.data],
@@ -455,7 +480,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   const scoredFiles = React.useMemo(() => {
     if (!isCommandPaletteOpen && !retainResults) return [];
     if (liveTrimmed !== trimmedQuery) return [];
-    return scoreCommandPaletteFiles(fileSearchQuery.data?.files ?? [], trimmedQuery);
+    return scoreCommandPaletteFiles(fileSearchQuery.data ?? [], trimmedQuery);
   }, [isCommandPaletteOpen, retainResults, fileSearchQuery.data, trimmedQuery, liveTrimmed]);
 
   // ---------------------------------------------------------------------------
@@ -555,7 +580,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   });
 
   const handleOpenFile = useEvent(async (filePath: string) => {
-    const file = fileSearchQuery.data?.files.find((item) => item.path === filePath);
+    const file = fileSearchQuery.data?.find((item) => item.path === filePath);
     if (!file) return;
     const transport = getRuntimeTransportIdentity();
     const generation = getRuntimeGeneration();
@@ -566,7 +591,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
       return;
     }
     if (mobileActions) mobileActions.openFile({ path: filePath });
-    else openContextFile(effectiveDirectory || file.directory, filePath);
+    else openContextFile(file.directory, filePath);
     close();
   });
 
@@ -611,12 +636,11 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     return project?.label || (project?.path || directory).split('/').pop() || '';
   };
 
-  const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && (
-    fileSearchQuery.isError || Boolean(fileSearchQuery.data?.failedDirectories.length)
-  );
+  const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && fileSearchQuery.isError;
+  const fileSearchPending = hasQuery && liveTrimmed === trimmedQuery
+    && fileSearchQuery.isFetching && !fileSearchQuery.isSuccess;
   const remoteResultsPending = hasQuery && (
     liveTrimmed !== trimmedQuery
-    || (fileSearchQuery.isFetching && !fileSearchQuery.isSuccess)
     || (titleSearchQuery.isFetching && !titleSearchQuery.isSuccess)
     || (contentScope !== null && contentSearchQuery.isFetching && !contentSearchQuery.isSuccess)
   );
@@ -675,7 +699,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
             />
           ) : searchInput}
           <CommandList aria-label={t('commandPalette.title')} className="yuri-global-search-results overscroll-contain">
-            {resultsSettled && !fileSearchFailed && !titleSearchFailed && !contentSearchFailed && sessionsStatus !== 'loading' && sessionsStatus !== 'error' ? (
+            {resultsSettled && !fileSearchPending && !fileSearchFailed && !titleSearchFailed && !contentSearchFailed && sessionsStatus !== 'loading' && sessionsStatus !== 'error' ? (
               <CommandEmpty className="py-10 text-center typography-meta text-muted-foreground">
                 {t('commandPalette.empty.noResults')}
               </CommandEmpty>
@@ -825,7 +849,8 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
             {resultsSettled && sessionsStatus === 'error' ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
             {resultsSettled && titleSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
             {resultsSettled && contentSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.messages')}</div> : null}
-            {resultsSettled && fileSearchFailed ? <div data-file-search-notice role="status" className="px-4 py-2 text-xs text-muted-foreground">{t(fileSearchQuery.isError ? 'commandPalette.error.files' : 'commandPalette.error.filesPartial')}</div> : null}
+            {resultsSettled && fileSearchPending ? <div data-file-search-pending role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('common.loading')}</div> : null}
+            {resultsSettled && fileSearchFailed ? <div data-file-search-notice role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('commandPalette.error.files')}</div> : null}
           </CommandList>
         </Command>
   );

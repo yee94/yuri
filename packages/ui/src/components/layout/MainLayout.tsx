@@ -13,6 +13,7 @@ import { OpenCodeStatusDialog } from '../ui/OpenCodeStatusDialog';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
 import { SessionDialogs } from '@/components/session/SessionDialogs';
 import { ScheduledTasksWorkspace } from '@/components/session/ScheduledTasksDialog';
+import { GuiPluginPage } from '@/components/gui-plugins/GuiPluginPage';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
 import { MultiRunLauncher } from '@/components/multirun';
 import { DrawerProvider } from '@/contexts/DrawerContext';
@@ -352,7 +353,8 @@ export const MainLayout: React.FC = () => {
     // Product mutual exclusion: exactly one exclusive full-main primary OR session shell.
     const isScheduleActive = activeMainTab === 'schedule';
     const isAssistantActive = activeMainTab === 'assistant';
-    const isExclusivePrimary = isScheduleActive || isAssistantActive;
+    const isPluginActive = activeMainTab === 'plugin';
+    const isExclusivePrimary = isScheduleActive || isAssistantActive || isPluginActive;
     const isChatActive = activeMainTab === 'chat';
     // Keep-alive chat only under session primary (chat or session tools) — never under exclusive primaries.
     const mountChatKeepAlive = !isExclusivePrimary && !isSettingsDialogOpen;
@@ -532,7 +534,7 @@ export const MainLayout: React.FC = () => {
                                 <main className="flex-1 overflow-hidden bg-background" data-page-scroll-lock="true">
                                     <ErrorBoundary>
                                         <React.Suspense fallback={null}>
-                                            {isAssistantActive ? (
+                                            {isPluginActive ? <GuiPluginPage /> : isAssistantActive ? (
                                                 <AssistantView />
                                             ) : (
                                                 <ScheduledTasksWorkspace />

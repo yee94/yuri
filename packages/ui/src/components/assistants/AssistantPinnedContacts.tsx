@@ -39,12 +39,12 @@ function PinnedContact({ assistant, selected, onSelect, onEdit, onDelete }: {
           data-mobile-press-feedback="soft"
           onClick={() => onSelect(assistant.id)}
           className={cn(
-            'flex w-full min-w-0 max-w-32 flex-col items-center gap-2 rounded-2xl px-2 py-3 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] active:bg-interactive-active motion-reduce:transition-none',
+            'flex w-full min-w-0 max-w-28 flex-col items-center gap-2 rounded-2xl px-2 py-3 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] active:bg-interactive-active motion-reduce:transition-none',
             selected ? 'bg-[var(--surface-muted)]' : 'hover:bg-interactive-hover',
           )}
         >
           <span className="relative">
-            <AssistantWorkingAvatar name={assistant.id} avatarSeed={assistant.avatarSeed} size={76} label={displayName} working={working} hoverTarget={hoverTarget} />
+            <AssistantWorkingAvatar name={assistant.id} avatarSeed={assistant.avatarSeed} size={64} label={displayName} working={working} hoverTarget={hoverTarget} />
             <AssistantUnreadBadge count={assistant.unreadCount ?? 0} className="absolute -right-1 -top-1" />
           </span>
           <span className="w-full truncate typography-ui-label font-medium leading-5">{displayName}</span>
@@ -58,7 +58,7 @@ export function AssistantPinnedContacts({ contacts, selectedAssistantID, onSelec
   const { t } = useI18n();
   if (contacts.length === 0) return null;
   return (
-    <div role="group" aria-label={t('assistants.list.pinned')} className="grid grid-cols-1 justify-items-center gap-2 pb-3 pt-2">
+    <div role="group" aria-label={t('assistants.list.pinned')} className="yuri-assistant-pinned-contacts grid grid-cols-1 justify-items-center gap-2 pb-3 pt-2">
       {contacts.map((assistant) => (
         <PinnedContact key={assistant.id} assistant={assistant} selected={assistant.id === selectedAssistantID} onSelect={onSelect} onEdit={onEdit} onDelete={onDelete} />
       ))}

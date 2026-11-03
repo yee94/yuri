@@ -1,5 +1,6 @@
 import '@/lib/brand-storage-bootstrap';
 import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
+import { GuiPluginPage } from '@/components/gui-plugins/GuiPluginPage';
 import React from 'react';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
@@ -75,6 +76,7 @@ const normalizePath = (value?: string | null): string | null => {
 type VSCodeView = 'sessions' | 'chat' | 'settings';
 
 export const VSCodeLayout: React.FC = () => {
+  const activeMainTab = useUIStore((state) => state.activeMainTab);
   const { t } = useI18n();
   const runtimeApis = useRuntimeAPIs();
 
@@ -529,7 +531,7 @@ export const VSCodeLayout: React.FC = () => {
 
   return (
     <div ref={containerRef} className="h-full w-full bg-background text-foreground flex flex-col">
-      {viewMode === 'editor' ? (
+      {activeMainTab === 'plugin' ? <ErrorBoundary><GuiPluginPage /></ErrorBoundary> : viewMode === 'editor' ? (
         // Editor mode: just chat, no sidebar
         <div className="flex flex-col h-full">
           <VSCodeHeader

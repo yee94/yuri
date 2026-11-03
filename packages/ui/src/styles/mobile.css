@@ -1270,6 +1270,14 @@ button.yuri-mobile-worktree-label-trigger:active,
   gap: 0.875rem;
 }
 
+.yuri-mobile-assistant-catalog .yuri-assistant-pinned-contacts {
+  padding-top: 0;
+}
+
+.yuri-mobile-assistant-catalog [data-assistant-pinned] {
+  padding-top: 0.25rem;
+}
+
 .yuri-mobile-assistant-loading {
   overflow: hidden;
   border-radius: var(--yuri-mobile-surface-radius);

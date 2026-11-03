@@ -58,13 +58,13 @@ afterEach(async () => {
 });
 
 describe('compact Git sidebar commit section', () => {
-  test('uses a small title, three-line textarea and shared xs actions with a small bottom inset', async () => {
+  test('uses a small title, two-line textarea and shared xs actions with a small bottom inset', async () => {
     await render();
     expect(host.querySelector('h3')?.classList.contains('text-xs')).toBe(true);
     const input = host.querySelector('textarea')!;
-    expect(input.getAttribute('rows')).toBe('3');
-    expect(input.style.height).toBe('64px');
-    expect(input.style.minHeight).toBe('64px');
+    expect(input.getAttribute('rows')).toBe('2');
+    expect(input.style.height).toBe('48px');
+    expect(input.style.minHeight).toBe('48px');
     expect(input.classList.contains('text-xs')).toBe(true);
     expect(input.classList.contains('focus:ring-1')).toBe(true);
     expect(input.parentElement?.classList.contains('pb-1')).toBe(true);
@@ -78,7 +78,7 @@ describe('compact Git sidebar commit section', () => {
     const search = host.querySelector('input')!;
     for (const className of [
       'rounded-md', 'ring-1', 'ring-inset', 'ring-border/60',
-      'transition', 'duration-200', 'ease-out',
+      'duration-200', 'ease-out',
       'hover:[&:not(:focus)]:ring-transparent',
       'focus:ring-1', 'focus:ring-[var(--interactive-focus-ring)]',
     ]) {
@@ -88,6 +88,8 @@ describe('compact Git sidebar commit section', () => {
     expect(textarea.classList.contains('bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))]')).toBe(true);
     expect(textarea.classList.contains('hover:[&:not(:focus)]:bg-[color-mix(in_srgb,var(--surface-foreground)_4%,var(--background))]')).toBe(true);
     expect(textarea.classList.contains('border')).toBe(false);
+    expect(textarea.classList.contains('transition-[background-color,box-shadow]')).toBe(true);
+    expect(textarea.classList.contains('transition')).toBe(false);
   });
 
   test('retains multiline growth and the same focused input when editing', async () => {
@@ -103,6 +105,10 @@ describe('compact Git sidebar commit section', () => {
     await render({ commitMessage: 'longer body' });
     expect(input.style.height).toBe('200px');
     expect(input.style.overflowY).toBe('auto');
+    fixture.contentHeight = 0;
+    await render({ commitMessage: '' });
+    expect(input.style.height).toBe('48px');
+    expect(input.style.overflowY).toBe('hidden');
   });
 
   test('preserves staging, pending-index and in-flight guards on all commit actions', async () => {

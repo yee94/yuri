@@ -174,6 +174,17 @@ The page presentation keeps its existing search and focus behavior.
 `CommandPalette.mobile.test.tsx` covers 50 closed-catalog updates with zero commits
 and the existing mobile search/navigation behavior.
 
+Conversation readiness does not wait for project file searches. Cold file queries
+show a local pending status while indexed conversation results remain visible and
+keyboard-selectable; they never gate the entire palette or trigger a premature
+empty-results state. GUI commands consume the startup provider's live contributions
+only; opening or typing in the palette does not request GUI plugin loading.
+Title/content snapshots start before directory file searches; files become enabled
+after both initial snapshots settle (success or error). Typing a different query
+or closing disables and explicitly cancels the three exact Query keys immediately,
+without waiting for the debounce or exit animation. Exit retention preserves cached
+rows, not active polling or obsolete network work.
+
 Title and content matches merge into one row per session, retaining the newest
 matching content message for its snippet and navigation target. The five-row
 preview and “show more” count operate on these unique sessions. Content search
@@ -201,20 +212,31 @@ rendering remains unchanged.
 
 File search uses the runtime Files API backed by the official V2 client, not
 the removed `/api/find/file` route. Confirmed missing locations are skipped
-without removing saved projects. Real total/partial failures retain other
+without removing saved projects. File search failures retain other
 results and show a compact muted status, not a red directory-list alert.
 Arrow-key navigation loops across the first and last selectable result via cmdk's
 `loop` contract, including mobile hardware keyboards.
 
-The palette has no current-project scope or index-status banner. File search uses
-the runtime FilesAPI across saved projects and known worktrees, with at most four
-directory searches in flight and ten candidates per directory. Its Query key
-includes transport, generation, the canonical root set and query; cancellation
-stops queued work and rejects late results (FilesAPI does not expose request-level
-abort). Results deduplicate by absolute path and retain their source directory.
-Partial directory failures keep successful results and expose the existing file
-error notice; total failure remains a Query error. Search does not traverse the
-entire disk or depend on the currently selected project.
+Conversation search remains global; commands consume registered contributions,
+and project matches filter the existing project list only (no project discovery
+or directory scanning). File search requires a selected conversation with a known
+`currentSessionDirectory` belonging to a saved project. It makes exactly one
+runtime FilesAPI request for that conversation's working directory, capped at ten
+candidates. A worktree conversation searches only that worktree, never its main
+checkout or sibling worktrees. No selected conversation, unresolved directory or
+unknown project means no file search, even if a draft, active project or global
+fallback directory exists. Search adds no scope picker or index-status banner.
+Its Query key includes transport, generation, the normalized working directory
+and query; changing focus cancels the old scoped read and hides its cached rows.
+Input changes and closing also cancel in-flight reads and reject late results.
+FilesAPI forwards its optional signal
+to the official client over direct/relay transports. VS Code cancels the webview
+bridge wait and ignores late replies; already-dispatched extension scans may finish.
+Results deduplicate by absolute path and retain their source directory for file
+opening. Failure remains a Query error and never widens scope to other projects.
+`CommandPalette.mobile.test.tsx` guards one request with 51 saved projects,
+zero requests without focus/project, worktree isolation, focus-change cancellation
+and global conversation/project results when file search is skipped.
 
 # Render-count verification
 
@@ -235,6 +257,12 @@ own observer notifications settle. Theme changes repin only this host's toasts.
 updates with zero toast scans and covers style replacement and theme changes.
 
 # Image loading
+
+`WorkspaceSurface` owns the shared rounded material used by ContextPanel and global
+GUI plugin pages. It renders one clipped, isolated section with the theme-aware
+background and a non-interactive inset-ring overlay above its content. Opaque
+plugin toolbars and iframes must not cover the ring. Outer spacing, navigation,
+resizing and content lifetimes remain with callers; the surface owns no state.
 
 Decoded transcript images use `width: fit-content` on the frame and an in-flow, auto-width image at the reserved height. Narrow/portrait images shrink the bubble to their displayed width; wide images clamp to the available column. Pending/error frames retain their placeholder width. The outer height stays constant so width fitting never reintroduces load-time vertical shifts. The browser geometry regression covers portrait, landscape and width-constrained panoramas with the lazy Markdown theme loaded.
 

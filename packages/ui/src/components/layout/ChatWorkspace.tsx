@@ -23,6 +23,7 @@ export const ChatWorkspace: React.FC<React.PropsWithChildren<{ header?: React.Re
         reservedWidthRef.current = width;
         updateVisibility();
     });
+    const getMaxSplitWidth = useEvent(() => availableWidthRef.current - PRIMARY_CHAT_MIN_WIDTH);
 
     React.useLayoutEffect(() => {
         availableWidthRef.current = workspaceRef.current?.clientWidth ?? 0;
@@ -49,7 +50,7 @@ export const ChatWorkspace: React.FC<React.PropsWithChildren<{ header?: React.Re
                 </div>
                 {footer}
             </main>
-            <ContextPanel onReservedWidthChange={handleReservedWidthChange} fillAvailableSpace={hidden} />
+            <ContextPanel onReservedWidthChange={handleReservedWidthChange} fillAvailableSpace={hidden} getMaxSplitWidth={getMaxSplitWidth} />
         </div>
     );
 };

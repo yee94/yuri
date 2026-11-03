@@ -6,10 +6,9 @@ import { CommandGroup, CommandItem } from '@/components/ui/command';
 import { toast } from '@/components/ui';
 
 export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect: () => void }) {
-  const { host, snapshot, requested, requestLoad } = useGuiPlugins();
+  const { host, snapshot } = useGuiPlugins();
   const { t } = useI18n();
   const [expandedQuery, setExpandedQuery] = React.useState<string | null>(null);
-  React.useEffect(() => { if (!requested) requestLoad(); }, [requested, requestLoad]);
   const commands = React.useMemo(() => query.trim()
     ? scoreByFuzzyQuery([...snapshot.commands], query.trim(), (command) => `${command.title} ${command.description ?? ''}`, { threshold: 0.4 }).map(({ item }) => item)
     : snapshot.commands, [snapshot.commands, query]);

@@ -59,13 +59,14 @@
 - The route calls `resolveGitHubPrStatus(...)` in `packages/web/server/lib/github/pr-status.js`.
 - The resolver finds the most likely repo and PR for a local branch.
 - The route then enriches that result with checks, mergeability, and permission-related fields.
-- The client caches and shares the result between sidebar and Git view.
+- The client retains its explicit PR API and status-store capabilities. The session
+  sidebar no longer initiates PR discovery, auth reads, or background refreshes.
 
 ## Consumers of PR data
 
-- `packages/ui/src/components/session/SessionSidebar.tsx` reads all PR entries and maps them to `directory::branch`.
-- `packages/ui/src/components/session/sidebar/SessionGroupSection.tsx` renders the compact badge, PR number, title, checks summary, and GitHub link.
-- `packages/ui/src/components/views/git/PullRequestSection.tsx` uses the same shared entry for the full PR workflow.
+- `packages/ui/src/components/views/git/PullRequestSection.tsx` retains the PR
+  workflow component, but the current Git view does not mount it. Do not use the
+  mere existence of this component as demand for background PR requests.
 - `packages/ui/src/components/ui/MemoryDebugPanel.tsx` reads request counters for debugging.
 
 ## How PR resolution works
@@ -84,7 +85,7 @@
 - Client key is effectively `directory::branch`.
 - One entry stores last known status, loading state, error, timestamps, watcher count, identity, and resolved remote.
 - Requests are deduplicated by branch signature, not by component instance.
-- This keeps sidebar and Git view aligned and avoids duplicated fetches.
+- The session sidebar has no subscription to this store and does not create entries.
 
 ## Persistence
 
@@ -96,9 +97,9 @@
 
 ## Polling and refresh model
 
-- There are two layers: entry-level polling in `useGitHubPrStatusStore` and repo scanning in `useGitHubPrBackgroundTracking`.
-- Entry-level polling decides when a known branch should revalidate PR state.
-- Background tracking decides which directories and branches should even be watched.
+- Entry-level polling in `useGitHubPrStatusStore` runs only for actual mounted
+  watchers. There is no sidebar/background repo-scanning owner. Startup, session
+  changes, and project/worktree expansion do not constitute PR demand.
 
 ## Entry-level polling rules
 

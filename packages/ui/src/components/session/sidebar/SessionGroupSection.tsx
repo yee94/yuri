@@ -38,7 +38,6 @@ import type { SessionFolder, SessionOrderActivityMap, SessionOrderMap } from '@/
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { openExternalUrl } from '@/lib/url';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -114,29 +113,6 @@ type Props = {
   openSidebarMenuKey: string | null;
   liveSessionById: Map<string, Session>;
   alwaysVisibleSessionIds: ReadonlySet<string>;
-  prVisualStateByDirectoryBranch: Map<string, {
-    visualState: 'draft' | 'open' | 'blocked' | 'merged' | 'closed';
-    number: number;
-    url: string | null;
-    state: 'open' | 'closed' | 'merged';
-    draft: boolean;
-    title: string | null;
-    base: string | null;
-    head: string | null;
-    checks: {
-      state: 'success' | 'failure' | 'pending' | 'unknown';
-      total: number;
-      success: number;
-      failure: number;
-      pending: number;
-    } | null;
-    canMerge: boolean | null;
-    mergeableState: string | null;
-    repo: {
-      owner: string;
-      repo: string;
-    } | null;
-  }>;
   onToggleCollapsedGroup: (group: SessionGroup, groupKey: string, projectId?: string | null) => void;
   dragHandleProps?: SortableDragHandleProps | null;
   compactBodyPadding?: boolean;
@@ -342,20 +318,6 @@ const areGroupPropsEqual = (prev: Props, next: Props): boolean => {
     return false;
   }
 
-  // Per-row / per-state props. The PR-visual-state map flips frequently
-  // during bootstrap but a single group's value is usually stable, so we
-  // compare only the value this group actually consumes instead of the
-  // whole map reference.
-  if (prev.prVisualStateByDirectoryBranch !== next.prVisualStateByDirectoryBranch) {
-    const prevVal = prev.group?.directory && prev.group?.branch
-      ? prev.prVisualStateByDirectoryBranch.get(`${prev.group.directory}::${prev.group.branch.trim()}`)
-      : undefined;
-    const nextVal = next.group?.directory && next.group?.branch
-      ? next.prVisualStateByDirectoryBranch.get(`${next.group.directory}::${next.group.branch.trim()}`)
-      : undefined;
-    if (!Object.is(prevVal, nextVal)) return false;
-  }
-
   // Other props are typically stable references from the parent. Default
   // to reference equality (the cheap path) and only re-render when the
   // parent actually swapped something.
@@ -441,7 +403,6 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
     shortcutTargetVisibleIndex = null,
     editingId,
     openSidebarMenuKey,
-    prVisualStateByDirectoryBranch,
     onToggleCollapsedGroup,
     dragHandleProps,
     compactBodyPadding = false,
@@ -887,23 +848,6 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
     [group.branch, group.isMain, group.label],
   );
 
-  // useEvent must sit above the search-empty early-return (rules-of-hooks).
-  // Resolve the PR URL at event time so this hook does not depend on
-  // post-return local prIndicator binding.
-  const handlePrLinkClick = useEvent((event: React.MouseEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const groupDirectoryKey = normalizePath(group.directory ?? null);
-    const groupBranchKey = group.branch?.trim() ?? null;
-    const url = groupDirectoryKey && groupBranchKey
-      ? (prVisualStateByDirectoryBranch.get(`${groupDirectoryKey}::${groupBranchKey}`)?.url ?? null)
-      : null;
-    if (!url) {
-      return;
-    }
-    void openExternalUrl(url);
-  });
-
   if (hasSessionSearchQuery && !groupMatchesSearch && rootFolders.length === 0 && ungroupedSessions.length === 0) {
     return null;
   }
@@ -911,67 +855,8 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
   const isGitProject = projectId && projectRepoStatus.has(projectId)
     ? Boolean(projectRepoStatus.get(projectId))
     : lastRepoStatus;
-  const groupDirectoryKey = normalizePath(group.directory ?? null);
-  const groupBranchKey = group.branch?.trim() ?? null;
-  const prIndicator = groupDirectoryKey && groupBranchKey
-    ? (prVisualStateByDirectoryBranch.get(`${groupDirectoryKey}::${groupBranchKey}`) ?? null)
-    : null;
-  const showInlinePrTitle = Boolean(prIndicator && group.branch);
-  const showBranchSubtitle = !prIndicator && !group.isMain && Boolean(group.branch);
-  const checksSummary = prIndicator && prIndicator.state === 'open' && prIndicator.checks
-    ? t('sessions.sidebar.group.pr.checksPassed', {
-      success: prIndicator.checks.success,
-      total: prIndicator.checks.total,
-    })
-    : null;
-  const checksTail = prIndicator && prIndicator.state === 'open' && prIndicator.checks
-    ? [
-      prIndicator.checks.failure > 0
-        ? t('sessions.sidebar.group.pr.failingCount', { count: prIndicator.checks.failure })
-        : null,
-      prIndicator.checks.pending > 0
-        ? t('sessions.sidebar.group.pr.pendingCount', { count: prIndicator.checks.pending })
-        : null,
-    ].filter((item): item is string => Boolean(item)).join(', ')
-    : null;
-  const mergeabilityLabel = prIndicator && prIndicator.state === 'open'
-    ? (prIndicator.mergeableState === 'blocked' || prIndicator.mergeableState === 'dirty'
-        ? t('sessions.sidebar.group.pr.conflictsOrBlocked')
-        : (prIndicator.mergeableState === 'clean' || prIndicator.canMerge === true ? t('sessions.sidebar.group.pr.mergeable') : null))
-    : null;
-  const mergeStateLabel = prIndicator && prIndicator.state === 'open' && prIndicator.mergeableState
-    ? t('sessions.sidebar.group.pr.mergeState', { state: prIndicator.mergeableState })
-    : null;
-  const baseBranchLabel = prIndicator?.base ?? null;
-  const headBranchLabel = prIndicator?.head ?? null;
-  const statusLine = (() => {
-    if (!prIndicator) {
-      return group.branch && isBranchDifferentFromLabel(group.branch, group.label)
-        ? { label: group.branch, color: null as string | null }
-        : null;
-    }
-    switch (prIndicator.visualState) {
-      case 'merged':
-        return { label: t('sessions.sidebar.group.pr.status.merged'), color: 'var(--pr-merged)' };
-      case 'open':
-        return (prIndicator.canMerge === true || prIndicator.mergeableState === 'clean' || prIndicator.checks?.state === 'success')
-          ? { label: t('sessions.sidebar.group.pr.status.readyToMerge'), color: 'var(--pr-open)' }
-          : { label: t('sessions.sidebar.group.pr.status.open'), color: 'var(--pr-open)' };
-      case 'blocked':
-        return {
-          label: prIndicator.mergeableState === 'dirty'
-            ? t('sessions.sidebar.group.pr.status.mergeConflicts')
-            : t('sessions.sidebar.group.pr.status.mergeBlocked'),
-          color: 'var(--pr-blocked)',
-        };
-      case 'draft':
-        return { label: t('sessions.sidebar.group.pr.status.draft'), color: 'var(--pr-draft)' };
-      case 'closed':
-        return { label: t('sessions.sidebar.group.pr.status.closed'), color: 'var(--pr-closed)' };
-      default:
-        return null;
-    }
-  })();
+  const showBranchSubtitle = Boolean(!group.isMain && group.branch
+    && isBranchDifferentFromLabel(group.branch, group.label));
 
   const renderOneFolderItem = (folder: SessionFolder, nodes: SessionNode[], depth: number): React.ReactNode => {
     const directSubFolders = allFoldersForGroup.filter(({ folder: f }) => f.parentId === folder.id);
@@ -1273,66 +1158,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
         >
           <div className="min-w-0 flex flex-1 flex-col justify-center gap-0.5 overflow-hidden">
             <p className="text-[14px] font-normal truncate text-foreground/92">
-              {showInlinePrTitle && prIndicator ? (
-                <span className="inline-flex min-w-0 max-w-full items-center">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex shrink-0 items-center gap-1 leading-none align-middle">
-                        <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                          <Icon name="git-branch"
-                            className={cn('h-3.5 w-3.5 shrink-0', alwaysShowActions ? 'hidden' : 'group-hover/gh:hidden')}
-                          />
-                          <span className={cn(
-                            'h-3.5 w-3.5 items-center justify-center',
-                            alwaysShowActions ? 'inline-flex' : 'hidden group-hover/gh:inline-flex',
-                          )}>
-                            {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
-                          </span>
-                        </span>
-                        {prIndicator.url ? (
-                          <button
-                            type="button"
-                            className="inline-flex shrink-0 items-center leading-none"
-                            onMouseDown={(event) => event.stopPropagation()}
-                            onClick={handlePrLinkClick}
-                          >
-                            #{prIndicator.number}
-                          </button>
-                        ) : (
-                          <span className="inline-flex shrink-0 items-center leading-none">#{prIndicator.number}</span>
-                        )}
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" sideOffset={6} align="start" className="max-w-sm">
-                      <div className="space-y-1 text-xs">
-                        {(baseBranchLabel || headBranchLabel) ? (
-                          <div className="text-muted-foreground truncate">
-                            {baseBranchLabel && headBranchLabel ? (
-                              <>
-                                <span>{baseBranchLabel}</span>
-                                <Icon name="arrow-left-long" className="mx-0.5 inline h-3 w-3 align-[-2px]" />
-                                <span>{headBranchLabel}</span>
-                              </>
-                            ) : (
-                              <span>{baseBranchLabel ?? headBranchLabel ?? ''}</span>
-                            )}
-                          </div>
-                        ) : null}
-                        {mergeStateLabel ? <div className="text-muted-foreground truncate">{mergeStateLabel}</div> : null}
-                        {(mergeabilityLabel || checksSummary) ? (
-                          <div className="text-muted-foreground truncate">
-                            {mergeabilityLabel ?? ''}
-                            {mergeabilityLabel && checksSummary ? ' • ' : ''}
-                            {checksSummary ?? ''}
-                            {checksTail ? ` (${checksTail})` : ''}
-                          </div>
-                        ) : null}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                  <span className="ml-1 min-w-0 flex-1 truncate leading-none align-middle">{group.branch}</span>
-                </span>
-              ) : group.isArchivedBucket ? (
+              {group.isArchivedBucket ? (
                 <span className="inline-flex min-w-0 max-w-full items-center gap-1">
                   <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                     <Icon name="archive" className={cn('h-3.5 w-3.5 shrink-0', alwaysShowActions ? 'hidden' : 'group-hover/gh:hidden')} />
@@ -1364,54 +1190,15 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
                 renderHighlightedText(group.label, normalizedSessionSearchQuery)
               )}
             </p>
-            {showBranchSubtitle && statusLine ? (
-              <span
-                className={cn('inline-flex min-w-0 items-center gap-1.5 leading-tight', !statusLine.color && 'text-muted-foreground')}
-                style={statusLine.color ? { color: statusLine.color } : undefined}
-              >
+            {showBranchSubtitle ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5 leading-tight text-muted-foreground">
                 {group.isArchivedBucket ? (
                   <Icon name="archive" className="h-3.5 w-3.5 flex-shrink-0" />
                 ) : (!group.isMain || isGitProject) ? (
-                  showInlinePrTitle && prIndicator ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center">
-                          <Icon name="git-branch" className="h-3.5 w-3.5" />
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" sideOffset={6} align="start" className="max-w-sm">
-                        <div className="space-y-1 text-xs">
-                          {(baseBranchLabel || headBranchLabel) ? (
-                            <div className="text-muted-foreground truncate">
-                              {baseBranchLabel && headBranchLabel ? (
-                                <>
-                                  <span>{baseBranchLabel}</span>
-                                  <Icon name="arrow-left-long" className="mx-0.5 inline h-3 w-3 align-[-2px]" />
-                                  <span>{headBranchLabel}</span>
-                                </>
-                              ) : (
-                                <span>{baseBranchLabel ?? headBranchLabel ?? ''}</span>
-                              )}
-                            </div>
-                          ) : null}
-                          {mergeStateLabel ? <div className="text-muted-foreground truncate">{mergeStateLabel}</div> : null}
-                          {(mergeabilityLabel || checksSummary) ? (
-                            <div className="text-muted-foreground truncate">
-                              {mergeabilityLabel ?? ''}
-                              {mergeabilityLabel && checksSummary ? ' • ' : ''}
-                              {checksSummary ?? ''}
-                              {checksTail ? ` (${checksTail})` : ''}
-                            </div>
-                          ) : null}
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <Icon name="git-branch" className="h-3.5 w-3.5 flex-shrink-0" />
-                  )
+                  <Icon name="git-branch" className="h-3.5 w-3.5 flex-shrink-0" />
                 ) : null}
                 <span className="min-w-0 truncate text-[11px] font-medium">
-                  {statusLine.label}
+                  {group.branch}
                 </span>
               </span>
             ) : null}

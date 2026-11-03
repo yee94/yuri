@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 
+vi.mock('@yuriai/ui/lib/runtime-file-resource', () => ({ readRuntimeFile: vi.fn() }));
+vi.mock('@yuriai/ui/lib/runtime-file-download', () => ({ downloadRuntimeFile: vi.fn() }));
+
 describe('VS Code webview bridge requests', () => {
   let originalWindow: typeof globalThis.window;
   let originalAcquire: unknown;
@@ -49,6 +52,23 @@ describe('VS Code webview bridge requests', () => {
     assert.ok(result instanceof DOMException);
     assert.equal((result as DOMException).name, 'AbortError');
     assert.equal(messages.length, 0);
+  });
+
+  test('FilesAPI search cancels its bridge wait and ignores late scan replies', async () => {
+    const { createVSCodeFilesAPI } = await import('./files');
+    const files = createVSCodeFilesAPI();
+    const controller = new AbortController();
+    const pending = files.search({ directory: '/project', query: 'alpha', maxResults: 10 }, { signal: controller.signal });
+    const rejected = pending.then(() => null, (error: unknown) => error);
+    const request = messages[0] as { id: string; type: string; payload: unknown };
+    assert.equal(request.type, 'api:fs:search');
+    controller.abort();
+    assert.equal((await rejected as Error).name, 'AbortError');
+    target.dispatchEvent(new MessageEvent('message', {
+      data: { id: request.id, type: request.type, success: true, data: { files: [{ path: '/project/late.ts' }] } },
+    }));
+    await assert.rejects(files.search({ directory: '/project', query: 'alpha' }, { signal: controller.signal }), { name: 'AbortError' });
+    assert.equal(messages.length, 1);
   });
 
   test('failure Error carries structured BridgeResponse data code/status', async () => {

@@ -1,4 +1,5 @@
 import React from 'react';
+import { WorkspaceSurface } from '@/components/ui/WorkspaceSurface';
 import { useEvent, useResizeObserver } from '@reactuses/core';
 
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
@@ -2196,12 +2197,17 @@ export const ContextPanel: React.FC<{
   directory?: string | null;
   onReservedWidthChange?: (width: number) => void;
   fillAvailableSpace?: boolean;
-}> = ({ directory: directoryOverride, onReservedWidthChange, fillAvailableSpace = false }) => {
+  getMaxSplitWidth?: () => number;
+}> = ({ directory: directoryOverride, onReservedWidthChange, fillAvailableSpace = false, getMaxSplitWidth }) => {
   const { t } = useI18n();
   const btwSessionId = useSessionUIStore((state) => state.currentSessionId);
   const fallbackDirectory = useEffectiveDirectory() ?? '';
   const effectiveDirectory = directoryOverride?.trim() || fallbackDirectory;
   const directoryKey = React.useMemo(() => normalizeDirectoryKey(effectiveDirectory), [effectiveDirectory]);
+
+  React.useEffect(() => {
+    useUIStore.getState().initializeWorkspacePanels(directoryKey);
+  }, [directoryKey]);
 
   const panelState = useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined));
   const contextToolDiff = useUIStore((state) => (directoryKey ? state.contextToolDiffByDirectory[directoryKey] : undefined));
@@ -2224,7 +2230,8 @@ export const ContextPanel: React.FC<{
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
   const activeTab = tabs.find((tab) => tab.id === panelState?.activeTabId) ?? tabs[tabs.length - 1] ?? null;
   const isOpen = Boolean(panelState?.isOpen);
-  const isExpanded = Boolean(isOpen && panelState?.expanded);
+  const requestedExpanded = Boolean(panelState?.expanded);
+  const isExpanded = isOpen && (requestedExpanded || fillAvailableSpace);
   const previewBodyRef = React.useRef<HTMLDivElement>(null);
   const compactRef = React.useRef(true);
   const [isCompact, setIsCompact] = React.useState(true);
@@ -2244,9 +2251,6 @@ export const ContextPanel: React.FC<{
   const railVisible = isOpen && isFileTreeOpen && (!isCompact || railAnchor === activeTab);
   const previewVisible = isOpen && (!isCompact || !railVisible);
   const width = clampWidth(panelState?.width ?? CONTEXT_PANEL_DEFAULT_WIDTH);
-  React.useLayoutEffect(() => {
-    onReservedWidthChange?.(isOpen ? (isExpanded ? Infinity : width) : 0);
-  }, [isExpanded, isOpen, onReservedWidthChange, width]);
   const chatSessionIDs = React.useMemo(() => {
     const ids: string[] = [];
     for (const tab of tabs) {
@@ -2264,6 +2268,14 @@ export const ContextPanel: React.FC<{
   const startWidthRef = React.useRef(width);
   const resizingWidthRef = React.useRef<number | null>(null);
   const activeResizePointerIDRef = React.useRef<number | null>(null);
+  const lastSplitWidthRef = React.useRef({ directory: directoryKey, width });
+  React.useLayoutEffect(() => {
+    if (isResizing) return;
+    if (lastSplitWidthRef.current.directory !== directoryKey || (isOpen && !isExpanded)) {
+      lastSplitWidthRef.current = { directory: directoryKey, width };
+    }
+    onReservedWidthChange?.(isOpen ? (requestedExpanded ? Infinity : width) : 0);
+  }, [directoryKey, isExpanded, isOpen, isResizing, onReservedWidthChange, requestedExpanded, width]);
   const panelRef = React.useRef<HTMLElement | null>(null);
   const chatFrameRefs = React.useRef<Map<string, HTMLIFrameElement>>(new Map());
   const chatFrameSrcByTabIDRef = React.useRef<Map<string, EmbeddedSessionChatURLCacheEntry>>(new Map());
@@ -2364,8 +2376,8 @@ export const ContextPanel: React.FC<{
     onReservedWidthChange?.(liveWidth);
   });
 
-  const handleResizeStart = React.useCallback((event: React.PointerEvent) => {
-    if (!isOpen || isExpanded || !directoryKey) {
+  const handleResizeStart = useEvent((event: React.PointerEvent) => {
+    if (!isOpen || !directoryKey) {
       return;
     }
 
@@ -2381,9 +2393,10 @@ export const ContextPanel: React.FC<{
     const initialWidth = panelRef.current?.clientWidth || width;
     startWidthRef.current = initialWidth;
     resizingWidthRef.current = initialWidth;
+    if (requestedExpanded) toggleContextPanelExpanded(directoryKey);
     applyLiveWidth(initialWidth);
     event.preventDefault();
-  }, [applyLiveWidth, directoryKey, isExpanded, isOpen, width]);
+  });
 
   const handleResizeMove = React.useCallback((event: React.PointerEvent) => {
     if (!isResizing || activeResizePointerIDRef.current !== event.pointerId) {
@@ -2439,7 +2452,14 @@ export const ContextPanel: React.FC<{
     if (!directoryKey) {
       return;
     }
-    toggleContextPanelExpanded(directoryKey);
+    if (!isExpanded) {
+      toggleContextPanelExpanded(directoryKey);
+      return;
+    }
+    const preferredWidth = lastSplitWidthRef.current.width;
+    const restoredWidth = clampWidth(Math.min(preferredWidth, getMaxSplitWidth?.() ?? preferredWidth));
+    if (restoredWidth !== width) setContextPanelWidth(directoryKey, restoredWidth);
+    if (requestedExpanded) toggleContextPanelExpanded(directoryKey);
   });
 
   const handlePanelKeyDownCapture = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
@@ -2722,9 +2742,7 @@ export const ContextPanel: React.FC<{
     };
   }), [effectiveDirectory, sessionTitleById, t, tabs]);
 
-  const activeNonChatContent = activeTab?.mode === 'btw'
-        ? (btwSessionId ? <BtwPanel scope={{ sessionId: btwSessionId, directory: directoryKey }} /> : <p className="p-4 text-muted-foreground">{t('chat.btw.sessionRequired')}</p>)
-        : activeTab?.mode === 'context'
+  const activeNonChatContent = activeTab?.mode === 'context'
         ? <ContextPanelContent />
         : activeTab?.mode === 'preview'
                 ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
@@ -2877,8 +2895,8 @@ export const ContextPanel: React.FC<{
         ],
       )}
       style={{
-        height: 'var(--yuri-header-height, 3rem)',
-        minHeight: 'max(3rem, var(--yuri-wco-titlebar-height, 0px))',
+        height: 'calc(var(--yuri-header-height, 3rem) - 0.75rem * var(--padding-scale, 1))',
+        minHeight: 'calc(max(3rem, var(--yuri-wco-titlebar-height, 0px)) - 0.75rem * var(--padding-scale, 1))',
         paddingRight: 'calc(0.75rem + var(--yuri-wco-right-inset, 0px))',
         ...(fillAvailableSpace && !isSidebarOpen ? { paddingLeft: 'calc(var(--yuri-titlebar-left-inset, 0.75rem) + var(--yuri-titlebar-controls-width, 5.5rem) + 0.5rem)' } : {}),
       }}
@@ -2948,15 +2966,8 @@ export const ContextPanel: React.FC<{
         overflow: 'hidden',
         visibility: 'hidden',
       }
-    : isExpanded
-      ? {
-          ['--yuri-context-panel-width' as string]: '100%',
-          width: '100%',
-          minWidth: '100%',
-          maxWidth: '100%',
-        }
       : {
-          width: fillAvailableSpace ? '100%' : 'min(var(--yuri-context-panel-width), 100%)',
+          width: isExpanded ? '100%' : 'min(var(--yuri-context-panel-width), 100%)',
           minWidth: `min(${CONTEXT_PANEL_MIN_WIDTH}px, 100%)`,
           maxWidth: '100%',
           ['--yuri-context-panel-width' as string]: `${isResizing ? (resizingWidthRef.current ?? width) : width}px`,
@@ -2971,17 +2982,14 @@ export const ContextPanel: React.FC<{
       inert={!isOpen || undefined}
       className={cn(
         'flex min-h-0 flex-col overflow-visible bg-transparent',
-        isOpen && (isExpanded ? 'p-1.5' : 'py-1.5 pl-1 pr-1.5'),
-        isExpanded
-          ? 'absolute inset-0 z-20 min-w-0'
-          : 'relative h-full flex-shrink-0',
+        isOpen && 'py-1.5 pl-1 pr-1.5',
+        'relative h-full flex-shrink-0',
         !isOpen && 'pointer-events-none',
         isResizing || !isOpen || suppressWidthTransition || onReservedWidthChange ? 'transition-none' : 'transition-[width] duration-200 ease-in-out'
       )}
       onKeyDownCapture={handlePanelKeyDownCapture}
       style={panelStyle}
     >
-      {!isExpanded && (
         <Tooltip>
         <TooltipTrigger asChild>
         <div
@@ -3006,8 +3014,7 @@ export const ContextPanel: React.FC<{
         </TooltipTrigger>
         <TooltipContent side="right" sideOffset={4}>{t('contextPanel.actions.resizePanel')}</TooltipContent>
         </Tooltip>
-      )}
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--interactive-border)] bg-background shadow-sm [--background:oklch(from_var(--surface-background)_min(1,calc(l_+_0.015))_c_h)] dark:[--background:color-mix(in_srgb,var(--surface-foreground)_4%,var(--surface-background))]" data-context-panel-surface>
+      <WorkspaceSurface data-context-panel-surface>
       {header}
       {fileNotice === 'turn-diff-outside-workspace' ? (
         <div className="shrink-0 border-b border-status-info/20 bg-status-info/10 px-3 py-2 typography-meta text-status-info">
@@ -3080,6 +3087,14 @@ export const ContextPanel: React.FC<{
             </React.Activity>
           );
         }) : null}
+        {tabs.filter((tab) => tab.mode === 'btw').map((tab) => {
+          const visible = previewVisible && activeTab?.id === tab.id;
+          return <React.Activity key={`btw:${directoryKey}:${btwSessionId}:${tab.id}`} name="context-panel-btw" mode={visible ? 'visible' : 'hidden'}>
+            {btwSessionId
+              ? <BtwPanel scope={{ sessionId: btwSessionId, directory: directoryKey }} active={visible} />
+              : <p className="p-4 text-muted-foreground">{t('chat.btw.sessionRequired')}</p>}
+          </React.Activity>;
+        })}
         {browserTabs.map((tab) => (
           <div
             key={tab.id}
@@ -3127,14 +3142,14 @@ export const ContextPanel: React.FC<{
             </div>
           );
         })}
-        {activeTab?.mode !== 'chat' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' && activeTab?.mode !== 'file-diff' ? activeNonChatContent : null}
+        {activeTab?.mode !== 'chat' && activeTab?.mode !== 'btw' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' && activeTab?.mode !== 'file-diff' ? activeNonChatContent : null}
       </div>
       </div>
       <RightSidebar isOpen={railVisible} className={cn('!min-w-0 shrink-0 bg-transparent [--layout-chrome-divider-width:1px] [--layout-chrome-divider:color-mix(in_srgb,var(--surface-foreground)_8%,var(--background))]', isCompact && '!transition-none', isCompact && railVisible ? '!w-full !max-w-full !border-l-0 [&>[role=separator]]:hidden' : '!max-w-[50%]')}>
         {railVisible ? <ErrorBoundary><RightSidebarTabs /></ErrorBoundary> : null}
       </RightSidebar>
       </div>
-      </section>
+      </WorkspaceSurface>
     </aside>
   );
 };

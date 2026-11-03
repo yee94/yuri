@@ -79,13 +79,14 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
     return toDirectoryListResult(target, result);
   },
 
-  async search(payload: FileSearchQuery): Promise<FileSearchResult[]> {
+  async search(payload: FileSearchQuery, options): Promise<FileSearchResult[]> {
     const directory = normalizePath(payload.directory);
     try {
       const files = await opencodeClient.searchFiles(payload.query, {
         directory,
         limit: payload.maxResults,
         type: 'file',
+        ...(options?.signal ? { signal: options.signal } : {}),
       });
       return files.map((file) => ({ path: file.path, preview: [file.relativePath] }));
     } catch (error) {

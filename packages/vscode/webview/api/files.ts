@@ -36,9 +36,9 @@ export const createVSCodeFilesAPI = (): FilesAPI => ({
     };
   },
 
-  async search(payload: FileSearchQuery): Promise<FileSearchResult[]> {
+  async search(payload: FileSearchQuery, options): Promise<FileSearchResult[]> {
     const directory = normalizePath(payload.directory);
-    const data = await sendBridgeMessage<{
+    const data = await sendBridgeMessageWithOptions<{
       files?: Array<{ path?: string; relativePath?: string }>;
     }>('api:fs:search', {
       directory,
@@ -46,7 +46,7 @@ export const createVSCodeFilesAPI = (): FilesAPI => ({
       limit: payload.maxResults,
       includeHidden: false,
       respectGitignore: true,
-    });
+    }, { signal: options?.signal });
 
     const files = Array.isArray(data?.files) ? data.files : [];
 

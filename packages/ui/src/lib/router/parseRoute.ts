@@ -20,6 +20,8 @@ export function routeStateFromPath(pathWithSearch: string): RouteState {
   const parsed = parseAppPath(pathWithSearch);
 
   switch (parsed.kind) {
+    case 'plugin':
+      return { ...emptyRoute(), tab: 'plugin', guiPageKey: JSON.stringify([parsed.pluginId, parsed.pageId]) };
     case 'new':
       return {
         ...emptyRoute(),
@@ -124,6 +126,7 @@ export function hasRouteParams(): boolean {
       || parsed.kind === 'new'
       || parsed.kind === 'schedule'
       || parsed.kind === 'assistant'
+      || parsed.kind === 'plugin'
       || parsed.kind === 'settings'
       || parsed.kind === 'connect'
     );

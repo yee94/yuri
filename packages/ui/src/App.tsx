@@ -639,12 +639,22 @@ function App({ apis }: AppProps) {
         openAssistant(assistantID.trim());
       }
     };
+    const openTaskHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectID?: string; taskID?: string }>).detail;
+      const projectID = detail?.projectID;
+      const taskID = detail?.taskID;
+      if (projectID && taskID) {
+        void import('@/lib/scheduledTaskNavigation').then(({ openScheduledTask }) => openScheduledTask(projectID, taskID));
+      }
+    };
 
     window.addEventListener('yuri:open-session', handler as EventListener);
     window.addEventListener('yuri:open-assistant', openAssistantHandler as EventListener);
+    window.addEventListener('yuri:open-scheduled-task', openTaskHandler);
     return () => {
       window.removeEventListener('yuri:open-session', handler as EventListener);
       window.removeEventListener('yuri:open-assistant', openAssistantHandler as EventListener);
+      window.removeEventListener('yuri:open-scheduled-task', openTaskHandler);
     };
   }, []);
 

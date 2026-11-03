@@ -460,22 +460,83 @@ describe('file reference failure lifecycle', () => {
     await clickButton('contextPanel.actions.expandPanel');
     expect(main.inert).toBe(true);
     expect(panel.style.width).toBe('100%');
-    expect(panel.classList.contains('absolute')).toBe(true);
-    expect(panel.classList.contains('p-1.5')).toBe(true);
-    expect(panel.classList.contains('pl-1')).toBe(false);
+    expect(panel.classList.contains('relative')).toBe(true);
+    expect(panel.classList.contains('absolute')).toBe(false);
+    expect(panel.classList.contains('py-1.5')).toBe(true);
+    expect(panel.classList.contains('pl-1')).toBe(true);
     expect(panel.querySelector('[aria-label="contextPanel.actions.collapsePanel"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(panel.querySelector('[aria-label="contextPanel.actions.collapsePanel"] use')?.getAttribute('href')).toBe('#yuri-collapse-diagonal');
     await clickButton('contextPanel.actions.collapsePanel');
     expect(main.inert).toBe(false);
     expect(panel.classList.contains('absolute')).toBe(false);
     expect(panel.classList.contains('pl-1')).toBe(true);
-    expect(panel.classList.contains('p-1.5')).toBe(false);
+    expect(panel.classList.contains('px-1.5')).toBe(false);
+    expect(panel.classList.contains('py-1.5')).toBe(true);
     expect(panel.style.getPropertyValue('--yuri-context-panel-width')).toBe(`${savedWidth}px`);
     expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(savedWidth);
     expect(host.querySelector('[data-composer]')).toBe(composer);
     expect(composer.value).toBe('unsent draft');
     expect(host.querySelector('[data-testid="draft"]')).toBe(editor);
     expect(activeFilePath()).toBe('/repo/A.ts');
+  });
+
+  test('drag fullscreen and button fullscreen share layout, restore controls and preserve drafts without per-move store writes', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      if (!this.hasAttribute('data-context-panel')) return 1200;
+      return this.style.width === '100%' ? 1200 : Number.parseFloat(this.style.getPropertyValue('--yuri-context-panel-width')) || 600;
+    });
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ChatWorkspace><textarea data-composer defaultValue="unsent draft" /></ChatWorkspace>));
+    const panel = host.querySelector<HTMLElement>('[data-context-panel]')!;
+    const main = host.querySelector<HTMLElement>('[data-primary-chat]')!;
+    const input = host.querySelector('[data-composer]');
+    const editor = host.querySelector('[data-testid="draft"]');
+    const separator = panel.querySelector('[data-context-resize-handle]')!;
+    const pointer = async (type: string, clientX: number) => {
+      await act(async () => separator.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX })));
+    };
+    const initial = useUIStore.getState().contextPanelByDirectory['/repo'];
+    await pointer('pointerdown', 600);
+    for (let index = 0; index < 50; index++) await pointer('pointermove', 600 - index * 6);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toBe(initial);
+    expect(main.inert).toBe(true);
+    expect(panel.querySelector('[aria-label="contextPanel.actions.collapsePanel"]')?.getAttribute('aria-pressed')).toBe('true');
+    const fullscreenClass = panel.className;
+    expect(panel.style.width).toBe('100%');
+    await pointer('pointerup', 306);
+    await clickButton('contextPanel.actions.collapsePanel');
+    expect(main.inert).toBe(false);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(600);
+    await clickButton('contextPanel.actions.expandPanel');
+    expect(panel.className).toBe(fullscreenClass);
+    expect(panel.style.width).toBe('100%');
+    expect(main.inert).toBe(true);
+    await pointer('pointerdown', 0);
+    await pointer('pointermove', 600);
+    expect(main.inert).toBe(false);
+    expect(panel.querySelector('[aria-label="contextPanel.actions.expandPanel"]')?.getAttribute('aria-pressed')).toBe('false');
+    await pointer('pointerup', 600);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ width: 600, expanded: false });
+    expect(host.querySelector('[data-composer]')).toBe(input);
+    expect(host.querySelector('[data-testid="draft"]')).toBe(editor);
+  });
+
+  test('restoring automatic fullscreen after a viewport shrink leaves 350px for the conversation', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ChatWorkspace>Chat</ChatWorkspace>));
+    const workspace = host.querySelector<HTMLElement>('[data-chat-area]')!;
+    const main = host.querySelector<HTMLElement>('[data-primary-chat]')!;
+    expect(main.inert).toBe(false);
+    await act(async () => harness.resizeObservers.get(workspace)?.([
+      { contentRect: { width: 900 } } as ResizeObserverEntry,
+    ], {} as ResizeObserver));
+    expect(main.inert).toBe(true);
+    await clickButton('contextPanel.actions.collapsePanel');
+    expect(main.inert).toBe(false);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(550);
   });
 
   test('the compact file search still debounces filtering and clears back to the same focused field', async () => {
@@ -589,6 +650,32 @@ describe('file reference failure lifecycle', () => {
     expect(harness.explorerRenders).toBe(compactRenders);
   });
 
+  test('the zero-settings workspace shows Git Changes and keeps a manually closed preview closed after remount', async () => {
+    const initial = useUIStore.getInitialState();
+    useUIStore.setState({
+      isRightSidebarOpen: initial.isRightSidebarOpen,
+      rightSidebarTab: initial.rightSidebarTab,
+      sessionWorkspacePanelById: {},
+    });
+    await act(async () => reactRoot.render(<ChatWorkspace>Chat</ChatWorkspace>));
+    const panel = host.querySelector<HTMLElement>('[data-context-panel]')!;
+    expect(panel.inert).toBe(false);
+    expect(panel.classList.contains('py-1.5')).toBe(true);
+    await act(async () => useUIStore.getState().toggleContextPanelExpanded('/repo'));
+    expect(panel.classList.contains('py-1.5')).toBe(true);
+    await act(async () => useUIStore.getState().toggleContextPanelExpanded('/repo'));
+    expect(panel.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    expect(panel.querySelector('[aria-label="layout.rightSidebar.git"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs: [] });
+    expect(harness.files.readFile).not.toHaveBeenCalled();
+    await clickButton('contextPanel.actions.closePanel');
+    expect(panel.inert).toBe(true);
+    await act(async () => reactRoot.render(null));
+    await act(async () => reactRoot.render(<ChatWorkspace>Chat</ChatWorkspace>));
+    expect(host.querySelector<HTMLElement>('[data-context-panel]')?.inert).toBe(true);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+  });
+
   test('opens an empty preview without file reads, nests the file tree and closes both together', async () => {
     await act(async () => {
       useUIStore.getState().openContextPanel('/repo');
@@ -599,6 +686,9 @@ describe('file reference failure lifecycle', () => {
     expect(panel.inert).toBe(false);
     expect(panel.querySelector('[data-context-panel-surface]')?.classList.contains('rounded-xl')).toBe(true);
     const surface = panel.querySelector('[data-context-panel-surface]')!;
+    expect(surface.hasAttribute('data-workspace-surface')).toBe(true);
+    expect(surface.querySelector('[data-workspace-surface-ring]')?.classList.contains('ring-inset')).toBe(true);
+    expect(surface.classList.contains('border')).toBe(false);
     expect(surface.classList.contains('[--background:oklch(from_var(--surface-background)_min(1,calc(l_+_0.015))_c_h)]')).toBe(true);
     expect(surface.classList.contains('dark:[--background:color-mix(in_srgb,var(--surface-foreground)_4%,var(--surface-background))]')).toBe(true);
     expect(panel.textContent).toContain('contextPanel.empty.selectFile');
@@ -671,8 +761,9 @@ describe('file reference failure lifecycle', () => {
     expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(1);
     await act(async () => tabs[0].parentElement!.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 })));
     expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(true);
-    expect(host.textContent).toContain('contextPanel.empty.selectFile');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(false);
+    expect(host.querySelector<HTMLElement>('[data-context-panel]')?.inert).toBe(true);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
   });
 
   test('panel publishes its requested width while filling the collapsed primary pane, then restores on close', async () => {
@@ -717,7 +808,7 @@ describe('file reference failure lifecycle', () => {
 
     await act(async () => useUIStore.getState().toggleContextPanelExpanded('/repo'));
     expect(onReservedWidthChange).toHaveBeenLastCalledWith(Infinity);
-    expect(host.querySelector('[data-context-resize-handle]')).toBeNull();
+    expect(host.querySelector('[data-context-resize-handle]')).not.toBeNull();
     await act(async () => useUIStore.getState().closeContextPanel('/repo'));
     expect(onReservedWidthChange).toHaveBeenLastCalledWith(0);
   });

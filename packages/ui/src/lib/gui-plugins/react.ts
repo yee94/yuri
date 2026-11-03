@@ -4,7 +4,7 @@ import type { PluginSource } from '@yuriai/opencode-gui-client';
 
 type Snapshot = ReturnType<GuiPluginHost['getSnapshot']>;
 export const GuiFileIconsContext = createContext<Pick<GuiPluginHost['fileIcons'], 'subscribe' | 'get'> | null>(null);
-const emptySnapshot: Snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], settings: [], menuItems: [], activePanel: null };
+const emptySnapshot: Snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null };
 export const getEmptySnapshot = () => emptySnapshot;
 
 export interface GuiPluginsContextValue {

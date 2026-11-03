@@ -4,6 +4,7 @@ import {
   buildAppLocation,
   buildNewSessionPath,
   buildSettingsPath,
+  buildPluginPagePath,
   parseAppPath,
   type DiffScope,
   type ScheduleView,
@@ -15,6 +16,7 @@ export interface AppRouteState {
   /** Welcome / new-session draft surface → `/session/new` */
   isNewSession?: boolean;
   tab: MainTab;
+  guiPageKey?: string | null;
   isSettingsOpen: boolean;
   settingsPath: string;
   settingsEntityId?: string | null;
@@ -48,6 +50,16 @@ export function serializeAppPath(state: AppRouteState): string {
       scheduleTaskId: state.scheduleTaskId,
       focusSessionId: state.focusSessionId,
     });
+  }
+
+  if (state.tab === 'plugin') {
+    try {
+      const parts: unknown = JSON.parse(state.guiPageKey ?? 'null');
+      if (Array.isArray(parts) && parts.length === 2 && parts.every((part) => typeof part === 'string' && part)) {
+        return buildPluginPagePath(parts[0], parts[1]);
+      }
+    } catch { /* An invalid transient selection never becomes a session URL. */ }
+    return '/';
   }
 
   if (state.tab === 'assistant') {

@@ -11,6 +11,7 @@ export type PrimarySurface =
   | 'session'
   | 'schedule'
   | 'assistant'
+  | 'plugin'
   | 'settings';
 
 /** Session-scoped tool layers (only valid when primary === session). */
@@ -56,6 +57,7 @@ export function resolvePrimarySurface(
   if (activeMainTab === 'assistant') {
     return { primary: 'assistant', sessionTool: null };
   }
+  if (activeMainTab === 'plugin') return { primary: 'plugin', sessionTool: null };
   if (SESSION_TOOLS.has(activeMainTab)) {
     return { primary: 'session', sessionTool: activeMainTab as SessionTool };
   }
@@ -65,7 +67,7 @@ export function resolvePrimarySurface(
 
 /** True when main column must mount only that surface (no chat keep-alive under it). */
 export function isExclusiveFullMainPrimary(primary: PrimarySurface): boolean {
-  return primary === 'schedule' || primary === 'assistant';
+  return primary === 'schedule' || primary === 'assistant' || primary === 'plugin';
 }
 
 /** Path / store tab id for schedule (product name: schedule, not scheduled). */

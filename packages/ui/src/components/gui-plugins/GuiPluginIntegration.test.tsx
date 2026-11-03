@@ -9,6 +9,8 @@ import { GuiPluginsManager } from './GuiPluginsManager';
 import { GuiFileLinkBridge } from './GuiFileLinkBridge';
 import { GuiPluginCommands } from './GuiPluginCommands';
 import { GuiPluginTitlebarItems } from './GuiPluginTitlebarItems';
+import { GuiPluginPage } from './GuiPluginPage';
+import { useUIStore } from '@/stores/useUIStore';
 
 type Context = ReturnType<typeof useGuiPlugins>;
 const state = vi.hoisted(() => ({
@@ -45,7 +47,7 @@ function makeHost() {
     return () => { log.push(`dispose:${kind}:${key}`); child.remove(); };
   });
   const methods = {
-    mountPanel: mount('panel'), mountSettings: mount('settings'),
+    mountPanel: mount('panel'), mountSettings: mount('settings'), mountPage: mount('page'),
     openLink: vi.fn(() => true), runCommand: vi.fn(), runTitlebarItem: vi.fn(),
     registerFileView: vi.fn(() => vi.fn()),
     filePanel: vi.fn(() => state.context?.snapshot.panels.find((panel) => panel.inline)),
@@ -88,7 +90,7 @@ beforeEach(() => {
   state.registryQuery.mockClear();
   state.context = {
     host: fixture.host,
-    snapshot: { plugins: [{ id: 'demo', revision: 'one', status: 'active' }], panels: [], commands: [], titlebarItems: [], settings: [], menuItems: [], activePanel: null },
+    snapshot: { plugins: [{ id: 'demo', revision: 'one', status: 'active' }], panels: [], pages: [], commands: [], titlebarItems: [], settings: [], menuItems: [], activePanel: null },
     inventory: [{ id: 'demo', enabled: true }], loading: false, error: null,
     setEnabled: vi.fn(), refresh: vi.fn(), requested: true, requestLoad: vi.fn(),
   };
@@ -103,78 +105,66 @@ afterEach(async () => {
 });
 
 describe('foreign DOM ownership', () => {
-  test.each([false, true])('package artwork matches authoritative sources and inherits text color (mobile=%s)', async (mobile) => {
-    const icon = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E';
+  test('global page host failures use the shared centered SVG state without header or navigation chrome', async () => {
+    const previous = useUIStore.getState();
+    useUIStore.setState({ activeGuiPage: JSON.stringify(['demo', 'main']), isMobile: false });
+    try {
+      updateSnapshot({ plugins: [{ id: 'demo', revision: 'one', status: 'failed', error: 'private diagnostic' }] });
+      await render(<GuiPluginPage />);
+      const surface = container.querySelector('[data-gui-plugin-page-surface]')!;
+      for (const name of ['rounded-xl', 'overflow-hidden', 'isolate']) expect(surface.classList.contains(name)).toBe(true);
+      expect(surface.hasAttribute('data-workspace-surface')).toBe(true);
+      const ring = surface.querySelector('[data-workspace-surface-ring]')!;
+      for (const name of ['ring-inset', 'pointer-events-none', 'z-50']) expect(ring.classList.contains(name)).toBe(true);
+      expect(container.querySelector('[data-file-preview-state]')).not.toBeNull();
+      expect(container.querySelector('[data-file-preview-illustration] svg')).not.toBeNull();
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('guiPlugins.error');
+      expect(container.textContent).not.toContain('private diagnostic');
+      expect(container.querySelector('header,button')).toBeNull();
+      updateSnapshot({ plugins: [{ id: 'demo', revision: 'two', status: 'active' }], pages: [{ key: JSON.stringify(['demo', 'main']), pluginId: 'demo', title: 'Demo' }] });
+      await render(<GuiPluginPage />);
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(fixture.methods.mountPage).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => { useUIStore.setState({ activeGuiPage: previous.activeGuiPage, isMobile: previous.isMobile }); }); }
+  });
+  test('global placement retains its foreign DOM across 50 unrelated renders and cleans up on owner revision', async () => {
+    const view = (revision = 'one') => <GuiPluginMount host={fixture.host} kind="page" contributionKey="global" revision={revision} />;
+    await render(view());
+    const node = container.querySelector('[data-gui-plugin-mount]')!.firstChild;
+    for (let i = 0; i < 50; i++) { updateSnapshot({ sessionKey: String(i) }); await render(view()); }
+    expect(fixture.methods.mountPage).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-gui-plugin-mount]')!.firstChild).toBe(node);
+    await render(view('two'));
+    expect(fixture.log).toEqual(['mount:page:global', 'dispose:page:global', 'mount:page:global']);
+  });
+  test.each([false, true])('global sidebar rows keep official icons despite available Settings package artwork (mobile=%s)', async (mobile) => {
     state.context = { ...context(), inventory: [
-      { id: 'not-the-package-name', enabled: true, source: { type: 'package', target: '@example/tools@1.0.0' } },
-      { id: 'local', enabled: true, source: { type: 'local', path: '/workspace/plugin/dist/index.mjs' } },
-      { id: 'no-entry', enabled: true, source: { type: 'package', target: 'not-needed' } },
+      { id: 'demo', enabled: true, source: { type: 'local', path: '/plugin' } },
+      { id: 'unused', enabled: true, source: { type: 'package', target: 'not-needed' } },
     ] };
-    state.registry = {
-      '@example/tools@1.0.0': { kind: 'npm-ok', spec: '@example/tools@1.0.0', name: '@example/tools', currentVersion: '1.0.0', latestVersion: '1.0.0', versions: ['1.0.0'], hasUpdate: false, icon },
-      '/workspace/plugin/dist/index.mjs': { kind: 'path-ok', spec: '/workspace/plugin/dist/index.mjs', absolutePath: '/workspace/plugin/dist/index.mjs', icon },
-    };
-    updateSnapshot({ titlebarItems: [
-      { key: 'package', pluginId: 'not-the-package-name', label: 'Package', icon: 'globe', actionable: true },
-      { key: 'local', pluginId: 'local', label: 'Local', actionable: false },
-    ] });
-    await render(<GuiPluginTitlebarItems mobile={mobile} />);
-    expect(state.registryQuery).toHaveBeenLastCalledWith(['@example/tools@1.0.0', '/workspace/plugin/dist/index.mjs']);
-    await act(async () => container.querySelectorAll('img').forEach((image) => image.dispatchEvent(new Event('load'))));
-    const masks = [...container.querySelectorAll<HTMLElement>('[data-gui-package-icon]')];
-    expect(masks).toHaveLength(2);
-    for (const mask of masks) {
-      expect(mask.style.backgroundColor).toBe('currentcolor');
-      expect(mask.style.mask).toContain(JSON.stringify(icon));
-      expect(mask.style.maskMode).toBe('alpha');
+    state.registry = { '/plugin': { kind: 'path-ok', spec: '/plugin', absolutePath: '/plugin', icon: 'https://example.test/custom.svg' } };
+    updateSnapshot({ titlebarItems: [{ key: 'entry', pluginId: 'demo', label: 'Runmark', icon: 'globe', actionable: true }] });
+    await render(<GuiPluginTitlebarItems sidebar mobile={mobile} />);
+    const row = container.querySelector('button')!;
+    expect(row.textContent).toBe('Runmark');
+    expect(row.className).toContain('w-full');
+    expect(row.className).toContain('justify-start');
+    expect(container.querySelector('[data-gui-sidebar-items]')).not.toBeNull();
+    expect(container.querySelector('[data-icon="global"]')).not.toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    expect(state.registryQuery).not.toHaveBeenCalled();
+    await click('Runmark');
+    expect(fixture.methods.runTitlebarItem).toHaveBeenCalledWith('entry');
+    for (let index = 0; index < 50; index++) {
+      updateSnapshot({ sessionKey: `session-${index}` });
+      await render(<GuiPluginTitlebarItems sidebar mobile={mobile} />);
+      expect(container.querySelector('button')).toBe(row);
+      expect(container.querySelector('img')).toBeNull();
     }
-    expect(container.querySelector('[data-icon="global"]')).toBeNull();
-    await click('Package');
-    expect(fixture.methods.runTitlebarItem).toHaveBeenCalledWith('package');
     expect(context().requestLoad).not.toHaveBeenCalled();
-  });
-
-  test('broken artwork falls back; a replacement URL retries and busy still wins', async () => {
-    const spec = '/plugin';
-    state.context = { ...context(), inventory: [{ id: 'demo', enabled: true, source: { type: 'local', path: spec } }] };
-    state.registry = { [spec]: { kind: 'path-ok', spec, absolutePath: spec, icon: 'https://example.test/broken.svg' } };
-    const item = { key: 'entry', pluginId: 'demo', label: 'Entry', actionable: true };
-    updateSnapshot({ titlebarItems: [item] });
-    await render(<GuiPluginTitlebarItems />);
-    await act(async () => container.querySelector('img')!.dispatchEvent(new Event('error')));
-    expect(container.querySelector('[data-gui-package-icon]')).toBeNull();
-    expect(container.textContent).toBe('Entry');
-    state.registry = { [spec]: { kind: 'path-ok', spec, absolutePath: spec, icon: 'https://example.test/replacement.svg' } };
-    await render(<GuiPluginTitlebarItems />);
-    await act(async () => container.querySelector('img')!.dispatchEvent(new Event('load')));
-    expect(container.querySelector('[data-gui-package-icon]')).not.toBeNull();
-    updateSnapshot({ titlebarItems: [{ ...item, busy: true }] });
-    await render(<GuiPluginTitlebarItems />);
-    expect(container.querySelector('[data-gui-package-icon]')).toBeNull();
-    expect(container.querySelector('[data-icon="loader-4"]')).not.toBeNull();
-    expect(container.querySelector('button')!.disabled).toBe(true);
-  });
-
-  test('unsupported sources do not query guessed packages and image errors retain builtin icons', async () => {
-    state.context = { ...context(), inventory: [
-      { id: 'demo', enabled: true, source: { type: 'sdk' } },
-      { id: 'builtin', enabled: true, source: { type: 'builtin' } },
-    ] };
-    updateSnapshot({ titlebarItems: [{ key: 'entry', pluginId: 'demo', label: 'Entry', icon: 'globe', actionable: true }] });
-    await render(<GuiPluginTitlebarItems />);
-    expect(state.registryQuery).toHaveBeenLastCalledWith([]);
-    expect(container.querySelector('[data-icon="global"]')).not.toBeNull();
-    const spec = '/plugin';
-    state.context = { ...context(), inventory: [{ id: 'demo', enabled: true, source: { type: 'local', path: spec } }] };
-    state.registry = { [spec]: { kind: 'path-ok', spec, absolutePath: spec, icon: 'https://example.test/broken.svg' } };
-    await render(<GuiPluginTitlebarItems />);
-    await act(async () => container.querySelector('img')!.dispatchEvent(new Event('error')));
-    expect(container.querySelector('[data-icon="global"]')).not.toBeNull();
-    updateSnapshot({ titlebarItems: [] });
-    state.registryQuery.mockClear();
-    await render(<GuiPluginTitlebarItems />);
     expect(state.registryQuery).not.toHaveBeenCalled();
   });
+
 
   test.each([false, true])('titlebar contributions render accessible actions, busy and passive states (mobile=%s)', async (mobile) => {
     updateSnapshot({titlebarItems:[
@@ -309,7 +299,7 @@ describe('foreign DOM ownership', () => {
     });
     const view = (revision: string) => <GuiPluginMount host={fixture.host} kind="panel" contributionKey="a" revision={revision} fallback={<div role="status">Preparing</div>} />;
     await render(view('one'));
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('render failed');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('render failed');
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.textContent).not.toContain('partial');
     await render(view('two'));
@@ -379,13 +369,15 @@ describe('foreign DOM ownership', () => {
     expect(next.log.at(-1)).toBe('dispose:settings:b');
   });
 
-  test('exposes mount errors without leaving partial foreign DOM', async () => {
-    fixture.methods.mountPanel.mockImplementation((_key, node) => {
+  test.each(['panel', 'settings', 'page'] as const)('exposes %s mount errors without leaving partial foreign DOM', async (kind) => {
+    const method = kind === 'panel' ? fixture.methods.mountPanel : kind === 'settings' ? fixture.methods.mountSettings : fixture.methods.mountPage;
+    method.mockImplementation((_key, node) => {
       node.textContent = 'partial';
       throw new Error('render failed');
     });
-    await render(<GuiPluginMount host={fixture.host} kind="panel" contributionKey="a" />);
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('render failed');
+    await render(<GuiPluginMount host={fixture.host} kind={kind} contributionKey="a" />);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('render failed');
+    expect(container.querySelector('[data-file-preview-illustration] svg')).not.toBeNull();
     expect(container.textContent).not.toContain('partial');
   });
 
@@ -763,7 +755,7 @@ test('palette discovery is silent until commands arrive, including while discove
   state.context = { ...context(), host: null, requested: false, loading: true };
   updateSnapshot({ plugins: [], commands: [] });
   await render(<GuiPluginCommands query="" onSelect={() => {}} />);
-  expect(context().requestLoad).toHaveBeenCalledOnce();
+  expect(context().requestLoad).not.toHaveBeenCalled();
   expect(container.childElementCount).toBe(0);
   updateSnapshot({ commands: [{ key: 'ready', title: 'Ready command', run: () => {} }] });
   await render(<GuiPluginCommands query="" onSelect={() => {}} />);
@@ -789,10 +781,10 @@ test.each(['discovery', 'bundle', 'activation'])('palette stays silent on %s fai
   expect(state.toast).not.toHaveBeenCalled();
 });
 
-test.each(['manager', 'commands'])('%s requests deferred plugins on entry and retries after runtime scope resets', async (entry) => {
+test('manager requests deferred plugins on entry and retries after runtime scope resets', async () => {
   state.context = { ...context(), host: null, requested: false, loading: true };
   updateSnapshot({ plugins: [] });
-  const view = () => entry === 'manager' ? <GuiPluginsManager /> : <GuiPluginCommands query="" onSelect={() => {}} />;
+  const view = () => <GuiPluginsManager />;
   await render(view());
   expect(context().requestLoad).toHaveBeenCalledOnce();
   state.context = { ...context(), requested: true };
@@ -801,4 +793,15 @@ test.each(['manager', 'commands'])('%s requests deferred plugins on entry and re
   state.context = { ...context(), requested: false };
   await render(view());
   expect(context().requestLoad).toHaveBeenCalledTimes(2);
+});
+
+test('commands consume live snapshots without requesting plugins across query and runtime changes', async () => {
+  state.context = { ...context(), host: null, requested: false, loading: true };
+  updateSnapshot({ plugins: [], commands: [] });
+  for (let index = 0; index < 50; index++) {
+    await render(<GuiPluginCommands query={`query-${index}`} onSelect={() => {}} />);
+  }
+  state.context = { ...context(), requested: false };
+  await render(<GuiPluginCommands query="" onSelect={() => {}} />);
+  expect(context().requestLoad).not.toHaveBeenCalled();
 });

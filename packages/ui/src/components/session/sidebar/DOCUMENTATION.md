@@ -1,5 +1,12 @@
 # Session Sidebar Documentation
 
+The sidebar does not discover or refresh GitHub PR status. Session-tree mounting,
+project/worktree expansion, and session updates must not request PR auth/status
+or subscribe to PR-store projections. The obsolete PR request effect and group
+badge/tooltip plumbing have been removed; group labels and branch subtitles remain
+local metadata. GitHub API capabilities outside this sidebar are unchanged.
+`SessionSidebar.actions.performance.test.tsx` guards this dependency boundary.
+
 Session menus no longer offer opening a conversation in the side panel. The
 Electron Mini Chat Window action remains available; subtask and review panels
 retain their existing behavior independently of the sidebar menu.
@@ -28,6 +35,10 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   `Button`'s direct-SVG padding rule cannot shift the Assistant row when its icon
   becomes an image. Avatar artwork scales to 125% inside the unchanged 16px slot;
   all three labels retain the same left edge in both avatar and fallback states.
+- Official GUI `TitlebarItem` contributions appear immediately below Bots and
+  before pinned/in-progress sessions as icon-and-label rows. Their leaf component
+  owns the GUI subscription; SessionSidebar does not subscribe to plugin state.
+  Icons follow the official named-icon contract rather than package-image metadata.
 
 - `DeviceConnections` owns the settings-adjacent desktop/phone shortcut. Its
   hover/click popover fetches the active runtime's authorized devices only while
@@ -362,8 +373,8 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - `sessionSortableOrder.ts` derives visible sortable IDs and the shared scope-local comparator from the rendered folder tree, collapsed/search state, Show-more slice, and the effective order above. Reordering stays within one folder or the ungrouped scope; folder drops own cross-folder moves.
 - Visibility performance (`isVisible` prop): desktop passes `isSidebarOpen`, mobile
   passes `mobileLeftDrawerVisible`. When false, the session row tree unmounts and
-  speculative work stops (live session/status aggregates, sticky headers, PR
-  enrichment, search listeners, archived auto-folders, project repo status). The
+  speculative work stops (live session/status aggregates, sticky headers,
+  search listeners, archived auto-folders, project repo status). The
   outer sidebar chrome stays mounted so UI state and authoritative session-index
   refresh remain available for an immediate reopen (mobile always-mount for
   issue #1695 is preserved at the layout shell).
