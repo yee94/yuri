@@ -38,10 +38,10 @@ function ScheduleAssistantButton({ assistant }: { assistant: NonNullable<ReturnT
           <ProceduralAssistantAvatar
             seed={assistant.seed}
             size={40}
-            motion="working"
+            motion="idle"
             followPointer={false}
             animationKey={assistant.id}
-            blinkOnMount
+            blinkOnMount={2}
           />
         </span>
         <span className="yuri-mobile-schedule-assistant-label" aria-hidden="true">

@@ -100,17 +100,110 @@ test('a newly visible contact blinks once, restores its saved face and does not 
   expect(frames.size).toBe(1);
 });
 
-test('first-appearance blink obeys reduced motion and the saved motion-off preference', async () => {
+test('a double-blink greeting keeps the same idle player and head pose, then releases all frame work', async () => {
+  const original = avatarEngine.createAssistantAvatarPlayer;
+  const blink = vi.fn();
+  const bodyPaths = new Set<string>();
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args);
+    return { ...player,
+      blink: () => { blink(); player.blink(); },
+      advance: (...advanceArgs) => {
+        const sample = player.advance(...advanceArgs);
+        if (sample.model.mode === 'sphere') bodyPaths.add(sample.model.bodyD);
+        return sample;
+      },
+    };
+  });
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('greeting'), shape: 'round' });
+  const render = (revision: number) => root.render(<div data-revision={revision}>
+    <ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} blinkOnMount={2} eyeColor="black" />
+  </div>);
+  await act(async () => render(0));
+  const svg = host.querySelector('svg');
+  const pose = () => [...host.querySelectorAll('svg path')].map(path => path.getAttribute('d'));
+  const initial = pose();
+  await intersect(true);
+  expect(create).toHaveBeenCalledOnce();
+  expect(create.mock.calls[0][2]).toBe('idle');
+  expect(create.mock.calls[0][4]).toMatchObject({ resting: true });
+  expect(blink).toHaveBeenCalledOnce();
+  const start = performance.now();
+  let firstBlinkMoved = false;
+  let secondBlinkMoved = false;
+  for (let i = 1; i <= 40; i++) {
+    frame(start + i * 34);
+    const current = pose();
+    expect(host.querySelector('svg')).toBe(svg);
+    expect(current[0]).toBe(initial[0]);
+    const eyesMoved = current.some((path, index) => path !== initial[index]);
+    if (i < 10 && eyesMoved) firstBlinkMoved = true;
+    if (i > 17 && i < 25 && eyesMoved) secondBlinkMoved = true;
+    if (i === 14) expect(frames.size).toBe(1);
+  }
+  expect(firstBlinkMoved).toBe(true);
+  expect(secondBlinkMoved).toBe(true);
+  expect(blink).toHaveBeenCalledTimes(2);
+  expect(bodyPaths.size).toBe(1);
+  expect(pose()).toEqual(initial);
+  expect(frames.size).toBe(0);
+  for (let i = 1; i <= 50; i++) await act(async () => render(i));
+  await intersect(false);
+  await intersect(true);
+  expect(create).toHaveBeenCalledOnce();
+  expect(blink).toHaveBeenCalledTimes(2);
+  expect(frames.size).toBe(0);
+});
+
+test.each([true, 2] as const)('first-appearance blink %s obeys reduced motion and the saved motion-off preference', async blinkOnMount => {
   reduced = true;
   const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
-  await act(async () => root.render(<LiveAssistantWorkingAvatar name="reduced" working={false} followPointer={false} />));
+  await act(async () => root.render(<ProceduralAssistantAvatar seed="reduced" size={40} motion="idle" followPointer={false} blinkOnMount={blinkOnMount} />));
   await intersect(true);
   expect(create).not.toHaveBeenCalled();
   expect(frames.size).toBe(0);
   const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('off'), animate: false });
-  await act(async () => root.render(<LiveAssistantWorkingAvatar name="off" avatarSeed={seed} working={false} />));
+  await act(async () => root.render(<ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} blinkOnMount={blinkOnMount} />));
   expect(host.querySelector('img')).not.toBeNull();
   expect(create).not.toHaveBeenCalled();
+});
+
+test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('a pending second greeting blink is cancelled without replay when %s', async reason => {
+  const original = avatarEngine.createAssistantAvatarPlayer;
+  const blink = vi.fn();
+  vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args);
+    return { ...player, blink: () => { blink(); player.blink(); } };
+  });
+  await act(async () => root.render(<ProceduralAssistantAvatar seed="interrupt-greeting" size={40} motion="idle" followPointer={false} blinkOnMount={2} />));
+  await intersect(true);
+  const start = performance.now();
+  for (let i = 1; i <= 14; i++) frame(start + i * 34);
+  expect(blink).toHaveBeenCalledOnce();
+  expect(frames.size).toBe(1);
+  if (reason === 'offscreen') await intersect(false);
+  if (reason === 'hidden') {
+    visible = 'hidden';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: true });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  if (reason === 'unmounted') await act(async () => root.render(null));
+  expect(frames.size).toBe(0);
+  for (let i = 15; i <= 40; i++) frame(start + i * 34);
+  if (reason === 'offscreen') await intersect(true);
+  if (reason === 'hidden') {
+    visible = 'visible';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: false });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  expect(blink).toHaveBeenCalledOnce();
+  expect(frames.size).toBe(0);
 });
 
 test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('interrupting a first-appearance blink releases frame work when %s', async (reason) => {

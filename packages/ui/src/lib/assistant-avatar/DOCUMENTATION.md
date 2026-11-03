@@ -28,10 +28,14 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
 - `update({ active, motion, size, followPointer?, blinkOnMount? })`: update live state, preserving the player
   during continuous non-idle work/size changes. `active` is the view's intersecting, foreground,
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
-  `blinkOnMount` opts into one native blink on the first eligible update, consumed
+  `blinkOnMount: true` opts into one native blink on the first eligible update, consumed
   for this renderer's lifetime. It does not replay on foreground/intersection return.
   The player composes local blink eyes over shared working frames without resetting
-  the shared head timeline. Idle cleanup waits for the bounded .4-second blink;
+  the shared head timeline. `blinkOnMount: 2` plays two native blinks on the same
+  resting player, with a short open-eye gap, without entering working/thinking or
+  replacing the renderer. The existing frame subscription owns the bounded second
+  blink; interruption cancels it and visibility return does not replay the greeting.
+  Idle cleanup waits for the pending second blink and bounded .4-second blink;
   no timer, recurring idle blink or per-frame React updates are introduced.
 - `hover()`: trigger the bounded existing shrink/rebound; eligible idle faces
   lazily start a resting player only for the hover excursion.

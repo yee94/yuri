@@ -5,11 +5,11 @@ import { mountAvatarAnimation } from '@/lib/assistant-avatar/runtime';
 import { generatedAvatarDataUri } from '@/lib/generatedAvatar';
 import { cn } from '@/lib/utils';
 
-type Props = { seed?: string; size: number; label?: string; className?: string; motion?: AvatarMotion; hoverTarget?: React.RefObject<HTMLElement | null>; randomizeShape?: boolean; eyeColor?: AvatarEyeColor; followPointer?: boolean; animationKey?: string; blinkOnMount?: boolean };
+type Props = { seed?: string; size: number; label?: string; className?: string; motion?: AvatarMotion; hoverTarget?: React.RefObject<HTMLElement | null>; randomizeShape?: boolean; eyeColor?: AvatarEyeColor; followPointer?: boolean; animationKey?: string; blinkOnMount?: boolean | 2 };
 
 // This leaf owns observers and delegates DOM/frame work to the runtime. Historical/static
 // faces use the cached image path and allocate no animation Hooks or clock work.
-function LiveFace({ seed, motion, size, hoverTarget, randomizeShape = false, eyeColor, followPointer = true, animationKey, blinkOnMount }: { seed?: string; motion: AvatarMotion; size: number; hoverTarget?: React.RefObject<HTMLElement | null>; randomizeShape?: boolean; eyeColor?: AvatarEyeColor; followPointer?: boolean; animationKey?: string; blinkOnMount?: boolean }) {
+function LiveFace({ seed, motion, size, hoverTarget, randomizeShape = false, eyeColor, followPointer = true, animationKey, blinkOnMount }: { seed?: string; motion: AvatarMotion; size: number; hoverTarget?: React.RefObject<HTMLElement | null>; randomizeShape?: boolean; eyeColor?: AvatarEyeColor; followPointer?: boolean; animationKey?: string; blinkOnMount?: boolean | 2 }) {
   const host = React.useRef<HTMLSpanElement>(null);
   const animation = React.useRef<ReturnType<typeof mountAvatarAnimation> | null>(null);
   const id = React.useId();

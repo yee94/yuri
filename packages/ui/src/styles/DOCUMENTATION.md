@@ -188,6 +188,8 @@ Its header Bot shortcut has a zero-height anchor in the existing trailing row;
 the absolute capsule changes only clipping, face/background transforms and copy
 opacity. After a short entrance it moves left, reveals localized text for five
 seconds, then retracts right without changing header/spacer/content geometry.
+The copy uses smaller, vertically centered multiline text within the same fixed
+capsule height; English explicitly breaks into two complete lines without ellipsis.
 The closed clip excludes the invisible text from hit testing. Reduced motion
 uses discrete states rather than travel. Shared avatar visibility/motion gates
 own live eye animation; no per-frame React state or new animation clock is added.

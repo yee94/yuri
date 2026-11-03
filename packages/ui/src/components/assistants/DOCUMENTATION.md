@@ -204,7 +204,11 @@ no shortcut, while a failed refresh retains its known target. Clicking its face
 or copy calls the existing mobile `openAssistant` route, preserving Schedule as
 the Back destination. It opens no creation dialog and sends no automatic message.
 Inactive tabs, covered pages and an open task editor unmount the shortcut observer
-and live avatar. The saved avatar uses the existing motion/visibility runtime.
+and live avatar. The saved avatar uses the existing motion/visibility runtime in
+`idle` with a one-shot double blink. Capsule entrance, hold and exit retain the
+same renderer/resting pose; this greeting never enters the working state. After
+the second blink it releases frame work and stays still, respecting reduced motion
+and saved animation-off preferences.
 
 Creating a Bot forwards the current UI locale to the Host. The Host stores its
 single welcome message in the contact transcript and returns its preview in the

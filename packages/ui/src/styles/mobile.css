@@ -1450,14 +1450,14 @@ button.yuri-mobile-schedule-assistant::before {
   inset-block: 0;
   right: 0.75rem;
   left: calc(var(--yuri-schedule-assistant-size) + 0.5rem);
-  display: block;
+  display: flex;
+  align-items: center;
   overflow: hidden;
   color: var(--surface-foreground);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  line-height: var(--yuri-schedule-assistant-size);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
+  white-space: pre-line;
   visibility: hidden;
   opacity: 0;
 }

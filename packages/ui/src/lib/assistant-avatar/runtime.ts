@@ -70,11 +70,13 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let settling = false;
   let settleDeadline = 0;
   let appeared = false;
+  let nextAppearanceBlinkIn: number | null = null;
   let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
   const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer;
   const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
 
   const reset = () => {
+    nextAppearanceBlinkIn = null;
     if (!stop) return;
     stop(); stop = null; player = null; shared = null; settling = false;
     renderer.still();
@@ -97,10 +99,18 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         live.setGaze(gaze);
         previousGaze = gaze;
       }
-      const sample = live.advance((timestamp - previous) / 1000, source?.read(timestamp));
+      const dt = Math.min(0.1, Math.max(0, (timestamp - previous) / 1000));
+      if (nextAppearanceBlinkIn !== null) {
+        nextAppearanceBlinkIn -= dt;
+        if (nextAppearanceBlinkIn <= 0) {
+          live.blink();
+          nextAppearanceBlinkIn = null;
+        }
+      }
+      const sample = live.advance(dt, source?.read(timestamp));
       renderer.paint(sample);
       previous = timestamp;
-      if (resting() && !sample.hovering && !sample.blinking && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
+      if (resting() && nextAppearanceBlinkIn === null && !sample.hovering && !sample.blinking && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
     }, () => {
       gaze = null;
       const point = pointer?.read();
@@ -118,7 +128,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   };
 
   return {
-    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean }) {
+    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean | 2 }) {
       if (disposed) return;
       const wasResting = resting();
       const wasSharing = sharing();
@@ -149,6 +159,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         appeared = true;
         start();
         player?.blink();
+        nextAppearanceBlinkIn = next.blinkOnMount === 2 ? 0.55 : null;
       }
     },
     hover() {

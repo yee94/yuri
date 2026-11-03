@@ -22,7 +22,7 @@ vi.mock('@/queries/assistantQueries', async () => {
   } };
 });
 vi.mock('@/components/assistants/ProceduralAssistantAvatar', () => ({
-  ProceduralAssistantAvatar: (props: { seed: string; motion: string; followPointer: boolean; blinkOnMount: boolean }) => {
+  ProceduralAssistantAvatar: (props: { seed: string; motion: string; followPointer: boolean; blinkOnMount: boolean | 2 }) => {
     state.avatar(props);
     return <span data-avatar-seed={props.seed} data-motion={props.motion} />;
   },
@@ -76,7 +76,7 @@ test.each(['avatar', 'text'])('%s opens the pinned Bot directly, preserving Sche
   await setSnapshot([assistant('first'), assistant('pinned', 20)]);
   await render();
   expect(host.querySelector('[data-avatar-seed="seed-pinned"]')).not.toBeNull();
-  expect(state.avatar).toHaveBeenLastCalledWith(expect.objectContaining({ motion: 'working', followPointer: false, blinkOnMount: true }));
+  expect(state.avatar).toHaveBeenLastCalledWith(expect.objectContaining({ motion: 'idle', followPointer: false, blinkOnMount: 2 }));
   await act(async () => host.querySelector<HTMLElement>(target === 'avatar' ? '[data-avatar-seed]' : '.yuri-mobile-schedule-assistant-label')!.click());
   expect(getSelectedAssistantID()).toBe('pinned');
   expect(useMobileNavigationStore.getState()).toMatchObject({ activeTab: 'scheduled', secondary: { kind: 'assistant' } });
