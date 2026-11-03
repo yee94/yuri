@@ -3932,6 +3932,15 @@ button.yuri-mobile-worktree-label-trigger:active,
   opacity: calc(1 - min(1, var(--yuri-mobile-composer-swap) * 2));
 }
 
+.yuri-mobile-composer-foot--overlay > .yuri-transcript-scroll-controls {
+  z-index: 30;
+  bottom: var(--yuri-chat-foot-inset);
+}
+
+.yuri-mobile-composer-foot > .yuri-transcript-scroll-controls {
+  pointer-events: none;
+}
+
 /* Compact sits inside the pill trailing cluster; fade with the rise half. */
 .yuri-scroll-to-bottom--compact {
   opacity: max(0, calc(var(--yuri-mobile-composer-swap) * 2 - 1));

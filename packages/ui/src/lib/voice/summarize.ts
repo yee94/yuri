@@ -3,7 +3,7 @@
  * Removes markdown, URLs, file paths, and other non-speakable content.
  * Applied as a fallback when server-side summarization is skipped.
  */
-export function sanitizeForTTS(text: string): string {
+export function sanitizeForTTS(text: string, preserveParagraphs = false): string {
     if (!text) return '';
     return text
         // Remove fenced code blocks entirely (multi-line code is unreadable),
@@ -29,6 +29,6 @@ export function sanitizeForTTS(text: string): string {
         .replace(/[[\]{}()<>|&;]/g, ' ')
         .replace(/\\/g, '')
         // Collapse whitespace
-        .replace(/\s+/g, ' ')
+        .replace(/\s+/g, (space) => preserveParagraphs && /\n\s*\n/.test(space) ? '\n\n' : ' ')
         .trim();
 }

@@ -12,6 +12,42 @@
 @import "katex/dist/katex.min.css";
 @source "./**/*.{ts,tsx,css}";
 
+::highlight(yuri-speech) {
+  color: var(--foreground);
+}
+
+[data-speech-active="true"] {
+  color: var(--foreground);
+}
+
+[data-speech-marker-owner="true"] {
+  isolation: isolate;
+}
+
+.yuri-speech-marker-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.yuri-speech-marker-stroke {
+  --yuri-speech-marker-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  position: absolute;
+  box-sizing: content-box;
+  margin: -0.12em -0.24em;
+  padding: 0.12em 0.24em;
+  border-radius: 0.22em 0.18em 0.24em 0.16em;
+  corner-shape: round;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--yuri-speech-marker-color) 85%, transparent),
+    var(--yuri-speech-marker-color) 25% 80%,
+    color-mix(in srgb, var(--yuri-speech-marker-color) 90%, transparent)
+  );
+}
+
 /* KaTeX theme overrides for light/dark mode */
 .katex {
   color: var(--foreground);

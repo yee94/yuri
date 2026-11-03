@@ -12,8 +12,8 @@ import { projectTurnActivity } from '../lib/turns/projectTurnActivity';
 import type { ChatMessageEntry } from '../lib/turns/types';
 import { AutoReadPlaybackContext } from '@/mobile/chat/auto-read-context';
 
-const mocks = vi.hoisted(() => ({ copy: vi.fn(async (_text: string) => ({ ok: true })), speak: vi.fn(), autoRead: vi.fn() }));
-vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: mocks.speak, stop: () => {} }) }));
+const mocks = vi.hoisted(() => ({ copy: vi.fn(async (_text: string) => ({ ok: true })), speak: vi.fn(), canResume: vi.fn(() => false), autoRead: vi.fn() }));
+vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: mocks.speak, stop: () => {}, canResume: mocks.canResume }) }));
 vi.mock('@/mobile/chat/auto-read-context', async (importOriginal) => ({ ...await importOriginal<typeof import('@/mobile/chat/auto-read-context')>(), useAutoReadRenderedReply: mocks.autoRead }));
 vi.hoisted(() => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
@@ -40,10 +40,54 @@ describe('user shell results', () => {
     document.body.append(container);
     root = createRoot(container);
     mocks.copy.mockClear();
+    mocks.speak.mockClear();
+    mocks.canResume.mockReset().mockReturnValue(false);
   });
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+  });
+  test.each([true, false])('offers anchored resume/restart only for interrupted playback (mobile=%s)', async (isMobile) => {
+    const previousConfig = useConfigStore.getState();
+    useConfigStore.setState({ ttsInputMode: 'final', showMessageTTSButtons: true });
+    try {
+      await act(async () => root.render(<MessageBody
+        sessionId="session" messageId="speech-choice" parts={[{ id: 'answer', type: 'text', text: 'First passage.\n\nSecond passage.' } as Part]}
+        isUser={false} isMessageCompleted messageFinish="stop" isMobile={isMobile} hasTouchInput={isMobile}
+        copiedCode={null} onCopyCode={() => {}} expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+        streamPhase="completed" allowAnimation={false} hasTextContent
+        turnGroupingContext={{ turnId: 'turn', isFirstAssistantInTurn: true, isLastAssistantInTurn: true,
+          isLatestTurn: false, hasTools: false, hasReasoning: false, isWorking: false, isTurnSettled: true }}
+      />));
+      const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="chat.messageBody.tts.readAloud"]')!;
+      expect(trigger).not.toBeNull();
+      await act(async () => trigger.click());
+      expect(mocks.speak).toHaveBeenCalledTimes(1);
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      mocks.canResume.mockReturnValue(true);
+      await act(async () => trigger.click());
+      expect(mocks.speak).toHaveBeenCalledTimes(1);
+      const popup = document.querySelector('[role="menu"]')!;
+      expect(popup.classList.contains('yuri-popup-surface')).toBe(true);
+      const choices = [...popup.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      expect(choices.map((item) => item.textContent)).toEqual(['chat.messageBody.tts.resume', 'chat.messageBody.tts.restart']);
+      expect(choices.map((item) => item.querySelector('use')?.getAttribute('href'))).toEqual(['#yuri-play', '#yuri-restart']);
+      if (isMobile) expect(choices.every((item) => item.classList.contains('min-h-11'))).toBe(true);
+      await act(async () => choices[0].click());
+      expect(mocks.speak.mock.lastCall?.[2]?.restart).toBe(false);
+      expect(mocks.speak.mock.lastCall?.[2]?.target === container.querySelector('[data-message-text-export-root]')).toBe(true);
+      await act(async () => trigger.click());
+      const restart = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'chat.messageBody.tts.restart')!;
+      await act(async () => restart.click());
+      expect(mocks.speak).toHaveBeenCalledTimes(3);
+      expect(mocks.speak.mock.lastCall?.[2]).toMatchObject({ restart: true });
+      await act(async () => trigger.click());
+      await act(async () => document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+      expect(mocks.speak).toHaveBeenCalledTimes(3);
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      useConfigStore.setState({ ttsInputMode: previousConfig.ttsInputMode, showMessageTTSButtons: previousConfig.showMessageTTSButtons });
+    }
   });
   test.each([
     ['live', true], ['sorted', true], ['live', false], ['sorted', false],

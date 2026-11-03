@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './uk.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.messageBody.tts.follow': 'Стежити за читанням',
+  'chat.messageBody.tts.failed': 'Читання перервано. Натисніть відтворення, щоб продовжити з поточного уривка.',
   'commandPalette.error.files': 'Пошук файлів тимчасово недоступний.',
   'commandPalette.error.filesPartial': 'Не вдалося знайти файли в деяких проєктах.',
   'remoteDesktop.title': 'Віддалений робочий стіл',
@@ -2240,6 +2242,8 @@ export const dict: Record<I18nKey, string> = {
   "chat.generatedResult.pullRequest.bodyLabel": "Опис",
   "chat.messageBody.tts.stopSpeaking": "Зупинити озвучення",
   "chat.messageBody.tts.readAloud": "Прочитати вголос",
+  "chat.messageBody.tts.resume": "Продовжити відтворення",
+  "chat.messageBody.tts.restart": "Відтворити спочатку",
   "chat.messageBody.tts.readAloudWithProvider": "Прочитати вголос (голос {provider})",
   "filesView.tts.readAloud": "Прочитати файл вголос",
   "filesView.tts.stopSpeaking": "Зупинити читання",

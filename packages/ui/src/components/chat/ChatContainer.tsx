@@ -49,7 +49,7 @@ import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-st
 import { isQuestionFormMetadata } from '@/sync/v2-runtime';
 import { isSessionRetryAction, resolveRetryActionCopy } from '@/sync/session-retry-action';
 import { StatusRowContainer } from './StatusRowContainer';
-import ScrollToBottomButton from './components/ScrollToBottomButton';
+import { TranscriptScrollControls } from './components/TranscriptScrollControls';
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { getFullText } from './lib/messagePreview';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
@@ -1552,8 +1552,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         scrollToMessage: timelineController.scrollToMessage,
         resumeToBottom: resumeToLatestInstant,
     });
-    // Expanded scroll-to-bottom stays a foot sibling (original bottom-full mb-2).
-    // Compact scroll-to-bottom is mounted on the pill inside ChatInput.
+    // Transcript navigation stays outside the composer, including the compact pill.
     const promptSurface = promptAvailability.showReadOnlyBanner
         ? readOnlyPromptBanner
         : readOnly
@@ -1563,8 +1562,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                     key="composer-input"
                     surface={composerSurface}
                     scrollToBottom={scrollViewportOnSend}
-                    showScrollToBottom={isMobile && timelineController.showScrollToBottom}
-                    onScrollToBottom={navigation.resumeToLatest}
                     submissionBlocked={promptAvailability.blockSubmission}
                 />
             );
@@ -2230,20 +2227,12 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                 )}
             >
                 {!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
-                {!isDesktopExpandedInput && renderedViewportMessages.length > 0 && (
-                    isMobile ? (
-                        <ScrollToBottomButton
-                            placement="expanded"
-                            visible={timelineController.showScrollToBottom}
-                            onClick={navigation.resumeToLatest}
-                        />
-                    ) : (
-                        <ScrollToBottomButton
-                            visible={timelineController.showScrollToBottom}
-                            onClick={navigation.resumeToLatest}
-                        />
-                    )
-                )}
+                <TranscriptScrollControls
+                    scrollRef={scrollRef}
+                    active={active && !isDesktopExpandedInput}
+                    showScrollToBottom={renderedViewportMessages.length > 0 && timelineController.showScrollToBottom}
+                    onScrollToBottom={navigation.resumeToLatest}
+                />
                 {promptSurface}
             </div>
 

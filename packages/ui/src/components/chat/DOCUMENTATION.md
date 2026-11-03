@@ -239,6 +239,76 @@ the new owner. Native mobile
 uses `YuriScreenAwake`; browsers use Screen Wake Lock and show a localized
 warning when unavailable. Native support requires a new iOS/Android binary.
 
+### Reading position, following and recovery
+
+`useMessageTTS` owns a serialized natural-paragraph queue for all providers;
+individual requests are capped at 280 UTF-16 units with sentence/word fallback
+and no surrogate-pair splitting. Sanitization retains paragraph boundaries for
+long replies. Only actual audio completion advances the checkpoint; synthesis
+completion does not. A stopped/erroring request resumes its current passage on
+the next play, so part of that passage can repeat but completed passages do not.
+Progress is in-memory, not durable
+across page reloads. One interrupted checkpoint can hand automatic reading off to
+the same session/message's manual action; runtime changes clear it.
+After interruption, activating the message's read-aloud icon opens an anchored
+shared popup with Resume and Restart choices. Resume repeats the unfinished
+passage; Restart explicitly discards that position and reads from the beginning.
+Both choices use shared play/restart icons at medium stroke; touch-context rows
+have at least 44px hit height while retaining the shared popup material and spacing.
+First playback and playback after full completion start directly. Dismissing the
+popup does not start audio or consume progress. `useMessageTTS.canResume` checks
+the same exact text, identity, provider and content-mode checkpoint as playback
+at interaction time, including automatic-to-manual handoff; no transcript-wide
+progress subscription is added. Popup selection restores focus without scrolling,
+so speech following remains the sole viewport owner across shared UI runtimes.
+
+Transient failures retry the current passage twice with 600/1200ms backoff.
+Missing terminal events have a rate/length-bounded watchdog; permanent autoplay,
+authorization and unsupported errors are not retried. Exhausted recovery reports
+failure and retains the checkpoint rather than pretending the reply completed.
+User stop, Escape, microphone capture, replacement, unmount and runtime changes
+cancel recovery as well as audio. Browser synthesis forwards post-start errors.
+
+`lib/voice/speech-tracking.ts` indexes only the active visible reply's speech DOM
+once and paints actual-start passage ranges with `speech-marker.ts`. A single
+absolute, pointer-inert layer draws rounded, lightly graduated theme-accent
+strokes for each visual line, with 0.24em inline and 0.12em block paint padding.
+The marker uses 22% theme primary color without changing ordinary text contrast.
+Overlapping inline/text rectangles merge so formatted text is not painted twice.
+The layer travels with its relative reply owner without scroll listeners; only
+the active target has a ResizeObserver for line reflow. It does not wrap or replace
+Markdown nodes, affect normal-flow geometry, or change the user's Selection.
+CSS Custom Highlights supplies foreground color only; older engines use a
+paint-only paragraph foreground marker. Summaries/unmatched source text do not
+fabricate a location. Replacement and stop remove paint and observer ownership.
+Only the small `TranscriptScrollControls` leaf subscribes to range changes; the history
+list subscribes to the stable target, not each passage. Virtualized history retains
+the speaking turn as one extra range item with explicit gap spacing so scrolling
+away does not unmount its playback owner.
+
+`useChatAutoFollow` remains the scroll owner: speech releases bottom pinning and
+requests a visibility adjustment only at passage start or explicit resume, and
+only when the passage needs a real, reachable viewport movement. No overflow,
+an unmeasured range, a visible passage or a clamped/subpixel no-op must not write
+scroll or release bottom-follow ownership. Desktop visibility uses the actual
+viewport edges, not the preferred 80px landing margin; mobile keeps its overlay
+edge reservation. Starting/stopping a short visible reply therefore preserves
+the bottom pin without a transient navigation button or reveal change. Wheel,
+directional touch, navigation keys and scrollbar dragging release speech following
+without stopping audio. Following never writes during a held touch. The bottom-right
+control above the composer restores it. It shares one right-aligned, horizontal
+row with the scroll-to-bottom action, bounded by `.chat-input-column` including
+its responsive padding. Both actions reuse the shared `Button` `mobileGlass` /
+`mobileIcon` floating-circle recipe, including its glass tokens and geometry.
+The following state uses the shared `yuri-mobile-inverse-action` tint with
+`aria-pressed`: clicking toggles following off/on without stopping or restarting
+audio; manual scrolling also clears the selected state. There is
+no restart action or duplicate scroll action in the primary compact/native composer.
+Mobile anchors the row above `--yuri-chat-foot-inset` in both compact and expanded
+states. Stops remove highlighting and the speech action without forcing a bottom
+jump or hiding the independent bottom action. The same shared UI applies to web,
+Electron, VS Code, hosted mobile and Capacitor; no native bridge changes are needed.
+
 ## Mobile hold-to-talk
 
 Desktop dictation writes provisional transcripts directly into the existing
@@ -770,7 +840,7 @@ Mobile direct-send keeps the Composer textarea focused so the keyboard remains a
 
 Capacitor iOS primary chat is the exception unless Appearance Settings turns native UI off (`yuri.iosNativeUi`): `useNativeIosComposer` drives a process-owned `YuriComposer` singleton (homepage `warm`s the glass while hidden, conceal immediately on leave / back-start, `dismiss` after the remount window without dropping listeners, never rebuild the UITextView across session or phone-page remounts) — a full-width collapsed glass pill with ghost `+` and Send/Stop, and an expanded glass card matching web footer order (`+`, Agent with a brief name flash, model icon + bitmap name/thinking, Send). Send, model, and agent remain ChatInput-owned. Native `send` only stages the document and schedules `handlePrimaryAction`; it must not `forceText` or `present` on that tap, and a cancelled-back `reveal` is `show()` only so a background→type→send burst cannot stall the main thread on text/preview transfer. Keyboard Return sends or queues (no newline except IME confirm). While a turn can abort, Stop stays on the card; queue Send sits above it only when the card is expanded. `+` opens a `UIMenu` above the plus (photos first, then files) without resigning first responder. Photos use `PHPickerViewController`. System pickers may hide the keyboard once; the card stays expanded and focus returns when they close. `filesPicked` goes to `attachFiles`; it must not open the web attach sheet. That photos/files half-sheet (`usesAndroidAttachPickSheet`) is Android-only, including hosted Android browsers. iOS, desktop, VS Code, and non-Android mobile open the file input directly. After attach, the native card shows the image/file preview strip with a remove control; deleting a citation in the native field (or tapping remove) uses the same `removeAttachment` sink as web so the attachment and its `[filename]` text stay in lockstep. The web `AttachedFilesList` stays hidden while the native overlay is active — it would sit in the 0-height overlay foot and is not tappable. Inline trigger-icon chips are paint-only on native: `useNativeIosComposer` sends `chipRanges` from the same highlight parts as the web overlay; the UITextView keeps source glyphs, colors the label with `--primary`, hides the trigger well, and overlays the rasterized icon. IME marked text is not attributed. Chip icon rasterization and highlight walking run only on Capacitor iOS; chrome-only plugin updates do not re-paint chips or re-rasterize the model name/thinking bitmaps. Chip ranges join citation ranges for atomic token delete. Native does not use NSTextAttachment. The model chip keeps the web thinking-suffix weight/color (regular muted) and does not slide its title on expand. Model/agent open the existing WebView pickers after the native overlay suppresses itself. Tapping the identicon cycles the primary agent; a long-press opens the agent picker. `--yuri-native-composer-height` stays at the collapsed occupancy while typing so Changes / TODO / queue stay docked just above the pill. They keep that absolute overlay position and fade with `--yuri-native-composer-dock` (distance from the live edge, visible only at the true bottom, and only after arriving there — a short downward approach stays hidden; leaving fades out over the first ~40px) instead of composer-swap rest or translating away; there is no page-background veil. Toward-bottom travel can rest the composer expanded far from the bottom — those rows have no background and must stay hidden until the viewport is actually there. The native liquid-glass `arrow.down` above Send emits `scrollToBottom` and stays hidden until the viewport has travelled ~80px from the live edge (the 40px follow-rearm band alone would flash it on the first nudge). Published occupancy never includes that button, so Changes / TODO / queue do not jump when it appears; they fade instead. The WebView scroll-to-bottom control stays hidden. The native field stays uncontrolled while first responder or IME marked text is active so Chinese composition is not rewritten. Keyboard hide closes the native keyboard session and re-pins to the window home-indicator inset (not `keyboardLayoutGuide` / view safe-area), and still clears leftover web `--yuri-kb-layout`. Android, hosted H5, iPad desktop layout, and secondary surfaces keep the web Composer.
 
-The mobile overlay keeps the expanded scroll-to-bottom control as a foot sibling anchored at `--yuri-chat-foot-inset` with the original `mb-2` gap. The compact control sits inside the pill trailing cluster on the right; when Stop or the ready Send circle is present it shifts left of that action. Swap opacity stagger selects the active instance; only opacity follows swap progress. When `:root.yuri-native-ios-composer` is set, the web textarea/pill and web scroll-to-bottom controls are hidden. `useMobileComposerSwap` still tracks scroll so Changes / TODO / queue can fade from distance (`--yuri-native-composer-dock`), not from swap rest; those rows stay absolutely docked to the overlay at `--yuri-native-composer-height` minus an 8px settle toward the pill and do not use a background veil. The queue card hides its composer-overlap tail (`data-yuri-queue-composer-overlap`) and uses symmetric vertical padding so it reads as a rounded card rather than a strip tucked behind the input. Approaching the bottom keeps them hidden until the true edge; leaving fades them over the first ~40px of upward travel. Native scroll-to-bottom stays on the overlay, appears only after ~80px of upward travel, and is excluded from published occupancy so the strip does not jump. `--yuri-chat-foot-inset` is the collapsed `--yuri-native-composer-height` plus `--yuri-native-composer-accessory` (JS never writes `--yuri-chat-foot-inset`). Expanding the native field does not change that inset. That override and the web default are both plain root selectors so the native one wins by its extra class; keeping the web default scope-qualified made it out-specify the native rule and native iOS reserved the 8rem web value instead of the measured pill plus accessory — see `packages/ui/src/styles/DOCUMENTATION.md`.
+The mobile overlay keeps one `TranscriptScrollControls` row as a foot sibling anchored at `--yuri-chat-foot-inset` with the original `mb-2` gap. Its circular bottom/follow actions align with the input's right edge and remain side by side through expanded/compact transitions. Primary ChatInput receives no inline/native scroll-action props, avoiding duplicate controls. `:root.yuri-native-ios-composer` hides the web textarea/pill but not this row. `useMobileComposerSwap` still tracks scroll so Changes / TODO / queue can fade from distance (`--yuri-native-composer-dock`), not from swap rest; those rows stay absolutely docked to the overlay at `--yuri-native-composer-height` minus an 8px settle toward the pill and do not use a background veil. The queue card hides its composer-overlap tail (`data-yuri-queue-composer-overlap`) and uses symmetric vertical padding so it reads as a rounded card rather than a strip tucked behind the input. Approaching the bottom keeps them hidden until the true edge; leaving fades them over the first ~40px of upward travel. Transcript controls are excluded from published occupancy so the strip does not jump. `--yuri-chat-foot-inset` is the collapsed `--yuri-native-composer-height` plus `--yuri-native-composer-accessory` (JS never writes `--yuri-chat-foot-inset`). Expanding the native field does not change that inset. That override and the web default are both plain root selectors so the native one wins by its extra class; keeping the web default scope-qualified made it out-specify the native rule and native iOS reserved the 8rem web value instead of the measured pill plus accessory — see `packages/ui/src/styles/DOCUMENTATION.md`.
 
 The mobile Composer mounts separate expanded and compact layers. Main chat and hydrating layouts place their `.yuri-mobile-composer-foot--overlay` inside `.yuri-chat-composer-swap-scope` while React `isMobile` is true; draft, empty, and history-error layouts retain the in-flow expanded Composer. Those in-flow feet pin swap progress to expanded and do not paint the compact pill, so a session→new-chat ChatContainer reuse cannot leave a non-interactive "Tap to type" bar over the real input. On `:root.yuri-native-ios-composer` the web textarea is gone, so those in-flow feet reserve `calc(var(--yuri-native-composer-height) - 8px)` as padding-bottom — the same empty occupancy overlay pages get from absolute `bottom` — so project / branch (the same `[data-native-composer-accessories]` strip as Changes / TODO) sit above the native pill. The swap hook clears published CSS from a detached scope. Follow is relative: every user-owned scroll frame moves progress by its own travel (80px = 0…1, ~40px per half), from wherever the composer rests, so a gesture far up the transcript tracks the finger instead of jumping; travel toward the bottom is also bounded by the remaining distance so expanded lands exactly at the live edge. A single frame that crosses ≥0.5 of the range (fling) snaps with the 240ms transition. Commit waits for touchend / scrollend / idle and follows the last same-direction run (≥16px within 250ms); a stationary release falls back to the 0.5 midpoint. Touches only claim scroll ownership after 6px of vertical travel so tap jitter cannot turn program scroll into user travel. A short post-compact settle (~320ms) only suppresses return-follow while momentum dies; leaving the bottom band or a later gesture clears it so expand↔compact can repeat. Snapping is interruptible so the machine cannot stick. Queue, changes, todos, and the complete input card move down together in the expanded layer while a centered 80% translucent compact preview rises from below with attachment and Stop or ready-Send actions. A tap on the compact preview (outside attach/Stop/Send) restores the expanded endpoint and focuses the textarea. Textarea focus, active dictation, and native keyboard state pin the expanded endpoint immediately; reduced motion makes the snap instant, and disabled surfaces remain expanded. The per-frame `--yuri-mobile-composer-swap` / `--yuri-native-composer-dock` variables are written on the overlay foot, not the scope, so tracking frames restyle only the composer subtree; phase / rest attributes stay on the scope. The transcript reserves `--yuri-chat-foot-inset`, resolved from the measured `--yuri-mobile-composer-occupancy` that ChatInput publishes on the root via ResizeObserver (primary mobile overlay foot, non-native iOS); swap motion is transform/opacity only and never changes it or scroll geometry. Desktop keeps a persistent page-background fade above the in-flow composer (`DesktopComposerEdgeFade`) so the last messages blend into the input instead of meeting a hard edge; mobile already owns that blend on `.yuri-mobile-composer::after`. The legend timeline cannot wrap its scroller in `ScrollShadow`, so `TimelineList` stamps the same `data-scroll-shadow` mask on the list-owned element and hides the bottom mask on mobile (the composer fade owns that edge) and the top mask when a sticky user header is already painting one.
 

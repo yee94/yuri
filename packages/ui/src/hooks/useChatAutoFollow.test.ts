@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getSpeechTracking, resumeSpeechFollowing, trackSpeech } from '@/lib/voice/speech-tracking';
 
 import {
     isWithinSessionOpenPinGrace,
@@ -13,6 +14,107 @@ import {
 } from './useChatAutoFollow';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+test.each(['no-overflow', 'visible-bottom-edge', 'visible-top-edge', 'clamped-noop', 'subpixel-noop', 'unmeasured-range', 'mobile-no-overflow', 'mobile-clamped-noop'] as const)(
+    'speech does not write or release a stationary viewport: %s', async (scenario) => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        const host = document.createElement('div');
+        document.body.append(host);
+        const root = createRoot(host);
+        let api!: UseChatAutoFollowResult;
+        let playback: ReturnType<typeof trackSpeech> | undefined;
+        const noOverflow = scenario === 'no-overflow' || scenario === 'mobile-no-overflow';
+        const initialTop = noOverflow ? 0 : scenario === 'subpixel-noop' ? 599.5 : 600;
+        let top = initialTop;
+        const scrollTo = vi.fn();
+        const cancelScroll = vi.fn();
+        const controller = { current: { scrollToBottom: () => true, cancelScroll } };
+        const makeRange = document.createRange.bind(document);
+        vi.spyOn(document, 'createRange').mockImplementation(() => {
+            const range = makeRange();
+            range.getBoundingClientRect = () => new DOMRect(0,
+                scenario === 'visible-top-edge' ? 10 : scenario.endsWith('clamped-noop') || scenario === 'subpixel-noop' ? 350 : 260,
+                200, scenario === 'unmeasured-range' ? 0 : 20);
+            return range;
+        });
+        function Harness() {
+            api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 2, sessionIsWorking: false, isMobile: scenario.startsWith('mobile'), scrollControllerRef: controller });
+            return React.createElement('div', { ref: (element: HTMLDivElement | null) => {
+                api.scrollRef.current = element;
+                if (!element) return;
+                Object.defineProperties(element, {
+                    scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = value; } },
+                    clientHeight: { configurable: true, value: 300 },
+                    scrollHeight: { configurable: true, value: noOverflow ? 300 : 900 },
+                });
+                element.getBoundingClientRect = () => new DOMRect(0, 0, 500, 300);
+                element.scrollTo = scrollTo;
+            } }, React.createElement('p', { 'data-speech-content': true }, '海风轻轻吹来。'));
+        }
+        try {
+            await act(async () => root.render(React.createElement(Harness)));
+            cancelScroll.mockClear(); scrollTo.mockClear();
+            await act(async () => { playback = trackSpeech(api.scrollRef.current!.firstElementChild as HTMLElement); playback.update('海风轻轻吹来。', 0); });
+            await act(async () => resumeSpeechFollowing());
+            await act(async () => playback!.stop());
+            expect({ writes: scrollTo.mock.calls.length, cancels: cancelScroll.mock.calls.length, state: api.state, top })
+                .toEqual({ writes: 0, cancels: 0, state: 'following', top: initialTop });
+            expect(api.showScrollButton).toBe(false);
+        } finally {
+            await act(async () => { playback?.stop(); root.unmount(); });
+            host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+        }
+    },
+);
+
+test('speech uses the viewport owner, yields to downward scrolling, and resumes only on request', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    let api!: UseChatAutoFollowResult;
+    let playback: ReturnType<typeof trackSpeech> | undefined;
+    let top = 0;
+    let writes = 0;
+    function Harness() {
+        api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 10, sessionIsWorking: false, isMobile: false });
+        return React.createElement('div', { ref: api.scrollRef }, React.createElement('p', { 'data-speech-content': true }, '第一段。第二段。'));
+    }
+    try {
+        await act(async () => root.render(React.createElement(Harness)));
+        const scroller = api.scrollRef.current!;
+        Object.defineProperties(scroller, {
+            scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = value; } },
+            clientHeight: { configurable: true, value: 300 }, scrollHeight: { configurable: true, value: 2000 },
+        });
+        scroller.getBoundingClientRect = () => new DOMRect(0, 0, 500, 300);
+        scroller.scrollTo = (options?: ScrollToOptions | number) => {
+            if (typeof options === 'object') { top = options.top ?? top; writes++; }
+        };
+        await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); playback.update('第一段。', 0); });
+        getSpeechTracking()!.range!.getBoundingClientRect = () => new DOMRect(0, 900 - top, 300, 40);
+        await act(async () => resumeSpeechFollowing());
+        expect(top).toBe(840);
+        expect(api.state).toBe('released');
+        await act(async () => {
+            scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+            top = 1000; scroller.dispatchEvent(new Event('scroll'));
+        });
+        expect(getSpeechTracking()?.following).toBe(false);
+        const count = writes;
+        await act(async () => playback!.update('第二段。', 1));
+        expect(writes).toBe(count);
+        expect(top).toBe(1000);
+        getSpeechTracking()!.range!.getBoundingClientRect = () => new DOMRect(0, 1200 - top, 300, 40);
+        await act(async () => resumeSpeechFollowing());
+        expect(getSpeechTracking()?.following).toBe(true);
+        expect(top).toBe(1000); // Already fully visible: do not move the reader unnecessarily.
+        expect(writes).toBe(count);
+    } finally {
+        await act(async () => { playback?.stop(); root.unmount(); });
+        host.remove(); vi.unstubAllGlobals();
+    }
+});
 
 describe('virtual list scroll ownership', () => {
     test('normal-flow jump preserves independent overflow axes', async () => {

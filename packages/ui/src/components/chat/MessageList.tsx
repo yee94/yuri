@@ -1,7 +1,8 @@
 import React from 'react';
 import { useEvent, useEventListener, useInterval, useIsomorphicLayoutEffect, useResizeObserver, useUnmount } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
-import { elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
+import { defaultRangeExtractor, elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
+import { getSpeechTarget, subscribeSpeechTracking } from '@/lib/voice/speech-tracking';
 import { isAssistantSessionDivider } from './hostedSessionHistory';
 import { useI18n } from '@/lib/i18n';
 import { CompactionDisclosureContext, createCompactionDisclosureStore } from './message/compactionDisclosureState';
@@ -1426,6 +1427,9 @@ type StaticHistoryListProps = {
 
 const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, contentRef, scrollRef, registerTanstackVirtualizer, virtualizerKey, onMessageContentChange, getAnimationHandlers, scrollToBottom, stickyUserHeader, activityRenderMode, turnUiStates, onToggleTurnGroup, chatRenderMode, shouldAnimateUserMessage, onUserAnimationConsumed, reviewTransferDirection }: StaticHistoryListProps) => {
     const [displayEntries, setDisplayEntries] = React.useState(entries);
+    const speechTarget = React.useSyncExternalStore(subscribeSpeechTracking, getSpeechTarget, () => null);
+    const speechEntryKey = speechTarget && scrollRef?.current?.contains(speechTarget)
+        ? speechTarget.closest<HTMLElement>('[data-turn-entry]')?.dataset.turnEntry : undefined;
     const isTanstack = engine === 'tanstack' && displayEntries.length >= resolveHistoryVirtualizationThreshold();
     // A prepend can move this list across the tiny-history virtualization
     // threshold. Capture from the old normal-flow DOM during render, then seed
@@ -1640,6 +1644,8 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
         width: scrollRef?.current?.clientWidth ?? 0,
         height: scrollRef?.current?.clientHeight ?? 0,
     } : undefined, [isTanstack, scrollRef]);
+    const speakingIndex = React.useMemo(() => speechEntryKey
+        ? renderEntries.findIndex((entry) => entry.key === speechEntryKey) : -1, [renderEntries, speechEntryKey]);
     const tanstackVirtualizer = useTanstackVirtualizer<HTMLDivElement, HTMLDivElement>({
         count: renderEntries.length,
         enabled: isTanstack,
@@ -1647,6 +1653,11 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
         getScrollElement: () => scrollRef?.current ?? null,
         estimateSize: () => estimatedEntrySizeRef.current,
         overscan: historyOverscan,
+        rangeExtractor: (range) => {
+            const indexes = defaultRangeExtractor(range);
+            return speakingIndex >= 0 && !indexes.includes(speakingIndex)
+                ? [...indexes, speakingIndex].sort((left, right) => left - right) : indexes;
+        },
         measureElement: (element, entry, instance) => {
             const key = instance.options.getItemKey(instance.indexFromElement(element));
             const cached = instance.itemSizeCache.get(key);
@@ -2039,7 +2050,7 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
                         paddingBottom: historyFrameStyle.paddingBottom,
                     }}
                 >
-                    {virtualItems.map((item) => {
+                    {virtualItems.map((item, position) => {
                         const entry = renderEntries[item.index];
                         if (!entry) return null;
                         return (
@@ -2048,7 +2059,11 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
                                 data-index={item.index}
                                 ref={measureHistoryElement}
                                 data-turn-entry={entry.key}
-                                style={{ opacity: tanstackVirtualizer.itemSizeCache.has(entry.key) ? undefined : 0 }}
+                                style={{
+                                    opacity: tanstackVirtualizer.itemSizeCache.has(entry.key) ? undefined : 0,
+                                    marginTop: position > 0 && item.index > virtualItems[position - 1].index + 1
+                                        ? item.start - virtualItems[position - 1].end : undefined,
+                                }}
                                 className="yuri-chat-message-layout-boundary"
                             >
                                 {renderEntry(

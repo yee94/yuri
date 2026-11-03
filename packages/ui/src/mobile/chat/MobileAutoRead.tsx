@@ -51,7 +51,7 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
             setPlayingReply(null);
             if (error) { stop(); toast.error(t('mobile.menu.autoReadFailed')); return; }
             drain();
-        });
+        }, { target: next.target });
     });
     const rendered = useEvent((reply: RenderedReply) => {
         const current = state.current;

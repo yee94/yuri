@@ -20,18 +20,19 @@ let current: UseMessageTTSReturn;
 let root: ReturnType<typeof createRoot>;
 function Probe() { current = useMessageTTS({ enabled: true }); return null; }
 beforeEach(async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.clearAllMocks(); mocks.config.voiceProvider = 'volcengine'; mocks.config.ttsInputMode = 'raw';
     mocks.speak.mockResolvedValue(undefined);
     root = createRoot(document.createElement('div'));
     await act(async () => root.render(<Probe />));
 });
-afterEach(async () => { await act(async () => root.unmount()); });
+afterEach(async () => { await act(async () => root.unmount()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it.each(['volcengine', 'openai', 'openai-compatible'])('delegates %s playback to the Host without cached capability gating or configuration', async (provider) => {
     mocks.config.voiceProvider = provider;
     await act(async () => root.render(<Probe />));
     await act(async () => current.play('你好'));
-    expect(mocks.speak).toHaveBeenCalledWith('你好', { onEnd: expect.any(Function), onError: expect.any(Function) });
+    expect(mocks.speak).toHaveBeenCalledWith('你好', { onStart: expect.any(Function), onEnd: expect.any(Function), onError: expect.any(Function) });
 });
 
 it('settles once on audio end, not synthesis completion', async () => {
@@ -48,7 +49,7 @@ it.each(['final', 'sanitized'])('cleans Markdown and slash separators before %s 
     await act(async () => root.render(<Probe />));
     await act(async () => current.play('## **总结**\n支持 `iOS/Android/Web`，支持输入/输出。 / // ／ \\ \n[说明](https://example.com/guide)\n```sh\nnpm run build\n```'));
     expect(mocks.speak).toHaveBeenCalledWith('总结 支持 iOS Android Web，支持输入 输出。 说明', {
-        onEnd: expect.any(Function), onError: expect.any(Function),
+        onStart: expect.any(Function), onEnd: expect.any(Function), onError: expect.any(Function),
     });
 });
 
@@ -157,4 +158,140 @@ it('does not interrupt the new owner when the replaced message unmounts', async 
     expect(other.isPlaying).toBe(true);
     expect(mocks.stop).not.toHaveBeenCalled();
     expect(mocks.cancelSpeech).not.toHaveBeenCalled();
+});
+
+it('bounds long speech requests and advances only after audible completion', async () => {
+    const text = '这是一段需要完整读完的长文字。'.repeat(800);
+    const settled = vi.fn();
+    await act(async () => current.play(text, settled));
+    expect(mocks.speak.mock.calls[0][0].length).toBeLessThanOrEqual(400);
+    expect(mocks.speak).toHaveBeenCalledTimes(1);
+    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
+    expect(mocks.speak).toHaveBeenCalledTimes(2);
+    expect(settled).not.toHaveBeenCalled();
+});
+
+it('recovers a transient interruption at the current chunk without replaying completed chunks', async () => {
+    await act(async () => current.play('第一段。'.repeat(100) + '\n\n' + '第二段。'.repeat(100)));
+    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
+    const interrupted = mocks.speak.mock.calls[1][0];
+    await act(async () => mocks.speak.mock.calls[1][1].onError('Speech synthesis interrupted or failed'));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 700)));
+    expect(mocks.speak).toHaveBeenCalledTimes(3);
+    expect(mocks.speak.mock.calls[2][0]).toBe(interrupted);
+    expect(current.isPlaying).toBe(true);
+});
+
+it('resumes the interrupted passage on play and supports an explicit restart', async () => {
+    const text = Array.from({ length: 20 }, (_, index) => `第${index}段。${'海浪慢慢涌来。'.repeat(15)}`).join('\n\n');
+    expect(current.canResume(text)).toBe(false);
+    await act(async () => current.play(text));
+    const first = mocks.speak.mock.calls[0][0];
+    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
+    const second = mocks.speak.mock.calls[1][0];
+    expect(second).not.toBe(first);
+    await act(async () => current.stop());
+    expect(current.canResume(text)).toBe(true);
+    expect(current.canResume(`${text}changed`)).toBe(false);
+    await act(async () => current.play(text));
+    expect(mocks.speak.mock.calls[2][0]).toBe(second);
+    await act(async () => current.play(text, undefined, { restart: true }));
+    expect(mocks.speak.mock.calls[3][0]).toBe(first);
+});
+
+it('does not restart after a user stop during recovery backoff', async () => {
+    vi.useFakeTimers();
+    const settled = vi.fn();
+    await act(async () => current.play('读到一半的段落。', settled));
+    const callbacks = mocks.speak.mock.calls[0][1];
+    await act(async () => callbacks.onError('network disconnected'));
+    await act(async () => current.stop());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); callbacks.onEnd(); });
+    expect(mocks.speak).toHaveBeenCalledTimes(1);
+    expect(settled).not.toHaveBeenCalled();
+    expect(current.isPlaying).toBe(false);
+});
+
+it('bounds automatic retries and settles exactly once on repeated failure', async () => {
+    vi.useFakeTimers();
+    const settled = vi.fn();
+    await act(async () => current.play('需要恢复的段落。', settled));
+    for (let index = 0; index < 3; index++) {
+        await act(async () => mocks.speak.mock.calls[index][1].onError('connection lost'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    }
+    expect(mocks.speak).toHaveBeenCalledTimes(3);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(expect.any(Error));
+    expect(current.isPlaying).toBe(false);
+});
+
+it('does not retry authorization or autoplay failures', async () => {
+    vi.useFakeTimers();
+    const settled = vi.fn();
+    await act(async () => current.play('需要手动解锁音频。', settled));
+    await act(async () => mocks.speak.mock.calls[0][1].onError('Audio blocked by browser autoplay policy'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+    expect(mocks.speak).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(expect.any(Error));
+});
+
+it('recovers when the provider never reports completion', async () => {
+    vi.useFakeTimers();
+    await act(async () => current.play('卡住的音频。'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(45600); });
+    expect(mocks.speak).toHaveBeenCalledTimes(2);
+    expect(current.isPlaying).toBe(true);
+});
+
+it('hands automatic playback progress to another hook for the same reply', async () => {
+    let manual!: UseMessageTTSReturn;
+    function Manual() { manual = useMessageTTS({ enabled: true }); return null; }
+    await act(async () => root.render(<><Probe /><Manual /></>));
+    const target = document.createElement('div');
+    target.dataset.speechIdentity = 'test-session:test-reply';
+    const text = '第一段。'.repeat(80) + '第二段。'.repeat(80);
+    await act(async () => current.play(text, undefined, { target }));
+    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
+    const interrupted = mocks.speak.mock.calls[1][0];
+    await act(async () => current.stop());
+    expect(manual.canResume(text, target)).toBe(true);
+    const otherTarget = document.createElement('div');
+    otherTarget.dataset.speechIdentity = 'test-session:other-reply';
+    expect(manual.canResume(text, otherTarget)).toBe(false);
+    await act(async () => manual.play(text, undefined, { target }));
+    expect(mocks.speak.mock.calls[2][0]).toBe(interrupted);
+});
+
+it('offers no resume after completion, a provider/content-mode change or a runtime switch', async () => {
+    const text = 'A short passage.';
+    await act(async () => current.play(text));
+    await act(async () => mocks.speak.mock.lastCall![1].onEnd());
+    expect(current.canResume(text)).toBe(false);
+    await act(async () => current.play(text));
+    await act(async () => current.stop());
+    expect(current.canResume(text)).toBe(true);
+    mocks.config.voiceProvider = 'openai';
+    await act(async () => root.render(<Probe />));
+    expect(current.canResume(text)).toBe(false);
+    mocks.config.voiceProvider = 'volcengine';
+    mocks.config.ttsInputMode = 'sanitized';
+    await act(async () => root.render(<Probe />));
+    expect(current.canResume(text)).toBe(false);
+    mocks.config.ttsInputMode = 'raw';
+    await act(async () => root.render(<Probe />));
+    expect(current.canResume(text)).toBe(true);
+    await act(async () => window.dispatchEvent(new CustomEvent('yuri:runtime-endpoint-changed', { detail: {} })));
+    expect(current.canResume(text)).toBe(false);
+});
+
+it('does not offer the discarded checkpoint after a restarted reply finishes', async () => {
+    const target = document.createElement('div');
+    target.dataset.speechIdentity = 'session:restart-completed';
+    const text = 'Restart this reply.';
+    await act(async () => current.play(text, undefined, { target }));
+    await act(async () => current.stop());
+    expect(current.canResume(text, target)).toBe(true);
+    await act(async () => current.play(text, undefined, { target, restart: true }));
+    await act(async () => mocks.speak.mock.lastCall![1].onEnd());
+    expect(current.canResume(text, target)).toBe(false);
 });

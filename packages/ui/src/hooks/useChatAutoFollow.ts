@@ -11,6 +11,7 @@ import {
     nestedScrollableCanConsumeDown,
 } from '@/hooks/lib/chatUpwardIntent';
 import { useViewportStore, type SessionMemoryState } from '@/sync/viewport-store';
+import { getSpeechTracking, pauseSpeechFollowing, subscribeSpeechTracking } from '@/lib/voice/speech-tracking';
 
 type AutoFollowState = 'following' | 'released';
 
@@ -547,6 +548,33 @@ export const useChatAutoFollow = ({
         updateOverflowAndButton();
     });
 
+    // Speech requests go through this viewport owner, never a second scroll loop.
+    const followSpeech = useEvent(() => {
+        const speech = getSpeechTracking();
+        const container = scrollRef.current;
+        if (!enabled || !container || !speech || !container.contains(speech.target)) return;
+        if (!speech.following || !speech.range || touchPositionRef.current) return;
+        const geometry = readScrollGeometry(container);
+        if (!canScrollGeometry(geometry)) return;
+        const rect = speech.range.getBoundingClientRect?.();
+        if (!rect || !rect.height) return;
+        const viewport = container.getBoundingClientRect();
+        const inset = Math.min(80, container.clientHeight * 0.2);
+        // Desktop's viewport excludes chrome; mobile still reserves its overlay edges.
+        const visibleInset = isMobileRef.current ? inset : 0;
+        if (rect.top >= viewport.top + visibleInset && rect.bottom <= viewport.bottom - visibleInset) return;
+        const nextTop = Math.min(geometry.scrollHeight - geometry.clientHeight,
+            Math.max(0, geometry.scrollTop + rect.top - viewport.top - inset));
+        if (Math.abs(nextTop - geometry.scrollTop) <= 1) return;
+        releaseAutoFollow();
+        container.scrollTo({ top: nextTop, behavior: 'instant' });
+        lastScrollTopRef.current = container.scrollTop;
+    });
+    React.useEffect(() => {
+        followSpeech();
+        return subscribeSpeechTracking(followSpeech);
+    }, [enabled, containerEl, followSpeech]);
+
     const beginHistoryViewportPreservation = useEvent(() => {
         historyViewportPreservationRef.current = true;
         releaseAutoFollow();
@@ -560,6 +588,7 @@ export const useChatAutoFollow = ({
     onUpwardUserIntentRef.current = onUpwardUserIntent;
 
     const releaseFromUserIntent = useEvent(() => {
+        if (scrollRef.current) pauseSpeechFollowing(scrollRef.current);
         // A genuine user gesture (wheel/touch/key/scrollbar) cancels the entry
         // window immediately so we never fight the user's read position.
         // The session-open grace absorbs the leftover list-row tap on iOS.
@@ -745,6 +774,9 @@ export const useChatAutoFollow = ({
 
         updateOverflowAndButton(geometry);
 
+        const speech = getSpeechTracking();
+        if (speech && el.contains(speech.target)) { queueSave(); return; }
+
         if (historyViewportPreservationRef.current) {
             queueSave();
             return;
@@ -803,6 +835,7 @@ export const useChatAutoFollow = ({
     const handleWheel = useEvent((event: WheelEvent) => {
         const container = scrollRef.current;
         if (!container) return;
+        if (event.deltaY !== 0) pauseSpeechFollowing(container);
         if (event.deltaY > 0) {
             if (!nestedScrollableCanConsumeDown(container, event.target)) downwardUserIntentRef.current = true;
             return;
@@ -834,6 +867,7 @@ export const useChatAutoFollow = ({
         touchPositionRef.current = { x: touch.clientX, y: touch.clientY, dx, dy };
         if (Math.abs(dx) >= Math.abs(dy)) return;
         if (!container) return;
+        if (Math.abs(dy) > TOUCH_FINGER_DOWN_THRESHOLD) pauseSpeechFollowing(container);
         if (dy < -TOUCH_FINGER_DOWN_THRESHOLD) {
             if (!nestedScrollableCanConsumeDown(container, event.target)) downwardUserIntentRef.current = true;
             return;
@@ -856,6 +890,7 @@ export const useChatAutoFollow = ({
         const target = event.target;
         if (event.defaultPrevented || (target instanceof HTMLElement
             && (target.isContentEditable || target.closest('input, textarea, select')))) return;
+        if (scrollRef.current && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) pauseSpeechFollowing(scrollRef.current);
         if (!event.altKey && !event.ctrlKey && !event.metaKey
             && ['ArrowDown', 'PageDown', 'End'].includes(event.key)) {
             const container = scrollRef.current;

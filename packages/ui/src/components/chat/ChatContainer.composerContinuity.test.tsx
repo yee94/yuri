@@ -64,7 +64,7 @@ const render = async (overrides: Record<string, unknown>) => {
         promptAvailability: {}, ChatInput: Composer,
         t: (key: string) => key,
         ChatViewport: Empty, Skeleton: Empty, DesktopComposerEdgeFade: Empty,
-        TimelineDialog: Empty, ScrollToBottomButton: Empty,
+        TimelineDialog: Empty, TranscriptScrollControls: Empty,
         ChatEmptyState: Empty, Icon: Empty, Button: Empty,
         ...overrides,
     };

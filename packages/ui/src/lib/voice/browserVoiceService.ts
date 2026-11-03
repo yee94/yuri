@@ -458,7 +458,7 @@ class BrowserVoiceService {
     text: string,
     lang: string,
     onEnd?: SpeechEndCallback,
-    options?: { rate?: number; pitch?: number; volume?: number; voiceName?: string }
+    options?: { rate?: number; pitch?: number; volume?: number; voiceName?: string; onStart?: () => void; onError?: (error: string) => void }
   ): Promise<void> {
     if (!('speechSynthesis' in window)) {
       throw new Error('Speech synthesis not supported');
@@ -519,18 +519,22 @@ class BrowserVoiceService {
       let hasStarted = false;
 
       utterance.onstart = () => {
+        if (generation !== this.speechGeneration) return;
         hasStarted = true;
+        options?.onStart?.();
         console.log('[BrowserVoiceService] Speech started');
         resolve();
       };
 
       utterance.onend = () => {
+        if (generation !== this.speechGeneration) return;
         this.isSpeaking = false;
         console.log('[BrowserVoiceService] Speech ended');
         onEnd?.();
       };
 
       utterance.onerror = (event) => {
+        if (generation !== this.speechGeneration) return;
         this.isSpeaking = false;
         console.error('[BrowserVoiceService] Speech synthesis error:', event.error);
 
@@ -547,6 +551,7 @@ class BrowserVoiceService {
           errorMessage = 'Speech was interrupted. Please try again.';
         }
 
+        options?.onError?.(errorMessage);
         reject(new Error(errorMessage));
       };
 

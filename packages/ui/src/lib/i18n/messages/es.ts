@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './es.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.messageBody.tts.follow': 'Seguir la lectura',
+  'chat.messageBody.tts.failed': 'La lectura se interrumpió. Pulsa reproducir para continuar desde el pasaje actual.',
   'commandPalette.error.files': 'La búsqueda de archivos no está disponible temporalmente.',
   'commandPalette.error.filesPartial': 'No se pudieron buscar archivos en algunos proyectos.',
   'remoteDesktop.title': 'Escritorio remoto',
@@ -2240,6 +2242,8 @@ export const dict: Record<I18nKey, string> = {
   "chat.generatedResult.pullRequest.bodyLabel": "Descripción",
   "chat.messageBody.tts.stopSpeaking": "Dejar de hablar",
   "chat.messageBody.tts.readAloud": "Leer en voz alta",
+  "chat.messageBody.tts.resume": "Reanudar la reproducción",
+  "chat.messageBody.tts.restart": "Reproducir desde el principio",
   "chat.messageBody.tts.readAloudWithProvider": "Leer en voz alta ({provider} voz)",
   "filesView.tts.readAloud": "Leer archivo en voz alta",
   "filesView.tts.stopSpeaking": "Detener lectura",

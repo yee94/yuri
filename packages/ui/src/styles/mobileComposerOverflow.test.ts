@@ -114,12 +114,20 @@ describe('mobile composer overflow and swap contract', () => {
         expect(mobileCss).toContain('.yuri-mobile-composer-compact-preview--placeholder');
     });
 
-    test('anchors independent expanded and compact scroll-to-bottom buttons', () => {
+    test('anchors primary transcript actions together outside both composer states', () => {
         expect(mobileCss).not.toMatch(/\.yuri-mobile-composer-foot--overlay\s*>\s*div:first-child[^{]*\{[^}]*--yuri-mobile-composer-swap/s);
         expect(mobileCss).toMatch(/\.yuri-scroll-to-bottom--expanded\s*\{[^}]*z-index:\s*30;[^}]*bottom:\s*var\(--yuri-chat-foot-inset\)[^}]*opacity:\s*calc\(1 - min\(1, var\(--yuri-mobile-composer-swap\) \* 2\)\)/s);
         expect(mobileCss).toMatch(/\.yuri-scroll-to-bottom--compact\s*\{[^}]*opacity:\s*max\(0, calc\(var\(--yuri-mobile-composer-swap\) \* 2 - 1\)\)/s);
-        expect(chatContainerSource).toContain('placement="expanded"');
-        expect(chatContainerSource).not.toContain('placement="compact"');
+        expect(chatContainerSource).toContain('<TranscriptScrollControls');
+        expect(chatContainerSource).not.toContain('<ScrollToBottomButton');
+        const primaryInput = chatContainerSource.match(/<ChatInput\s+key="composer-input"[\s\S]*?\/>/)?.[0];
+        expect(primaryInput).toBeDefined();
+        expect(primaryInput).not.toContain('showScrollToBottom=');
+        expect(primaryInput).not.toContain('onScrollToBottom=');
+        expect(mobileCss).toMatch(/\.yuri-mobile-composer-foot--overlay\s*>\s*\.yuri-transcript-scroll-controls\s*\{[^}]*bottom:\s*var\(--yuri-chat-foot-inset\)/s);
+        const controls = readFileSync(join(here, '../components/chat/components/TranscriptScrollControls.tsx'), 'utf-8');
+        expect(controls).toContain('chat-input-column flex items-center justify-end gap-2');
+        expect(controls).not.toContain('restart');
         expect(chatInputSource).toContain('placement="compact"');
         expect(chatInputSource).toContain('yuri-mobile-composer-compact-chrome--with-scroll');
         expect(chatInputSource).toContain('yuri-mobile-composer-compact-chrome--aborting');

@@ -1,4 +1,5 @@
 import React from 'react';
+import { toast } from 'sonner';
 import { messageHoverHandlers } from '../lib/messageHover';
 import { useEvent } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
@@ -23,6 +24,7 @@ import {
 import { FadeInOnReveal } from './FadeInOnReveal';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import {
     emitStreamingHapticEvent,
@@ -1200,7 +1202,7 @@ const AssistantMessageActionButtons = React.memo(({
     const chatSurfaceMode = useChatSurfaceMode();
     const sessionSurface = useSessionSurface();
     const sessionSurfaceActions = getSessionSurfaceActionAvailability(sessionSurface);
-    const { isPlaying: isManualTTSPlaying, play: playTTS, stop: stopTTS } = useMessageTTS();
+    const { isPlaying: isManualTTSPlaying, play: playTTS, stop: stopTTS, canResume: canResumeTTS } = useMessageTTS();
     const autoReadPlayback = React.useContext(AutoReadPlaybackContext);
     const isAutoReadPlaying = Boolean(autoReadPlayback && autoReadPlayback.sessionId === sessionId && autoReadPlayback.messageId === messageId);
     const isTTSPlaying = isManualTTSPlaying || isAutoReadPlaying;
@@ -1209,6 +1211,8 @@ const AssistantMessageActionButtons = React.memo(({
     const [copyHintVisible, setCopyHintVisible] = React.useState(false);
     const [isMessageCopied, setIsMessageCopied] = React.useState(false);
     const [isTransferringReview, setIsTransferringReview] = React.useState(false);
+    const [ttsMenuOpen, setTTSMenuOpen] = React.useState(false);
+    const ttsButtonRef = React.useRef<HTMLButtonElement | null>(null);
     const copyHintTimeoutRef = React.useRef<number | null>(null);
     const copiedResetTimeoutRef = React.useRef<number | null>(null);
     const canCopyMessage = Boolean(onCopyMessage);
@@ -1334,20 +1338,28 @@ const AssistantMessageActionButtons = React.memo(({
         return t('chat.messageBody.tts.readAloudWithProvider', { provider: providerLabel });
     }, [isTTSPlaying, t, voiceProvider]);
 
-    const handleTTSClick = useEvent(
-        (event: React.MouseEvent<HTMLButtonElement>) => {
-            event.stopPropagation();
-            event.preventDefault();
-
+    const startTTS = useEvent((restart = false) => {
+        setTTSMenuOpen(false);
+        if (!ttsText.trim()) return;
+        const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
+        void playTTS(ttsText, (error) => { if (error) toast.error(t('chat.messageBody.tts.failed')); }, { target, restart });
+    });
+    const handleTTSMenuOpenChange = useEvent(
+        (open: boolean, details: Parameters<NonNullable<React.ComponentProps<typeof DropdownMenu>['onOpenChange']>>[1]) => {
+            if (!open) { setTTSMenuOpen(false); return; }
             if (isTTSPlaying) {
+                details.cancel();
                 if (isAutoReadPlaying) autoReadPlayback?.stop();
                 stopTTS();
                 return;
             }
-
-            if (ttsText.trim()) {
-                void playTTS(ttsText);
+            const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
+            if (canResumeTTS(ttsText, target)) {
+                setTTSMenuOpen(true);
+                return;
             }
+            details.cancel();
+            startTTS();
         }
     );
 
@@ -1440,27 +1452,43 @@ const AssistantMessageActionButtons = React.memo(({
                 </Tooltip>
             ) : null}
             {chatSurfaceMode !== 'mini-chat' && showMessageTTSButtons && hasCopyableText && ttsText.trim() && (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className={cn(
-                                MESSAGE_ACTION_ICON_BUTTON_CLASS,
-                                '!bg-transparent shadow-none',
-                                isTTSPlaying ? 'text-[var(--primary-base)]' : 'hover:text-foreground/80'
-                            )}
-                            aria-label={isTTSPlaying ? t('chat.messageBody.tts.stopSpeaking') : t('chat.messageBody.tts.readAloud')}
-                            aria-pressed={isTTSPlaying}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={handleTTSClick}
-                        >
-                            <VoiceActivityIcon kind="speaker" active={isTTSPlaying} className={MESSAGE_ACTION_ICON_CLASS} />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent sideOffset={6}>{readAloudTooltip}</TooltipContent>
-                </Tooltip>
+                <DropdownMenu open={ttsMenuOpen && !isTTSPlaying} onOpenChange={handleTTSMenuOpenChange} modal={false}>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    ref={ttsButtonRef}
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className={cn(
+                                        MESSAGE_ACTION_ICON_BUTTON_CLASS,
+                                        '!bg-transparent shadow-none',
+                                        isTTSPlaying ? 'text-[var(--primary-base)]' : 'hover:text-foreground/80'
+                                    )}
+                                    aria-label={isTTSPlaying ? t('chat.messageBody.tts.stopSpeaking') : t('chat.messageBody.tts.readAloud')}
+                                    aria-pressed={isTTSPlaying}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <VoiceActivityIcon kind="speaker" active={isTTSPlaying} className={MESSAGE_ACTION_ICON_CLASS} />
+                                </Button>
+                            </DropdownMenuTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent sideOffset={6}>{readAloudTooltip}</TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent side="top" align="start" sideOffset={6}
+                        onClick={(event) => event.stopPropagation()}>
+                        <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(false)}>
+                            <Icon name="play" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />
+                            {t('chat.messageBody.tts.resume')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(true)}>
+                            <Icon name="restart" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />
+                            {t('chat.messageBody.tts.restart')}
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             )}
         </>
     );
@@ -1878,6 +1906,7 @@ const AssistantMessageBody = React.memo(({
     useAutoReadRenderedReply({
         sessionId: sessionId ?? '', messageId, created: messageCreatedAt ?? 0,
         text: ttsText,
+        targetRef: messageContentRef,
         streaming: isMobile && sessionSurface.active && (streamPhase === 'streaming' || streamPhase === 'cooldown'),
         completed: isMobile && sessionSurface.active && isMessageCompleted
             && streamPhase !== 'streaming' && streamPhase !== 'cooldown' && !errorMessage,
@@ -2439,6 +2468,7 @@ const AssistantMessageBody = React.memo(({
          <div
               ref={messageContentRef}
               data-message-text-export-root="true"
+              data-speech-identity={sessionId ? `${sessionId}:${messageId}` : undefined}
               {...messageHoverHandlers}
               className={cn(
                  'relative w-full yuri-message-hover-scope'

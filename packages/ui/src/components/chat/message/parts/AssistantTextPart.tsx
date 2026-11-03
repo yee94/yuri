@@ -130,6 +130,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
         <div
             className={`group/assistant-text relative break-words ${chatRenderMode === 'live' ? 'my-1' : ''}`}
             key={part.id || `${messageId}-text`}
+            data-speech-content={part.type === 'text' ? 'true' : undefined}
         >
             <MarkdownRenderer
                 content={displayTextContent}
