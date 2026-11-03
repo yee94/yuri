@@ -1,5 +1,15 @@
 # Assistants Module
 
+## WeChat message channel
+
+Each saved Bot has a Host-owned, QR-authorized text channel configured in the final
+**Message channels** settings group. It admits only the QR-confirmed owner through
+the existing `send()` pipeline and reads committed public replies through the internal
+`channelPage()` feed. Bindings, private credentials, durable receipts/outbox and
+process leases are owned by `weixin/`, not ordinary Session delivery or UI state.
+See `weixin/DOCUMENTATION.md` for authorization, shared-context/output semantics,
+restart ambiguity, local disconnect and the explicit platform-verification limits.
+
 ## New-contact greeting
 
 Every successful create (HTTP, contact tool, or first-run seed) atomically inserts

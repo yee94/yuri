@@ -42,6 +42,7 @@ import { useAssistantUIStore } from '@/stores/useAssistantUIStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useScopedProvidersQuery } from '@/queries/agentQueries';
+import { AssistantChannelsGroup } from './AssistantChannelsGroup';
 
 const MANAGED_WORKSPACE_VALUE = '__managed_workspace__';
 const LEGACY_WORKSPACE_VALUE = '__current_workspace__';
@@ -605,6 +606,8 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
             </SettingsField>
 
             {selected ? <AssistantScheduledTasksGroup assistantID={selected.id} /> : null}
+
+            {selected ? <AssistantChannelsGroup key={selected.id} assistantID={selected.id} /> : null}
 
             {saveActionContainer ? createPortal(
               <Button type="button" size="mobileIcon" onClick={save} disabled={saving} aria-label={t('assistants.settings.save')} aria-busy={saving}>

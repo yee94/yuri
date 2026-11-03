@@ -35,6 +35,7 @@ import {
   migrateContactReadStateDefaultRead,
   nextContactOrdinal,
   projectActiveContactTurn,
+  readContactChannelPage,
   resetContactReadWatermarkForGeneration,
   updateSessionCardStatus,
   upsertContactWatch,
@@ -4086,7 +4087,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       throw error;
     }
   };
-  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
+  // Internal Host seam only: no credentials, no OpenCode session projection.
+  const channelPage = (assistantID, options) => {
+    active(assistantID);
+    return readContactChannelPage(db, assistantID, options);
+  };
+  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
     assignedCompletion.dispose();
     cancelAssignedResumes({});
     sessionAbortInflight.clear();

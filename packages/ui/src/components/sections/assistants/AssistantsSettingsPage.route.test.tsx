@@ -14,6 +14,7 @@ const fixture = vi.hoisted(() => {
     update: vi.fn().mockResolvedValue(assistant),
     create: vi.fn(),
     remove: vi.fn().mockResolvedValue(undefined),
+    weixin: vi.fn(),
     providers: { data: [] },
     config: { providers: [], opencodeDefaultModel: undefined as string | undefined },
   };
@@ -37,6 +38,15 @@ vi.mock('@/stores/useProjectsStore', () => ({
 }));
 vi.mock('@/apps/MobileShareBridge', () => ({ publishNativeAssistantCatalog: vi.fn(), refreshNativeAssistantCatalog: vi.fn() }));
 vi.mock('@/queries/agentQueries', () => ({ useScopedProvidersQuery: () => fixture.providers }));
+vi.mock('@/queries/assistantWeixinQueries', () => ({
+  useAssistantWeixin: (assistantID: string) => {
+    fixture.weixin(assistantID);
+    return {
+      query: { data: { status: 'disconnected', error: null }, isPending: false, isError: false },
+      mutation: { isPending: false, error: null },
+    };
+  },
+}));
 vi.mock('@/queries/assistantQueries', () => ({
   useAssistantSnapshotQuery: () => fixture.snapshot,
   useAssistantCapabilityQuery: () => ({ data: { supported: true, enabled: true }, isSuccess: true }),
@@ -117,6 +127,23 @@ test('model selection shares the name card and no enable or manual share-default
   expect(host.querySelector('[role="checkbox"]')).toBeNull();
   expect(host.querySelector('[data-settings-item="assistants.default-share"]')).toBeNull();
   expect(host.textContent).not.toContain('assistants.settings.defaultShare');
+});
+
+test('message channels are the final settings group and belong to the route Bot', async () => {
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  const groups = [...host.querySelectorAll('.yuri-settings-group')];
+  expect(groups.at(-1)?.querySelector('.yuri-settings-group-label')?.textContent).toBe('assistants.channels.title');
+  expect(groups.at(-1)?.textContent).toContain('assistants.weixin.connect');
+  expect(fixture.weixin).toHaveBeenCalledWith('asst_route');
+  expect(fixture.weixin).not.toHaveBeenCalledWith('asst_settings_tab');
+});
+
+test('an unsaved new Bot has no message-channel connection', async () => {
+  fixture.snapshot.data.assistants = [];
+  useAssistantUIStore.getState().requestCreate();
+  await act(async () => root.render(<AssistantsSettingsPage />));
+  expect(host.textContent).not.toContain('assistants.channels.title');
+  expect(fixture.weixin).not.toHaveBeenCalled();
 });
 
 test('custom avatar configuration saves atomically with the draft; failed saves preserve the preview', async () => {

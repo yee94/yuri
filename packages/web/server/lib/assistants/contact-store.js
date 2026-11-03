@@ -731,6 +731,22 @@ export function getContactMessage(db, messageID) {
   return hydrateMessage(db, row);
 }
 
+/** Bounded, ascending durable output feed for Host-owned message channels. */
+export function readContactChannelPage(db, assistantID, { afterOrdinal = 0, generation = null, tipOnly = false } = {}) {
+  return db.transaction(() => {
+    const tip = getContactReadTip(db, assistantID);
+    const after = generation === null || generation === tip.generation ? afterOrdinal : 0;
+    const rows = tipOnly ? [] : db.prepare(`SELECT * FROM assistant_contact_message WHERE assistant_id=? AND ordinal>?
+      ORDER BY ordinal ASC LIMIT 50`).all(assistantID, after);
+    return {
+      generation: tip.generation,
+      tipOrdinal: tip.ordinal,
+      ordinal: rows.at(-1)?.ordinal ?? after,
+      messages: rows.filter((row) => row.role === 'assistant').map((row) => hydrateMessage(db, row)),
+    };
+  })();
+}
+
 const isSettleOnlyText = (text) => {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   return trimmed.startsWith('oc.settle.');

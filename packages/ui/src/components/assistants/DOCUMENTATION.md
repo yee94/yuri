@@ -1,5 +1,18 @@
 # Assistant UI
 
+## Per-Bot message channels
+
+Each saved Bot's settings ends with `AssistantChannelsGroup`, after scheduled tasks.
+The shared labelled **Message channels** card currently contains WeChat QR connection,
+optional verification, status, disconnect and explicit delivery retry. It uses
+runtime/Bot-scoped TanStack Query state, retains snapshots on failed refresh, and
+does not poll when unmounted. QR rendering is local and content-dependent, and
+runtime changes reset transient verification state. Dynamic Bot channel rows are
+not global Settings search entries. Host-backed web/desktop/mobile use the same
+routes; standalone VS Code and older unsupported Hosts show an explicit unsupported
+state. See the backend `assistants/weixin/DOCUMENTATION.md` for permissions and
+delivery semantics. No new App deeplink or native SDK integration is included.
+
 ## Creation and session return
 
 Creating a Bot forwards the current UI locale to the Host. The Host stores its

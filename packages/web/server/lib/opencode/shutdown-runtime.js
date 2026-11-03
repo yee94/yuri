@@ -51,7 +51,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     // in-flight attach/finalize can still write, and so exitProcess:false restarts
     // can reuse the same global singleton without reopening a closed SQLite handle.
     scheduledTasksRuntime?.stop?.();
-    closeFeatureRoutes?.();
+    await closeFeatureRoutes?.();
 
     const healthCheckInterval = getHealthCheckInterval();
     if (healthCheckInterval) {

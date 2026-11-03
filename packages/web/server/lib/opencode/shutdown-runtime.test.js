@@ -31,6 +31,18 @@ const createRuntime = (server, shutdownTimeoutMs = 1000, overrides = {}) => crea
 });
 
 describe('graceful shutdown runtime', () => {
+  it('waits for Host message channels to stop before closing downstream runtimes', async () => {
+    let release;
+    const closeFeatureRoutes = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const server = { close: vi.fn((callback) => callback()) };
+    const runtime = createRuntime(server, 1000, { closeFeatureRoutes });
+    const pending = runtime.gracefulShutdown({ exitProcess: false });
+    expect(closeFeatureRoutes).toHaveBeenCalledOnce();
+    expect(server.close).not.toHaveBeenCalled();
+    release();
+    await pending;
+    expect(server.close).toHaveBeenCalledOnce();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

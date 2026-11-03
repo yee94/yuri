@@ -3,11 +3,15 @@ import { isSafeInlineImageMime } from './contact-attachments.js';
 import { createChatCompletion } from '../llm/completions.js';
 import { setAssignedSessionSettleHandler } from '../session-goal/runtime.js';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
+import path from 'node:path';
+import { createWeixinRuntime } from './weixin/runtime.js';
+import { registerWeixinRoutes } from './weixin/routes.js';
 
 const respond = (res, work, success = 200) => Promise.resolve().then(work).then((body) => res.status(success).json(body)).catch((error) => { const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error'; const status = code === 'not_found' ? 404 : ['revision_conflict', 'idempotency_conflict', 'contact_generation_conflict'].includes(code) ? 409 : code === 'assistant_disabled' ? 403 : code === 'no_provider' ? 400 : code === 'upstream_error' || code === 'llm_attachment_generation_unavailable' ? 502 : 400; res.status(status).json({ ok: false, error: code, message: typeof error?.message === 'string' && error.message.trim() ? error.message : code }); });
 const gone = (_req, res) => res.status(410).json({ ok: false, error: 'assistant_topics_retired' });
 
 export const registerAssistantRoutes = (app, dependencies) => {
+  let weixin;
   const boundCompletion = (input) => createChatCompletion({
     ...input,
     buildOpenCodeUrl: dependencies.buildOpenCodeUrl,
@@ -38,7 +42,10 @@ export const registerAssistantRoutes = (app, dependencies) => {
     syncScheduledTaskProject: dependencies.syncScheduledTaskProject,
     globalEventHub: dependencies.globalEventHub,
     onRevisionTip: dependencies.onRevisionTip,
-    onContactTurnEvent: dependencies.onContactTurnEvent,
+    onContactTurnEvent: (event) => {
+      weixin?.onTurnEvent(event);
+      dependencies.onContactTurnEvent?.(event);
+    },
     onContactTurnComplete: dependencies.onContactTurnComplete,
     archiveSessionHost: dependencies.archiveSessionHost,
     forgetSessionHost: dependencies.forgetSessionHost,
@@ -52,7 +59,11 @@ export const registerAssistantRoutes = (app, dependencies) => {
   app.get('/api/yuri/assistants/capability', (_req, res) => respond(res, () => service.capability()));
   const snapshot = async () => { await service.ensureDefaultAssistant(); return service.snapshot(); };
   app.get('/api/yuri/assistants', (_req, res) => respond(res, snapshot)); app.get('/api/yuri/assistants/snapshot', (_req, res) => respond(res, snapshot)); app.put('/api/yuri/assistants/settings', (req, res) => respond(res, () => service.setEnabled(req.body)));
-  app.post('/api/yuri/assistants', (req, res) => respond(res, () => service.createAssistant(req.body), 201)); app.patch('/api/yuri/assistants/:assistantID', (req, res) => respond(res, () => service.updateAssistant(req.params.assistantID, req.body))); app.delete('/api/yuri/assistants/:assistantID', (req, res) => respond(res, () => service.removeAssistant(req.params.assistantID, req.body?.expectedRevision)));
+  app.post('/api/yuri/assistants', (req, res) => respond(res, () => service.createAssistant(req.body), 201)); app.patch('/api/yuri/assistants/:assistantID', (req, res) => respond(res, () => service.updateAssistant(req.params.assistantID, req.body))); app.delete('/api/yuri/assistants/:assistantID', (req, res) => respond(res, async () => {
+    const result = service.removeAssistant(req.params.assistantID, req.body?.expectedRevision);
+    await weixin.forget(req.params.assistantID);
+    return result;
+  }));
   app.post('/api/yuri/assistants/:assistantID/session/ensure', (req, res) => respond(res, () => service.ensure(req.params.assistantID))); app.post('/api/yuri/assistants/:assistantID/session/new', (req, res) => respond(res, () => service.createNew(req.params.assistantID))); app.post('/api/yuri/assistants/:assistantID/session/compact', (req, res) => respond(res, () => service.compact(req.params.assistantID, req.body))); app.post('/api/yuri/assistants/:assistantID/session/abort', (req, res) => respond(res, () => service.abort(req.params.assistantID, req.body)));
   app.get('/api/yuri/assistants/:assistantID/messages', (req, res) => respond(res, () => service.historicalMessages(req.params.assistantID, req.query)));
   app.get('/api/yuri/assistants/:assistantID/contact/messages', (req, res) => respond(res, () => service.contactMessages(req.params.assistantID, req.query)));
@@ -109,5 +120,16 @@ export const registerAssistantRoutes = (app, dependencies) => {
   // Contact send admits the user message at 202; assistant bubbles stream on SSE.
   app.post('/api/yuri/assistants/:assistantID/messages', (req, res) => respond(res, () => service.send(req.params.assistantID, req.body), 202)); app.post('/api/yuri/assistants/:assistantID/share', (req, res) => respond(res, () => service.share(req.params.assistantID, req.body), 202)); app.get('/api/yuri/assistants/share-operations/:operationID', (req, res) => respond(res, () => { const operation = service.shareOperation(req.params.operationID); if (!operation) throw new AssistantError('not_found'); return operation; }));
   app.use('/api/yuri/assistants/topics', gone); app.use('/api/yuri/assistants/:assistantID/topics', gone);
-  return { service, close: () => { unsubscribeTaskResults?.(); setAssignedSessionSettleHandler(null); service.close(); } };
+  weixin = createWeixinRuntime({
+    directory: path.join(dependencies.yuriDataDir, 'weixin'), service,
+    refreshAllowedRoots: dependencies.refreshAllowedRoots,
+    ...(dependencies.weixinAPI ? { api: dependencies.weixinAPI } : {}),
+  });
+  registerWeixinRoutes(app, weixin);
+  return { service, close: async () => {
+    unsubscribeTaskResults?.();
+    setAssignedSessionSettleHandler(null);
+    await weixin.close();
+    service.close();
+  } };
 };

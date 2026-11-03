@@ -428,6 +428,10 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return jsonResponse({ error: 'remote_desktop_unsupported' }, 501);
   }
 
+  if (/^\/api\/yuri\/assistants\/[^/]+\/weixin(?:\/|$)/.test(normalizedPathname)) {
+    return jsonResponse({ error: 'weixin_unsupported' }, 501);
+  }
+
   // Yuri-owned turn-page route — must run before the generic OpenCode
   // proxy fallthrough (api:proxy). Matches web host registration order.
   if (isSessionTurnPageRoute(normalizedPathname) || isSessionTurnPageRoute(pathname)) {

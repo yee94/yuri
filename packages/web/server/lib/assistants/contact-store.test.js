@@ -45,6 +45,7 @@ import {
   migrateContactReadStateDefaultRead,
   nextContactOrdinal,
   projectActiveContactTurn,
+  readContactChannelPage,
   resetContactReadWatermarkForGeneration,
   sanitizeContactPreviewText,
   saveContactSummary,
@@ -60,6 +61,24 @@ const openDb = () => {
   ensureContactSchema(db);
   return db;
 };
+
+it('channel output feed is ascending, bounded, generation-aware and isolated by Bot', () => {
+  const db = openDb();
+  try {
+    for (let index = 0; index < 60; index++) insert(db, 'a', { role: index % 2 ? 'assistant' : 'user', text: `row-${index}` });
+    insert(db, 'b', { role: 'assistant', text: 'other Bot' });
+    const page = readContactChannelPage(db, 'a');
+    expect(page.ordinal).toBe(50);
+    expect(page.tipOrdinal).toBe(60);
+    expect(page.messages).toHaveLength(25);
+    expect(page.messages.every((message) => message.assistantID === 'a' && message.role === 'assistant')).toBe(true);
+    expect(readContactChannelPage(db, 'a', { afterOrdinal: page.ordinal, generation: page.generation }).messages).toHaveLength(5);
+    deleteContactMessages(db, 'a');
+    bumpContactGeneration(db, 'a');
+    insert(db, 'a', { role: 'assistant', text: 'new generation' });
+    expect(readContactChannelPage(db, 'a', { afterOrdinal: 60, generation: page.generation }).messages[0].text).toBe('new generation');
+  } finally { db.close(); }
+});
 
 const insert = (db, assistantID, {
   role, text = '', parts, status = 'complete', fromAssistantID = null, fromAssistantName = null, turnID = null, messageID = null, createdAt = Date.now(),
