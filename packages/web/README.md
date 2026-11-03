@@ -35,6 +35,15 @@ whose launcher has already exited. Ctrl-C stops both groups and cancels retries.
 Logs remain in the tmux pane. Restarting preserves Vite's dependency cache;
 `YURI_VITE_FORCE=1` remains an explicit cache-reset option.
 
+Development servers (`dev:server`, `dev:server:watch`, including HMR/full/mobile
+live reload) run with `NODE_ENV=development`. WeChat channels are disabled by
+default in development and Electron dev: no channel database access, lease,
+polling, sending, QR login, disconnect or rebind. Existing production bindings
+are not removed. `YURI_WEIXIN_ENABLED=1` explicitly opts in for channel testing;
+use a separate Yuri data directory and test WeChat account. `YURI_WEIXIN_ENABLED=0`
+disables the channel in any environment. Merely isolating data does not bypass
+WeChat's single-entry binding restriction.
+
 HMR skips React Compiler by default; use `YURI_HMR_REACT_COMPILER=1 bun run dev:web:hmr`
 when checking compiler-specific behavior. Production builds always retain the
 compiler, regardless of that development toggle. Package-based vendor chunk

@@ -3962,12 +3962,24 @@ button.yuri-mobile-worktree-label-trigger:active,
 }
 
 .yuri-mobile-composer-foot--overlay > .yuri-transcript-scroll-controls {
-  --yuri-transcript-controls-swap: var(--yuri-mobile-composer-swap, 0);
+  --yuri-transcript-controls-swap: 0;
   z-index: 30;
   bottom: calc(
     (1 - var(--yuri-transcript-controls-swap)) * var(--yuri-chat-foot-inset)
     + var(--yuri-transcript-controls-swap) * var(--yuri-transcript-compact-inset, var(--yuri-chat-foot-inset))
   );
+}
+
+:root:not(.yuri-native-ios-composer) .yuri-chat-composer-swap-scope[data-yuri-composer-swap-rest="compact"]
+  > .yuri-mobile-composer-foot--overlay > .yuri-transcript-scroll-controls {
+  --yuri-transcript-controls-swap: 1;
+}
+
+.yuri-chat-composer-swap-scope:is(
+  [data-yuri-composer-swap-phase="tracking"],
+  [data-yuri-composer-swap-phase="snapping"]
+) .yuri-transcript-scroll-controls {
+  display: none;
 }
 
 .yuri-mobile-composer-foot--overlay .yuri-transcript-scroll-controls-row {

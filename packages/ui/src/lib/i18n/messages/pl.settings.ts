@@ -15,6 +15,7 @@ export const settingsDict = {
   'assistants.weixin.verifySubmit': 'Potwierdź',
   'assistants.weixin.attention': 'Połączenie wymaga uwagi',
   'assistants.weixin.status.disconnected': 'Nie połączono',
+  'assistants.weixin.status.disabled': 'WeChat jest wyłączony. Tryb deweloperski domyślnie nie nawiązuje połączenia.',
   'assistants.weixin.status.waiting': 'Oczekiwanie na skan',
   'assistants.weixin.status.scanned': 'Potwierdź połączenie w WeChat',
   'assistants.weixin.status.verify': 'Wpisz kod weryfikacyjny',

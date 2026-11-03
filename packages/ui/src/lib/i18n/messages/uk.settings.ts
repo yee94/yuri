@@ -15,6 +15,7 @@ export const settingsDict = {
   'assistants.weixin.verifySubmit': 'Підтвердити',
   'assistants.weixin.attention': 'Підключення потребує уваги',
   'assistants.weixin.status.disconnected': 'Не підключено',
+  'assistants.weixin.status.disabled': 'WeChat вимкнено. Режим розробки за замовчуванням не підключається.',
   'assistants.weixin.status.waiting': 'Очікування сканування',
   'assistants.weixin.status.scanned': 'Підтвердьте підключення у WeChat',
   'assistants.weixin.status.verify': 'Введіть код підтвердження',

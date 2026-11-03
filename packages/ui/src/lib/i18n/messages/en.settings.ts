@@ -15,6 +15,7 @@ export const settingsDict = {
   'assistants.weixin.verifySubmit': 'Confirm',
   'assistants.weixin.attention': 'Connection needs attention',
   'assistants.weixin.status.disconnected': 'Not connected',
+  'assistants.weixin.status.disabled': 'WeChat is disabled. Development mode does not connect by default.',
   'assistants.weixin.status.waiting': 'Waiting for scan',
   'assistants.weixin.status.scanned': 'Confirm the connection in WeChat',
   'assistants.weixin.status.verify': 'Enter the verification code',

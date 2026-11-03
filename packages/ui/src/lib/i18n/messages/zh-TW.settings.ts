@@ -15,6 +15,7 @@
   'assistants.weixin.verifySubmit': '確認',
   'assistants.weixin.attention': '連線需要處理',
   'assistants.weixin.status.disconnected': '未連線',
+  'assistants.weixin.status.disabled': '微信通道已停用，開發模式預設不連線。',
   'assistants.weixin.status.waiting': '等待掃碼',
   'assistants.weixin.status.scanned': '請在微信中確認連線',
   'assistants.weixin.status.verify': '請輸入驗證碼',

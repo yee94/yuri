@@ -333,11 +333,15 @@ fixed-white icons and two 2.4s breathing edge halos (static under reduced motion
 It exposes `aria-pressed`: clicking toggles following off/on without stopping or restarting
 audio; manual scrolling also clears the selected state. There is
 no restart action or duplicate scroll action in the primary compact/native composer.
-Mobile interpolates the row from `--yuri-chat-foot-inset` to the compact pill's
-measured top, with the same 8px gap. Compact width follows the centered 80% pill
+Mobile hides the row entirely during composer `tracking` and `snapping`, without
+position/size animation or hit targets. At `rest`, current speech and scroll state
+determine which actions appear. Expanded mode uses `--yuri-chat-foot-inset`;
+compact mode uses the pill's measured top, with the same 8px gap.
+Compact width follows the centered 80% pill
 and keeps its actions 0.625rem inside the right edge. A leaf ResizeObserver measures
-the untransformed pill geometry only when the composer resizes; swap frames use
-CSS only, never change transcript occupancy, and do not rerender the composer.
+the untransformed pill geometry only when the composer resizes; visibility and
+resting layout use the existing CSS phase/rest attributes, never change transcript
+occupancy, and do not rerender the composer.
 Native iOS retains the native foot-inset anchor rather than measuring its hidden web pill.
 Stops remove highlighting and the speech action without forcing a bottom
 jump or hiding the independent bottom action. The same shared UI applies to web,

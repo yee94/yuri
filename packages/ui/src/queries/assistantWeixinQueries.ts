@@ -4,7 +4,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useI18nStore } from '@/lib/i18n/store';
 
-const statuses = ['disconnected', 'waiting', 'scanned', 'verify', 'connected', 'reconnecting', 'expired', 'error', 'unsupported'] as const;
+const statuses = ['disconnected', 'waiting', 'scanned', 'verify', 'connected', 'reconnecting', 'expired', 'error', 'unsupported', 'disabled'] as const;
 export type AssistantWeixinStatus = {
   status: typeof statuses[number];
   error: string | null;

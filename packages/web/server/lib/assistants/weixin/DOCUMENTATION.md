@@ -26,6 +26,22 @@ service protocol. No OpenClaw runtime or new dependency is installed.
 
 ## Authorization and persistence
 
+Before opening storage or creating any timer, the runtime resolves the channel
+policy from its environment. `NODE_ENV=development` or `YURI_ELECTRON_DEV=1/true`
+disables WeChat by default; the web development server scripts explicitly set
+`NODE_ENV=development`, including watch/HMR/full/mobile live-reload paths. An
+explicit `YURI_WEIXIN_ENABLED=1/true` opts in; `0/false` or an unrecognized nonempty
+value disables it in any environment. Production defaults remain enabled.
+
+A disabled runtime does not open/create SQLite, acquire/release leases, poll,
+send, infer live typing or mutate bindings. Status returns `disabled`; QR login,
+verification, retry, disconnect and transfer fail with `channel_disabled` (403).
+`forget` and shutdown are no-ops, so development does not erase production channel
+credentials. Shared UI displays the disabled state without connection controls
+and does not poll it. This gate is channel-specific, not general isolation of
+assistant data; testing channels still requires an isolated data directory and
+test account. Never copy production WeChat credentials into a second database.
+
 The QR-confirmed `ilink_user_id` is the only accepted sender. Group messages,
 other senders and messages without a stable platform ID never invoke tools. Each
 bound account maps to exactly one Bot within the Host data directory. The account

@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/web",
-  "version": "0.2.27-beta.4",
+  "version": "0.2.27-beta.5",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
@@ -13,8 +13,8 @@
   },
   "scripts": {
     "dev": "bun run build:watch",
-    "dev:server": "bun run build:llm-bridge && node ../../scripts/ensure-node-better-sqlite3.mjs && node server/index.js --port ${YURI_PORT:-3001}",
-    "dev:server:watch": "bun run build:llm-bridge && nodemon --exitcrash --watch server --ext js --exec \"node ../../scripts/ensure-node-better-sqlite3.mjs && node server/index.js --port ${YURI_PORT:-3001}\"",
+    "dev:server": "bun run build:llm-bridge && node ../../scripts/ensure-node-better-sqlite3.mjs && cross-env NODE_ENV=development node server/index.js --port ${YURI_PORT:-3001}",
+    "dev:server:watch": "bun run build:llm-bridge && nodemon --exitcrash --watch server --ext js --exec \"node ../../scripts/ensure-node-better-sqlite3.mjs && cross-env NODE_ENV=development node server/index.js --port ${YURI_PORT:-3001}\"",
     "build": "bun run build:llm-bridge && vite build",
     "build:llm-bridge": "bun scripts/build-llm-bridge.mjs",
     "prepack": "bun run build:llm-bridge",

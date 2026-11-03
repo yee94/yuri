@@ -38,7 +38,8 @@ function WeixinChannelRows({ assistantID }: { assistantID: string }) {
   const pending = mutation.isPending;
   const waiting = state?.status === 'waiting' || state?.status === 'scanned' || state?.status === 'verify';
   const bound = state?.status === 'connected' || state?.status === 'reconnecting';
-  const sources = !bound && !waiting && state?.status !== 'unsupported' ? state?.transferSources ?? [] : [];
+  const unavailable = state?.status === 'unsupported' || state?.status === 'disabled';
+  const sources = !bound && !waiting && !unavailable ? state?.transferSources ?? [] : [];
   React.useEffect(() => {
     if (!value) return;
     let disposed = false;
@@ -70,7 +71,7 @@ function WeixinChannelRows({ assistantID }: { assistantID: string }) {
         description={state ? t(`assistants.weixin.status.${state.status}`) : t('common.loading')}
       >
         {query.isPending ? <Icon name="loader-4" className="size-4 animate-spin motion-reduce:animate-none" />
-          : state?.status === 'unsupported' ? null
+          : unavailable ? null
             : bound || waiting ? <Button size="sm" variant="ghost" disabled={pending} onClick={disconnect}>{t(bound ? 'assistants.weixin.disconnect' : 'settings.common.actions.cancel')}</Button>
               : <>
                 {state?.status === 'expired' || state?.status === 'error' ? <Button size="sm" variant="ghost" disabled={pending} onClick={disconnect}>{t('assistants.weixin.disconnect')}</Button> : null}

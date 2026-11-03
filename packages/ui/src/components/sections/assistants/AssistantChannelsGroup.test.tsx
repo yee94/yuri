@@ -80,6 +80,15 @@ describe('per-Bot message channel settings', () => {
     expect(host.querySelectorAll('button')).toHaveLength(0);
   });
 
+  it('shows the disabled state without connect, disconnect or move controls', async () => {
+    fixture.data = { status: 'disabled', error: null, transferSources: [{ assistantID: 'old', name: 'Old bot', revision: 'r1' }] };
+    await mount();
+    expect(host.textContent).toContain('assistants.weixin.status.disabled');
+    expect(host.querySelectorAll('button')).toHaveLength(0);
+    expect(fixture.mutate).not.toHaveBeenCalled();
+    expect(fixture.qr).not.toHaveBeenCalled();
+  });
+
   it('requires explicit confirmation to move, supports cancel and sends the selected binding revision', async () => {
     fixture.data = { status: 'disconnected', error: null, transferSources: [{ assistantID: 'old', name: 'Old bot', revision: 'r1' }] };
     await mount();

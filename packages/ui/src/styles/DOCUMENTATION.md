@@ -60,12 +60,13 @@ as its background, with fixed-white `--voice-active-foreground` icon contrast.
 Two concentric green edge halos use the player's 15% / 25% tint and 2.4s breathing
 cadence; only the halo dims, never the button or white icon. Reduced motion keeps
 a static glow. Its inactive state retains the shared floating glass recipe. The mobile control row
-interpolates from expanded foot occupancy to the measured compact pill top and
-80% width, with an 8px vertical gap and 0.625rem trailing inset; the leaf owns the
+is not displayed during composer `tracking` or `snapping`; it reappears only at
+`rest` when the current speech/scroll state requires it. Resting compact mode uses
+the measured compact pill top and 80% width, with an 8px vertical gap and 0.625rem trailing inset; the leaf owns the
 ResizeObserver measurement, not per-frame React state or transcript padding.
 Native iOS keeps the native inset because its web pill is hidden.
 Both navigation circles use a 1.875rem diameter (30px at the default scale)
-on desktop and expanded mobile; compact mobile interpolates down to 1.5rem
+on desktop and expanded mobile; resting compact mobile uses 1.5rem
 (24px). Icons and the inter-button gap scale with
 the circle. Only this cluster opts out of the global 36px touch minimum.
 

@@ -2,8 +2,25 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { registerWeixinRoutes } from './routes.js';
+import { createWeixinRuntime } from './runtime.js';
 
 describe('authenticated Bot WeChat routes', () => {
+  it('reports a disabled channel and blocks direct mutation requests, not only UI buttons', async () => {
+    const app = express();
+    app.use(express.json());
+    const runtime = createWeixinRuntime({ env: { NODE_ENV: 'development' } });
+    registerWeixinRoutes(app, runtime);
+    const root = '/api/yuri/assistants/bot/weixin';
+    const response = await request(app).get(root).expect(200);
+    expect(response.body).toEqual({ status: 'disabled', error: null });
+    for (const action of ['login', 'verify', 'retry', 'transfer']) {
+      const result = await request(app).post(`${root}/${action}`).send({}).expect(403);
+      expect(result.body).toEqual({ error: 'channel_disabled' });
+    }
+    await request(app).delete(root).expect(403);
+    await runtime.close();
+  });
+
   it('keeps the existing authentication boundary, has explicit routes and no-store QR responses', async () => {
     const app = express();
     app.use(express.json());

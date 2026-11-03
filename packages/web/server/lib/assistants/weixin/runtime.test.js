@@ -23,7 +23,7 @@ const inbound = (id = '1', peer = 'owner', text = 'hello') => ({
   item_list: [{ type: 1, text_item: { text } }],
 });
 
-function fixture({ directory = root(), configureAPI, service: externalService, clock } = {}) {
+function fixture({ directory = root(), configureAPI, service: externalService, clock, env = {} } = {}) {
   const pages = new Map();
   const service = externalService ?? {
     snapshot: () => ({ assistants: ['bot', 'other-bot', 'third-bot'].map((id) => ({ id, name: `Name ${id}` })) }),
@@ -46,7 +46,7 @@ function fixture({ directory = root(), configureAPI, service: externalService, c
     sendTyping: vi.fn(async () => ({})),
   };
   configureAPI?.(api);
-  const runtime = createWeixinRuntime({ directory, service, api, intervalMs: 15, ...(clock ? { clock } : {}) });
+  const runtime = createWeixinRuntime({ directory, service, api, env, intervalMs: 15, ...(clock ? { clock } : {}) });
   closers.push(() => runtime.close());
   const bind = async (id = 'bot') => {
     await runtime.startLogin(id, 'zh-CN');
@@ -57,6 +57,52 @@ function fixture({ directory = root(), configureAPI, service: externalService, c
 }
 
 describe('Weixin Host runtime', () => {
+  it.each([
+    { NODE_ENV: 'development' },
+    { YURI_ELECTRON_DEV: '1' },
+    { YURI_ELECTRON_DEV: 'true' },
+    { NODE_ENV: 'production', YURI_WEIXIN_ENABLED: '0' },
+    { YURI_WEIXIN_ENABLED: 'false' },
+    { YURI_WEIXIN_ENABLED: 'invalid' },
+  ])('disables channel startup and all mutations without opening storage for %j', async (env) => {
+    const directory = path.join(root(), 'must-not-open');
+    const api = { getQRCode: vi.fn(), getUpdates: vi.fn(), sendText: vi.fn(), getConfig: vi.fn(), sendTyping: vi.fn() };
+    const service = { channelPage: vi.fn(), send: vi.fn() };
+    const runtime = createWeixinRuntime({ directory, api, service, env });
+    closers.push(() => runtime.close());
+    expect(runtime.status('bot')).toEqual({ status: 'disabled', error: null });
+    for (const method of ['startLogin', 'verify', 'retry', 'disconnect', 'transfer']) {
+      expect(() => runtime[method]('bot', {})).toThrow('channel_disabled');
+    }
+    runtime.onTurnEvent({ type: 'yuri:contact-turn-start', properties: { assistantID: 'bot', turnID: 'turn' } });
+    await runtime.forget('bot');
+    await runtime.close();
+    expect(fs.existsSync(directory)).toBe(false);
+    for (const call of Object.values(api)) expect(call).not.toHaveBeenCalled();
+    expect(service.send).not.toHaveBeenCalled();
+    expect(service.channelPage).not.toHaveBeenCalled();
+  });
+
+  it('a disabled dev runtime cannot acquire the production lease or delete its binding', async () => {
+    const production = fixture();
+    await production.bind();
+    const dev = fixture({ directory: production.directory, env: { NODE_ENV: 'development' } });
+    expect(dev.runtime.status('bot')).toEqual({ status: 'disabled', error: null });
+    await dev.runtime.forget('bot');
+    await dev.runtime.close();
+    production.updates.push([inbound()]);
+    await vi.waitFor(() => expect(production.service.send).toHaveBeenCalledTimes(1));
+    expect(production.runtime.status('bot')).toEqual({ status: 'connected', error: null });
+    expect(dev.api.getUpdates).not.toHaveBeenCalled();
+  });
+
+  it.each(['1', 'true'])('requires an explicit %s override to enable WeChat in development', async (enabled) => {
+    const f = fixture({ env: { NODE_ENV: 'development', YURI_ELECTRON_DEV: '1', YURI_WEIXIN_ENABLED: enabled } });
+    await f.bind();
+    expect(f.runtime.status('bot').status).toBe('connected');
+    expect(f.api.getUpdates).toHaveBeenCalled();
+  });
+
   it('QR binds one Bot, admits only the owner once, and sends persisted text with the latest context', async () => {
     const f = fixture();
     f.updates.push([inbound('1'), inbound('1'), inbound('2', 'stranger'), { ...inbound('3'), group_id: 'group' }]);

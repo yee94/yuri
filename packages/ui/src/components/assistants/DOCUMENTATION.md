@@ -12,6 +12,9 @@ not global Settings search entries. Host-backed web/desktop/mobile use the same
 routes; standalone VS Code and older unsupported Hosts show an explicit unsupported
 state. See the backend `assistants/weixin/DOCUMENTATION.md` for permissions and
 delivery semantics. No new App deeplink or native SDK integration is included.
+Host-reported `disabled` is distinct from disconnected/unsupported: it shows an
+explicit disabled message, offers no channel actions, and does not poll. Development
+Hosts disable the channel before opening channel storage; this is not a UI-only gate.
 
 Unbound Bots also show local connection candidates by the current owner's name.
 Moving requires a separate confirmation that discloses discarded pending messages

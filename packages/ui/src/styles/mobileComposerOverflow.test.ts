@@ -124,9 +124,16 @@ describe('mobile composer overflow and swap contract', () => {
         expect(primaryInput).toBeDefined();
         expect(primaryInput).not.toContain('showScrollToBottom=');
         expect(primaryInput).not.toContain('onScrollToBottom=');
-        expect(mobileCss).toMatch(/\.yuri-mobile-composer-foot--overlay\s*>\s*\.yuri-transcript-scroll-controls\s*\{[^}]*bottom:\s*var\(--yuri-chat-foot-inset\)/s);
+        const controlsRule = mobileCss.match(/\.yuri-mobile-composer-foot--overlay\s*>\s*\.yuri-transcript-scroll-controls\s*\{([^}]*)\}/s)?.[1];
+        expect(controlsRule).toContain('--yuri-transcript-controls-swap: 0');
+        expect(controlsRule).toContain('var(--yuri-chat-foot-inset)');
+        expect(controlsRule).toContain('var(--yuri-transcript-compact-inset, var(--yuri-chat-foot-inset))');
+        expect(controlsRule).not.toContain('var(--yuri-mobile-composer-swap');
+        expect(mobileCss).toMatch(/data-yuri-composer-swap-rest="compact"\]\s*>\s*\.yuri-mobile-composer-foot--overlay\s*>\s*\.yuri-transcript-scroll-controls\s*\{[^}]*--yuri-transcript-controls-swap:\s*1/s);
+        expect(mobileCss).toMatch(/\.yuri-chat-composer-swap-scope:is\(\s*\[data-yuri-composer-swap-phase="tracking"\],\s*\[data-yuri-composer-swap-phase="snapping"\]\s*\)\s*\.yuri-transcript-scroll-controls\s*\{\s*display:\s*none/s);
         const controls = readFileSync(join(here, '../components/chat/components/TranscriptScrollControls.tsx'), 'utf-8');
-        expect(controls).toContain('chat-input-column flex items-center justify-end gap-2');
+        expect(controls).toContain('className="chat-input-column"');
+        expect(controls).toContain('yuri-transcript-scroll-controls-row mx-auto flex items-center justify-end gap-2');
         expect(controls).not.toContain('restart');
         expect(chatInputSource).toContain('placement="compact"');
         expect(chatInputSource).toContain('yuri-mobile-composer-compact-chrome--with-scroll');

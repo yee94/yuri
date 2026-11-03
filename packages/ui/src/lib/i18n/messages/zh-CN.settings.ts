@@ -15,6 +15,7 @@ export const settingsDict = {
   'assistants.weixin.verifySubmit': '确认',
   'assistants.weixin.attention': '连接需要处理',
   'assistants.weixin.status.disconnected': '未连接',
+  'assistants.weixin.status.disabled': '微信通道已禁用，开发模式默认不连接。',
   'assistants.weixin.status.waiting': '等待扫码',
   'assistants.weixin.status.scanned': '请在微信中确认连接',
   'assistants.weixin.status.verify': '请输入验证码',

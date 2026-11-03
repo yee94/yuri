@@ -61,9 +61,13 @@ describe('assistant WeChat query boundary', () => {
     expect(options.refetchIntervalInBackground).toBe(false);
     expect(options.refetchInterval({ state: { data: { status: 'waiting', error: null } } })).toBe(2000);
     expect(options.refetchInterval({ state: { data: { status: 'connected', error: null } } })).toBe(15_000);
-    for (const status of ['disconnected', 'expired', 'error', 'unsupported'] as const) {
+    for (const status of ['disconnected', 'expired', 'error', 'unsupported', 'disabled'] as const) {
       expect(options.refetchInterval({ state: { data: { status, error: null } } })).toBe(false);
     }
+  });
+
+  it('recognizes a disabled channel instead of treating it as disconnected or unsupported', () => {
+    expect(parseAssistantWeixinStatus({ status: 'disabled', error: null })).toEqual({ status: 'disabled', error: null });
   });
 
   it('only exposes validated source identity/name/revision, never source credentials', () => {

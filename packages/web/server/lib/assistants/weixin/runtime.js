@@ -27,7 +27,19 @@ const feedback = (language, kind) => {
 const safeError = (error) => error instanceof WeixinError ? error.code
   : ['account_in_use', 'not_found', 'no_provider'].includes(error?.code) ? error.code : 'channel_error';
 
-export function createWeixinRuntime({ directory, service, refreshAllowedRoots = async () => {}, api = createWeixinAPI(), clock = Date.now, intervalMs = 2000 } = {}) {
+export function createWeixinRuntime({ directory, service, refreshAllowedRoots = async () => {}, api = createWeixinAPI(), clock = Date.now, intervalMs = 2000, env = process.env } = {}) {
+  const configured = String(env.YURI_WEIXIN_ENABLED ?? '').trim().toLowerCase();
+  const development = env.NODE_ENV === 'development' || ['1', 'true'].includes(String(env.YURI_ELECTRON_DEV ?? '').trim().toLowerCase());
+  const enabled = configured ? ['1', 'true'].includes(configured) : !development;
+  if (!enabled) {
+    // Do not open the shared store, acquire a lease, or remove production bindings.
+    const disabled = () => { throw new WeixinError('channel_disabled'); };
+    return {
+      status: () => ({ status: 'disabled', error: null }),
+      startLogin: disabled, verify: disabled, retry: disabled, disconnect: disabled, transfer: disabled,
+      forget: async () => {}, onTurnEvent: () => {}, close: async () => {},
+    };
+  }
   const store = createWeixinStore(directory);
   const owner = randomUUID();
   const logins = new Map();

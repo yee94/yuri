@@ -15,6 +15,7 @@ export const settingsDict = {
   'assistants.weixin.verifySubmit': '확인',
   'assistants.weixin.attention': '연결을 확인해야 합니다',
   'assistants.weixin.status.disconnected': '연결되지 않음',
+  'assistants.weixin.status.disabled': 'WeChat이 비활성화되었습니다. 개발 모드에서는 기본적으로 연결하지 않습니다.',
   'assistants.weixin.status.waiting': '스캔 대기 중',
   'assistants.weixin.status.scanned': 'WeChat에서 연결을 확인하세요',
   'assistants.weixin.status.verify': '인증 코드를 입력하세요',

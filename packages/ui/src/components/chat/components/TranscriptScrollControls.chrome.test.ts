@@ -38,12 +38,15 @@ test.skipIf(!resolveChrome())('navigation follows compact pill geometry and uses
         for (const width of [320, 402, 430, 1200]) {
             await page.send('Emulation.setDeviceMetricsOverride', { width, height: 874, deviceScaleFactor: 1, mobile: false });
             for (const dark of [false, true]) {
-                for (const progress of (width === 1200 ? [0] : [0, 0.5, 1])) {
+                for (const progress of (width === 1200 ? [0] : [0, 1])) {
                     const result = await page.evaluate<{ gap: number; rightInset: number; active: string; voice: string; count: number; sizes: { width: number; height: number; icon: number }[]; spacing: number; iconColor: string; halo: string; animation: string }>(`(()=>{
                         document.documentElement.classList.toggle('dark',${dark});
                         document.querySelectorAll('.yuri-transcript-scroll-controls button').forEach(b=>b.style.transition='none');
                         document.documentElement.classList.toggle('mobile-pointer',${width !== 1200});
                         document.documentElement.classList.toggle('desktop-runtime',${width === 1200});
+                        const scope=document.querySelector('.fixture');
+                        scope.dataset.yuriComposerSwapPhase='rest';
+                        scope.dataset.yuriComposerSwapRest='${progress === 1 ? 'compact' : 'expanded'}';
                         document.querySelector('.yuri-mobile-composer-foot').style.setProperty('--yuri-mobile-composer-swap','${progress}');
                         const row=document.querySelector('.yuri-transcript-scroll-controls').getBoundingClientRect();
                         const pill=document.querySelector('.yuri-mobile-composer-compact-layer').getBoundingClientRect();
@@ -75,9 +78,42 @@ test.skipIf(!resolveChrome())('navigation follows compact pill geometry and uses
                     if ((width === 402 && progress === 1) || width === 1200) {
                         await page.screenshotPng(join(root, `speech-follow-${width}-${dark ? 'dark' : 'light'}.png`));
                     }
+                    if (width !== 1200) {
+                        const transitions = await page.evaluate<{ display: string; boxes: number; animations: number }[]>(`(()=>{
+                            const scope=document.querySelector('.fixture'),foot=document.querySelector('.yuri-mobile-composer-foot');
+                            const controls=document.querySelector('.yuri-transcript-scroll-controls');
+                            const results=[];
+                            for(const phase of ['tracking','snapping','tracking','snapping']){
+                                scope.dataset.yuriComposerSwapPhase=phase;
+                                for(const progress of [0,0.01,0.5,0.99,1]){
+                                    foot.style.setProperty('--yuri-mobile-composer-swap',String(progress));
+                                    results.push({display:getComputedStyle(controls).display,
+                                        boxes:[...controls.querySelectorAll('button')].reduce((count,b)=>count+b.getClientRects().length,0),
+                                        animations:controls.getAnimations({subtree:true}).length});
+                                }
+                            }
+                            scope.dataset.yuriComposerSwapPhase='rest';
+                            foot.style.setProperty('--yuri-mobile-composer-swap','${progress}');
+                            return results;
+                        })()`);
+                        for (const transition of transitions) {
+                            expect(transition).toEqual({ display: 'none', boxes: 0, animations: 0 });
+                        }
+                        const restored = await page.evaluate<number[]>(`[...document.querySelectorAll('.yuri-transcript-scroll-controls button')].map(b=>b.getBoundingClientRect().width)`);
+                        expect(restored).toHaveLength(2);
+                        for (const size of restored) expect(size).toBeCloseTo(diameter, 1);
+                    }
                 }
             }
         }
+        const nativeSizes = await page.evaluate<number[]>(`(()=>{
+            document.documentElement.classList.add('yuri-native-ios-composer');
+            document.querySelector('.fixture').dataset.yuriComposerSwapRest='compact';
+            document.querySelector('.yuri-mobile-composer-foot').style.setProperty('--yuri-mobile-composer-swap','1');
+            const sizes=[...document.querySelectorAll('.yuri-transcript-scroll-controls button')].map(b=>b.getBoundingClientRect().width);
+            document.documentElement.classList.remove('yuri-native-ios-composer');return sizes;
+        })()`);
+        for (const size of nativeSizes) expect(size).toBeCloseTo(30, 1);
         await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
         const reduced = await page.evaluate<{ animation: string; halo: string; color: string }>(`(()=>{
             const button=document.querySelector('.yuri-speech-follow-active'),style=getComputedStyle(button);

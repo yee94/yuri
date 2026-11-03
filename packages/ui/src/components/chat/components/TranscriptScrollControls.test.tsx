@@ -104,6 +104,28 @@ it('does not expose another transcript’s speech action or any action on an ina
     expect(host.querySelector('button')).toBeNull();
 });
 
+it('keeps action eligibility current while the composer transition hides the row', async () => {
+    host.className = 'yuri-chat-composer-swap-scope';
+    host.dataset.yuriComposerSwapPhase = 'tracking';
+    props.showScrollToBottom = true;
+    await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); });
+    await render();
+    expect(host.querySelectorAll('button')).toHaveLength(2);
+    host.dataset.yuriComposerSwapPhase = 'snapping';
+    await act(async () => playback?.stop());
+    expect(host.querySelectorAll('button')).toHaveLength(1);
+    props = { ...props, showScrollToBottom: false };
+    await render();
+    host.dataset.yuriComposerSwapPhase = 'rest';
+    expect(host.querySelector('.yuri-transcript-scroll-controls')).toBeNull();
+    host.dataset.yuriComposerSwapPhase = 'tracking';
+    await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); });
+    host.dataset.yuriComposerSwapRest = 'compact';
+    host.dataset.yuriComposerSwapPhase = 'rest';
+    expect([...host.querySelectorAll('button')].map(button => button.getAttribute('aria-label')))
+        .toEqual(['chat.messageBody.tts.follow']);
+});
+
 it('does no leaf snapshot or subscription work over 50 unrelated parent updates', async () => {
     function Parent({ version }: { version: number }) {
         return <div data-version={version}><TranscriptScrollControls {...props} /></div>;
