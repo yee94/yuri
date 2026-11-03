@@ -1,10 +1,14 @@
 import type { OpenCodeClient } from '@opencode/client';
 
+type CredentialClient = Pick<OpenCodeClient, 'credential'> & {
+  config: Pick<OpenCodeClient['config'], 'get'>;
+};
+
 export type ProviderCredential =
   | { type: 'api'; key: string }
   | { type: 'oauth'; access: string; refresh: string; expires: number; accountId?: string; enterpriseUrl?: string };
-export function configureOpenCodeCredentials(resolveClient: (() => OpenCodeClient) | null): void;
-export function currentClient(): OpenCodeClient;
+export function configureOpenCodeCredentials(resolveClient: (() => CredentialClient) | null): void;
+export function currentClient(): CredentialClient;
 export function openCodeCredentialSource(deps: {
   buildOpenCodeUrl: (path: string, prefix?: string) => string;
   getOpenCodeAuthHeaders: () => Record<string, string>;

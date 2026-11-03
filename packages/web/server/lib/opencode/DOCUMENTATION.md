@@ -90,6 +90,11 @@ encoding, not removed V1 endpoints.
 - `packages/web/server/lib/ui-auth/ui-passkeys.js`: UI passkey storage and WebAuthn registration/authentication helpers (outside OpenCode module).
 
 ## Public exports (auth.js)
+Shared credential and location-release declarations require only the SDK resources
+they consume (`credential`, `config.get`, and `debug.location.evict`), not the entire
+generated client. VS Code and Web may resolve compatible client patch versions;
+unrelated new SDK resources must not invalidate these host integration seams.
+
 - `configureOpenCodeCredentials(resolveClient)`: host composition injects a call-time SDK client resolver; `null` detaches it. Web/Electron share server wiring; VS Code wires its manager in extension activation. Mobile clients use their host.
 - `currentClient()`: trusted host-only client resolver used by config-sync to retain full V2 credential account records instead of the active-account quota projection.
 - `openCodeCredentialSource({ buildOpenCodeUrl, getOpenCodeAuthHeaders })`: resolves the current endpoint/auth at each read rather than capturing a previous runtime.

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenCode } from '@opencode/client';
 import { configureOpenCodeCredentials, getProviderAuth, removeProviderAuth } from './opencodeAuth';
 import { handleProxyBridgeMessage } from './bridge-proxy-runtime';
+import { releaseDeletedWorktreeLocation } from '../../web/server/lib/opencode/location-release.js';
 
 afterEach(() => { configureOpenCodeCredentials(null); vi.unstubAllGlobals(); });
 
@@ -14,7 +15,8 @@ describe('extension host credentials', () => {
       if (request.method === 'DELETE') return new Response(null, { status: 204 });
       return Response.json({ data: [{ id: 'credential_1', integrationID: 'openai', label: 'account', active: true, value: { type: 'key', key: 'test-key' } }] });
     }));
-    configureOpenCodeCredentials(() => OpenCode.make({ baseUrl: 'http://service.invalid' }));
+    const client = OpenCode.make({ baseUrl: 'http://service.invalid' });
+    configureOpenCodeCredentials(() => ({ credential: client.credential, config: { get: client.config.get } }));
     await expect(getProviderAuth('openai')).resolves.toEqual({ type: 'api', key: 'test-key' });
     await expect(removeProviderAuth('openai')).resolves.toBe(true);
     expect(calls).toEqual(['GET /api/credential', 'GET /api/credential', 'DELETE /api/credential/credential_1']);
@@ -34,4 +36,18 @@ describe('extension host credentials', () => {
     configureOpenCodeCredentials(() => OpenCode.make({ baseUrl: 'http://service.invalid' }));
     await expect(getProviderAuth('openai')).rejects.toThrow(/^Unable to read OpenCode credentials$/);
   });
+});
+
+it('accepts only the location eviction capability from the extension SDK', async () => {
+  const calls: Request[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    calls.push(new Request(input, init));
+    return new Response(null, { status: 204 });
+  }));
+  const client = OpenCode.make({ baseUrl: 'http://service.invalid' });
+  const getClient = () => ({ debug: { location: { evict: client.debug.location.evict } } });
+  await expect(releaseDeletedWorktreeLocation({ getClient, directory: '/repo/worktree' })).resolves.toEqual({ state: 'released' });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].method).toBe('DELETE');
+  expect(new URL(calls[0].url).pathname).toBe('/api/debug/location');
 });
