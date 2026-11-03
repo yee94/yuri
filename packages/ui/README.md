@@ -11,6 +11,11 @@ remain authoritative. The web host fills missing theme preferences with the same
 defaults; Web, Mini Chat and mobile cold-start backdrops use Cursor's dark surface
 until persisted splash colors or the resolved runtime theme are available.
 
+Cursor Dark's primary text, elevated text, quotes and tool-title base use opaque
+`#DEDEDE` instead of translucent gray-white. Secondary text, reasoning, tool
+descriptions, accent headings, links, syntax and status colors keep their existing
+palettes; other themes remain unchanged.
+
 ## Startup logo geometry
 
 The mobile HTML also includes the canonical 120 × 120 logo inside `#root` before

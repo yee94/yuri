@@ -73,6 +73,41 @@ describe('built-in Cursor and Osaka Jade palettes', () => {
     }
   });
 
+  test('keeps Cursor Dark primary text opaque light gray without flattening secondary or semantic colors', () => {
+    const theme = getDefaultTheme(true);
+    const css = new CSSVariableGenerator().generate(theme);
+
+    for (const token of ['foreground', 'card-foreground', 'popover-foreground']) {
+      expect(css).toContain(`--${token}: #DEDEDE !important;`);
+    }
+
+    for (const token of [
+      'surface-foreground', 'surface-elevated-foreground',
+      'chat-user-message', 'chat-assistant-message',
+      'markdown-heading4', 'markdown-bold', 'markdown-blockquote',
+    ]) {
+      expect(css).toContain(`--${token}: #DEDEDE;`);
+    }
+
+    expect(css).toContain('--muted-foreground: #848484 !important;');
+    expect(css).toContain('--secondary-foreground: #848484 !important;');
+    expect(css).toContain('--sidebar-accent-foreground: #DEDEDE !important;');
+    for (const token of ['surface-muted-foreground', 'chat-timestamp', 'chat-typing', 'markdown-strikethrough']) {
+      expect(css).toContain(`--${token}: #848484;`);
+    }
+    expect(css).toContain('--tools-title: color-mix(in srgb, #DEDEDE 50%, #848484);');
+    expect(css).toContain('--tools-description: #848484cc;');
+    expect(css).toContain('--markdown-heading1: #4c9df3;');
+    expect(css).toContain('--markdown-heading2: #4c9df3e6;');
+    expect(css).toContain('--markdown-heading3: #4c9df3cc;');
+    expect(css).toContain('--markdown-italic: #DEDEDEe6;');
+    expect(theme.colors.markdown?.link).toBe('#4c9df3');
+    expect(theme.colors.markdown?.inlineCode).toBe('#88C0D0');
+    expect(theme.colors.syntax.base.foreground).toBe('#D8DEE9');
+    expect(theme.colors.status.error).toBe('#BF616A');
+    expect(getDefaultTheme(false).colors.surface.foreground).not.toBe('#FFFFFF');
+  });
+
   test('keeps previously registered themes and does not enable other commented palettes', () => {
     const ids = new Set(themes.map((theme) => theme.metadata.id));
 

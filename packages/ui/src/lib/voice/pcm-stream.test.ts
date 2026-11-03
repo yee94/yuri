@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { playPcmStream } from './pcm-stream';
+import { createPcmSpeechCache, playPcmStream } from './pcm-stream';
 
 function fixture() {
   const sources: Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; onended: (() => void) | null; buffer: AudioBuffer | null; detune: { value: number }; connect: ReturnType<typeof vi.fn> }> = [];
@@ -21,7 +21,7 @@ function fixture() {
   const abort = new AbortController();
   const onStart = vi.fn();
   const play = (pitch = 1) => playPcmStream(response, context as unknown as AudioContext, { signal: abort.signal, pitch, volume: 1, onStart });
-  return { sources, context, controller, cancel, send, abort, onStart, play };
+  return { sources, context, response, controller, cancel, send, abort, onStart, play };
 }
 
 describe('streaming PCM playback', () => {
@@ -165,5 +165,92 @@ describe('streaming PCM playback', () => {
     expect(f.sources.at(-1)!.start.mock.calls[0][0]).toBeLessThan(2);
     f.abort.abort();
     await rejected;
+  });
+
+  it('drains late subtitles past the two-second audio queue without advancing the audible clock', async () => {
+    const f = fixture();
+    const cache = createPcmSpeechCache('第一句。第二句。');
+    const onProgress = vi.fn();
+    const playing = playPcmStream(f.response, f.context as unknown as AudioContext, { signal: f.abort.signal, pitch: 1, volume: 1, onStart: f.onStart, cache, onProgress });
+    const rejected = expect(playing).rejects.toThrow();
+    for (let i = 0; i < 30; i++) f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+    f.send({ type: 'subtitle', text: '第二句。', words: [{ word: '第二句。', startTime: 3, endTime: 5.8 }] });
+    f.send({ type: 'subtitle', text: '第一句。', words: [{ word: '第一句。', startTime: 0, endTime: 2.8 }] });
+    f.send({ type: 'done' }); f.controller.close();
+    await vi.waitFor(() => expect(cache.complete).toBe(true));
+    expect(cache.timeline.at(3.5)?.text).toBe('第二句。');
+    expect(f.sources).toHaveLength(10);
+    expect(onProgress).not.toHaveBeenCalled();
+    f.context.currentTime = 0.15;
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: '第一句。' })));
+    expect(cache.position).toBeCloseTo(0.13);
+    f.abort.abort(); await rejected;
+  });
+
+  it('ignores expired subtitles and follows pitch-adjusted, starvation-aware audio time', async () => {
+    const f = fixture(); const cache = createPcmSpeechCache('第一句。第二句。'); const onProgress = vi.fn();
+    const playing = playPcmStream(f.response, f.context as unknown as AudioContext, { signal: f.abort.signal, pitch: 2, volume: 1, onStart: f.onStart, cache, onProgress });
+    const rejected = expect(playing).rejects.toThrow();
+    for (let i = 0; i < 4; i++) f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+    await vi.waitFor(() => expect(f.sources).toHaveLength(4));
+    f.context.currentTime = 0.35;
+    f.send({ type: 'subtitle', text: '第一句。', words: [{ word: '第一句。', startTime: 0, endTime: 0.3 }] });
+    f.send({ type: 'subtitle', text: '第二句。', words: [{ word: '第二句。', startTime: 0.4, endTime: 1.5 }] });
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: '第二句。' })));
+    expect(cache.position).toBeCloseTo(0.66);
+    f.sources.forEach((source) => source.onended?.()); f.context.currentTime = 5;
+    f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+    await vi.waitFor(() => expect(cache.samples / 24000).toBe(1));
+    expect(f.sources).toHaveLength(4);
+    expect(cache.position).toBeCloseTo(0.8);
+    f.abort.abort(); await rejected;
+  });
+
+  it('replays complete cached PCM from the stopped sample without a network stream', async () => {
+    const f = fixture(); const cache = createPcmSpeechCache('缓存的音频。');
+    cache.chunks = [new Uint8Array(48000)]; cache.samples = 24000; cache.complete = true; cache.position = 0.6;
+    const playing = playPcmStream(null, f.context as unknown as AudioContext, { signal: f.abort.signal, pitch: 1, volume: 1, onStart: f.onStart, cache });
+    await vi.waitFor(() => expect(f.sources).toHaveLength(1));
+    expect(f.sources[0].buffer!.duration).toBeCloseTo(0.4);
+    f.context.currentTime = 1; f.sources[0].onended?.(); await playing;
+    expect(cache.position).toBe(1);
+  });
+
+  it('publishes one cue for 500 clock samples and releases its clock on stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture(); const cache = createPcmSpeechCache('同一句话。'); const onProgress = vi.fn();
+      const playing = playPcmStream(f.response, f.context as unknown as AudioContext, { signal: f.abort.signal, pitch: 1, volume: 1, onStart: f.onStart, cache, onProgress });
+      const rejected = expect(playing).rejects.toThrow();
+      f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+      f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+      f.send({ type: 'subtitle', text: '同一句话。', words: [{ word: '同一句话。', startTime: 0, endTime: 0.4 }] });
+      f.send({ type: 'done' }); f.controller.close();
+      for (let index = 0; index < 30; index++) await Promise.resolve();
+      f.context.currentTime = 0.1;
+      await vi.advanceTimersByTimeAsync(25000);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      f.abort.abort(); await rejected;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('uses the output timestamp rather than the ahead-of-speaker AudioContext clock', async () => {
+    const f = fixture(); const cache = createPcmSpeechCache('第一句。第二句。'); const onProgress = vi.fn();
+    let outputTime = 0;
+    Object.assign(f.context, { getOutputTimestamp: () => ({ contextTime: outputTime }) });
+    const playing = playPcmStream(f.response, f.context as unknown as AudioContext, { signal: f.abort.signal, pitch: 1, volume: 1, onStart: f.onStart, cache, onProgress });
+    const rejected = expect(playing).rejects.toThrow();
+    for (let index = 0; index < 4; index++) f.send({ type: 'audio', data: btoa('\x00\x40'.repeat(4800)) });
+    f.send({ type: 'subtitle', text: '第一句。', words: [{ word: '第一句。', startTime: 0, endTime: 0.4 }] });
+    f.send({ type: 'subtitle', text: '第二句。', words: [{ word: '第二句。', startTime: 0.4, endTime: 0.8 }] });
+    await vi.waitFor(() => expect(f.sources).toHaveLength(4));
+    f.context.currentTime = 0.7;
+    for (let index = 0; index < 20; index++) await Promise.resolve();
+    expect(onProgress).not.toHaveBeenCalled();
+    outputTime = 0.3;
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: '第一句。' })));
+    expect(cache.position).toBeCloseTo(0.28);
+    f.abort.abort(); await rejected;
   });
 });

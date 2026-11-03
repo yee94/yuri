@@ -559,7 +559,7 @@ export const useChatAutoFollow = ({
         const rect = speech.range.getBoundingClientRect?.();
         if (!rect || !rect.height) return;
         const viewport = container.getBoundingClientRect();
-        const inset = Math.min(80, container.clientHeight * 0.2);
+        const inset = Math.min(96, container.clientHeight * 0.2);
         // Desktop's viewport excludes chrome; mobile still reserves its overlay edges.
         const visibleInset = isMobileRef.current ? inset : 0;
         if (rect.top >= viewport.top + visibleInset && rect.bottom <= viewport.bottom - visibleInset) return;
@@ -567,7 +567,7 @@ export const useChatAutoFollow = ({
             Math.max(0, geometry.scrollTop + rect.top - viewport.top - inset));
         if (Math.abs(nextTop - geometry.scrollTop) <= 1) return;
         releaseAutoFollow();
-        container.scrollTo({ top: nextTop, behavior: 'instant' });
+        container.scrollTo({ top: nextTop, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
         lastScrollTopRef.current = container.scrollTop;
     });
     React.useEffect(() => {

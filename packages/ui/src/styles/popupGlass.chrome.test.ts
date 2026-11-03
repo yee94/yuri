@@ -37,7 +37,7 @@ test.skipIf(!resolveChrome())('popup glass shares theme fill but has lighter ele
         return {fill:popup.backgroundColor,alpha:alpha(popup.backgroundColor),blur:popup.backdropFilter,
           edge:popup.getPropertyValue('--yuri-popup-edge'),shadow:popup.boxShadow,pickerShadow:picker.boxShadow,
           sameFill:popup.backgroundColor===picker.backgroundColor,menuFill:style('menu').backgroundColor,
-          foregroundAlpha:alpha(popup.getPropertyValue('--surface-foreground')),dividerAlpha:alpha(style('header').borderBottomColor),sameDivider:style('header').borderBottomColor===getComputedStyle(document.querySelector('#list > div')).borderBottomColor&&style('header').borderBottomColor===style('separator').backgroundColor,
+          foreground:popup.color,foregroundAlpha:alpha(popup.getPropertyValue('--surface-foreground')),dividerAlpha:alpha(style('header').borderBottomColor),sameDivider:style('header').borderBottomColor===getComputedStyle(document.querySelector('#list > div')).borderBottomColor&&style('header').borderBottomColor===style('separator').backgroundColor,
           dividerWidth:style('separator').height,
           listFill:list.backgroundColor,listShadow:list.boxShadow,listScrolls:document.querySelector('#list').scrollHeight>document.querySelector('#list').clientHeight};
       };</script></body></html>`);
@@ -46,7 +46,7 @@ test.skipIf(!resolveChrome())('popup glass shares theme fill but has lighter ele
     for (const dark of [false, true]) {
       await page.evaluate(`document.documentElement.classList.toggle('dark', ${dark})`);
       await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }] });
-      const normal = await page.evaluate<{ alpha: number; blur: string; edge: string; shadow: string; pickerShadow: string; sameFill: boolean; fill: string; menuFill: string; listFill: string; listShadow: string; listScrolls: boolean; foregroundAlpha: number; dividerAlpha: number; sameDivider: boolean; dividerWidth: string }>('window.inspectGlass()');
+      const normal = await page.evaluate<{ alpha: number; blur: string; edge: string; shadow: string; pickerShadow: string; sameFill: boolean; fill: string; menuFill: string; listFill: string; listShadow: string; listScrolls: boolean; foreground: string; foregroundAlpha: number; dividerAlpha: number; sameDivider: boolean; dividerWidth: string }>('window.inspectGlass()');
       expect(normal.alpha).toBeCloseTo(255 * 0.22, 0);
       expect(normal.blur).toContain('blur(20px)');
       expect(normal.edge).toContain(dark ? '16%' : '12%');
@@ -58,6 +58,10 @@ test.skipIf(!resolveChrome())('popup glass shares theme fill but has lighter ele
       expect(normal.listFill).toBe('rgba(0, 0, 0, 0)');
       expect(normal.listShadow).toBe('none');
       expect(normal.listScrolls).toBe(true);
+      if (dark) {
+        expect(normal.foreground).toBe('rgb(222, 222, 222)');
+        expect(normal.foregroundAlpha).toBe(255);
+      }
       expect(normal.dividerAlpha).toBeCloseTo(normal.foregroundAlpha * (dark ? 0.08 : 0.06), 0);
       expect(normal.sameDivider).toBe(true);
       expect(normal.dividerWidth).toBe('0.5px');

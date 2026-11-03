@@ -55,6 +55,20 @@ Light mode uses sRGB `#38CD80`, targeting raw screenshot RGB `#85C688`
 under the embedded `Rec2020 Gamut with sRGB Transfer` screenshot profile. These
 profile-dependent raw pixel values are not display-independent CSS colors.
 
+The transcript's selected speech-follow circle uses that same `--voice-active-fill`
+as its background, with fixed-white `--voice-active-foreground` icon contrast.
+Two concentric green edge halos use the player's 15% / 25% tint and 2.4s breathing
+cadence; only the halo dims, never the button or white icon. Reduced motion keeps
+a static glow. Its inactive state retains the shared floating glass recipe. The mobile control row
+interpolates from expanded foot occupancy to the measured compact pill top and
+80% width, with an 8px vertical gap and 0.625rem trailing inset; the leaf owns the
+ResizeObserver measurement, not per-frame React state or transcript padding.
+Native iOS keeps the native inset because its web pill is hidden.
+Both navigation circles use a 1.875rem diameter (30px at the default scale)
+on desktop and expanded mobile; compact mobile interpolates down to 1.5rem
+(24px). Icons and the inter-button gap scale with
+the circle. Only this cluster opts out of the global 36px touch minimum.
+
 The first-prompt establishing draft joins the main chat and hydrating overlay-foot contract. The idle draft keeps the in-flow Composer contract.
 
 ## `isMobile` vs `mobile-pointer` (do not confuse)
@@ -126,6 +140,7 @@ Dense UI that intentionally uses sub-36px controls **must opt out**. Tailwind `h
 | Composer agent + model chips | `.composer-mobile-model-controls button` (locked to 26px so the revealed agent name stays vertically centered with the model chip) | `mobile.css` |
 | Message action / footer icons | `[data-message-action-group="true"] button` | `mobile.css` |
 | Composer queued-message chips | `.yuri-composer-queue button` / `[role="button"]` | `mobile.css` |
+| Transcript bottom / speech-follow circles | `.yuri-transcript-scroll-controls button` | `mobile.css` |
 | Conversation quote chips | `[data-composer-quote-list] button` (1.25rem close control) | `mobile.css` |
 | Mobile load-older hint | `button[data-chat-load-older="true"]` | `mobile.css` |
 | Composer attachment thumbs | `[data-attachment-preview="true"] button` | `mobile.css` |

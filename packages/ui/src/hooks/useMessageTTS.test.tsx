@@ -6,7 +6,7 @@ import { prepareSpeechCapture } from '@/lib/voice/audio-session';
 
 const mocks = vi.hoisted(() => ({
     config: { voiceProvider: 'volcengine', ttsInputMode: 'raw' },
-    speak: vi.fn(), stop: vi.fn(), unlock: vi.fn(), localUnlock: vi.fn(), fetch: vi.fn(), cancelSpeech: vi.fn(),
+    speak: vi.fn(), stop: vi.fn(), unlock: vi.fn(), localUnlock: vi.fn(), fetch: vi.fn(), cancelSpeech: vi.fn(), update: vi.fn(),
 }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: Object.assign(
     (selector: (state: typeof mocks.config) => unknown) => selector(mocks.config), { getState: () => mocks.config },
@@ -16,6 +16,7 @@ vi.mock('./useSayTTS', () => ({ useSayTTS: () => ({ stop: () => {}, unlockAudio:
 vi.mock('./useLocalTTS', () => ({ useLocalTTS: () => ({ stop: () => {}, unlockAudio: mocks.localUnlock }) }));
 vi.mock('@/lib/voice/browserVoiceService', () => ({ browserVoiceService: { cancelSpeech: mocks.cancelSpeech, resumeAudioContext: async () => {} } }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: mocks.fetch }));
+vi.mock('@/lib/voice/speech-tracking', () => ({ trackSpeech: () => ({ update: mocks.update, stop: () => {} }) }));
 let current: UseMessageTTSReturn;
 let root: ReturnType<typeof createRoot>;
 function Probe() { current = useMessageTTS({ enabled: true }); return null; }
@@ -32,7 +33,7 @@ it.each(['volcengine', 'openai', 'openai-compatible'])('delegates %s playback to
     mocks.config.voiceProvider = provider;
     await act(async () => root.render(<Probe />));
     await act(async () => current.play('你好'));
-    expect(mocks.speak).toHaveBeenCalledWith('你好', { onStart: expect.any(Function), onEnd: expect.any(Function), onError: expect.any(Function) });
+    expect(mocks.speak).toHaveBeenCalledWith('你好', expect.objectContaining({ onStart: expect.any(Function), onEnd: expect.any(Function), onError: expect.any(Function) }));
 });
 
 it('settles once on audio end, not synthesis completion', async () => {
@@ -48,9 +49,9 @@ it.each(['final', 'sanitized'])('cleans Markdown and slash separators before %s 
     mocks.config.ttsInputMode = mode;
     await act(async () => root.render(<Probe />));
     await act(async () => current.play('## **总结**\n支持 `iOS/Android/Web`，支持输入/输出。 / // ／ \\ \n[说明](https://example.com/guide)\n```sh\nnpm run build\n```'));
-    expect(mocks.speak).toHaveBeenCalledWith('总结 支持 iOS Android Web，支持输入 输出。 说明', {
+    expect(mocks.speak).toHaveBeenCalledWith('总结 支持 iOS Android Web，支持输入 输出。 说明', expect.objectContaining({
         onStart: expect.any(Function), onEnd: expect.any(Function), onError: expect.any(Function),
-    });
+    }));
 });
 
 it('stops active speech on Escape and ignores late playback completion', async () => {
@@ -160,25 +161,28 @@ it('does not interrupt the new owner when the replaced message unmounts', async 
     expect(mocks.cancelSpeech).not.toHaveBeenCalled();
 });
 
-it('bounds long speech requests and advances only after audible completion', async () => {
-    const text = '这是一段需要完整读完的长文字。'.repeat(800);
+it('submits the whole reply once, without a paragraph-by-paragraph synthesis queue', async () => {
+    const text = Array.from({ length: 8 }, () => '这是一段需要连续读完的长文字。'.repeat(8)).join('\n\n');
     const settled = vi.fn();
     await act(async () => current.play(text, settled));
-    expect(mocks.speak.mock.calls[0][0].length).toBeLessThanOrEqual(400);
+    expect(mocks.speak.mock.calls[0][0]).toBe(text);
     expect(mocks.speak).toHaveBeenCalledTimes(1);
     await act(async () => mocks.speak.mock.calls[0][1].onEnd());
-    expect(mocks.speak).toHaveBeenCalledTimes(2);
-    expect(settled).not.toHaveBeenCalled();
+    expect(mocks.speak).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledOnce();
 });
 
-it('recovers a transient interruption at the current chunk without replaying completed chunks', async () => {
-    await act(async () => current.play('第一段。'.repeat(100) + '\n\n' + '第二段。'.repeat(100)));
-    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
-    const interrupted = mocks.speak.mock.calls[1][0];
-    await act(async () => mocks.speak.mock.calls[1][1].onError('Speech synthesis interrupted or failed'));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 700)));
-    expect(mocks.speak).toHaveBeenCalledTimes(3);
-    expect(mocks.speak.mock.calls[2][0]).toBe(interrupted);
+it('recovers a broken stream using its audio key and last audible source offset', async () => {
+    vi.useFakeTimers();
+    const text = '第一段。\n\n第二段。';
+    await act(async () => current.play(text));
+    const first = mocks.speak.mock.calls[0][1];
+    await act(async () => first.onProgress({ text: '第二段。', start: 6, end: text.length }));
+    await act(async () => first.onError('Speech synthesis interrupted or failed'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    expect(mocks.speak).toHaveBeenCalledTimes(2);
+    expect(mocks.speak.mock.calls[1][0]).toBe(text);
+    expect(mocks.speak.mock.calls[1][1]).toEqual(expect.objectContaining({ resume: true, resumeOffset: 6, playbackKey: first.playbackKey }));
     expect(current.isPlaying).toBe(true);
 });
 
@@ -186,17 +190,18 @@ it('resumes the interrupted passage on play and supports an explicit restart', a
     const text = Array.from({ length: 20 }, (_, index) => `第${index}段。${'海浪慢慢涌来。'.repeat(15)}`).join('\n\n');
     expect(current.canResume(text)).toBe(false);
     await act(async () => current.play(text));
-    const first = mocks.speak.mock.calls[0][0];
-    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
-    const second = mocks.speak.mock.calls[1][0];
-    expect(second).not.toBe(first);
+    const first = mocks.speak.mock.calls[0][1];
+    await act(async () => first.onProgress({ text: '海浪慢慢涌来。', start: 80, end: 88 }));
     await act(async () => current.stop());
     expect(current.canResume(text)).toBe(true);
     expect(current.canResume(`${text}changed`)).toBe(false);
     await act(async () => current.play(text));
-    expect(mocks.speak.mock.calls[2][0]).toBe(second);
+    expect(mocks.speak.mock.calls[1][0]).toBe(text);
+    expect(mocks.speak.mock.calls[1][1]).toEqual(expect.objectContaining({ resume: true, resumeOffset: 80, playbackKey: first.playbackKey }));
     await act(async () => current.play(text, undefined, { restart: true }));
-    expect(mocks.speak.mock.calls[3][0]).toBe(first);
+    expect(mocks.speak.mock.calls[2][0]).toBe(text);
+    expect(mocks.speak.mock.calls[2][1]).toEqual(expect.objectContaining({ resume: false, resumeOffset: 0 }));
+    expect(mocks.speak.mock.calls[2][1].playbackKey).not.toBe(first.playbackKey);
 });
 
 it('does not restart after a user stop during recovery backoff', async () => {
@@ -251,15 +256,30 @@ it('hands automatic playback progress to another hook for the same reply', async
     target.dataset.speechIdentity = 'test-session:test-reply';
     const text = '第一段。'.repeat(80) + '第二段。'.repeat(80);
     await act(async () => current.play(text, undefined, { target }));
-    await act(async () => mocks.speak.mock.calls[0][1].onEnd());
-    const interrupted = mocks.speak.mock.calls[1][0];
+    const first = mocks.speak.mock.calls[0][1];
+    await act(async () => first.onProgress({ text: '第二段。', start: 320, end: 324 }));
     await act(async () => current.stop());
     expect(manual.canResume(text, target)).toBe(true);
     const otherTarget = document.createElement('div');
     otherTarget.dataset.speechIdentity = 'test-session:other-reply';
     expect(manual.canResume(text, otherTarget)).toBe(false);
     await act(async () => manual.play(text, undefined, { target }));
-    expect(mocks.speak.mock.calls[2][0]).toBe(interrupted);
+    expect(mocks.speak.mock.calls[1][0]).toBe(text);
+    expect(mocks.speak.mock.calls[1][1]).toEqual(expect.objectContaining({ resume: true, resumeOffset: 320, playbackKey: first.playbackKey }));
+});
+
+it('highlights only audible subtitle progress, not synthesis start, and fences late/backward updates', async () => {
+    const target = document.createElement('div');
+    await act(async () => current.play('第一句。第二句。', undefined, { target }));
+    const callbacks = mocks.speak.mock.calls[0][1];
+    await act(async () => callbacks.onStart());
+    expect(mocks.update).not.toHaveBeenCalled();
+    await act(async () => callbacks.onProgress({ text: '第二句。', start: 4, end: 8 }));
+    expect(mocks.update).toHaveBeenCalledExactlyOnceWith('第二句。', 4);
+    await act(async () => callbacks.onProgress({ text: '第一句。', start: 0, end: 4 }));
+    await act(async () => current.stop());
+    await act(async () => callbacks.onProgress({ text: '迟到的字幕', start: 8, end: 12 }));
+    expect(mocks.update).toHaveBeenCalledTimes(1);
 });
 
 it('offers no resume after completion, a provider/content-mode change or a runtime switch', async () => {

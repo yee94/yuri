@@ -2710,6 +2710,12 @@ button.yuri-mobile-worktree-label-trigger:active,
     min-width: 0 !important;
   }
 
+  :root.mobile-pointer:not(.desktop-runtime)
+    .yuri-transcript-scroll-controls button {
+    min-height: 0 !important;
+    min-width: 0 !important;
+  }
+
   /* Mobile load-older matches the desktop muted hint, not a 36px filled chip. */
   :root.mobile-pointer:not(.desktop-runtime)
     button[data-chat-load-older="true"],
@@ -3932,9 +3938,68 @@ button.yuri-mobile-worktree-label-trigger:active,
   opacity: calc(1 - min(1, var(--yuri-mobile-composer-swap) * 2));
 }
 
+.yuri-transcript-scroll-controls {
+  --yuri-transcript-control-size: calc(
+    1.875rem - 0.375rem * var(--yuri-transcript-controls-swap, 0)
+  );
+}
+
+.yuri-transcript-scroll-controls-row {
+  gap: calc(var(--yuri-transcript-control-size) / 5);
+}
+
+.yuri-transcript-scroll-controls button {
+  width: var(--yuri-transcript-control-size);
+  height: var(--yuri-transcript-control-size);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.yuri-transcript-scroll-controls button > svg {
+  width: calc(var(--yuri-transcript-control-size) / 2);
+  height: calc(var(--yuri-transcript-control-size) / 2);
+}
+
 .yuri-mobile-composer-foot--overlay > .yuri-transcript-scroll-controls {
+  --yuri-transcript-controls-swap: var(--yuri-mobile-composer-swap, 0);
   z-index: 30;
-  bottom: var(--yuri-chat-foot-inset);
+  bottom: calc(
+    (1 - var(--yuri-transcript-controls-swap)) * var(--yuri-chat-foot-inset)
+    + var(--yuri-transcript-controls-swap) * var(--yuri-transcript-compact-inset, var(--yuri-chat-foot-inset))
+  );
+}
+
+.yuri-mobile-composer-foot--overlay .yuri-transcript-scroll-controls-row {
+  width: calc(100% - 20% * var(--yuri-transcript-controls-swap));
+  padding-inline: calc(0.625rem * var(--yuri-transcript-controls-swap));
+}
+
+.yuri-transcript-scroll-controls .yuri-speech-follow-active {
+  background: var(--voice-active-fill);
+  color: var(--voice-active-foreground);
+  box-shadow:
+    0 0 0 calc(var(--yuri-transcript-control-size) * 0.15) color-mix(in srgb, var(--voice-active-fill) 15%, transparent),
+    0 0 0 calc(var(--yuri-transcript-control-size) * 0.1) color-mix(in srgb, var(--voice-active-fill) 25%, transparent);
+  animation: yuri-speech-follow-glow 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes yuri-speech-follow-glow {
+  50% {
+    box-shadow:
+      0 0 0 calc(var(--yuri-transcript-control-size) * 0.15) color-mix(in srgb, var(--voice-active-fill) 7.5%, transparent),
+      0 0 0 calc(var(--yuri-transcript-control-size) * 0.1) color-mix(in srgb, var(--voice-active-fill) 12.5%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-transcript-scroll-controls .yuri-speech-follow-active {
+    animation: none;
+  }
+}
+
+:root.yuri-native-ios-composer .yuri-transcript-scroll-controls {
+  --yuri-transcript-controls-swap: 0;
 }
 
 .yuri-mobile-composer-foot > .yuri-transcript-scroll-controls {

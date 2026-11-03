@@ -16,9 +16,11 @@
  * ```
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useEvent } from '@reactuses/core';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { playPcmStream } from '@/lib/voice/pcm-stream';
+import { createPcmSpeechCache, playPcmStream, type PcmSpeechCache } from '@/lib/voice/pcm-stream';
+import type { SpeechCue } from '@/lib/voice/speech-timeline';
 import { requestSpeechAudio } from '@/lib/voice/direct-tts';
 import { prepareSpeechPlayback, subscribeSpeechCapture } from '@/lib/voice/audio-session';
 import { getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
@@ -100,7 +102,15 @@ interface SpeakOptions {
   onEnd?: () => void;
   /** Callback on error */
   onError?: (error: string) => void;
+  onProgress?: (cue: SpeechCue) => void;
+  playbackKey?: object;
+  resume?: boolean;
+  resumeOffset?: number;
 }
+
+// Only the most recent stream is retained, shared by automatic/manual owners.
+// No tickets, credentials or AudioContext buffers are retained in this cache.
+let cachedSpeech: { key: object; identity: string; text: string; offset: number; pcm: PcmSpeechCache; pitch: number; volume: number } | null = null;
 
 // Shared AudioContext for Web Audio API playback (better iOS support)
 let sharedAudioContext: AudioContext | null = null;
@@ -125,7 +135,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
   
 
   // Check if server TTS is available
-  const checkAvailability = useCallback(async (): Promise<boolean> => {
+  const checkAvailability = useEvent(async (): Promise<boolean> => {
     const generation = ++availabilityGenerationRef.current;
     const transportIdentity = getRuntimeTransportIdentity();
     const applyAvailability = (available: boolean): boolean => {
@@ -143,19 +153,19 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
     } catch {
       return applyAvailability(false);
     }
-  }, [enabled]);
+  });
 
   // Check the Host capability when playback becomes enabled.
   useEffect(() => {
     void checkAvailability();
-  }, [checkAvailability]);
+  }, [enabled, checkAvailability]);
 
   useEffect(() => subscribeRuntimeEndpointChanged(() => {
     void checkAvailability();
   }), [checkAvailability]);
 
   // Stop current playback
-  const stop = useCallback(() => {
+  const stop = useEvent(() => {
     const session = sessionRef.current;
     sessionRef.current = null;
     session?.abort.abort();
@@ -172,11 +182,11 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
     }
     
     setIsPlaying(false);
-  }, []);
+  });
 
   // Pre-unlock audio for mobile Safari
   // This must be called within a user gesture context
-  const unlockAudio = useCallback(async (): Promise<void> => {
+  const unlockAudio = useEvent(async (): Promise<void> => {
     try {
       // Get or create AudioContext
       const ctx = getAudioContext();
@@ -198,10 +208,10 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
     } catch (err) {
       console.error('[useServerTTS] Failed to unlock audio:', err);
     }
-  }, []);
+  });
 
   // Speak text using server TTS
-  const speak = useCallback(async (text: string, options?: SpeakOptions): Promise<void> => {
+  const speak = useEvent(async (text: string, options?: SpeakOptions): Promise<void> => {
     // Stop any existing playback
     stop();
 
@@ -231,10 +241,58 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
       silentSource.connect(ctx.destination);
       silentSource.start(0);
 
+      const identity = getRuntimeTransportIdentity();
+      const previous = options?.resume && options.playbackKey && cachedSpeech?.key === options.playbackKey
+        && cachedSpeech.identity === identity && cachedSpeech.text === text ? cachedSpeech : null;
+      let offset = Math.max(0, Math.min(text.length, options?.resumeOffset ?? 0));
+      const playStream = async (response: Response | null, pcm: PcmSpeechCache, pitch: number, volume: number, base: number, endAt?: number) => {
+        await playPcmStream(response, ctx, {
+          signal: session.abort.signal, pitch, volume, cache: pcm, endAt,
+          onStart: () => {
+            if (sessionRef.current !== session) return;
+            setIsPlaying(true);
+            options?.onStart?.();
+          },
+          onProgress: (cue) => {
+            if (sessionRef.current !== session) return;
+            options?.onProgress?.({ ...cue, start: cue.start + base, end: cue.end + base });
+          },
+        });
+      };
+      const finish = () => {
+        if (sessionRef.current !== session) return;
+        if (cachedSpeech?.key === options?.playbackKey) cachedSpeech = null;
+        sessionRef.current = null;
+        setIsPlaying(false);
+        options?.onEnd?.();
+      };
+      if (previous) {
+        if (previous.pcm.complete) {
+          await playStream(null, previous.pcm, previous.pitch, previous.volume, previous.offset);
+          finish();
+          return;
+        }
+        // A cancelled/broken socket is not resumable. Reuse its cached tail only
+        // up to a timestamp-aligned text boundary, then synthesize the remainder
+        // in one new session. Unknown audio/text alignment never skips source.
+        const boundary = previous.pcm.timeline.lastBefore(previous.pcm.samples / 24000);
+        if (boundary && previous.offset + boundary.end < text.trimEnd().length) {
+          if (boundary.endTime > previous.pcm.position) {
+            await playStream(null, previous.pcm, previous.pitch, previous.volume, previous.offset, boundary.endTime);
+          }
+          offset = Math.max(offset, previous.offset + boundary.end);
+        }
+      }
+      session.abort.signal.throwIfAborted();
+      cachedSpeech = null;
+      offset += text.slice(offset).match(/^\s*/u)![0].length;
+      if (offset === text.length) { finish(); return; }
+
       // Fetch audio from server
-      const response = await requestSpeechAudio(text.trim(), session.abort.signal);
+      const response = await requestSpeechAudio(text.slice(offset), session.abort.signal);
 
       if (sessionRef.current !== session) {
+        await response.body?.cancel();
         return;
       }
 
@@ -246,21 +304,10 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
       const pitch = Number(response.headers.get('X-Speech-Pitch') ?? 1);
       const volume = Number(response.headers.get('X-Speech-Volume') ?? 1);
       if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
-        await playPcmStream(response, ctx, {
-          signal: session.abort.signal,
-          pitch,
-          volume,
-          onStart: () => {
-            if (sessionRef.current !== session) return;
-            setIsPlaying(true);
-            options?.onStart?.();
-          },
-        });
-        if (sessionRef.current === session) {
-          sessionRef.current = null;
-          setIsPlaying(false);
-          options?.onEnd?.();
-        }
+        const pcm = createPcmSpeechCache(text.slice(offset));
+        if (options?.playbackKey) cachedSpeech = { key: options.playbackKey, identity, text, offset, pcm, pitch, volume };
+        await playStream(response, pcm, pitch, volume, offset);
+        finish();
         return;
       }
 
@@ -333,10 +380,10 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
       }
       sessionRef.current = null;
     }
-  }, [stop]);
+  });
 
   // Cleanup on unmount
-  useEffect(() => subscribeRuntimeEndpointChanged(stop), [stop]);
+  useEffect(() => subscribeRuntimeEndpointChanged(() => { stop(); cachedSpeech = null; }), [stop]);
   useEffect(() => subscribeSpeechCapture(stop), [stop]);
 
   useEffect(() => {

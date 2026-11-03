@@ -67,8 +67,17 @@ test.each(['no-overflow', 'visible-bottom-edge', 'visible-top-edge', 'clamped-no
     },
 );
 
-test('speech uses the viewport owner, yields to downward scrolling, and resumes only on request', async () => {
+test.each([
+    { isMobile: false, reducedMotion: false }, { isMobile: true, reducedMotion: false },
+    { isMobile: false, reducedMotion: true }, { isMobile: true, reducedMotion: true },
+])('speech keeps breathing room and respects smooth/reduced motion (mobile=$isMobile, reduced=$reducedMotion)', async ({ isMobile, reducedMotion }) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const matchMedia = window.matchMedia.bind(window);
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => {
+        const media = matchMedia(query);
+        if (query === '(prefers-reduced-motion: reduce)') Object.defineProperty(media, 'matches', { value: reducedMotion });
+        return media;
+    });
     const host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
@@ -76,8 +85,9 @@ test('speech uses the viewport owner, yields to downward scrolling, and resumes 
     let playback: ReturnType<typeof trackSpeech> | undefined;
     let top = 0;
     let writes = 0;
+    const behaviors: (ScrollBehavior | undefined)[] = [];
     function Harness() {
-        api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 10, sessionIsWorking: false, isMobile: false });
+        api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 10, sessionIsWorking: false, isMobile });
         return React.createElement('div', { ref: api.scrollRef }, React.createElement('p', { 'data-speech-content': true }, '第一段。第二段。'));
     }
     try {
@@ -89,12 +99,14 @@ test('speech uses the viewport owner, yields to downward scrolling, and resumes 
         });
         scroller.getBoundingClientRect = () => new DOMRect(0, 0, 500, 300);
         scroller.scrollTo = (options?: ScrollToOptions | number) => {
-            if (typeof options === 'object') { top = options.top ?? top; writes++; }
+            if (typeof options === 'object') { top = options.top ?? top; writes++; behaviors.push(options.behavior); }
         };
         await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); playback.update('第一段。', 0); });
         getSpeechTracking()!.range!.getBoundingClientRect = () => new DOMRect(0, 900 - top, 300, 40);
         await act(async () => resumeSpeechFollowing());
         expect(top).toBe(840);
+        expect(behaviors).toEqual([reducedMotion ? 'instant' : 'smooth']);
+        expect(getSpeechTracking()!.range!.getBoundingClientRect().top).toBe(60);
         expect(api.state).toBe('released');
         await act(async () => {
             scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
@@ -112,7 +124,7 @@ test('speech uses the viewport owner, yields to downward scrolling, and resumes 
         expect(writes).toBe(count);
     } finally {
         await act(async () => { playback?.stop(); root.unmount(); });
-        host.remove(); vi.unstubAllGlobals();
+        host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
     }
 });
 

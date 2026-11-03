@@ -24,6 +24,11 @@
   isolation: isolate;
 }
 
+[data-speech-marker-inline-code="true"] {
+  background: transparent !important;
+  color: var(--foreground) !important;
+}
+
 .yuri-speech-marker-layer {
   position: absolute;
   inset: 0;

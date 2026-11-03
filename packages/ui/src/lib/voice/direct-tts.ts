@@ -8,7 +8,10 @@ async function* synthesize(ticket: SpeechTicket, text: string, signal: AbortSign
   const encoder = new TextEncoder();
   const params = {
     speaker: ticket.voice,
-    audio_params: { format: 'pcm', sample_rate: 24000, speech_rate: Math.round((ticket.speed! - 1) * 100) },
+    audio_params: {
+      format: 'pcm', sample_rate: 24000, speech_rate: Math.round((ticket.speed! - 1) * 100),
+      ...(['seed-tts-2.0', 'seed-icl-2.0'].includes(ticket.resourceId) ? { enable_subtitle: true } : {}),
+    },
     ...(ticket.resourceId === 'seed-tts-2.0' && ticket.voice === 'zh_female_vv_uranus_bigtts' ? {
       additions: JSON.stringify({ context_texts: ['请用自然、温暖的对话语气朗读，根据文本内容表达恰当的情感，保持清晰自然的停顿与重音，避免夸张的播音腔。'] }),
     } : {}),
@@ -42,6 +45,9 @@ async function* synthesize(ticket: SpeechTicket, text: string, signal: AbortSign
           for (const byte of chunk) binary += String.fromCharCode(byte);
           yield encoder.encode(`${JSON.stringify({ type: 'audio', data: btoa(binary) })}\n`);
         }
+      } else if (frame.event === 364 && state === 'audio') {
+        const subtitle = speechJson(frame.payload);
+        yield encoder.encode(`${JSON.stringify({ type: 'subtitle', text: subtitle.text, words: subtitle.words })}\n`);
       } else if (frame.event === 152 && state === 'audio') {
         const result = speechJson(frame.payload);
         if (result.status_code !== undefined && result.status_code !== 0 && result.status_code !== 20000000) throw new Error('Speech synthesis failed');

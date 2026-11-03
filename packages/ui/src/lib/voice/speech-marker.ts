@@ -3,12 +3,25 @@ export function createSpeechMarker(target: HTMLElement) {
     let range: Range | null = null;
     let layer: HTMLSpanElement | null = null;
     let observer: ResizeObserver | null = null;
+    let inlineCodes: HTMLElement[] = [];
+
+    const clearInlineCodes = () => {
+        for (const code of inlineCodes) code.removeAttribute('data-speech-marker-inline-code');
+        inlineCodes = [];
+    };
 
     const paint = () => {
         const rectangles = Array.from(range?.getClientRects?.() ?? [])
             .filter((rect) => rect.width > 0 && rect.height > 0)
             .sort((a, b) => a.top - b.top || a.left - b.left);
-        if (rectangles.length === 0) { layer?.replaceChildren(); return; }
+        if (rectangles.length === 0) {
+            for (const code of inlineCodes) code.removeAttribute('data-speech-marker-inline-code');
+            layer?.replaceChildren();
+            return;
+        }
+        for (const code of inlineCodes) {
+            if (!code.hasAttribute('data-speech-marker-inline-code')) code.setAttribute('data-speech-marker-inline-code', 'true');
+        }
 
         const origin = target.getBoundingClientRect();
         const fontSize = getComputedStyle(range?.startContainer.parentElement ?? target).fontSize;
@@ -53,6 +66,20 @@ export function createSpeechMarker(target: HTMLElement) {
     return {
         update(nextRange: Range | null) {
             range = nextRange;
+            let nextInlineCodes: HTMLElement[] = [];
+            if (range) {
+                const activeRange = range;
+                const ancestor = activeRange.commonAncestorContainer;
+                const element = ancestor instanceof Element ? ancestor : ancestor.parentElement;
+                const enclosingCode = element?.closest<HTMLElement>('code, .inline-code');
+                const candidates = enclosingCode ? [enclosingCode]
+                    : Array.from(element?.querySelectorAll<HTMLElement>('code, .inline-code') ?? []);
+                nextInlineCodes = candidates.filter((code) => target.contains(code) && !code.closest('pre') && activeRange.intersectsNode(code));
+            }
+            for (const code of inlineCodes) {
+                if (!nextInlineCodes.includes(code)) code.removeAttribute('data-speech-marker-inline-code');
+            }
+            inlineCodes = nextInlineCodes;
             paint();
             if (range && !observer && typeof ResizeObserver !== 'undefined') {
                 observer = new ResizeObserver(paint);
@@ -63,6 +90,7 @@ export function createSpeechMarker(target: HTMLElement) {
             observer?.disconnect();
             observer = null;
             range = null;
+            clearInlineCodes();
             layer?.remove();
             layer = null;
             target.removeAttribute('data-speech-marker-owner');

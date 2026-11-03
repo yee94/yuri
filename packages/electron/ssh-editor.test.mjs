@@ -8,7 +8,7 @@ const urlFor = (command, appId = 'vscode', projectPath = '/srv/project') => buil
 });
 
 describe('SSH editor handoff', () => {
-  test.each(sshEditorAppIds().filter((id) => id !== 'zed'))('%s preserves SSH aliases and encodes remote paths', (id) => {
+  test.each(sshEditorAppIds().filter((id) => id !== 'zed' && id !== 'wu'))('%s preserves SSH aliases and encodes remote paths', (id) => {
     const url = new URL(urlFor('ssh dev-box', id, '/srv/项目 #?%/folder.with.dot'));
     expect(url.protocol).toBe(`${id}:`);
     expect(url.hostname).toBe('vscode-remote');
@@ -26,6 +26,11 @@ describe('SSH editor handoff', () => {
   test('Zed uses its native SSH link, including IPv6 and custom ports', () => {
     expect(urlFor('ssh -p 2200 dev@[::1]', 'zed', '/srv/a b')).toBe('zed://ssh/dev@[::1]:2200/srv/a%20b');
     expect(urlFor('ssh alias', 'zed')).toBe('zed://ssh/alias/srv/project');
+  });
+
+  test('Wu reuses the Zed SSH link format under its own scheme', () => {
+    expect(urlFor('ssh -p 2200 dev@[::1]', 'wu', '/srv/a b')).toBe('wu://ssh/dev@[::1]:2200/srv/a%20b');
+    expect(urlFor('ssh alias', 'wu')).toBe('wu://ssh/alias/srv/project');
   });
 
   test.each(['ssh -i key host', 'ssh -J bastion host', 'ssh -F config host', 'ssh -o ServerAliveInterval=30 host'])('never silently discards options: %s', (command) => {

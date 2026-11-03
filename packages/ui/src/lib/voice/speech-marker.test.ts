@@ -78,3 +78,40 @@ it('removes all paint and observation on stop, and ignores a queued resize after
     expect(target.hasAttribute('data-speech-marker-owner')).toBe(false);
     expect(disconnect).toHaveBeenCalledTimes(1);
 });
+
+it('exposes marker paint through only the active inline-code backgrounds and restores them on advance or stop', () => {
+    target.innerHTML = '<p>版本：<code class="inline-code">0.2.27-beta.1</code></p><p>提交：<code>b7385390d</code></p><pre><code>不改变代码块</code></pre>';
+    const html = target.innerHTML;
+    const codes = [...target.querySelectorAll('code')];
+    const firstNode = codes[0].firstChild;
+    range.selectNodeContents(target.firstElementChild!);
+    marker.update(range);
+    expect(codes.map((code) => code.hasAttribute('data-speech-marker-inline-code'))).toEqual([true, false, false]);
+    range.selectNodeContents(target.children[1]);
+    marker.update(range);
+    expect(codes.map((code) => code.hasAttribute('data-speech-marker-inline-code'))).toEqual([false, true, false]);
+    marker.update(null);
+    expect(codes.every((code) => !code.hasAttribute('data-speech-marker-inline-code'))).toBe(true);
+    range.selectNodeContents(codes[0]);
+    marker.update(range);
+    expect(codes[0].hasAttribute('data-speech-marker-inline-code')).toBe(true);
+    expect(codes[0].firstChild).toBe(firstNode);
+    marker.stop();
+    expect(target.innerHTML).toBe(html);
+});
+
+it('does not retoggle an unchanged code node across subtitle cues or rescan it on resize', () => {
+    target.innerHTML = '<p>版本：<code>0.2.27-beta.1</code></p>';
+    range.selectNodeContents(target.firstElementChild!);
+    marker.update(range);
+    const code = target.querySelector('code')!;
+    const set = vi.spyOn(code, 'setAttribute');
+    const remove = vi.spyOn(code, 'removeAttribute');
+    for (let cue = 0; cue < 50; cue++) marker.update(range);
+    const query = vi.spyOn(target.firstElementChild!, 'querySelectorAll');
+    resize();
+    expect(set).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    set.mockRestore(); remove.mockRestore(); query.mockRestore();
+});

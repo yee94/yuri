@@ -1,4 +1,4 @@
-/** Bounded, sentence-aligned requests shared by every message speech provider. */
+/** Bounded requests for browser/local/Say fallback; streamed server TTS never uses this queue. */
 export function splitSpeechText(text: string): string[] {
     const chunks: string[] = [];
     let rest = text.trim();

@@ -4,6 +4,7 @@ const SCHEMES = new Map([
   ['cursor', 'cursor'],
   ['windsurf', 'windsurf'],
   ['zed', 'zed'],
+  ['wu', 'wu'],
 ]);
 
 export const sshEditorAppIds = () => [...SCHEMES.keys()];
@@ -39,9 +40,9 @@ export const buildSshEditorUrl = ({ appId, projectPath, ssh }) => {
     throw new Error('Invalid SSH port');
   }
   const remotePath = projectPath.split('/').map(encodeURIComponent).join('/');
-  if (appId === 'zed') {
+  if (appId === 'zed' || appId === 'wu') {
     const hostname = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-    return `zed://ssh/${user ? `${encodeURIComponent(user)}@` : ''}${hostname}${port ? `:${port}` : ''}${remotePath}`;
+    return `${scheme}://ssh/${user ? `${encodeURIComponent(user)}@` : ''}${hostname}${port ? `:${port}` : ''}${remotePath}`;
   }
   // Remote-SSH's structured authority carries an explicit port without treating
   // host:port as an OpenSSH hostname. Bare aliases retain the user's SSH config.

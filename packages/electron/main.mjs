@@ -3462,8 +3462,15 @@ const resolveAppIconPath = async (appPath) => {
   } catch {
     return null;
   }
-  const icon = entries.find((entry) => entry.toLowerCase().endsWith('.icns'));
-  return icon ? path.join(resourcesPath, icon) : null;
+  const iconFiles = entries.filter((entry) => entry.toLowerCase().endsWith('.icns'));
+  if (iconFiles.length === 0) return null;
+  // Bundles that ship a document icon (Wu, for example) put it next to the app
+  // icon; only accept it when it clearly belongs to this app.
+  const appStem = path.basename(appPath, '.app').toLowerCase();
+  const appIcon = iconFiles.find((entry) => entry.toLowerCase() === `${appStem}.icns`)
+    ?? iconFiles.find((entry) => entry.toLowerCase() !== 'document.icns');
+  const icon = appIcon ?? iconFiles[0];
+  return path.join(resourcesPath, icon);
 };
 
 const buildInstalledApps = async (apps) => {
@@ -3540,6 +3547,7 @@ const CLI_BY_APP_ID = {
   vscodium: 'codium',
   windsurf: 'windsurf',
   zed: 'zed',
+  wu: 'wu',
 };
 
 const WINDOWS_CLI_BY_APP_ID = {
@@ -3548,6 +3556,7 @@ const WINDOWS_CLI_BY_APP_ID = {
   vscodium: 'codium.cmd',
   windsurf: 'windsurf.cmd',
   zed: 'zed.cmd',
+  wu: 'wu.exe',
 };
 
 const WINDOWS_APP_EXECUTABLES = {
@@ -3557,6 +3566,7 @@ const WINDOWS_APP_EXECUTABLES = {
   vscodium: ['codium.exe', 'codium.cmd'],
   windsurf: ['windsurf.exe', 'windsurf.cmd'],
   zed: ['zed.exe', 'zed.cmd'],
+  wu: ['wu.exe'],
   'visual-studio': ['devenv.exe'],
   'sublime-text': ['subl.exe', 'sublime_text.exe'],
 };
@@ -3571,6 +3581,7 @@ const WINDOWS_APP_ID_BY_NAME = new Map([
   ['vscodium', 'vscodium'],
   ['windsurf', 'windsurf'],
   ['zed', 'zed'],
+  ['wu', 'wu'],
   ['visual studio', 'visual-studio'],
   ['sublime text', 'sublime-text'],
 ]);
@@ -3815,7 +3826,20 @@ const buildWindowsOpenFileSpecs = ({ filePath, appId, appName }) => {
   return specs;
 };
 
-const buildOpenProjectSpecs = ({ projectPath, appId, appName }) => {
+const APP_CLI_EXECUTABLES = {
+  wu: 'cli',
+};
+
+const resolveAppCliExecutable = async (appName, executablesByAppName) => {
+  const executable = executablesByAppName[appName];
+  if (!executable) return null;
+  const appPath = await resolveAppBundlePath(appName);
+  if (!appPath) return null;
+  const candidate = path.join(appPath, 'Contents', 'MacOS', executable);
+  return (await pathExists(candidate)) ? candidate : null;
+};
+
+const buildOpenProjectSpecs = async ({ projectPath, appId, appName }) => {
   if (appId === 'finder') {
     return [{ program: 'open', args: [projectPath] }];
   }
@@ -3825,6 +3849,14 @@ const buildOpenProjectSpecs = ({ projectPath, appId, appName }) => {
   }
 
   const specs = [];
+
+  // Editors installed outside PATH (Wu, for example, only links its CLI into
+  // ~/.local/bin) still need an explicit launch: opening the folder directly
+  // makes LaunchServices load it with the editor app bundle as data.
+  const bundleExecutable = await resolveAppCliExecutable(appName, APP_CLI_EXECUTABLES);
+  if (bundleExecutable) {
+    specs.push({ program: bundleExecutable, args: ['-n', projectPath] });
+  }
 
   const cli = CLI_BY_APP_ID[appId];
   if (cli) {
@@ -3839,7 +3871,7 @@ const buildOpenProjectSpecs = ({ projectPath, appId, appName }) => {
   return specs;
 };
 
-const buildOpenFileSpecs = ({ filePath, appId, appName }) => {
+const buildOpenFileSpecs = async ({ filePath, appId, appName }) => {
   if (appId === 'finder') {
     return [{ program: 'open', args: ['-R', filePath] }];
   }
@@ -3850,6 +3882,11 @@ const buildOpenFileSpecs = ({ filePath, appId, appName }) => {
   }
 
   const specs = [];
+
+  const bundleExecutable = await resolveAppCliExecutable(appName, APP_CLI_EXECUTABLES);
+  if (bundleExecutable) {
+    specs.push({ program: bundleExecutable, args: [filePath] });
+  }
 
   const cli = CLI_BY_APP_ID[appId];
   if (cli) {
@@ -4269,7 +4306,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (process.platform !== 'darwin') {
         throw new Error('desktop_open_in_app is only supported on macOS and Windows');
       }
-      runSpecChain(buildOpenProjectSpecs({ projectPath, appId, appName }), appName);
+      runSpecChain(await buildOpenProjectSpecs({ projectPath, appId, appName }), appName);
       return null;
     }
 
@@ -4287,7 +4324,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (process.platform !== 'darwin') {
         throw new Error('desktop_open_file_in_app is only supported on macOS and Windows');
       }
-      runSpecChain(buildOpenFileSpecs({ filePath, appId, appName }), appName);
+      runSpecChain(await buildOpenFileSpecs({ filePath, appId, appName }), appName);
       return null;
     }
 

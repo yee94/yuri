@@ -260,9 +260,15 @@ Supported handoffs (research: 2026-10-23):
 | Cursor | `cursor://vscode-remote/ssh-remote+authority/path`; Cursor's Remote-SSH extension required |
 | Windsurf | `windsurf://vscode-remote/ssh-remote+authority/path`; its own Remote-SSH implementation |
 | Zed | Native `zed://ssh/[user@]host[:port]/path` |
+| Wu | Native `wu://ssh/[user@]host[:port]/path` (Wu is a Zed fork and keeps the same link format) |
 | IntelliJ / PyCharm / WebStorm / Rider / PhpStorm / RustRover | Gateway supports remote development, but its connection link requires a remote IDE backend path/version as well as the project; not included in this host-and-path-only handoff |
 | VSCodium / Kiro / Antigravity / Trae | Remote SSH exists through product-specific or community extensions; their external launch compatibility is not validated here, so they are not enabled |
 | Finder / Terminal / iTerm2 / Ghostty / Visual Studio / Android Studio / Xcode / Sublime / Eclipse | No validated equivalent remote-folder editor link in this integration; omitted from the SSH menu |
+
+Local opening prefers an explicit CLI launch before `open -a`: editors such as Wu
+link their CLI only into `~/.local/bin` (not PATH), and opening the folder with
+`open -a` makes LaunchServices load the app bundle as a data path instead. Wu is
+launched through `Wu.app/Contents/MacOS/cli` with `-n <project>`.
 
 SSH config aliases are preserved so editor-side OpenSSH can apply identity files,
 jump hosts and other config. Explicit `-l` and `-p` (including `user@host:port`)

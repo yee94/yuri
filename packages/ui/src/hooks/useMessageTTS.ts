@@ -24,7 +24,7 @@ import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 const TTS_SUMMARIZE_MIN_CHARS = 600;
 
 let stopActiveMessageSpeech: (() => void) | null = null;
-type SpeechCheckpoint = { text: string; mode: string; provider: string; identity?: string; chunks: string[]; index: number };
+type SpeechCheckpoint = { text: string; mode: string; provider: string; identity?: string; chunks: string[]; index: number; offset: number; audioKey: object };
 // One in-memory handoff lets a manually stopped automatic reply resume from its message action.
 let interruptedSpeech: SpeechCheckpoint | null = null;
 
@@ -190,13 +190,18 @@ export function useMessageTTS(options: { enabled?: boolean } = {}): UseMessageTT
             const textToSpeak = shouldUseRaw ? sourceText : sanitizedText;
             if (!textToSpeak.trim()) { finish(); return; }
             
-            const progress = resume ? previous : { text, mode: ttsInputMode, provider: voiceProvider, identity, chunks: splitSpeechText(textToSpeak), index: 0 };
+            const progress = resume ? previous : {
+                text, mode: ttsInputMode, provider: voiceProvider, identity,
+                chunks: isServerProvider ? [textToSpeak.trim()] : splitSpeechText(textToSpeak),
+                index: 0, offset: 0, audioKey: {},
+            };
             checkpoint.current = progress;
             if (interruptedSpeech?.identity === identity && interruptedSpeech?.text === text) interruptedSpeech = null;
             if (options?.target) {
                 const bodies = options.target.querySelectorAll<HTMLElement>('[data-speech-content]');
                 const target = ttsInputMode === 'final' ? bodies[bodies.length - 1] ?? options.target : options.target;
-                tracking.current = trackSpeech(target, progress.chunks.slice(0, progress.index).join(' '), !shouldUseRaw);
+                const preceding = isServerProvider ? progress.chunks[0].slice(0, progress.offset) : progress.chunks.slice(0, progress.index).join(' ');
+                tracking.current = trackSpeech(target, preceding, !shouldUseRaw);
             }
             const speakChunk = async (attempt = 0): Promise<void> => {
                 if (request !== generation.current || settled) return;
@@ -209,7 +214,7 @@ export function useMessageTTS(options: { enabled?: boolean } = {}): UseMessageTT
                 };
                 const onStart = () => {
                     if (completed || request !== generation.current) return;
-                    tracking.current?.update(chunk, progress.index);
+                    if (!isServerProvider) tracking.current?.update(chunk, progress.index);
                 };
                 const onEnd = () => {
                     if (completed || request !== generation.current) return;
@@ -235,7 +240,17 @@ export function useMessageTTS(options: { enabled?: boolean } = {}): UseMessageTT
                 watchdog.current = setTimeout(() => onError('Speech playback stalled'), Math.max(45000, chunk.length * 500 / Math.max(speechRate || 1, 0.1)));
                 try {
                     const callbacks = { onStart, onEnd, onError };
-                    if (isServerProvider) await speakServerTTS(chunk, callbacks);
+                    if (isServerProvider) await speakServerTTS(chunk, {
+                        ...callbacks,
+                        playbackKey: progress.audioKey,
+                        resume: resume || attempt > 0,
+                        resumeOffset: progress.offset,
+                        onProgress: (cue) => {
+                            if (completed || request !== generation.current || cue.start < progress.offset) return;
+                            progress.offset = cue.start;
+                            tracking.current?.update(cue.text, cue.start);
+                        },
+                    });
                     else if (voiceProvider === 'local') await speakLocalTTS(chunk, callbacks);
                     else if (voiceProvider === 'say' && isSayTTSAvailable) await speakSayTTS(chunk, callbacks);
                     else {

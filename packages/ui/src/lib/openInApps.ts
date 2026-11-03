@@ -21,6 +21,7 @@ export const OPEN_IN_APPS: OpenInApp[] = [
   { id: 'webstorm', label: 'WebStorm', appName: 'WebStorm' },
   { id: 'rider', label: 'Rider', appName: 'Rider' },
   { id: 'zed', label: 'Zed', appName: 'Zed' },
+  { id: 'wu', label: 'Wu', appName: 'Wu' },
   { id: 'phpstorm', label: 'PhpStorm', appName: 'PhpStorm' },
   { id: 'eclipse', label: 'Eclipse', appName: 'Eclipse' },
   { id: 'windsurf', label: 'Windsurf', appName: 'Windsurf' },

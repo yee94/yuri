@@ -207,6 +207,14 @@ handshakes, sends text, and requires SessionFinished after audio. It adapts
 binary PCM into the existing bounded NDJSON player contract (24 kHz mono,
 9600-byte frames), retaining startup buffering, pitch, volume, cancellation,
 and playback-completion semantics. Text and audio go directly to the provider.
+TTS/ICL 2.0 sessions set `req_params.audio_params.enable_subtitle: true` and
+forward `364 / TTSSubtitle` as `{type:'subtitle',text,words}` NDJSON. Words carry
+`word/startTime/endTime` in seconds relative to the whole session, not a sentence
+or network packet. Events 350/351 are not paragraph boundaries. Subtitle receipt
+never splits or delays synthesis; one normal reply sends one TaskRequest/session.
+Other resource IDs do not acquire an unsupported subtitle flag. The old Host HTTP
+fallback and other providers can still return audio without subtitles: playback
+continues, but precise highlighting is unavailable instead of guessed.
 `dictation/volcengine-direct.ts` uses `/api/v3/sauc/bigmodel_async` for 16 kHz
 PCM16, live full-text partials, and an explicit final audio frame. A terminal
 response without text retains the last partial; explicit empty text remains empty.
@@ -260,11 +268,25 @@ Web Audio context with a 400 ms startup buffer measured in actual playback time
 its 20 ms safety margin, it accumulates another 400 ms before resuming, rather
 than playing isolated packets. Terminal success flushes short replies and any
 remaining tail below that threshold. Scheduled audio remains bounded to
-approximately two seconds; the additional unscheduled buffer is bounded to the
-400 ms target plus one frame. It does not wait for EOF or MP3 decoding. Source nodes are
+approximately two seconds. Receipt is independent of scheduling: raw PCM is
+cached up to 24 MiB (8192 chunks), within the 32 MiB NDJSON transfer cap, so a
+subtitle behind queued audio is not blocked by playback backpressure. Only
+scheduled audio is expanded to AudioBuffers. It does not wait for EOF or MP3
+decoding. `speech-timeline.ts` validates/bounds subtitles and aligns source ranges
+in media order. The 50ms output-clock sampler accounts for pitch and starvation,
+emits only cue transitions, and is cleared with playback. Late/expired metadata
+never moves a highlight backwards or holds audio. Source nodes are
 released on completion; stop, runtime switch, unmount and errors cancel the
 reader and queued audio. Playback completion waits for both terminal success
 and the last source's `ended` event, preserving automatic read-aloud ordering.
+`useServerTTS` keeps only one in-memory stream cache keyed by the message playback
+key, exact source and runtime transport identity. Stop preserves received PCM and
+its sample position, but cancels the network. Resume of a complete cache performs
+no request. Partial-cache recovery replays only through a known subtitle boundary
+before one new synthesis of the remaining source; absent alignment falls back to
+the last known passage. Missing terminal success is never promoted to a complete
+cache, even if all text has subtitles. Completion/restart/replacement/runtime
+changes release or replace cached audio. No provider JWT is retained for resume.
 The legacy Host HTTP stream uses `runtimeFetch`, including the existing encrypted
 Relay transport. Current Volcengine clients feed the same player from direct
 WebSocket audio instead. Relay may buffer legacy transport bytes independently

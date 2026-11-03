@@ -31,6 +31,7 @@
     --yuri-wco-titlebar-height: 0px;
     --ui-regular-font-weight: 400;
     --voice-active-fill: #38CD80;
+    --voice-active-foreground: white;
     --yuri-scrollbar-thumb: oklch(0.32 0.03 50 / 0.4);
     --yuri-scrollbar-thumb-hover: oklch(0.32 0.03 50 / 0.6);
     /* User density setting (useUIStore.applyPadding writes this name).
@@ -123,7 +124,7 @@
     --voice-active-fill: #3BCC80;
     /* Cursor Dark fallback until the resolved theme variables are applied. */
     --background: #1a1a1a;
-    --foreground: #ccccccdd;
+    --foreground: #dedede;
     --card: #141414;
     --card-foreground: var(--foreground);
     --popover: #141414;

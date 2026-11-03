@@ -19,6 +19,7 @@ let mode;
 let audioChunks;
 let clients;
 let asrRequests;
+let ttsRequests;
 const ticket = () => ({ transport: 'volcengine-direct', token: 'header.payload.signature', appId: 'fixture-app', expiresAt: Date.now() + 300000,
   resourceId: 'seed-tts-2.0', voice: 'zh_female_vv_uranus_bigtts', speed: 1, pitch: 1.1, volume: 0.8 });
 const waitFor = async (fn) => { for (let n = 0; n < 200; n++) { if (fn()) return; await new Promise((r) => setTimeout(r, 5)); } throw new Error('Fixture timed out'); };
@@ -41,7 +42,7 @@ function asrResponse(text, final = false) {
 
 beforeEach(async () => {
   urls = []; sockets = []; audioChunks = []; clients = []; mode = 'success'; mocks.identity = 'host-a';
-  asrRequests = [];
+  asrRequests = []; ttsRequests = [];
   mocks.openRuntimeWebSocket.mockReset();
   mocks.runtimeFetch.mockReset().mockImplementation(async () => Response.json(ticket()));
   server = new WebSocketServer({ port: 0, host: '127.0.0.1' }); await once(server, 'listening');
@@ -60,8 +61,19 @@ beforeEach(async () => {
         const id = event >= 100 ? bytes.subarray(12, 12 + bytes.readUInt32BE(8)).toString() : '';
         if (event === 1) socket.send(ttsResponse(50, 'connection', {}));
         if (event === 100) socket.send(ttsResponse(150, id, {}));
-        if (event === 200) socket.send(ttsResponse(352, id, Buffer.alloc(19200), 11));
-        if (event === 102 && (mode === 'success' || mode === 'success-close')) socket.send(ttsResponse(152, id, {}));
+        if (event === 200) {
+          const offset = 16 + Buffer.byteLength(id);
+          ttsRequests.push(JSON.parse(bytes.subarray(offset).toString()));
+          socket.send(ttsResponse(352, id, Buffer.alloc(19200), 11));
+          if (mode === 'subtitles') {
+            socket.send(ttsResponse(350, id, { text: '', words: [] }));
+            socket.send(ttsResponse(364, id, { text: '第一句。', words: [{ word: '第一句。', startTime: 0, endTime: 0.2 }] }));
+            socket.send(ttsResponse(352, id, Buffer.alloc(9600), 11));
+            socket.send(ttsResponse(364, id, { text: '第二句。', words: [{ word: '第二句。', startTime: 0.3, endTime: 0.6 }] }));
+            socket.send(ttsResponse(351, id, { text: '第一句。第二句。', words: [] }));
+          }
+        }
+        if (event === 102 && (mode === 'success' || mode === 'success-close' || mode === 'subtitles')) socket.send(ttsResponse(152, id, {}));
         if (event === 102 && mode === 'success-close') socket.close();
         if (event === 102 && mode === 'failure') socket.send(ttsResponse(153, id, { message: 'private details' }));
         if (event === 102 && mode === 'truncated') socket.close();
@@ -91,6 +103,19 @@ it('uses only a ticket request through runtime transport and streams TTS PCM dir
   expect(urls[0].hostname).toBe('openspeech.bytedance.com');
   expect(urls[0].searchParams.get('api_access_key')).toBe('Jwt; header.payload.signature');
   expect(mocks.openRuntimeWebSocket).not.toHaveBeenCalled();
+});
+
+it('sends the full text once with TTS 2.0 subtitles and forwards event 364 without splitting audio sessions', async () => {
+  mode = 'subtitles';
+  const text = '第一句。\n\n第二句。';
+  const response = await requestSpeechAudio(text, new AbortController().signal);
+  const frames = (await response.text()).trim().split('\n').map(JSON.parse);
+  expect(ttsRequests).toHaveLength(1);
+  expect(ttsRequests[0].req_params.text).toBe(text);
+  expect(ttsRequests[0].req_params.audio_params.enable_subtitle).toBe(true);
+  expect(frames.map((frame) => frame.type)).toEqual(['audio', 'audio', 'subtitle', 'audio', 'subtitle', 'done']);
+  expect(frames.filter((frame) => frame.type === 'subtitle').map((frame) => frame.words[0].startTime)).toEqual([0, 0.3]);
+  expect(mocks.runtimeFetch).toHaveBeenCalledTimes(1);
 });
 
 it('streams 100 ASR chunks in order, publishes live partials, and accepts a terminal frame without text', async () => {

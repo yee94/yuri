@@ -55,21 +55,21 @@ it('keeps independent bottom and speech actions in one composer-width circular r
     const buttons = [...host.querySelectorAll('button')];
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(['chat.scrollToBottom.aria', 'chat.messageBody.tts.follow']);
     expect(buttons[0].parentElement).toBe(buttons[1].parentElement);
-    expect(buttons[0].parentElement?.className).toContain('chat-input-column');
+    expect(buttons[0].parentElement?.parentElement?.className).toContain('chat-input-column');
     for (const button of buttons) {
         expect(button.className).toContain('yuri-mobile-floating-action');
         expect(button.className).toContain('size-10');
     }
     expect(buttons[0].classList.contains('yuri-mobile-inverse-action')).toBe(false);
-    expect(buttons[1].classList.contains('yuri-mobile-inverse-action')).toBe(true);
+    expect(buttons[1].classList.contains('yuri-speech-follow-active')).toBe(true);
     await act(async () => buttons[0].click());
     expect(bottom).toHaveBeenCalledTimes(1);
     await act(async () => pauseSpeechFollowing(scroller));
     expect(buttons[1].getAttribute('aria-pressed')).toBe('false');
-    expect(buttons[1].classList.contains('yuri-mobile-inverse-action')).toBe(false);
+    expect(buttons[1].classList.contains('yuri-speech-follow-active')).toBe(false);
     await act(async () => buttons[1].click());
     expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
-    expect(buttons[1].classList.contains('yuri-mobile-inverse-action')).toBe(true);
+    expect(buttons[1].classList.contains('yuri-speech-follow-active')).toBe(true);
     await act(async () => playback?.stop());
     expect(host.querySelectorAll('button')).toHaveLength(1);
 });
@@ -85,11 +85,11 @@ it('toggles following off and on without changing the current spoken range', asy
     for (let index = 0; index < 3; index++) {
         await act(async () => button.click());
         expect(button.getAttribute('aria-pressed')).toBe('false');
-        expect(button.classList.contains('yuri-mobile-inverse-action')).toBe(false);
+        expect(button.classList.contains('yuri-speech-follow-active')).toBe(false);
         expect(getSpeechTracking()?.range).toBe(range);
         await act(async () => button.click());
         expect(button.getAttribute('aria-pressed')).toBe('true');
-        expect(button.classList.contains('yuri-mobile-inverse-action')).toBe(true);
+        expect(button.classList.contains('yuri-speech-follow-active')).toBe(true);
         expect(getSpeechTracking()?.range).toBe(range);
     }
 });
@@ -121,4 +121,46 @@ it('does no leaf snapshot or subscription work over 50 unrelated parent updates'
     await act(async () => host.querySelector('button')!.click());
     expect(props.onScrollToBottom).toHaveBeenCalledTimes(1);
     expect(bottom).not.toHaveBeenCalled();
+});
+
+it('measures the compact pill anchor when controls first appear and only rewrites it on geometry changes', async () => {
+    const observers: { notify: () => void; observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+        observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
+        constructor(notify: () => void) { observers.push({ notify, observe: this.observe, disconnect: this.disconnect }); }
+    });
+    function Fixture() {
+        return <div className="yuri-mobile-composer-foot" ref={(element) => {
+            if (element) element.getBoundingClientRect = () => new DOMRect(0, 0, 402, 874);
+        }}>
+            <TranscriptScrollControls {...props} />
+            <form className="yuri-mobile-composer">
+                <div className="yuri-mobile-composer-motion-viewport" ref={(element) => {
+                    if (element) element.getBoundingClientRect = () => new DOMRect(12, 700, 378, 158);
+                }}>
+                    <div className="yuri-mobile-composer-compact-layer" style={{ bottom: 4 }} ref={(element) => {
+                        if (element) Object.defineProperty(element, 'offsetHeight', { configurable: true, value: 44 });
+                    }} />
+                </div>
+            </form>
+        </div>;
+    }
+    await act(async () => root.render(<Fixture />));
+    props = { ...props, showScrollToBottom: true };
+    await act(async () => root.render(<Fixture />));
+    const observer = observers.find((entry) => entry.observe.mock.calls[0]?.[0] === host.querySelector('form'))!;
+    expect(observer).toBeDefined();
+    await act(async () => observer.notify());
+    const controls = host.querySelector<HTMLElement>('.yuri-transcript-scroll-controls')!;
+    expect(controls.style.getPropertyValue('--yuri-transcript-compact-inset')).toBe('64px');
+    const writes = vi.spyOn(controls.style, 'setProperty');
+    await act(async () => { for (let index = 0; index < 50; index++) observer.notify(); });
+    expect(writes).not.toHaveBeenCalled();
+    Object.defineProperty(host.querySelector('.yuri-mobile-composer-compact-layer'), 'offsetHeight', { configurable: true, value: 48 });
+    await act(async () => observer.notify());
+    expect(controls.style.getPropertyValue('--yuri-transcript-compact-inset')).toBe('68px');
+    writes.mockRestore();
+    props = { ...props, showScrollToBottom: false };
+    await act(async () => root.render(<Fixture />));
+    expect(observer.disconnect).toHaveBeenCalledTimes(1);
 });
