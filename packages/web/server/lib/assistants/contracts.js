@@ -3,6 +3,7 @@ export const assistantContractFixtures = Object.freeze({
     id: 'assistant_fixture',
     revision: 4,
     enabled: true,
+    pinnedAt: null,
     name: 'Fixture',
     defaultPrompt: '',
     workspacePath: null,

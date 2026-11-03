@@ -447,7 +447,7 @@ describe('ScheduledTasksDialog queries', () => {
     expect(settingsTabContent).not.toContain('onMobileStageChange');
     expect(settingsTabContent).toContain('showHeader={false}');
     expect(chatHeaderContent).toContain('<MobileDetailNavigation');
-    expect(chatHeaderContent).toContain('trailing={trailing}');
+    expect(chatHeaderContent).toContain('trailing={<><GuiPluginTitlebarItems mobile />{trailing}</>}');
     expect(chatHeaderContent).toContain('elevated={elevated || menuOpen}');
     expect(chatHeaderContent).toContain('pressed: menuOpen');
     expect(chatScreenContent).toContain('<MobileContextProgressButton');

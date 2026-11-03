@@ -91,12 +91,6 @@ vi.mock('@/sync/session-ui-store', () => ({
   }),
 }));
 
-vi.mock('@/stores/useGlobalSessionsStore', () => ({
-  useGlobalSessionsStore: (selector: (state: { reviewTransferBySessionId: Map<string, unknown> }) => unknown) => selector({
-    reviewTransferBySessionId: new Map<string, unknown>(),
-  }),
-}));
-
 
 vi.mock('@/components/ui/ModelLogo', () => ({
   ModelLogo: ({ modelId }: { modelId?: string | null }) => React.createElement(

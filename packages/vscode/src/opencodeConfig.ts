@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import yaml from 'yaml';
+import { readLocalPluginIcon, sanitizePluginIcon } from '../../web/server/lib/opencode/plugin-icon.js';
 import {
   getGlobalConfigDirectory, readConfigFile, isPlainObject, readConfigLayers,
   readConfig, getConfigForPath, writeConfig, getJsonEntrySource, getJsonWriteTarget,
@@ -51,12 +52,12 @@ export type PluginFile = {
 };
 
 export type PluginRegistryResult =
-  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean }
-  | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[] }
+  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string }
+  | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[]; icon?: string }
   | { kind: 'npm-missing-package'; spec: string; name: string; error: string }
   | { kind: 'npm-malformed'; spec: string; error: string }
   | { kind: 'npm-network'; spec: string; error: string }
-  | { kind: 'path-ok'; spec: string; absolutePath: string }
+  | { kind: 'path-ok'; spec: string; absolutePath: string; icon?: string }
   | { kind: 'path-missing'; spec: string; absolutePath: string }
   | { kind: 'path-unreadable'; spec: string; absolutePath: string };
 
@@ -743,7 +744,7 @@ export const deletePluginDirFile = (id: string, workingDirectory?: string): void
 };
 
 type NpmLookupResult =
-  | { ok: true; latest: string | null; versions: string[] }
+  | { ok: true; latest: string | null; versions: string[]; icon?: string }
   | { ok: false; status: number | 'network'; error: string };
 
 const npmInfoCache = new Map<string, { fetchedAt: number; payload: NpmLookupResult }>();
@@ -757,11 +758,14 @@ const lookupNpmPackage = async (name: string): Promise<NpmLookupResult> => {
       signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {
-      const data = await response.json() as { versions?: unknown; 'dist-tags'?: { latest?: unknown } };
+      const data = await response.json() as { versions?: Record<string, { icon?: unknown }>; 'dist-tags'?: { latest?: unknown } };
+      const latest = typeof data['dist-tags']?.latest === 'string' ? data['dist-tags'].latest : null;
+      const icon = sanitizePluginIcon(latest ? data.versions?.[latest]?.icon : undefined);
       return {
         ok: true,
-        latest: typeof data['dist-tags']?.latest === 'string' ? data['dist-tags'].latest : null,
+        latest,
         versions: isPlainObject(data.versions) ? Object.keys(data.versions) : [],
+        ...(icon ? { icon } : {}),
       };
     }
     if (response.status === 404) return { ok: false, status: 404, error: 'Package not found' };
@@ -836,7 +840,8 @@ export const queryPluginRegistry = async (
       }
       try {
         fs.accessSync(absolutePath, fs.constants.R_OK);
-        results.push({ kind: 'path-ok', spec, absolutePath });
+        const icon = await readLocalPluginIcon(absolutePath);
+        results.push({ kind: 'path-ok', spec, absolutePath, ...(icon ? { icon } : {}) });
       } catch {
         results.push({ kind: 'path-unreadable', spec, absolutePath });
       }
@@ -866,6 +871,7 @@ export const queryPluginRegistry = async (
         currentVersion,
         latestVersion: info.latest,
         versions: info.versions,
+        ...(info.icon ? { icon: info.icon } : {}),
       });
       continue;
     }
@@ -877,6 +883,7 @@ export const queryPluginRegistry = async (
       latestVersion: info.latest,
       versions: info.versions,
       hasUpdate: currentVersion !== null && isExactPluginSemver(currentVersion) && currentVersion !== info.latest,
+      ...(info.icon ? { icon: info.icon } : {}),
     });
   }
   return { results };

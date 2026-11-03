@@ -5,10 +5,12 @@ import { useDeviceInfo } from '@/lib/device';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 
 type CommitAction = 'commit' | 'commitAndPush' | null;
 
 interface CommitSectionProps {
+  compact?: boolean;
   stagedCount: number;
   commitMessage: string;
   onCommitMessageChange: (value: string) => void;
@@ -25,6 +27,7 @@ interface CommitSectionProps {
 }
 
 export const CommitSection: React.FC<CommitSectionProps> = ({
+  compact = false,
   stagedCount,
   commitMessage,
   onCommitMessageChange,
@@ -44,16 +47,17 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
   const canCommit = commitMessage.trim() && hasStagedFiles && commitAction === null && !hasPendingIndexMutation;
   const { isMobile, hasTouchInput } = useDeviceInfo();
 
-  const containerClassName = 'border-0 bg-transparent rounded-none';
-  const headerClassName = 'flex w-full items-baseline gap-2 px-0 pt-2 pb-1';
-  const contentClassName = 'flex flex-col gap-3 px-0 pt-1 pb-3';
+  const containerClassName = 'shrink-0 border-0 bg-transparent rounded-none';
+  const headerClassName = cn('flex w-full items-baseline gap-2 px-0 pb-1', compact ? 'pt-0' : 'pt-2');
+  const contentClassName = cn('flex flex-col px-0', compact ? 'gap-1.5 pb-1' : 'gap-3 pt-1 pb-3');
+  const iconClassName = compact ? 'size-3.5' : 'size-4';
 
   return (
-    <section className={containerClassName}>
+    <section className={containerClassName} data-git-commit-section>
       <div className={headerClassName}>
-        <h3 className="typography-ui-header font-semibold text-foreground">{t('gitView.commit.title')}</h3>
+        <h3 className={cn('shrink-0 font-semibold text-foreground', compact ? 'text-xs leading-4' : 'typography-ui-header')}>{t('gitView.commit.title')}</h3>
         {!hasStagedFiles ? (
-          <span className="min-w-0 truncate typography-meta text-muted-foreground">
+          <span className={cn('min-w-0 truncate text-muted-foreground', compact ? 'text-[0.6875rem] leading-4' : 'typography-meta')}>
             {t('gitView.commit.stageFilesHint')}
           </span>
         ) : null}
@@ -72,12 +76,13 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
           disabled={commitAction !== null}
           hasTouchInput={hasTouchInput}
           isMobile={isMobile}
+          compact={compact}
         />
 
-        <div className="@container/commit-actions flex items-center gap-2 min-w-0">
+        <div className={cn('@container/commit-actions flex items-center min-w-0', compact ? 'gap-1' : 'gap-2')}>
           <Button
-            variant="outline"
-            size="sm"
+            variant={compact ? 'ghost' : 'outline'}
+            size={compact ? 'xs' : 'sm'}
             onClick={onGenerateMessage}
             disabled={
               isGeneratingMessage ||
@@ -87,12 +92,12 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
             }
             type="button"
             aria-label={t('gitView.commit.generateAria')}
-            className="commit-actions__btn"
+            className={cn('commit-actions__btn', compact && 'text-xs')}
           >
             {isGeneratingMessage ? (
-              <Icon name="loader-4" className="size-4 animate-spin" />
+              <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
             ) : (
-              <Icon name="ai-generate-2" className="size-4 text-primary" />
+              <Icon name="ai-generate-2" className={cn(iconClassName, 'text-primary')} />
             )}
             <span className="commit-actions__label">{t('gitView.commit.generate')}</span>
           </Button>
@@ -100,14 +105,16 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
           {gitmojiEnabled ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <Button
+                  variant="ghost"
+                  size="xs"
                   type="button"
                   onClick={onOpenGitmojiPicker}
                   aria-label={t('gitView.commit.addGitmoji')}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className={cn('shrink-0 p-0 text-muted-foreground', compact ? 'w-6' : 'size-7')}
                 >
-                  <Icon name="emotion-happy" className="size-4" />
-                </button>
+                  <Icon name="emotion-happy" className={iconClassName} />
+                </Button>
               </TooltipTrigger>
               <TooltipContent side="top">
                 <p>{t('gitView.commit.addGitmoji')}</p>
@@ -118,21 +125,21 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
           <div className="flex-1" />
 
           <Button
-            size="sm"
-            variant="outline"
+            size={compact ? 'xs' : 'sm'}
+            variant={compact ? 'default' : 'outline'}
             onClick={onCommit}
             disabled={!canCommit || isGeneratingMessage}
-            className="commit-actions__btn whitespace-nowrap"
+            className={cn('commit-actions__btn whitespace-nowrap', compact && 'text-xs')}
             aria-label={t('gitView.commit.commitAria')}
           >
             {commitAction === 'commit' ? (
               <>
-                <Icon name="loader-4" className="size-4 animate-spin" />
+                <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
                 <span className="commit-actions__label">{t('gitView.commit.committing')}</span>
               </>
             ) : (
               <>
-                <Icon name="git-commit" className="size-4" />
+                <Icon name="git-commit" className={iconClassName} />
                 <span className="commit-actions__label">{t('gitView.commit.commit')}</span>
               </>
             )}
@@ -162,16 +169,16 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
             </Tooltip>
           ) : (
             <Button
-              size="sm"
+              size={compact ? 'xs' : 'sm'}
               variant="default"
               onClick={() => onCommitAndPush()}
               disabled={!canCommit || isGeneratingMessage}
-              className="commit-actions__btn"
+              className={cn('commit-actions__btn', compact && 'text-xs')}
               aria-label={t('gitView.commit.pushAria')}
             >
               {commitAction === 'commitAndPush' ? (
                 <>
-                  <Icon name="loader-4" className="size-4 animate-spin" />
+                  <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
                   <span className="commit-actions__label commit-actions__label--push">{t('gitView.commit.pushing')}</span>
                 </>
               ) : (

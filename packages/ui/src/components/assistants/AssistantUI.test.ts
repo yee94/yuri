@@ -282,24 +282,30 @@ describe('Assistant UI product contract', () => {
   });
 
   test('offers desktop context actions and shared mobile swipe edit/delete actions', async () => {
-    const [view, mobileTab, deleteDialog, store, settingsView, english] = await Promise.all([
+    const [view, mobileTab, deleteDialog, store, settingsView, english, menu] = await Promise.all([
       read('AssistantView.tsx'),
       read('../../mobile/assistant/MobileAssistantTab.tsx'),
       read('AssistantDeleteConfirmDialog.tsx'),
       read('../../stores/useAssistantUIStore.ts'),
       read('../views/SettingsView.tsx'),
       read('../../lib/i18n/messages/en.settings.ts'),
+      read('AssistantContactMenu.tsx'),
     ]);
     expect(view).toContain('AssistantListItem');
     expect(view).toContain('openAssistantSettings');
-    expect(view).toContain("t('assistants.menu.edit')");
-    expect(view).toContain("t('assistants.settings.delete')");
-    expect(view).toContain('name="edit"');
-    expect(view).toContain('name="delete-bin"');
-    expect(view).toContain('ContextMenuSeparator');
-    expect(view).toContain('text-[var(--status-error)]');
+    expect(menu).toContain("t('assistants.menu.edit')");
+    expect(menu).toContain("t('assistants.settings.delete')");
+    expect(menu).toContain('name="edit"');
+    expect(menu).toContain('name="delete-bin"');
+    expect(menu).toContain('ContextMenuSeparator');
+    expect(menu).toContain('text-[var(--status-error)]');
     expect(view).toContain('AssistantDeleteConfirmDialog');
-    expect(view).toContain('ContextMenu');
+    expect(view).toContain('AssistantContactMenu');
+    expect(mobileTab).toContain('AssistantContactMenu');
+    for (const source of [view, mobileTab]) {
+      expect(source).toContain('<AssistantPinnedContacts contacts={contacts.pinned}');
+      expect(source).toContain('contacts.unpinned.map(');
+    }
     expect(mobileTab).toContain('useMobileSwipeActions');
     expect(mobileTab).not.toContain('createMobileLongPressController');
     expect(mobileTab).toContain('openAssistantSettings');
@@ -524,7 +530,7 @@ describe('Assistant UI product contract', () => {
     expect(conversation).not.toContain('<ChatInput');
     expect(conversation).toContain('onAddFiles');
     expect(conversation).toContain('fileAccept="*/*"');
-    expect(conversation).toContain('onStop');
+    expect(conversation).not.toContain('onStop');
     expect(conversation).not.toContain('thinkingLevel');
     expect(promptComposer).toContain('data-composer-send="true"');
     expect(promptComposer).toContain('data-composer-circle={sendReady ? \'true\' : undefined}');
@@ -649,8 +655,8 @@ describe('Assistant UI product contract', () => {
     expect(view).not.toContain('fetchMessagesForSession');
     expect(conversation).toContain('sendAssistantContactMessage');
     expect(conversation).not.toContain('promptAsync');
-    expect(queries).toContain('applyAssistant(result, transport)');
-    expect(queries.indexOf('applyAssistant(result, transport)')).toBeLessThan(queries.indexOf('return result; }', queries.indexOf('export const updateAssistant')));
+    const updateAssistant = queries.slice(queries.indexOf('export const updateAssistant'), queries.indexOf('export const deleteAssistant'));
+    expect(updateAssistant).toMatch(/applyAssistant\(result, transport\);\s*}\s*return result;/);
   });
 
   test('keeps assistant delivery on the contact transcript and session-card click-through', async () => {
@@ -723,7 +729,7 @@ describe('Assistant UI product contract', () => {
     expect(chatInput).toContain('resolveComposerVisibleAgents(surface.selection.catalog?.agents)');
     expect(chatInput).not.toContain("surface.kind === 'primary' ? state.agents : EMPTY_AGENTS");
     expect(chatInput).toContain('const sessionIsRunning = sessionPhase === \'busy\' || sessionPhase === \'retry\'');
-    expect(chatInput).toContain('(sessionIsRunning || autoReviewRunning)');
+    expect(chatInput).toContain("inputMode === 'normal' && hasContent && currentSessionId && sessionIsRunning");
     expect(queueServer).toContain("deliveryTarget.kind === 'assistant' && !deliveryParts");
     expect(conversation).toContain('sendAssistantContactMessage');
     expect(conversation).not.toContain('assistant.effectiveWorkspacePath');

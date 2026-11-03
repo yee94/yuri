@@ -1089,12 +1089,10 @@ html:not(.dark) .chat-scroll {
 /* Diff toolbar: drop low-priority labels only when the context panel is genuinely tight. */
 @container diff-toolbar (max-width: 28rem) {
   .diff-toolbar__scope-count,
-  .diff-toolbar__review-label,
   .diff-toolbar__expand-label {
     display: none;
   }
 
-  .diff-toolbar__review-button,
   .diff-toolbar__expand-button {
     padding-inline: 0.5rem;
   }

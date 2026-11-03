@@ -6,16 +6,14 @@ import { CommandGroup, CommandItem } from '@/components/ui/command';
 import { toast } from '@/components/ui';
 
 export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect: () => void }) {
-  const { host, snapshot, inventory, loading, error, requested, requestLoad, refresh } = useGuiPlugins();
+  const { host, snapshot, requested, requestLoad } = useGuiPlugins();
   const { t } = useI18n();
   const [expandedQuery, setExpandedQuery] = React.useState<string | null>(null);
   React.useEffect(() => { if (!requested) requestLoad(); }, [requested, requestLoad]);
   const commands = React.useMemo(() => query.trim()
     ? scoreByFuzzyQuery([...snapshot.commands], query.trim(), (command) => `${command.title} ${command.description ?? ''}`, { threshold: 0.4 }).map(({ item }) => item)
     : snapshot.commands, [snapshot.commands, query]);
-  const failure = error || inventory.find((plugin) => plugin.enabled && plugin.error)?.error
-    || snapshot.plugins.find((plugin) => plugin.status === 'failed')?.error;
-  if (!commands.length && !failure) return null;
+  if (!commands.length) return null;
   const visible = expandedQuery === query ? commands : commands.slice(0, 5);
   const run = async (key: string) => {
     onSelect();
@@ -28,9 +26,6 @@ export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect
       <span>{t('guiPlugins.commands')}</span>
       <span className="yuri-global-search-group-count">{commands.length}</span>
     </span>}>
-      {failure ? <CommandItem value="gui-plugin:retry" disabled={loading} onSelect={refresh}>
-        <span role="alert" className="min-w-0 flex-1 break-words">{failure}</span><span>{t('guiPlugins.refresh')}</span>
-      </CommandItem> : null}
       {visible.map((command) => <CommandItem key={command.key} value={`gui-plugin:${command.key}`}
         className="yuri-global-search-compact min-h-9 gap-4 rounded-lg px-3 py-2 typography-meta" onSelect={() => void run(command.key)}>
         <span className="yuri-global-search-result-title min-w-0 flex-1 truncate">{command.title}</span>

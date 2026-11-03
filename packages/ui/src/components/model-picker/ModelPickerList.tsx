@@ -653,7 +653,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   }, [disabled, flatModelList, moveSelection, onActiveKeyDown, onEscape, onSelect, onVariantKey, selectionStore]);
 
   const headerClassName = cn(
-    'typography-micro font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2 px-2 py-1.5',
+    'model-picker-section-header typography-micro font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2 px-2 py-1.5',
     stickyHeaders && 'sticky top-0 z-10 [background:linear-gradient(var(--surface-elevated),var(--surface-elevated)),linear-gradient(var(--surface-background),var(--surface-background))]',
     sectionHeaderClassName,
   );
@@ -854,7 +854,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
             onKeyDown={handleKeyDown}
-            className="h-8 pl-8 typography-meta"
+            className="model-picker-search h-8 pl-8 typography-meta"
             autoFocus={autoFocus}
           />
         </div>

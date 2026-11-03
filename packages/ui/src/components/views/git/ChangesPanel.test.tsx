@@ -56,6 +56,13 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof ChangesPanel
 }
 
 describe('ChangesPanel revert all', () => {
+  test('uses a smaller sidebar title without changing the row height or default presentation', () => {
+    const compact = renderPanel({ compact: true });
+    expect(compact).toMatch(/<h3[^>]*text-xs leading-4[^>]*>Changes<\/h3>/);
+    expect(compact).toContain('flex h-8 items-center');
+    expect(renderPanel()).toMatch(/<h3[^>]*typography-ui-label[^>]*>Changes<\/h3>/);
+  });
+
   test('puts the revert-all icon in the header rail before the file list', () => {
     const markup = renderPanel({
       headerLeadingActions: <span>leading-action</span>,

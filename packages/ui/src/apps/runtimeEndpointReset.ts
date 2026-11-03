@@ -5,7 +5,6 @@ import { disposeTerminalInputTransport } from '@/lib/terminalApi';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { useAutoReviewStore } from '@/stores/useAutoReviewStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { resetQuotaStoreForRuntimeSwitch } from '@/stores/useQuotaStore';
@@ -61,9 +60,6 @@ export const reconnectAppForTransportSwitch = (): void => {
 export const resetAppForRuntimeEndpointChange = (detail: RuntimeEndpointChangedDetail): void => {
   useSessionUIStore.getState().prepareForRuntimeSwitch(detail.previousRuntimeKey);
   useUIStore.getState().prepareForRuntimeSwitch(detail.previousRuntimeKey);
-  if (detail.previousRuntimeKey) {
-    useAutoReviewStore.getState().stopRunningRunsForRuntime(detail.previousRuntimeKey);
-  }
   disposeTerminalInputTransport();
   opencodeClient.reconnectToRuntimeBaseUrl();
   // Reset projections without overwriting the new runtime's saved selections.

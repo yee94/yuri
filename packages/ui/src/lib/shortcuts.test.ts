@@ -1,8 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 
-import { getEffectiveShortcutCombo, getEffectiveShortcutCombos } from './shortcuts';
+import { getCustomizableShortcutActions, getEffectiveShortcutCombo, getEffectiveShortcutCombos, getShortcutAction } from './shortcuts';
 
 describe('getEffectiveShortcutCombo', () => {
+  test('does not expose or reactivate the removed go-to-line action from a saved override', () => {
+    expect(getShortcutAction('open_go_to_line')).toBeUndefined();
+    expect(getCustomizableShortcutActions().some((action) => action.id === 'open_go_to_line')).toBe(false);
+    expect(getEffectiveShortcutCombo('open_go_to_line', { open_go_to_line: 'alt+g' })).toBe('');
+    expect(getEffectiveShortcutCombos('open_go_to_line', { open_go_to_line: 'alt+g' })).toEqual([]);
+  });
+
   test('uses Ctrl+backtick as the default terminal shortcut', () => {
     expect(getEffectiveShortcutCombo('toggle_terminal')).toBe('ctrl+backtick');
   });

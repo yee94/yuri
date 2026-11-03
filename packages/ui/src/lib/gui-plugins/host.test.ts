@@ -3,6 +3,8 @@ import { QueryClient } from '@tanstack/react-query';
 import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
 import type { FilesAPI } from '@/lib/api/types';
 import { GuiPluginHost, type PluginGuiBundle } from './host';
+import { NativeGuiSession } from './native';
+import type { NativeGuiBridge } from './native-types';
 
 const hosts: GuiPluginHost[] = [];
 function host(focusFile?: (path: string, directory: string) => Promise<void>) {
@@ -16,6 +18,82 @@ const bundle = (setup: string, revision = '1', declarations = ''): PluginGuiBund
 afterEach(() => { for (const item of hosts.splice(0)) item.dispose(); localStorage.clear(); document.body.replaceChildren(); });
 
 describe('GUI plugin host with the actual official Solid SDK', () => {
+    it('supports global titlebar actions, reactive fields, busy guards and lifecycle without a session', async () => {
+        const value = host();
+        const counts = { reads: 0, runs: 0 };
+        Reflect.set(globalThis, '__guiTitlebarCounts', counts);
+        try {
+            value.install('toolbar', bundle(`
+                const [busy,setBusy]=S.createSignal(false);
+                const [shown,setShown]=S.createSignal(true);
+                ctx.add(G.TitlebarItem,()=>{
+                    globalThis.__guiTitlebarCounts.reads++;
+                    return shown() ? {id:'open',label:ctx.t('label'),title:'Open dashboard',icon:'globe',busy:busy(),pressed:busy(),run(){globalThis.__guiTitlebarCounts.runs++}} : undefined;
+                });
+                ctx.add(G.Command,{id:'busy',title:'Busy',run(){setBusy(v=>!v)}});
+                ctx.add(G.Command,{id:'show',title:'Show',run(){setShown(v=>!v)}});
+            `, '1', `i18n:{en:{label:'Dashboard'},zh:{label:'仪表盘'}},`));
+            expect(value.getSnapshot().plugins[0].status).toBe('active');
+            const item = value.getSnapshot().titlebarItems[0];
+            expect(item).toMatchObject({pluginId:'toolbar',label:'Dashboard',title:'Open dashboard',icon:'globe',busy:false,pressed:false,actionable:true});
+            await value.runTitlebarItem(item.key);
+            expect(counts.runs).toBe(1);
+            const reads = counts.reads;
+            for (let i = 0; i < 50; i++) value.setSession({id:`s${i}`,directory:'/work'});
+            value.setSession(undefined);
+            expect(counts.reads).toBe(reads);
+            value.runCommand('toolbar.busy');
+            expect(value.getSnapshot().titlebarItems[0]).toMatchObject({busy:true,pressed:true});
+            value.runTitlebarItem(item.key);
+            expect(counts.runs).toBe(1);
+            value.setAppearance({locale:'zh',mode:'dark',narrow:true});
+            expect(value.getSnapshot().titlebarItems[0]).toMatchObject({key:item.key,label:'仪表盘'});
+            value.runCommand('toolbar.show');
+            expect(value.getSnapshot().titlebarItems).toEqual([]);
+            value.runTitlebarItem(item.key);
+            expect(counts.runs).toBe(1);
+            value.runCommand('toolbar.show');
+            value.uninstall('toolbar');
+            expect(value.getSnapshot().titlebarItems).toEqual([]);
+            value.runTitlebarItem(item.key);
+            expect(counts.runs).toBe(1);
+        } finally { Reflect.deleteProperty(globalThis, '__guiTitlebarCounts'); }
+    });
+
+    it('isolates titlebar IDs and action failures, and replaces stale actions on reload', async () => {
+        const value = host();
+        value.install('demo', bundle(`ctx.add(G.TitlebarItem,{id:'tools:open',label:'First',run(){throw new Error('old')}})`));
+        value.install('demo:tools', bundle(`ctx.add(G.TitlebarItem,{id:'open',label:'Second'})`));
+        const [first, second] = value.getSnapshot().titlebarItems;
+        expect(first.key).not.toBe(second.key);
+        expect(second.actionable).toBe(false);
+        value.install('demo', bundle(`ctx.add(G.TitlebarItem,{id:'tools:open',label:'Replacement',async run(){throw new Error('new')}})`,'2'));
+        await value.runTitlebarItem(first.key);
+        expect(value.getSnapshot().plugins.find(item=>item.id==='demo')).toMatchObject({status:'failed',error:'new'});
+        expect(value.getSnapshot().titlebarItems).toEqual([second]);
+        value.dispose();
+        expect(value.getSnapshot().titlebarItems).toEqual([]);
+    });
+
+    it('routes a titlebar dashboard action through the existing native IPC lease', async () => {
+        const value = host();
+        const request = vi.fn<NativeGuiBridge['request']>(async () => ({ok:true,value:undefined}));
+        const code = bundle(`
+            const dashboard=ctx.main(G.Ipc.define({id:'dashboard.open',methods:{open:{}}}));
+            ctx.add(G.TitlebarItem,{id:'dashboard',label:'Dashboard',run:()=>dashboard.open()});
+            ctx.add(G.Command,{id:'open',title:'Open dashboard',run:()=>dashboard.open()});
+        `);
+        const native = new NativeGuiSession({request,subscribe:()=>()=>{}},{lease:'local-lease',os:'macos',app:{version:'1',packaged:false},bundle:code});
+        value.install('dashboard', code, native);
+        await value.runTitlebarItem(value.getSnapshot().titlebarItems[0].key);
+        await value.runCommand('dashboard.open');
+        expect(request.mock.calls.filter(([action])=>action==='call')).toHaveLength(2);
+        expect(request).toHaveBeenCalledWith('call',expect.objectContaining({lease:'local-lease',ipc:'dashboard.open',method:'open'}));
+        value.uninstall('dashboard');
+        expect(native.active).toBe(false);
+        expect(request).toHaveBeenCalledWith('release',{lease:'local-lease'});
+    });
+
     it('binds action slots to each mounted instance and captures fresh content only on invocation', async () => {
         const value = host();
         value.setSession({ id: 'one', directory: '/work' });

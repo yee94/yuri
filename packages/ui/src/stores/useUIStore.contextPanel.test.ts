@@ -6,8 +6,8 @@ beforeEach(() => {
     contextPanelByDirectory: {},
     contextToolDiffByDirectory: {},
     sessionWorkspacePanelById: {},
-    contextPanelsOpenBeforeRightSidebarCollapse: [],
     isRightSidebarOpen: false,
+    activeMainTab: 'chat',
     rightSidebarTab: 'git',
     pendingFileFocusPath: null,
     pendingFileViewerMode: null,
@@ -17,6 +17,74 @@ beforeEach(() => {
 });
 
 describe('useUIStore context panel tabs', () => {
+  test('allows a 240px inner rail while preserving its 360px default and manually resized width', () => {
+    const store = useUIStore.getState();
+    useUIStore.setState({ rightSidebarWidth: 360, hasManuallyResizedRightSidebar: false });
+    store.setRightSidebarWidth(200);
+    expect(useUIStore.getState().rightSidebarWidth).toBe(240);
+    store.setRightSidebarWidth(280);
+    store.setRightSidebarOpen(true);
+    expect(useUIStore.getState().rightSidebarWidth).toBe(280);
+    store.setRightSidebarOpen(false);
+    store.toggleRightSidebar();
+    expect(useUIStore.getState().rightSidebarWidth).toBe(280);
+    useUIStore.setState({ isRightSidebarOpen: false, rightSidebarWidth: 240, hasManuallyResizedRightSidebar: false });
+    store.setRightSidebarOpen(true);
+    expect(useUIStore.getState().rightSidebarWidth).toBe(360);
+    useUIStore.setState({ isRightSidebarOpen: false, rightSidebarWidth: 240, hasManuallyResizedRightSidebar: false });
+    store.toggleRightSidebar();
+    expect(useUIStore.getState().rightSidebarWidth).toBe(360);
+  });
+
+  test.each([280, 300, 380, 450])('clamps requested and restored preview width %ipx to at least 300px', async (width) => {
+    const store = useUIStore.getState();
+    store.openContextPanel('/repo');
+    store.setContextPanelWidth('/repo', width);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(Math.max(300, width));
+    const saved = useUIStore.persist.getOptions().partialize!(useUIStore.getState()) as Pick<ReturnType<typeof useUIStore.getState>, 'contextPanelByDirectory'>;
+    saved.contextPanelByDirectory = {
+      ...saved.contextPanelByDirectory,
+      '/repo': { ...saved.contextPanelByDirectory['/repo'], width },
+    };
+    const restored = await useUIStore.persist.getOptions().migrate!(saved, 7) as typeof saved;
+    expect(restored.contextPanelByDirectory['/repo'].width).toBe(Math.max(300, width));
+  });
+
+  test('opens an empty preview independently and preserves cached files and unrelated roots when toggling', () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/other', '/other/a.ts');
+    const other = useUIStore.getState().contextPanelByDirectory['/other'];
+    store.toggleContextPanel('/repo/');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs: [], activeTabId: null });
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(true);
+    expect(useUIStore.getState().rightSidebarTab).toBe('git');
+    store.openContextFile('/repo', '/repo/a.ts');
+    const tabs = useUIStore.getState().contextPanelByDirectory['/repo'].tabs;
+    store.toggleContextPanel('/repo');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(false);
+    store.toggleContextPanel('/repo');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs });
+    expect(useUIStore.getState().contextPanelByDirectory['/other']).toBe(other);
+    const unchanged = useUIStore.getState();
+    for (let index = 0; index < 50; index++) store.openContextPanel('/repo');
+    expect(useUIStore.getState()).toBe(unchanged);
+    store.openContextPanel('');
+    expect(useUIStore.getState()).toBe(unchanged);
+  });
+
+  test('persists an intentionally empty preview and restores it when revisiting its session', async () => {
+    const store = useUIStore.getState();
+    store.openContextPanel('/repo');
+    const saved = useUIStore.persist.getOptions().partialize!(useUIStore.getState()) as Pick<ReturnType<typeof useUIStore.getState>, 'contextPanelByDirectory'>;
+    expect(saved.contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs: [], activeTabId: null });
+    const migrated = await useUIStore.persist.getOptions().migrate!(saved, 7) as typeof saved;
+    expect(migrated.contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs: [], activeTabId: null });
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'a', previousDirectory: '/repo', nextSessionId: 'b', nextDirectory: '/repo' });
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(false);
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'b', previousDirectory: '/repo', nextSessionId: 'a', nextDirectory: '/repo' });
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, tabs: [], activeTabId: null });
+  });
+
   test('keeps btw live while persisting only durable tabs and a valid active reference', () => {
     const store = useUIStore.getState();
     store.openContextPanelTab('/repo', { mode: 'btw' });
@@ -169,7 +237,7 @@ describe('useUIStore context panel tabs', () => {
     expect(tabs[0]?.readOnly).toBe(false);
   });
 
-  test('closeActiveContextPanelTab closes the active tab and shuts the panel when empty', () => {
+  test('closing the last tab leaves an empty preview and the next close dismisses the panel', () => {
     const directory = '/repo';
 
     useUIStore.getState().openContextPanelTab(directory, { mode: 'context' });
@@ -191,12 +259,15 @@ describe('useUIStore context panel tabs', () => {
     expect(closedLast).toBe(true);
     const after = useUIStore.getState().contextPanelByDirectory[directory];
     expect(after?.tabs).toHaveLength(0);
-    expect(after?.isOpen).toBe(false);
+    expect(after?.isOpen).toBe(true);
+
+    expect(useUIStore.getState().closeActiveContextPanelTab(directory)).toBe(true);
+    expect(useUIStore.getState().contextPanelByDirectory[directory]?.isOpen).toBe(false);
 
     expect(useUIStore.getState().closeActiveContextPanelTab(directory)).toBe(false);
   });
 
-  test('toggles open context panels with the right sidebar and restores them', () => {
+  test('the nested file-tree toggle never closes or reopens preview panels', () => {
     const firstDirectory = '/repo-one';
     const secondDirectory = '/repo-two';
     const store = useUIStore.getState();
@@ -209,12 +280,14 @@ describe('useUIStore context panel tabs', () => {
     store.toggleRightSidebar();
 
     expect(useUIStore.getState().isRightSidebarOpen).toBe(false);
-    expect(useUIStore.getState().contextPanelByDirectory[firstDirectory]?.isOpen).toBe(false);
-    expect(useUIStore.getState().contextPanelByDirectory[secondDirectory]?.isOpen).toBe(false);
+    expect(useUIStore.getState().contextPanelByDirectory[firstDirectory]?.isOpen).toBe(true);
+    expect(useUIStore.getState().contextPanelByDirectory[secondDirectory]?.isOpen).toBe(true);
+
+    store.closeContextPanel(firstDirectory);
 
     store.toggleRightSidebar();
 
-    expect(useUIStore.getState().contextPanelByDirectory[firstDirectory]?.isOpen).toBe(true);
+    expect(useUIStore.getState().contextPanelByDirectory[firstDirectory]?.isOpen).toBe(false);
     expect(useUIStore.getState().contextPanelByDirectory[secondDirectory]?.isOpen).toBe(true);
   });
 

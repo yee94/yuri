@@ -3,6 +3,7 @@ import { useEvent } from '@reactuses/core';
 
 import { useI18n } from '@/lib/i18n';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 
 export type MobileChatHeaderProps = {
   title: string;
@@ -40,7 +41,7 @@ export function MobileChatHeader({
       overlay
       collapsible
       elevated={elevated || menuOpen}
-      trailing={trailing}
+      trailing={<><GuiPluginTitlebarItems mobile />{trailing}</>}
       actions={[{
         icon: 'more-2',
         ariaLabel: t('mobile.menu.titleAria'),

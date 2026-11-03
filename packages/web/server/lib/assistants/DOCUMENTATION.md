@@ -1,5 +1,21 @@
 # Assistants Module
 
+## Contact pins
+
+Schema v15 adds nullable `assistant_v2.pinned_at`; existing contacts start unpinned.
+The ordinary revision-checked Assistant PATCH accepts `pinned: boolean` and returns
+`pinnedAt: number | null` in every Assistant DTO/snapshot. The Host chooses the time;
+repeated pinning and unrelated settings edits preserve it, and unpinning clears it.
+Only one live Bot may be pinned per Host. Pinning another Bot atomically clears
+the previous pin and revises both contacts. Schema v16 keeps the most recently
+pinned live contact from v15 (source order breaks ties), clears the others without
+changing unread/history, and installs a partial unique index to enforce the limit.
+Normalization, the index and schema-version update commit together; failure can retry.
+Writes and domain revision changes use the existing transaction, so failed replacement
+preserves the previous pin and all revisions. Pins do not create/reset sessions, alter catalog/share-default
+order, or change avatar/transcript/read state. Tombstoned contacts never appear in
+the pinned list. Existing snapshot events distribute confirmed changes to clients.
+
 ## WeChat message channel
 
 Each saved Bot has a Host-owned, QR-authorized text channel configured in the final

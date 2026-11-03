@@ -93,7 +93,6 @@ function Harness({ live = session, editing = true, indexed = session, children =
     removeSessionFromFolder={noop}
     addSessionToFolder={noop}
     createFolderAndStartRename={() => null}
-    openContextPanelTab={noop}
     handleDeleteSession={noop}
     mobileVariant={false}
     alwaysShowActions={false}

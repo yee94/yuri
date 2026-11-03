@@ -12,6 +12,7 @@ import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { SidebarBrandMark } from './SidebarBrandMark';
 import { GlobalSearchButton } from './GlobalSearchButton';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 
 const ICON_BUTTON_CLASS =
   'app-region-no-drag inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-interactive-hover hover:text-foreground transition-colors';
@@ -136,6 +137,7 @@ export const TitlebarLeftControls: React.FC = () => {
         ) : null}
 
         <div className="flex shrink-0 items-center gap-1">
+          <GuiPluginTitlebarItems />
           {showGlobalSearchInTitlebar ? <GlobalSearchButton /> : null}
 
           <Tooltip>

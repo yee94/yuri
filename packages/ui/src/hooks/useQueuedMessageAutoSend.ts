@@ -3,10 +3,9 @@ import { flushMessageQueuePersistence, useMessageQueueStore, queueScopeKey, type
 import { notifyConfirmedMessageSent, useSessionUIStore } from '@/sync/session-ui-store';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useConfigStore } from '@/stores/useConfigStore';
-import { useAutoReviewStore } from '@/stores/useAutoReviewStore';
 import { useChildStoreManager, useScopedSessionStatusReader, useScopedSessionStatusRevision } from '@/sync/sync-context';
 import type { ScopedSessionStatus } from '@/sync/scoped-session-status';
-import { getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { fetchRecentSendConfirmationRecords, getSendFailureKind, releaseUnconfirmedQueueSend, type OptimisticSendTicket } from '@/sync/session-actions';
 import { confirmQueueAbortOptimistic, getQueueAbortOptimisticPresentation } from '@/sync/queue-abort-optimistic';
 import { ascendingIdAfter } from '@/sync/message-id';
@@ -103,14 +102,6 @@ export const planQueueHead = (item: QueueItem | undefined, status: SessionStatus
   return {};
 };
 export const shouldDispatchQueuedAutoSend = (previous: SessionStatusType | undefined, current: SessionStatusType, hasQueuedItems = false) => Boolean(planQueueHead(hasQueuedItems ? ({ status: 'queued' } as QueueItem) : undefined, current, previous, Date.now()).dispatch);
-type PersistedAutoReviewRun = { status?: string; runtimeKey?: string };
-export const getAutoReviewBlockedSessions = (runsByOriginalSessionID: Record<string, PersistedAutoReviewRun | undefined>, activeRuntimeKey: string): Set<string> => {
-  const blockedSessions = new Set<string>();
-  for (const [sessionID, run] of Object.entries(runsByOriginalSessionID)) {
-    if (run?.status === 'running' && run.runtimeKey === activeRuntimeKey) blockedSessions.add(sessionID);
-  }
-  return blockedSessions;
-};
 
 type BoundScope = Extract<QueueScope, { state: 'bound' }>;
 const latestMessageID = (sessionID: string, directory: string): string | undefined => {
@@ -313,17 +304,12 @@ const releaseUnresolvedQueueHead = (scope: BoundScope, item: QueueItem) => {
 export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?: boolean }) {
   const enabled = typeof enabledOrOptions === 'boolean' ? enabledOrOptions : enabledOrOptions?.enabled ?? true;
   const gate = React.useSyncExternalStore(subscribeQueuedMessageOwnershipGate, getQueuedMessageOwnershipGate, getQueuedMessageOwnershipGate);
-  const queuedMessages = useMessageQueueStore((state) => state.queuedMessages); const runsByOriginalSessionID = useAutoReviewStore((state) => state.runsByOriginalSessionID);
+  const queuedMessages = useMessageQueueStore((state) => state.queuedMessages);
   const queueAbortBlocks = useSessionUIStore((state) => state.queueAbortBlocks);
   const activeTransportIdentity = React.useSyncExternalStore(
     subscribeRuntimeEndpointChanged,
     getRuntimeTransportIdentity,
     getRuntimeTransportIdentity,
-  );
-  const activeRuntimeKey = React.useSyncExternalStore(
-    subscribeRuntimeEndpointChanged,
-    getRuntimeKey,
-    getRuntimeKey,
   );
   const dispatchFlightState = React.useSyncExternalStore(subscribeDispatchFlights, () => dispatchFlightRevision, () => dispatchFlightRevision);
   const scopes = React.useMemo(() => Object.values(queuedMessages).flatMap((queue) => { const owner = queue[0]?.owner; return owner?.state === 'bound' && owner.transportIdentity === activeTransportIdentity ? [owner] : []; }), [activeTransportIdentity, queuedMessages]);
@@ -385,9 +371,6 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
   React.useEffect(() => {
     if (!enabled || gate !== 'legacy-enabled') return; const now = Date.now(); useSessionUIStore.getState().pruneQueueAbortBlocks(now); const blockedSessions = new Set<string>(); const blockedScopeKeys = new Set<string>();
     for (const [scopeKey, block] of queueAbortBlocks) if (block.expiresAt > now) blockedScopeKeys.add(scopeKey);
-    // A running auto-review pauses only its matching stable runtime. Legacy
-    // unkeyed records allow drain so persisted history cannot strand a queue.
-    for (const sessionID of getAutoReviewBlockedSessions(runsByOriginalSessionID, activeRuntimeKey)) blockedSessions.add(sessionID);
     const schedule = planQueueScheduler({ queuedMessages, activeTransportIdentity, getStatus, getTurnState, previous: previous.current, inFlight: reconciliationInFlight.current, blockedSessions, blockedScopeKeys, now });
     for (const operation of schedule.recoverOperations) {
       useMessageQueueStore.getState().markQueueItemReconciling(operation.scope, {
@@ -416,5 +399,5 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
     }
     const abortBlockWakeAt = getQueueAbortBlockWakeAt(queueAbortBlocks, now); const nextWakeAt = !schedule.nextWakeAt ? abortBlockWakeAt : !abortBlockWakeAt ? schedule.nextWakeAt : Math.min(schedule.nextWakeAt, abortBlockWakeAt);
     let timer: ReturnType<typeof setTimeout> | undefined; if (nextWakeAt) timer = setTimeout(() => { useSessionUIStore.getState().pruneQueueAbortBlocks(); setWake((value) => value + 1); }, Math.max(0, nextWakeAt - Date.now())); return () => { if (timer) clearTimeout(timer); };
-  }, [activeRuntimeKey, activeTransportIdentity, childStores, dispatchFlightState, enabled, gate, queuedMessages, queueAbortBlocks, runsByOriginalSessionID, statusRevision, messageCompletionRevision, getStatus, getTurnState, wake]);
+  }, [activeTransportIdentity, childStores, dispatchFlightState, enabled, gate, queuedMessages, queueAbortBlocks, statusRevision, messageCompletionRevision, getStatus, getTurnState, wake]);
 }

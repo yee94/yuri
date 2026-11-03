@@ -38,7 +38,7 @@ type SortableTabsStripProps = {
   onClose?: (id: string) => void;
   onReorder?: (activeId: string, overId: string) => void;
   layoutMode?: 'scrollable' | 'fit';
-  variant?: 'default' | 'active-pill' | 'animated';
+  variant?: 'default' | 'active-pill' | 'animated' | 'compact';
   activePillInsetClassName?: string;
   activePillButtonClassName?: string;
   inactiveTabsIconOnly?: boolean;
@@ -109,6 +109,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const itemIDs = React.useMemo(() => items.map((item) => item.id), [items]);
   const isScrollable = layoutMode === 'scrollable';
   const isDefaultVariant = variant === 'default';
+  const isCompactVariant = variant === 'compact';
   const isActivePillVariant = variant === 'active-pill';
   const isAnimatedVariant = variant === 'animated';
   const usesActivePillIndicator = isActivePillVariant || isAnimatedVariant;
@@ -327,6 +328,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
           usesActivePillIndicator && 'pill-tabs__track',
           usesActivePillIndicator && (activePillInsetClassName ?? 'gap-0.5 py-0.5'),
           useUnderlineIndicator && 'items-center overflow-y-hidden',
+          isCompactVariant && 'items-center gap-1 overflow-y-hidden',
           showPillTrackBackground && 'rounded-[10px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px] bg-[color-mix(in_srgb,var(--foreground)_2%,transparent)] p-0.5 gap-0.5',
           isScrollable
             ? 'overflow-x-auto scrollbar-none'
@@ -369,7 +371,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
           const shouldShowIcon = Boolean(item.icon) && (!iconOnlyActiveTab || isActive);
           const useIntrinsicActiveTab = inactiveTabsIconOnly && usesActivePillIndicator && isActive && !isScrollable && !useIntrinsicPillSizing;
           const closable = item.closable !== false && Boolean(onClose);
-          const closeReplacesIcon = closable && Boolean(item.icon);
+          const closeReplacesIcon = closable && Boolean(item.icon) && !isCompactVariant;
           const wrapperClassName = (isScrollable || useIntrinsicPillSizing)
             ? undefined
             : usesActivePillIndicator
@@ -409,11 +411,15 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                     : usesActivePillIndicator
                       ? 'w-full'
                       : 'w-full min-w-0',
-                  usesActivePillIndicator
-                    ? 'relative z-10 bg-transparent'
-                    : isActive
-                      ? 'relative z-10 bg-transparent text-foreground'
-                      : 'relative z-10 bg-transparent text-muted-foreground hover:text-foreground'
+                  isCompactVariant
+                    ? cn('relative rounded-md transition-colors', isActive
+                      ? 'bg-interactive-selection text-interactive-selection-foreground'
+                      : 'text-muted-foreground hover:bg-interactive-hover hover:text-foreground')
+                    : usesActivePillIndicator
+                      ? 'relative z-10 bg-transparent'
+                      : isActive
+                        ? 'relative z-10 bg-transparent text-foreground'
+                        : 'relative z-10 bg-transparent text-muted-foreground hover:text-foreground'
                 )}
               >
                 <button
@@ -423,9 +429,11 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                   aria-label={showInactiveIconOnly ? (item.title ?? item.label) : undefined}
                   onClick={() => onSelect(item.id)}
                   className={cn(
-                    usesActivePillIndicator
-                      ? 'animated-tabs__button pill-tabs__button relative z-10 flex flex-1 min-w-0 flex-nowrap items-center justify-center rounded-[9px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px] text-sm font-medium transition-colors duration-150 !min-h-0'
-                      : 'flex h-full min-w-0 flex-nowrap items-center typography-micro',
+                    isCompactVariant
+                      ? 'flex h-full max-w-56 min-w-0 flex-nowrap items-center rounded-md px-2 text-left text-xs font-normal !min-h-0 !min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]'
+                      : usesActivePillIndicator
+                        ? 'animated-tabs__button pill-tabs__button relative z-10 flex flex-1 min-w-0 flex-nowrap items-center justify-center rounded-[9px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px] text-sm font-medium transition-colors duration-150 !min-h-0'
+                        : 'flex h-full min-w-0 flex-nowrap items-center typography-micro',
                     usesActivePillIndicator && activePillLowercase ? 'lowercase' : null,
                     usesActivePillIndicator && (showInactiveIconOnly ? 'gap-0' : 'gap-1.5'),
                     usesActivePillIndicator
@@ -438,9 +446,11 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                             : useIntrinsicActiveTab
                               ? 'shrink-0 whitespace-nowrap px-3 text-center'
                               : 'px-3 text-center')
-                      : isScrollable
-                        ? 'max-w-56 justify-start truncate px-3 text-left'
-                        : 'w-full justify-center truncate px-3 text-center',
+                      : isCompactVariant
+                        ? null
+                        : isScrollable
+                          ? 'max-w-56 justify-start truncate px-3 text-left'
+                          : 'w-full justify-center truncate px-3 text-center',
                     usesActivePillIndicator
                       ? (activePillButtonClassName ?? (isActivePillVariant ? (isMobile ? 'h-[38px]' : 'h-[31px]') : 'h-7'))
                       : null,
@@ -488,7 +498,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                         <span
                           className={cn(
                             'relative flex h-4 w-4 shrink-0 items-center justify-center transition-colors duration-200 ease-out',
-                            isActive ? 'text-[var(--primary-base)]' : 'text-muted-foreground'
+                            !isCompactVariant && (isActive ? 'text-[var(--primary-base)]' : 'text-muted-foreground')
                           )}
                         >
                           <span className={cn('flex items-center justify-center transition-opacity', closeReplacesIcon && (alwaysShowCloseControls ? 'opacity-0' : 'group-hover:opacity-0'))}>{item.icon}</span>
@@ -528,16 +538,18 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                     }}
                     className={cn(
                       'relative z-20 inline-flex !min-h-0 !min-w-0 items-center justify-center transition-opacity',
-                      usesActivePillIndicator
-                        ? '-ml-2.5 mr-1 h-[88%] w-5 self-center !aspect-auto rounded-md'
-                        : 'aspect-square h-[65%] min-h-4 max-h-5 rounded-sm mr-1',
-                      usesActivePillIndicator
+                      isCompactVariant
+                        ? 'mr-1 size-4 shrink-0 self-center rounded-sm text-muted-foreground hover:bg-interactive-hover hover:text-foreground'
+                        : usesActivePillIndicator
+                          ? '-ml-2.5 mr-1 h-[88%] w-5 self-center !aspect-auto rounded-md'
+                          : 'aspect-square h-[65%] min-h-4 max-h-5 rounded-sm mr-1',
+                      !isCompactVariant && (usesActivePillIndicator
                         ? (isActive
                           ? 'text-muted-foreground hover:bg-transparent hover:text-foreground'
                           : 'text-muted-foreground opacity-0 hover:bg-transparent hover:text-foreground group-hover:opacity-100')
                         : (isActive
                           ? 'text-muted-foreground hover:bg-interactive-hover/60 hover:text-foreground'
-                          : 'text-muted-foreground opacity-0 hover:bg-interactive-hover/80 hover:text-foreground group-hover:opacity-100')
+                          : 'text-muted-foreground opacity-0 hover:bg-interactive-hover/80 hover:text-foreground group-hover:opacity-100'))
                     )}
                     aria-label={item.closeLabel ?? `Close ${item.label} tab`}
                     title={item.closeLabel ?? `Close ${item.label} tab`}

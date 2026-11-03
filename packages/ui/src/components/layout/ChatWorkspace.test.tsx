@@ -100,3 +100,20 @@ it('does not rerender for 50 resize events that stay on the same side of the thr
     await reserve(600);
     expect(main().style.display).not.toBe('none');
 });
+
+it('keeps the conversation header and terminal inside the primary column, beside the full-height preview', async () => {
+    await act(async () => root.render(<ChatWorkspace header={<header>Session tools</header>} footer={<section data-terminal>Terminal</section>}><textarea defaultValue="draft" /></ChatWorkspace>));
+    const header = host.querySelector('header')!;
+    const terminal = host.querySelector('[data-terminal]')!;
+    const input = host.querySelector('textarea')!;
+    expect(main().contains(header)).toBe(true);
+    expect(main().contains(terminal)).toBe(true);
+    expect(input.closest('[data-primary-chat-content]')).not.toBeNull();
+    expect(host.querySelector('aside')?.parentElement).toBe(main().parentElement);
+    await reserve(Infinity);
+    expect(main().style.display).toBe('none');
+    await reserve(0);
+    expect(host.querySelector('header')).toBe(header);
+    expect(host.querySelector('textarea')).toBe(input);
+    expect(host.querySelector('[data-terminal]')).toBe(terminal);
+});

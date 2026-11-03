@@ -10,6 +10,7 @@ import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
 import { ContactCardModelLine } from './ContactCardModelLine'
 import { cn } from '@/lib/utils'
 import { openAssistant } from '@/stores/useAssistantUIStore'
+import { AssistantCardNavigation } from './AssistantCardNavigation'
 import { CONTACT_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantAssistantCardProps = {
@@ -28,7 +29,9 @@ export const AssistantAssistantCard: React.FC<AssistantAssistantCardProps> = ({ 
   const isPhoneShell = Boolean(mobileActions && !isIPadApp())
   const title = card.name
   const metadata = `${card.providerID}/${card.modelID}`
+  const navigateCard = React.useContext(AssistantCardNavigation)
   const openContact = useEvent(() => {
+    if (navigateCard) return navigateCard({ assistantID: card.assistantID })
     if (isPhoneShell) {
       useMobileNavigationStore.getState().openAssistant(card.assistantID)
       return

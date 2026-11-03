@@ -3,6 +3,18 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+## Diff context loading
+
+The working-tree/staged diff toolbar's full-file switch loads both complete file
+versions for expanded, mounted rows and expands unchanged lines in Pierre. Turning
+it off restores compact patch context. Background loads retain the mounted preview,
+show per-file busy feedback, and expose errors with Retry without hiding the last
+snapshot. Request lifetimes depend on file/status/scope/context inputs, never their
+own response data; stale completions and timeout handles are cleaned up on change.
+Turn snapshots do not offer this switch: partial historical patches must never be
+hydrated from the current working tree. Other Pierre consumers remain compact by
+default. Covered by `src/components/views/DiffView.fullFiles.test.tsx`.
+
 ## Default themes
 
 New preferences use Cursor Dark (`cursor-dark`) and Carbonfox Light
@@ -27,8 +39,8 @@ recheck is pending, and a logo Suspense fallback plus error boundary for the app
 This prevents createRoot from replacing static branding with an empty commit.
 The web timeout removes its static overlay only after React has committed content;
 mini-chat's in-root logo is replaced by React without a destructive timeout.
-GUI revision checks, code downloads and installation stay silent; failures retain
-their existing error feedback, and file previews own their local loading state.
+GUI revision checks, code downloads and installation stay silent, including failures;
+diagnostics remain in plugin settings, and file previews own their local loading state.
 
 The full-text index startup screen keeps the same transparent 120 × 120 CSS-pixel logo at the viewport center as the desktop/web splash. Its progress ring is concentric with the logo; percentage, description, and background action occupy an independently scrolling area below it. The fullscreen dialog must not scale during entrance or exit, and progress/text changes must never reposition the logo.
 
@@ -70,7 +82,9 @@ sculpted SVG through `YuriWordmark` for each exact, whitespace-separated `Yuri`
 word, including mixed names such as `Yee Yuri`. Its width is cap-height-relative
 (2.44814cap = 626.723 / 256), matching the visible artwork to the bold
 Syne text's cap height. All words use the
-same theme foreground. Custom text retains its original 1.0625rem size, 700
+same theme foreground. Without a standalone `Yuri` word, the first word uses the
+normal foreground and trailing words use the current theme accent (`Team CODE`
+accents `CODE`). Custom text retains its original 1.0625rem size, 700
 weight and 0.08em tracking; Syne loads only when custom text is present.
 Whitespace-only names hide the slot. Store version 3 migrates exact historical default
 names, preserving other custom values and the existing runtime-scoped storage.
@@ -180,6 +194,73 @@ actions retain their existing shared sheet and modal behavior.
 
 ## Desktop conversation width
 
+Desktop `ChatWorkspace` owns two full-height columns: the primary conversation
+(including its session header and terminal dock) and the preview `ContextPanel`.
+The primary header's folder action and the existing right-sidebar shortcut
+toggle the preview independently of its tabs. Opening without a selection shows
+a localized select-file SVG empty state; closing the last tab returns to that
+state, while the panel close action hides the entire preview without deleting tabs.
+An additional close shortcut on an already-empty preview closes the panel, not
+the OS window. The session overflow menu omits the redundant Changes panel entry;
+Git changes remain available in the preview's Git rail.
+The preview toolbar owns its always-visible joined Git/Files icon group
+(one rounded outline with internal dividers), expand and
+close actions. The preview's expand/restore button uses paired diagonal arrows and
+toggles a full-workspace
+preview without changing the saved split width, tabs, or conversation draft.
+Expanded previews use the same `p-1.5` inset on all four sides; restoring keeps
+the original split-layout spacing.
+The file-tree search uses a compact 28px field with a 14px icon and a fine focus
+ring and a subtle local-background fill (2% foreground, 4% on hover), not a dark
+elevated plate; filtering, clear-to-refocus, and existing file actions stay available.
+The existing Files/Git/Browser rail is inside that preview; its visibility no
+longer closes or resurrects preview tabs. Hidden rails unmount their
+consumers. A first standalone open defaults to Git (Files if the main Git view is
+already active); subsequent opens preserve the chosen view. The preview has one
+inset rounded border. File paths remain in tab hover titles rather than a separate
+path header; content begins directly below the toolbar (except actionable notices).
+The entire preview surface (toolbar and content) raises the theme background's
+OKLCH lightness by 0.015 in light mode, capped at 1 while preserving hue/chroma.
+Dark mode retains its 4% foreground mix. Both keep a subtly raised layer rather
+than darkening the light surface; nested editors inherit its local
+background token. Stacked Changes file headers also use that local background
+(including their sticky translucent state), rather than separate elevated plates;
+diff addition/deletion colors and hover/selection feedback retain their meaning.
+The rail is transparent and inherits the same preview background, without a
+separate darker plate. Its resize minimum is 240 CSS pixels; the default stays
+360px and manually chosen widths survive reopening. In split mode, one 1px divider mixes 8% foreground into
+that background to keep the boundary visible; single-view mode omits the divider.
+It starts directly
+beneath its toolbar, without a second tab strip or
+top spacer. Below 400 CSS pixels of content width, the preview uses a single view:
+the rail fills the content area, and confirmed file/tab navigation switches to the
+preview. Failed validation or a blocked unsaved-file guard keeps the rail visible.
+Its toolbar buttons reopen the rail; widening restores both panes without changing
+the saved rail selection/width or unmounting the file preview. Resize events only
+update React layout state when crossing the threshold.
+In light mode, the header's selected tabs and Git/Files segments use a local
+7% foreground mix over the preview background, keeping selection neutral and
+aligned with the theme's tint. Dark selection and editor text-selection tokens
+are unchanged. Header hover/press use the same neutral tint at 6%/10%, so a
+selected segment never flashes the theme's unrelated accent tint on interaction.
+Desktop Git rails use compact Changes/Commit titles, a three-line textarea with a
+64px minimum that grows with content, and shared xs actions. The textarea matches
+the file-search field's inset edge, theme-derived fill and hover/focus feedback.
+Only the commit section adds a small bottom inset (`pb-1`); the outer scroll surface
+adds none. Mobile keeps the existing title, 38px field and touch sizing;
+staging/index-mutation guards, generation, gitmoji and commit/push remain unchanged.
+Right-side frameless window controls move from the session header to
+the preview header while open; WCO/titlebar insets remain reserved.
+
+The preview's saved and drag-resized width is at least 300 CSS pixels; older
+narrower saved widths are clamped on restore. A smaller workspace still bounds
+the rendered panel to its available width. Its full-height resize hit area is
+1rem wide and straddles the boundary. The short rounded 3px grip sits on the chat
+side, clear of the preview border, and remains hidden until hover or dragging.
+It uses a faint 25% muted-foreground fill and a localized Resize tooltip. Only the
+outer resize affordance may overflow; the rounded content surface stays clipped.
+Expanded previews omit the resize handle.
+
 Desktop `ChatWorkspace` keeps the primary conversation (transcript and composer)
 at least 350 CSS pixels wide while a ContextPanel is open. If the requested panel
 width leaves less space, the primary pane hides without unmounting and the panel
@@ -191,6 +272,10 @@ Split width changes do not animate through unreadable intermediate widths. Phone
 native-mobile and the separate VS Code layout retain their existing behavior.
 
 ## File preview fallback
+
+File toolbars retain find-in-file but have no go-to-line control or shortcut.
+The shared CodeMirror search keymap also omits its built-in go-to-line command;
+find, replace, and navigation to source references keep their existing behavior.
 
 `FilesView` and `MobileFilesSurface` retain the inline GUI-plugin preview as the
 outermost preview choice. The ordinary text fallback first reads authoritative

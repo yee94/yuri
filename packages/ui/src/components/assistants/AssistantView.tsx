@@ -1,5 +1,9 @@
-import { sortAssistantContacts } from './sortAssistantContacts';
+import { partitionAssistantContacts } from './sortAssistantContacts';
+import { AssistantContactMenu } from './AssistantContactMenu';
+import { AssistantPinnedContacts } from './AssistantPinnedContacts';
 import React from 'react';
+import { toast } from 'sonner';
+import { canOpenAssistantMiniChat, openAssistantMiniChat } from '@/lib/assistant-mini-chat';
 import { AssistantUnreadBadge } from './AssistantUnreadBadge';
 import { AssistantMarkAllReadButton } from './AssistantMarkAllReadButton';
 import { useEvent } from '@reactuses/core';
@@ -8,13 +12,6 @@ import { AssistantContactStatus } from './AssistantContactStatus';
 import { useAssistantWorking } from './assistantWorking';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
@@ -79,14 +76,13 @@ const MobileAssistantConversationHeader: React.FC<MobileAssistantConversationHea
 };
 
 type AssistantListItemProps = {
+  assistant: AssistantDTO;
   avatarSeed?: string;
   unreadCount: number;
   summary: string;
   assistantID: string;
   displayName: string;
   selected: boolean;
-  editLabel: string;
-  deleteLabel: string;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -95,14 +91,13 @@ type AssistantListItemProps = {
 };
 
 const AssistantListItem: React.FC<AssistantListItemProps> = ({
+  assistant,
   avatarSeed,
   unreadCount,
   summary,
   assistantID,
   displayName,
   selected,
-  editLabel,
-  deleteLabel,
   onSelect,
   onEdit,
   onDelete,
@@ -110,63 +105,37 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
   serverWorking = false,
 }) => {
   const working = useAssistantWorking(assistantID, serverWorking);
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const hoverTarget = React.useRef<HTMLButtonElement>(null);
   const handleSelect = useEvent(() => onSelect());
-  const handleEdit = useEvent(() => {
-    setMenuOpen(false);
-    onEdit();
-  });
-  const handleDelete = useEvent(() => {
-    setMenuOpen(false);
-    onDelete();
-  });
 
   return (
-    <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
-      <ContextMenuTrigger
-        render={
-          <button
-            ref={hoverTarget}
-            type="button"
-            role="option"
-            aria-selected={selected}
-            onClick={handleSelect}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setMenuOpen(true);
-            }}
-            className={cn(
-              'flex w-full min-h-11 items-center gap-3 rounded-xl border px-3 py-3 text-left outline-none transition-[background-color,border-color,opacity] duration-150 ease-out active:bg-interactive-active focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] motion-reduce:transition-none',
-              selected
-                ? 'border-border/50 bg-[var(--surface-elevated)]'
-                : 'border-transparent hover:bg-interactive-hover',
-            )}
-          />
-        }
-      >
-        <AssistantWorkingAvatar name={assistantID} avatarSeed={avatarSeed} size={44} label={displayName} working={working} hoverTarget={hoverTarget} />
-        <span className="min-w-0 flex-1">
-          <span className={cn('block truncate typography-ui-label leading-5', selected ? 'font-semibold' : 'font-medium')}>{displayName}</span>
-          <span className={cn(ASSISTANT_MESSAGE_PREVIEW_CLASS, 'mt-1 text-[length:calc(var(--text-micro)*0.9)] leading-5')}>{summary}</span>
-        </span>
-        <AssistantUnreadBadge count={unreadCount} className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
-      </ContextMenuTrigger>
-      <ContextMenuContent className="min-w-[10rem]">
-        <ContextMenuItem onClick={handleEdit}>
-          <Icon name="edit" className="size-4" />
-          {editLabel}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onClick={handleDelete}
-          className="text-[var(--status-error)] focus:text-[var(--status-error)] data-[highlighted]:text-[var(--status-error)] [&_svg]:text-[var(--status-error)]"
+    <AssistantContactMenu
+      assistant={assistant}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      trigger={(
+        <button
+          ref={hoverTarget}
+          type="button"
+          role="option"
+          aria-selected={selected}
+          onClick={handleSelect}
+          className={cn(
+            'flex w-full min-h-11 items-center gap-3 rounded-xl border px-3 py-3 text-left outline-none transition-[background-color,border-color,opacity] duration-150 ease-out active:bg-interactive-active focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] motion-reduce:transition-none',
+            selected
+              ? 'border-border/50 bg-[var(--surface-elevated)]'
+              : 'border-transparent hover:bg-interactive-hover',
+          )}
         >
-          <Icon name="delete-bin" className="size-4" />
-          {deleteLabel}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          <AssistantWorkingAvatar name={assistantID} avatarSeed={avatarSeed} size={44} label={displayName} working={working} hoverTarget={hoverTarget} />
+          <span className="min-w-0 flex-1">
+            <span className={cn('block truncate typography-ui-label leading-5', selected ? 'font-semibold' : 'font-medium')}>{displayName}</span>
+            <span className={cn(ASSISTANT_MESSAGE_PREVIEW_CLASS, 'mt-1 text-[length:calc(var(--text-micro)*0.9)] leading-5')}>{summary}</span>
+          </span>
+          <AssistantUnreadBadge count={unreadCount} className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
+        </button>
+      )}
+    />
   );
 };
 
@@ -193,7 +162,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
   const capabilityQuery = useAssistantCapabilityQuery();
   const snapshotQuery = useAssistantSnapshotQuery();
   const snapshot = snapshotQuery.data;
-  const contacts = React.useMemo(() => sortAssistantContacts(snapshot?.assistants ?? []), [snapshot?.assistants]);
+  const contacts = React.useMemo(() => partitionAssistantContacts(snapshot?.assistants ?? []), [snapshot?.assistants]);
   const selectedAssistantID = useAssistantUIStore((state) => state.assistantByTransport[transport] ?? null);
   const selectAssistant = useAssistantUIStore((state) => state.selectAssistant);
   const requestCreate = useAssistantUIStore((state) => state.requestCreate);
@@ -276,21 +245,21 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
             </Button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 sm:px-4" role="listbox" aria-label={t('assistants.listAria')}>
+            <AssistantPinnedContacts contacts={contacts.pinned} selectedAssistantID={selectedAssistantID} onSelect={selectAssistant} onEdit={openEditSettings} onDelete={requestDeleteAssistant} />
             <div className="flex flex-col gap-1 pt-1">
-              {contacts.map((item) => {
+              {contacts.unpinned.map((item) => {
                 const selected = item.id === selectedAssistantID;
                 const itemPresentation = getAssistantPresentation(item.name);
                 return (
                   <AssistantListItem
                     key={item.id}
+                    assistant={item}
                     assistantID={item.id}
                     avatarSeed={item.avatarSeed}
                     unreadCount={item.unreadCount ?? 0}
                     summary={getAssistantMessagePreview(item.latestMessagePreview, t)}
                     displayName={itemPresentation.displayName}
                     selected={selected}
-                    editLabel={t('assistants.menu.edit')}
-                    deleteLabel={t('assistants.settings.delete')}
                     assignedSessionIDs={item.assignedSessionIDs}
                     serverWorking={item.working}
                     onSelect={() => selectAssistant(item.id)}
@@ -318,6 +287,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
               <div className="truncate typography-ui-label font-semibold leading-5 tracking-[-0.01em] text-foreground">{presentation.displayName}</div>
               <AssistantContactStatus assistantID={assistant.id} serverWorking={Boolean(assistant.working || assistant.activeContactTurn)} lastContactAt={assistant.latestMessagePreview?.createdAt} />
             </div>
+            {canOpenAssistantMiniChat() ? (
+              <Button type="button" variant="ghost" size="icon" onClick={() => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); }} aria-label={t('sessions.sidebar.session.menu.openMiniChatWindow')} title={t('sessions.sidebar.session.menu.openMiniChatWindow')}>
+                <Icon name="external-link" className="size-4" />
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="ghost"

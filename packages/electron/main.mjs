@@ -3085,14 +3085,15 @@ const createAdditionalWindow = async (url, runtimeConfig = {}) => {
   return browserWindow;
 };
 
-const buildMiniChatUrl = ({ mode, sessionId, directory, projectId }) => {
-  const base = state.localOrigin || state.sidecarUrl;
+const buildMiniChatUrl = ({ mode, sessionId, assistantID, directory, projectId }) => {
+  const base = state.localUiOrigin || state.localOrigin || state.sidecarUrl;
   if (!base) {
     throw new Error('Local UI is not available');
   }
 
   const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl('/mini-chat.html') : '/mini-chat.html', base);
-  url.searchParams.set('mode', mode === 'session' ? 'session' : 'draft');
+  url.searchParams.set('mode', mode === 'assistant' ? 'assistant' : mode === 'session' ? 'session' : 'draft');
+  if (mode === 'assistant' && assistantID) url.searchParams.set('assistantID', assistantID);
   if (sessionId) url.searchParams.set('sessionId', sessionId);
   if (directory) url.searchParams.set('directory', directory);
   if (projectId) url.searchParams.set('projectId', projectId);
@@ -3119,14 +3120,16 @@ const getWindowRuntimeConfig = (browserWindow) => {
   };
 };
 
-const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', projectId = '', runtimeConfig = {} } = {}) => {
+const createMiniChatWindow = async ({ mode, sessionId = '', assistantID = '', directory = '', projectId = '', runtimeConfig = {} } = {}) => {
   const effectiveRuntimeConfig = {
     apiBaseUrl: normalizeHostUrl(runtimeConfig.apiBaseUrl || state.apiBaseUrl || state.localOrigin || state.sidecarUrl || ''),
-    clientToken: sanitizeClientTokenForStorage(runtimeConfig.clientToken || state.clientToken || ''),
+    clientToken: sanitizeClientTokenForStorage(runtimeConfig.clientToken ?? state.clientToken ?? ''),
     requestHeaders: sanitizeRuntimeRequestHeaders(runtimeConfig.requestHeaders || state.requestHeaders || {}),
   };
-  const sessionWindowKey = mode === 'session' && sessionId ? miniChatSessionWindowKey(effectiveRuntimeConfig, sessionId) : '';
-  if (mode === 'session' && sessionId) {
+  const sessionWindowKey = mode === 'assistant' && assistantID
+    ? miniChatSessionWindowKey(effectiveRuntimeConfig, `assistant:${assistantID}`)
+    : mode === 'session' && sessionId ? miniChatSessionWindowKey(effectiveRuntimeConfig, sessionId) : '';
+  if (sessionWindowKey) {
     const existing = state.miniChatWindowsBySession.get(sessionWindowKey);
     if (existing && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore();
@@ -3188,6 +3191,7 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
   browserWindow.__yuriRuntimeConfig = effectiveRuntimeConfig;
   browserWindow.__yuriInitScript = buildInitScript(desktopLocalOrigin, state.bootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
   browserWindow.__yuriMiniChat = true;
+  browserWindow.__yuriMiniChatAssistantID = mode === 'assistant' ? assistantID : '';
   browserWindow.__yuriMiniChatSessionId = sessionWindowKey;
   browserWindow.__yuriPinned = false;
 
@@ -3244,8 +3248,51 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
     }
   });
 
-  await navigateWindow(browserWindow, buildMiniChatUrl({ mode, sessionId, directory, projectId }));
+  try {
+    await navigateWindow(browserWindow, buildMiniChatUrl({ mode, sessionId, assistantID, directory, projectId }));
+  } catch (error) {
+    if (!browserWindow.isDestroyed()) browserWindow.destroy();
+    throw error;
+  }
   return browserWindow;
+};
+
+const focusAssistantMiniChatTarget = async (browserWindow, args) => {
+  const runtimeConfig = getWindowRuntimeConfig(browserWindow);
+  const assistantID = typeof args.assistantID === 'string' ? args.assistantID.trim() : '';
+  const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
+  const taskID = typeof args.taskID === 'string' ? args.taskID.trim() : '';
+  const projectID = typeof args.projectID === 'string' ? args.projectID.trim() : '';
+  const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
+  const route = taskID && projectID ? `/schedule/tasks/${encodeURIComponent(projectID)}/${encodeURIComponent(taskID)}`
+    : sessionId ? `/session/${encodeURIComponent(sessionId)}`
+    : `/assistant/${encodeURIComponent(assistantID || browserWindow.__yuriMiniChatAssistantID || '')}`;
+  const runtimeKey = miniChatSessionWindowKey(runtimeConfig, '');
+  let target = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()
+    && candidate.__yuriLabel
+    && candidate.__yuriMiniChat !== true
+    && !candidate.__yuriRuntimeConfig?.relayHostId
+    && miniChatSessionWindowKey(getWindowRuntimeConfig(candidate), '') === runtimeKey);
+  if (!target) {
+    const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
+    if (directory) url.searchParams.set('directory', directory);
+    target = await createAdditionalWindow(url.toString(), runtimeConfig);
+    if (!target) throw new Error('Main window is not available');
+  } else if (target.webContents.isLoading()) {
+    const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
+    if (directory) url.searchParams.set('directory', directory);
+    await navigateWindow(target, url.toString());
+  } else if (taskID && projectID) {
+    emitToWindow(target, 'yuri:open-scheduled-task', { projectID, taskID });
+  } else if (sessionId) {
+    emitToWindow(target, 'yuri:open-session', { sessionId, directory });
+  } else {
+    emitToWindow(target, 'yuri:open-assistant', { assistantID: assistantID || browserWindow.__yuriMiniChatAssistantID });
+  }
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
+  return { focused: true };
 };
 
 const setMiniChatPinned = (browserWindow, pinned) => {
@@ -3256,7 +3303,6 @@ const setMiniChatPinned = (browserWindow, pinned) => {
     throw new Error('Pinning is only available for Mini Chat windows');
   }
   const nextPinned = pinned === true;
-  browserWindow.__yuriPinned = nextPinned;
   if (nextPinned) {
     browserWindow.setAlwaysOnTop(true, 'floating');
   } else {
@@ -3265,6 +3311,7 @@ const setMiniChatPinned = (browserWindow, pinned) => {
       browserWindow.setVisibleOnAllWorkspaces(false);
     }
   }
+  browserWindow.__yuriPinned = nextPinned;
   return { pinned: nextPinned };
 };
 
@@ -4682,6 +4729,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
+    case 'desktop_open_assistant_mini_chat_window': {
+      const assistantID = typeof args.assistantID === 'string' ? args.assistantID.trim() : '';
+      if (!assistantID || assistantID.length > 256) throw new Error('Assistant id is required');
+      if (browserWindow?.__yuriRuntimeConfig?.relayHostId) throw new Error('Mini Chat requires a direct runtime connection');
+      await createMiniChatWindow({ mode: 'assistant', assistantID, runtimeConfig: resolveMiniChatRuntimeConfig(browserWindow, args) });
+      return null;
+    }
+
     case 'desktop_open_draft_mini_chat_window': {
       const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
       const projectId = typeof args.projectId === 'string' ? args.projectId.trim() : '';
@@ -4696,6 +4751,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { pinned: Boolean(browserWindow?.__yuriPinned) };
 
     case 'desktop_focus_main_window': {
+      if (browserWindow?.__yuriMiniChatAssistantID) return focusAssistantMiniChatTarget(browserWindow, args);
       const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
       const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
       const mode = typeof args.mode === 'string' ? args.mode.trim() : '';

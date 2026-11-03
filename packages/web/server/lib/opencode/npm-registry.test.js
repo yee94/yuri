@@ -1,5 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import * as npm from './npm-registry.js';
+
+const mock = vi.fn;
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock('child_process', () => ({ execFile: execFileMock }));
 
 const originalFetch = globalThis.fetch;
 const originalDateNow = Date.now;
@@ -18,6 +22,7 @@ const originalCliLookup = npm.npmCli.lookup;
 describe('npm registry client', () => {
   beforeEach(() => {
     npm.clearCache();
+    execFileMock.mockReset();
     Date.now = originalDateNow;
     fetchMock = mock(() => jsonResponse({}));
     globalThis.fetch = fetchMock;
@@ -212,23 +217,49 @@ describe('npm registry client', () => {
 
     expect(fetchMock.mock.calls[0][1].headers['User-Agent']).toMatch(/^yuri-server\//);
   });
-  test('npm CLI answer carries a vetted magpie.icon', async () => {
-    npm.npmCli.lookup = async () => ({ ok: true, latest: '1.0.0', versions: ['1.0.0'], distTags: { latest: '1.0.0' }, icon: 'https://cdn.example/a.png' });
+  test('npm CLI queries and sanitizes the top-level package icon', async () => {
+    npm.npmCli.lookup = originalCliLookup;
+    execFileMock.mockImplementation((_command, _args, _options, callback) => callback(null, JSON.stringify({
+      'dist-tags': { latest: '1.0.0' }, versions: ['1.0.0'],
+      icon: '  https://cdn.example/a.png  ',
+      magpie: { icon: 'https://cdn.example/legacy.png' },
+    }), ''));
 
     const result = await npm.getNpmInfo('@scope/pkg', { cwd: '/proj' });
 
     expect(result.icon).toBe('https://cdn.example/a.png');
+    expect(execFileMock).toHaveBeenCalledWith(expect.any(String), ['view', '@scope/pkg', 'dist-tags', 'versions', 'icon', '--json'],
+      expect.objectContaining({ cwd: '/proj' }), expect.any(Function));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test('registry fallback reads magpie.icon from the latest release', async () => {
+  test('registry fallback reads the top-level icon from the latest release', async () => {
     fetchMock.mockImplementation(() => jsonResponse({
       'dist-tags': { latest: '1.0.0' },
-      versions: { '1.0.0': { magpie: { icon: 'data:image/svg+xml;base64,AAAA' } } },
+      icon: 'https://cdn.example/packument.png',
+      versions: {
+        '0.9.0': { icon: 'https://cdn.example/old.png' },
+        '1.0.0': { icon: 'data:image/svg+xml;base64,AAAA', magpie: { icon: 'https://cdn.example/legacy.png' } },
+      },
     }));
 
     const result = await npm.lookupNpmPackage('foo');
 
     expect(result.icon).toBe('data:image/svg+xml;base64,AAAA');
+  });
+
+  test.each(['cli', 'http'])('%s never falls back to magpie.icon when icon is missing or invalid', async (source) => {
+    for (const icon of [undefined, 'http://cdn.example/insecure.png', { url: 'https://cdn.example/a.png' }]) {
+      const manifest = { icon, magpie: { icon: 'https://cdn.example/legacy.png' }, 'magpie.icon': 'https://cdn.example/legacy-flat.png' };
+      if (source === 'cli') {
+        npm.npmCli.lookup = originalCliLookup;
+        execFileMock.mockImplementation((_command, _args, _options, callback) => callback(null,
+          JSON.stringify({ 'dist-tags': { latest: '1.0.0' }, versions: ['1.0.0'], ...manifest }), ''));
+      } else fetchMock.mockImplementation(() => jsonResponse({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': manifest } }));
+      const result = await npm.lookupNpmPackage('foo');
+      expect(result.ok).toBe(true);
+      expect(result).not.toHaveProperty('icon');
+    }
   });
 
   test('sanitizePluginIcon keeps only https and data:image, within the size cap', () => {

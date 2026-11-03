@@ -197,8 +197,10 @@ Phone conversation headers (session chat and Assistant) share `--yuri-mobile-hea
 ## Anchored popup glass
 
 `yuri-mobile-overlay-surface yuri-popup-surface` reuses the global overlay blur
-and saturation on every runtime. `--yuri-overlay-translucent-fill` is shared with
-desktop pickers/composer catalogs; `--yuri-popup-fill` references it. Popup-only
+and saturation on every runtime. Desktop pickers/composer catalogs retain
+`--yuri-overlay-translucent-fill` at 22%; anchored popups instead use
+`--yuri-popup-fill` at 50% of the theme elevated surface to suppress background
+text interference while retaining frost. Popup-only
 `--yuri-popup-edge` and `--yuri-popup-shadow` provide a fine theme-foreground rim
 and short contact elevation instead of the large overlay's 48px shadow. Light
 and dark values live in `mobile.css`, not duplicated component utility strings.
@@ -208,6 +210,11 @@ Virtual rows paint that same hairline as an inset shadow to preserve measurement
 See `components/ui/DOCUMENTATION.md#anchored-popup-surfaces` for consumers and
 boundaries. The compound modifier is included in reduced-transparency rules so
 its specificity cannot defeat the opaque-fill/no-filter fallback.
+
+Model-picker section headers and the search input (including hover) stay
+transparent inside anchored popups, so the outer popup is their only material
+owner. Search rings and interactive row highlights remain intact. Inline and
+mobile-sheet model pickers retain their existing header/input backgrounds.
 
 ## Shared notifications
 

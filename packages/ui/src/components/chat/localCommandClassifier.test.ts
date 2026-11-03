@@ -28,6 +28,10 @@ describe('getLocalChatCommand', () => {
     expect(getLocalChatCommand('/remote-command', 'normal')).toBeNull();
     expect(getLocalChatCommand('/undo', 'shell')).toBeNull();
   });
+  test('does not intercept the removed handoff command while preserving workspace review', () => {
+    expect(getLocalChatCommand('/handoff-review', 'normal')).toBeNull();
+    expect(getLocalChatCommand('/workspace-review', 'normal')).toBe('workspace-review');
+  });
   test('recognizes resource-preserving command boundaries', () => {
     expect(getLocalChatCommand('/compact', 'normal')).toBe('compact');
     expect(getLocalChatCommand('/fork from-here', 'normal')).toBe('fork');

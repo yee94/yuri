@@ -60,6 +60,16 @@ success or failure. These are in-flight handles, not an additional snapshot cach
 
 ## Purpose
 
+`useUIStore.contextPanelByDirectory` owns preview visibility independently from
+tab selection. `openContextPanel` can open an empty preview; `toggleContextPanel`
+never creates a placeholder tab or clears cached files. Closing the last tab keeps
+the preview open, and closing an already-empty preview via the tab-close action
+dismisses it before window-close fallback. Explicit empty previews survive
+persistence and session workspace restoration; filtering transient-only BTW tabs
+still cannot persist an open phantom surface. `isRightSidebarOpen` now controls
+the Files/Git/Browser rail nested inside the desktop preview, not an outer column.
+Its toggle never changes preview visibility. Session snapshots retain both flags.
+
 `useOpenInAppsStore` caches the desktop machine's installed editor catalog, not the
 active Host's apps. Discovery remains behind local-page Electron IPC but is also
 available while that trusted UI is connected to SSH. `sshEditorQueries` owns the
@@ -150,7 +160,7 @@ reload, update check) are TanStack mutations in `queries/pluginMutations.ts`; th
 store keeps no pending/error state for them. Per-target update state is read with
 `usePluginPackageUpdateState`, keyed by runtime transport, directory and target, so
 the detail page and every list row agree. Package icons come from the registry
-result (`RegistryResult.icon`, the server-vetted `magpie.icon`).
+result (`RegistryResult.icon`, the server-vetted top-level package.json `icon`).
 Pinned updates retain the config entry identity and destination spec through the
 write/reload, so a changed spec cannot lose the pending/error state. Registry and
 runtime update notices share one compact strip; the registry banner only reports

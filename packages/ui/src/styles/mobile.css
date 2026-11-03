@@ -26,7 +26,7 @@
   --yuri-mobile-glass-blur: 20px;
   --yuri-mobile-glass-saturate: 1.25;
   --yuri-overlay-translucent-fill: color-mix(in srgb, var(--surface-elevated) 22%, transparent);
-  --yuri-popup-fill: var(--yuri-overlay-translucent-fill);
+  --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 50%, transparent);
   --yuri-popup-edge: color-mix(in srgb, var(--surface-foreground) 12%, transparent);
   --yuri-popup-divider: color-mix(in srgb, var(--surface-foreground) 6%, transparent);
   --yuri-popup-divider-width: 0.5px;
@@ -504,6 +504,12 @@
 .yuri-popup-surface .yuri-popup-separator {
   height: var(--yuri-popup-divider-width);
   background: var(--yuri-popup-divider);
+}
+
+.yuri-popup-surface .model-picker-section-header,
+.yuri-popup-surface .model-picker-search,
+.yuri-popup-surface .model-picker-search:hover:not(:focus) {
+  background: transparent;
 }
 
 .yuri-composer-autocomplete-row {

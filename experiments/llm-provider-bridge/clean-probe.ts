@@ -2,7 +2,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-
+ 
 const source = process.env.OPENCODE_SOURCE;
 if (!source) throw new Error('OPENCODE_SOURCE is required');
 const load = (file: string) => import(pathToFileURL(path.join(source, file)).href);

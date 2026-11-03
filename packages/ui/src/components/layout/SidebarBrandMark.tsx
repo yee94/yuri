@@ -19,8 +19,9 @@ import { YuriLogo } from '@/components/ui/YuriLogo';
  * compensated so the visible 256-unit artwork matches the text's cap height.
  * Custom text retains the Syne display face and its original tracking.
  *
- * The configured text is split on whitespace and uses one foreground color. Brand copy is
- * user content, so it is intentionally not localized.
+ * The configured text is split on whitespace. Names containing a Yuri wordmark use
+ * one foreground color; other names accent trailing words with the theme primary.
+ * Brand copy is user content, so it is intentionally not localized.
  *
  * An empty (whitespace-only) config hides the mark entirely — no default
  * fallback — so that logo slot stays vacant.
@@ -33,6 +34,7 @@ export const SidebarBrandMark: React.FC<SidebarBrandMarkProps> = ({ className })
   const sidebarBrandName = useSidebarBrandStore((state) => state.sidebarBrandName);
   const brandName = sidebarBrandName.trim();
   const brandWords = brandName.split(/\s+/).filter(Boolean);
+  const hasYuriWordmark = brandWords.includes('Yuri');
   const usesDisplayFont = brandWords.some((word) => word !== 'Yuri');
 
   React.useEffect(() => {
@@ -67,7 +69,7 @@ export const SidebarBrandMark: React.FC<SidebarBrandMarkProps> = ({ className })
           <span
             key={index}
             aria-hidden="true"
-            className="inline-flex shrink-0 items-baseline"
+            className={cn('inline-flex shrink-0 items-baseline', !hasYuriWordmark && index > 0 && 'text-primary')}
           >
             {word === 'Yuri' ? <YuriWordmark width="2.44814cap" /> : word}
           </span>

@@ -5,7 +5,7 @@ import { Compartment, EditorState, RangeSetBuilder, StateField } from '@codemirr
 import { Decoration, type DecorationSet, EditorView, type KeyBinding, ViewPlugin, WidgetType, gutters, keymap, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
 import { forceParsing, indentUnit } from '@codemirror/language';
-import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen, getSearchQuery } from '@codemirror/search';
+import { search, searchKeymap, gotoLine, openSearchPanel, closeSearchPanel, searchPanelOpen, getSearchQuery } from '@codemirror/search';
 import { createPortal } from 'react-dom';
 
 import { createVimModeExtensions } from '@/lib/codemirror/vimModeExtension';
@@ -156,6 +156,8 @@ const vimCompartment = new Compartment();
 const toViewKeyBindings = (bindings: readonly unknown[]): readonly KeyBinding[] => {
   return bindings as readonly KeyBinding[];
 };
+
+const editorSearchKeymap = toViewKeyBindings(searchKeymap.filter((binding) => binding.run !== gotoLine));
 
 const forceParsingCompat = forceParsing as unknown as (view: EditorView, upto?: number, timeout?: number) => boolean;
 const openSearchPanelCompat = openSearchPanel as unknown as (view: EditorView) => void;
@@ -401,7 +403,7 @@ export function CodeMirrorEditor({
         externalExtensionsCompartment.of(extensions ?? []),
         highlightLinesCompartment.of(createHighlightLinesExtension(highlightLines)),
         blockWidgetsCompartment.of(createBlockWidgetsExtension(blockWidgets, widgetContainersRef.current)),
-        searchCompartment.of(enableSearch ? [search({ top: true }), keymap.of(toViewKeyBindings(searchKeymap))] : []),
+        searchCompartment.of(enableSearch ? [search({ top: true }), keymap.of(editorSearchKeymap)] : []),
       ],
     });
 
@@ -443,7 +445,7 @@ export function CodeMirrorEditor({
         externalExtensionsCompartment.reconfigure(extensions ?? []),
         highlightLinesCompartment.reconfigure(createHighlightLinesExtension(highlightLines)),
         blockWidgetsCompartment.reconfigure(createBlockWidgetsExtension(blockWidgets, widgetContainersRef.current)),
-        searchCompartment.reconfigure(enableSearch ? [search({ top: true }), keymap.of(toViewKeyBindings(searchKeymap))] : []),
+        searchCompartment.reconfigure(enableSearch ? [search({ top: true }), keymap.of(editorSearchKeymap)] : []),
       ],
     });
 

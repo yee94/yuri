@@ -23,12 +23,6 @@ export type MagicPromptId =
   | 'session.summary.instructions'
   | 'session.review.visible'
   | 'session.review.instructions'
-  | 'session.reviewHandoff.visible'
-  | 'session.reviewHandoff.instructions'
-  | 'session.reviewSession.visible'
-  | 'session.reviewSessionWithoutHandoff.visible'
-  | 'session.reviewFeedbackToImplementer.visible'
-  | 'session.implementationResponseToReviewer.visible'
   | 'session.craftGoal.visible'
   | 'session.craftGoal.instructions'
   | 'session.catchup.visible'
@@ -496,87 +490,6 @@ Output:
 - If you find nothing real, say so plainly instead of inventing findings.
 
 Keep the review concise and practical. Respond in the same language the user uses.`,
-  },
-  {
-    id: 'session.reviewHandoff.visible',
-    title: 'Review Handoff Visible Prompt',
-    group: 'Session',
-    description: 'Visible user message sent by the /handoff-review command.',
-    template: 'Prepare a handoff for another agent to review this work.',
-  },
-  {
-    id: 'session.reviewHandoff.instructions',
-    title: 'Review Handoff Instructions',
-    group: 'Session',
-    description: 'Hidden instructions attached to the /handoff-review command. Produces a handoff for a separate review agent.',
-    template: `Produce a review handoff for another agent. Do not compact or mutate session history. Your output is an assistant message that Yuri will send to a separate reviewer agent.
-
-Include:
-- The user's original intent and any later clarifications that changed the intent
-- What was implemented and why
-- Files changed, with brief purpose per file
-- Important design decisions and tradeoffs
-- Validation/tests run, if known
-- Known gaps, uncertainty, or areas the reviewer should inspect closely
-
-Formatting:
-- Concise markdown with clear sections
-- No preamble like "Here is a handoff"
-- Do not mention Yuri metadata, linked sessions, session IDs, or routing
-- Respond in the same language the user used most in the conversation`,
-  },
-  {
-    id: 'session.reviewSession.visible',
-    title: 'Review Session Starter Prompt',
-    group: 'Session',
-    description: 'Visible user message sent to the generated review session.',
-    placeholders: [
-      { key: 'handoff', description: 'The generated implementation handoff.' },
-    ],
-    template: `Please review the changes described in this handoff.
-
-Focus on correctness, regressions, missing implementation, missing tests, and whether the implementation satisfies the stated intent. Provide concise, actionable feedback for the agent implementing the changes.
-
-{{handoff}}`,
-  },
-  {
-    id: 'session.reviewSessionWithoutHandoff.visible',
-    title: 'Review Session Starter Prompt Without Handoff',
-    group: 'Session',
-    description: 'Visible user message sent to a generated review session when no implementation handoff is generated first.',
-    template: `Please review the current workspace changes.
-
-There is no generated implementation handoff. Infer the likely user intent from the current diff, recent session context if available, changed files, and surrounding code. Judge whether the implementation is correct for that inferred intent, and call out uncertainty explicitly when intent cannot be recovered.
-
-Focus on correctness, regressions, missing implementation, missing tests, and whether the implementation is the smallest maintainable way to satisfy the likely goal. Provide concise, actionable feedback for the agent implementing the changes.`,
-  },
-  {
-    id: 'session.reviewFeedbackToImplementer.visible',
-    title: 'Review Feedback Transfer Prompt',
-    group: 'Session',
-    description: 'Visible user message sent from a review session back to the implementing agent.',
-    placeholders: [
-      { key: 'review_feedback', description: 'Reviewer assistant feedback text.' },
-    ],
-    template: `Another agent reviewed your changes and left the feedback below.
-
-Please review the feedback, resolve the relevant issues, and explain what you changed.
-
-{{review_feedback}}`,
-  },
-  {
-    id: 'session.implementationResponseToReviewer.visible',
-    title: 'Implementation Response Transfer Prompt',
-    group: 'Session',
-    description: 'Visible user message sent from the implementing agent back to the review session.',
-    placeholders: [
-      { key: 'implementation_response', description: 'Implementing assistant response text.' },
-    ],
-    template: `The agent implementing the changes has responded to the previous review feedback.
-
-Please review the latest state again and report any remaining issues.
-
-{{implementation_response}}`,
   },
   {
     id: 'session.craftGoal.visible',

@@ -136,8 +136,6 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
         composerDocument: visibleComposerDocument,
     }), [visibleAttachments, visibleComposerDocument, visibleContent]);
 
-    const attachmentCount = pendingAdmission || inboxChip ? message.attachmentCount : visibleAttachments?.length ?? 0;
-
     const removeAction = (
         <button
             type="button"
@@ -189,14 +187,14 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
             {isMobile ? removeAction : null}
             <span className={cn(
                 // items-baseline keeps chip labels on the same line as plain text
-                // ("hey") / "+N files". MessageReferenceChip exposes its label baseline
+                // ("hey"). MessageReferenceChip exposes its label baseline
                 // (icon is a separate 1em well), matching sent-message rendering.
                 'flex min-w-0 flex-1 items-baseline overflow-hidden whitespace-nowrap text-foreground [&>[data-message-reference-kind]]:min-w-0 [&>[data-message-reference-kind]]:truncate',
                 isMobile ? 'text-xs leading-5' : 'typography-ui-label leading-5',
             )}>
                 {previewParts ? previewParts.map((part, index) => (
                     part.type === 'text'
-                        ? <span key={`text-${index}`} className="min-w-0 truncate">{part.text}</span>
+                        ? <span key={`text-${index}`} className="min-w-0 truncate whitespace-pre">{part.text}</span>
                         : (
                             <MessageReferenceChip
                                 key={`ref-${index}-${part.span.start}`}
@@ -205,9 +203,6 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                             />
                         )
                 )) : (firstLine || t('chat.queuedMessage.empty'))}
-                {attachmentCount > 0 && (
-                    <span className="ml-1 shrink-0 text-muted-foreground">{t('chat.queuedMessage.attachments', { count: attachmentCount })}</span>
-                )}
             </span>
             <div className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
                 {sendPending && !waitingForCompaction ? (

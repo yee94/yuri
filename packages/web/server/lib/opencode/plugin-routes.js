@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 
 import { getNpmInfo as defaultGetNpmInfo } from './npm-registry.js';
+import { readLocalPluginIcon } from './plugin-icon.js';
 import { isExactSemver as defaultIsExactSemver, isPathSpec as defaultIsPathSpec, parseNpmSpec as defaultParseNpmSpec, parsePathSpec as defaultParsePathSpec } from './plugin-spec.js';
 
 const ENTRY_EXISTS_CODES = new Set(['ENTRY_EXISTS', 'EEXIST']);
@@ -170,7 +171,8 @@ export const registerPluginRoutes = (app, dependencies) => {
 
           try {
             fs.accessSync(absolutePath, fs.constants.R_OK);
-            results.push({ kind: 'path-ok', spec, absolutePath });
+            const icon = await readLocalPluginIcon(absolutePath);
+            results.push({ kind: 'path-ok', spec, absolutePath, ...(icon ? { icon } : {}) });
           } catch {
             results.push({ kind: 'path-unreadable', spec, absolutePath });
           }

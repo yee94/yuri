@@ -9,7 +9,7 @@ const mode = process.env.YURI_GUI_TEST_MODE;
 app.setPath('userData', path.join(directory, `profile-${mode}`));
 protocol.registerSchemesAsPrivileged([{ scheme: 'yuri-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const source = `
-  const {Plugin,Ipc,Command}=require('@opencode/plugin/gui');
+  const {Plugin,Ipc,Command,TitlebarItem}=require('@opencode/plugin/gui');
   const {Schema}=require('effect');
   const {BrowserWindow}=require('electron');
   const Export=Ipc.define({id:'pdf-fixture.export',methods:{pdf:{input:Schema.String,output:Schema.String}}});
@@ -17,10 +17,12 @@ const source = `
     setup(ctx){
       if(ctx.app.platform!=='desktop'||!ctx.desktop.os) throw new Error('Desktop metadata missing');
       const api=ctx.main(Export);
-      ctx.add(Command,{id:'export',title:'Export',run:async()=>{
+       const run=async()=>{
         const pdf=await api.pdf('<html><body><h1>Native plugin PDF</h1><p>Selectable text</p></body></html>');
         document.documentElement.dataset.pdf=pdf;
-      }});
+       };
+       ctx.add(Command,{id:'export',title:'Export',run});
+       ctx.add(TitlebarItem,{id:'export',label:'Export',icon:'globe',run});
     },
     main(ctx){
       const live=new Set();

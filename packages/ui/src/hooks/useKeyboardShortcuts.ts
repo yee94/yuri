@@ -161,7 +161,7 @@ export const useKeyboardShortcuts = () => {
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
   const toggleHelpDialog = useUIStore((s) => s.toggleHelpDialog);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
-  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const toggleContextPanel = useUIStore((s) => s.toggleContextPanel);
   const setRightSidebarOpen = useUIStore((s) => s.setRightSidebarOpen);
   const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
   const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
@@ -907,7 +907,8 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
-        toggleRightSidebar();
+        const directory = resolveEffectiveDirectory();
+        if (directory) toggleContextPanel(directory);
         return;
       }
 
@@ -917,6 +918,8 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
+        const directory = resolveEffectiveDirectory();
+        if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab('git');
         return;
@@ -928,6 +931,8 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
+        const directory = resolveEffectiveDirectory();
+        if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab('files');
         return;
@@ -947,6 +952,8 @@ export const useKeyboardShortcuts = () => {
         const nextTab = tabs[(currentIndex + 1) % tabs.length];
 
         e.preventDefault();
+        const directory = resolveEffectiveDirectory();
+        if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab(nextTab);
         return;
@@ -1199,9 +1206,19 @@ export const useKeyboardShortcuts = () => {
           isMultiRunLauncherOpen,
           isImagePreviewOpen,
           isPromptNavigatorPanelOpen,
+          workStatusOverlayOpen,
         } = useUIStore.getState();
 
         if (isInsideDialog || isInsideTerminal || hasDropdownInteraction) {
+          resetAbortPriming();
+          return;
+        }
+
+        if (workStatusOverlayOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          useUIStore.getState().setWorkStatusOverlayOpen(false);
           resetAbortPriming();
           return;
         }
@@ -1311,7 +1328,7 @@ export const useKeyboardShortcuts = () => {
     toggleCommandPalette,
     toggleHelpDialog,
     toggleSidebar,
-    toggleRightSidebar,
+    toggleContextPanel,
     setRightSidebarOpen,
     setRightSidebarTab,
     toggleBottomTerminal,

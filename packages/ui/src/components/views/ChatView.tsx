@@ -63,7 +63,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ readOnly = false, active = t
     const { visible, fits, layoutAllows } = useWorkStatusVisibility({ isMobile, isVSCode, directory });
     const hasConversation = selectionOverride ? Boolean(selectionOverride.sessionId)
         : isDraftOpen ? isDraftConversation : Boolean(sessionId);
-    const mountable = active && layoutAllows && !isExpandedInput && hasConversation;
+    const mountable = active && !isMobile && !isVSCode && !isExpandedInput && hasConversation;
     const showInline = mountable && visible;
     const showOverlay = mountable && workStatusEnabled && !fits && workStatusOverlayOpen;
 
@@ -82,7 +82,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ readOnly = false, active = t
                     <ChatContainer readOnly={readOnly} active={active} explicitSession={selectionOverride ? { ...selectionOverride, active } : undefined} />
                 </ChatErrorBoundary>
             </div>
-            {mountable ? (
+            {mountable && layoutAllows ? (
                 <WorkStatusHost
                     publishVisible
                     visible={showInline}

@@ -8,3 +8,12 @@ export function sortAssistantContacts<T extends Pick<AssistantDTO, 'latestMessag
     return left === right ? 0 : right - left;
   });
 }
+
+/** The single pinned contact is independent of recency; legacy multiple pins keep the latest. */
+export function partitionAssistantContacts<T extends Pick<AssistantDTO, 'latestMessagePreview' | 'pinnedAt'>>(contacts: readonly T[]) {
+  let pinned: T | undefined;
+  for (const contact of contacts) {
+    if (contact.pinnedAt != null && (!pinned || contact.pinnedAt > pinned.pinnedAt!)) pinned = contact;
+  }
+  return { pinned: pinned ? [pinned] : [], unpinned: sortAssistantContacts(contacts.filter(contact => contact !== pinned)) };
+}

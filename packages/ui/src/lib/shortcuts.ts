@@ -114,13 +114,6 @@ export function keyToShortcutToken(key: string): string {
 
 const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
   {
-    id: 'open_go_to_line',
-    defaultCombo: 'alt+g',
-    label: 'Go to line (files editor)',
-    description: 'Open go to line in the files editor',
-    customizable: true,
-  },
-  {
     id: 'open_command_palette',
     defaultCombo: 'mod+p',
     label: 'Open command palette',

@@ -27,10 +27,8 @@ import {
 } from '@/lib/userSendAnimation';
 import { streamPerfCount, streamPerfMeasure } from '@/stores/utils/streamDebug';
 import type { StreamPhase } from './message/types';
-import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionParts } from '@/sync/sync-context';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
-import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { scheduleAfterPaintTask } from '@/lib/afterPaintTaskQueue';
 import { useRenderPhaseCallback } from '@/hooks/useRenderPhaseCallback';
 import { getInitialHistoryOverscan, getNextHistoryOverscan } from './lib/historyOverscan';
@@ -762,7 +760,6 @@ interface MessageRowProps {
     onContentChange: (reason?: ContentChangeReason) => void;
     animationHandlers: AnimationHandlers;
     scrollToBottom?: () => void;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }
 
 const MessageRow = React.memo<MessageRowProps>(({ 
@@ -779,7 +776,6 @@ const MessageRow = React.memo<MessageRowProps>(({
     onContentChange,
     animationHandlers,
     scrollToBottom,
-    reviewTransferDirection,
 }) => {
     const sessionSurface = useSessionSurface();
     const messageSurface = message.sourceSessionID
@@ -817,7 +813,6 @@ const MessageRow = React.memo<MessageRowProps>(({
             turnOwnsAssistantHeader={turnOwnsAssistantHeader}
             isInActiveTurn={isInActiveTurn}
             activeStreamingPhase={activeStreamingPhase}
-            reviewTransferDirection={reviewTransferDirection}
         />
     );
     return (
@@ -841,7 +836,6 @@ const MessageRow = React.memo<MessageRowProps>(({
         && prev.turnOwnsAssistantHeader === next.turnOwnsAssistantHeader
         && prev.isInActiveTurn === next.isInActiveTurn
         && prev.activeStreamingPhase === next.activeStreamingPhase
-        && prev.reviewTransferDirection === next.reviewTransferDirection
         && prev.animationHandlers?.onChunk === next.animationHandlers?.onChunk
         && prev.animationHandlers?.onComplete === next.animationHandlers?.onComplete
         && prev.animationHandlers?.onStreamingCandidate === next.animationHandlers?.onStreamingCandidate
@@ -869,7 +863,6 @@ interface TurnBlockProps {
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }
 
 const TurnBlock = React.memo(({
@@ -888,7 +881,6 @@ const TurnBlock = React.memo(({
     onUserAnimationConsumed,
     activeStreamingMessageId,
     activeStreamingPhase,
-    reviewTransferDirection,
 }: TurnBlockProps) => {
     const showReasoningTraces = useUIStore((state) => state.showReasoningTraces);
     const hasLeadingContent = React.useMemo(() => Boolean(turn.userMessage) || turn.assistantMessages.some((message) => (
@@ -1178,7 +1170,6 @@ const TurnBlock = React.memo(({
                 turnOwnsAssistantHeader={isAssistantMessage}
                 isInActiveTurn={Boolean(streamingAssistantMessageId) && message.info.id === streamingAssistantMessageId}
                 activeStreamingPhase={message.info.id === streamingAssistantMessageId ? activeStreamingPhase : null}
-                reviewTransferDirection={reviewTransferDirection}
                 animateUserOnMount={shouldAnimateUserMessage(message)}
                 onUserAnimationConsumed={onUserAnimationConsumed}
                 onContentChange={onMessageContentChange}
@@ -1228,7 +1219,7 @@ const TurnBlock = React.memo(({
             onMessageContentChange={onMessageContentChange} getAnimationHandlers={getAnimationHandlers}
             scrollToBottom={scrollToBottom} shouldAnimateUserMessage={shouldAnimateUserMessage}
             onUserAnimationConsumed={onUserAnimationConsumed} activeStreamingMessageId={activeStreamingMessageId}
-            activeStreamingPhase={activeStreamingPhase} reviewTransferDirection={reviewTransferDirection} /> : null;
+            activeStreamingPhase={activeStreamingPhase} /> : null;
     }
 
     return (
@@ -1269,7 +1260,6 @@ interface UngroupedMessageRowProps {
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }
 
 const UngroupedMessageRow = React.memo(({
@@ -1283,7 +1273,6 @@ const UngroupedMessageRow = React.memo(({
     onUserAnimationConsumed,
     activeStreamingMessageId,
     activeStreamingPhase,
-    reviewTransferDirection,
 }: UngroupedMessageRowProps) => {
     const { t } = useI18n();
     if (isAssistantSessionDivider(message)) {
@@ -1311,7 +1300,6 @@ const UngroupedMessageRow = React.memo(({
             scrollToBottom={scrollToBottom}
             isInActiveTurn={Boolean(activeStreamingMessageId) && message.info.id === activeStreamingMessageId}
             activeStreamingPhase={message.info.id === activeStreamingMessageId ? activeStreamingPhase : null}
-            reviewTransferDirection={reviewTransferDirection}
         />
     );
 });
@@ -1334,7 +1322,6 @@ interface MessageListEntryProps {
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
-    reviewTransferDirection?: ReviewTransferDirection | null;
     showLiveStatusRow?: boolean;
 }
 
@@ -1354,7 +1341,6 @@ const MessageListEntry = React.memo(({
     onUserAnimationConsumed,
     activeStreamingMessageId,
     activeStreamingPhase,
-    reviewTransferDirection,
     showLiveStatusRow = false,
 }: MessageListEntryProps) => {
     const body = entry.kind === 'ungrouped' ? (
@@ -1369,7 +1355,6 @@ const MessageListEntry = React.memo(({
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
             activeStreamingPhase={activeStreamingPhase}
-            reviewTransferDirection={reviewTransferDirection}
         />
     ) : (
         <TurnBlock
@@ -1384,7 +1369,6 @@ const MessageListEntry = React.memo(({
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
             activeStreamingPhase={activeStreamingPhase}
-            reviewTransferDirection={reviewTransferDirection}
             onMessageContentChange={onMessageContentChange}
             getAnimationHandlers={getAnimationHandlers}
             scrollToBottom={scrollToBottom}
@@ -1422,10 +1406,9 @@ type StaticHistoryListProps = {
     chatRenderMode: 'sorted' | 'live';
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 };
 
-const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, contentRef, scrollRef, registerTanstackVirtualizer, virtualizerKey, onMessageContentChange, getAnimationHandlers, scrollToBottom, stickyUserHeader, activityRenderMode, turnUiStates, onToggleTurnGroup, chatRenderMode, shouldAnimateUserMessage, onUserAnimationConsumed, reviewTransferDirection }: StaticHistoryListProps) => {
+const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, contentRef, scrollRef, registerTanstackVirtualizer, virtualizerKey, onMessageContentChange, getAnimationHandlers, scrollToBottom, stickyUserHeader, activityRenderMode, turnUiStates, onToggleTurnGroup, chatRenderMode, shouldAnimateUserMessage, onUserAnimationConsumed }: StaticHistoryListProps) => {
     const [displayEntries, setDisplayEntries] = React.useState(entries);
     const speechTarget = React.useSyncExternalStore(subscribeSpeechTracking, getSpeechTarget, () => null);
     const speechEntryKey = speechTarget && scrollRef?.current?.contains(speechTarget)
@@ -1993,7 +1976,6 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
                 chatRenderMode={chatRenderMode}
                 shouldAnimateUserMessage={shouldAnimateUserMessage}
                 onUserAnimationConsumed={onUserAnimationConsumed}
-                reviewTransferDirection={reviewTransferDirection}
             />
         );
     });
@@ -2108,7 +2090,6 @@ const TailEntry = React.memo<{
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }>((props) => (
     <div className="yuri-chat-message-layout-boundary">
         <MessageListEntry {...props} />
@@ -2136,7 +2117,6 @@ const StreamingTailContent: React.FC<{
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }> = ({
     entries,
     directory,
@@ -2155,7 +2135,6 @@ const StreamingTailContent: React.FC<{
     onUserAnimationConsumed,
     activeStreamingMessageId,
     activeStreamingPhase,
-    reviewTransferDirection,
 }) => {
     const newestIndex = entries.length - 1;
     // Ticket 02 remediation: session-scoped repository parts subscription —
@@ -2199,7 +2178,6 @@ const StreamingTailContent: React.FC<{
                         onUserAnimationConsumed={onUserAnimationConsumed}
                         activeStreamingMessageId={isNewest ? activeStreamingMessageId : null}
                         activeStreamingPhase={isNewest ? activeStreamingPhase : null}
-                        reviewTransferDirection={reviewTransferDirection}
                     />
                 );
             })}
@@ -2239,9 +2217,6 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const chatRenderMode = useUIStore((state) => state.chatRenderMode);
     const activityRenderMode = useUIStore((state) => state.activityRenderMode);
     const showTurnChangedFiles = useUIStore((state) => state.showTurnChangedFiles);
-    const reviewTransferDirection = useGlobalSessionsStore((state) => {
-        return state.reviewTransferBySessionId.get(domainSessionKey) ?? null;
-    });
     const [turnUiStates, setTurnUiStates] = React.useState<Map<string, TurnUiState>>(() => new Map());
     const [turnUiSessionKey, setTurnUiSessionKey] = React.useState(domainSessionKey);
     if (turnUiSessionKey !== domainSessionKey) {
@@ -2869,7 +2844,6 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                                     chatRenderMode={chatRenderMode}
                                     shouldAnimateUserMessage={shouldAnimateUserMessage}
                                     onUserAnimationConsumed={onUserAnimationConsumed}
-                                    reviewTransferDirection={reviewTransferDirection}
                                 />
                             </DeferredToolHydrationProvider>
                         </FadeInDisabledProvider>
@@ -2898,7 +2872,6 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                             onUserAnimationConsumed={onUserAnimationConsumed}
                             activeStreamingMessageId={activeStreamingMessageId}
                             activeStreamingPhase={activeStreamingPhase}
-                            reviewTransferDirection={reviewTransferDirection}
                         />
                         {/* Inside pin-reveal root: cold-open must not leave a
                             visible status label over a still-hidden transcript. */}

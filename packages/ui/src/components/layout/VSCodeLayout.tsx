@@ -1,4 +1,5 @@
 import '@/lib/brand-storage-bootstrap';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 import React from 'react';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
@@ -808,6 +809,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
         <SessionsTabTitle title={title} />
       )}
       <div className="min-w-0 flex-1" />
+      <GuiPluginTitlebarItems />
       {onArchiveAll && <ArchiveAllDropdown onArchiveAll={onArchiveAll} />}
       {onNewSession && (
         <button

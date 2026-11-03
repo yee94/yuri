@@ -65,6 +65,22 @@ with `mobileIcon`, matching search/back controls. `yuri-mobile-inverse-action`
 only swaps the tint to translucent `surface.foreground` and the icon to
 `surface.background`; reflection, blur and shadows retain the shared recipe.
 
+# File editor navigation
+
+The shared CodeMirror editor keeps find/replace keybindings but excludes the
+search package's `gotoLine` binding on both creation and reconfiguration. File
+toolbars have no line-number entry or go-to-line action; source-reference
+navigation and line-number gutters remain available.
+
+# Compact preview tabs
+
+`SortableTabsStrip variant="compact"` is the ContextPanel preview header recipe:
+24px tabs in the window-height-aligned preview header, 12px labels, a neutral selection-token rounded fill,
+and no underline or enclosing track. File icons stay visible, with a separate
+trailing close button on every closable tab. Selection, horizontal scrolling,
+middle-click close and drag reorder retain the shared strip's behavior. Other
+tab-strip variants and mobile file navigation remain unchanged.
+
 # Mobile row swipe actions
 
 `useMobileSwipeActions.ts` and `MobileSwipeActionRail.tsx` own the homepage session and Assistant contact trailing
@@ -131,8 +147,9 @@ status overlays and device connections use
 `yuri-mobile-overlay-surface yuri-popup-surface`. The base owns blur/saturation;
 the modifier owns the shared translucent fill, foreground, fine edge and short
 shadow through `--yuri-popup-fill`, `--yuri-popup-edge` and `--yuri-popup-shadow`
-in `styles/mobile.css`. The fill shares `--yuri-overlay-translucent-fill` with
-picker dialogs; popup shadows are deliberately shorter and lighter. Theme
+in `styles/mobile.css`. The fill uses 50% of the theme elevated surface for
+readability, independently of picker-dialog translucency; popup shadows are
+deliberately shorter and lighter. Theme
 surface colors remain authoritative. Avoid default inline opaque backgrounds
 or copied shadow utilities on popup roots. Explicit caller styles still win.
 

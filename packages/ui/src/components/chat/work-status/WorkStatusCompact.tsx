@@ -62,6 +62,7 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => 
   const [subagentsExpanded, setSubagentsExpanded] = React.useState(false);
   const subagentsListId = React.useId();
   const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
+  const openContextPanel = useUIStore((state) => state.openContextPanel);
   const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
   const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
@@ -108,6 +109,8 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => 
     void copyText(worktreeCopyKey, path);
   });
   const openGit = useEvent(() => {
+    if (!directory) return;
+    openContextPanel(directory);
     setRightSidebarTab('git');
     setRightSidebarOpen(true);
   });

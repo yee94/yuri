@@ -78,6 +78,22 @@ describe('sidebar brand selection and persisted defaults', () => {
     expect(mark?.getAttribute('aria-label')).toBe('Yee Yuri');
     expect(mark?.textContent).toBe('Yee');
     expect(container.querySelectorAll('[style*="mask"]')).toHaveLength(1);
+    expect(container.querySelector('.text-primary')).toBeNull();
+  });
+
+  it('uses the theme accent for trailing custom words only when no Yuri wordmark is present', () => {
+    act(() => {
+      useSidebarBrandStore.getState().setSidebarBrandName('Team CODE');
+      root.render(<SidebarBrandMark />);
+    });
+    const mark = container.querySelector('[role="img"]')!;
+    expect(mark.children[0].textContent).toBe('Team');
+    expect(mark.children[0].classList.contains('text-primary')).toBe(false);
+    expect(mark.children[1].textContent).toBe('CODE');
+    expect(mark.children[1].classList.contains('text-primary')).toBe(true);
+
+    act(() => useSidebarBrandStore.getState().setSidebarBrandName('Yee Yuri'));
+    expect(container.querySelector('.text-primary')).toBeNull();
   });
 
   it.each([

@@ -1,4 +1,6 @@
-import { sortAssistantContacts } from '@/components/assistants/sortAssistantContacts';
+import { partitionAssistantContacts } from '@/components/assistants/sortAssistantContacts';
+import { AssistantContactMenu } from '@/components/assistants/AssistantContactMenu';
+import { AssistantPinnedContacts } from '@/components/assistants/AssistantPinnedContacts';
 import * as React from 'react';
 import { AssistantUnreadBadge } from '@/components/assistants/AssistantUnreadBadge';
 import { AssistantMarkAllReadButton } from '@/components/assistants/AssistantMarkAllReadButton';
@@ -117,6 +119,7 @@ function MobileAssistantDisabledGuide({ onEnable }: { onEnable: () => void }) {
 }
 
 type MobileAssistantCardProps = {
+  assistant: AssistantDTO;
   avatarSeed?: string;
   unreadCount: number;
   assistantID: string;
@@ -132,6 +135,7 @@ type MobileAssistantCardProps = {
 };
 
 function MobileAssistantCard({
+  assistant,
   avatarSeed,
   unreadCount,
   assistantID,
@@ -155,6 +159,7 @@ function MobileAssistantCard({
           { label: editLabel, icon: 'edit', onClick: onEdit },
           { label: deleteLabel, icon: 'delete-bin', destructive: true, onClick: onDelete },
         ]} />
+          <AssistantContactMenu assistant={assistant} onEdit={onEdit} onDelete={onDelete} trigger={(
             <button
               ref={hoverTarget}
               type="button"
@@ -168,7 +173,6 @@ function MobileAssistantCard({
               onPointerMove={swipe.handlePointerMove}
               onPointerUp={swipe.finishGesture}
               onPointerCancel={swipe.handlePointerCancel}
-              onContextMenu={swipe.handleContextMenu}
               style={{ touchAction: 'pan-y', transform: `translate3d(${swipe.offset}px, 0, 0)`, willChange: swipe.offset === 0 ? undefined : 'transform' }}
             >
           <span className="yuri-mobile-assistant-avatar">
@@ -191,6 +195,7 @@ function MobileAssistantCard({
           </span>
           <AssistantUnreadBadge count={unreadCount} />
         </button>
+          )} />
       </MobileFloatingSurface>
   );
 }
@@ -200,7 +205,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
   const mobileActions = useMobileAppActions();
   const capability = useAssistantCapabilityQuery();
   const snapshot = useAssistantSnapshotQuery();
-  const contacts = React.useMemo(() => sortAssistantContacts(snapshot.data?.assistants ?? []), [snapshot.data?.assistants]);
+  const contacts = React.useMemo(() => partitionAssistantContacts(snapshot.data?.assistants ?? []), [snapshot.data?.assistants]);
   const requestCreate = useAssistantUIStore((state) => state.requestCreate);
   const [deleteTarget, setDeleteTarget] = React.useState<AssistantDTO | null>(null);
   const handleEnable = useEvent(() => onEnable());
@@ -263,7 +268,8 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
           role="listbox"
           aria-label={t('assistants.listAria')}
         >
-          {contacts.map((assistant) => {
+          <AssistantPinnedContacts contacts={contacts.pinned} onSelect={handleOpenAssistant} onEdit={handleEdit} onDelete={handleRequestDelete} />
+          {contacts.unpinned.map((assistant) => {
             const presentation = getAssistantPresentation(assistant.name);
             const displayName = presentation.displayName || assistant.name;
             const summary = getAssistantMessagePreview(assistant.latestMessagePreview, t);
@@ -271,6 +277,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
             return (
               <MobileAssistantCard
                 key={assistant.id}
+                assistant={assistant}
                 assistantID={assistant.id}
                 avatarSeed={assistant.avatarSeed}
                 unreadCount={assistant.unreadCount ?? 0}

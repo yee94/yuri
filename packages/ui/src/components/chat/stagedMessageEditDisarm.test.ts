@@ -107,7 +107,7 @@ describe('sent-message edit submission routing', () => {
             useEvent: (fn: unknown) => fn,
             useSessionUIStore: { getState: () => ({ stagedMessageEdit: input.editing ? { sessionId: 'session-a', messageId: 'msg_1' } : null }) },
             currentSessionId: 'session-a', surface: { kind: 'primary', deliveryTarget: { kind: 'primary' } },
-            sessionIsRunning: input.busy, autoReviewRunning: false, hasQueuedMessages: input.queued,
+            sessionIsRunning: input.busy, hasQueuedMessages: input.queued,
             queueFrozen: input.frozen ?? false, serverQueue: { mode: 'server' }, inputMode: 'normal', followUpBehavior: 'queue',
             getCurrentInputSnapshot: () => ({ message: 'edited', document: { text: 'edited', references: [] }, hasContent: true }),
             getLocalChatCommand: () => null, claimedByEstablishingFollowUp: () => false, isSubmissionInFlight: () => false,

@@ -3,8 +3,10 @@
 A short column beside the transcript. It is not a card and not a context-panel
 surface. It occupies its final width as soon as a session is selected or the
 first-prompt draft enters its establishing/submitting transcript state. Message
-loading does not gate the column. Idle welcome drafts keep it hidden, as do an
-open right sidebar or non-chat context panel. Opening a subagent chat keeps the
+loading does not gate the column. Idle welcome drafts keep it hidden. An open
+preview rail or non-chat context panel suppresses the automatic inline column,
+but never blocks the manually requested popup in the conversation column.
+Opening a subagent chat keeps the
 column and its expanded agent list visible. The column overlays the transcript instead
 of shrinking it, and stays one scrollbar-lane left of the viewport edge. The
 chat scroller remains full width, so its scrollbar sits on the right edge of
@@ -74,8 +76,10 @@ come from this fork's shared `useGitStore` (its diff stats are flat per-file, un
 upstream's staged/working maps). ChatInput already owns live Git refresh hints;
 this column only ensures the shared snapshot on mount and adds no polling.
 Changes opens the Git sidebar. Branch does not navigate.
-Layout exclusion applies to both inline and overlay modes, scoped to the displayed
-directory, without mutating the saved visibility preference.
+Inline layout exclusion is scoped to the displayed directory, without mutating
+the saved visibility preference. Overlay eligibility depends on an active desktop
+conversation, not on preview visibility. Mobile, VS Code, inactive transcripts,
+and expanded input still exclude both modes.
 
 Inline width is fixed at 196px; the overlay is wider (264px) with `p-2` and `rounded-xl` so the popup reads as its own surface. Inline and overlay modes are both absolutely positioned; neither consumes flex width. Inline display requires a window viewport of at least
 1440px, evaluated on the first render with `useMediaQuery`; it does not wait for
@@ -88,4 +92,8 @@ the same shared frosted popup material, fine outline and compact shadow as the
 Changed files popup. The `yuri-popup-surface` modifier keeps elevation below the
 larger picker dialog; reduced transparency restores an opaque elevated fill.
 Inline mode stays transparent and borderless.
-The header toggle uses `settings-2`.
+The header uses `WorkStatusToggle` with `settings-2`. In popup mode, a single click
+both enables a previously disabled preference and opens the popup; subsequent
+clicks close/reopen it. Inline mode keeps its preference toggle behavior.
+The global Escape capture closes this popup before either preview dismissal or
+double-Escape abort priming, including while the conversation is running.

@@ -1952,7 +1952,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
               as={ScrollShadow}
               ref={actionPanelScrollRef}
               outerClassName="flex-1 min-h-0"
-              className={cn('px-4', 'pt-2 pb-4')}
+              className={isMobile ? 'px-4 pt-2 pb-4' : 'px-2 pt-0 pb-0'}
               disableHorizontal
               preventOverscroll
             >
@@ -1960,7 +1960,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                 {isDeferredChanges ? (
                   <>
                     <div className="mb-1 flex h-8 shrink-0 items-center bg-background pr-2">
-                      <span className="min-w-0 flex-1 truncate typography-ui-label font-semibold text-foreground">
+                      <span className={cn('min-w-0 flex-1 truncate font-semibold text-foreground', isMobile ? 'typography-ui-label' : 'text-xs leading-4')}>
                         {t('gitView.changes.deferredTitle', { count: status?.files?.length ?? 0 })}
                       </span>
                       <div className="ml-auto grid shrink-0 grid-flow-col auto-cols-[1.5rem] items-center justify-end">
@@ -1977,6 +1977,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                   <>
                     <div className="min-h-0 flex-1 overflow-hidden">
                       <ChangesPanel
+                        compact={!isMobile}
                         groups={changeGroups}
                         diffStats={status?.diffStats}
                         revertingPaths={revertingPaths}
@@ -1991,6 +1992,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                     </div>
 
                     <CommitSection
+                      compact={!isMobile}
                       stagedCount={stagedCount}
                       commitMessage={commitMessage}
                       onCommitMessageChange={setCommitMessage}
@@ -2009,7 +2011,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                 ) : (
                   <>
                     <div className="mb-1 flex h-8 shrink-0 items-center bg-background pr-2">
-                      <span className="min-w-0 flex-1 truncate typography-ui-label font-semibold text-foreground">
+                      <span className={cn('min-w-0 flex-1 truncate font-semibold text-foreground', isMobile ? 'typography-ui-label' : 'text-xs leading-4')}>
                         {t('gitView.empty.cleanTitle')}
                       </span>
                       <div className="ml-auto grid shrink-0 grid-flow-col auto-cols-[1.5rem] items-center justify-end">

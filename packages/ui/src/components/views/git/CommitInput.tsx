@@ -10,6 +10,7 @@ interface CommitInputProps {
   disabled?: boolean;
   hasTouchInput?: boolean;
   isMobile?: boolean;
+  compact?: boolean;
 }
 
 const MIN_HEIGHT = 38; // Single line height
@@ -22,10 +23,12 @@ export const CommitInput: React.FC<CommitInputProps> = ({
   disabled = false,
   hasTouchInput = false,
   isMobile = false,
+  compact = false,
 }) => {
   const { t } = useI18n();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
+  const minimumHeight = compact ? 64 : MIN_HEIGHT;
 
   // Auto-resize based on content (layout phase to avoid mount flicker)
   React.useLayoutEffect(() => {
@@ -35,9 +38,9 @@ export const CommitInput: React.FC<CommitInputProps> = ({
 
     const resize = () => {
       // Reset to baseline to measure content height from a stable line.
-      textarea.style.height = `${MIN_HEIGHT}px`;
+      textarea.style.height = `${minimumHeight}px`;
       const contentHeight = textarea.scrollHeight;
-      const newHeight = Math.min(Math.max(contentHeight, MIN_HEIGHT), MAX_HEIGHT);
+      const newHeight = Math.min(Math.max(contentHeight, minimumHeight), MAX_HEIGHT);
       textarea.style.height = `${newHeight}px`;
       textarea.style.overflowY = contentHeight > MAX_HEIGHT ? 'auto' : 'hidden';
 
@@ -51,7 +54,7 @@ export const CommitInput: React.FC<CommitInputProps> = ({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [value]);
+  }, [minimumHeight, value]);
 
   return (
     <textarea
@@ -59,18 +62,26 @@ export const CommitInput: React.FC<CommitInputProps> = ({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder ?? t('gitView.commit.messagePlaceholder')}
-      rows={1}
+      rows={compact ? 3 : 1}
       disabled={disabled}
       autoCorrect={hasTouchInput ? 'on' : 'off'}
       autoCapitalize={hasTouchInput ? 'sentences' : 'off'}
       spellCheck={isMobile || inputSpellcheckEnabled}
       className={cn(
-        'w-full rounded-lg border border-border/60 bg-surface-elevated px-3 py-2 typography-ui-label text-foreground placeholder:text-muted-foreground',
-        'resize-none outline-none transition-[border-color,box-shadow] duration-150',
-        'focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]',
+        'w-full resize-none outline-none text-foreground placeholder:text-muted-foreground',
+        compact ? [
+          'appearance-none rounded-md px-2 py-1.5 text-xs leading-4',
+          'bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))]',
+          'ring-1 ring-inset ring-border/60 transition duration-200 ease-out',
+          'hover:[&:not(:focus)]:bg-[color-mix(in_srgb,var(--surface-foreground)_4%,var(--background))] hover:[&:not(:focus)]:ring-transparent',
+          'focus:ring-1 focus:ring-[var(--interactive-focus-ring)] focus-visible:outline-none',
+        ] : [
+          'border border-border/60 bg-surface-elevated rounded-lg px-3 py-2 typography-ui-label',
+          'transition-[border-color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]',
+        ],
         disabled && 'opacity-50'
       )}
-      style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
+      style={{ minHeight: minimumHeight, maxHeight: MAX_HEIGHT }}
     />
   );
 };

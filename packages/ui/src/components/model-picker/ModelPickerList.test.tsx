@@ -1,10 +1,12 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, test, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-const persistedCollapsedSections = { 'provider:anthropic': true };
+const { persistedCollapsedSections } = vi.hoisted(() => ({
+  persistedCollapsedSections: { 'provider:anthropic': true },
+}));
 
-mock.module('@/stores/useModelPickerSectionsStore', () => ({
+vi.mock('@/stores/useModelPickerSectionsStore', () => ({
   useModelPickerSectionsStore: (selector: (state: {
     collapsedSections: Record<string, boolean>;
     toggleSection: (key: string) => void;
@@ -14,11 +16,11 @@ mock.module('@/stores/useModelPickerSectionsStore', () => ({
   }),
 }));
 
-mock.module('@/components/ui/ModelLogo', () => ({
+vi.mock('@/components/ui/ModelLogo', () => ({
   ModelLogo: () => <span />,
 }));
 
-mock.module('@/components/ui/ProviderLogo', () => ({
+vi.mock('@/components/ui/ProviderLogo', () => ({
   ProviderLogo: () => <span />,
 }));
 
@@ -51,5 +53,11 @@ describe('ModelPickerList section collapse state', () => {
     expect(renderPicker('')).not.toContain('Claude Sonnet 4');
     expect(renderPicker('sonnet')).toContain('Claude Sonnet 4');
     expect(persistedCollapsedSections['provider:anthropic']).toBe(true);
+  });
+
+  test('marks headers and search for popup-only transparent material', () => {
+    const markup = renderPicker('');
+    expect(markup).toContain('model-picker-section-header');
+    expect(markup).toContain('model-picker-search');
   });
 });

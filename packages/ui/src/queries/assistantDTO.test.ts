@@ -5,6 +5,16 @@ import { assistantContractFixtures } from '../../../web/server/lib/assistants/co
 import { createScheduleCardPart } from '../../../web/server/lib/assistants/cards.js';
 import { AssistantAPIError, parseAssistantCapabilityDTO, parseAssistantContactCardAdmission, parseAssistantContactPage, parseAssistantContactPeerAdmission, parseAssistantHistoryPage, parseCompactResponse, parseMessageAdmission, parseSessionBinding, parseShareOperation, parseAssistantSnapshotDTO } from './assistantDTO';
 describe('Assistant DTO parsing', () => {
+  test('preserves nullable pin timestamps and distinguishes legacy Hosts without pin support', () => {
+    const parse = (pinnedAt: unknown) => parseAssistantSnapshotDTO({ revision: 1, enabled: true, assistants: [{ ...assistantContractFixtures.assistant, pinnedAt }] }).assistants[0];
+    expect(parse(123).pinnedAt).toBe(123);
+    expect(parse(0).pinnedAt).toBe(0);
+    expect(parse(null).pinnedAt).toBeNull();
+    expect(parse(undefined).pinnedAt).toBeUndefined();
+    for (const invalid of [true, '123', {}, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parse(invalid)).toThrow(AssistantAPIError);
+    }
+  });
   test.each([
     { kind: 'cron', cron: '0 9 1 * *', time: null },
     { kind: 'once', date: '2026-12-01', time: '09:00' },

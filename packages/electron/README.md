@@ -343,6 +343,11 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 ## Native Features Owned Here
 
 - Floating Mini Chat windows.
+- Assistant Mini Chat reuses the same windows, pin controls and lifecycle. Direct
+  connections deduplicate by runtime and Assistant ID; returning to main or opening
+  contact cards targets a primary window on that runtime, creating it at the exact
+  route when absent. Relay is explicitly unsupported. The Assistant IPC and routing
+  require an updated installer, not only UI OTA. See the Assistant UI documentation.
 - Multiple native windows.
 - Native notifications.
 - Notification clicks target the originating window, with deduplication scoped to that window. In-process backend notifications target a local-runtime window, excluding relay hosts. Closed windows or windows whose shell runtime changed do not redirect old notifications to another instance.

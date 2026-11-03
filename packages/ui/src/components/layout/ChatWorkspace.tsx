@@ -4,7 +4,7 @@ import { ContextPanel } from './ContextPanel';
 
 const PRIMARY_CHAT_MIN_WIDTH = 350;
 
-export const ChatWorkspace: React.FC<React.PropsWithChildren> = ({ children }) => {
+export const ChatWorkspace: React.FC<React.PropsWithChildren<{ header?: React.ReactNode; footer?: React.ReactNode }>> = ({ children, header, footer }) => {
     const workspaceRef = React.useRef<HTMLDivElement>(null);
     const availableWidthRef = React.useRef(0);
     const reservedWidthRef = React.useRef(0);
@@ -37,13 +37,17 @@ export const ChatWorkspace: React.FC<React.PropsWithChildren> = ({ children }) =
     return (
         <div ref={workspaceRef} className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true" data-chat-area>
             <main
-                className="flex-1 min-w-0 overflow-hidden bg-background relative"
+                className="flex flex-1 min-w-0 flex-col overflow-hidden bg-background relative"
                 style={hidden ? { display: 'none' } : { minWidth: `min(${PRIMARY_CHAT_MIN_WIDTH}px, 100%)` }}
                 inert={hidden || undefined}
                 data-page-scroll-lock="true"
                 data-primary-chat
             >
-                {children}
+                {header}
+                <div className="relative min-h-0 flex-1 overflow-hidden yuri-layout-divider-t" data-primary-chat-content>
+                    {children}
+                </div>
+                {footer}
             </main>
             <ContextPanel onReservedWidthChange={handleReservedWidthChange} fillAvailableSpace={hidden} />
         </div>

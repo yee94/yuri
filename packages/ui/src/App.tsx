@@ -38,10 +38,8 @@ import { openAssistant } from '@/stores/useAssistantUIStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { opencodeClient } from '@/lib/opencode/client';
-import { getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { createRuntimeEndpointTransitionCoalescer } from '@/lib/runtime-endpoint-transition';
-import { useAutoReviewStore } from '@/stores/useAutoReviewStore';
-import { resumeAutoReviewRun } from '@/lib/reviewFlow';
 import { SyncProvider } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
@@ -309,33 +307,6 @@ function App({ apis }: AppProps) {
       transitions.cancel();
     };
   }, [isDesktopRuntime]);
-
-  const autoReviewResumeSignature = useAutoReviewStore((state) => {
-    const runtimeKey = getRuntimeKey();
-    return Object.values(state.runsByOriginalSessionID)
-      .filter((run) => run.status === 'running' && run.runtimeKey === runtimeKey)
-      .map((run) => `${run.originalSessionID}:${run.phase}:${run.lastForwardedMessageID ?? ''}:${run.expectedAssistantParentID ?? ''}`)
-      .sort()
-      .join('|');
-  });
-
-  React.useEffect(() => {
-    if (embeddedSessionChat) {
-      return;
-    }
-
-    let cancelled = false;
-    void waitForSessionStartupBarrier().then(() => {
-      if (cancelled) return;
-      const runtimeKey = getRuntimeKey();
-      const runs = Object.values(useAutoReviewStore.getState().runsByOriginalSessionID)
-        .filter((run) => run.status === 'running' && run.runtimeKey === runtimeKey);
-      for (const run of runs) {
-        resumeAutoReviewRun(run.originalSessionID);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [autoReviewResumeSignature, embeddedSessionChat, runtimeEndpointEpoch]);
 
   React.useEffect(() => {
     document.documentElement.classList.toggle('wide-chat-layout', wideChatLayoutEnabled);

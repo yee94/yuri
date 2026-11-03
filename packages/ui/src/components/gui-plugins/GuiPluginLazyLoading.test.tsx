@@ -386,23 +386,28 @@ it('preserves source after bundle failure and refresh mounts the real inline pre
   state.gui.mockRejectedValue(new Error('bundle unavailable'));
   await start();
   await click('open-file');
-  await until(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe('bundle unavailable'));
+  await until(() => expect(context.inventory[0]?.error).toBe('bundle unavailable'));
   expect(context.loading).toBe(false);
   expect(container.querySelector('[data-source]')?.textContent).toBe(source);
   expect(container.querySelector('[data-preview]')).toBeNull();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.textContent).not.toContain('guiPlugins.refresh');
+  expect(state.toast).not.toHaveBeenCalled();
   expect(state.gui).toHaveBeenCalledTimes(2);
   state.gui.mockResolvedValue({ data: bundle });
-  await click('guiPlugins.refresh');
+  await act(async () => context.refresh());
   await expectPreview();
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(state.gui).toHaveBeenCalledTimes(3);
 });
 
-it('reports a real plugin render failure inside the opened file surface', async () => {
+it('silently falls back to source when the real host marks a rendering plugin as failed', async () => {
   state.gui.mockResolvedValue({ data: { ...bundle, code: bundle.code.replace("const node = document.createElement('pre');", "throw new Error('preview render failed');") } });
   await start();
   await click('open-file');
-  await until(() => expect(container.querySelector('[data-gui-file-view] [role="alert"]')?.textContent).toBe('preview render failed'));
+  await until(() => expect(context.snapshot.plugins[0]).toMatchObject({ status: 'failed', error: 'preview render failed' }));
+  expect(container.querySelector('[data-gui-file-view] [role="alert"]')).toBeNull();
+  expect(state.toast).not.toHaveBeenCalled();
   expect(container.querySelector('[data-source]')?.textContent).toBe(source);
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });

@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 import { useEvent } from '@reactuses/core';
 import {
   Tooltip,
@@ -30,6 +31,7 @@ import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
 import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { ContextUsageDisplay } from '@/components/ui/ContextUsageDisplay';
+import { WorkStatusToggle } from '@/components/chat/work-status/WorkStatusToggle';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { ConnectedHostVersionUpdate } from '@/components/update/HostVersionUpdate';
 import { useDeviceInfo, useTabletStandalonePwaRuntime } from '@/lib/device';
@@ -648,12 +650,10 @@ export const Header: React.FC<HeaderProps> = ({
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const toggleBottomTerminal = useUIStore((state) => state.toggleBottomTerminal);
-  const toggleRightSidebar = useUIStore((state) => state.toggleRightSidebar);
+  const toggleContextPanel = useUIStore((state) => state.toggleContextPanel);
   const openContextOverview = useUIStore((state) => state.openContextOverview);
   const openContextBrowser = useUIStore((state) => state.openContextBrowser);
-  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
   const closeContextPanel = useUIStore((state) => state.closeContextPanel);
-  const contextPanelByDirectory = useUIStore((state) => state.contextPanelByDirectory);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const setActiveMainTab = useUIStore((state) => state.setActiveMainTab);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
@@ -797,20 +797,6 @@ export const Header: React.FC<HeaderProps> = ({
   }, [desktopServicesTab, isDesktopApp]);
 
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
-  const workStatusPanelEnabled = useUIStore((state) => state.workStatusPanelEnabled);
-  const workStatusPanelFits = useUIStore((state) => state.workStatusPanelFits);
-  const workStatusOverlayOpen = useUIStore((state) => state.workStatusOverlayOpen);
-  const setWorkStatusPanelEnabled = useUIStore((state) => state.setWorkStatusPanelEnabled);
-  const setWorkStatusOverlayOpen = useUIStore((state) => state.setWorkStatusOverlayOpen);
-  const workStatusShownInline = workStatusPanelEnabled && workStatusPanelFits;
-  const workStatusToggleActive = workStatusShownInline || workStatusOverlayOpen;
-  const handleWorkStatusToggle = useEvent(() => {
-    if (workStatusPanelEnabled && !workStatusPanelFits) {
-      setWorkStatusOverlayOpen(!workStatusOverlayOpen);
-      return;
-    }
-    setWorkStatusPanelEnabled(!workStatusPanelEnabled);
-  });
   const showDesktopHeaderContextUsage = !isVSCode
     && activeMainTab === 'chat'
     && !!stableDesktopContextUsage;
@@ -1011,6 +997,9 @@ export const Header: React.FC<HeaderProps> = ({
   const contextActionDirectory = React.useMemo(() => {
     return normalize(effectiveDirectory || openDirectory || activeProject?.path || '');
   }, [activeProject?.path, effectiveDirectory, openDirectory]);
+  const currentContextPanel = useUIStore((state) => state.contextPanelByDirectory[contextActionDirectory]);
+  const isPreviewPanelOpen = Boolean(currentContextPanel?.isOpen);
+  const handleTogglePreviewPanel = useEvent(() => toggleContextPanel(contextActionDirectory));
 
   const currentSessionTitle = React.useMemo(() => {
     if (!currentSessionId) {
@@ -1148,38 +1137,23 @@ export const Header: React.FC<HeaderProps> = ({
       return;
     }
 
-    const panelState = contextPanelByDirectory[directory];
+    const panelState = currentContextPanel;
     if (getActiveContextMode(panelState) === 'context') {
       closeContextPanel(directory);
       return;
     }
 
     openContextOverview(directory);
-  }, [closeContextPanel, contextActionDirectory, contextPanelByDirectory, openContextOverview]);
+  }, [closeContextPanel, contextActionDirectory, currentContextPanel, openContextOverview]);
 
   const isContextPanelActive = React.useMemo(() => {
     const directory = contextActionDirectory;
     if (!directory) {
       return false;
     }
-    const panelState = contextPanelByDirectory[directory];
+    const panelState = currentContextPanel;
     return getActiveContextMode(panelState) === 'context';
-  }, [contextActionDirectory, contextPanelByDirectory]);
-
-  const handleOpenContextChanges = React.useCallback(() => {
-    const directory = contextActionDirectory;
-    if (!directory) {
-      return;
-    }
-
-    const panelState = contextPanelByDirectory[directory];
-    if (getActiveContextMode(panelState) === 'diff') {
-      closeContextPanel(directory);
-      return;
-    }
-
-    openContextPanelTab(directory, { mode: 'diff', stagedDiff: false });
-  }, [closeContextPanel, contextActionDirectory, contextPanelByDirectory, openContextPanelTab]);
+  }, [contextActionDirectory, currentContextPanel]);
 
   const handleOpenContextBrowser = React.useCallback(() => {
     const directory = contextActionDirectory;
@@ -1187,23 +1161,23 @@ export const Header: React.FC<HeaderProps> = ({
       return;
     }
 
-    const panelState = contextPanelByDirectory[directory];
+    const panelState = currentContextPanel;
     if (getActiveContextMode(panelState) === 'browser') {
       closeContextPanel(directory);
       return;
     }
 
     openContextBrowser(directory);
-  }, [closeContextPanel, contextActionDirectory, contextPanelByDirectory, openContextBrowser]);
+  }, [closeContextPanel, contextActionDirectory, currentContextPanel, openContextBrowser]);
 
   const isContextBrowserActive = React.useMemo(() => {
     const directory = contextActionDirectory;
     if (!directory) {
       return false;
     }
-    const panelState = contextPanelByDirectory[directory];
+    const panelState = currentContextPanel;
     return getActiveContextMode(panelState) === 'browser';
-  }, [contextActionDirectory, contextPanelByDirectory]);
+  }, [contextActionDirectory, currentContextPanel]);
 
   const desktopHeaderIconButtonClass = DESKTOP_HEADER_ICON_BUTTON_CLASS;
   const mobileHeaderIconButtonClass = MOBILE_HEADER_ICON_BUTTON_CLASS;
@@ -1305,11 +1279,11 @@ export const Header: React.FC<HeaderProps> = ({
     return {
       // Left inset is handled by the no-drag spacer (see renderDesktop); only
       // the right inset / titlebar height are owned by the window-controls overlay.
-      paddingRight: 'calc(0.75rem + var(--yuri-wco-right-inset, 0px))',
+      paddingRight: isPreviewPanelOpen ? '0.75rem' : 'calc(0.75rem + var(--yuri-wco-right-inset, 0px))',
       minHeight: 'max(3rem, var(--yuri-wco-titlebar-height, 0px))',
       height: 'max(3rem, var(--yuri-wco-titlebar-height, 0px))',
     };
-  }, [isDesktopApp, isVSCode, usesFramelessChrome]);
+  }, [isDesktopApp, isVSCode, isPreviewPanelOpen, usesFramelessChrome]);
 
   const updateHeaderHeight = React.useCallback(() => {
     if (typeof document === 'undefined') {
@@ -1632,15 +1606,6 @@ export const Header: React.FC<HeaderProps> = ({
           </TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" className="min-w-[14rem]">
-          {!isVSCode ? (
-            <DropdownMenuItem
-              className="flex items-center gap-2"
-              onClick={() => runSessionMenuAction(handleOpenContextChanges)}
-            >
-              <Icon name="layout-column" className="h-3.5 w-3.5" />
-              <span className="flex-1">{t('header.actions.toggleChangesPanel')}</span>
-            </DropdownMenuItem>
-          ) : null}
           {showMiniChatHeaderAction ? (
             <DropdownMenuItem
               className="flex items-center gap-2"
@@ -1725,29 +1690,17 @@ export const Header: React.FC<HeaderProps> = ({
   const desktopSidebarActions = (
     <>
       {!isMobile && !isVSCode && activeMainTab === 'chat' ? (
-        <button
-          type="button"
-          data-work-status-toggle="true"
-          aria-pressed={workStatusToggleActive}
-          aria-label={t('header.workStatusPanel.toggleAria')}
-          title={t('header.workStatusPanel.toggleAria')}
-          onClick={handleWorkStatusToggle}
-          className={cn(
-            'app-region-no-drag group inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-interactive-hover transition-colors',
-            workStatusToggleActive ? 'text-foreground' : 'text-muted-foreground/50',
-          )}
-        >
-          <Icon name="settings-2" className="size-4" />
-        </button>
+        <WorkStatusToggle />
       ) : null}
       <OpenInAppButton directory={actionDirectory} />
       <HeaderIconActionButton
         title={t('header.actions.rightSidebarWithShortcut', { shortcut: shortcutLabel('toggle_right_sidebar') })}
-        ariaLabel={t('header.actions.toggleRightSidebarAria')}
-        onClick={toggleRightSidebar}
-        className="app-region-no-drag group inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-interactive-hover hover:text-foreground transition-colors"
-        Icon="layout-left-rounded"
-        iconClassName="size-4 -scale-x-100 text-foreground/55 transition-colors group-hover:text-foreground group-focus-visible:text-foreground"
+        ariaLabel={t('contextPanel.actions.togglePanel')}
+        pressed={isPreviewPanelOpen}
+        onClick={handleTogglePreviewPanel}
+        className={cn('app-region-no-drag group inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-interactive-hover transition-colors', isPreviewPanelOpen ? 'bg-interactive-selection text-interactive-selection-foreground' : 'text-muted-foreground/75 hover:text-foreground')}
+        Icon="folder-3"
+        iconClassName="size-4"
       />
       <DesktopGitHubControl
         isMobile={isMobile}
@@ -1831,7 +1784,7 @@ export const Header: React.FC<HeaderProps> = ({
             />
           ) : null}
           {desktopSidebarActions}
-          <WindowsWindowControls visible={usesFramelessChrome && windowControlsSide === 'right'} position="right" />
+          <WindowsWindowControls visible={usesFramelessChrome && windowControlsSide === 'right' && !isPreviewPanelOpen} position="right" />
         </div>
       </div>
     </div>
@@ -1943,6 +1896,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            <GuiPluginTitlebarItems mobile />
             {projectActionsContext && (
               <ProjectActionsButton
                 projectRef={projectActionsContext.projectRef}

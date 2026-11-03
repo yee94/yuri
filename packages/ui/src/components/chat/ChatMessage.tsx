@@ -39,7 +39,6 @@ import { ResponseStatusRow } from './message/ResponseStatusRow';
 import { FadeInOnReveal } from './message/FadeInOnReveal';
 import { streamPerfCount } from '@/stores/utils/streamDebug';
 import { areOptionalRenderRelevantMessagesEqual, areRenderRelevantMessagesEqual, areRelevantTurnGroupingContextsEqual } from './message/renderCompare';
-import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { getSessionSurfaceActionAvailability, useSessionSurface } from './SessionSurfaceContext';
 import { bindMessageTimeFocus } from './message/messageTimeFocus';
 
@@ -175,7 +174,6 @@ interface ChatMessageProps {
     activeStreamingPhase?: StreamPhase | null;
     animateUserOnMount?: boolean;
     onUserAnimationConsumed?: (messageId: string) => void;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -191,7 +189,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     activeStreamingPhase = null,
     animateUserOnMount = false,
     onUserAnimationConsumed,
-    reviewTransferDirection = null,
 }) => {
     const { t } = useI18n();
     const { isMobile, isTablet, hasTouchInput } = useDeviceInfo();
@@ -1271,7 +1268,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                 agentMention={agentMention}
                                 turnGroupingContext={turnGroupingContext}
                                 errorPresentation={assistantError}
-                                reviewTransferDirection={reviewTransferDirection}
                             />
 
                         </div>
@@ -1307,7 +1303,6 @@ export default React.memo(ChatMessage, (prev, next) => {
         )
         && prev.isInActiveTurn === next.isInActiveTurn
         && prev.activeStreamingPhase === next.activeStreamingPhase
-        && prev.reviewTransferDirection === next.reviewTransferDirection
         && prev.assistantHeaderMessageId === next.assistantHeaderMessageId
         && prev.turnOwnsAssistantHeader === next.turnOwnsAssistantHeader
         && prev.animateUserOnMount === next.animateUserOnMount

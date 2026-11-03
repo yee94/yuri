@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
+import { Button } from '@/components/ui/button';
 import { GitView } from '@/components/views/GitView';
 import { Icon } from "@/components/icon/Icon";
 import { useGitStore } from '@/stores/useGitStore';
@@ -13,7 +13,7 @@ import { shouldShowBrowserProviderRail } from '@/lib/browser-provider/contract';
 import { useBrowserProviderCatalogQuery } from '@/queries/browserProviderQueries';
 import { BrowserProviderRail } from './BrowserProviderRail';
 import { SidebarFilesTree } from './SidebarFilesTree';
-import { isRightSidebarTab, visibleRightSidebarTabs } from './visibleRightSidebarTabs';
+import { visibleRightSidebarTabs } from './visibleRightSidebarTabs';
 
 const isBrowserActive = (): boolean => {
   if (typeof document !== 'undefined' && document.hidden) return false;
@@ -62,8 +62,35 @@ function useRightSidebarGitSync(
   }, [shouldPoll, directory, git, ensureStatus]);
 }
 
-export const RightSidebarTabs: React.FC = () => {
+export const RightSidebarToolbar: React.FC<{
+  railVisible?: boolean;
+  onSelect?: () => void;
+}> = ({ railVisible, onSelect }) => {
   const { t } = useI18n();
+  const isOpen = useUIStore((state) => state.isRightSidebarOpen);
+  const activeTab = useUIStore((state) => state.rightSidebarTab);
+  const setOpen = useUIStore((state) => state.setRightSidebarOpen);
+  const setTab = useUIStore((state) => state.setRightSidebarTab);
+  const mainTab = useUIStore((state) => state.activeMainTab);
+  const browserCatalog = useBrowserProviderCatalogQuery();
+  const tabs = visibleRightSidebarTabs({ hideGit: mainTab === 'git', showBrowser: shouldShowBrowserProviderRail(browserCatalog.data) });
+  return (
+    <div role="group" aria-label={t('header.actions.toggleRightSidebarAria')} className="inline-flex items-center overflow-hidden rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-muted)]/50 divide-x divide-[var(--interactive-border)]">
+      {tabs.map((tab) => {
+        const selected = (railVisible ?? isOpen) && activeTab === tab;
+        const label = t(tab === 'git' ? 'layout.rightSidebar.git' : tab === 'files' ? 'contextPanel.actions.toggleFileTree' : 'layout.rightSidebar.browser');
+        return <Button key={tab} type="button" variant="ghost" size="icon"
+          className={cn('size-7 !rounded-none focus-visible:z-10 focus-visible:ring-inset', selected && 'bg-interactive-selection text-interactive-selection-foreground')}
+          aria-pressed={selected} aria-label={label} title={label}
+          onClick={() => { onSelect?.(); setTab(tab); setOpen(!selected); }}>
+          <Icon name={tab === 'git' ? 'git-branch' : tab === 'files' ? 'list-unordered' : 'global'} className="size-4" />
+        </Button>;
+      })}
+    </div>
+  );
+};
+
+export const RightSidebarTabs: React.FC = () => {
   const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
   const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
   const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
@@ -94,36 +121,10 @@ export const RightSidebarTabs: React.FC = () => {
     }
   }, [rightSidebarTab, setRightSidebarTab, visibleTabs]);
 
-  const tabItems = React.useMemo(() => visibleTabs.map((id) => ({
-    id,
-    label: t(id === 'git' ? 'layout.rightSidebar.git' : id === 'files' ? 'layout.rightSidebar.files' : 'layout.rightSidebar.browser'),
-    icon: <Icon name={id === 'git' ? 'git-branch' : id === 'files' ? 'folder-3' : 'global'} className="h-3.5 w-3.5" />,
-  })), [t, visibleTabs]);
   const isRightGitTabActive = isRightSidebarOpen && rightSidebarTab === 'git' && !hideGit;
 
-  const handleTabSelect = React.useCallback(
-    (tabID: string) => {
-      if (isRightSidebarTab(tabID) && visibleTabs.includes(tabID)) {
-        setRightSidebarTab(tabID);
-      }
-    },
-    [setRightSidebarTab, visibleTabs]
-  );
-
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <div className="h-9 bg-background pt-1 px-2">
-        <SortableTabsStrip
-          items={tabItems}
-          activeId={rightSidebarTab}
-          onSelect={handleTabSelect}
-          layoutMode="fit"
-          variant="active-pill"
-          activePillLowercase={false}
-          className="h-full"
-        />
-      </div>
-
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className={cn('h-full', rightSidebarTab !== 'git' && 'hidden')}>
           <GitView isActive={isRightGitTabActive} />

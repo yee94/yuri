@@ -140,7 +140,7 @@ export const useMenuActions = (
   const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
   const setSettingsPage = useUIStore((s) => s.setSettingsPage);
   const setAboutDialogOpen = useUIStore((s) => s.setAboutDialogOpen);
-  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const toggleContextPanel = useUIStore((s) => s.toggleContextPanel);
   const setRightSidebarOpen = useUIStore((s) => s.setRightSidebarOpen);
   const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
   const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
@@ -258,19 +258,27 @@ export const useMenuActions = (
           handleCloseContextPanelTabOrWindow();
           break;
 
-        case 'toggle-right-sidebar':
-          toggleRightSidebar();
+        case 'toggle-right-sidebar': {
+          const directory = resolveEffectiveDirectory();
+          if (directory) toggleContextPanel(directory);
           break;
+        }
 
-        case 'open-right-sidebar-git':
+        case 'open-right-sidebar-git': {
+          const directory = resolveEffectiveDirectory();
+          if (directory) useUIStore.getState().openContextPanel(directory);
           setRightSidebarOpen(true);
           setRightSidebarTab('git');
           break;
+        }
 
-        case 'open-right-sidebar-files':
+        case 'open-right-sidebar-files': {
+          const directory = resolveEffectiveDirectory();
+          if (directory) useUIStore.getState().openContextPanel(directory);
           setRightSidebarOpen(true);
           setRightSidebarTab('files');
           break;
+        }
 
         case 'toggle-terminal':
           toggleBottomTerminal();
@@ -376,7 +384,7 @@ export const useMenuActions = (
       toggleBottomTerminal,
       toggleCommandPalette,
       toggleHelpDialog,
-      toggleRightSidebar,
+      toggleContextPanel,
       toggleSidebar,
     ]
   );

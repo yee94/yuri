@@ -1928,10 +1928,8 @@ Exhausted checks or a reached deadline resolve to editable `unresolved` items.
 Auto-send never re-POSTs unresolved rows (ambiguous delivery), but terminal
 `failed` and `unresolved` rows no longer block later dispatchable FIFO work. Explicit manual
 Send may select any recoverable row, atomically promote it to the scoped head, and POST once; automatic dispatch retains FIFO order among dispatchable rows. Edit and Remove still
-release the terminal state without another POST. `running` auto-review runs
-block queue drain only when their stable `runtimeKey` matches the active runtime;
-legacy records without a runtime key allow drain. Completed, stopped, and error
-records allow drain.
+release the terminal state without another POST. Queue drain depends on live
+session authority and exact-scope abort/dispatch gates, never persisted review runs.
 
 - Definitive `failed` heads share the terminal manual-recovery contract with
 `unresolved` heads. The v3 production scheduler auto-dispatches only `queued`

@@ -33,11 +33,10 @@ const nonEmptyString = (value: string | null | undefined): string | undefined =>
 export const shouldRouteComposerThroughQueue = (input: {
     hasQueuedMessages: boolean;
     sessionIsRunning: boolean;
-    autoReviewRunning: boolean;
     queuedOnly: boolean;
     delivery?: 'steer' | 'queue';
 }): boolean => input.hasQueuedMessages
-    && (input.sessionIsRunning || input.autoReviewRunning)
+    && input.sessionIsRunning
     && !input.queuedOnly
     && input.delivery !== 'steer';
 

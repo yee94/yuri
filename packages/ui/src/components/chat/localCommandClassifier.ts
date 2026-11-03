@@ -1,7 +1,7 @@
 import { isVSCodeRuntime } from '@/lib/desktop';
 
 export const LOCAL_CHAT_COMMANDS = new Set([
-  'new', 'fork', 'compact', 'reload', 'undo', 'redo', 'timeline', 'model', 'summary', 'workspace-review', 'handoff-review', 'goal', 'craft-goal', 'catch-up', 'debug', 'weigh', 'explore', 'btw',
+  'new', 'fork', 'compact', 'reload', 'undo', 'redo', 'timeline', 'model', 'summary', 'workspace-review', 'goal', 'craft-goal', 'catch-up', 'debug', 'weigh', 'explore', 'btw',
 ]);
 
 export const IMMEDIATE_LOCAL_CHAT_COMMANDS = new Set([

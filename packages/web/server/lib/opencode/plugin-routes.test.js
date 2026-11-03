@@ -112,6 +112,19 @@ describe('opencode plugin routes', () => {
     expect(getNpmInfo).not.toHaveBeenCalled();
   });
 
+  test('GET /registry returns local package icon for directory and built entry', async () => {
+    const icon = 'data:image/svg+xml,%3Csvg/%3E';
+    const local = path.join(projectDir, 'local-plugin');
+    fs.mkdirSync(path.join(local, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(local, 'package.json'), JSON.stringify({ icon }));
+    const entry = path.join(local, 'dist', 'index.mjs');
+    fs.writeFileSync(entry, '');
+    for (const spec of [local, entry]) {
+      const response = await request(app).get('/api/config/plugins/registry').query({ specs: spec }).expect(200);
+      expect(response.body.results[0]).toMatchObject({ kind: 'path-ok', spec, icon });
+    }
+  });
+
   test('GET /registry reports update for exact npm version behind latest', async () => {
     createRegistryApp(mock(async () => ({ ok: true, latest: '2.0.0', versions: ['1.0.0', '2.0.0'], distTags: { latest: '2.0.0' } })));
 

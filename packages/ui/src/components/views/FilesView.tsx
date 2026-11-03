@@ -29,7 +29,6 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
-import { GoToLineDialog } from './GoToLineDialog';
 import { PreviewToggleButton } from './PreviewToggleButton';
 import { BinaryFileFallback } from './BinaryFileFallback';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
@@ -83,7 +82,7 @@ import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import { isDesktopLocalOriginActive, openDesktopFileInApp, openDesktopPath } from '@/lib/desktop';
 import { useOpenInAppsStore } from '@/stores/useOpenInAppsStore';
-import { eventMatchesShortcut, formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
+import { eventMatchesShortcut, formatShortcutForDisplay } from '@/lib/shortcuts';
 import { useI18n } from '@/lib/i18n';
 import { ShortcutKbd } from '@/components/ui/kbd';
 
@@ -980,7 +979,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const [rightClickMenuPath, setRightClickMenuPath] = React.useState<string | null>(null);
   const [copiedContent, setCopiedContent] = React.useState(false);
   const [copiedPath, setCopiedPath] = React.useState(false);
-  const [isGoToLineOpen, setIsGoToLineOpen] = React.useState(false);
   const [hasEditorSelection, setHasEditorSelection] = React.useState(false);
   const [editorSelectionPosition, setEditorSelectionPosition] = React.useState<{ x: number; y: number } | null>(null);
   const addCodeSelectionAttachment = useInputStore((state) => state.addCodeSelectionAttachment);
@@ -1053,7 +1051,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const setPendingFileFocusPath = useUIStore((state) => state.setPendingFileFocusPath);
   const pendingFileViewerMode = useUIStore((state) => state.pendingFileViewerMode);
   const setPendingFileViewerMode = useUIStore((state) => state.setPendingFileViewerMode);
-  const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const fileEditorKeymap = useUIStore((state) => state.fileEditorKeymap);
   const settingsDefaultFileViewerPreview = useConfigStore((state) => state.settingsDefaultFileViewerPreview);
   const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
@@ -3067,8 +3064,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       return;
     }
 
-    const goToLineCombo = getEffectiveShortcutCombo('open_go_to_line', shortcutOverrides);
-
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as Element | null;
       if (target?.closest('[role="dialog"]')) {
@@ -3089,12 +3084,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
         return;
       }
 
-      if (eventMatchesShortcut(event, goToLineCombo)) {
-        event.preventDefault();
-        setIsGoToLineOpen(true);
-        return;
-      }
-
       if (eventMatchesShortcut(event, 'mod+l')) {
         const selection = editorViewRef.current?.state.selection.main;
         if (selection && !selection.empty) {
@@ -3106,7 +3095,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [addEditorSelectionToChat, isMobile, shortcutOverrides, textViewMode]);
+  }, [addEditorSelectionToChat, isMobile, textViewMode]);
   const editorFontSize = useUIStore((state) => state.editorFontSize);
 
   const editorExtensions = React.useMemo(() => {
@@ -3467,8 +3456,9 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                 )}
                 title={autoSaveEnabled ? t('filesView.editor.autoSaveOn') : t('filesView.editor.manualSave')}
                 aria-label={autoSaveEnabled ? t('filesView.editor.autoSaveOn') : t('filesView.editor.manualSave')}
+                aria-pressed={autoSaveEnabled}
               >
-                {autoSaveEnabled ? <Icon name="file-check-fill" className="size-4" /> : <Icon name="file-check" className="size-4" />}
+                <Icon name="file-check" className="size-4" />
               </Button>
             )}
           </>
@@ -3564,26 +3554,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                     <Icon name="search" className="size-4" />
                   </Button>
                 )}
-                {withTooltip(t('filesView.editor.goToLine'),
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(event) => {
-                      setIsGoToLineOpen((open) => !open);
-                      event.currentTarget.blur();
-                    }}
-                    className="size-6 p-0 text-foreground opacity-100 transition-opacity hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-                    title={t('filesView.editor.goToLine')}
-                  >
-                    <Icon name="menu-fold-2" className="size-4" />
-                  </Button>
-                )}
-                <GoToLineDialog
-                  open={isGoToLineOpen}
-                  onOpenChange={setIsGoToLineOpen}
-                  view={editorViewRef.current}
-                  variant="inline"
-                />
               </>
             )}
           </>

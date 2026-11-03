@@ -21,7 +21,6 @@ import { reloadOpenCodeLocations } from '@/stores/useAgentsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useLeaderKeyStore } from '@/stores/useLeaderKeyStore';
 import { useMessageQueueStore, getPendingAdmissionsForScope, getQueueForScope, legacyQueueScope, queueScopeKey, type QueueItem, type QueueScope, type QueuedMessage, type QueuePendingAdmissionItem } from '@/stores/messageQueueStore';
-import { useAutoReviewStore } from '@/stores/useAutoReviewStore';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { autoRespondsPermission } from '@/stores/utils/permissionAutoAccept';
 import { beginDraftEstablishingPaint, clearDraftEstablishingPaint, useSessionUIStore } from '@/sync/session-ui-store';
@@ -51,20 +50,17 @@ import { useSync } from '@/sync/use-sync';
 import { useInlineCommentDraftStore, type InlineCommentDraft } from '@/stores/useInlineCommentDraftStore';
 import { appendInlineComments } from '@/lib/messages/inlineComments';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
-import { startReviewFlow } from '@/lib/reviewFlow';
-import { getRuntimeGeneration, getRuntimeKey } from '@/lib/runtime-switch';
+import { getRuntimeGeneration } from '@/lib/runtime-switch';
 import { getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { dispatchQueuedMessage } from '@/hooks/useQueuedMessageAutoSend';
 import { useMessageQueueServerScope } from '@/sync/use-message-queue-server';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
-import { ReviewFlowDialog, type ReviewFlowExecution } from '@/components/session/ReviewFlowDialog';
 import { ComposerQuoteChips } from './ComposerQuoteChips';
 import { ActiveEditorFileSuggestion, AttachedFilesList, AttachedVSCodeFileChips } from './FileAttachment';
 import { composerQuoteKey, documentWithComposerQuotes, messageWithComposerQuotes } from '@/stores/composerQuotes';
 import { selectComposerQuotes, useComposerQuoteStore } from '@/stores/useComposerQuoteStore';
 import { QueuedMessageChips } from './QueuedMessageChips';
 import { SessionRecoveryNotice } from './SessionRecoveryNotice';
-import { AutoReviewBanner } from './AutoReviewBanner';
 import { FileMentionAutocomplete, type FileMentionHandle, type MentionSkillInfo } from './FileMentionAutocomplete';
 import { CommandAutocomplete, type CommandAutocompleteHandle, type CommandInfo } from './CommandAutocomplete';
 import { cn, formatDirectoryName } from '@/lib/utils';
@@ -1758,8 +1754,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const projects = useProjectsStore((state) => state.projects);
     const activeProjectId = useProjectsStore((state) => state.activeProjectId);
     const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
-    const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
-    const [reviewFlowSubmitting, setReviewFlowSubmitting] = React.useState(false);
     const permissionAutoAcceptEnabled = React.useMemo(() => {
         if (!currentSessionId) {
             return newSessionDraft.permissionAutoAcceptEnabled === true;
@@ -2055,36 +2049,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         });
     }, [currentDirectory, runtimeGit, fetchGitStatus]);
 
-    const handleStartReviewFlow = useEvent(async (execution: ReviewFlowExecution) => {
-        if (!currentSessionId) return;
-        const directory = useSessionUIStore.getState().getDirectoryForSession(currentSessionId) || currentDirectory || '';
-        if (!directory) {
-            toast.error(t('diffView.reviewDialog.toast.noSessionDirectory'));
-            return;
-        }
-
-        setReviewFlowSubmitting(true);
-        try {
-            await startReviewFlow({
-                originalSessionID: currentSessionId,
-                directory,
-                providerID: execution.providerID,
-                modelID: execution.modelID,
-                agent: execution.agent || undefined,
-                variant: execution.variant || undefined,
-                generateHandoff: execution.generateHandoff,
-                returnAfterHandoffRequest: execution.generateHandoff,
-                autoReview: execution.autoReview,
-            });
-            setReviewDialogOpen(false);
-        } catch (error) {
-            console.error('[review-flow] failed to start review flow', error);
-            toast.error(error instanceof Error ? error.message : t('diffView.reviewDialog.toast.startFailed'));
-        } finally {
-            setReviewFlowSubmitting(false);
-        }
-    });
-
     const isDesktopExpanded = isExpandedInput && !isMobile;
     // Mobile fullscreen composer (entered via the drag handle's swipe-up).
     const isMobileExpanded = isExpandedInput && isMobile;
@@ -2128,13 +2092,12 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             'init', 'review', 'undo', 'redo', 'fork', 'timeline', 'model', 'compact', 'summary', 'workspace-review', 'craft-goal', 'goal', 'catch-up', 'debug', 'weigh', 'explore',
         ]);
         if (isVSCodeRuntime()) names.add('reload');
-        if (!isMobile && !isVSCodeRuntime()) names.add('handoff-review');
         for (const command of availableCommands) {
             if (command.source === 'skill') continue;
             names.add(command.name.toLowerCase());
         }
         return names;
-    }, [availableCommands, isMobile]);
+    }, [availableCommands]);
 
     const composerCommandRanges = React.useMemo<HighlightRange[]>(() => {
         if (!message || !message.includes('/') || inputMode === 'shell' || knownSlashNames.size === 0) {
@@ -2393,11 +2356,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         surface.kind === 'primary' ? currentDirectory ?? undefined : undefined,
     );
     const sessionPhase = surface.activity?.phase ?? scopedActivity.phase;
-    const autoReviewRunning = useAutoReviewStore(React.useMemo(() => (state: ReturnType<typeof useAutoReviewStore.getState>) => {
-        if (!currentSessionId) return false;
-        const run = state.runsByOriginalSessionID[currentSessionId];
-        return run?.status === 'running' && run.runtimeKey === getRuntimeKey();
-    }, [currentSessionId]));
 
     const handleOpenMobilePanel = useEvent((panel: MobileControlsPanel) => {
         if (!isMobile) {
@@ -3113,10 +3071,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             && Boolean(currentSessionId && stagedEditAtSubmit?.sessionId === currentSessionId);
         const steerAfterAdmit = !replacingMessage && options?.steerAfterAdmit === true
             && sessionIsRunning
-            && !autoReviewRunning
             && surface.kind === 'primary';
         const requestedDelivery = replacingMessage ? 'steer' : steerAfterAdmit ? 'queue' : options?.delivery;
-        const delivery = requestedDelivery === 'queue' && (sessionIsRunning || autoReviewRunning)
+        const delivery = requestedDelivery === 'queue' && sessionIsRunning
             ? 'queue'
             : requestedDelivery === 'steer' && sessionIsRunning ? 'steer' : undefined;
         const inputSnapshot = options?.presetText != null
@@ -3165,7 +3122,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             return;
         }
         const routeThroughQueue = !replacingMessage && !steerAfterAdmit && shouldRouteComposerThroughQueue({
-            hasQueuedMessages, sessionIsRunning, autoReviewRunning, queuedOnly, delivery,
+            hasQueuedMessages, sessionIsRunning, queuedOnly, delivery,
         });
         if (!queuedOnly && localCommand && localCommand !== 'model') {
             // Local command handlers run below with their existing business actions.
@@ -3186,10 +3143,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         const queuedMessagesToSend = resourcePolicy || (!queuedOnly && inputSnapshot.hasContent && !queuedMessageId) ? [] : queuedMessageId
             ? queuedMessages.filter((message) => message.id === queuedMessageId)
             : queuedMessages;
-
-        if (queuedOnly && autoReviewRunning) {
-            return;
-        }
 
         if (queuedOnly) {
             if (queuedMessagesToSend.length === 0 || !currentSessionId) return;
@@ -3269,18 +3222,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     : undefined,
             });
         };
-        // An auto-review run owns the turn and is not steerable, so a direct send
-        // would be discarded by the runner. Queue instead: the queued-message
-        // auto-send hook delivers it once the review finishes. This must happen
-        // BEFORE the composer is cleared — handleQueueMessage reads the live
-        // composer, and a cleared draft restored through recoverSubmission only
-        // lands in the store on a later render, so the queue path would read an
-        // empty composer and drop the message.
-        if (currentSessionId && !queuedOnly && !resourcePolicy && !replacingMessage && autoReviewRunning) {
-            endSubmissionFlight();
-            queueMessageFromEvent();
-            return;
-        }
         // Direct messages leave the Composer before selection/configuration work
         // starts. The captured submission restores this exact draft if dispatch
         // cannot proceed. Local commands retain their existing resource policy.
@@ -3977,10 +3918,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 }
                 return;
             }
-            else if (commandName === 'handoff-review' && currentSessionId && !isMobile && !isVSCodeRuntime()) {
-                setReviewDialogOpen(true);
-                return;
-            }
             else if (commandName === 'goal' && (currentSessionId || newSessionDraftOpen)) {
                 // `/goal` only arms goal mode — never auto-sends. Strip the slash
                 // token and leave any trailing objective in the composer so the
@@ -4306,11 +4243,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         if (claimedByEstablishingFollowUp()) return;
         if (isSubmissionInFlight()) return;
         const inputSnapshot = getCurrentInputSnapshot();
-        // Only authoritative busy/retry (or an active auto-review) may queue/steer.
+        // Only authoritative busy/retry may queue/steer.
         // `unknown` must not count as running — assistant surfaces used to emit it
         // while session status was still loading, which parked idle sends in the
         // queue path and left the composer uncleared when legacy queue rejected them.
-        const canQueue = inputMode === 'normal' && inputSnapshot.hasContent && currentSessionId && (sessionIsRunning || autoReviewRunning);
+        const canQueue = inputMode === 'normal' && inputSnapshot.hasContent && currentSessionId && sessionIsRunning;
         const queueUsable = canQueue
             && queueModeAllowsMutations(serverQueue.mode)
             && assistantQueueAdmissionAvailable(surface.deliveryTarget?.kind, serverQueue.mode);
@@ -4321,7 +4258,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             queueUsable: Boolean(queueUsable),
             primary: surface.kind === 'primary',
             sessionIsRunning,
-            autoReviewRunning,
         });
         if (followUpAction.kind === 'queue') {
             queueMessageFromEvent();
@@ -4816,8 +4752,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             const isCtrlEnter = e.ctrlKey || e.metaKey;
 
             // Queueing / steering only works when there's an existing busy
-            // session (or an active auto-review run). `unknown` is not running.
-            const canQueue = inputMode === 'normal' && hasContent && currentSessionId && (sessionIsRunning || autoReviewRunning);
+            // session. `unknown` is not running.
+            const canQueue = inputMode === 'normal' && hasContent && currentSessionId && sessionIsRunning;
             const queueUsable = canQueue
                 && queueModeAllowsMutations(serverQueue.mode)
                 && assistantQueueAdmissionAvailable(surface.deliveryTarget?.kind, serverQueue.mode);
@@ -4828,7 +4764,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 queueUsable: Boolean(queueUsable),
                 primary: surface.kind === 'primary',
                 sessionIsRunning,
-                autoReviewRunning,
             });
             if (followUpAction.kind === 'queue') {
                 queueMessageFromEvent();
@@ -7349,7 +7284,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 {nativeIosComposerActive ? null : (
                     <AttachedFilesList attachments={attachedFiles} onShowPopup={handleShowAttachmentPopup} onRemoveAttachedFile={handleAttachedFileRemove} />
                 )}
-                <AutoReviewBanner />
                 {hasDrafts && (
                     <div className="flex flex-wrap items-center gap-2 pb-2">
                         {reviewCount > 0 ? (
@@ -8060,13 +7994,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 setLinkedPr(pr);
                 setLinkedIssue(null);
             }}
-        />
-        <ReviewFlowDialog
-            open={reviewDialogOpen}
-            onOpenChange={setReviewDialogOpen}
-            projectDirectory={currentSessionDirectoryForSync ?? currentDirectory ?? null}
-            submitting={reviewFlowSubmitting}
-            onConfirm={handleStartReviewFlow}
         />
         {/* Always-mounted picker inputs. They must NOT live inside
             ComposerAttachmentControls: that component mounts once per composer

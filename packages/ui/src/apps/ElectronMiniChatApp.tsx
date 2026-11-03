@@ -7,6 +7,7 @@ import { registerRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { MiniChatLayout } from '@/components/mini-chat/MiniChatLayout';
+import { AssistantMiniChatLayout } from '@/components/mini-chat/AssistantMiniChatLayout';
 import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { opencodeClient } from '@/lib/opencode/client';
@@ -25,10 +26,11 @@ import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeMana
 
 const MINI_CHAT_PRESENCE_CHANNEL = 'yuri:mini-chat-presence';
 
-type MiniChatMode = 'session' | 'draft';
+type MiniChatMode = 'session' | 'draft' | 'assistant';
 
 type MiniChatConfig = {
   mode: MiniChatMode;
+  assistantID: string;
   sessionId: string | null;
   directory: string | null;
   projectId: string | null;
@@ -40,11 +42,12 @@ type ElectronMiniChatAppProps = {
 
 const readMiniChatConfig = (): MiniChatConfig => {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const mode = params.get('mode') === 'session' ? 'session' : 'draft';
+  const mode = params.get('mode') === 'assistant' ? 'assistant' : params.get('mode') === 'session' ? 'session' : 'draft';
+  const assistantID = params.get('assistantID')?.trim() || '';
   const sessionId = params.get('sessionId')?.trim() || null;
   const directory = params.get('directory')?.trim() || null;
   const projectId = params.get('projectId')?.trim() || null;
-  return { mode, sessionId, directory, projectId };
+  return { mode, assistantID, sessionId, directory, projectId };
 };
 
 const MiniChatBootstrap: React.FC<{ config: MiniChatConfig }> = ({ config }) => {
@@ -293,13 +296,12 @@ export function ElectronMiniChatApp({ apis }: ElectronMiniChatAppProps) {
   }, [apis]);
 
   useAppFontEffects();
-  useMiniChatKeyboardShortcuts();
+  useMiniChatKeyboardShortcuts(config.mode === 'assistant');
   usePushVisibilityBeacon({ enabled: true });
-  useWindowTitle();
 
   return (
     <ErrorBoundary>
-      <SyncProvider sdk={opencodeClient.getSdkClient()} directory={currentDirectory || config.directory || ''} bootstrapDirectory={!(newSessionDraftOpen && currentSessionId === null)}>
+      <SyncProvider sdk={opencodeClient.getSdkClient()} directory={currentDirectory || config.directory || ''} bootstrapDirectory={config.mode !== 'assistant' && !(newSessionDraftOpen && currentSessionId === null)}>
         <RuntimeAPIProvider apis={apis}>
           <TooltipProvider delayDuration={300} skipDelayDuration={150}>
             <div className="h-full text-foreground bg-background">
@@ -313,11 +315,19 @@ export function ElectronMiniChatApp({ apis }: ElectronMiniChatAppProps) {
   );
 }
 
+const SessionWindowTitle: React.FC = () => {
+  useWindowTitle();
+  return null;
+};
+
 const ElectronMiniChatContent: React.FC<{ config: MiniChatConfig }> = ({ config }) => {
   const sessionUnavailable = useSessionUnavailable(config);
 
+  if (config.mode === 'assistant') return <AssistantMiniChatLayout assistantID={config.assistantID} />;
+
   return (
     <>
+      <SessionWindowTitle />
       <MiniChatBootstrap config={config} />
       <MiniChatPresencePublisher />
       <SyncRuntimeEffects embeddedBackgroundWorkEnabled={true} />

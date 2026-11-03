@@ -116,7 +116,6 @@ type Props = {
   removeSessionFromFolder: (scopeKey: string, sessionId: string) => void;
   addSessionToFolder: (scopeKey: string, folderId: string, sessionId: string) => void;
   createFolderAndStartRename: (scopeKey: string, parentId?: string | null) => { id: string } | null;
-  openContextPanelTab: (directory: string, options: { mode: 'chat'; dedupeKey: string; label: string; sessionTitleFallback?: string; readOnly?: boolean }) => void;
   handleDeleteSession: (session: Session, source?: { archivedBucket?: boolean; hardDelete?: boolean; skipConfirm?: boolean }) => void;
   mobileVariant: boolean;
   alwaysShowActions: boolean;
@@ -344,7 +343,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     removeSessionFromFolder,
     addSessionToFolder,
     createFolderAndStartRename,
-    openContextPanelTab,
     handleDeleteSession,
     mobileVariant,
     alwaysShowActions,
@@ -1143,26 +1141,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         );
       })() : null}
 
-      {!isVSCode ? (
-        <Item
-          disabled={!sessionDirectory}
-          onClick={() => {
-            if (!sessionDirectory) return;
-            openContextPanelTab(sessionDirectory, {
-              mode: 'chat',
-              dedupeKey: `session:${session.id}`,
-              label: sessionTitle,
-              sessionTitleFallback: sessionTitle,
-            });
-          }}
-          className="[&>svg]:mr-1"
-        >
-          <Icon name="chat-thread" className="mr-1 h-4 w-4" />
-          <span className="truncate">{t('sessions.sidebar.session.menu.openInSidePanel')}</span>
-          <span className="shrink-0 typography-micro px-1 rounded leading-none pb-px text-[var(--status-warning)] bg-[var(--status-warning)]/10">{t('sessions.sidebar.session.menu.betaBadge')}</span>
-        </Item>
-      ) : null}
-
       {isElectron ? (
         <Item
           disabled={!sessionDirectory}
@@ -1181,8 +1159,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           {t('sessions.sidebar.bulkActions.archive')}
         </Item>
       ) : null}
-      <Item className="text-destructive focus:text-destructive [&>svg]:mr-1" onClick={() => handleDeleteSession(session, { archivedBucket, hardDelete: true })}>
-        <Icon name="delete-bin" className="mr-1 h-4 w-4" />
+      <Item className="text-destructive/80 focus:text-destructive/80 [&>svg]:mr-1" onClick={() => handleDeleteSession(session, { archivedBucket, hardDelete: true })}>
+        <Icon name="delete-bin" className="mr-1 h-4 w-4 text-inherit" />
         {t('sessions.sidebar.bulkActions.delete')}
       </Item>
     </>
@@ -1742,7 +1720,6 @@ const areSessionNodeItemPropsEqual = (prev: Props, next: Props): boolean => {
     && prev.removeSessionFromFolder === next.removeSessionFromFolder
     && prev.addSessionToFolder === next.addSessionToFolder
     && prev.createFolderAndStartRename === next.createFolderAndStartRename
-    && prev.openContextPanelTab === next.openContextPanelTab
     && prev.handleDeleteSession === next.handleDeleteSession
     && prev.renderSessionNode === next.renderSessionNode;
 };

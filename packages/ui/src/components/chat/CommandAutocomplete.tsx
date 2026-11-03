@@ -86,17 +86,14 @@ const sameCommandList = (left: readonly CommandInfo[], right: readonly CommandIn
 // eslint-disable-next-line react-refresh/only-export-components
 export const resolveCommandAutocompleteAvailability = (
   context: CommandAutocompleteContext,
-  isMobile: boolean,
 ): {
   hasSession: boolean;
   canStartSessionCommand: boolean;
-  canUseReviewHandoffFlow: boolean;
 } => {
   const hasSession = Boolean(context.sessionID);
   return {
     hasSession,
     canStartSessionCommand: hasSession || context.hasNewDraft,
-    canUseReviewHandoffFlow: hasSession && !isMobile && !isVSCodeRuntime(),
   };
 };
 
@@ -143,9 +140,9 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
     },
     [commandContext, fallbackSessionId, fallbackMessages.length, fallbackHasNewDraft],
   );
-  const { hasSession, canStartSessionCommand, canUseReviewHandoffFlow } = React.useMemo(
-    () => resolveCommandAutocompleteAvailability(resolvedContext, isMobile),
-    [resolvedContext, isMobile],
+  const { hasSession, canStartSessionCommand } = React.useMemo(
+    () => resolveCommandAutocompleteAvailability(resolvedContext),
+    [resolvedContext],
   );
   const hasMessagesInCurrentSession = resolvedContext.hasMessages;
 
@@ -230,10 +227,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? [{ id: 'yuri:workspace-review', name: 'workspace-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isYuri: true }]
             : []
           ),
-          ...(canUseReviewHandoffFlow
-            ? [{ id: 'yuri:handoff-review', name: 'handoff-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isYuri: true }]
-            : []
-          ),
           ...(canStartSessionCommand
             ? [{ id: 'yuri:craft-goal', name: 'craft-goal', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isYuri: true }]
             : []
@@ -299,10 +292,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             ? [{ id: 'yuri:workspace-review', name: 'workspace-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isYuri: true }]
             : []
           ),
-          ...(canUseReviewHandoffFlow
-            ? [{ id: 'yuri:handoff-review', name: 'handoff-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isYuri: true }]
-            : []
-          ),
           ...(canStartSessionCommand
             ? [{ id: 'yuri:craft-goal', name: 'craft-goal', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isYuri: true }]
             : []
@@ -340,7 +329,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
     };
 
     loadCommands();
-  }, [searchQuery, hasMessagesInCurrentSession, hasSession, canStartSessionCommand, canUseReviewHandoffFlow, commandsWithMetadata, isCommandsFetching, t, commandPolicy]);
+  }, [searchQuery, hasMessagesInCurrentSession, hasSession, canStartSessionCommand, commandsWithMetadata, isCommandsFetching, t, commandPolicy]);
 
   React.useEffect(() => {
     setSelectedIndex(0);

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AssistantAssistantCard } from './AssistantAssistantCard'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantScheduleCard } from './AssistantScheduleCard'
+import { AssistantCardNavigation } from './AssistantCardNavigation'
 import type { AssistantContactScheduleCardPart, AssistantContactSessionCardPart } from '@/queries/assistantDTO'
 
 const state = vi.hoisted(() => ({
@@ -33,6 +34,25 @@ vi.mock('@/lib/scheduledTaskNavigation', () => ({ openScheduledTask: state.openT
 
 const sessionCard: AssistantContactSessionCardPart = { type: 'card', cardType: 'session', sessionID: 'session-a', directory: '/workspace/project', title: 'Saved title', status: 'busy', branch: 'saved-branch' }
 const scheduleCard: AssistantContactScheduleCardPart = { type: 'card', cardType: 'schedule', taskID: 'task-a', projectID: 'project-a', name: 'Daily review', kind: 'daily', time: '09:00', timezone: 'Asia/Shanghai', prompt: 'Review unfinished work.' }
+
+test('Mini Chat contact cards delegate exact targets instead of navigating an absent main layout', async () => {
+  const navigate = vi.fn();
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<AssistantCardNavigation.Provider value={navigate}>
+    <AssistantSessionCard card={sessionCard} />
+    <AssistantScheduleCard card={scheduleCard} />
+    <AssistantAssistantCard card={{ type: 'card', cardType: 'assistant', assistantID: 'b', name: 'Bot', providerID: 'p', modelID: 'm', mode: 'continuous' }} />
+  </AssistantCardNavigation.Provider>));
+  await act(async () => host.querySelectorAll<HTMLElement>('[role="button"]').forEach((card) => card.click()));
+  expect(navigate.mock.calls).toEqual([
+    [{ sessionId: sessionCard.sessionID, directory: sessionCard.directory }],
+    [{ projectID: scheduleCard.projectID, taskID: scheduleCard.taskID }],
+    [{ assistantID: 'b' }],
+  ]);
+  expect(state.openSession).not.toHaveBeenCalled(); expect(state.openTask).not.toHaveBeenCalled(); expect(state.openAssistant).not.toHaveBeenCalled();
+  await act(async () => root.unmount());
+});
 
 beforeEach(() => {
   state.liveSession = null

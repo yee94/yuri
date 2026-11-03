@@ -47,7 +47,6 @@ test('scroll renders skip the row hydration provider; releasing hydration preser
             const getAnimationHandlers = noop, scrollToBottom = noop, stickyUserHeader = false;
             const activityRenderMode = 'collapsed', turnUiStates = states, onToggleTurnGroup = noop;
             const chatRenderMode = 'live', shouldAnimateUserMessage = noop, onUserAnimationConsumed = noop;
-            const reviewTransferDirection = null;
             ${historyRenderer}
             return renderEntry(entry, hydrateMarkdown);
         }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;

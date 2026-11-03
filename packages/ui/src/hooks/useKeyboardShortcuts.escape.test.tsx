@@ -129,3 +129,15 @@ test('Escape closes prompt navigation before a fresh double Escape can abort', a
   await pressEscape(textarea);
   expect(mocks.abort).toHaveBeenCalledExactlyOnceWith('session-after');
 });
+
+test('Escape closes work status without reaching the preview or priming an abort', async () => {
+  const { textarea } = await mountSwitchedConversation();
+  const underlyingEscape = vi.fn();
+  textarea.addEventListener('keydown', underlyingEscape);
+  await act(async () => useUIStore.getState().setWorkStatusOverlayOpen(true));
+  await pressEscape(textarea);
+  expect(useUIStore.getState().workStatusOverlayOpen).toBe(false);
+  expect(useSessionUIStore.getState().abortPromptSessionId).toBeNull();
+  expect(underlyingEscape).not.toHaveBeenCalled();
+  expect(mocks.abort).not.toHaveBeenCalled();
+});

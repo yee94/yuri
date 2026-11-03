@@ -123,6 +123,157 @@ const toolBatch = (calls, content = '') => ({ completion: { choices: [{ message:
 const sayThen = (text, name, args) => toolBatch([['notify_user', { text }], [name, args]]);
 
 describe('assistants service', () => {
+  it('persists pins across clients and restarts without changing catalog, session or share-default order', async () => {
+    const directory = root();
+    const create = vi.fn();
+    let at = 100;
+    let service = setup(directory, { create }, { clock: () => at });
+    let peer;
+    try {
+      const first = service.createAssistant(assistantInput);
+      const second = service.createAssistant({ ...assistantInput, name: 'B' });
+      expect(first.pinnedAt).toBeNull();
+      const pinned = await service.updateAssistant(second.id, { expectedRevision: second.revision, pinned: true });
+      expect(pinned).toMatchObject({ pinnedAt: 100, sessionID: second.sessionID, sessionGeneration: second.sessionGeneration, avatarSeed: second.avatarSeed });
+      at = 200;
+      const renamed = await service.updateAssistant(second.id, { expectedRevision: pinned.revision, name: 'Renamed' });
+      const repinned = await service.updateAssistant(second.id, { expectedRevision: renamed.revision, pinned: true });
+      expect(repinned.pinnedAt).toBe(100);
+      expect(service.snapshot().assistants.map(item => item.id)).toEqual([first.id, second.id]);
+      peer = setup(directory);
+      expect(peer.snapshot().assistants.find(item => item.id === second.id).pinnedAt).toBe(100);
+      peer.close(); peer = null;
+      service.close(); service = setup(directory);
+      const restored = service.snapshot().assistants.find(item => item.id === second.id);
+      expect(restored.pinnedAt).toBe(100);
+      const unpinned = await service.updateAssistant(second.id, { expectedRevision: restored.revision, pinned: false });
+      expect(unpinned.pinnedAt).toBeNull();
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      peer?.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('rejects invalid pins and stale revisions, and rolls back pin changes when storage fails', async () => {
+    const directory = root();
+    const service = setup(directory);
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      const created = service.createAssistant(assistantInput);
+      const before = service.snapshot();
+      for (const pinned of [null, 1, 'true', {}]) {
+        await expect(service.updateAssistant(created.id, { expectedRevision: created.revision, pinned })).rejects.toThrow('validation_error');
+      }
+      await expect(service.updateAssistant(created.id, { expectedRevision: 999, pinned: true })).rejects.toThrow('revision_conflict');
+      db.exec("CREATE TRIGGER reject_pin BEFORE UPDATE OF pinned_at ON assistant_v2 BEGIN SELECT RAISE(ABORT, 'pin write failed'); END");
+      await expect(service.updateAssistant(created.id, { expectedRevision: created.revision, pinned: true })).rejects.toThrow('pin write failed');
+      expect(service.snapshot()).toEqual(before);
+      db.exec('DROP TRIGGER reject_pin');
+      const pinned = await service.updateAssistant(created.id, { expectedRevision: created.revision, pinned: true });
+      service.removeAssistant(created.id, pinned.revision);
+      expect(service.snapshot().assistants).toEqual([]);
+    } finally {
+      db.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('upgrades existing schema-v14 contacts as unpinned without losing identity or history', () => {
+    const directory = root();
+    let service = setup(directory);
+    try {
+      const created = service.createAssistant(assistantInput);
+      const messages = service.contactMessages(created.id).messages;
+      service.close();
+      const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+      db.exec('DROP INDEX IF EXISTS assistant_single_pin');
+      db.exec('ALTER TABLE assistant_v2 DROP COLUMN pinned_at');
+      db.prepare("UPDATE assistant_meta SET value='14' WHERE key='schema_version'").run();
+      db.close();
+      service = setup(directory);
+      expect(service.snapshot().assistants[0]).toEqual(created);
+      expect(service.contactMessages(created.id).messages).toEqual(messages);
+    } finally {
+      service.close(); fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it('atomically replaces the pinned Bot across clients and rejects stale edits to the previous owner', async () => {
+    const directory = root();
+    const service = setup(directory);
+    const peer = setup(directory);
+    try {
+      const first = service.createAssistant(assistantInput);
+      const second = service.createAssistant({ ...assistantInput, name: 'B' });
+      const before = service.snapshot();
+      const old = await service.updateAssistant(first.id, { expectedRevision: first.revision, pinned: true });
+      await peer.updateAssistant(second.id, { expectedRevision: second.revision, pinned: true });
+      const after = service.snapshot();
+      expect(after.assistants.filter(item => item.pinnedAt !== null).map(item => item.id)).toEqual([second.id]);
+      expect(after.assistants[0]).toMatchObject({ pinnedAt: null, revision: old.revision + 1, unreadCount: first.unreadCount, readWatermark: first.readWatermark });
+      expect(after.assistants.map(item => item.id)).toEqual(before.assistants.map(item => item.id));
+      await expect(service.updateAssistant(first.id, { expectedRevision: old.revision, pinned: true })).rejects.toThrow('revision_conflict');
+      expect(service.snapshot()).toEqual(after);
+    } finally { peer.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('rolls back clearing the old pin when writing the replacement fails', async () => {
+    const directory = root();
+    const service = setup(directory);
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      const first = service.createAssistant(assistantInput);
+      const second = service.createAssistant({ ...assistantInput, name: 'B' });
+      await service.updateAssistant(first.id, { expectedRevision: first.revision, pinned: true });
+      const before = service.snapshot();
+      db.exec("CREATE TRIGGER reject_replacement BEFORE UPDATE OF pinned_at ON assistant_v2 WHEN NEW.pinned_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'replacement failed'); END");
+      await expect(service.updateAssistant(second.id, { expectedRevision: second.revision, pinned: true })).rejects.toThrow('replacement failed');
+      expect(service.snapshot()).toEqual(before);
+      db.exec('DROP TRIGGER reject_replacement');
+      await service.updateAssistant(second.id, { expectedRevision: second.revision, pinned: true });
+      expect(service.snapshot().assistants.filter(item => item.pinnedAt !== null).map(item => item.id)).toEqual([second.id]);
+    } finally { db.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('keeps a single pin under competing client writes and a database constraint rejects bypasses', async () => {
+    const directory = root();
+    const service = setup(directory);
+    const peer = setup(directory);
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      const first = service.createAssistant(assistantInput);
+      const second = service.createAssistant({ ...assistantInput, name: 'B' });
+      await Promise.all([
+        service.updateAssistant(first.id, { expectedRevision: first.revision, pinned: true }),
+        peer.updateAssistant(second.id, { expectedRevision: second.revision, pinned: true }),
+      ]);
+      const snapshot = service.snapshot();
+      expect(snapshot.assistants.filter(item => item.pinnedAt !== null)).toHaveLength(1);
+      const unpinned = snapshot.assistants.find(item => item.pinnedAt === null);
+      expect(() => db.prepare('UPDATE assistant_v2 SET pinned_at=123 WHERE assistant_id=?').run(unpinned.id)).toThrow();
+      expect(service.snapshot()).toEqual(snapshot);
+    } finally { db.close(); peer.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('migrates multiple v15 pins to the latest one, preserves unread and retries a failed migration atomically', async () => {
+    const directory = root();
+    let service = setup(directory);
+    const first = service.createAssistant(assistantInput);
+    const second = service.createAssistant({ ...assistantInput, name: 'B' });
+    service.close();
+    const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
+    try {
+      db.exec('DROP INDEX assistant_single_pin');
+      db.prepare('UPDATE assistant_v2 SET pinned_at=? WHERE assistant_id=?').run(10, first.id);
+      db.prepare('UPDATE assistant_v2 SET pinned_at=? WHERE assistant_id=?').run(20, second.id);
+      db.prepare("UPDATE assistant_meta SET value='15' WHERE key='schema_version'").run();
+      db.exec("CREATE TRIGGER reject_pin_migration BEFORE UPDATE OF pinned_at ON assistant_v2 BEGIN SELECT RAISE(ABORT, 'pin migration failed'); END");
+      expect(() => setup(directory)).toThrow('pin migration failed');
+      expect(db.prepare("SELECT value FROM assistant_meta WHERE key='schema_version'").get().value).toBe('15');
+      expect(db.prepare('SELECT COUNT(*) AS count FROM assistant_v2 WHERE pinned_at IS NOT NULL').get().count).toBe(2);
+      db.exec('DROP TRIGGER reject_pin_migration');
+      service = setup(directory);
+      const snapshot = service.snapshot();
+      expect(snapshot.assistants.filter(item => item.pinnedAt !== null).map(item => item.id)).toEqual([second.id]);
+      expect(snapshot.assistants[0]).toMatchObject({ pinnedAt: null, revision: first.revision + 1, unreadCount: first.unreadCount, readWatermark: first.readWatermark });
+      expect(snapshot.assistants[1]).toMatchObject({ pinnedAt: 20, revision: second.revision, unreadCount: second.unreadCount });
+      service.close(); service = setup(directory);
+      expect(service.snapshot()).toEqual(snapshot);
+    } finally { db.close(); service.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  });
   it.each([
     ['en', "Hi, I'm A. How can I help you?"],
     ['zh-CN', '你好，我是A，有什么可以帮你的吗？'],

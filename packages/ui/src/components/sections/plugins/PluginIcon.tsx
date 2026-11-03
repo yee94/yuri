@@ -7,7 +7,7 @@ import './plugin-settings.css';
 interface PluginIconProps {
   /** Package or file name; its first letter stands in when there is no picture. */
   name: string;
-  /** The package's own `magpie.icon`: an https URL or a data:image URI, already vetted by the server. */
+  /** The package.json top-level `icon`: an https URL or a data:image URI, already vetted by the server. */
   src?: string;
   /** Used for local files and paths, which have no package to take a picture from. */
   fallback?: IconName;

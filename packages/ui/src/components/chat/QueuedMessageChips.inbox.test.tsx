@@ -17,7 +17,6 @@ vi.mock('@/sync/queue-abort-optimistic', () => ({ isQueueItemSendPendingByAbortO
 vi.mock('@/sync/use-message-queue-server', () => ({ useMessageQueueServerScope: () => ({ mode: fixture.mode, items: fixture.items, runtimeCapture: { generation: 1 }, actions: {}, scope: null }) }));
 vi.mock('@/hooks/useQueuedMessageAutoSend', () => ({ useQueueScopeDispatchFlight: () => false }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (state: { isMobile: boolean }) => unknown) => select({ isMobile: fixture.mobile }) }));
-vi.mock('./MessageReferenceChip', () => ({ MessageReferenceChip: () => null }));
 let root: Root;
 let host: HTMLDivElement;
 let client: QueryClient;
@@ -72,6 +71,30 @@ it.each([false, true])('uses smaller regular-weight desktop actions without chan
     expect(label?.classList.contains('font-normal')).toBe(!mobile);
     expect(label?.classList.contains('text-[length:calc(var(--text-ui-label)-1px)]')).toBe(!mobile);
     expect(label?.classList.contains('font-medium')).toBe(mobile);
+  }
+});
+it.each([false, true])('preserves spaces between image references and surrounding preview text (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  await render([{ ...inbox, content: '前文 [image-1.png] 这个地方需要间距' }]);
+  const image = host.querySelector('[data-message-reference-kind="image"]');
+  expect(image).not.toBeNull();
+  expect(image?.previousElementSibling?.textContent).toBe('前文 ');
+  expect(image?.nextElementSibling?.textContent).toBe(' 这个地方需要间距');
+  for (const text of [image?.previousElementSibling, image?.nextElementSibling]) {
+    expect(text?.classList.contains('whitespace-pre')).toBe(true);
+    expect(text?.classList.contains('truncate')).toBe(true);
+  }
+});
+it.each([false, true])('omits the redundant attachment count from queue previews (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  for (const item of [
+    { ...inbox, content: '[image-1.png] review', attachmentCount: 1 },
+    { ...inbox, kind: 'pending-admission' as const, phase: 'admitting' as const, content: '[image-1.png] review', attachmentCount: 1 },
+  ]) {
+    await render([item]);
+    expect(host.querySelector('[data-message-reference-kind="image"]')).not.toBeNull();
+    expect(host.textContent).toContain('review');
+    expect(host.textContent).not.toContain('file(s)');
   }
 });
 it.each([false, true])('matches pending status typography to sibling actions (mobile=%s)', async (mobile) => {

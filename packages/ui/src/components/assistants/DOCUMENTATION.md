@@ -1,5 +1,80 @@
 # Assistant UI
 
+## Desktop Mini Chat
+
+Direct-connected Electron surfaces expose Open in Mini Chat in each contact's
+context menu and the conversation header. Native main reuses the existing Mini
+Chat window lifecycle and deduplicates by runtime plus Assistant ID, independently
+of ordinary session windows. Reopening restores/focuses that window and retains
+its pin state. `MiniChatWindowHeader` owns shared drag regions, native controls,
+Pin/Unpin and Open in main window for both conversation types. Pin state is native,
+per-window and not persisted across closing. Failed actions retain the window and
+report an error; failed native navigation destroys the partially opened window.
+
+`AssistantMiniChatLayout` renders the existing contact transcript/composer for the
+explicit URL Assistant ID, not a persisted selection or an OpenCode Session. It
+reuses capability/snapshot/contact Queries and their event reconciliation; it does
+not mount session bootstrap, draft creation or worktree discovery. Deleted contacts
+and disabled/unsupported Hosts remain unavailable rather than selecting another
+Bot; failed initial reads offer retry. Session-only model/new-chat shortcuts do not
+change Bot settings. The contact-list pin and native always-on-top pin are separate.
+
+Contact cards use the optional `AssistantCardNavigation` context to open the exact
+session, task or Bot in a primary window on the same runtime without closing Mini
+Chat. The header's main-window action closes Mini Chat only after successful
+handoff. If no matching primary window exists, main creates one at the target
+route instead of redirecting another Host's window. Ordinary Assistant surfaces
+retain their existing card navigation. Web, VS Code, hosted/mobile/Capacitor and
+Relay connections do not expose this native window capability. It requires an
+updated desktop installer (main IPC), not only a UI OTA.
+
+Focused UI/native tests cover fixed contact identity, failed reads/actions,
+pin serialization, card handoff and shortcut isolation. The real-macOS Electron
+evidence fixture runs production native Mini Chat functions, preload and shared
+header through both Vite HMR and bundled `yuri-ui` origins; it verifies actual
+always-on-top state, unpinning, deduplication, close cleanup and primary routing.
+It is not a full live Bot/backend, signed-installer, visual-material or Windows/Linux
+acceptance test.
+
+## Pinned contacts
+
+Desktop right-click and mobile long-press share `AssistantContactMenu` with Pin / Unpin,
+Edit and Delete. Mobile rows retain their existing swipe edit/delete actions.
+`AssistantPinnedContacts` displays the single pinned Bot above ordinary rows as a
+centered 76px face with a truncated name, live working dot and unread badge. Pinning
+another Bot automatically replaces the previous one. The region shares the catalog scroll owner; no separate card, heading or
+scroller is introduced. Selection uses the existing neutral theme surface.
+
+`partitionAssistantContacts` selects the Host-owned pin; legacy multiple-pin
+snapshots display only the latest `pinnedAt` (source order breaks ties), returning
+the remaining contacts to ordinary rows. Ordinary rows keep message-recency ordering.
+Unpinning restores that ordinary position. The authoritative source catalog,
+Settings/share default order, and navigation's latest-contact avatar are unchanged.
+The at-most-100-contact snapshot is partitioned/sorted only when its array changes;
+there are no new history requests, timers or broad live-status subscriptions.
+
+Pin mutations send only `{ pinned, expectedRevision }` through the existing PATCH,
+then cancel pre-write snapshot reads and fetch the complete captured-runtime catalog
+so both owners' pin states and revisions update together. No optimistic movement
+occurs: failure retains the previous layout and reports a translated toast.
+If the write succeeds but reconciliation fails, the prior snapshot remains until
+the existing snapshot refresh recovers; retry/conflict never fabricates an unpin.
+Host persistence and existing snapshot events reconcile other clients. Legacy Hosts
+omit `pinnedAt`, so their pin action is unavailable rather than an unsupported write.
+Web, Electron, Host-backed VS Code, hosted mobile and Capacitor share this behavior;
+standalone VS Code retains its existing unsupported-Assistant capability.
+
+`AssistantPinning.test.tsx` covers the real context menu, large-face presentation,
+navigation, legacy Hosts and failed-write retry; `assistantPinQueries.test.ts`
+covers minimal PATCH payloads, complete runtime-scoped reconciliation, cancelled
+pre-write reads, failed refresh retention and stale completions. Service tests
+cover single-pin replacement across clients, the database uniqueness constraint,
+v14/v15 migration without changing unread state, conflicts, malformed input,
+replacement/migration rollback, persistence across restart and deletion.
+Browser component-fixture checks use production CSS for right-click, touch
+long-press, pin/unpin, failure retention, light/dark and 320/390px avatar bounds;
+installed-shell and physical-device acceptance remain separate.
+
 ## Per-Bot message channels
 
 Each saved Bot's settings ends with `AssistantChannelsGroup`, after scheduled tasks.
@@ -544,7 +619,7 @@ A persisted session card status `cancelled` denotes a user-interrupted watch. It
 
 The contact composer is send-only: its contract excludes `onStop` / `stopLabel`, and the contact surface has no interrupt/abort action. Processing and authoritative server work drive transcript feedback, never the send button's pending state. Users can send follow-ups while the Assistant is replying, through the same contact admission path without interrupting the current turn. Only upload/admission pending blocks duplicate submission and attachment changes; the textarea stays mounted, enabled and editable for the next draft. Web, Electron, VS Code, hosted mobile and Capacitor share this behavior. Primary Chat stop controls and Assistant tools for managing worker sessions are unchanged.
 
-Desktop and mobile contact lists share `sortAssistantContacts`: descending latest visible message `createdAt`, with stable source order for ties. Incoming and outgoing messages both advance interaction time, so a new sent message also ranks ahead of older unread messages. Unread state, unread volume, and configuration `updatedAt` do not rank contacts; marking read preserves the interaction order. Empty histories and legacy missing timestamps stay below timestamped contacts. Each list memoizes the bounded (at most 100 contacts) snapshot sort; no per-contact requests or token-frequency sorting are introduced. Settings catalog order is unchanged.
+Below pinned contacts, desktop and mobile ordinary contact lists share `sortAssistantContacts`: descending latest visible message `createdAt`, with stable source order for ties. Incoming and outgoing messages both advance interaction time, so a new sent message also ranks ahead of older unread messages. Unread state, unread volume, and configuration `updatedAt` do not rank contacts; marking read preserves the interaction order. Empty histories and legacy missing timestamps stay below timestamped contacts. Each list memoizes the bounded (at most 100 contacts) snapshot partition/sort; no per-contact requests or token-frequency sorting are introduced. Settings catalog order is unchanged.
 
 Navigation uses `useAssistantNavigationAvatar` to select an identity seed with the
 same order among enabled contacts. Its narrow selector exposes only identity/seed;

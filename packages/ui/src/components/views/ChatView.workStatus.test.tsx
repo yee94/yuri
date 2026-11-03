@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatView } from './ChatView';
 import { statusBarPopoverSurfaceClassName } from '../chat/statusBarPopover';
+import { WorkStatusToggle } from '../chat/work-status/WorkStatusToggle';
 
 const fixture = vi.hoisted(() => ({
     session: {
@@ -12,9 +13,10 @@ const fixture = vi.hoisted(() => ({
     },
     ui: {
         isMobile: false, isExpandedInput: false, isRightSidebarOpen: false,
-        workStatusPanelEnabled: true, workStatusOverlayOpen: false,
+        workStatusPanelEnabled: true, workStatusPanelFits: false, workStatusOverlayOpen: false,
         contextPanelByDirectory: {},
         setWorkStatusPanelFits: vi.fn(), setWorkStatusPanelVisible: vi.fn(), setWorkStatusOverlayOpen: vi.fn(),
+        setWorkStatusPanelEnabled: vi.fn(),
     },
     transcript: [] as object[],
     paintedWidths: [] as (string | null)[],
@@ -55,7 +57,13 @@ beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     fixture.session.currentSessionId = null;
     Object.assign(fixture.session.newSessionDraft, { open: true, draftEstablishing: false, draftSubmitting: false, pendingUserMessage: null });
-    Object.assign(fixture.ui, { isMobile: false, isRightSidebarOpen: false, workStatusOverlayOpen: false, contextPanelByDirectory: {} });
+    Object.assign(fixture.ui, { isMobile: false, isRightSidebarOpen: false, workStatusPanelEnabled: true, workStatusPanelFits: false, workStatusOverlayOpen: false, contextPanelByDirectory: {} });
+    fixture.ui.setWorkStatusPanelFits.mockImplementation((fits: boolean) => { fixture.ui.workStatusPanelFits = fits; });
+    fixture.ui.setWorkStatusOverlayOpen.mockImplementation((open: boolean) => { fixture.ui.workStatusOverlayOpen = open; });
+    fixture.ui.setWorkStatusPanelEnabled.mockImplementation((enabled: boolean) => {
+        fixture.ui.workStatusPanelEnabled = enabled;
+        fixture.ui.workStatusOverlayOpen = false;
+    });
     fixture.transcript = [];
     fixture.paintedWidths = [];
     viewportWidth = 1600;
@@ -128,6 +136,47 @@ it('shows a selected session before its transcript loads, without a hidden first
     expect(fixture.paintedWidths[0]).toBe('196px');
 });
 
+it.each([1200, 1600])('opens the manually requested status popup beside a file preview at %ipx', async (width) => {
+    fixture.session.currentSessionId = 'session';
+    fixture.session.newSessionDraft.open = false;
+    viewportWidth = width;
+    fixture.ui.contextPanelByDirectory = {
+        '/repo': { isOpen: true, activeTabId: 'file', tabs: [{ id: 'file', mode: 'file' }] },
+    };
+    fixture.ui.isRightSidebarOpen = true;
+    const render = () => root.render(<><WorkStatusToggle /><ChatView /></>);
+    await act(async () => render());
+    expect(host.querySelector('aside[aria-hidden="false"]')).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-work-status-toggle]')!.click());
+    await act(async () => render());
+    const popup = host.querySelector<HTMLElement>('aside[aria-hidden="false"]');
+    expect(popup?.textContent).toBe('Project status');
+    expect(popup?.style.width).toBe('264px');
+    expect(host.querySelector('.yuri-chat-work-status-inline')).toBeNull();
+    expect(fixture.ui.isRightSidebarOpen).toBe(true);
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-work-status-toggle]')!.click());
+    await act(async () => render());
+    expect(host.querySelector('aside[aria-hidden="false"]')).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-work-status-toggle]')!.click());
+    await act(async () => render());
+    expect(host.querySelector('aside[aria-hidden="false"]')?.textContent).toBe('Project status');
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await act(async () => render());
+    expect(host.querySelector('aside[aria-hidden="false"]')).toBeNull();
+});
+
+it('opens the narrow popup on the first click even when the saved preference is disabled', async () => {
+    fixture.session.currentSessionId = 'session';
+    fixture.session.newSessionDraft.open = false;
+    fixture.ui.workStatusPanelEnabled = false;
+    viewportWidth = 1200;
+    const render = () => root.render(<><WorkStatusToggle /><ChatView /></>);
+    await act(async () => render());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-work-status-toggle]')!.click());
+    await act(async () => render());
+    expect(host.querySelector('aside[aria-hidden="false"]')?.textContent).toBe('Project status');
+});
+
 it.each([1600, 1200])('keeps the status column mounted when opening a subagent chat at %ipx', async (width) => {
     fixture.session.currentSessionId = 'session';
     fixture.session.newSessionDraft.open = false;
@@ -145,10 +194,11 @@ it.each([1600, 1200])('keeps the status column mounted when opening a subagent c
         '/repo': { isOpen: true, activeTabId: 'file', tabs: [{ id: 'file', mode: 'file' }] },
     };
     await act(async () => root.render(<ChatView />));
-    expect(host.querySelector('aside')).toBeNull();
+    expect(host.querySelector<HTMLElement>('aside[aria-hidden="false"]')?.style.width).toBe('264px');
+    expect(host.querySelector('.yuri-chat-work-status-inline')).toBeNull();
 });
 
-it('retains manual overlay display below the breakpoint and excludes the right sidebar and mobile', async () => {
+it('retains manual overlay display below the breakpoint, ignores a hidden rail and excludes mobile', async () => {
     fixture.session.currentSessionId = 'session';
     fixture.session.newSessionDraft.open = false;
     viewportWidth = 1200;
@@ -165,7 +215,7 @@ it('retains manual overlay display below the breakpoint and excludes the right s
     expect(overlay?.textContent).toBe('Project status');
     fixture.ui.isRightSidebarOpen = true;
     await act(async () => root.render(<ChatView />));
-    expect(host.querySelector('aside')).toBeNull();
+    expect(host.querySelector('aside[aria-hidden="false"]')).toBe(overlay);
     fixture.ui.isRightSidebarOpen = false;
     fixture.ui.isMobile = true;
     await act(async () => root.render(<ChatView />));

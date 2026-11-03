@@ -184,7 +184,7 @@ test('duplicate and newer equivalent index snapshots preserve all projection ref
         await applyIndex(snapshot(11));
         const after = useGlobalSessionsStore.getState();
         for (const key of [
-            'activeSessions', 'sessionsByDirectory', 'reviewTransferBySessionId',
+            'activeSessions', 'sessionsByDirectory',
             'loadedDirectories', 'loadingDirectories', 'refreshingDirectories',
             'activePaginationByDirectory', 'sessionIndexSyncByDirectory', 'cachedDirectories',
         ] as const) expect(after[key], key).toBe(before[key]);

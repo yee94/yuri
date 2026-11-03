@@ -10,6 +10,3 @@ export const visibleRightSidebarTabs = (input: {
   if (input.showBrowser) tabs.push('browser');
   return tabs;
 };
-
-export const isRightSidebarTab = (value: string): value is RightSidebarTab =>
-  value === 'git' || value === 'files' || value === 'browser';

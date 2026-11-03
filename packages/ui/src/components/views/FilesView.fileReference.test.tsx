@@ -4,16 +4,20 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { TransactionSpec } from '@codemirror/state';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { useFileSearchStore } from '@/stores/useFileSearchStore';
 
 const harness = vi.hoisted(() => ({
   files: { readFile: vi.fn(), listDirectory: vi.fn(), statFile: vi.fn(), writeFile: vi.fn(), downloadFile: vi.fn() },
   runtime: { isDesktop: false, isVSCode: false },
   local: false,
   pluginPreview: false,
+  themeDark: false,
   openDesktopPath: vi.fn(),
   noop: () => {},
   empty: [],
   t: (key: string) => key,
+  resizeObservers: new Map<Element, ResizeObserverCallback>(),
+  explorerRenders: 0,
 }));
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: harness.t }) }));
@@ -49,7 +53,8 @@ vi.mock('@/contexts/useThemeSystem', async () => {
   const { getDefaultTheme } = await import('@/lib/theme/themes');
   const theme = getDefaultTheme(false);
   const value = { currentTheme: theme, availableThemes: [theme], lightThemeId: theme.metadata.id, darkThemeId: theme.metadata.id };
-  return { useThemeSystem: () => value, useOptionalThemeSystem: () => value };
+  const darkValue = { ...value, currentTheme: getDefaultTheme(true) };
+  return { useThemeSystem: () => harness.themeDark ? darkValue : value, useOptionalThemeSystem: () => harness.themeDark ? darkValue : value };
 });
 vi.mock('@/lib/shiki/appThemeRegistry', () => ({ ensurePierreThemeRegistered: harness.noop, getResolvedShikiTheme: () => 'light' }));
 vi.mock('@/lib/codemirror/shikiHighlight', () => ({ shikiHighlightExtension: () => [] }));
@@ -63,6 +68,11 @@ vi.mock('@/components/diagram', () => ({ DiagramEditor: () => null }));
 vi.mock('@/components/views/DiffView', () => ({ DiffView: () => null }));
 vi.mock('@/components/layout/ContextSidebarTab', () => ({ ContextPanelContent: () => null }));
 vi.mock('@/components/layout/ContextPanelSessionTranscript', () => ({ ContextPanelSessionTranscript: () => null }));
+vi.mock('@/components/layout/RightSidebarTabs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/layout/RightSidebarTabs')>(),
+  RightSidebarTabs: () => { harness.explorerRenders++; return <div data-testid="sidebar-explorer" />; },
+}));
+vi.mock('@/queries/browserProviderQueries', () => ({ useBrowserProviderCatalogQuery: () => ({ data: undefined }) }));
 vi.mock('@/sync/sync-context', () => ({
   useDirectoryStore: () => ({ subscribe: () => harness.noop, getState: () => ({ session: harness.empty }) }),
   setContextPanelViewedSession: harness.noop,
@@ -104,6 +114,8 @@ vi.mock('@/components/ui/tooltip', () => ({
 
 import { FilesView } from './FilesView';
 import { ContextPanel } from '@/components/layout/ContextPanel';
+import { ChatWorkspace } from '@/components/layout/ChatWorkspace';
+import { SidebarFilesTree } from '@/components/layout/SidebarFilesTree';
 import { openFileReference } from '@/components/chat/fileReferenceActions';
 
 function deferred<T>() {
@@ -134,11 +146,24 @@ async function open(path: string, atLine = false) {
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  harness.resizeObservers.clear();
+  harness.explorerRenders = 0;
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) { harness.resizeObservers.set(target, this.callback); }
+    unobserve(target: Element) { harness.resizeObservers.delete(target); }
+    disconnect() {
+      for (const [target, callback] of harness.resizeObservers) {
+        if (callback === this.callback) harness.resizeObservers.delete(target);
+      }
+    }
+  });
   harness.files.readFile.mockReset();
   harness.runtime.isDesktop = false;
   harness.runtime.isVSCode = false;
   harness.local = false;
   harness.pluginPreview = false;
+  harness.themeDark = false;
   harness.openDesktopPath.mockReset().mockResolvedValue(true);
   harness.files.downloadFile.mockReset().mockResolvedValue(undefined);
   harness.files.writeFile.mockReset().mockResolvedValue({ success: true });
@@ -146,7 +171,7 @@ beforeEach(() => {
   harness.files.listDirectory.mockClear();
   harness.files.listDirectory.mockResolvedValue({ entries: [] });
   useFilesViewTabsStore.setState({ byRoot: {} });
-  useUIStore.setState({ contextPanelByDirectory: {}, pendingFileFocusPath: null, pendingFileNavigation: null, pendingFileViewerMode: null, mainTabGuard: null });
+  useUIStore.setState({ contextPanelByDirectory: {}, isRightSidebarOpen: false, activeMainTab: 'chat', rightSidebarTab: 'git', pendingFileFocusPath: null, pendingFileNavigation: null, pendingFileViewerMode: null, mainTabGuard: null });
   window.localStorage.setItem('yuri:files:auto-save-enabled', 'false');
   window.localStorage.removeItem('yuri:files:md-viewer-mode');
   window.localStorage.removeItem('yuri:files:html-viewer-mode');
@@ -159,6 +184,7 @@ afterEach(async () => {
   await act(async () => reactRoot.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -391,6 +417,264 @@ describe('background file preview refresh', () => {
 });
 
 describe('file reference failure lifecycle', () => {
+  test('keeps file search controls without exposing go-to-line inputs or buttons', async () => {
+    harness.files.readFile.mockResolvedValue({ content: 'first\nsecond\nthird' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+    await clickButton('filesView.editor.showControlsAria');
+    expect(host.querySelector('[title="filesView.editor.findInFile"]')).not.toBeNull();
+    expect(host.querySelector('[title="filesView.editor.goToLine"]')).toBeNull();
+    expect(host.querySelector('input[type="number"]')).toBeNull();
+    expect(host.textContent).not.toContain('goToLineDialog.actions.go');
+  });
+
+  test('autosave uses a legible outline icon in both states without changing file contents', async () => {
+    window.localStorage.setItem('yuri:files:auto-save-enabled', 'true');
+    harness.files.readFile.mockResolvedValue({ content: 'unchanged file' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+    await clickButton('filesView.editor.showControlsAria');
+    const enabled = host.querySelector<HTMLButtonElement>('[aria-label="filesView.editor.autoSaveOn"]')!;
+    expect(enabled.querySelector('use')?.getAttribute('href')).toBe('#yuri-file-check');
+    expect(enabled.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => enabled.click());
+    const disabled = host.querySelector<HTMLButtonElement>('[aria-label="filesView.editor.manualSave"]')!;
+    expect(disabled.querySelector('use')?.getAttribute('href')).toBe('#yuri-file-check');
+    expect(disabled.getAttribute('aria-pressed')).toBe('false');
+    expect(harness.files.writeFile).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="editor"]')?.textContent).toBe('unchanged file');
+  });
+
+  test('the real expand button fills the workspace and restores its split without remounting drafts', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200);
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ChatWorkspace header={<header>Session</header>} footer={<div data-terminal />}> <textarea data-composer defaultValue="unsent draft" /> </ChatWorkspace>));
+    const panel = host.querySelector<HTMLElement>('[data-context-panel]')!;
+    const main = host.querySelector<HTMLElement>('[data-primary-chat]')!;
+    const composer = host.querySelector<HTMLTextAreaElement>('[data-composer]')!;
+    const editor = host.querySelector('[data-testid="draft"]');
+    const savedWidth = useUIStore.getState().contextPanelByDirectory['/repo'].width;
+    expect(main.inert).toBe(false);
+    expect(panel.classList.contains('pl-1')).toBe(true);
+    await clickButton('contextPanel.actions.expandPanel');
+    expect(main.inert).toBe(true);
+    expect(panel.style.width).toBe('100%');
+    expect(panel.classList.contains('absolute')).toBe(true);
+    expect(panel.classList.contains('p-1.5')).toBe(true);
+    expect(panel.classList.contains('pl-1')).toBe(false);
+    expect(panel.querySelector('[aria-label="contextPanel.actions.collapsePanel"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(panel.querySelector('[aria-label="contextPanel.actions.collapsePanel"] use')?.getAttribute('href')).toBe('#yuri-collapse-diagonal');
+    await clickButton('contextPanel.actions.collapsePanel');
+    expect(main.inert).toBe(false);
+    expect(panel.classList.contains('absolute')).toBe(false);
+    expect(panel.classList.contains('pl-1')).toBe(true);
+    expect(panel.classList.contains('p-1.5')).toBe(false);
+    expect(panel.style.getPropertyValue('--yuri-context-panel-width')).toBe(`${savedWidth}px`);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(savedWidth);
+    expect(host.querySelector('[data-composer]')).toBe(composer);
+    expect(composer.value).toBe('unsent draft');
+    expect(host.querySelector('[data-testid="draft"]')).toBe(editor);
+    expect(activeFilePath()).toBe('/repo/A.ts');
+  });
+
+  test('the compact file search still debounces filtering and clears back to the same focused field', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    const search = vi.spyOn(useFileSearchStore.getState(), 'searchFiles').mockResolvedValue([
+      { name: 'notes.ts', path: '/repo/notes.ts', relativePath: 'notes.ts', extension: 'ts' },
+    ]);
+    await act(async () => reactRoot.render(<SidebarFilesTree />));
+    const input = host.querySelector<HTMLInputElement>('[data-sidebar-file-search] input')!;
+    expect(input.classList.contains('h-7')).toBe(true);
+    expect(input.classList.contains('focus:ring-1')).toBe(true);
+    expect(input.classList.contains('bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))]')).toBe(true);
+    expect(input.classList.contains('bg-[var(--surface-elevated)]')).toBe(false);
+    expect(input.getAttribute('aria-label')).toBe('sidebarFilesTree.search.placeholder');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'notes');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(search).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect(search).toHaveBeenCalledWith('/repo', 'notes', 150, expect.objectContaining({ type: 'file' }));
+    expect(host.textContent).toContain('notes.ts');
+    await clickButton('sidebarFilesTree.search.clearAria');
+    expect(input.value).toBe('');
+    expect(document.activeElement).toBe(input);
+    expect(host.querySelector('[data-sidebar-file-search] input')).toBe(input);
+  });
+
+  const resizePreview = async (width: number) => {
+    const body = host.querySelector<HTMLElement>('[data-context-layout]')!;
+    const callback = harness.resizeObservers.get(body);
+    expect(callback).toBeTruthy();
+    await act(async () => callback!([{
+      target: body,
+      contentRect: new DOMRect(0, 0, width, 800),
+      borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [],
+    }], {} as ResizeObserver));
+  };
+
+  test('switches a narrow rail to preview only after confirmed navigation and restores both panes at 400px', async () => {
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await act(async () => {
+      useUIStore.getState().openContextPanel('/repo');
+      reactRoot.render(<ContextPanel directory="/repo" />);
+    });
+    await resizePreview(399);
+    const preview = host.querySelector<HTMLElement>('[data-context-preview-content]')!;
+    expect(preview.inert).toBe(true);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    await clickButton('contextPanel.actions.toggleFileTree');
+    await open('/repo/A.ts');
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(true);
+    const editor = host.querySelector('[data-testid="draft"]');
+    await clickButton('contextPanel.actions.toggleFileTree');
+    expect(preview.inert).toBe(true);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    await open('/repo/A.ts');
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="draft"]')).toBe(editor);
+    await resizePreview(400);
+    expect(host.querySelector('[data-context-layout]')?.getAttribute('data-context-layout')).toBe('split');
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    await resizePreview(399);
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+    await clickButton('contextPanel.actions.toggleFileTree');
+    const tab = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+    await act(async () => tab.click());
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+  });
+
+  test('keeps the narrow file tree visible through a cancelled unsaved guard, then reveals the confirmed target', async () => {
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+    const editor = host.querySelector<HTMLTextAreaElement>('[data-testid="draft"]')!;
+    await act(async () => {
+      editor.value = 'unsaved';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('contextPanel.actions.toggleFileTree');
+    const preview = host.querySelector<HTMLElement>('[data-context-preview-content]')!;
+    await open('/repo/B.ts');
+    expect(activeFilePath()).toBe('/repo/A.ts');
+    expect(preview.inert).toBe(true);
+    await clickButton('filesView.dialog.cancel');
+    expect(preview.inert).toBe(true);
+    await open('/repo/B.ts');
+    await clickButton('filesView.unsaved.discard');
+    expect(activeFilePath()).toBe('/repo/B.ts');
+    expect(preview.inert).toBe(false);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+  });
+
+  test('does not rerender the explorer for 50 same-side content resize events', async () => {
+    await act(async () => {
+      useUIStore.getState().openContextPanel('/repo');
+      reactRoot.render(<ContextPanel directory="/repo" />);
+    });
+    await resizePreview(400);
+    const renders = harness.explorerRenders;
+    for (let index = 0; index < 50; index++) await resizePreview(400 + index);
+    expect(harness.explorerRenders).toBe(renders);
+    await resizePreview(399);
+    const compactRenders = harness.explorerRenders;
+    for (let index = 0; index < 50; index++) await resizePreview(300 + index);
+    expect(harness.explorerRenders).toBe(compactRenders);
+  });
+
+  test('opens an empty preview without file reads, nests the file tree and closes both together', async () => {
+    await act(async () => {
+      useUIStore.getState().openContextPanel('/repo');
+      reactRoot.render(<ContextPanel directory="/repo" />);
+    });
+    const panel = host.querySelector<HTMLElement>('[data-context-panel]')!;
+    expect(panel.style.minWidth).toBe('min(300px, 100%)');
+    expect(panel.inert).toBe(false);
+    expect(panel.querySelector('[data-context-panel-surface]')?.classList.contains('rounded-xl')).toBe(true);
+    const surface = panel.querySelector('[data-context-panel-surface]')!;
+    expect(surface.classList.contains('[--background:oklch(from_var(--surface-background)_min(1,calc(l_+_0.015))_c_h)]')).toBe(true);
+    expect(surface.classList.contains('dark:[--background:color-mix(in_srgb,var(--surface-foreground)_4%,var(--surface-background))]')).toBe(true);
+    expect(panel.textContent).toContain('contextPanel.empty.selectFile');
+    expect(panel.querySelector('[data-context-preview-content] [aria-hidden="true"] svg')).not.toBeNull();
+    expect(harness.files.readFile).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    expect(useUIStore.getState().rightSidebarTab).toBe('git');
+    expect(panel.querySelector('aside')?.classList.contains('bg-transparent')).toBe(true);
+    expect(panel.querySelector('aside')?.className).not.toContain('[--background:');
+    expect(panel.querySelector('aside')?.classList.contains('[--layout-chrome-divider-width:1px]')).toBe(true);
+    expect(panel.querySelector('aside')?.classList.contains('[--layout-chrome-divider:color-mix(in_srgb,var(--surface-foreground)_8%,var(--background))]')).toBe(true);
+    expect(panel.querySelector('[aria-label="layout.rightSidebar.git"]')?.getAttribute('aria-pressed')).toBe('true');
+    const buttonGroup = panel.querySelector('[role="group"]')!;
+    expect(buttonGroup.classList.contains('divide-x')).toBe(true);
+    expect(buttonGroup.classList.contains('overflow-hidden')).toBe(true);
+    expect([...buttonGroup.querySelectorAll('button')].every((button) => button.classList.contains('!rounded-none'))).toBe(true);
+    await clickButton('contextPanel.actions.toggleFileTree');
+    expect(panel.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+    expect(useUIStore.getState().rightSidebarTab).toBe('files');
+    expect(panel.querySelector('[aria-label="contextPanel.actions.toggleFileTree"]')?.getAttribute('aria-pressed')).toBe('true');
+    await clickButton('contextPanel.actions.closePanel');
+    expect(panel.inert).toBe(true);
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+    await act(async () => useUIStore.getState().toggleContextPanel('/repo'));
+    expect(panel.inert).toBe(false);
+    expect(panel.textContent).toContain('contextPanel.empty.selectFile');
+    await clickButton('contextPanel.actions.toggleFileTree');
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+    expect(panel.inert).toBe(false);
+  });
+
+  test('dark preview headers keep the original theme selection tokens', async () => {
+    harness.themeDark = true;
+    await act(async () => {
+      useUIStore.getState().openContextPanel('/repo');
+      reactRoot.render(<ContextPanel directory="/repo" />);
+    });
+    expect(host.querySelector('[data-context-panel] header')?.className).not.toContain('--interactive-selection');
+  });
+
+  test('preview tabs use compact selection with separate close controls and preserve tab navigation', async () => {
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+    await open('/repo/first.ts');
+    await open('/repo/second.md');
+
+    const tablist = host.querySelector('[role="tablist"]')!;
+    const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs).toHaveLength(2);
+    expect(tablist.closest('header')?.classList.contains('app-region-drag')).toBe(true);
+    expect(tablist.closest('header')?.classList.contains('[--interactive-selection:color-mix(in_srgb,var(--surface-foreground)_7%,var(--background))]')).toBe(true);
+    expect(host.querySelector('[data-context-preview-content]')?.className).not.toContain('--interactive-selection');
+    expect(host.querySelector('[data-context-file-path]')).toBeNull();
+    expect(tabs[1].getAttribute('title')).toContain('second.md');
+    expect(tabs[1].parentElement?.classList.contains('bg-interactive-selection')).toBe(true);
+    expect(tablist.querySelector('[aria-hidden].bg-\\[var\\(--primary-base\\)\\]')).toBeNull();
+    for (const tab of tabs) {
+      expect(tab.classList.contains('text-xs')).toBe(true);
+      expect(tab.querySelector('[role="button"]')).toBeNull();
+      const close = tab.parentElement?.querySelector<HTMLButtonElement>('button:not([role="tab"])');
+      expect(close).not.toBeNull();
+      expect(close?.classList.contains('opacity-0')).toBe(false);
+    }
+
+    await act(async () => tabs[0].click());
+    expect(activeFilePath()).toBe('/repo/first.ts');
+    const close = tabs[1].parentElement!.querySelector<HTMLButtonElement>('button:not([role="tab"])')!;
+    await act(async () => close.click());
+    expect(activeFilePath()).toBe('/repo/first.ts');
+    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    await act(async () => tabs[0].parentElement!.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 })));
+    expect(tablist.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(true);
+    expect(host.textContent).toContain('contextPanel.empty.selectFile');
+  });
+
   test('panel publishes its requested width while filling the collapsed primary pane, then restores on close', async () => {
     const onReservedWidthChange = vi.fn();
     harness.files.readFile.mockResolvedValue({ content: 'file content' });
@@ -406,14 +690,34 @@ describe('file reference failure lifecycle', () => {
     expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(700);
 
     const separator = host.querySelector('[role="separator"]')!;
+    expect(separator.hasAttribute('data-context-resize-handle')).toBe(true);
+    expect(separator.classList.contains('w-4')).toBe(true);
+    expect(separator.classList.contains('-left-1')).toBe(true);
+    expect(separator.classList.contains('touch-none')).toBe(true);
+    const grip = separator.querySelector('[aria-hidden="true"]')!;
+    expect(grip.classList.contains('rounded-full')).toBe(true);
+    expect(grip.classList.contains('opacity-0')).toBe(true);
+    expect(grip.classList.contains('bg-muted-foreground/25')).toBe(true);
+    expect(panel.classList.contains('overflow-visible')).toBe(true);
+    expect(panel.querySelector('[data-context-panel-surface]')?.classList.contains('overflow-hidden')).toBe(true);
     await act(async () => separator.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 700, pointerId: 1 })));
+    expect(grip.classList.contains('opacity-100')).toBe(true);
     await act(async () => separator.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 800, pointerId: 1 })));
     expect(onReservedWidthChange).toHaveBeenLastCalledWith(600);
     await act(async () => separator.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 800, pointerId: 1 })));
+    expect(grip.classList.contains('opacity-0')).toBe(true);
     expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(600);
+
+    await act(async () => separator.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 800, pointerId: 2 })));
+    await act(async () => separator.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 1200, pointerId: 2 })));
+    expect(onReservedWidthChange).toHaveBeenLastCalledWith(300);
+    await act(async () => separator.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 1200, pointerId: 2 })));
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].width).toBe(300);
+    expect(panel.style.getPropertyValue('--yuri-context-panel-width')).toBe('300px');
 
     await act(async () => useUIStore.getState().toggleContextPanelExpanded('/repo'));
     expect(onReservedWidthChange).toHaveBeenLastCalledWith(Infinity);
+    expect(host.querySelector('[data-context-resize-handle]')).toBeNull();
     await act(async () => useUIStore.getState().closeContextPanel('/repo'));
     expect(onReservedWidthChange).toHaveBeenLastCalledWith(0);
   });
@@ -584,7 +888,7 @@ describe('file reference failure lifecycle', () => {
 });
 
 async function clickButton(label: string) {
-  const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent === label);
+  const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent === label || entry.getAttribute('aria-label') === label);
   expect(button, label).toBeTruthy();
   await act(async () => button!.click());
 }

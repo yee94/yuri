@@ -91,12 +91,9 @@ import { answersToFormAnswer, v2CapabilityUnavailable } from "./v2-runtime"
 import { stripMessageDiffSnapshots, stripSessionDiffSnapshots } from "./sanitize"
 import { sessionEvents } from "@/lib/sessionEvents"
 import {
-  getOriginalSessionID,
   getSessionMetadata,
-  isReviewSession,
-  withoutReviewSessionLink,
   type SessionMetadataRecord,
-} from "@/lib/sessionReviewMetadata"
+} from "@/lib/sessionMetadata"
 import { reconcileActiveSessionStatusAfterMessagePull } from "./session-status-reconciliation"
 import { seedSessionTodosFromHydratedTranscript } from "./session-todo-projection"
 import {
@@ -1035,27 +1032,6 @@ export async function patchSessionMetadata(
   return updated
 }
 
-async function cleanupReviewMetadataBeforeDelete(sessionId: string, directory?: string | null): Promise<void> {
-  let session: Session
-  try {
-    session = await opencodeClient.getSession(sessionId, directory ?? getSessionDirectory(sessionId))
-  } catch {
-    return
-  }
-  if (!isReviewSession(session)) return
-  const originalSessionID = getOriginalSessionID(session)
-  if (!originalSessionID) return
-  try {
-    await patchSessionMetadata(originalSessionID, directory ?? getSessionDirectory(originalSessionID), (metadata) =>
-      withoutReviewSessionLink(metadata, sessionId),
-    )
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (/not found/i.test(message)) return
-    console.warn("[session-actions] review metadata cleanup failed before delete", error)
-  }
-}
-
 /** Optimistically remove a session from every live child store that has it. */
 function optimisticRemoveSession(sessionId: string, preferredDirectory?: string): SessionListSnapshot[] {
   if (!_childStores) return []
@@ -1165,7 +1141,6 @@ function optimisticallyRemoveSessionForDelete(sessionId: string, directory?: str
 /** Commit a delete that has already been optimistically removed from local stores. */
 async function commitRemovedSessionDelete(sessionId: string, directory?: string): Promise<boolean> {
   try {
-    await cleanupReviewMetadataBeforeDelete(sessionId, directory)
     const deleted = await opencodeClient.deleteSession(sessionId, directory)
     if (deleted !== true) {
       throw new Error("session.delete failed: server did not confirm deletion")
@@ -1300,7 +1275,6 @@ export async function archiveSession(sessionId: string): Promise<boolean> {
     ui.setCurrentSession(null)
   }
   try {
-    await cleanupReviewMetadataBeforeDelete(sessionId, sessionDirectory)
     if (!isSameRuntime()) {
       throw new Error("session archive aborted because the runtime changed")
     }

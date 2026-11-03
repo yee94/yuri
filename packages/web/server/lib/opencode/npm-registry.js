@@ -2,6 +2,9 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sanitizePluginIcon } from './plugin-icon.js';
+
+export { sanitizePluginIcon } from './plugin-icon.js';
 
 const NPM_CACHE_TTL_MS = 3_600_000;
 const NPM_FETCH_TIMEOUT_MS = 5_000;
@@ -13,7 +16,7 @@ const NPM_REGISTRY_BASE = 'https://registry.npmjs.org';
  * @property {string|null} latest
  * @property {string[]} versions
  * @property {Record<string, string>} distTags
- * @property {string} [icon] sanitized `magpie.icon` of the latest release
+ * @property {string} [icon] sanitized top-level package.json `icon` of the latest release
  *
  * @typedef {Object} NpmLookupError
  * @property {false} ok
@@ -81,23 +84,6 @@ function cacheResult(name, payload) {
   }
 }
 
-const NPM_ICON_MAX_LENGTH = 3 << 19;
-
-/**
- * A package's own picture, as magpie reads `magpie.icon` from package.json:
- * an https URL or a data:image URI, at most ~1.5 MB. Anything else is dropped.
- * Nothing is fetched here; the client renders it as an image.
- *
- * @param {unknown} value
- * @returns {string | undefined}
- */
-export function sanitizePluginIcon(value) {
-  const icon = typeof value === 'string' ? value.trim() : '';
-  return icon.length > 0 && icon.length <= NPM_ICON_MAX_LENGTH && /^(https:\/\/|data:image\/)/i.test(icon)
-    ? icon
-    : undefined;
-}
-
 const VALID_NPM_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const NPM_CLI_TIMEOUT_MS = 15_000;
 
@@ -118,7 +104,7 @@ function lookupViaNpmCli(name, cwd) {
   return new Promise((resolve) => {
     execFile(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
-      ['view', name, 'dist-tags', 'versions', 'magpie.icon', '--json'],
+      ['view', name, 'dist-tags', 'versions', 'icon', '--json'],
       {
         cwd: cwd || undefined,
         timeout: NPM_CLI_TIMEOUT_MS,
@@ -142,7 +128,7 @@ function lookupViaNpmCli(name, cwd) {
           const versions = Array.isArray(data?.versions)
             ? data.versions.filter((version) => typeof version === 'string')
             : typeof data?.versions === 'string' ? [data.versions] : [];
-          const icon = sanitizePluginIcon(data?.['magpie.icon'] ?? data?.magpie?.icon);
+          const icon = sanitizePluginIcon(data?.icon);
           resolve({ ok: true, latest: distTags.latest ?? null, versions, distTags, ...(icon ? { icon } : {}) });
         } catch {
           resolve(null);
@@ -189,7 +175,7 @@ async function lookupNpmPackageOverHttp(name) {
       const data = await response.json();
       const distTags = parseDistTags(data?.['dist-tags']);
       const latest = distTags.latest ?? null;
-      const icon = sanitizePluginIcon(latest ? data?.versions?.[latest]?.magpie?.icon : undefined);
+      const icon = sanitizePluginIcon(latest ? data?.versions?.[latest]?.icon : undefined);
       return {
         ok: true,
         latest,

@@ -18,7 +18,7 @@ export function GuiFileLinkBridge({ path, base, active: surfaceActive = true, ch
 }) {
   const windowActive = React.useContext(MobileWindowActiveContext);
   const active = surfaceActive && windowActive;
-  const { host, snapshot, inventory, loading, error, requested, requestLoad, refresh } = useGuiPlugins();
+  const { host, snapshot, inventory, loading, error, requested, requestLoad } = useGuiPlugins();
   const { t } = useI18n();
   const anchor = React.useRef<HTMLDivElement>(null);
   const [actions] = React.useState(() => document.createElement('div'));
@@ -92,10 +92,6 @@ export function GuiFileLinkBridge({ path, base, active: surfaceActive = true, ch
     <div ref={anchor} className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col" data-gui-file-view={path}
       data-mobile-edge-to-edge-preview={content ? 'true' : undefined}>
       {feedback ? <span role="status" className="shrink-0 px-3 py-1 break-words typography-meta text-muted-foreground">{feedback}</span> : null}
-      {active && !preview && failure ? <div className="flex shrink-0 items-center gap-2 px-3 py-2">
-        <span role="alert" className="min-w-0 flex-1 break-words typography-meta text-[var(--status-error)]">{failure}</span>
-        <Button size="sm" disabled={loading} onClick={refresh}>{t('guiPlugins.refresh')}</Button>
-      </div> : null}
       {typeof children === 'function' ? children({ preview: content, toggle, controls }) : <>
         {controls ? <div className="absolute right-3 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{controls}</div> : null}
         {content ?? children}

@@ -1,5 +1,9 @@
 # Session Sidebar Documentation
 
+Session menus no longer offer opening a conversation in the side panel. The
+Electron Mini Chat Window action remains available; subtask and review panels
+retain their existing behavior independently of the sidebar menu.
+
 Sidebar numeric shortcuts and global-search hints share `Kbd variant="hint"`.
 The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neutral
 6% foreground fill; consumers do not maintain their own shortcut color/size recipe.

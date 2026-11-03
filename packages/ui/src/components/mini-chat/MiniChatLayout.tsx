@@ -1,14 +1,10 @@
 import React from 'react';
-import { Button } from '@/components/ui/button';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatSurfaceProvider } from '@/components/chat/ChatSurfaceContext';
 import { ContextUsageDisplay } from '@/components/ui/ContextUsageDisplay';
-import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
-import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
-import { invokeDesktop, isElectronShell } from '@/lib/desktop';
-import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
+import { MiniChatWindowHeader } from './MiniChatWindowHeader';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { useSessionContextUsage, useSessionMessages, useSessions } from '@/sync/sync-context';
@@ -67,17 +63,6 @@ const MiniChatHeader: React.FC<{ mode: MiniChatMode }> = ({ mode }) => {
     if (!state.newSessionDraft?.open) return '';
     return normalizePath(state.newSessionDraft.bootstrapPendingDirectory ?? state.newSessionDraft.directoryOverride ?? '');
   });
-  const [pinned, setPinned] = React.useState(false);
-  const macosMajor = typeof window !== 'undefined' ? window.__YURI_MACOS_MAJOR__ ?? 0 : 0;
-  const hasMacTrafficLights = Number.isFinite(macosMajor) && macosMajor > 0;
-  const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
-  const macosHeaderSizeClass = hasMacTrafficLights
-    ? macosMajor >= 26
-      ? 'h-12'
-      : macosMajor <= 15
-        ? 'h-14'
-        : ''
-    : '';
 
   const session = React.useMemo(
     () => currentSessionId ? sessions.find((entry) => entry.id === currentSessionId) ?? null : null,
@@ -85,12 +70,6 @@ const MiniChatHeader: React.FC<{ mode: MiniChatMode }> = ({ mode }) => {
   );
   const sessionWorktreeMetadata = (session as { worktreeMetadata?: { path?: string | null; branch?: string | null; projectDirectory?: string | null } } | null)?.worktreeMetadata ?? null;
 
-  React.useEffect(() => {
-    if (!isElectronShell()) return;
-    void invokeDesktop<{ pinned?: boolean }>('desktop_get_window_pinned').then((result) => {
-      if (typeof result?.pinned === 'boolean') setPinned(result.pinned);
-    });
-  }, []);
 
   const title = session?.title?.trim()
     || (draftOpen || mode === 'draft' ? t('miniChat.header.newSession') : t('miniChat.header.session'));
@@ -152,7 +131,6 @@ const MiniChatHeader: React.FC<{ mode: MiniChatMode }> = ({ mode }) => {
   const outputLimit = limit && typeof limit.output === 'number' ? limit.output : 0;
   const contextUsage = useSessionContextUsage(currentSessionId ?? '', contextLimit, outputLimit);
   const [stableContextUsage, setStableContextUsage] = React.useState<SessionContextUsage | null>(null);
-  const dragRegionStyle = { WebkitAppRegion: 'drag' } as React.CSSProperties;
   const noDragRegionStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 
   React.useEffect(() => {
@@ -188,39 +166,24 @@ const MiniChatHeader: React.FC<{ mode: MiniChatMode }> = ({ mode }) => {
     ? Math.min(999, (stableContextUsage.totalTokens / stableContextUsage.contextLimit) * 100)
     : 0;
 
-  const handleTogglePinned = React.useCallback(() => {
-    const nextPinned = !pinned;
-    setPinned(nextPinned);
-    void invokeDesktop('desktop_set_window_pinned', { pinned: nextPinned }).catch(() => {
-      setPinned(!nextPinned);
-    });
-  }, [pinned]);
-
-  const handleOpenMainApp = React.useCallback(() => {
-    const payload = currentSessionId
+  const mainWindowTarget = currentSessionId
       ? { sessionId: currentSessionId, directory: (session as { directory?: string | null } | null)?.directory ?? currentDirectory ?? '' }
       : { mode: 'draft', directory: openDirectory || currentDirectory || '', projectId: draftProjectId };
-    void invokeDesktop<{ focused?: boolean }>('desktop_focus_main_window', payload)
-      .then((result) => {
-        if (result?.focused === true) {
-          return invokeDesktop('desktop_close_current_window');
-        }
-        return null;
-      });
-  }, [currentDirectory, currentSessionId, draftProjectId, openDirectory, session]);
 
   return (
-    <header
-      className={cn(
-        'flex items-center gap-3 bg-background pr-3',
-        hasMacTrafficLights ? 'pl-[5.5rem]' : 'pl-3',
-        usesFramelessChrome ? 'h-12' : macosHeaderSizeClass || 'min-h-14',
-      )}
-      style={dragRegionStyle}
-    >
-      {usesFramelessChrome && windowControlsSide === 'left' ? (
-        <WindowsWindowControls visible position="left" />
-      ) : null}
+    <MiniChatWindowHeader mainWindowTarget={mainWindowTarget} actions={stableContextUsage ? (
+      <ContextUsageDisplay
+        pending={stableContextUsage.pending}
+        totalTokens={stableContextUsage.totalTokens}
+        percentage={displayContextPercentage}
+        colorPercentage={stableContextUsage.percentage}
+        contextLimit={stableContextUsage.contextLimit}
+        outputLimit={stableContextUsage.outputLimit ?? 0}
+        className="h-9 shrink-0 pl-1 pr-1 typography-ui-label"
+        valueClassName="font-semibold leading-none"
+        hideIcon showPercentIcon percentIconClassName="h-4.5 w-4.5"
+      />
+    ) : null}>
       <SessionSwitcherDropdown>
         <button
           type="button"
@@ -242,46 +205,7 @@ const MiniChatHeader: React.FC<{ mode: MiniChatMode }> = ({ mode }) => {
           </span>
         </button>
       </SessionSwitcherDropdown>
-      <div className="min-w-0 flex-1" />
-      {stableContextUsage ? (
-        <ContextUsageDisplay
-          pending={stableContextUsage.pending}
-          totalTokens={stableContextUsage.totalTokens}
-          percentage={displayContextPercentage}
-          colorPercentage={stableContextUsage.percentage}
-          contextLimit={stableContextUsage.contextLimit}
-          outputLimit={stableContextUsage.outputLimit ?? 0}
-          className="h-9 shrink-0 pl-1 pr-1 typography-ui-label"
-          valueClassName="font-semibold leading-none"
-          hideIcon
-          showPercentIcon
-          percentIconClassName="h-4.5 w-4.5"
-        />
-      ) : null}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={handleTogglePinned}
-        aria-label={pinned ? t('miniChat.actions.unpinAria') : t('miniChat.actions.pinAria')}
-        title={pinned ? t('miniChat.actions.unpin') : t('miniChat.actions.pin')}
-        style={noDragRegionStyle}
-      >
-        {pinned ? <Icon name="pushpin-2-fill" className="h-4 w-4" /> : <Icon name="pushpin-2" className="h-4 w-4" />}
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={handleOpenMainApp}
-        aria-label={t('miniChat.actions.openMainAria')}
-        title={t('miniChat.actions.openMain')}
-        style={noDragRegionStyle}
-      >
-        <Icon name="external-link" className="h-4 w-4" />
-      </Button>
-      <WindowsWindowControls visible={usesFramelessChrome && windowControlsSide === 'right'} position="right" />
-    </header>
+    </MiniChatWindowHeader>
   );
 };
 

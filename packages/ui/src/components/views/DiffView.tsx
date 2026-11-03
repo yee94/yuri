@@ -30,7 +30,6 @@ import { getLanguageFromExtension, isImageFile } from '@/lib/toolHelpers';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { DiffViewToggle } from '@/components/chat/message/DiffViewToggle';
 import type { DiffViewMode } from '@/components/chat/message/types';
-import { ReviewFlowDialog, type ReviewFlowExecution } from '@/components/session/ReviewFlowDialog';
 import { PierreDiffViewer } from './PierreDiffViewer';
 import { useDeviceInfo } from '@/lib/device';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
@@ -40,8 +39,6 @@ import { sessionEvents } from '@/lib/sessionEvents';
 import { useI18n } from '@/lib/i18n';
 import type { I18nKey } from '@/lib/i18n/store';
 import { fileDiffFromPatch } from '@/lib/diff/patchFileDiff';
-import { isVSCodeRuntime } from '@/lib/desktop';
-import { startReviewFlow } from '@/lib/reviewFlow';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionMessages } from '@/sync/sync-context';
 import {
@@ -446,6 +443,7 @@ interface InlineDiffViewerProps {
   diff: DiffData;
   renderSideBySide: boolean;
   wrapLines: boolean;
+  expandUnchanged?: boolean;
   focusLine?: number | null;
 }
 
@@ -454,6 +452,7 @@ const InlineDiffViewer = React.memo<InlineDiffViewerProps>(({
   diff,
   renderSideBySide,
   wrapLines,
+  expandUnchanged = false,
   focusLine,
 }) => {
   const language = React.useMemo(
@@ -485,6 +484,7 @@ const InlineDiffViewer = React.memo<InlineDiffViewerProps>(({
         fileName={filePath}
         renderSideBySide={renderSideBySide}
         wrapLines={wrapLines}
+        expandUnchanged={expandUnchanged && !diff.fileDiff?.isPartial}
         focusLine={focusLine}
         layout="inline"
         enableSelectionActions
@@ -654,7 +654,6 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     const [forceRenderLarge, setForceRenderLarge] = React.useState(false);
     const [localDiffData, setLocalDiffData] = React.useState<DiffData | null>(null);
     const [stagedDiffData, setStagedDiffData] = React.useState<DiffData | null>(null);
-    const lastDiffRequestRef = React.useRef<string | null>(null);
     const sectionRef = React.useRef<HTMLDivElement | null>(null);
 
     const descriptor = React.useMemo(() => describeChange(file), [file]);
@@ -720,8 +719,6 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         : (turnChangeError ?? diffLoadError);
     const visibleIsLoading = (loadTurnChangeFile && turnChangeFileQuery.isPending) || isLoading;
 
-    const diffDataMatchesContextMode = diffData?.contextMode === desiredContextMode;
-
     const setSectionRef = React.useCallback((node: HTMLDivElement | null) => {
         sectionRef.current = node;
         registerSectionRef(file.path, node);
@@ -736,31 +733,15 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     }, [file.path, onSelect]);
 
     React.useEffect(() => {
-        if (!isExpanded || !isMounted) return;
-        if (disableGitFetch) {
-            lastDiffRequestRef.current = null;
+        if (!isExpanded || !isMounted || disableGitFetch || !directory || initialDiffData) {
             setIsLoading(false);
-            return;
-        }
-        if (!directory || initialDiffData) {
-            lastDiffRequestRef.current = null;
-            setIsLoading(false);
-            return;
-        }
-
-        const requestKey = `${directory}::${file.path}::${staged ? 'staged' : 'unstaged'}::${fileStatusKey}::${desiredContextMode}::${diffRetryNonce}`;
-        if (lastDiffRequestRef.current === requestKey) {
             return;
         }
 
         // Keep an already-rendered snapshot on screen while git status refreshes.
         // Clearing it unmounts Pierre and jumps the preview back to the top.
-        const keepVisibleSnapshot = Boolean(diffData && diffDataMatchesContextMode);
-        lastDiffRequestRef.current = requestKey;
         setDiffLoadError(null);
-        if (!keepVisibleSnapshot) {
-            setIsLoading(true);
-        }
+        setIsLoading(true);
 
         let cancelled = false;
         const contextLines = loadFullFiles ? FULL_CONTEXT_DIFF_LINES : DEFAULT_CONTEXT_DIFF_LINES;
@@ -768,8 +749,9 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
             ? git.getGitFileDiff(directory, { path: file.path, staged })
             : git.getGitDiff(directory, { path: file.path, staged, contextLines });
         const timeoutMs = DIFF_REQUEST_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+            timeoutId = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
         });
 
         void Promise.race([fetchPromise, timeoutPromise])
@@ -806,15 +788,14 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
                 const message = error instanceof Error ? error.message : String(error);
                 setDiffLoadError(message);
                 setIsLoading(false);
-            });
+            })
+            .finally(() => clearTimeout(timeoutId));
 
         return () => {
             cancelled = true;
-            if (lastDiffRequestRef.current === requestKey) {
-                lastDiffRequestRef.current = null;
-            }
+            clearTimeout(timeoutId);
         };
-    }, [desiredContextMode, diffData, diffDataMatchesContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, initialDiffData, isExpanded, isMounted, loadFullFiles, setDiff, staged]);
+    }, [desiredContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, initialDiffData, isExpanded, isMounted, loadFullFiles, setDiff, staged]);
 
     const handleToggle = React.useCallback(() => {
         handleOpenChange(!isExpanded);
@@ -850,8 +831,8 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     }, [directory, fetchStatus, file.path, fileAction, git, t]);
 
     return (
-        <div ref={setSectionRef} className="scroll-mt-9 border-b border-[var(--interactive-border)]/40 last:border-b-0">
-            <div className="sticky top-0 z-30 border-b border-[var(--interactive-border)]/35 bg-[var(--surface-elevated)]/90 backdrop-blur-md supports-[backdrop-filter]:bg-[var(--surface-elevated)]/80">
+        <div ref={setSectionRef} aria-busy={visibleIsLoading} className="scroll-mt-9 border-b border-[var(--interactive-border)]/40 last:border-b-0">
+            <div className="sticky top-0 z-30 border-b border-[var(--interactive-border)]/35 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/90" data-diff-file-header>
                 <div
                     role="button"
                     tabIndex={0}
@@ -899,6 +880,11 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
                         </span>
                     </div>
                     <div className="relative flex shrink-0 items-center justify-self-end gap-1.5">
+                        {visibleIsLoading && diffData ? (
+                            <span role="status" aria-label={t('diffView.state.loadingDiff')}>
+                                <Icon name="loader-4" className="size-3.5 animate-spin" />
+                            </span>
+                        ) : null}
                         {formatDiffTotals(file.insertions, file.deletions)}
                         {showOpenInEditorAction && onOpenInEditor ? (
                             <Button
@@ -939,6 +925,14 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
             </div>
             {isExpanded && (
                 <div className="relative bg-background overflow-hidden">
+                    {diffData && diffLoadError ? (
+                        <div role="alert" className="flex items-center gap-2 px-3 py-2 typography-meta text-muted-foreground">
+                            <span className="min-w-0 flex-1 break-words">{t('diffView.state.failedToLoadDiff')}: {diffLoadError}</span>
+                            <Button variant="ghost" size="xs" onClick={() => setDiffRetryNonce((nonce) => nonce + 1)}>
+                                {t('diffView.actions.retry')}
+                            </Button>
+                        </div>
+                    ) : null}
                     {!isMounted && !visibleDiffLoadError ? (
                         <div className="h-40 border border-border/40 bg-background/40" />
                     ) : null}
@@ -995,6 +989,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
                                 diff={diffData}
                                 renderSideBySide={renderSideBySide}
                                 wrapLines={wrapLines}
+                                expandUnchanged={loadFullFiles && diffData.contextMode === 'full'}
                                 focusLine={focusLine}
                             />
                             {showFileActions ? (
@@ -1095,8 +1090,6 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const [mountedStackedFiles, setMountedStackedFiles] = React.useState<Set<string>>(() => new Set());
     const [loadFullFiles, setLoadFullFiles] = React.useState(preloadFullFiles);
     const [scrollRequestNonce, setScrollRequestNonce] = React.useState(0);
-    const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
-    const [reviewFlowSubmitting, setReviewFlowSubmitting] = React.useState(false);
     const [activeDiffScope, setActiveDiffScope] = React.useState(diffScope);
 
     React.useEffect(() => {
@@ -1127,7 +1120,6 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const activeDiffStaged = forcedStaged ?? displayFileStaged;
 
     const isMobileLayout = isMobile || screenWidth <= 768;
-    const showReviewAction = Boolean(resolvedSessionId) && activeDiffScope !== 'turn' && !isMobileLayout && !isVSCodeRuntime();
     const showFileSidebar = !hideStackedFileSidebar && !isMobileLayout && screenWidth >= 1024;
     const diffScrollRef = React.useRef<HTMLElement | null>(null);
     const fileSectionRefs = React.useRef(new Map<string, HTMLDivElement | null>());
@@ -1566,37 +1558,6 @@ export const DiffView: React.FC<DiffViewProps> = ({
         queueVisibleStackedFilesSync();
     }, [cancelPendingScrollAlignment, changedFiles, queueVisibleStackedFilesSync]);
 
-    const handleStartReviewFlow = React.useCallback(async (execution: ReviewFlowExecution) => {
-        // Review attaches to the primary chat session, not a nested panel session.
-        if (!globalSessionId) return;
-        const directory = useSessionUIStore.getState().getDirectoryForSession(globalSessionId) || effectiveDirectory || '';
-        if (!directory) {
-            toast.error(t('diffView.reviewDialog.toast.noSessionDirectory'));
-            return;
-        }
-
-        setReviewFlowSubmitting(true);
-        try {
-            await startReviewFlow({
-                originalSessionID: globalSessionId,
-                directory,
-                providerID: execution.providerID,
-                modelID: execution.modelID,
-                agent: execution.agent || undefined,
-                variant: execution.variant || undefined,
-                generateHandoff: execution.generateHandoff,
-                returnAfterHandoffRequest: execution.generateHandoff,
-                autoReview: execution.autoReview,
-            });
-            setReviewDialogOpen(false);
-        } catch (error) {
-            console.error('[review-flow] failed to start review flow', error);
-            toast.error(error instanceof Error ? error.message : t('diffView.reviewDialog.toast.startFailed'));
-        } finally {
-            setReviewFlowSubmitting(false);
-        }
-    }, [globalSessionId, effectiveDirectory, t]);
-
     const scrollToFile = React.useCallback((path: string): boolean => {
         const node = fileSectionRefs.current.get(path);
         const scrollRoot = diffScrollRef.current;
@@ -1935,26 +1896,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                         </span>
                     </Button>
                 )}
-                {changedFiles.length > 0 && showReviewAction && (
-                    <Button
-                        variant="default"
-                        size="sm"
-                        onClick={() => setReviewDialogOpen(true)}
-                        disabled={reviewFlowSubmitting}
-                        className="diff-toolbar__review-button h-7 flex-shrink-0 gap-1.5 px-2"
-                        aria-label={t('diffView.actions.reviewAria')}
-                    >
-                        {reviewFlowSubmitting ? (
-                            <Icon name="loader-4" className="size-4 animate-spin" />
-                        ) : (
-                            <Icon name="search-eye" className="size-4" />
-                        )}
-                        <span className={cn('diff-toolbar__review-label typography-code', toolbarInSheetHeader && 'hidden')}>
-                            {t('diffView.actions.review')}
-                        </span>
-                    </Button>
-                )}
-                {changedFiles.length > 0 && (
+                {changedFiles.length > 0 && activeDiffScope !== 'turn' && (
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <Button
@@ -2008,14 +1950,6 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     {toolbar}
                 </div>
             ) : null}
-
-            <ReviewFlowDialog
-                open={reviewDialogOpen}
-                onOpenChange={setReviewDialogOpen}
-                projectDirectory={effectiveDirectory ?? null}
-                submitting={reviewFlowSubmitting}
-                onConfirm={handleStartReviewFlow}
-            />
 
             {renderContent()}
         </div>

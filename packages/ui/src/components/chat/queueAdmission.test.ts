@@ -14,13 +14,12 @@ const scope: Extract<QueueScope, { state: 'bound' }> = {
 };
 
 test('existing queue captures follow-ups only during active work, never idle sends or explicit steer', () => {
-    const state = { hasQueuedMessages: true, sessionIsRunning: true, autoReviewRunning: false, queuedOnly: false };
+    const state = { hasQueuedMessages: true, sessionIsRunning: true, queuedOnly: false };
     expect(shouldRouteComposerThroughQueue(state)).toBe(true);
     expect(shouldRouteComposerThroughQueue({ ...state, sessionIsRunning: false })).toBe(false);
     expect(shouldRouteComposerThroughQueue({ ...state, delivery: 'steer' })).toBe(false);
     expect(shouldRouteComposerThroughQueue({ ...state, delivery: 'queue' })).toBe(true);
     expect(shouldRouteComposerThroughQueue({ ...state, queuedOnly: true })).toBe(false);
-    expect(shouldRouteComposerThroughQueue({ ...state, sessionIsRunning: false, autoReviewRunning: true })).toBe(true);
     expect(shouldRouteComposerThroughQueue({ ...state, hasQueuedMessages: false })).toBe(false);
 });
 const add = (target: QueueScope, content: string): QueueItem => {

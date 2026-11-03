@@ -1,5 +1,24 @@
 # GUI plugin UI boundary
 
+`GuiPluginTitlebarItems` renders official global `TitlebarItem` contributions in
+the persistent desktop/Web left titlebar controls, VS Code's header and mobile
+root/session headers. It remains independent of session selection and does not
+request early loading or introduce a new startup gate. Entries use shared neutral
+buttons, accessible title/label, hover labels, busy/pressed states and bounded
+horizontal overflow. Passive items are status text, not clickable buttons. Official
+icon names reuse available Yuri sprites (including `globe` → `global`). Entries
+prefer the owning package's top-level `package.json` `icon`, matched by the exact
+inventory `source.target` or absolute local `source.path`, never by GUI ID. Only
+sources with visible contributions join the existing batched, runtime/directory-scoped
+registry Query; artwork does not delay activation or request early GUI loading.
+Package images render as alpha CSS masks filled with `currentColor`, so theme,
+pressed and inherited text colors apply without executing or injecting SVG markup.
+HTTPS artwork must allow anonymous CORS for CSS masks. While loading or after an
+image failure, entries use their built-in icon, or label when unmapped. Busy state
+still takes precedence. Builtin/SDK sources have no package artwork lookup.
+Plugin-owned labels
+remain under the plugin's i18n. Native actions retain the existing main/IPC policy.
+
 File previews render inside the existing FilesView tab or MobileFileDetail body.
 File previews and standalone plugin panels share the mobile edge-to-edge marker;
 their active sheet removes bottom safe padding and the home-indicator overlay.
@@ -14,13 +33,13 @@ desktop dialogs float actions above their panel content.
 `GuiFileLinkBridge` registers that visible file surface before dispatching its
 LinkHandler. The host matches the contribution's explicit `PanelTab.file` against
 the normalized absolute file path; an inline-owned panel never opens a modal.
-`GuiPluginSurface` remains mounted once for errors and standalone panels without
+`GuiPluginSurface` remains mounted once for standalone panels without
 an inline file owner. `GuiPluginWindow` supplies Dialog/Sheet for those standalone
 panels and settings pages only.
 
 Explicit message file links and Changes' open-file actions navigate to the file
 surface without a file-read or plugin-support preflight. Read failures stay in
-that opened file tab; plugin render failures appear there through the bridge.
+that opened file tab; host-reported plugin failures silently restore its source fallback.
 Changes row selection still defaults to diff. Background link probes annotate
 inferred references but cannot veto explicit Markdown file-link navigation.
 
@@ -44,8 +63,10 @@ the contribution key prefix: official plugin IDs are strings without a no-colon
 constraint, so IDs such as `demo` and `demo:tools` can share a prefix.
 Mount failures appear inline; cleanup failures are reported through the shared
 toast while the container is still cleared. Locale changes update fallback copy
-without remounting foreign content. Root-surface failure notifications remain
-visible even when the host removes the failed active panel.
+without remounting foreign content. Discovery, bundle download and activation
+failures stay silent outside plugin settings: no file-view banner/retry row,
+command-palette error entry, or root-surface toast. The provider/host retains failure
+state for diagnostics and the Plugins manager's explicit reload controls.
 
 The Plugins collection has no separate GUI inventory or row action menus.
 A provider row carries a muted 13px window icon (localized UI-plugin tooltip)
@@ -67,8 +88,8 @@ registered individually in Settings search. The owning Plugins page remains the
 navigation entry. `GuiPluginCommands` is an independently filtered command-palette
 group with five-row previews and explicit expansion.
 Initial plugin discovery is silent in the palette: no loading row or empty group
-is shown. Loaded commands remain usable during discovery, and failures retain the
-existing error/retry entry.
+is shown. Loaded commands remain usable during discovery and other plugins' failures;
+failed loading never adds an error/retry entry.
 
 Plugin keyboard shortcuts and slash-command autocomplete are not supported in
 this first version. Command-palette and manager actions are the available command
@@ -102,9 +123,8 @@ usable before a host exists; source choice is retained for the file/base/session
 identity, so a late preview cannot take over. Discovery completion without a match
 removes the loading canvas and restores ordinary source with no plugin controls.
 Ready handlers may render and switch to/from source while other bundles are still
-pending. Failed loading removes the preparation canvas, exposes reload next to the error and keeps source usable;
-the command group also exposes loading and retry, while the manager retains its
-existing reload control. Runtime changes reset demand; mounted entrypoints request
+pending. Failed loading removes the preparation canvas and silently keeps source usable;
+only the manager retains its existing reload control. Runtime changes reset demand; mounted entrypoints request
 the new runtime explicitly.
 
 Ready/preloaded file panels also pass `GuiPreviewLoading` as `GuiPluginMount`'s

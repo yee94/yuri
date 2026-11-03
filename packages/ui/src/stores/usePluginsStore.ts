@@ -60,7 +60,7 @@ export type RegistryResult =
   | { kind: 'npm-missing-package'; spec: string; name: string; error: string }
   | { kind: 'npm-malformed'; spec: string; error: string }
   | { kind: 'npm-network'; spec: string; error: string }
-  | { kind: 'path-ok'; spec: string; absolutePath: string }
+  | { kind: 'path-ok'; spec: string; absolutePath: string; icon?: string }
   | { kind: 'path-missing'; spec: string; absolutePath: string }
   | { kind: 'path-unreadable'; spec: string; absolutePath: string };
 

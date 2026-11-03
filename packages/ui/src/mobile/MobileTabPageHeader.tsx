@@ -3,6 +3,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { useEvent } from '@reactuses/core';
 
 import { cn } from '@/lib/utils';
+import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 
 export type MobileTabPageHeaderProps = {
   title: string;
@@ -102,11 +103,10 @@ export function MobileTabPageHeader({
               {title}
             </h1>
           </div>
-          {trailing ? (
-            <div className="yuri-mobile-collapsing-header-trailing flex min-h-10 shrink-0 items-center gap-3.5">
-              {trailing}
-            </div>
-          ) : null}
+          <div className="yuri-mobile-collapsing-header-trailing flex min-h-10 shrink-0 items-center gap-3.5">
+            <GuiPluginTitlebarItems mobile />
+            {trailing}
+          </div>
         </div>
       </header>
       {/*

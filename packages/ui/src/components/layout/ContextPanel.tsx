@@ -1,15 +1,18 @@
 import React from 'react';
-import { useEvent } from '@reactuses/core';
+import { useEvent, useResizeObserver } from '@reactuses/core';
 
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Button } from '@/components/ui/button';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DiffView } from '@/components/views/DiffView';
 import { FilesView } from '@/components/views/FilesView';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
+import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
@@ -21,6 +24,9 @@ import { markSessionViewed } from '@/sync/notification-store';
 import { setContextPanelViewedSession, setExternallyViewedSession, useDirectoryStore } from '@/sync/sync-context';
 import { ContextPanelContent } from './ContextSidebarTab';
 import { BtwPanel } from './BtwPanel';
+import { RightSidebar } from './RightSidebar';
+import { RightSidebarTabs, RightSidebarToolbar } from './RightSidebarTabs';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { toast } from '@/components/ui';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -74,10 +80,11 @@ import {
 } from '@/lib/preview/relay-preview-gateway-client';
 import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 
-const CONTEXT_PANEL_MIN_WIDTH = 380;
+const CONTEXT_PANEL_MIN_WIDTH = 300;
 const CONTEXT_PANEL_MAX_WIDTH = 1400;
 const CONTEXT_PANEL_DEFAULT_WIDTH = 600;
 const CONTEXT_TAB_LABEL_MAX_CHARS = 24;
+const PREVIEW_SPLIT_MIN_WIDTH = 400;
 type TranslateFn = ReturnType<typeof useI18n>['t'];
 const EMPTY_SESSION_TITLE_MAP = new Map<string, string>();
 
@@ -2205,6 +2212,10 @@ export const ContextPanel: React.FC<{
   const setContextPanelWidth = useUIStore((state) => state.setContextPanelWidth);
   const setActiveContextPanelTab = useUIStore((state) => state.setActiveContextPanelTab);
   const reorderContextPanelTabs = useUIStore((state) => state.reorderContextPanelTabs);
+  const isFileTreeOpen = useUIStore((state) => state.isRightSidebarOpen);
+  const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
+  const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
+  const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
   const setSelectedFilePath = useFilesViewTabsStore((state) => state.setSelectedPath);
   const openContextPreview = useUIStore((state) => state.openContextPreview);
   const allowPromptingSubagentSessions = useUIStore((state) => state.allowPromptingSubagentSessions);
@@ -2212,8 +2223,26 @@ export const ContextPanel: React.FC<{
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
   const activeTab = tabs.find((tab) => tab.id === panelState?.activeTabId) ?? tabs[tabs.length - 1] ?? null;
-  const isOpen = Boolean(panelState?.isOpen && activeTab);
+  const isOpen = Boolean(panelState?.isOpen);
   const isExpanded = Boolean(isOpen && panelState?.expanded);
+  const previewBodyRef = React.useRef<HTMLDivElement>(null);
+  const compactRef = React.useRef(true);
+  const [isCompact, setIsCompact] = React.useState(true);
+  // Only confirmed tab navigation replaces this object; blocked opens keep the rail focused.
+  const [railAnchor, setRailAnchor] = React.useState<typeof activeTab | undefined>(activeTab);
+  const focusRail = useEvent(() => setRailAnchor(activeTab));
+  React.useLayoutEffect(() => {
+    focusRail();
+  }, [directoryKey, isOpen, isFileTreeOpen, rightSidebarTab, focusRail]);
+  useResizeObserver(previewBodyRef, ([entry]) => {
+    if (!entry || entry.contentRect.width <= 0) return;
+    const compact = entry.contentRect.width < PREVIEW_SPLIT_MIN_WIDTH;
+    if (compact === compactRef.current) return;
+    compactRef.current = compact;
+    setIsCompact(compact);
+  });
+  const railVisible = isOpen && isFileTreeOpen && (!isCompact || railAnchor === activeTab);
+  const previewVisible = isOpen && (!isCompact || !railVisible);
   const width = clampWidth(panelState?.width ?? CONTEXT_PANEL_DEFAULT_WIDTH);
   React.useLayoutEffect(() => {
     onReservedWidthChange?.(isOpen ? (isExpanded ? Infinity : width) : 0);
@@ -2406,12 +2435,12 @@ export const ContextPanel: React.FC<{
     closeContextPanel(directoryKey);
   }, [closeContextPanel, directoryKey]);
 
-  const handleToggleExpanded = React.useCallback(() => {
+  const handleToggleExpanded = useEvent(() => {
     if (!directoryKey) {
       return;
     }
     toggleContextPanelExpanded(directoryKey);
-  }, [directoryKey, toggleContextPanelExpanded]);
+  });
 
   const handlePanelKeyDownCapture = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w' && activeTab && directoryKey) {
@@ -2448,7 +2477,7 @@ export const ContextPanel: React.FC<{
   );
 
   React.useEffect(() => {
-    if (!isOpen || !directoryKey || !activeChatSessionID) {
+    if (!previewVisible || !directoryKey || !activeChatSessionID) {
       setContextPanelViewedSession('', null);
       return;
     }
@@ -2456,10 +2485,10 @@ export const ContextPanel: React.FC<{
     return () => {
       setContextPanelViewedSession('', null);
     };
-  }, [activeChatSessionID, directoryKey, isOpen]);
+  }, [activeChatSessionID, directoryKey, previewVisible]);
 
   React.useEffect(() => {
-    if (!isOpen || !directoryKey || !activeChatSessionID || typeof window === 'undefined') {
+    if (!previewVisible || !directoryKey || !activeChatSessionID || typeof window === 'undefined') {
       return;
     }
 
@@ -2486,7 +2515,7 @@ export const ContextPanel: React.FC<{
       document.removeEventListener('visibilitychange', markActiveChatViewed);
       setExternallyViewedSession(directoryKey, activeChatSessionID, false);
     };
-  }, [activeChatSessionID, directoryKey, isOpen]);
+  }, [activeChatSessionID, directoryKey, previewVisible]);
 
   const getEmbeddedChatSrc = React.useCallback((tabID: string, sessionID: string, readOnly: boolean): string => {
     return getOrCreateEmbeddedSessionChatURL(chatFrameSrcByTabIDRef.current, tabID, sessionID, directoryKey || null, readOnly, {
@@ -2595,7 +2624,7 @@ export const ContextPanel: React.FC<{
         continue;
       }
 
-      const payload = { visible: activeChatTabID === tabID };
+      const payload = { visible: previewVisible && activeChatTabID === tabID };
       const directVisibilitySync = (frameWindow as unknown as {
         __yuriSetEmbeddedVisibility?: (visibilityPayload: typeof payload) => void;
       }).__yuriSetEmbeddedVisibility;
@@ -2617,7 +2646,7 @@ export const ContextPanel: React.FC<{
         window.location.origin,
       );
     }
-  }, [activeChatTabID]);
+  }, [activeChatTabID, previewVisible]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2700,10 +2729,23 @@ export const ContextPanel: React.FC<{
         : activeTab?.mode === 'preview'
                 ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
                 : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-                    <Icon name="global" className="h-12 w-12 text-muted-foreground/50" />
-                    <div className="typography-ui-header text-foreground">{t('contextPanel.preview.title')}</div>
-                    <div className="max-w-sm typography-micro text-muted-foreground">{t('contextPanel.preview.description')}</div>
+                  <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+                    <div aria-hidden="true" className="flex h-18 w-24 flex-col overflow-hidden rounded-lg border border-current/35 text-muted-foreground/45">
+                      <div className="flex h-3.5 shrink-0 items-end border-b border-current/25 px-2">
+                        <span className="h-1.5 w-5 rounded-t-sm bg-current/20" />
+                      </div>
+                      <div className="flex min-h-0 flex-1">
+                        <div className="flex w-6 shrink-0 flex-col gap-1.5 border-r border-current/25 px-1.5 py-3">
+                          <span className="h-0.5 w-full rounded-full bg-current/40" />
+                          <span className="h-0.5 w-2 rounded-full bg-current/25" />
+                          <span className="h-0.5 w-full rounded-full bg-current/25" />
+                        </div>
+                        <div className="flex flex-1 items-center justify-center">
+                          <Icon name="file-text" className="size-7" />
+                        </div>
+                      </div>
+                    </div>
+                    <p className="typography-ui-label text-muted-foreground">{t('contextPanel.empty.selectFile')}</p>
                   </div>
                 );
 
@@ -2726,7 +2768,7 @@ export const ContextPanel: React.FC<{
   })
     ? DesktopBrowserPane
     : IframeBrowserPane;
-  const nativeBrowserVisible = isOpen && activeTab?.mode === 'browser' && BrowserPane === DesktopBrowserPane;
+  const nativeBrowserVisible = previewVisible && activeTab?.mode === 'browser' && BrowserPane === DesktopBrowserPane;
   React.useLayoutEffect(() => {
     if (!nativeBrowserVisible) return;
     // MainLayout owns one ContextPanel. Publish only visibility transitions;
@@ -2824,7 +2866,23 @@ export const ContextPanel: React.FC<{
   }, [commitSessionNavigation, directoryKey]);
 
   const header = (
-    <header className="flex h-10 items-stretch border-b border-transparent">
+    <header
+      className={cn(
+        'app-region-drag flex shrink-0 select-none items-center pl-2',
+        currentTheme.metadata.variant === 'light' && [
+          '[--interactive-selection:color-mix(in_srgb,var(--surface-foreground)_7%,var(--background))]',
+          '[--interactive-selection-foreground:var(--surface-foreground)]',
+          '[--interactive-hover:color-mix(in_srgb,var(--surface-foreground)_6%,var(--background))]',
+          '[--interactive-active:color-mix(in_srgb,var(--surface-foreground)_10%,var(--background))]',
+        ],
+      )}
+      style={{
+        height: 'var(--yuri-header-height, 3rem)',
+        minHeight: 'max(3rem, var(--yuri-wco-titlebar-height, 0px))',
+        paddingRight: 'calc(0.75rem + var(--yuri-wco-right-inset, 0px))',
+        ...(fillAvailableSpace && !isSidebarOpen ? { paddingLeft: 'calc(var(--yuri-titlebar-left-inset, 0.75rem) + var(--yuri-titlebar-controls-width, 5.5rem) + 0.5rem)' } : {}),
+      }}
+    >
       <SortableTabsStrip
         items={tabItems}
         activeId={activeTab?.id ?? null}
@@ -2833,6 +2891,9 @@ export const ContextPanel: React.FC<{
             return;
           }
           setActiveContextPanelTab(directoryKey, tabID);
+          if (useUIStore.getState().contextPanelByDirectory[directoryKey]?.activeTabId === tabID) {
+            setRailAnchor(undefined);
+          }
         }}
         onClose={(tabID) => {
           closePanelTab(tabID);
@@ -2844,9 +2905,11 @@ export const ContextPanel: React.FC<{
           reorderContextPanelTabs(directoryKey, activeTabID, overTabID);
         }}
         layoutMode="scrollable"
-        variant="default"
+        variant="compact"
+        className="app-region-no-drag h-6"
       />
-      <div className="flex items-center gap-1 px-1.5">
+      <div className="app-region-no-drag flex shrink-0 items-center gap-1 pl-1.5">
+        {isOpen ? <RightSidebarToolbar railVisible={railVisible} onSelect={focusRail} /> : null}
         <Button
           type="button"
           variant="ghost"
@@ -2855,8 +2918,9 @@ export const ContextPanel: React.FC<{
           className="h-7 w-7 p-0"
           title={isExpanded ? t('contextPanel.actions.collapsePanel') : t('contextPanel.actions.expandPanel')}
           aria-label={isExpanded ? t('contextPanel.actions.collapsePanel') : t('contextPanel.actions.expandPanel')}
+          aria-pressed={isExpanded}
         >
-          {isExpanded ? <Icon name="fullscreen-exit" className="h-3.5 w-3.5" /> : <Icon name="fullscreen" className="h-3.5 w-3.5" />}
+          <Icon name={isExpanded ? 'collapse-diagonal' : 'expand-diagonal'} className="size-3.5" />
         </Button>
         <Button
           type="button"
@@ -2869,6 +2933,7 @@ export const ContextPanel: React.FC<{
         >
           <Icon name="close" className="h-3.5 w-3.5" />
         </Button>
+        <WindowsWindowControls visible={isOpen && usesFramelessChrome && windowControlsSide === 'right'} position="right" />
       </div>
     </header>
   );
@@ -2905,8 +2970,8 @@ export const ContextPanel: React.FC<{
       tabIndex={-1}
       inert={!isOpen || undefined}
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden bg-background',
-        !isExpanded && 'yuri-layout-divider-l',
+        'flex min-h-0 flex-col overflow-visible bg-transparent',
+        isOpen && (isExpanded ? 'p-1.5' : 'py-1.5 pl-1 pr-1.5'),
         isExpanded
           ? 'absolute inset-0 z-20 min-w-0'
           : 'relative h-full flex-shrink-0',
@@ -2917,11 +2982,10 @@ export const ContextPanel: React.FC<{
       style={panelStyle}
     >
       {!isExpanded && (
+        <Tooltip>
+        <TooltipTrigger asChild>
         <div
-          className={cn(
-            'absolute left-0 top-0 z-50 h-full w-[3px] cursor-col-resize transition-colors hover:bg-[var(--interactive-border)]/80',
-            isResizing && 'bg-[var(--interactive-border)]'
-          )}
+          className="group/preview-resize absolute -left-1 top-0 z-50 h-full w-4 touch-none cursor-col-resize"
           onPointerDown={handleResizeStart}
           onPointerMove={handleResizeMove}
           onPointerUp={handleResizeEnd}
@@ -2929,22 +2993,37 @@ export const ContextPanel: React.FC<{
           role="separator"
           aria-orientation="vertical"
           aria-label={t('contextPanel.actions.resizePanelAria')}
-        />
+          data-context-resize-handle
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none absolute left-[2px] top-1/2 h-14 w-[3px] -translate-y-1/2 rounded-full bg-muted-foreground/25 opacity-0 transition-opacity duration-150 group-hover/preview-resize:opacity-100',
+              isResizing && 'opacity-100',
+            )}
+          />
+        </div>
+        </TooltipTrigger>
+        <TooltipContent side="right" sideOffset={4}>{t('contextPanel.actions.resizePanel')}</TooltipContent>
+        </Tooltip>
       )}
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--interactive-border)] bg-background shadow-sm [--background:oklch(from_var(--surface-background)_min(1,calc(l_+_0.015))_c_h)] dark:[--background:color-mix(in_srgb,var(--surface-foreground)_4%,var(--surface-background))]" data-context-panel-surface>
       {header}
       {fileNotice === 'turn-diff-outside-workspace' ? (
         <div className="shrink-0 border-b border-status-info/20 bg-status-info/10 px-3 py-2 typography-meta text-status-info">
           {t('contextPanel.file.notice.turnDiffOutsideWorkspace')}
         </div>
       ) : null}
-      <div className={cn('relative min-h-0 flex-1 overflow-hidden', isResizing && 'pointer-events-none')}>
+      <div ref={previewBodyRef} className={cn('relative flex min-h-0 flex-1 overflow-hidden', isResizing && 'pointer-events-none')} data-context-layout={isCompact ? 'single' : 'split'}>
+      <div className={cn('min-h-0 min-w-0 flex-1 flex-col overflow-hidden', previewVisible ? 'flex' : 'hidden')} inert={!previewVisible || undefined} data-context-preview-content>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {hasFileTabs && fileTargetPath ? (
           <div className={cn('absolute inset-0', isFileTabActive ? 'block' : 'hidden')}>
             <FilesView
               key={`${directoryKey}:${fileTargetPath ?? ''}`}
               mode="editor-only"
               targetPath={fileTargetPath}
-              isActive={isOpen && isFileTabActive}
+              isActive={previewVisible && isFileTabActive}
             />
           </div>
         ) : null}
@@ -2985,7 +3064,7 @@ export const ContextPanel: React.FC<{
         })}
         {chatRenderMode === 'react-surface' ? Object.values(sessionCache.mountedViews).map((view) => {
           const navigation = sessionNavigationByTabId[createContextPanelSessionSurfaceId(directoryKey, view.tabId)];
-          const visible = isOpen && activeChatTabID === view.tabId && activeChatViewKey === view.viewKey;
+            const visible = previewVisible && activeChatTabID === view.tabId && activeChatViewKey === view.viewKey;
           return (
             <React.Activity key={view.viewKey} name={`context-panel-session-${view.sessionId}`} mode={visible ? 'visible' : 'hidden'}>
               <ContextPanelSessionTranscript
@@ -3050,6 +3129,12 @@ export const ContextPanel: React.FC<{
         })}
         {activeTab?.mode !== 'chat' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' && activeTab?.mode !== 'file-diff' ? activeNonChatContent : null}
       </div>
+      </div>
+      <RightSidebar isOpen={railVisible} className={cn('!min-w-0 shrink-0 bg-transparent [--layout-chrome-divider-width:1px] [--layout-chrome-divider:color-mix(in_srgb,var(--surface-foreground)_8%,var(--background))]', isCompact && '!transition-none', isCompact && railVisible ? '!w-full !max-w-full !border-l-0 [&>[role=separator]]:hidden' : '!max-w-[50%]')}>
+        {railVisible ? <ErrorBoundary><RightSidebarTabs /></ErrorBoundary> : null}
+      </RightSidebar>
+      </div>
+      </section>
     </aside>
   );
 };

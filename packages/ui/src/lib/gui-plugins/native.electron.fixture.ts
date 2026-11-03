@@ -15,6 +15,11 @@ const host = new GuiPluginHost({
 });
 host.install('pdf-fixture', activation.bundle, native);
 await host.runCommand('pdf-fixture.export');
+delete document.documentElement.dataset.pdf;
+const titlebar = host.getSnapshot().titlebarItems[0];
+if (!titlebar || host.getSnapshot().sessionKey) throw new Error('Global titlebar contribution missing');
+await host.runTitlebarItem(titlebar.key);
+if (!document.documentElement.dataset.pdf) throw new Error('Titlebar native IPC did not complete');
 const status = host.getSnapshot().plugins[0];
 if (status.error) throw new Error(status.error);
 host.dispose();

@@ -6,7 +6,6 @@ const runningPrimary = {
     queueUsable: true,
     primary: true,
     sessionIsRunning: true,
-    autoReviewRunning: false,
 };
 
 describe('resolveFollowUpEnterAction', () => {
@@ -36,19 +35,13 @@ describe('resolveFollowUpEnterAction', () => {
         })).toEqual({ kind: 'submit', delivery: 'steer' });
     });
 
-    test('idle and auto-review cmd+enter stay a direct submit', () => {
+    test('idle cmd+enter stays a direct submit', () => {
         expect(resolveFollowUpEnterAction({
             ...runningPrimary,
             followUpBehavior: 'queue',
             ctrlEnter: true,
             canQueue: false,
             sessionIsRunning: false,
-        })).toEqual({ kind: 'submit' });
-        expect(resolveFollowUpEnterAction({
-            ...runningPrimary,
-            followUpBehavior: 'queue',
-            ctrlEnter: true,
-            autoReviewRunning: true,
         })).toEqual({ kind: 'submit' });
     });
 

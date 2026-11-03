@@ -18,13 +18,11 @@ export const resolveFollowUpEnterAction = (input: {
     queueUsable: boolean;
     primary: boolean;
     sessionIsRunning: boolean;
-    autoReviewRunning: boolean;
 }): FollowUpEnterAction => {
     const steerIntoQueue = input.ctrlEnter
         && input.canQueue
         && input.primary
-        && input.sessionIsRunning
-        && !input.autoReviewRunning;
+        && input.sessionIsRunning;
     if (input.followUpBehavior === 'queue') {
         if (steerIntoQueue) return { kind: 'submit', steerAfterAdmit: true };
         if (input.ctrlEnter || !input.canQueue) return { kind: 'submit' };

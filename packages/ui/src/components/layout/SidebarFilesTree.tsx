@@ -1109,27 +1109,28 @@ export const SidebarFilesTree: React.FC = () => {
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex items-center gap-1 border-b border-border/40 px-3 py-2">
+      <div className="flex items-center gap-1 border-b border-border/40 px-2 py-1.5" data-sidebar-file-search>
         <div className="relative min-w-0 flex-1">
-          <Icon name="search" className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+          <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchInputRef}
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder={t('sidebarFilesTree.search.placeholder')}
-            className="h-8 pl-8 pr-8 typography-meta"
+            aria-label={t('sidebarFilesTree.search.placeholder')}
+            className="h-7 rounded-md py-0 pl-7 pr-6 !text-xs leading-4 focus:ring-1 bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))] hover:[&:not(:focus)]:bg-[color-mix(in_srgb,var(--surface-foreground)_4%,var(--background))]"
           />
           {searchQuery.trim().length > 0 ? (
             <button
               type="button"
               aria-label={t('sidebarFilesTree.search.clearAria')}
-              className="absolute right-2 top-2 inline-flex h-4 w-4 items-center justify-center text-muted-foreground hover:text-foreground"
+              className="absolute right-1.5 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center text-muted-foreground hover:text-foreground"
               onClick={() => {
                 setSearchQuery('');
                 searchInputRef.current?.focus();
               }}
             >
-              <Icon name="close" className="h-4 w-4" />
+              <Icon name="close" className="size-3" />
             </button>
           ) : null}
         </div>

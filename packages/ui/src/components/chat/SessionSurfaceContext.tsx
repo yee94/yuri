@@ -94,7 +94,6 @@ export const getSessionSurfaceActionAvailability = (surface: SessionSurfaceConte
     fork: surface.capabilities.forkSession,
     revert: surface.capabilities.mutateSession,
     edit: surface.capabilities.mutateSession,
-    reviewTransfer: surface.capabilities.mutateSession,
     timeline: surface.capabilities.openTimeline,
     textSelectionMutation: surface.capabilities.textSelectionActions,
     openSourceSession: Boolean(surface.openSourceSession),

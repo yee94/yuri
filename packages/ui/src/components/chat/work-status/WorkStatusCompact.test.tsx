@@ -19,6 +19,7 @@ const fixture = vi.hoisted(() => ({
     isRightSidebarOpen: false,
     contextPanelByDirectory: {} as Record<string, { isOpen: boolean; tabs: { id: string }[]; activeTabId: string }>,
     openContextPanelTab: vi.fn(),
+    openContextPanel: vi.fn(),
     setRightSidebarOpen: vi.fn(),
     setRightSidebarTab: vi.fn(),
   },
@@ -98,6 +99,7 @@ it('resolves an external worktree to its project, copies the branch, and opens G
   expect(fixture.ui.openContextPanelTab).not.toHaveBeenCalled();
   expect(fixture.ui.setRightSidebarTab).toHaveBeenCalledWith('git');
   expect(fixture.ui.setRightSidebarOpen).toHaveBeenCalledWith(true);
+  expect(fixture.ui.openContextPanel).toHaveBeenCalledWith('/trees/topic');
 });
 
 it('renders a collapsed agent disclosure with stacked faces and expandable status rows', async () => {
@@ -207,7 +209,7 @@ it('does not reuse attached worktree metadata after changing the displayed direc
   expect(host.querySelector('[title^="Worktree:"]')).toBeNull();
 });
 
-it('excludes both panel modes when the displayed directory has context open or the sidebar is open', async () => {
+it('excludes empty previews and visible nested rails, but not a hidden rail in another directory', async () => {
   function Probe({ directory }: { directory: string }) {
     const { layoutAllows } = useWorkStatusVisibility({ isMobile: false, isVSCode: false, directory });
     return <span>{String(layoutAllows)}</span>;
@@ -219,7 +221,11 @@ it('excludes both panel modes when the displayed directory has context open or t
   expect(host.textContent).toBe('true');
   fixture.ui.isRightSidebarOpen = true;
   await act(async () => root.render(<Probe directory="/other" />));
+  expect(host.textContent).toBe('true');
+  fixture.ui.contextPanelByDirectory['/other'] = { isOpen: true, tabs: [], activeTabId: '' };
+  await act(async () => root.render(<Probe directory="/other" />));
   expect(host.textContent).toBe('false');
+  fixture.ui.contextPanelByDirectory['/other'].isOpen = false;
   fixture.ui.isRightSidebarOpen = false;
   await act(async () => root.render(<Probe directory="/other" />));
   expect(host.textContent).toBe('true');

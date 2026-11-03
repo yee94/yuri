@@ -132,7 +132,6 @@ describe('SessionSurfaceContext', () => {
             fork: false,
             revert: false,
             edit: false,
-            reviewTransfer: false,
             timeline: false,
             textSelectionMutation: false,
             openSourceSession: false,

@@ -385,7 +385,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const setActiveMainTab = useUIStore((state) => state.setActiveMainTab);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const assistantCapability = useAssistantCapabilityQuery();
-  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
   const setSettingsDialogOpen = useUIStore(
     (state) => state.setSettingsDialogOpen,
   );
@@ -2233,7 +2232,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         removeSessionFromFolder={removeSessionFromFolder}
         addSessionToFolder={addSessionToFolder}
         createFolderAndStartRename={stableCreateFolderAndStartRename}
-        openContextPanelTab={openContextPanelTab}
         handleDeleteSession={stableHandleDeleteSession}
         mobileVariant={mobileVariant}
         alwaysShowActions={alwaysShowSidebarActions}

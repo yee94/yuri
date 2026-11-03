@@ -7,6 +7,7 @@ import type { AssistantContactScheduleCardPart } from '@/queries/assistantQuerie
 import { openScheduledTask } from '@/lib/scheduledTaskNavigation'
 import { CONTACT_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, CONTACT_CARD_FOOTER_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 import { getScheduleCardPresentation, resolveScheduleCard } from './scheduleCardPresentation'
+import { AssistantCardNavigation } from './AssistantCardNavigation'
 
 type AssistantScheduleCardProps = {
   card: AssistantContactScheduleCardPart
@@ -22,7 +23,9 @@ export const AssistantScheduleCard: React.FC<AssistantScheduleCardProps> = ({ ca
   const title = card.name
   const schedule = getScheduleCardPresentation(resolveScheduleCard(card, task), t)
   const prompt = card.prompt?.trim()
+  const navigateCard = React.useContext(AssistantCardNavigation)
   const openSchedule = useEvent(() => {
+    if (navigateCard) return navigateCard({ projectID: card.projectID, taskID: card.taskID })
     openScheduledTask(card.projectID, card.taskID)
   })
   const onActivateKeyDown = useEvent((event: React.KeyboardEvent<HTMLElement>) => {

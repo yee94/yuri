@@ -41,7 +41,7 @@ vi.mock('@/components/gui-plugins/GuiPluginSurface', () => ({ GuiPluginSurface: 
 } }));
 vi.mock('./host', () => { state.hostImports(); return {
   GuiPluginHost: class {
-    snapshot = { plugins: [], commands: [], panels: [], settings: [], menuItems: [], activePanel: null };
+    snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], settings: [], menuItems: [], activePanel: null };
     install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn();
     subscribe = () => () => {};
     getSnapshot = () => this.snapshot;

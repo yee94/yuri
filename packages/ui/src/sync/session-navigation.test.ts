@@ -111,7 +111,6 @@ describe('session-navigation', () => {
       activeSessions: [],
       archivedSessions: [],
       sessionsByDirectory: new Map(),
-      reviewTransferBySessionId: new Map(),
       hasLoaded: false,
       status: 'idle',
     });
@@ -158,7 +157,6 @@ describe('session-navigation', () => {
       ],
       archivedSessions: [],
       sessionsByDirectory: new Map(),
-      reviewTransferBySessionId: new Map(),
       hasLoaded: true,
       status: 'ready',
     });
@@ -185,7 +183,6 @@ describe('session-navigation', () => {
       ],
       archivedSessions: [],
       sessionsByDirectory: new Map(),
-      reviewTransferBySessionId: new Map(),
       hasLoaded: true,
       status: 'ready',
     });
@@ -214,7 +211,6 @@ describe('session-navigation', () => {
       ],
       archivedSessions: [],
       sessionsByDirectory: new Map(),
-      reviewTransferBySessionId: new Map(),
       hasLoaded: true,
       status: 'ready',
     });
@@ -425,7 +421,6 @@ describe('session-navigation', () => {
       ],
       archivedSessions: [],
       sessionsByDirectory: new Map(),
-      reviewTransferBySessionId: new Map(),
       hasLoaded: true,
       status: 'ready',
     });

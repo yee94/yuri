@@ -62,11 +62,6 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useI18n } from '@/lib/i18n';
 import { extractLoopbackUrls } from '@/lib/url';
 import { useDeviceInfo } from '@/lib/device';
-import {
-    type ReviewTransferDirection,
-    sendImplementationResponseToReviewer,
-    sendReviewFeedbackToOriginal,
-} from '@/lib/reviewFlow';
 import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
 import { getSessionSurfaceActionAvailability, navigateNestedSession, useSessionSurface } from '../SessionSurfaceContext';
 import { pushPhoneNestedSession } from '@/mobile/useMobileNavigationStore';
@@ -357,8 +352,8 @@ const TurnChangesPreview = React.memo(({
                 disabled={!canOpen}
                 onClick={openCompleteTurnDiff}
                 className={cn(rowClass, 'max-w-full text-muted-foreground hover:text-foreground')}
-                aria-label={t('diffView.actions.reviewAria')}
-                title={t('diffView.actions.reviewAria')}
+                aria-label={t('chat.changedFiles.title')}
+                title={t('chat.changedFiles.title')}
             >
                 <Icon name="file-edit" className={iconClass} />
                 <span id={`turn-changes-${turnId}`} className={titleClass}>
@@ -386,8 +381,8 @@ const TurnChangesPreview = React.memo(({
                             disabled={!canOpen}
                             className={cn(rowClass, 'text-muted-foreground hover:text-foreground')}
                             onClick={openCompleteTurnDiff}
-                            aria-label={t('diffView.actions.reviewAria')}
-                            title={t('diffView.actions.reviewAria')}
+                            aria-label={t('chat.changedFiles.title')}
+                            title={t('chat.changedFiles.title')}
                         >
                             <span aria-hidden="true" className={cn(iconClass, 'flex-shrink-0')} />
                             <span className={footerClass}>+{hiddenCountLabel}</span>
@@ -770,7 +765,6 @@ interface MessageBodyProps {
     errorPresentation?: AssistantErrorPresentation;
     userActionsMode?: 'inline' | 'external-content' | 'external-actions';
     stickyUserHeaderEnabled?: boolean;
-    reviewTransferDirection?: ReviewTransferDirection | null;
 }
 
 const UserMessageBody = React.memo(({ sessionId, messageId, parts, sourceParts, messageCreatedAt, isMobile, alwaysShowActions = isMobile, hasTouchInput, hasTextContent, onCopyMessage, copiedMessage, onShowPopup, agentMention, onEdit, onRevert, onFork, pendingMessageAction, editing, editStaged, onCancelEdit, userActionsMode = 'inline', stickyUserHeaderEnabled = true }: {
@@ -1179,11 +1173,6 @@ interface AssistantMessageActionButtonsProps {
     hasCopyableText: boolean;
     isTouchContext: boolean;
     onCopyMessage?: () => void | boolean | Promise<void | boolean>;
-    reviewTransferAction?: {
-        ariaLabel: string;
-        tooltip: string;
-        onClick: () => void | Promise<void>;
-    };
     ttsText: string;
     /** Source OpenCode session for hosted Assistant replies; omitted for primary chat. */
     sessionId?: string;
@@ -1194,7 +1183,6 @@ const AssistantMessageActionButtons = React.memo(({
     hasCopyableText,
     isTouchContext,
     onCopyMessage,
-    reviewTransferAction,
     ttsText,
     sessionId,
 }: AssistantMessageActionButtonsProps) => {
@@ -1210,7 +1198,6 @@ const AssistantMessageActionButtons = React.memo(({
     const voiceProvider = useConfigStore((state) => state.voiceProvider);
     const [copyHintVisible, setCopyHintVisible] = React.useState(false);
     const [isMessageCopied, setIsMessageCopied] = React.useState(false);
-    const [isTransferringReview, setIsTransferringReview] = React.useState(false);
     const [ttsMenuOpen, setTTSMenuOpen] = React.useState(false);
     const ttsButtonRef = React.useRef<HTMLButtonElement | null>(null);
     const copyHintTimeoutRef = React.useRef<number | null>(null);
@@ -1295,20 +1282,6 @@ const AssistantMessageActionButtons = React.memo(({
 
             if (isTouchContext) {
                 revealCopyHint();
-            }
-        }
-    );
-
-    const handleReviewTransferClick = useEvent(
-        async (event: React.MouseEvent<HTMLButtonElement>) => {
-            event.stopPropagation();
-            event.preventDefault();
-            if (!reviewTransferAction || isTransferringReview || !hasCopyableText) return;
-            setIsTransferringReview(true);
-            try {
-                await reviewTransferAction.onClick();
-            } finally {
-                setIsTransferringReview(false);
             }
         }
     );
@@ -1423,34 +1396,6 @@ const AssistantMessageActionButtons = React.memo(({
                     <TooltipContent sideOffset={6}>{t('chat.messageBody.actions.openSourceSession')}</TooltipContent>
                 </Tooltip>
             ) : null}
-            {reviewTransferAction && chatSurfaceMode !== 'mini-chat' && sessionSurfaceActions.reviewTransfer ? (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            disabled={isTransferringReview || !hasCopyableText}
-                            className={cn(
-                                MESSAGE_ACTION_ICON_BUTTON_CLASS,
-                                (!hasCopyableText || isTransferringReview) && 'opacity-50'
-                            )}
-                            aria-label={reviewTransferAction.ariaLabel}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                                void handleReviewTransferClick(event);
-                            }}
-                        >
-                            {isTransferringReview ? (
-                                <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="loader-4" className={cn(MESSAGE_ACTION_ICON_CLASS, 'animate-spin')} />
-                            ) : (
-                                <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="arrow-left-right" className={MESSAGE_ACTION_ICON_CLASS} />
-                            )}
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent sideOffset={6}>{reviewTransferAction.tooltip}</TooltipContent>
-                </Tooltip>
-            ) : null}
             {chatSurfaceMode !== 'mini-chat' && showMessageTTSButtons && hasCopyableText && ttsText.trim() && (
                 <DropdownMenu open={ttsMenuOpen && !isTTSPlaying} onOpenChange={handleTTSMenuOpenChange} modal={false}>
                     <Tooltip>
@@ -1520,7 +1465,6 @@ const AssistantMessageBody = React.memo(({
     shouldShowHeader = false,
     turnGroupingContext,
     errorPresentation,
-    reviewTransferDirection = null,
 }: Omit<MessageBodyProps, 'isUser'>) => {
     const errorMessage = errorPresentation?.text;
     const { t } = useI18n();
@@ -1613,36 +1557,6 @@ const AssistantMessageBody = React.memo(({
     const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
     const getDirectoryForSession = useSessionUIStore((state) => state.getDirectoryForSession);
     const effectiveDirectory = useEffectiveDirectory();
-    const isReviewSessionView = reviewTransferDirection === 'review-to-original';
-    const effectiveReviewTransferDirection = (!isMobile && !isVSCode) ? reviewTransferDirection : null;
-    const reviewTransferAction = React.useMemo(() => {
-        const transferText = assistantPlanText.trim();
-        if (!sessionId || !effectiveDirectory || !transferText || !effectiveReviewTransferDirection) return undefined;
-        if (effectiveReviewTransferDirection === 'review-to-original') {
-            return {
-                ariaLabel: t('chat.messageBody.actions.sendReviewFeedback'),
-                tooltip: t('chat.messageBody.actions.sendReviewFeedback'),
-                onClick: async () => {
-                    try {
-                        await sendReviewFeedbackToOriginal(sessionId, effectiveDirectory, transferText);
-                    } catch (error) {
-                        console.error('[review-flow] failed to send review feedback', error);
-                    }
-                },
-            };
-        }
-        return {
-            ariaLabel: t('chat.messageBody.actions.sendImplementationResponse'),
-            tooltip: t('chat.messageBody.actions.sendImplementationResponse'),
-            onClick: async () => {
-                try {
-                    await sendImplementationResponseToReviewer(sessionId, effectiveDirectory, transferText);
-                } catch (error) {
-                    console.error('[review-flow] failed to send implementation response', error);
-                }
-            },
-        };
-    }, [assistantPlanText, effectiveDirectory, effectiveReviewTransferDirection, sessionId, t]);
     const [isForkPending, setIsForkPending] = React.useState(false);
     const preferredChatRenderMode = useUIStore((state) => state.chatRenderMode);
     // A partial history window can contain an assistant before its user turn.
@@ -1941,10 +1855,9 @@ const AssistantMessageBody = React.memo(({
             isTouchContext={isTouchContext}
             onCopyMessage={onCopyMessage}
             ttsText={ttsText}
-            reviewTransferAction={reviewTransferAction}
             sessionId={sessionId}
         />
-    ), [ttsText, hasCopyableText, isTouchContext, onCopyMessage, reviewTransferAction, sessionId, messageId]);
+    ), [ttsText, hasCopyableText, isTouchContext, onCopyMessage, sessionId, messageId]);
 
     const renderJustificationActions = React.useMemo(() => (activity: NonNullable<TurnGroupingContext['activityParts']>[number]) => {
         if (!showSplitAssistantMessageActions || !isSortedRenderMode) {
@@ -2436,7 +2349,7 @@ const AssistantMessageBody = React.memo(({
                     <TooltipContent sideOffset={6}>{t('chat.messageBody.actions.openPreview')}</TooltipContent>
                 </Tooltip>
             ) : null}
-            {!isMiniChatSurface && !isReviewSessionView && sessionSurfaceActions.fork ? <Tooltip>
+            {!isMiniChatSurface && sessionSurfaceActions.fork ? <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
                         type="button"

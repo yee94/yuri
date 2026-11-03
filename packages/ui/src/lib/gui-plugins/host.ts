@@ -25,9 +25,11 @@ type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
 type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void> };
 type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
+type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run'> & { key: string; pluginId: string; actionable: boolean };
 export type GuiPluginSnapshot = Readonly<{
     plugins: readonly Readonly<{ id: string; revision: string; status: 'active' | 'failed'; error?: string; errorCode?: NativeGuiErrorCode }>[];
     commands: readonly Readonly<CommandView>[];
+    titlebarItems: readonly Readonly<TitlebarView>[];
     panels: readonly Readonly<PanelView>[];
     settings: readonly Readonly<{ key: string; pluginId: string; title: string }>[];
     menuItems: readonly Readonly<{ key: string; pluginId?: string; title: string; description?: string; run: () => void }>[];
@@ -44,6 +46,7 @@ type Instance = {
     cleanups: Set<() => void>; contributions: Set<Contribution>;
     iconChanges: ReturnType<typeof createSignal<number>>; iconError?: string;
     commands: CommandView[]; panels: PanelEntry[]; settings: Gui.SettingsPage[]; menus: Gui.SessionPanelMenuItem[];
+    titlebarItems: (TitlebarView & { run?: Gui.TitlebarItem['run'] })[];
 };
 type LayoutState = { open: string[]; active: string | null; shown: boolean; scroll: Map<string, { x: number; y: number }> };
 const unsupported = (name: string): never => { throw new NativeGuiError('GUI_PLUGIN_UNSUPPORTED', `Unsupported GUI host API: ${name}`); };
@@ -90,7 +93,7 @@ export class GuiPluginHost {
     private storage: GuiPluginStorage;
     private ended = false;
     private contracts = new Map<string, { live: ReturnType<typeof createSignal<Gui.Live<unknown>>>; generation: number; provider?: Instance }>();
-    private snapshot: GuiPluginSnapshot = Object.freeze({ plugins: Object.freeze([]), commands: Object.freeze([]), panels: Object.freeze([]), settings: Object.freeze([]), menuItems: Object.freeze([]), activePanel: null });
+    private snapshot: GuiPluginSnapshot = Object.freeze({ plugins: Object.freeze([]), commands: Object.freeze([]), titlebarItems: Object.freeze([]), panels: Object.freeze([]), settings: Object.freeze([]), menuItems: Object.freeze([]), activePanel: null });
     private screen: Gui.SessionScreen;
     private viewExports: GuiViewExports;
 
@@ -141,7 +144,7 @@ export class GuiPluginHost {
         const previous = this.instances.get(id);
         if (this.ended || (previous?.status === 'active' && previous.revision === bundle.revision && previous.native?.active !== false)) { native?.dispose(); return; }
         if (previous) { this.instances.delete(id); this.release(previous); }
-        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), commands: [], panels: [], settings: [], menus: [] };
+        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], settings: [], menus: [] };
         this.instances.set(id, instance);
         try {
             if (id === 'yuri' || id.startsWith('yuri.')) throw new Error('The yuri namespace is reserved to the host');
@@ -197,7 +200,7 @@ export class GuiPluginHost {
         instance.cleanups.clear();
         guardCleanups(instance.root, (error) => { instance.error ??= String(error); });
         try { instance.dispose?.(); } catch (error) { instance.error ??= String(error); }
-        instance.contributions.clear(); instance.commands = []; instance.panels = []; instance.settings = []; instance.menus = [];
+        instance.contributions.clear(); instance.commands = []; instance.titlebarItems = []; instance.panels = []; instance.settings = []; instance.menus = [];
         this.fileIcons.remove(instance.id);
         for (const entry of this.contracts.values()) if (entry.provider === instance) {
             entry.provider = undefined;
@@ -297,7 +300,7 @@ export class GuiPluginHost {
             },
             add: <T>(registry: Gui.Registry<T>, item: T | (() => T | undefined)) => {
                 if (instance.controller.signal.aborted || readSolidContext(LifetimeContext)?.ended) return () => {};
-                const unsupportedRegistries = ['server', 'titlebar-item', 'composer-pill', 'slot', 'file.viewer', 'menubar-item'];
+                const unsupportedRegistries = ['server', 'composer-pill', 'slot', 'file.viewer', 'menubar-item'];
                 if (unsupportedRegistries.includes(registry.id)) unsupported(`registry.${registry.id}`);
                 if (instance.contributions.size >= 256) throw new Error('GUI contribution limit exceeded');
                 let dispose = () => {};
@@ -384,6 +387,7 @@ export class GuiPluginHost {
     private derive(instance: Instance): void {
         if (instance.status !== 'active') return;
         const commands: CommandView[] = [], panels: PanelEntry[] = [], settings: Gui.SettingsPage[] = [], menus: Gui.SessionPanelMenuItem[] = [];
+        const titlebarItems: Instance['titlebarItems'] = [];
         const session = this.session[0]();
         for (const contribution of instance.contributions) {
             if (contribution.registry === GUI_FILE_ICON_REGISTRY) continue;
@@ -391,6 +395,9 @@ export class GuiPluginHost {
             if (contribution.registry === Gui.Command.id) {
                 const command = value as Gui.Command;
                 if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
+            } else if (contribution.registry === Gui.TitlebarItem.id) {
+                const item = value as Gui.TitlebarItem;
+                titlebarItems.push({ key: JSON.stringify([instance.id, item.id]), pluginId: instance.id, label: item.label, title: item.title, icon: item.icon, busy: item.busy, pressed: item.pressed, actionable: Boolean(item.run), run: item.run });
             } else if (contribution.registry === Gui.Panel.id && session) {
                 const panel = value as Gui.Panel;
                 const prefix = `${instance.id}:`;
@@ -408,7 +415,7 @@ export class GuiPluginHost {
             }
         }
         for (const entry of panels) void entry.tab.title;
-        instance.commands = commands; instance.panels = panels; instance.settings = settings; instance.menus = menus;
+        instance.commands = commands; instance.titlebarItems = titlebarItems; instance.panels = panels; instance.settings = settings; instance.menus = menus;
         untrack(() => this.views[1]((value) => value + 1));
     }
 
@@ -424,6 +431,7 @@ export class GuiPluginHost {
         this.snapshot = Object.freeze({
             plugins: freezeRows(instances.map(({ id, revision, status, error, errorCode, iconError }) => ({ id, revision, status, error: error ?? iconError, ...(errorCode ? { errorCode } : {}) }))),
             commands: freezeRows(active.flatMap((instance) => instance.commands.filter((command) => !command.hidden))), panels: freezeRows(panels),
+            titlebarItems: freezeRows(active.flatMap((instance) => instance.titlebarItems.map(({ run: _run, ...item }) => item))),
             settings: freezeRows(active.flatMap((instance) => instance.settings.map((page) => ({ key: `${instance.id}:${page.id}`, pluginId: instance.id, title: page.title })))),
             menuItems: freezeRows(active.flatMap((instance) => instance.menus.map((menu) => ({ key: `${instance.id}:${menu.id}`, pluginId: instance.id, title: menu.title, description: menu.description, run: () => { void this.invoke(instance, () => menu.run()); } })))),
             activePanel: layout?.shown && panels.some((panel) => panel.key === layout.active) ? layout.active : null,
@@ -441,6 +449,12 @@ export class GuiPluginHost {
     }
     private command(key: string): CommandView | undefined { return [...this.instances.values()].flatMap((instance) => instance.commands).find((command) => command.key === key); }
     runCommand(key: string): void | Promise<void> { return this.command(key)?.run(); }
+    runTitlebarItem(key: string): void | Promise<void> {
+        for (const instance of this.instances.values()) {
+            const item = instance.titlebarItems.find((item) => item.key === key);
+            if (item?.run && !item.busy) return this.invoke(instance, item.run);
+        }
+    }
     private linkHandler(link: Gui.Link): { instance: Instance; value: Gui.LinkHandler } | undefined {
         const handlers: { instance: Instance; value: Gui.LinkHandler }[] = [];
         for (const instance of this.instances.values()) for (const entry of instance.contributions) if (entry.registry === Gui.LinkHandler.id) {

@@ -46,7 +46,6 @@ mock.module('@/stores/useConfigStore', () => ({ useConfigStore: {
 } }));
 mock.module('@/stores/useProjectsStore', () => ({ useProjectsStore: state }));
 mock.module('@/stores/useGlobalSessionsStore', () => ({ useGlobalSessionsStore: state }));
-mock.module('@/stores/useAutoReviewStore', () => ({ useAutoReviewStore: state }));
 mock.module('@/stores/useUIStore', () => ({
   useUIStore: {
     getState: () => uiState,

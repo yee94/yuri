@@ -28,6 +28,7 @@ Provider 的会话目录来自 `useCurrentSessionEntity(sessionID)` 的匹配会
 | 能力 | 首批边界 |
 | --- | --- |
 | Command | 命令面板与插件管理页执行；hidden 命令可通过 `ctx.commands.run` 调用。首批不注册快捷键或 slash autocomplete |
+| TitlebarItem | 全局窗口入口，不依赖当前会话；支持响应式 label/title/icon/busy/pressed、点击与仅展示状态 |
 | LinkHandler | 匹配、存在性与打开；交给会话文件/layout 管理 |
 | Panel | `list/render`、标签与 session side/mobile 面板；保持 session/tab getter 响应性 |
 | Style | 生命周期内注入并清理 CSS |
@@ -41,6 +42,10 @@ Provider 的会话目录来自 `useCurrentSessionEntity(sessionID)` 的匹配会
 | toast | 官方 `ctx.toast.show`，当前客户端的全局提示；支持纯文本、default/success/error/loading、duration/persistent 和 dismiss，icon/actions 明确 unsupported |
 
 本地 Electron 支持 `main`、`ctx.main(Ipc)`、`ctx.use(Ipc)`、schema 编解码、每窗口 state/events、调用取消及 `os` 限制；其他运行时仍拒绝 native IPC、main-only 和带 `os` 限制的定义。未支持 `WebContentsView`/embeds、server sources、slots、原生菜单及其他未实现 Host API。访问未支持能力必须产生可见错误，不能用空对象或成功 no-op 冒充支持。
+
+`TitlebarItem` 通过 snapshot 的 `titlebarItems` 交给 React 叶子入口，不挂载 Solid 视图，不主动请求加载，也不增加网络/轮询。注册顺序保持不变，内部 key 按插件 ID 与 item ID 元组编码，避免跨插件同名或含冒号 ID 的碰撞。`runTitlebarItem` 在点击时读取最新贡献并检查 busy 与插件生命周期；撤销、失败、替换、停用和切 runtime 清除旧入口。无会话时仍可运行；无 `run` 时仅展示状态。locale 和 Solid accessor/getter 更新字段，不因普通会话切换重跑注册 accessor。
+
+入口不扩大权限：本地 Electron 插件复用既有 main/IPC lease，Web、VS Code、hosted/Capacitor mobile 和远程窗口仅支持窗口动作；调用 native IPC 仍明确 unsupported。需要本机配置或 Electron shell 的插件应自行处理拒绝，不能由宿主推测 URL 或绕过 native gate。
 
 原生主进程自行从进程内后端的权威 OpenCode client 读取全局 inventory/bundle；窗口只能提交 id/revision，不能提交代码、options、服务地址或凭证。revision 必须匹配，窗口随后运行 main 返回的同一 bundle。插件 main 每个 revision 在应用内共享一个实例；每窗口激活有独立 lease，停用/卸载/切服务释放本窗口 lease，最后一个 lease 释放时撤销 IPC、abort 调用并清理 main。导航/销毁由 main 兜底撤销；replacement 会撤销旧 revision 的全部 lease。每次 native 操作验证主 frame、精确本地来源及主进程记录的本地实例身份，远程页面和预览 iframe 无权调用。
 
@@ -217,7 +222,7 @@ SDK 2.2.0 的文件接口是 `ctx.screen.current()?.file` 或面板的 `props.sc
 
 使用本目录 focused Vitest 测试检查 host、bundle、files、preferences 和 storage。生产集成必须再验证真实 React/Solid 挂载、CSP、服务连接与文件事件；静态类型通过不代表所有平台可用。
 
-`native.test.ts` 检查 IPC codec、快照/事件顺序、取消与 lease 清理；Electron 的 `gui-plugin-host.test.mjs` 覆盖多窗口共享 main、窗口隔离、非法来源、revision/读取失败、部分 setup 清理与导航取消。`scripts/gui-plugin-evidence.test.mjs` 用真实 Electron、正式 preload、窗口 host 和标准 CJS 插件，在 loopback Vite HMR 与 `yuri-ui://app` bundled 页面生成有效 PDF；服务端 inventory/bundle 是受控夹具，不代表真实 Eficy 导出 UI、签名安装包或 Windows/Linux 验收。
+`native.test.ts` 检查 IPC codec、快照/事件顺序、取消与 lease 清理；Electron 的 `gui-plugin-host.test.mjs` 覆盖多窗口共享 main、窗口隔离、非法来源、revision/读取失败、部分 setup 清理与导航取消。`scripts/gui-plugin-evidence.test.mjs` 用真实 Electron、正式 preload、窗口 host 和标准 CJS 插件，在 loopback Vite HMR 与 `yuri-ui://app` bundled 页面分别通过命令及无会话 TitlebarItem 动作生成有效 PDF；服务端 inventory/bundle 是受控夹具，不代表真实 Eficy 导出 UI、签名安装包或 Windows/Linux 验收。
 
 `packages/ui/vitest.config.ts` 内联 Solid 和插件 SDK，使 happy-dom 测试与浏览器使用同一 owner graph；不需要额外 NODE_OPTIONS。`host.test.ts`、`files.test.ts` 验证注册、文件刷新、错误恢复、会话隔离和清理。`react.test.tsx` 验证空闲前 50 次 rerender 零 host import/零 bundle、空闲预加载后点击复用、空闲取消与迟到隔离、并发需求合并、关闭重开复用、禁用/无 GUI、慢 bundle loading、失败重试及 transport 迟到隔离；另覆盖全局目录切换零会话同步、冷加载元数据、真实目录迁移、切会话等待与旧会话迟到更新隔离。
 

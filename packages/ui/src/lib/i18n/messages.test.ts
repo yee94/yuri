@@ -41,6 +41,12 @@ describe('i18n dictionaries', () => {
     }
   });
 
+  test('file preview empty state invites selecting a file to view', () => {
+    expect(zhCnDict['contextPanel.empty.selectFile']).toBe('请选择文件进行查看');
+    expect(zhTwDict['contextPanel.empty.selectFile']).toBe('請選擇檔案進行檢視');
+    expect(enDict['contextPanel.empty.selectFile']).toBe('Select a file to view');
+  });
+
   test('every selectable avatar silhouette has a translated accessible name in every locale', () => {
     for (const dictionary of Object.values(localeDictionaries)) {
       for (const shape of AVATAR_SHAPES) {

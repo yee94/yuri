@@ -6,7 +6,7 @@ mock.module('@/lib/runtime-switch', () => ({ getRuntimeTransportIdentity: () => 
 mock.module('@/sync/session-actions', () => ({ getSendFailureKind: () => failure, fetchRecentSendConfirmationRecords: (...args: [_sessionID: string, _messageID: string, _directory: string, options?: { signal?: AbortSignal; timeoutMs?: number }]) => fetchRecords(...args) }));
 mock.module('@/stores/useConfigStore', () => ({ useConfigStore: { getState: () => ({ getVisibleAgents: () => [{ name: 'worker', mode: 'subagent' }] }) } }));
 mock.module('@/sync/sync-refs', () => ({ getSyncMessages: () => syncMessages, getSyncSessions: () => [], getAllSyncSessionMap: () => new Map() }));
-const { buildQueuedAutoSendPayload, dispatchQueuedMessage, getAutoReviewBlockedSessions, getQueueAbortBlockWakeAt, getQueuedAutoSendRetryDelayMs, getTrailingQueueTurnState, planQueueHead, planQueueScheduler, reconcileQueuedMessage, setQueuedMessageOwnershipGate } = await import('./useQueuedMessageAutoSend');
+const { buildQueuedAutoSendPayload, dispatchQueuedMessage, getQueueAbortBlockWakeAt, getQueuedAutoSendRetryDelayMs, getTrailingQueueTurnState, planQueueHead, planQueueScheduler, reconcileQueuedMessage, setQueuedMessageOwnershipGate } = await import('./useQueuedMessageAutoSend');
 const scope = (): Extract<QueueScope, { state: 'bound' }> => ({ state: 'bound', transportIdentity: runtimeIdentity, directory: '/project', sessionID: 'session-a' });
 const originalBeginQueueItemDispatch = useMessageQueueStore.getState().beginQueueItemDispatch;
 const reset = () => useMessageQueueStore.setState({ queuedMessages: {}, followUpBehavior: 'queue' });
@@ -153,16 +153,9 @@ describe('queued dispatch and scheduler', () => {
     await flight;
     expect(planQueueScheduler({ queuedMessages: { scope: useMessageQueueStore.getState().getQueueForScope(scope()) }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle', previous: new Map(), inFlight: new Set(), blockedSessions: new Set(), now: Date.now() }).dispatchScopes).toEqual([second.owner]);
   });
-  test('current-runtime running auto-review blocks its authoritative idle queue', () => {
+  test('an authoritative idle queue drains without an auxiliary workflow gate', () => {
     const item = add();
-    const blockedSessions = getAutoReviewBlockedSessions({ 'session-a': { status: 'running', runtimeKey: 'runtime-a' } }, runtimeKey);
-    const plan = planQueueScheduler({ queuedMessages: { scope: [item] }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle', previous: new Map(), inFlight: new Set(), blockedSessions, now: 0 });
-    expect(plan.dispatchScopes).toEqual([]);
-  });
-  test('other-runtime running auto-review allows an authoritative idle queue', () => {
-    const item = add();
-    const blockedSessions = getAutoReviewBlockedSessions({ 'session-a': { status: 'running', runtimeKey: 'runtime-b' } }, runtimeKey);
-    const plan = planQueueScheduler({ queuedMessages: { scope: [item] }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle', previous: new Map(), inFlight: new Set(), blockedSessions, now: 0 });
+    const plan = planQueueScheduler({ queuedMessages: { scope: [item] }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle', previous: new Map(), inFlight: new Set(), blockedSessions: new Set(), now: 0 });
     expect(plan.dispatchScopes).toEqual([item.owner]);
   });
   test('an abort block pauses only its exact queue scope', () => {
@@ -189,14 +182,6 @@ describe('queued dispatch and scheduler', () => {
     const args = { queuedMessages: { scope: [item] }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle' as const, previous: new Map(), inFlight: new Set<string>(), blockedSessions: new Set<string>(), now: 2000 };
     expect(planQueueScheduler({ ...args, blockedScopeKeys: new Set([queueScopeKey(item.owner)]) }).dispatchScopes).toEqual([]);
     expect(planQueueScheduler({ ...args, blockedScopeKeys: new Set() }).dispatchScopes).toEqual([item.owner]);
-  });
-  test('completed, stopped, error, and legacy unkeyed auto-review records allow an authoritative idle queue', () => {
-    const item = add();
-    for (const run of [{ status: 'completed', runtimeKey }, { status: 'stopped', runtimeKey }, { status: 'error', runtimeKey }, { status: 'running' }]) {
-      const blockedSessions = getAutoReviewBlockedSessions({ 'session-a': run }, runtimeKey);
-      const plan = planQueueScheduler({ queuedMessages: { scope: [item] }, activeTransportIdentity: runtimeIdentity, getStatus: () => 'idle', previous: new Map(), inFlight: new Set(), blockedSessions, now: 0 });
-      expect(plan.dispatchScopes).toEqual([item.owner]);
-    }
   });
   test('manual dispatch re-sends unresolved heads after reset', async () => {
     const item = add();

@@ -1,7 +1,6 @@
 import React from 'react';
 import { useGuiPlugins } from '@/lib/gui-plugins/react';
 import { useI18n } from '@/lib/i18n';
-import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { GuiPluginMount } from './GuiPluginMount';
 import { GuiPluginWindow } from './GuiPluginWindow';
@@ -10,23 +9,10 @@ import { GuiPreviewActions } from './GuiPreviewActions';
 import { useDeviceInfo } from '@/lib/device';
 
 export function GuiPluginSurface() {
-  const { host, snapshot, error } = useGuiPlugins();
+  const { host, snapshot } = useGuiPlugins();
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
   const [actions] = React.useState(() => document.createElement('div'));
-  const reported = React.useRef<{ host: typeof host; errors: Set<string> }>({ host, errors: new Set() });
-  React.useEffect(() => {
-    if (reported.current.host !== host) reported.current = { host, errors: new Set() };
-    const errors = new Set<string>();
-    for (const plugin of snapshot.plugins) {
-      if (plugin.status !== 'failed') continue;
-      const message = plugin.error || t('guiPlugins.failed');
-      const key = JSON.stringify([plugin.id, message]);
-      errors.add(key);
-      if (!reported.current.errors.has(key)) toast.error(`${plugin.id}: ${message}`);
-    }
-    reported.current.errors = errors;
-  }, [host, snapshot.plugins, t]);
   const active = snapshot.panels.find((panel) => panel.key === snapshot.activePanel && !panel.inline);
   return (
     <GuiPluginWindow id="gui-plugin-panel" open={Boolean(host && active)} title={active?.title ?? t('guiPlugins.title')} onClose={() => host?.hidePanel()}
@@ -42,7 +28,6 @@ export function GuiPluginSurface() {
           </div>
         ))}
       </div>
-      {error ? <div role="alert" className="text-[var(--status-error)]">{error}</div> : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-mobile-edge-to-edge-preview="true">
         <GuiPluginMount host={host} contributionKey={active.key} kind="panel" actions={isMobile ? actions : undefined} revision={guiPluginReadinessKey(snapshot.plugins, active.pluginId)} />
       </div>

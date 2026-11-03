@@ -49,6 +49,7 @@ interface PierreDiffViewerProps {
   fileName?: string;
   renderSideBySide: boolean;
   wrapLines?: boolean;
+  expandUnchanged?: boolean;
   layout?: 'fill' | 'inline';
   enableComments?: boolean;
   enableSelectionActions?: boolean;
@@ -459,6 +460,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
   fileName,
   renderSideBySide,
   wrapLines,
+  expandUnchanged = false,
   layout = 'fill',
   enableComments = true,
   enableSelectionActions = true,
@@ -813,6 +815,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
     maxLineLengthForHighlighting: isLargeContent ? 1 : 1000,
     tokenizeMaxLineLength: isLargeContent ? 1 : 1000,
     collapsedContextThreshold: 0,
+    expandUnchanged,
     expansionLineCount: 20,
     overflow: wrapLines ? ('wrap' as const) : ('scroll' as const),
     disableFileHeader: true,
@@ -821,7 +824,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
     onLineSelected: enableComments ? handleSelectionChange : undefined,
     unsafeCSS: WEBKIT_SCROLL_FIX_CSS,
     renderAnnotation: enableComments ? renderAnnotation : undefined,
-  }), [darkTheme.metadata.id, enableComments, isDark, isLargeContent, lightTheme.metadata.id, renderSideBySide, wrapLines, handleSelectionChange, renderAnnotation]);
+  }), [darkTheme.metadata.id, enableComments, expandUnchanged, isDark, isLargeContent, lightTheme.metadata.id, renderSideBySide, wrapLines, handleSelectionChange, renderAnnotation]);
 
 
   const lineAnnotations = useMemo(() => {

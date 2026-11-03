@@ -89,7 +89,7 @@ import { buildAssistantSessionMetadata } from '../session-metadata/system-sessio
 import { completionEvent, createFamilyCompletionGate, readSessionFamilyActivity } from '../notifications/family-completion-gate.js';
 
 const require = createRequire(import.meta.url);
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 16;
 const normalizeSessionDirectory = (value) => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -413,6 +413,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       name: row.name,
       defaultPrompt: row.default_prompt,
       avatarSeed: row.avatar_seed ?? row.assistant_id,
+      pinnedAt: row.pinned_at ?? null,
       workspacePath: row.workspace_path,
       managedWorkspacePath: workspace(null, row.assistant_id, true),
       effectiveWorkspacePath: effectiveWorkspace(row),
@@ -508,11 +509,13 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     if (!validAssistantDeliveryParts(parts, { allowAttachmentRefs: true })) fail('validation_error');
   };
   const migrate = () => {
-    if (db.prepare("SELECT value FROM assistant_meta WHERE key='schema_version'").get()?.value === String(SCHEMA_VERSION)) return;
+    const previousVersion = Number(db.prepare("SELECT value FROM assistant_meta WHERE key='schema_version'").get()?.value ?? 0);
+    if (previousVersion === SCHEMA_VERSION) return;
     const v2Info = db.prepare("SELECT name,\"notnull\" AS required FROM pragma_table_info('assistant_v2')").all(); const v2Columns = new Set(v2Info.map((column) => column.name));
     if (v2Columns.has('skill_roots') || v2Info.some((column) => column.name === 'workspace_path' && column.required)) db.exec(`CREATE TABLE assistant_v2_next (assistant_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, enabled INTEGER NOT NULL, name TEXT NOT NULL, default_prompt TEXT NOT NULL, workspace_path TEXT, provider_id TEXT NOT NULL, model_id TEXT NOT NULL, agent TEXT, variant TEXT, current_session_id TEXT, session_generation INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, tombstone_at INTEGER); INSERT INTO assistant_v2_next (assistant_id,revision,enabled,name,default_prompt,workspace_path,provider_id,model_id,agent,variant,current_session_id,session_generation,created_at,updated_at,tombstone_at) SELECT assistant_id,revision,enabled,name,default_prompt,workspace_path,provider_id,model_id,agent,NULL,current_session_id,session_generation,created_at,updated_at,tombstone_at FROM assistant_v2; DROP TABLE assistant_v2; ALTER TABLE assistant_v2_next RENAME TO assistant_v2;`);
     if (!new Set(db.prepare("SELECT name FROM pragma_table_info('assistant_v2')").all().map((column) => column.name)).has('variant')) db.exec('ALTER TABLE assistant_v2 ADD COLUMN variant TEXT');
     if (!new Set(db.prepare("SELECT name FROM pragma_table_info('assistant_v2')").all().map((column) => column.name)).has('avatar_seed')) db.exec('ALTER TABLE assistant_v2 ADD COLUMN avatar_seed TEXT');
+    if (!new Set(db.prepare("SELECT name FROM pragma_table_info('assistant_v2')").all().map((column) => column.name)).has('pinned_at')) db.exec('ALTER TABLE assistant_v2 ADD COLUMN pinned_at INTEGER');
     if (!new Set(db.prepare("SELECT name FROM pragma_table_info('assistant_v2')").all().map((column) => column.name)).has('mode')) db.exec("ALTER TABLE assistant_v2 ADD COLUMN mode TEXT NOT NULL DEFAULT 'continuous'");
     const managedConfig = (workspacePath, assistantID) => workspacePath != null && path.resolve(workspacePath) === workspaceFor(assistantID) ? null : workspacePath;
     const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='assistant'").get();
@@ -520,11 +523,19 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     for (const row of db.prepare('SELECT assistant_id,workspace_path FROM assistant_v2 WHERE workspace_path IS NOT NULL').all()) { const workspacePath = managedConfig(row.workspace_path, row.assistant_id); if (workspacePath === null) db.prepare('UPDATE assistant_v2 SET workspace_path=NULL WHERE assistant_id=?').run(row.assistant_id); }
     // v13: shared contact read watermark. Legacy transcripts default to fully read
     // so existing installs do not flash unread on upgrade; later messages count.
-    migrateContactReadStateDefaultRead(db, { updatedAt: now() });
-    db.prepare("INSERT OR REPLACE INTO assistant_meta(key,value) VALUES ('schema_version',?)").run(String(SCHEMA_VERSION));
+    if (previousVersion < 13) migrateContactReadStateDefaultRead(db, { updatedAt: now() });
+    db.transaction(() => {
+      const pinned = db.prepare('SELECT assistant_id FROM assistant_v2 WHERE pinned_at IS NOT NULL AND tombstone_at IS NULL ORDER BY pinned_at DESC, created_at, rowid LIMIT 1').get();
+      if (pinned) {
+        const cleared = db.prepare('UPDATE assistant_v2 SET pinned_at=NULL,revision=revision+1,updated_at=? WHERE pinned_at IS NOT NULL AND tombstone_at IS NULL AND assistant_id!=?').run(now(), pinned.assistant_id);
+        if (cleared.changes) bump();
+      }
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS assistant_single_pin ON assistant_v2 ((1)) WHERE pinned_at IS NOT NULL AND tombstone_at IS NULL');
+      db.prepare("INSERT OR REPLACE INTO assistant_meta(key,value) VALUES ('schema_version',?)").run(String(SCHEMA_VERSION));
+    })();
   };
-  migrate();
   try {
+    migrate();
     db.transaction(() => {
       const restored = db.prepare('UPDATE assistant_v2 SET enabled=1, revision=revision+1, updated_at=? WHERE enabled!=1 AND tombstone_at IS NULL').run(now());
       if (restored.changes) bump();
@@ -1487,10 +1498,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   };
   const updateAssistant = async (assistantID, input) => {
     const row = editable(assistantID);
-    const allowed = new Set(['expectedRevision', 'enabled', 'name', 'avatarSeed', 'defaultPrompt', 'providerID', 'modelID', 'agent', 'variant', 'mode', 'workspacePath']);
+    const allowed = new Set(['expectedRevision', 'enabled', 'name', 'avatarSeed', 'pinned', 'defaultPrompt', 'providerID', 'modelID', 'agent', 'variant', 'mode', 'workspacePath']);
     if (!plainObject(input) || !Number.isInteger(input.expectedRevision) || Object.keys(input).some((key) => !allowed.has(key))) fail('validation_error');
+    if (input.pinned !== undefined && typeof input.pinned !== 'boolean') fail('validation_error');
     const next = {
       avatarSeed: input.avatarSeed === undefined ? row.avatar_seed : string(input.avatarSeed, 256, true),
+      pinnedAt: input.pinned === undefined ? row.pinned_at : input.pinned ? (row.pinned_at ?? now()) : null,
       name: input.name === undefined ? row.name : string(input.name, 256, true),
       prompt: input.defaultPrompt === undefined ? row.default_prompt : string(input.defaultPrompt, 200_000),
       provider: input.providerID === undefined ? row.provider_id : string(input.providerID, 256, true),
@@ -1507,7 +1520,10 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     const created = workspaceChanged ? await createSession(nextRow) : null;
     try {
       db.transaction(() => {
-        const result = db.prepare('UPDATE assistant_v2 SET avatar_seed=?,enabled=1,name=?,default_prompt=?,provider_id=?,model_id=?,agent=?,variant=?,mode=?,workspace_path=?,current_session_id=?,session_generation=session_generation+?,revision=revision+1,updated_at=? WHERE assistant_id=? AND revision=? AND session_generation=? AND tombstone_at IS NULL').run(next.avatarSeed, next.name, next.prompt, next.provider, next.model, next.agent, next.variant, next.mode, next.workspacePath, created?.sessionID ?? row.current_session_id, workspaceChanged ? 1 : 0, now(), assistantID, input.expectedRevision, row.session_generation);
+        if (input.pinned === true) {
+          db.prepare('UPDATE assistant_v2 SET pinned_at=NULL,revision=revision+1,updated_at=? WHERE assistant_id!=? AND pinned_at IS NOT NULL AND tombstone_at IS NULL').run(now(), assistantID);
+        }
+        const result = db.prepare('UPDATE assistant_v2 SET avatar_seed=?,pinned_at=?,enabled=1,name=?,default_prompt=?,provider_id=?,model_id=?,agent=?,variant=?,mode=?,workspace_path=?,current_session_id=?,session_generation=session_generation+?,revision=revision+1,updated_at=? WHERE assistant_id=? AND revision=? AND session_generation=? AND tombstone_at IS NULL').run(next.avatarSeed, next.pinnedAt, next.name, next.prompt, next.provider, next.model, next.agent, next.variant, next.mode, next.workspacePath, created?.sessionID ?? row.current_session_id, workspaceChanged ? 1 : 0, now(), assistantID, input.expectedRevision, row.session_generation);
         if (!result.changes) fail('revision_conflict');
         if (workspaceChanged && row.current_session_id) archiveSession(assistantID, row.current_session_id, effectiveWorkspace(row));
         bump();

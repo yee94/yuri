@@ -46,6 +46,7 @@ export interface ChangesGroupConfig {
 }
 
 interface ChangesPanelProps {
+  compact?: boolean;
   groups: ChangesGroupConfig[];
   diffStats: Record<string, { insertions: number; deletions: number }> | undefined;
   revertingPaths: Set<string>;
@@ -97,6 +98,7 @@ type PendingDirectoryRevert = {
 const expandedKey = (groupId: string, path: string): string => `${groupId} ${path}`;
 
 export const ChangesPanel: React.FC<ChangesPanelProps> = ({
+  compact = false,
   groups,
   diffStats,
   revertingPaths,
@@ -412,7 +414,7 @@ export const ChangesPanel: React.FC<ChangesPanelProps> = ({
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
             aria-expanded={!collapsed}
           >
-            <h3 className="truncate typography-ui-label font-semibold text-foreground">{group.title}</h3>
+            <h3 className={cn('truncate font-semibold text-foreground', compact ? 'text-xs leading-4' : 'typography-ui-label')}>{group.title}</h3>
             <span className="typography-code text-muted-foreground">{count}</span>
             <Icon
               name="arrow-down-s"
@@ -481,7 +483,7 @@ export const ChangesPanel: React.FC<ChangesPanelProps> = ({
         </div>
       );
     },
-    [collapseAllDirectories, collapsedGroups, directoryKeysByGroup, expandAllDirectories, expandedDirectories, headerActions, headerBackgroundClassName, headerLeadingActions, isRevertingAll, isTreeView, onRevertAll, revertAllCount, setGitChangesViewMode, t, toggleGroupCollapsed]
+    [collapseAllDirectories, collapsedGroups, compact, directoryKeysByGroup, expandAllDirectories, expandedDirectories, headerActions, headerBackgroundClassName, headerLeadingActions, isRevertingAll, isTreeView, onRevertAll, revertAllCount, setGitChangesViewMode, t, toggleGroupCollapsed]
   );
 
   const renderDirectory = React.useCallback(

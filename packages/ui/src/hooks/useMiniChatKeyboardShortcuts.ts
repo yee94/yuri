@@ -8,12 +8,12 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
-const focusChatInput = () => {
-  const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
+const focusChatInput = (assistantMode = false) => {
+  const textarea = document.querySelector<HTMLTextAreaElement>(assistantMode ? 'textarea' : 'textarea[data-chat-input="true"]');
   textarea?.focus();
 };
 
-export const useMiniChatKeyboardShortcuts = () => {
+export const useMiniChatKeyboardShortcuts = (assistantMode = false) => {
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const activeProject = useProjectsStore((state) => state.getActiveProject());
@@ -25,7 +25,7 @@ export const useMiniChatKeyboardShortcuts = () => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (eventMatchesShortcut(event, combo('focus_input'))) {
         event.preventDefault();
-        focusChatInput();
+        focusChatInput(assistantMode);
         return;
       }
 
@@ -49,6 +49,8 @@ export const useMiniChatKeyboardShortcuts = () => {
         });
         return;
       }
+
+      if (assistantMode) return;
 
       if (eventMatchesShortcut(event, combo('new_chat'))) {
         event.preventDefault();
@@ -129,5 +131,5 @@ export const useMiniChatKeyboardShortcuts = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeProject?.id, activeProject?.path, currentDirectory, openNewSessionDraft, shortcutOverrides]);
+  }, [activeProject?.id, activeProject?.path, assistantMode, currentDirectory, openNewSessionDraft, shortcutOverrides]);
 };

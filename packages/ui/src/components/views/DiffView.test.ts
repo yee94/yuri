@@ -153,14 +153,20 @@ describe('DiffView staged turn changes queries', () => {
     // Transcript scan and staged queries both use the resolved session.
     expect(diffViewSource).toContain("useSessionMessages(resolvedSessionId ?? ''");
     expect(diffViewSource).toContain('sessionID: resolvedSessionId,');
-    // …while review stays attached to the primary chat session.
-    expect(diffViewSource).toContain('originalSessionID: globalSessionId,');
     // Directory: explicit panel root wins over the primary effective directory.
     expect(diffViewSource).toContain('const effectiveDirectory = (typeof directory === \'string\' && directory.trim())');
   });
 });
 
 describe('DiffView per-file row action contract', () => {
+  test('file headers inherit the containing preview background instead of a separate elevated plate', () => {
+    const header = diffViewSource.match(/className="([^"]+)" data-diff-file-header/)?.[1];
+    expect(header).toContain('bg-background/95');
+    expect(header).toContain('supports-[backdrop-filter]:bg-background/90');
+    expect(header).not.toContain('--surface-elevated');
+    expect(header).toContain('sticky');
+  });
+
   test('file rows jump to the file viewer instead of duplicating the layout toggle', () => {
     // Only the toolbar may render the global layout toggle.
     expect(diffViewSource.split('<DiffViewToggle').length - 1).toBe(1);
@@ -211,7 +217,7 @@ describe('DiffView navigation align', () => {
   });
 
   test('keeps a rendered git snapshot while status refreshes', () => {
-    expect(diffViewSource).toContain('const keepVisibleSnapshot = Boolean(diffData && diffDataMatchesContextMode)');
+    expect(diffViewSource).toContain('aria-busy={visibleIsLoading}');
     expect(diffViewSource).toContain('lastAlignedNavigationKeyRef');
     expect(diffViewSource).not.toContain('setLocalDiffData(null)');
   });

@@ -17,6 +17,7 @@ import { useGlobalSessionStatus } from '@/sync/sync-context'
 import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback'
 import { useGitBranchesQuery } from '@/queries/gitBranchQueries'
 import { ContactCardModelLine } from './ContactCardModelLine'
+import { AssistantCardNavigation } from './AssistantCardNavigation'
 import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
 
 type AssistantSessionCardProps = {
@@ -84,9 +85,11 @@ export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card
   const branch = branches.data?.current?.trim() || null
   const model = readSessionModelLabel(liveSession)
   const changes = status === 'complete' || status === 'idle' ? readSessionChangeSummary(liveSession) : null
+  const navigateCard = React.useContext(AssistantCardNavigation)
   const openSession = useEvent(() => {
     const live = findSessionById(card.sessionID)
     const nextDirectory = live?.directory || card.directory
+    if (navigateCard) return navigateCard({ sessionId: card.sessionID, directory: nextDirectory })
     openSessionWithFeedback(card.sessionID, nextDirectory, {
       phoneShell: isPhoneShell,
       switchToChat: true,
