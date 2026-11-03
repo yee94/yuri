@@ -80,20 +80,82 @@ installed-shell and physical-device acceptance remain separate.
 ## Per-Bot message channels
 
 Each saved Bot's settings ends with `AssistantChannelsGroup`, after scheduled tasks.
-The shared labelled **Message channels** card currently contains WeChat QR connection,
-optional verification, status, disconnect and explicit delivery retry. It uses
-runtime/Bot-scoped TanStack Query state, retains snapshots on failed refresh, and
-does not poll when unmounted. QR rendering is local and content-dependent, and
-runtime changes reset transient verification state. Dynamic Bot channel rows are
-not global Settings search entries. Host-backed web/desktop/mobile use the same
-routes; standalone VS Code and older unsupported Hosts show an explicit unsupported
-state. See the backend `assistants/weixin/DOCUMENTATION.md` for permissions and
-delivery semantics. No new App deeplink or native SDK integration is included.
+The shared labelled **Message channels** card shows a 2×2 grid of brand entries:
+WeChat, WeCom, Feishu and DingTalk. Brand marks are bundled SVG assets with an
+upstream source and license in `packages/ui/src/assets/brand/channels/`; only those
+assets carry brand color, while tiles, dialogs and status use semantic theme tokens.
+Opening an entry mounts one `AssistantChannelDialog`; no channel query or polling
+runs while the dialog is closed. The dialog supplies the Settings workspace scope;
+credential fields stay full-width and left-aligned rather than using the compact
+right-aligned value grammar.
+
+The WeChat entry reuses the existing QR login, scan/verification, transfer,
+disconnect, delivery-unknown retry and error presentation inside its dialog. Its
+personal-account long-poll protocol is unchanged and is not presented as
+streamable HTTP. Dynamic Bot channel rows are not global Settings search entries.
+
+WeCom, Feishu and DingTalk share the platform channel contract in
+`queries/assistantChannelQueries.ts`:
+`/api/yuri/assistants/:assistantID/channels/:provider` (provider `wecom`,
+`feishu` or `dingtalk`). `GET` returns
+`{ provider, status, error, configured, clientID?, ownerID?, hasSecret, transport }`
+and never returns a secret. `PUT` saves `{ clientID, clientSecret?, ownerID?, language? }`
+and starts platform authentication. An omitted secret preserves the saved one only
+while `clientID` is unchanged; a first save or a changed client ID requires a new
+secret, so reusing the old account credential is impossible. `POST /retry` only
+reconnects, and `DELETE` disconnects and removes the configuration. `PUT`/`POST`/`DELETE`
+return the same snapshot shape (or `204` followed by a refetch). Saving never reports
+`connected`: only an authenticated platform snapshot does. The channel uses the
+platform's native long-lived connection, not MCP streamable HTTP. The backend
+adapter is intentionally outside this UI contract.
+
+Each platform form requires one platform identifier and one secret. The optional
+`ownerID` narrows access to one private-chat sender (WeCom `userid`, Feishu `open_id`,
+DingTalk `senderStaffId`); leaving it blank relies on platform access controls.
+Its subtitle explains both modes, shared Bot context and how to obtain the correct
+ID, with a platform-specific official documentation link opened through the shared
+external URL helper. Group chats and multi-sender allowlists are unsupported. All
+channels on the same Bot share one conversation context.
+Channel-originated replies return only to their source channel; only messages
+without a channel origin proactively push to eligible bound platforms.
+Configuration dialogs show the title and configuration fields without protocol or shared-context introductory
+paragraphs; connection errors and destructive confirmations remain visible. Secrets use password inputs,
+stay in component memory only, are never written to browser storage, logged, or sent
+back by `GET`; an existing secret is shown only as `hasSecret`. Both channel panels
+are keyed by runtime transport, Bot and channel; the dialog subscribes to runtime
+endpoint changes and the platform form also clears its unsaved secret as soon as the
+runtime generation changes, before any mutation.
+
+Status polling is dialog-scoped: `connecting` polls every 2 seconds, `connected`
+and `reconnecting` every 15 seconds, and other states do not poll. The query is
+keyed by runtime transport, Bot and provider with `gcTime: 0`, so unmounting the
+dialog drops pending work. `disabled` and unsupported hosts show explicit messages
+without credential forms; the development-build copy tells users to use a release
+build or enable channels in the host configuration before reopening the dialog.
+Fetch failures preserve any cached snapshot instead of rendering a fabricated
+disconnected form. Platform error codes map distinctly: `delivery_unknown` says a
+reconnect will not resend the message, `connection_replaced` discloses the session
+takeover, and `account_in_use` points at the other binding instead of being reported
+as a network failure.
+
+Unconfigured enterprise channels also expose local `transferSources` with Bot
+name, client ID and revision. The panel offers matching sources using the existing
+WeChat move button, discard warning and explicit confirmation, not an implicit
+overwrite on Save. `POST /transfer` sends only `{ sourceAssistantID, revision }`;
+the secret remains Host-owned. Cancel performs no mutation; changed revisions
+disable a stale confirmation, and runtime switches clear it. Success reconciles
+both source and destination runtime-scoped channel Queries. Cross-process lease
+conflicts are not bypassed, and other accounts/providers remain bound as before.
+
+Host-backed web/desktop/mobile use the same routes; standalone VS Code and older
+unsupported Hosts show an explicit unsupported state. See the backend
+`assistants/weixin/DOCUMENTATION.md` for existing WeChat permissions and delivery
+semantics. No new App deeplink or native SDK integration is included.
 Host-reported `disabled` is distinct from disconnected/unsupported: it shows an
 explicit disabled message, offers no channel actions, and does not poll. Development
 Hosts disable the channel before opening channel storage; this is not a UI-only gate.
 
-Unbound Bots also show local connection candidates by the current owner's name.
+Unbound Bots also show local WeChat connection candidates by the current owner's name.
 Moving requires a separate confirmation that discloses discarded pending messages
 and unsent replies; it sends the selected source ID and binding revision, not a
 freshly inferred default. A changed revision disables the old confirmation and a
@@ -301,14 +363,16 @@ and leaving discards unsaved changes. Its compact visual picker shows one live
 shape thumbnails, pigment swatches and a compact labelled randomize button, without a visible title, Reset or separate
 preview stage. The existing contact header shows the selected face. Shape targets
 use 44px mobile targets (36px on desktop, 32px artwork), in four mobile columns
-or eight desktop columns. Mobile has wider tile gaps, larger symmetric inner
+or eight desktop columns (two rows), with an 8px desktop gap. The card fills the
+available width; its centered shape/swatch content is capped at 28rem on desktop
+and 24rem on mobile. Mobile retains wider tile gaps, larger symmetric inner
 padding and a larger randomize label/icon; desktop stays compact. Randomize is absolutely positioned in the card's top-right padding as a
 muted small icon/text button; it reserves no row height. The picker has symmetric
 vertical padding. This replaces the hidden header-avatar
 overlay, and only changes the draft until Save. Shape/color edits preserve any existing hidden eye, rest-expression and
 motion preferences.
 
-Name and model selection share the first configuration card. Individual Bots are always available: no enable checkbox, disabled-contact warning or dimmed catalog state remains. Settings drafts omit the retired enable field; the Host retains an always-true DTO field only for installed-client compatibility and restores old disabled rows without losing their settings or chats.
+Name, model selection and the stacked default-prompt editor share the first configuration card. Individual Bots are always available: no enable checkbox, disabled-contact warning or dimmed catalog state remains. Settings drafts omit the retired enable field; the Host retains an always-true DTO field only for installed-client compatibility and restores old disabled rows without losing their settings or chats.
 There is no manual default-share switch or corresponding Settings search entry.
 Share catalogs mark the first enabled contact in authoritative snapshot order as
 their default, ignoring the retired client preference; disabling/deleting it

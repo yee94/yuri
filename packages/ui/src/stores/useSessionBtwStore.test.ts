@@ -81,6 +81,38 @@ beforeEach(() => {
 afterEach(() => resetSessionBtwStoreForRuntimeSwitch());
 
 describe('useSessionBtwStore side conversation', () => {
+  test('captures only real receipt timing and replaces it on retry, including failure', async () => {
+    const target = scope('ses_timing', '/repo');
+    let clock = 100;
+    const elapsed = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const wall = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    try {
+      const first = deferred();
+      const request = useSessionBtwStore.getState().ask(target, 'Question');
+      await flush();
+      clock = 1350;
+      first.resolve('Answer');
+      await request;
+      const entry = () => useSessionBtwStore.getState().entries[getSessionBtwKey(target)]!.turns[0]!;
+      expect(entry()).toMatchObject({ completedAt: 1_800_000_000_000, durationMs: 1250 });
+      const second = deferred();
+      const retry = useSessionBtwStore.getState().retry(target);
+      expect(entry().completedAt).toBeUndefined();
+      expect(entry().durationMs).toBeUndefined();
+      await flush();
+      clock = 2000;
+      wall.mockReturnValue(1_800_000_001_000);
+      second.resolve('New answer');
+      await retry;
+      expect(entry()).toMatchObject({ completedAt: 1_800_000_001_000, durationMs: 650 });
+      harness.queue.push(new Error('failed retry'));
+      await useSessionBtwStore.getState().retry(target);
+      expect(entry()).toMatchObject({ answer: '', error: 'failed retry', pending: false });
+      expect(entry().completedAt).toBeUndefined();
+      expect(entry().durationMs).toBeUndefined();
+    } finally { elapsed.mockRestore(); wall.mockRestore(); }
+  });
+
   test('keys are transport-scoped and directory-normalized; empty entry is frozen', () => {
     expect(Object.isFrozen(EMPTY_SESSION_BTW_ENTRY)).toBe(true);
     expect(EMPTY_SESSION_BTW_ENTRY.turns).toEqual([]);

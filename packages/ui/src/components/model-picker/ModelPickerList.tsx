@@ -13,11 +13,14 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { getCurrentIntlLocale } from '@/lib/i18n';
+import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { mergeModelMetadataWithLiveModel } from '@/lib/modelMetadata';
 import { getModelDisplayName as getSharedModelDisplayName } from '@/lib/modelDisplay';
 import { matchesModelSearch } from '@/lib/search/modelSearch';
@@ -151,11 +154,15 @@ const hasTooltipMetadata = (metadata?: ModelMetadata, providerName?: string) => 
 const ModelPickerRowTooltip: React.FC<{
   metadata?: ModelMetadata;
   providerName?: string;
+  providerID: string;
+  modelID: string;
   active: boolean;
   labels: ModelPickerListProps['labels'];
   children: React.ReactElement;
-}> = ({ metadata, providerName, active, labels, children }) => {
+}> = ({ metadata, providerName, providerID, modelID, active, labels, children }) => {
+  const { t } = useI18n();
   const [delayedActive, setDelayedActive] = React.useState(false);
+  const modelIdentifier = `${providerID}/${modelID}`;
 
   React.useEffect(() => {
     if (!active) {
@@ -210,6 +217,25 @@ const ModelPickerRowTooltip: React.FC<{
                 </div>
               </div>
             ) : null}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="h-auto min-h-0 w-full min-w-0 justify-end gap-0 rounded-none p-0 text-right cursor-copy font-normal text-muted-foreground hover:bg-transparent active:bg-transparent"
+              aria-label={t('onboarding.common.copyToClipboard')}
+              title={modelIdentifier}
+              onClick={async (event) => {
+                event.stopPropagation();
+                try {
+                  const result = await copyTextToClipboard(modelIdentifier);
+                  if (result.ok) toast.success(t('contextSidebar.actions.copied'));
+                  else toast.error(t('filesView.toast.copyFailed'));
+                } catch {
+                  toast.error(t('filesView.toast.copyFailed'));
+                }
+              }}
+            >
+              <span className="block w-full min-w-0 truncate text-right text-[10px] leading-tight">{modelIdentifier}</span>
+            </Button>
           </div>
         </TooltipContent>
       ) : null}
@@ -728,7 +754,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             </div>
           );
 
-          return <ModelPickerRowTooltip metadata={metadata} providerName={providerName} active={tooltipsEnabled && isHighlighted} labels={labels}>{rowElement}</ModelPickerRowTooltip>;
+          return <ModelPickerRowTooltip metadata={metadata} providerName={providerName} providerID={entry.providerID} modelID={entry.modelID} active={tooltipsEnabled && isHighlighted} labels={labels}>{rowElement}</ModelPickerRowTooltip>;
         }}
       </ModelPickerRowHighlight>
     );

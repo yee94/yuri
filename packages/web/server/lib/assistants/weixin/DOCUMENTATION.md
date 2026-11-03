@@ -13,6 +13,13 @@ service protocol. No OpenClaw runtime or new dependency is installed.
   ordered outgoing deliveries and process-owner lease.
 - `runtime.js`: QR lifecycle, owner-only admission, bounded output reconciliation,
   retry/ambiguity and shutdown. `routes.js` exposes authenticated settings only.
+- `chat-adapter.js`: the Chat SDK `Adapter` extension for personal-WeChat Bot.
+  Standard `Message`, thread identity, owner-only `openDM`, normalization and
+  `postMessage` are used by the running channel, not a separate demonstration path.
+  iLink-specific `poll`/`receipt` extensions preserve atomic cursor/receipt commits
+  and existing stable delivery IDs. Credentials and media capabilities remain in
+  private closures/receipts, not serialized Chat messages. Unsupported operations
+  throw `NotImplementedError`; HTTP webhook handling explicitly returns 501.
 - `typing.js`: optional per-binding live typing state, ticket lifetime, bounded
   refresh/backoff and serialized cancellation; no persisted presence or UI state.
 - `inbound.js`: bounded inbound content projection, private media references,
@@ -26,7 +33,9 @@ service protocol. No OpenClaw runtime or new dependency is installed.
   not expose credentials or replace the contact execution engine.
 - Shared `AssistantChannelsGroup` appears last in each **saved** Bot's settings,
   after scheduled tasks. One labelled **Message channels** group owns its card;
-  WeChat is its first channel. It is not a global setting or one search entry per
+  WeChat, WeCom, Feishu and DingTalk form a 2×2 set of colored brand entries;
+  configuration (including WeChat QR/verification/rebind) opens in a dialog.
+  It is not a global setting or one search entry per
   dynamic Bot. Web, desktop, hosted mobile and Capacitor configure the active Host
   through `runtimeFetch`; standalone VS Code explicitly returns 501.
 
@@ -132,7 +141,9 @@ cannot be recalled, including during disconnect/reset.
 
 ### Rich inbound content
 
-- Plain text retains the ordinary text path. Every recognized image, voice, file
+- Plain text retains the ordinary text path. Item protocol IDs (`msg_id`) and
+  envelope fields such as timestamps do not create a separate TOON text part.
+  Every recognized image, voice, file
   and video item is represented; mixed items no longer silently lose media. An
   item-level `msg_id` is accepted when the top-level message ID is absent, matching
   the reference client. Sender/group/ID authorization runs before normalization
@@ -211,7 +222,11 @@ content and stale runtime mutations cannot overwrite a new Host's cache.
 ### Typing presence
 
 Only live `yuri:contact-turn-start/end` events drive typing, including App-initiated
-or background contact turns whose public replies also sync to WeChat. Binding or
+or background contact turns without a channel source, which may push to WeChat.
+Replies to channel-originated turns require an exact receipt in this binding:
+WeChat inputs reply only here, and enterprise-channel inputs never broadcast here.
+The persisted contact turn ID identifies the original admitted input across restart.
+Binding or
 restarting does not infer activity from persisted receipts/history, and historical
 end events or streaming deltas never start an indicator. A turn already running
 before binding is not backfilled. Overlapping live turn IDs share one indicator;

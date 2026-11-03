@@ -8,6 +8,11 @@ import ts from 'typescript';
 
 const api = vi.hoisted(() => ({ generateSessionAside: vi.fn(), renderMarkdown: vi.fn() }));
 const language = vi.hoisted(() => ({ locale: 'en', listeners: new Set<() => void>() }));
+const speech = vi.hoisted(() => ({ play: vi.fn(async () => {}), stop: vi.fn(), canResume: vi.fn(() => false), evaluations: 0 }));
+vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => {
+  speech.evaluations++;
+  return { isPlaying: false, play: speech.play, stop: speech.stop, canResume: speech.canResume };
+} }));
 vi.mock('@/lib/opencode/client', () => ({
   opencodeClient: {
     generateSessionAside: api.generateSessionAside,
@@ -49,6 +54,8 @@ vi.mock('@/stores/useConfigStore', () => {
     currentModelId: 'model-a',
     currentAgentName: undefined as string | undefined,
     currentVariant: null as string | null,
+    showMessageTTSButtons: true,
+    voiceProvider: 'browser',
   };
   const useConfigStore = ((selector?: (state: typeof configState) => unknown) =>
     (selector ? selector(configState) : configState)) as {
@@ -75,6 +82,8 @@ import { BtwComposerSurface, BtwPanel } from './BtwPanel';
 import { useUIStore } from '@/stores/useUIStore';
 import { getSessionBtwKey, resetSessionBtwStoreForRuntimeSwitch, useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { formatAbsoluteMessageTimestamp } from '@/components/chat/message/timeFormat';
+import { PRIMARY_SESSION_SURFACE, SessionSurfaceContext } from '@/components/chat/SessionSurfaceContext';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const scope = { sessionId: 'session-a', directory: '/repo' };
@@ -83,6 +92,8 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  speech.evaluations = 0;
+  speech.canResume.mockReturnValue(false);
   language.locale = 'en';
   resetSessionBtwStoreForRuntimeSwitch();
   useUIStore.setState({ contextPanelByDirectory: {}, isMobile: true });
@@ -112,6 +123,73 @@ const typeAndEnter = async (text: string) => {
 };
 
 describe('Btw side conversation panel', () => {
+  test.each(['panel', 'page'] as const)('shares footer actions, receipt metadata and time interaction on %s', async (foot) => {
+    const completedAt = Date.UTC(2026, 10, 3, 10, 30);
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Speak this answer', error: null, pending: false,
+        completedAt, durationMs: 1250 }] },
+    } });
+    const openSourceSession = vi.fn();
+    await act(async () => root.render(<SessionSurfaceContext.Provider value={{ ...PRIMARY_SESSION_SURFACE,
+      sessionId: scope.sessionId, directory: '/repo', openSourceSession }}><BtwPanel scope={scope} foot={foot} /></SessionSurfaceContext.Provider>));
+    const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
+    expect(footer.style.containerName).toBe('message-footer');
+    expect(footer.className).toContain(foot === 'page' ? 'mt-3' : 'mt-1.5');
+    expect(footer.textContent).toContain('1.3s');
+    expect(footer.querySelector('[data-message-time]')?.textContent).toBe(formatAbsoluteMessageTimestamp(completedAt));
+    expect(footer.querySelector('use[href="#yuri-pulse"]')).toBeNull();
+    expect(footer.querySelector('[aria-label*="Fork"]')).toBeNull();
+    expect(footer.querySelector('[aria-label*="source session"]')).toBeNull();
+    const copy = button('Copy message text')!;
+    expect(copy.className).toContain('size-6!');
+    await act(async () => copy.click());
+    expect(copyTextToClipboard).toHaveBeenCalledWith('Speak this answer');
+    expect(copy.querySelector('use')?.getAttribute('href')).toBe('#yuri-check');
+    await act(async () => button('Read aloud')!.click());
+    expect(speech.play).toHaveBeenCalledWith('Speak this answer', expect.any(Function), expect.objectContaining({
+      target: host.querySelector('[data-message-text-export-root]'), restart: false,
+    }));
+    const reply = host.querySelector<HTMLElement>('[data-message-text-export-root]')!;
+    if (foot === 'page') {
+      expect(footer.querySelector('[data-message-time]')?.getAttribute('data-message-time-visible')).toBe('false');
+      await act(async () => {
+        reply.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'touch' }));
+        reply.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerType: 'touch' }));
+      });
+      expect(footer.querySelector('[data-message-time]')?.getAttribute('data-message-time-visible')).toBe('true');
+    } else {
+      expect(footer.querySelector('[data-message-time]')?.className).toContain('yuri-message-hover-time');
+      await act(async () => reply.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' })));
+      expect(reply.hasAttribute('data-message-hovered')).toBe(true);
+    }
+  });
+
+  test('missing metrics stay absent and copy failure never shows success feedback', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Legacy answer', error: null, pending: false }] },
+    } });
+    vi.mocked(copyTextToClipboard).mockResolvedValueOnce({ ok: false, error: 'clipboard unavailable' });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    expect(host.querySelector('[data-message-time]')).toBeNull();
+    expect(host.querySelector('use[href="#yuri-hourglass"]')).toBeNull();
+    await act(async () => button('Copy message text')!.click());
+    expect(button('Copy message text')!.querySelector('use')?.getAttribute('href')).toBe('#yuri-file-copy');
+  });
+
+  test('an interrupted reading uses the shared resume/restart menu', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Read again', error: null, pending: false }] },
+    } });
+    speech.canResume.mockReturnValue(true);
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    await act(async () => button('Read aloud')!.click());
+    expect(speech.play).not.toHaveBeenCalled();
+    const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(items.map((item) => item.textContent)).toEqual(['Resume playback', 'Restart playback']);
+    await act(async () => items[1]!.click());
+    expect(speech.play).toHaveBeenCalledWith('Read again', expect.any(Function), expect.objectContaining({ restart: true }));
+  });
+
   test('the production ContextPanel boundary retains answer DOM and drafts across tab and rail switches', async () => {
     const path = join(dirname(fileURLToPath(import.meta.url)), 'ContextPanel.tsx');
     const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -204,6 +282,7 @@ describe('Btw side conversation panel', () => {
     await act(async () => root.render(<BtwPanel scope={scope} />));
     const answer = host.querySelector('[data-markdown]');
     api.renderMarkdown.mockClear();
+    const speechEvaluations = speech.evaluations;
     for (let index = 0; index < 50; index++) {
       await act(async () => {
         useSessionBtwStore.getState().addQuote(scope, `quote ${index}`);
@@ -211,6 +290,7 @@ describe('Btw side conversation panel', () => {
       });
     }
     expect(api.renderMarkdown).not.toHaveBeenCalled();
+    expect(speech.evaluations).toBe(speechEvaluations);
     expect(host.querySelector('[data-markdown]')).toBe(answer);
     api.generateSessionAside.mockResolvedValueOnce({ text: 'Next answer' });
     await typeAndEnter('Next?');
@@ -325,7 +405,7 @@ describe('Btw side conversation panel', () => {
       [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Long answer', error: null, pending: false }] },
     } });
     await act(async () => root.render(<BtwPanel scope={scope} />));
-    await act(async () => button('Copy')!.click());
+    await act(async () => button('Copy message text')!.click());
     expect(copyTextToClipboard).toHaveBeenCalledWith('Long answer');
     await act(async () => root.render(<BtwPanel scope={{ ...scope, sessionId: 'session-b' }} />));
     expect(host.textContent).not.toContain('Why?');

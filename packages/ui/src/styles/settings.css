@@ -347,6 +347,31 @@
   justify-self: start;
 }
 
+/* Credential entry is the primary task in the channel dialog, so its fields
+   keep a full-width, left-aligned, visibly bordered input instead of the
+   compact right-aligned Settings value grammar. */
+.yuri-settings-channel-form .yuri-settings-split-row-control {
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+
+.yuri-settings-channel-form .yuri-settings-split-row-control > [data-slot="input"] {
+  width: 100%;
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+.yuri-settings-workspace .yuri-settings-channel-form .yuri-settings-split-row-control
+  > [data-slot="input"] {
+  border-color: var(--form-surface-border) !important;
+  background: var(--surface-elevated) !important;
+  margin-inline-end: 0;
+  padding-inline: 0.75rem !important;
+  text-align: left !important;
+  box-shadow: none !important;
+}
+
 @media (max-width: 640px) {
   .yuri-settings-split-row {
     grid-template-columns: minmax(0, 42%) minmax(0, 1fr);

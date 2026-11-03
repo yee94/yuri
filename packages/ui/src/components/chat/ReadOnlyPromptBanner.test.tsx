@@ -45,5 +45,7 @@ describe('ReadOnlyPromptBanner', () => {
         expect(markup).toContain('>GPT-5.6 Sol Fast</span>');
         expect(markup).toContain('text-right');
         expect(markup).toContain('yuri-mobile-readonly-prompt-foot');
+        expect(markup.match(/<aside class="([^"]*)"/)?.[1]).not.toContain('bg-');
+        expect(markup).toContain('bg-[var(--surface-elevated)]');
     });
 });

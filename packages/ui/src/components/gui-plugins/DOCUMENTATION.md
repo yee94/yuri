@@ -10,7 +10,11 @@ or introduce a startup gate. Navigation rows use the surrounding shared ghost
 Button style and compact controls retain neutral solid buttons. Busy/pressed,
 accessible title/label and passive status semantics are preserved.
 Settings → Plugins uses the package's top-level `package.json.icon`, not nested
-`magpie.icon`. GUI sidebar/titlebar entries instead use official `IconName` strings
+`magpie.icon`. SVG data URIs and HTTPS `.svg` URLs render as alpha masks in
+`currentColor`, so transparent package icons follow the surrounding text in light
+and dark themes; raster artwork keeps its original colors. SVG load/CORS failures
+use the existing placeholder. No plugin SVG markup is injected into the page.
+GUI sidebar/titlebar entries instead use official `IconName` strings
 resolved to available Yuri sprites (including `globe` → `global`) in current text
 color. They never query or substitute package artwork. Busy still uses a spinner.
 Unknown icons preserve the label. Plugin-owned labels remain under the plugin's

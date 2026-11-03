@@ -718,6 +718,23 @@ writer, with a separate `btw:` viewport key and a stable inner content node for 
 code/image resize observation. Readers who scroll away are not forced to the bottom
 by subsequent answers. Its composer and prompt-only backend remain independent;
 it never loads the parent transcript or fabricates session-message records.
+`message/AssistantMessageFooter.tsx` and `AssistantMessageActionButtons.tsx` own the
+shared footer presentation and copy/read-aloud lifecycle for primary, nested and BTW
+replies. The same icon sizing, spacing, tooltips, copy success/failure feedback,
+read-aloud stop/resume/restart, narrow-container labels and desktop-hover/mobile-tap
+absolute times apply. BTW supplies only its answer, available client receipt/elapsed
+timing and last-turn retry; missing timing stays absent. Native `session.generate`
+returns no token clocks/usage, diff records or forkable message identity, so BTW
+does not fabricate TPS, changes, fork or source-session actions from its parent.
+The primary footer still owns its authoritative turn metadata and capability-gated
+preview/fork/changes/background slots. Retry removes the old answer and receipt
+timing before starting another attempt; failed copy never paints the success check.
+Footer regression coverage includes both surfaces, missing data, retry timing reset,
+copy failure/success, read-aloud entry and mobile time focus. Production-CSS Chromium
+checks at 700px, 240px and 390px in light/dark modes confirmed 24px action targets,
+14px glyphs, 8px action gaps, 12px group gaps, 11px timestamps, narrow-label collapse,
+hover/tap time reveal and no horizontal overflow. These fixtures do not validate
+native WebView audio playback or packaged-app behavior.
 `layout/BtwPanel.test.tsx` exercises the production tab JSX, DOM/draft retention,
 50 unrelated updates, rich-renderer selection and released-reader behavior. A
 production-CSS/real-Shiki Chromium fixture was also checked at 1100px and 390px,

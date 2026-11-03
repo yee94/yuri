@@ -58,6 +58,21 @@ function fixture({ directory = root(), configureAPI, service: externalService, c
 }
 
 describe('Weixin Host runtime', () => {
+  it('does not broadcast other channel replies to WeChat but pushes source-less messages', async () => {
+    const f = fixture();
+    f.updates.push([inbound('own-turn')]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    const turnID = f.service.send.mock.calls[0][1].messageID;
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'enterprise-output', turnID: 'channel:feishu:some-turn', text: 'not for WeChat', cards: [], status: 'complete' },
+      { ordinal: 2, messageID: 'own-output', turnID, text: 'WeChat reply', cards: [], status: 'complete' },
+      { ordinal: 3, messageID: 'push-output', turnID: 'app-turn', text: 'proactive push', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
+    expect(f.api.sendText.mock.calls.map(([, delivery]) => delivery.text)).toEqual(['WeChat reply', 'proactive push']);
+  });
+
   it.each([
     { NODE_ENV: 'development' },
     { YURI_ELECTRON_DEV: '1' },

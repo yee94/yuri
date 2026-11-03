@@ -12,6 +12,14 @@ const prepare = async (message, overrides = {}) => {
 };
 
 describe('WeChat rich input projection', () => {
+  it('does not turn ordinary text item protocol IDs into a TOON message', async () => {
+    const message = { message_id: 'message-id', from_user_id: 'owner', create_time_ms: 123,
+      item_list: [{ type: 1, msg_id: 'item-id', create_time_ms: 123, text_item: { text: 'halo' } }] };
+    const result = await prepare(message);
+    expect(result.receipt.payload).toBe('');
+    expect(result.parts).toEqual([{ type: 'text', text: 'halo' }]);
+  });
+
   it('keeps ordinary text byte-for-byte and accepts legacy text-only receipts', async () => {
     const message = { context_token: 'private-context', message_id: 'id', item_list: [{ type: 1, text_item: { text: '你好' } }, { type: 1, text_item: { text: 'world' } }] };
     expect(normalizeWeixinInput(message)).toEqual({ text: '你好\nworld', payload: '' });

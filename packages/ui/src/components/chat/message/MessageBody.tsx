@@ -1,5 +1,4 @@
 import React from 'react';
-import { toast } from 'sonner';
 import { messageHoverHandlers } from '../lib/messageHover';
 import { useEvent } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
@@ -24,7 +23,6 @@ import {
 import { FadeInOnReveal } from './FadeInOnReveal';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import {
     emitStreamingHapticEvent,
@@ -36,9 +34,7 @@ import { SimpleMarkdownRenderer } from '../MarkdownRenderer';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { flattenAssistantTextParts } from '@/lib/messages/messageText';
-import { useMessageTTS } from '@/hooks/useMessageTTS';
-import { VoiceActivityIcon } from '@/components/dictation/VoiceActivityIcon';
-import { AutoReadPlaybackContext, useAutoReadRenderedReply } from '@/mobile/chat/auto-read-context';
+import { useAutoReadRenderedReply } from '@/mobile/chat/auto-read-context';
 import { getSortedBodyPartIndex } from '../lib/turns/assistantMessageLifecycle';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { TextSelectionMenu } from './TextSelectionMenu';
@@ -46,8 +42,9 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { useChatSurfaceMode } from '@/components/chat/useChatSurfaceMode';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { Icon } from "@/components/icon/Icon";
-import { formatAbsoluteMessageTimestamp, formatTimestampForDisplay } from './timeFormat';
-import { useMessageTimeFocused } from './messageTimeFocus';
+import { formatAbsoluteMessageTimestamp, formatTimestampForDisplay, formatTurnDuration } from './timeFormat';
+import { AssistantMessageActionButtons } from './AssistantMessageActionButtons';
+import { AssistantMessageFooter, MESSAGE_ACTION_ICON_BUTTON_CLASS, MESSAGE_ACTION_ICON_CLASS, MESSAGE_ACTION_ICON_WEIGHT, MESSAGE_ACTION_GROUP_CLASS, MESSAGE_FOOTER_META_CLASS, MESSAGE_FOOTER_META_ICON_CLASS } from './AssistantMessageFooter';
 import { canPresentAssistantTps, formatAssistantTps } from './assistantTps';
 import { BackgroundActivityHint } from './BackgroundActivityHint';
 import { ContextToolGroup } from './parts/ContextToolGroup';
@@ -75,68 +72,9 @@ import { openTurnChangedFilePreview } from '../openTurnChangedFile';
 
 
 const CONTAIN_LAYOUT_STYLE = { contain: 'layout' as const };
-const MESSAGE_FOOTER_CONTAINER_STYLE = { containerType: 'inline-size' as const, containerName: 'message-footer' };
 const INLINE_MESSAGE_ACTIONS_CLASS_NAME = 'mt-1.5 mb-0.5 flex items-center justify-start gap-1.5';
 /** 移动端：正文与底栏再拉开一点，避免贴死. */
 const INLINE_MESSAGE_ACTIONS_MOBILE_CLASS_NAME = 'mt-3 mb-0.5 flex items-center justify-start gap-1.5';
-/** Icon-only message-footer actions — ~14px glyphs in 24px hit; medium stroke. */
-const MESSAGE_ACTION_ICON_BUTTON_CLASS =
-  'size-6! p-0 text-muted-foreground bg-transparent hover:text-foreground hover:!bg-transparent active:!bg-transparent focus-visible:!bg-transparent focus-visible:ring-2 focus-visible:ring-primary/50';
-const MESSAGE_ACTION_ICON_CLASS = 'size-3.5!';
-/**
- * 底栏整行：操作组 | 耗时组 — 组内 gap-2，组间 gap-3，颜色同一档.
- * 移动端 -ml 抵消 size-6 按钮图标居中内缩，与正文左对齐.
- */
-const MESSAGE_FOOTER_ROW_CLASS = 'mt-1.5 mb-0.5 flex flex-wrap items-center gap-3';
-const MESSAGE_FOOTER_ROW_MOBILE_CLASS = 'mt-3 mb-0.5 flex flex-wrap items-center gap-3 -ml-[5px]';
-const MESSAGE_ACTION_GROUP_CLASS = 'flex items-center gap-2';
-/** Duration / timestamp — 与操作图标同色；字略小，行高贴齐图标高度保持垂直对齐. */
-const MESSAGE_FOOTER_META_GROUP_CLASS = 'flex w-max max-w-full flex-none flex-wrap items-center gap-2 text-muted-foreground';
-const MESSAGE_FOOTER_META_TEXT_CLASS =
-  'h-3.5 items-center gap-1 text-[11px] leading-none tabular-nums text-muted-foreground';
-const MESSAGE_FOOTER_META_CLASS = `inline-flex ${MESSAGE_FOOTER_META_TEXT_CLASS}`;
-const MESSAGE_FOOTER_META_ICON_CLASS = 'size-3.5!';
-/** Message-action icons: medium stroke — PC + mobile 同一套. */
-const MESSAGE_ACTION_ICON_WEIGHT = 'medium' as const;
-
-/** Desktop hover; mobile only after the message row is tapped. */
-const AssistantAbsoluteTime = ({ messageId, label, focusReveal }: { messageId: string; label: string; focusReveal: boolean }) => {
-    const focused = useMessageTimeFocused(messageId, focusReveal);
-    return (
-        <span
-            className={cn(
-                MESSAGE_FOOTER_META_TEXT_CLASS,
-                'whitespace-nowrap',
-                focusReveal
-                    ? (focused ? 'inline-flex' : 'hidden')
-                    : 'hidden yuri-message-hover-time',
-            )}
-            data-message-time=""
-            data-message-time-visible={focusReveal ? (focused ? 'true' : 'false') : undefined}
-        >
-            {label}
-        </span>
-    );
-};
-
-const AssistantTpsMeta = ({ label }: { label: string }) => {
-    const { t } = useI18n();
-    return (
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <span
-                    className={MESSAGE_FOOTER_META_CLASS}
-                    aria-label={t('chat.messageBody.meta.tpsAria', { rate: label })}
-                >
-                    <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="pulse" className={MESSAGE_FOOTER_META_ICON_CLASS} />
-                    <span className="message-footer__label">{label}</span>
-                </span>
-            </TooltipTrigger>
-            <TooltipContent>{t('chat.messageBody.meta.tpsTooltip')}</TooltipContent>
-        </Tooltip>
-    );
-};
-
 const getDisplayFileName = (file: string): string => {
     const normalized = file.replace(/\\/g, '/');
     const segments = normalized.split('/').filter(Boolean);
@@ -704,24 +642,6 @@ const UserShellActionPart: React.FC<{ part: ShellActionPartLike }> = ({ part }) 
     );
 };
 
-const formatTurnDuration = (durationMs: number): string => {
-    const totalSeconds = durationMs / 1000;
-    if (totalSeconds < 60) {
-        return `${totalSeconds.toFixed(1)}s`;
-    }
-    const roundedSeconds = Math.round(totalSeconds);
-    const days = Math.floor(roundedSeconds / 86400);
-    const hours = Math.floor((roundedSeconds % 86400) / 3600);
-    const minutes = Math.floor((roundedSeconds % 3600) / 60);
-    const seconds = roundedSeconds % 60;
-    return [
-        days > 0 ? `${days}d` : '',
-        hours > 0 ? `${hours}h` : '',
-        minutes > 0 ? `${minutes}m` : '',
-        seconds > 0 ? `${seconds}s` : '',
-    ].filter(Boolean).join(' ');
-};
-
 interface MessageBodyProps {
     sessionId?: string;
     messageId: string;
@@ -1168,277 +1088,6 @@ const UserMessageBody = React.memo(({ sessionId, messageId, parts, sourceParts, 
     );
 });
 
-interface AssistantMessageActionButtonsProps {
-    messageId?: string;
-    hasCopyableText: boolean;
-    isTouchContext: boolean;
-    onCopyMessage?: () => void | boolean | Promise<void | boolean>;
-    ttsText: string;
-    /** Source OpenCode session for hosted Assistant replies; omitted for primary chat. */
-    sessionId?: string;
-}
-
-const AssistantMessageActionButtons = React.memo(({
-    messageId,
-    hasCopyableText,
-    isTouchContext,
-    onCopyMessage,
-    ttsText,
-    sessionId,
-}: AssistantMessageActionButtonsProps) => {
-    const { t } = useI18n();
-    const chatSurfaceMode = useChatSurfaceMode();
-    const sessionSurface = useSessionSurface();
-    const sessionSurfaceActions = getSessionSurfaceActionAvailability(sessionSurface);
-    const { isPlaying: isManualTTSPlaying, play: playTTS, stop: stopTTS, canResume: canResumeTTS } = useMessageTTS();
-    const autoReadPlayback = React.useContext(AutoReadPlaybackContext);
-    const isAutoReadPlaying = Boolean(autoReadPlayback && autoReadPlayback.sessionId === sessionId && autoReadPlayback.messageId === messageId);
-    const isTTSPlaying = isManualTTSPlaying || isAutoReadPlaying;
-    const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
-    const voiceProvider = useConfigStore((state) => state.voiceProvider);
-    const [copyHintVisible, setCopyHintVisible] = React.useState(false);
-    const [isMessageCopied, setIsMessageCopied] = React.useState(false);
-    const [ttsMenuOpen, setTTSMenuOpen] = React.useState(false);
-    const ttsButtonRef = React.useRef<HTMLButtonElement | null>(null);
-    const copyHintTimeoutRef = React.useRef<number | null>(null);
-    const copiedResetTimeoutRef = React.useRef<number | null>(null);
-    const canCopyMessage = Boolean(onCopyMessage);
-    // Prefer the surface session/directory: history rows rebind the surface to
-    // sourceSessionID + sourceDirectory, while live Assistant replies use the host
-    // binding. message.info.sessionID alone can lag or disagree with the surface.
-    const openSourceSessionId = sessionSurface.sessionId || sessionId;
-    const canOpenSourceSession = Boolean(
-        openSourceSessionId
-        && sessionSurface.directory
-        && sessionSurfaceActions.openSourceSession
-        && chatSurfaceMode !== 'mini-chat',
-    );
-
-    const clearCopyHintTimeout = useEvent(() => {
-        if (copyHintTimeoutRef.current !== null && typeof window !== 'undefined') {
-            window.clearTimeout(copyHintTimeoutRef.current);
-            copyHintTimeoutRef.current = null;
-        }
-    });
-
-    const clearCopiedResetTimeout = useEvent(() => {
-        if (copiedResetTimeoutRef.current !== null && typeof window !== 'undefined') {
-            window.clearTimeout(copiedResetTimeoutRef.current);
-            copiedResetTimeoutRef.current = null;
-        }
-    });
-
-    React.useEffect(() => {
-        return () => {
-            clearCopyHintTimeout();
-            clearCopiedResetTimeout();
-        };
-    }, [clearCopiedResetTimeout, clearCopyHintTimeout]);
-
-    React.useEffect(() => {
-        if (!hasCopyableText || !canCopyMessage) {
-            setCopyHintVisible(false);
-            setIsMessageCopied(false);
-            clearCopyHintTimeout();
-            clearCopiedResetTimeout();
-        }
-    }, [canCopyMessage, clearCopiedResetTimeout, clearCopyHintTimeout, hasCopyableText]);
-
-    const revealCopyHint = useEvent(() => {
-        if (!isTouchContext || !canCopyMessage || !hasCopyableText || typeof window === 'undefined') {
-            return;
-        }
-
-        clearCopyHintTimeout();
-        setCopyHintVisible(true);
-        copyHintTimeoutRef.current = window.setTimeout(() => {
-            setCopyHintVisible(false);
-            copyHintTimeoutRef.current = null;
-        }, 1800);
-    });
-
-    const handleCopyButtonClick = useEvent(
-        async (event: React.MouseEvent<HTMLButtonElement>) => {
-            if (!onCopyMessage || !hasCopyableText) {
-                return;
-            }
-
-            event.stopPropagation();
-            event.preventDefault();
-
-            const copied = await onCopyMessage();
-            if (copied === false) {
-                return;
-            }
-
-            clearCopiedResetTimeout();
-            setIsMessageCopied(true);
-            if (typeof window !== 'undefined') {
-                copiedResetTimeoutRef.current = window.setTimeout(() => {
-                    setIsMessageCopied(false);
-                    copiedResetTimeoutRef.current = null;
-                }, 2000);
-            }
-
-            if (isTouchContext) {
-                revealCopyHint();
-            }
-        }
-    );
-
-    // Jump from a stitched Assistant reply into the underlying OpenCode session.
-    const handleOpenSourceSessionClick = useEvent(
-        (event: React.MouseEvent<HTMLButtonElement>) => {
-            event.stopPropagation();
-            event.preventDefault();
-            const targetSessionId = sessionSurface.sessionId || sessionId;
-            if (!targetSessionId || !sessionSurface.directory || !sessionSurface.openSourceSession) return;
-            sessionSurface.openSourceSession(targetSessionId, sessionSurface.directory);
-        }
-    );
-
-    const readAloudTooltip = React.useMemo(() => {
-        if (isTTSPlaying) {
-            return t('chat.messageBody.tts.stopSpeaking');
-        }
-        const providerLabel = voiceProvider === 'browser'
-            ? 'Browser'
-            : voiceProvider === 'openai'
-                ? 'OpenAI'
-                : voiceProvider === 'openai-compatible'
-                    ? 'Custom'
-                    : 'Say';
-        return t('chat.messageBody.tts.readAloudWithProvider', { provider: providerLabel });
-    }, [isTTSPlaying, t, voiceProvider]);
-
-    const startTTS = useEvent((restart = false) => {
-        setTTSMenuOpen(false);
-        if (!ttsText.trim()) return;
-        const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
-        void playTTS(ttsText, (error) => { if (error) toast.error(t('chat.messageBody.tts.failed')); }, { target, restart });
-    });
-    const handleTTSMenuOpenChange = useEvent(
-        (open: boolean, details: Parameters<NonNullable<React.ComponentProps<typeof DropdownMenu>['onOpenChange']>>[1]) => {
-            if (!open) { setTTSMenuOpen(false); return; }
-            if (isTTSPlaying) {
-                details.cancel();
-                if (isAutoReadPlaying) autoReadPlayback?.stop();
-                stopTTS();
-                return;
-            }
-            const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
-            if (canResumeTTS(ttsText, target)) {
-                setTTSMenuOpen(true);
-                return;
-            }
-            details.cancel();
-            startTTS();
-        }
-    );
-
-    return (
-        <>
-            {onCopyMessage && (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            data-visible={copyHintVisible || isMessageCopied ? 'true' : undefined}
-                            className={cn(
-                                MESSAGE_ACTION_ICON_BUTTON_CLASS,
-                                !hasCopyableText && 'opacity-50'
-                            )}
-                            disabled={!hasCopyableText}
-                            aria-label={t('chat.messageBody.actions.copyMessageAria')}
-                            aria-hidden={!hasCopyableText}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                                void handleCopyButtonClick(event);
-                            }}
-                            onFocus={() => {
-                                if (hasCopyableText) {
-                                    setCopyHintVisible(true);
-                                }
-                            }}
-                            onBlur={() => {
-                                if (!isMessageCopied) {
-                                    setCopyHintVisible(false);
-                                }
-                            }}
-                        >
-                            {isMessageCopied ? (
-                                <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="check" className={cn(MESSAGE_ACTION_ICON_CLASS, 'text-[color:var(--status-success)]')} />
-                            ) : (
-                                <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="file-copy" className={MESSAGE_ACTION_ICON_CLASS} />
-                            )}
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent sideOffset={6}>{t('chat.messageBody.actions.copyAnswer')}</TooltipContent>
-                </Tooltip>
-            )}
-            {canOpenSourceSession ? (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className={MESSAGE_ACTION_ICON_BUTTON_CLASS}
-                            aria-label={t('chat.messageBody.actions.openSourceSessionAria')}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={handleOpenSourceSessionClick}
-                        >
-                            <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="target" className={MESSAGE_ACTION_ICON_CLASS} />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent sideOffset={6}>{t('chat.messageBody.actions.openSourceSession')}</TooltipContent>
-                </Tooltip>
-            ) : null}
-            {chatSurfaceMode !== 'mini-chat' && showMessageTTSButtons && hasCopyableText && ttsText.trim() && (
-                <DropdownMenu open={ttsMenuOpen && !isTTSPlaying} onOpenChange={handleTTSMenuOpenChange} modal={false}>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <DropdownMenuTrigger asChild>
-                                <Button
-                                    ref={ttsButtonRef}
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className={cn(
-                                        MESSAGE_ACTION_ICON_BUTTON_CLASS,
-                                        '!bg-transparent shadow-none',
-                                        isTTSPlaying ? 'text-[var(--primary-base)]' : 'hover:text-foreground/80'
-                                    )}
-                                    aria-label={isTTSPlaying ? t('chat.messageBody.tts.stopSpeaking') : t('chat.messageBody.tts.readAloud')}
-                                    aria-pressed={isTTSPlaying}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => event.stopPropagation()}
-                                >
-                                    <VoiceActivityIcon kind="speaker" active={isTTSPlaying} className={MESSAGE_ACTION_ICON_CLASS} />
-                                </Button>
-                            </DropdownMenuTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent sideOffset={6}>{readAloudTooltip}</TooltipContent>
-                    </Tooltip>
-                    <DropdownMenuContent side="top" align="start" sideOffset={6}
-                        onClick={(event) => event.stopPropagation()}>
-                        <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(false)}>
-                            <Icon name="play" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />
-                            {t('chat.messageBody.tts.resume')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(true)}>
-                            <Icon name="restart" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />
-                            {t('chat.messageBody.tts.restart')}
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
-            )}
-        </>
-    );
-});
-
 const AssistantMessageBody = React.memo(({
     sessionId,
     messageId,
@@ -1492,8 +1141,6 @@ const AssistantMessageBody = React.memo(({
 
     const isTouchContext = Boolean(hasTouchInput ?? isMobile);
     const alwaysShowMessageActions = Boolean(alwaysShowActions ?? isMobile);
-    // 移动端尺寸/间距与桌面一致；底栏分组 + 左对齐
-    const footerRowClass = isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS;
     const awaitingMessageCompletion = !isMessageCompleted;
 
     const visibleParts = React.useMemo(() => {
@@ -2427,61 +2074,16 @@ const AssistantMessageBody = React.memo(({
                     </div>
                 )}
                 {shouldShowTurnFooter && (
-                    <div
-                        className={footerRowClass}
-                        data-message-footer="true"
-                        style={MESSAGE_FOOTER_CONTAINER_STYLE}
-                    >
-                        <div className={MESSAGE_ACTION_GROUP_CLASS} data-message-action-group="true">
-                            {messageActionButtons}
-                            {finalTurnActionButtons}
-                        </div>
-                        {(assistantTpsText || turnDurationText || footerTimestamp || showBackgroundActivity) ? (
-                            <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>
-                                {(assistantTpsText || turnDurationText) ? (
-                                    <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
-                                        {assistantTpsText ? <AssistantTpsMeta label={assistantTpsText} /> : null}
-                                        {turnDurationText ? (
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <span className={MESSAGE_FOOTER_META_CLASS}>
-                                                        <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="hourglass" className={MESSAGE_FOOTER_META_ICON_CLASS} />
-                                                        <span className="message-footer__label">{turnDurationText}</span>
-                                                    </span>
-                                                </TooltipTrigger>
-                                                <TooltipContent>{turnDurationText}</TooltipContent>
-                                            </Tooltip>
-                                        ) : null}
-                                    </div>
-                                ) : null}
-                                {showBackgroundActivity && sessionId ? (
-                                    <BackgroundActivityHint sessionId={sessionId} />
-                                ) : null}
-                                {footerTimestamp ? (
-                                    <AssistantAbsoluteTime
-                                        messageId={messageId}
-                                        label={footerTimestamp}
-                                        focusReveal={isMobile}
-                                    />
-                                ) : null}
-                            </div>
-                        ) : null}
-                        {!isMiniChatSurface && isLastAssistantInTurn && hasStopFinish && !hasAuthoritativeChangesMarker ? (
-                            <TurnChangedFilesDropdown activityParts={turnGroupingContext?.activityParts} />
-                        ) : null}
-                    </div>
+                    <AssistantMessageFooter messageId={messageId} isMobile={isMobile}
+                        actions={<>{messageActionButtons}{finalTurnActionButtons}</>}
+                        tps={assistantTpsText} duration={turnDurationText} timestamp={footerTimestamp}
+                        activity={showBackgroundActivity && sessionId ? <BackgroundActivityHint sessionId={sessionId} /> : null}
+                        trailing={!isMiniChatSurface && isLastAssistantInTurn && hasStopFinish && !hasAuthoritativeChangesMarker
+                            ? <TurnChangedFilesDropdown activityParts={turnGroupingContext?.activityParts} /> : null}
+                    />
                 )}
                 {!shouldShowTurnFooter && !hideCompactionBody && assistantTpsText ? (
-                    <div
-                        className={footerRowClass}
-                        data-message-footer="true"
-                        data-message-tps="interrupted"
-                        style={MESSAGE_FOOTER_CONTAINER_STYLE}
-                    >
-                        <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>
-                            <AssistantTpsMeta label={assistantTpsText} />
-                        </div>
-                    </div>
+                    <AssistantMessageFooter messageId={messageId} isMobile={isMobile} tps={assistantTpsText} interrupted />
                 ) : null}
 
             </div>

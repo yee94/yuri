@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { formatAbsoluteMessageTimestamp } from './timeFormat';
+import { formatAbsoluteMessageTimestamp, formatTurnDuration } from './timeFormat';
+
+test.each([
+    [0, '0.0s'], [1250, '1.3s'], [59_000, '59.0s'], [60_000, '1m'],
+    [3_661_000, '1h 1m 1s'], [90_061_000, '1d 1h 1m 1s'],
+] as const)('shared footer duration %s formats as %s', (duration, label) => {
+    expect(formatTurnDuration(duration)).toBe(label);
+});
 
 describe('formatAbsoluteMessageTimestamp', () => {
     test('formats local date and minute, zero-padded, without seconds', () => {

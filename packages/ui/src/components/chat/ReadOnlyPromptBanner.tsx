@@ -65,7 +65,7 @@ export const ReadOnlyPromptBanner: React.FC<ReadOnlyPromptBannerProps> = (props)
     return (
         <aside
             className={cn(
-                'shrink-0 border-t border-border/70 bg-[var(--surface-background)] p-3',
+                'shrink-0 border-t border-border/70 p-3',
                 isMobile && MOBILE_FOOT_CLASS,
             )}
         >

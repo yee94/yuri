@@ -23,7 +23,7 @@ export function AssistantAvatarEditor({ seed, disabled, onChange }: Props) {
   });
 
   return (
-    <div className="relative mx-auto w-full max-w-sm" data-assistant-avatar-editor="">
+    <div className="relative w-full" data-assistant-avatar-editor="">
       <SettingsGroup ariaLabel={t('assistants.avatar.title')}>
         <SettingsRow className="yuri-settings-split-row-stacked" copyClassName="!hidden" controlClassName="!block !w-full !max-w-none px-3 py-6 sm:px-0 sm:py-3">
           <div className="absolute right-3 top-1 z-10 sm:right-2">
@@ -40,8 +40,8 @@ export function AssistantAvatarEditor({ seed, disabled, onChange }: Props) {
               {t('assistants.settings.randomAvatar')}
             </Button>
           </div>
-          <div className="flex flex-col gap-6 sm:gap-4">
-          <div className="grid grid-cols-4 justify-items-center gap-3 sm:grid-cols-8 sm:gap-1" role="group" aria-label={t('assistants.avatar.shape')}>
+          <div className="mx-auto flex w-full max-w-sm flex-col gap-6 sm:max-w-md sm:gap-4">
+          <div className="grid grid-cols-4 justify-items-center gap-3 sm:grid-cols-8 sm:gap-2" role="group" aria-label={t('assistants.avatar.shape')}>
             {AVATAR_PICKER_SHAPES.map((shape) => (
               <Button
                 key={shape}

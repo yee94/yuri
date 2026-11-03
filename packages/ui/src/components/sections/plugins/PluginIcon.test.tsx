@@ -27,6 +27,33 @@ describe('PluginIcon', () => {
   test('shows the package picture when there is one', async () => {
     await render(<PluginIcon name="foo" src="https://cdn.example/a.png" />);
     expect(host.querySelector('img')?.getAttribute('src')).toBe('https://cdn.example/a.png');
+    expect(host.querySelector('[data-plugin-icon-mask]')).toBeNull();
+  });
+
+  test.each([
+    'data:image/svg+xml,%3Csvg%20xmlns="http://www.w3.org/2000/svg"/%3E',
+    'data:image/svg+xml;base64,PHN2Zy8+',
+    'https://cdn.example/icon.svg?version=2#icon',
+  ])('renders SVG artwork in currentColor with an alpha mask: %s', async (src) => {
+    await render(<span style={{ color: 'white' }}><PluginIcon name="foo" src={src} busy /></span>);
+    const mask = host.querySelector<HTMLElement>('[data-plugin-icon-mask]')!;
+    expect(mask).not.toBeNull();
+    expect(mask.style.backgroundColor).toBe('currentcolor');
+    expect(mask.style.maskImage).toBe(`url(${JSON.stringify(src)})`);
+    expect(mask.style.maskMode).toBe('alpha');
+    expect(mask.style.maskSize).toBe('contain');
+    expect(mask.style.color).toBe('');
+    expect(host.querySelector('img')?.style.opacity).toBe('0');
+    expect(host.querySelector('.animate-spin')).not.toBeNull();
+  });
+
+  test('an SVG load failure removes the mask and falls back, and a new source retries', async () => {
+    await render(<PluginIcon name="foo" src="https://cdn.example/broken.svg" />);
+    await act(async () => { host.querySelector('img')?.dispatchEvent(new Event('error')); });
+    expect(host.querySelector('[data-plugin-icon-mask]')).toBeNull();
+    expect(host.textContent).toBe('F');
+    await render(<PluginIcon name="foo" src="https://cdn.example/fixed.svg" />);
+    expect(host.querySelector('[data-plugin-icon-mask]')).not.toBeNull();
   });
 
   test('falls back to the first letter without a picture, ignoring a leading @', async () => {

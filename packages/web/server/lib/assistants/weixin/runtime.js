@@ -3,10 +3,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createWeixinAPI, WeixinError, weixinOrigin } from './api.js';
 import { createWeixinStore } from './store.js';
 import { createWeixinTyping } from './typing.js';
-import { normalizeWeixinInput, prepareWeixinInput } from './inbound.js';
+import { prepareWeixinInput } from './inbound.js';
+import { createWeixinChatAdapter } from './chat-adapter.js';
+import { isMessageChannelTurn } from '../message-channel-origin.js';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
-const messageID = (account, peer, id) => `weixin:${digest(JSON.stringify([account, peer, id]))}`;
 const chunks = (text) => {
   const chars = Array.from(text);
   const result = [];
@@ -86,19 +87,22 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
 
   const receive = async (initial, signal) => {
     let failures = 0;
+    let messages = [];
+    const adapter = createWeixinChatAdapter({ api, clock, getBinding: () => isCurrent(initial) ? store.get(initial.assistant_id) : null });
+    await adapter.initialize({ processMessage: async (_adapter, _threadID, message) => { messages.push(adapter.receipt(message)); } });
     while (!signal.aborted && isCurrent(initial)) {
       const binding = store.get(initial.assistant_id);
       if (!binding || binding.status === 'expired') return;
       if (store.backlog(binding.epoch) >= 100) { await pause(2000, signal); continue; }
       try {
-        const response = await api.getUpdates(binding, signal);
+        const response = await adapter.poll(signal);
         if (signal.aborted || !isCurrent(binding)) return;
         if (store.get(binding.assistant_id)?.status === 'expired') return;
         const incoming = response.msgs ?? [];
         const cursor = response.get_updates_buf ?? binding.cursor;
         if (!Array.isArray(incoming) || incoming.length > 500 || typeof cursor !== 'string'
           || cursor.length > 512_000) throw new WeixinError('invalid_response');
-        const messages = [];
+        messages = [];
         for (const msg of incoming) {
           if (!msg || typeof msg !== 'object') continue;
           // The QR-confirmed owner is the only principal allowed to execute tools.
@@ -106,9 +110,9 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
           const platformID = typeof msg.message_id === 'string' && msg.message_id ? msg.message_id
             : Array.isArray(msg.item_list) ? msg.item_list.find((item) => typeof item?.msg_id === 'string' && item.msg_id)?.msg_id : '';
           if (!platformID || platformID.length > 256) continue;
-          const context = typeof msg.context_token === 'string' && msg.context_token.length <= 65_536 ? msg.context_token : '';
-          messages.push({ id: messageID(binding.account_id, binding.peer_id, platformID), ...normalizeWeixinInput(msg), context });
+          await adapter.dispatch(msg);
         }
+        if (signal.aborted || !isCurrent(binding)) return;
         // Persist receipt and context before acknowledging the platform cursor.
         store.accept(binding, cursor || binding.cursor, messages);
         if (messages.some((message) => message.context)) store.unblock(binding.epoch);
@@ -173,6 +177,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     }
     if (binding.status === 'expired') return;
     const deliveries = page.messages.flatMap((message) => {
+      if (isMessageChannelTurn(message.turnID) && !store.hasReceipt(message.turnID, binding.epoch)) return [];
       const text = message.status === 'error' ? feedback(binding.language, 'failed')
         : message.text?.trim() && !message.text.trim().startsWith('oc.settle.') ? message.text.trim()
           : message.cards.map((card) => card.title || card.name || '').filter(Boolean).join('\n');
@@ -195,7 +200,10 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     store.markDelivery(delivery.id, 'sending');
     try {
       const receiverSignal = receivers.get(binding.assistant_id)?.controller.signal;
-      await api.sendText(current, delivery, receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal);
+      const adapter = createWeixinChatAdapter({ api, clock, getBinding: () => isCurrent(binding) ? store.get(binding.assistant_id) : null });
+      const threadID = await adapter.openDM(current.peer_id);
+      await adapter.postMessage(threadID, delivery.text, { id: delivery.id,
+        signal: receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal });
       if (!isCurrent(binding) && !(retiring.has(binding.assistant_id) && canControl(binding))) return;
       store.sent(delivery.id);
       store.patch(binding.epoch, { error: null, updated_at: clock() });

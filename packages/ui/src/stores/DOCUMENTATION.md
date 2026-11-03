@@ -515,6 +515,12 @@ desktop and mobile. Keys are `getSessionBtwKey(scope)` =
 transport identity + normalized directory + sessionId. Entries are a side
 conversation `{ turns: { id, quotes, question, answer, error, pending }[], quotes }`
 (bounded to 50 turns) with a stable frozen `EMPTY_SESSION_BTW_ENTRY` for missing keys.
+Successful turns additionally carry optional `completedAt` (client receipt wall time)
+and `durationMs` (monotonic elapsed time for that request, including selection apply).
+These are client-observed timing, not provider generation clocks or token usage.
+Only the owning successful completion writes them; retry clears both before sending,
+and failure/cancel/stale completion cannot reuse a previous attempt's timing. Older
+in-memory fixtures without timing remain valid and simply omit footer metadata.
 Entry-level `quotes` are staged text selections (`addQuote` trims/dedupes, capped
 at 10; `removeQuote` by index); they never request anything and are consumed into
 the next `ask` turn, whose prompt carries them as `>`-quoted blocks.

@@ -18,6 +18,14 @@ the pinned list. Existing snapshot events distribute confirmed changes to client
 
 ## WeChat message channel
 
+Message channel configuration is shared: WeChat, WeCom, Feishu and DingTalk use
+four colored entries in a 2×2 grid at the bottom of each saved Bot's settings,
+with configuration mounted only inside its dialog. Platform messaging follows
+Chat SDK's Adapter interface: vendor/community adapters are reused where suitable;
+personal-WeChat and DingTalk implement extensions. Yuri remains authoritative for
+Bot permissions, durable receipts, output and lifecycle, not a second Chat bot engine.
+See `channels/DOCUMENTATION.md` for enterprise configuration and SDK integration.
+
 Each saved Bot has a Host-owned, QR-authorized message channel configured in the final
 **Message channels** settings group. It admits only the QR-confirmed owner through
 the existing `send()` pipeline and reads committed public replies through the internal

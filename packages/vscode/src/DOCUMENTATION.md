@@ -1,7 +1,7 @@
 # VS Code Backend Modules
 
 Standalone webviews return explicit 501 for `/api/yuri/assistants/:id/weixin` and
-its subroutes. The QR-authorized message channel belongs to a running Yuri Host,
+`/api/yuri/assistants/:id/channels` and their subroutes. These message channels belong to a running Yuri Host,
 not a direct OpenCode connection; these routes must not reach generic proxy fallback.
 
 Yuri identity migration is explicit through `yuri.importLegacyConfiguration`; `brand-migration.ts` owns the two-key, non-destructive public configuration import. Private extension storage and credentials are not accessible across identities. See `../MIGRATION.md` for scope, retries, legacy-name exceptions and release blockers.

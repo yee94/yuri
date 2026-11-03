@@ -40,6 +40,9 @@ export type SessionBtwTurn = {
   answer: string;
   error: string | null;
   pending: boolean;
+  /** Client-observed successful response receipt and request elapsed time. */
+  completedAt?: number;
+  durationMs?: number;
 };
 
 /** Model/agent for native `session.generate` (upstream accepts prompt only). */
@@ -319,6 +322,7 @@ const runTurn = async (
   };
   const controller = new AbortController();
   controllers.set(key, { controller, turnId });
+  const startedAt = performance.now();
 
   try {
     await applyBtwSendSelection(scope);
@@ -333,7 +337,7 @@ const runTurn = async (
 
     const text = typeof result?.text === 'string' ? result.text.trim() : '';
     commitOwned(key, turnId, controller, runtime, text
-      ? { answer: text, error: null, pending: false }
+      ? { answer: text, error: null, pending: false, completedAt: Date.now(), durationMs: Math.max(0, performance.now() - startedAt) }
       : { answer: '', error: 'empty response', pending: false });
   } catch (error) {
     // Abort (signal or SDK AbortError): clear pending so the turn can retry.
@@ -372,7 +376,7 @@ const retry = async (scope: SessionBtwScope): Promise<void> => {
   if (!last) return;
 
   settlePreviousRequest(key);
-  patchTurn(key, last.id, { answer: '', error: null, pending: true });
+  patchTurn(key, last.id, { answer: '', error: null, pending: true, completedAt: undefined, durationMs: undefined });
   await runTurn(target, key, last, turns.slice(0, -1));
 };
 

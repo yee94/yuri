@@ -16,6 +16,13 @@ test('shows visual shape tiles, color swatches and randomize without a separate 
   await act(async () => root.render(<AssistantAvatarEditor seed="saved" disabled={false} onChange={vi.fn()} />));
   expect(host.querySelectorAll('[data-avatar-shape-option]')).toHaveLength(16);
   expect(AVATAR_PICKER_SHAPES).toHaveLength(16);
+  const shapeGrid = host.querySelector('[role="group"][aria-label="assistants.avatar.shape"]');
+  expect(shapeGrid?.classList.contains('grid-cols-4')).toBe(true);
+  expect(shapeGrid?.classList.contains('sm:grid-cols-8')).toBe(true);
+  expect(shapeGrid?.classList.contains('sm:gap-2')).toBe(true);
+  expect(host.querySelector('[data-assistant-avatar-editor]')?.className).toBe('relative w-full');
+  expect(shapeGrid?.parentElement?.classList.contains('sm:max-w-md')).toBe(true);
+  expect(shapeGrid?.parentElement?.classList.contains('mx-auto')).toBe(true);
   expect(host.querySelector('[data-avatar-shape-option="tall"],[data-avatar-shape-option="compact"],[data-avatar-shape-option="large"]')).toBeNull();
   expect(host.querySelectorAll('[data-avatar-color-option]')).toHaveLength(AVATAR_COLORS.length);
   expect(host.querySelectorAll('button')).toHaveLength(AVATAR_PICKER_SHAPES.length + AVATAR_COLORS.length + 1);

@@ -86,6 +86,7 @@ export function createWeixinStore(directory) {
       patch(binding.epoch, { cursor });
     }),
     pending: (epoch) => db.prepare("SELECT * FROM inbox WHERE epoch=? AND state='pending' ORDER BY rowid LIMIT 20").all(epoch),
+    hasReceipt: (id, epoch) => typeof id === 'string' && Boolean(db.prepare('SELECT 1 FROM inbox WHERE id=? AND epoch=?').get(id, epoch)),
     backlog: (epoch) => db.prepare("SELECT COUNT(*) AS count FROM inbox WHERE epoch=? AND state IN ('pending','admitted')").get(epoch).count,
     markInbox: (id, state) => db.prepare('UPDATE inbox SET state=? WHERE id=?').run(state, id),
     finishTurn: (id) => db.prepare("UPDATE inbox SET state='done',text='',payload='' WHERE id=?").run(id),

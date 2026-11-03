@@ -3,6 +3,12 @@ import { useEvent } from '@reactuses/core';
 import { ChatPromptComposer } from '@/components/chat/ChatPromptComposer';
 import { ComposerQuoteChips } from '@/components/chat/ComposerQuoteChips';
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { AssistantMessageActionButtons } from '@/components/chat/message/AssistantMessageActionButtons';
+import { AssistantMessageFooter, MESSAGE_ACTION_ICON_BUTTON_CLASS, MESSAGE_ACTION_ICON_CLASS, MESSAGE_ACTION_ICON_WEIGHT } from '@/components/chat/message/AssistantMessageFooter';
+import { formatAbsoluteMessageTimestamp, formatTurnDuration } from '@/components/chat/message/timeFormat';
+import { bindMessageTimeFocus } from '@/components/chat/message/messageTimeFocus';
+import { messageHoverHandlers } from '@/components/chat/lib/messageHover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
@@ -12,6 +18,7 @@ import { useChatAutoFollow } from '@/hooks/useChatAutoFollow';
 import { isPhoneBtwScopeOpen } from '@/mobile/useMobileNavigationStore';
 import { ensureNativeComposerCover, releaseNativeComposerCover, BTW_SHEET_NATIVE_COMPOSER_COVER } from '@/lib/nativeComposerCover';
 import { useI18n } from '@/lib/i18n';
+import { useDeviceInfo } from '@/lib/device';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { useUIStore } from '@/stores/useUIStore';
 import { ModelLogo } from '@/components/ui/ModelLogo';
@@ -33,21 +40,28 @@ const BTW_MOBILE_TEXT_CLASS = 'box-border w-full whitespace-pre-wrap break-words
 
 export type BtwComposerFoot = 'panel' | 'page' | 'sheet';
 
-const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, directory }: {
+const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, directory, isMobile }: {
   turn: SessionBtwTurn;
   isLast: boolean;
   sessionId: string;
   directory: SessionBtwScope['directory'];
+  isMobile: boolean;
 }) {
   const { t } = useI18n();
+  const { hasTouchInput } = useDeviceInfo();
+  const messageId = `btw:${sessionId}:${turn.id}`;
+  const replyRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (isMobile && replyRef.current) return bindMessageTimeFocus(replyRef.current, messageId);
+  }, [isMobile, messageId]);
   const error = turn.error === 'empty response' || turn.error === 'session.btw failed'
     ? t('chat.btw.failed')
     : turn.error;
   const cancelled = !turn.pending && !turn.error && !turn.answer;
   const copy = useEvent(async () => {
     const result = await copyTextToClipboard(turn.answer);
-    if (result.ok) toast.success(t('contextSidebar.actions.copied'));
-    else toast.error(t('filesView.toast.copyFailed'));
+    if (!result.ok) toast.error(t('filesView.toast.copyFailed'));
+    return result.ok;
   });
   return <div className="flex flex-col gap-2" data-btw-turn={turn.id}>
     <div className="ml-8 flex flex-col gap-1.5 self-end rounded-xl bg-[var(--surface-elevated)] px-3 py-2">
@@ -64,19 +78,30 @@ const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, d
       {error}
     </p> : null}
     {cancelled ? <p role="status" className="typography-meta text-muted-foreground">{t('chat.btw.cancelled')}</p> : null}
-    {turn.answer ? <div className="min-w-0 text-foreground">
-      <MarkdownRenderer content={turn.answer} messageId={`btw:${sessionId}:${turn.id}`}
+    <div ref={replyRef} data-message-id={messageId} data-message-text-export-root="true" data-speech-identity={messageId}
+      {...messageHoverHandlers} className="min-w-0 text-foreground yuri-message-hover-scope">
+    {turn.answer ? <div data-speech-content="true">
+      <MarkdownRenderer content={turn.answer} messageId={messageId}
         isAnimated={false} isStreaming={false} variant="assistant" enableFileReferences={false} />
     </div> : null}
-    {!turn.pending && (turn.answer || (isLast && (error || cancelled))) ? <div className="-ml-2 flex items-center gap-0.5">
-      {turn.answer ? <Button type="button" variant="ghost" size="xs" onClick={copy} aria-label={t('contextSidebar.actions.copy')}>
-        <Icon name="file-copy" className="size-3.5" />
-      </Button> : null}
-      {isLast ? <Button type="button" variant="ghost" size="xs" onClick={() => void useSessionBtwStore.getState().retry({ sessionId, directory })}
-        aria-label={t('contextPanel.preview.actions.retry')}>
-        <Icon name="refresh" className="size-3.5" />
-      </Button> : null}
-    </div> : null}
+    {!turn.pending && (turn.answer || (isLast && (error || cancelled))) ? <AssistantMessageFooter
+      messageId={messageId} isMobile={isMobile}
+      duration={turn.answer && typeof turn.durationMs === 'number' && Number.isFinite(turn.durationMs) && turn.durationMs >= 0 ? formatTurnDuration(turn.durationMs) : null}
+      timestamp={turn.answer && typeof turn.completedAt === 'number' && turn.completedAt > 0 ? formatAbsoluteMessageTimestamp(turn.completedAt) : null}
+      actions={<>
+        {turn.answer ? <AssistantMessageActionButtons messageId={messageId} hasCopyableText isTouchContext={hasTouchInput || isMobile}
+          onCopyMessage={copy} ttsText={turn.answer} allowSourceSession={false} /> : null}
+        {isLast ? <Tooltip>
+          <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon" className={MESSAGE_ACTION_ICON_BUTTON_CLASS}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => void useSessionBtwStore.getState().retry({ sessionId, directory })} aria-label={t('contextPanel.preview.actions.retry')}>
+            <Icon name="refresh" weight={MESSAGE_ACTION_ICON_WEIGHT} className={MESSAGE_ACTION_ICON_CLASS} />
+          </Button></TooltipTrigger>
+          <TooltipContent sideOffset={6}>{t('contextPanel.preview.actions.retry')}</TooltipContent>
+        </Tooltip> : null}
+      </>}
+    /> : null}
+    </div>
   </div>;
 });
 
@@ -180,7 +205,7 @@ export function BtwPanel({ scope, foot = 'panel', active = true }: { scope: Sess
         {turns.length === 0
           ? <p className="typography-meta text-muted-foreground">{t('chat.btw.description')}</p>
           : turns.map((turn, index) => <BtwTurnView key={turn.id} turn={turn} isLast={index === turns.length - 1}
-            sessionId={scope.sessionId} directory={scope.directory} />)}
+            sessionId={scope.sessionId} directory={scope.directory} isMobile={foot !== 'panel'} />)}
       </div>
     </div>
     <BtwComposer key={key} scope={scope} pending={pending} quotes={quotes} foot={foot} />

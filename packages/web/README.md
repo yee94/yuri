@@ -44,6 +44,14 @@ use a separate Yuri data directory and test WeChat account. `YURI_WEIXIN_ENABLED
 disables the channel in any environment. Merely isolating data does not bypass
 WeChat's single-entry binding restriction.
 
+Enterprise Bot channels (WeCom AI Bot, Feishu and DingTalk Stream) likewise default
+to disabled in development. `YURI_CHANNELS_ENABLED=1` enables their shared runtime
+for isolated test Bots; `0` disables it in any environment. Each saved Bot's message
+channel dialog owns configuration; secrets stay on the selected Host. These are
+outbound platform long connections, not public webhooks or MCP Streamable HTTP.
+Chat SDK adapters normalize messages without replacing Yuri's durable authorization,
+receipt and contact execution ownership. See `server/lib/assistants/channels/`.
+
 HMR skips React Compiler by default; use `YURI_HMR_REACT_COMPILER=1 bun run dev:web:hmr`
 when checking compiler-specific behavior. Production builds always retain the
 compiler, regardless of that development toggle. Package-based vendor chunk

@@ -22,6 +22,13 @@ const fixture = vi.hoisted(() => {
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
 vi.mock('@/components/chat/AgentAvatar', () => ({ AgentAvatar: ({ name }: { name: string }) => <span data-avatar-seed={name} /> }));
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: ({ open, children }: { open?: boolean; children?: React.ReactNode }) => (open ? children : null),
+  DialogContent: ({ children }: { children?: React.ReactNode }) => <div data-testid="channel-dialog">{children}</div>,
+  DialogHeader: ({ children }: { children?: React.ReactNode }) => children,
+  DialogTitle: ({ children }: { children?: React.ReactNode }) => children,
+  DialogDescription: ({ children }: { children?: React.ReactNode }) => children,
+}));
 vi.mock('@/components/sections/agents/ModelSelector', () => ({
   ModelSelector: ({ variant, onChange }: { variant?: string; onChange: (provider: string, model: string, variant?: string) => void }) => (
     <div data-testid="model-picker" data-variant={variant}>
@@ -59,7 +66,7 @@ vi.mock('@/queries/assistantQueries', () => ({
   fetchAssistantCapability: vi.fn(),
 }));
 
-import { AssistantsSettingsPage } from './AssistantsSettingsPage';
+import { AssistantsSettingsPage, AssistantsSettingsSidebar } from './AssistantsSettingsPage';
 import { useAssistantUIStore } from '@/stores/useAssistantUIStore';
 import { normalizeModelIdentifier } from '@/lib/modelIdentifier';
 import { resolveAssistantAvatar } from '@/lib/assistant-avatar/recipe';
@@ -86,6 +93,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const button = (label: string) => Array.from(host.querySelectorAll('button')).find((item) => item.textContent === label)!;
+
+test('the settings sidebar omits the introductory description and learn-more link', async () => {
+  await act(async () => root.render(<AssistantsSettingsSidebar />));
+  expect(host.textContent).not.toContain('assistants.settings.description');
+  expect(host.querySelector('a[href="#assistant-share-welcome"]')).toBeNull();
+  expect(host.textContent).toContain('Route assistant');
+});
 
 test('random avatar previews only in the draft, saves the seed, and discards unsaved edits on leaving', async () => {
   const render = () => root.render(<AssistantsSettingsPage assistantID="asst_route" />);
@@ -119,21 +133,26 @@ test('route ID owns displayed and saved assistant while the Settings tab selecti
   expect(useAssistantUIStore.getState().settingsSelectedAssistantID).toBe('asst_settings_tab');
 });
 
-test('model selection shares the name card and no enable or manual share-default control remains', async () => {
+test('model and default prompt share the name card and no enable or manual share-default control remains', async () => {
   await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
   const card = host.querySelector('#assistant-name')?.closest('.yuri-settings-group-card');
   expect(card?.querySelector('[data-settings-item="assistants.model"]')).not.toBeNull();
+  expect(card?.querySelector('[data-settings-item="assistants.prompt"]')).not.toBeNull();
+  expect(card?.querySelector<HTMLTextAreaElement>('#assistant-prompt')?.value).toBe('Route prompt');
   expect(host.textContent).not.toContain('assistants.settings.enabled');
   expect(host.querySelector('[role="checkbox"]')).toBeNull();
   expect(host.querySelector('[data-settings-item="assistants.default-share"]')).toBeNull();
   expect(host.textContent).not.toContain('assistants.settings.defaultShare');
 });
 
-test('message channels are the final settings group and belong to the route Bot', async () => {
+test('message channels are the final settings group, start request-free, and belong to the route Bot', async () => {
   await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
   const groups = [...host.querySelectorAll('.yuri-settings-group')];
   expect(groups.at(-1)?.querySelector('.yuri-settings-group-label')?.textContent).toBe('assistants.channels.title');
-  expect(groups.at(-1)?.textContent).toContain('assistants.weixin.connect');
+  expect(groups.at(-1)?.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(4);
+  expect(fixture.weixin).not.toHaveBeenCalled();
+  const entries = [...host.querySelectorAll<HTMLButtonElement>('[aria-haspopup="dialog"]')];
+  await act(async () => entries[0]!.click());
   expect(fixture.weixin).toHaveBeenCalledWith('asst_route');
   expect(fixture.weixin).not.toHaveBeenCalledWith('asst_settings_tab');
 });

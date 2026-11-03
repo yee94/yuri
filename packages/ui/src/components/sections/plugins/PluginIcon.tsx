@@ -27,6 +27,7 @@ const initialOf = (name: string): string => {
 export const PluginIcon: React.FC<PluginIconProps> = ({ name, src, fallback, size = 20, className, busy = false, marker }) => {
   const [failedSrc, setFailedSrc] = React.useState<string | null>(null);
   const showImage = Boolean(src) && failedSrc !== src;
+  const useMask = Boolean(src && (/^data:image\/svg\+xml[;,]/i.test(src) || /^https:\/\/[^?#]+\.svg(?:[?#]|$)/i.test(src)));
   const box: React.CSSProperties = {
     width: size,
     height: size,
@@ -36,16 +37,38 @@ export const PluginIcon: React.FC<PluginIconProps> = ({ name, src, fallback, siz
   };
 
   const picture = showImage ? (
-    <img
-      src={src}
-      alt=""
-      draggable={false}
-      referrerPolicy="no-referrer"
-      loading="lazy"
-      style={box}
-      className="object-contain"
-      onError={() => setFailedSrc(src ?? null)}
-    />
+    <>
+      <img
+        key={src}
+        src={src}
+        alt=""
+        draggable={false}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        crossOrigin={useMask ? 'anonymous' : undefined}
+        style={{ ...box, opacity: useMask ? 0 : undefined }}
+        className="object-contain"
+        onError={() => setFailedSrc(src ?? null)}
+      />
+      {useMask ? <span
+        data-plugin-icon-mask
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          ...box,
+          backgroundColor: 'currentColor',
+          maskImage: `url(${JSON.stringify(src)})`,
+          WebkitMaskImage: `url(${JSON.stringify(src)})`,
+          maskMode: 'alpha',
+          maskSize: 'contain',
+          WebkitMaskSize: 'contain',
+          maskPosition: 'center',
+          WebkitMaskPosition: 'center',
+          maskRepeat: 'no-repeat',
+          WebkitMaskRepeat: 'no-repeat',
+        }}
+      /> : null}
+    </>
   ) : fallback ? (
     <span className="yuri-plugin-icon-placeholder" style={{ ...box, display: 'grid', placeItems: 'center', color: 'var(--surface-muted-foreground)' }} aria-hidden>
       <Icon name={fallback} style={{ width: size * 0.65, height: size * 0.65 }} />

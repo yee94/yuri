@@ -64,7 +64,7 @@ export function normalizeWeixinInput(message) {
     const body = item[`${kind}_item`];
     if (kind === 'text' && typeof body?.text === 'string' && !quoted) texts.push(body.text);
     const index = items.length;
-    const details = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'ref_msg' && !(kind === 'text' && key === 'text_item')));
+    const details = Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'ref_msg' && key !== 'msg_id' && !envelope.has(key) && !(kind === 'text' && key === 'text_item')));
     if (kind === 'text' && body && typeof body === 'object') {
       const extraTextFields = Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'text'));
       if (Object.keys(extraTextFields).length) details.text_item = extraTextFields;

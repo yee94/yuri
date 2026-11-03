@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { useEvent } from '@reactuses/core';
 import { toast } from 'sonner';
 import { refreshNativeAssistantCatalog } from '@/apps/MobileShareBridge';
-import { AssistantShareWelcome } from '@/components/assistants/AssistantShareWelcome';
 import { AssistantAvatarEditor } from '@/components/assistants/AssistantAvatarEditor';
 import { createDefaultAssistantAvatarSeed } from '@/lib/assistant-avatar/recipe';
 import { getAssistantPresentation } from '@/components/assistants/assistantPresentation';
@@ -319,7 +318,6 @@ export const AssistantsSettingsSidebar: React.FC<{ onItemSelect?: () => void }> 
   const selectedID = useAssistantUIStore((state) => state.settingsSelectedAssistantID);
   const selectSettingsAssistant = useAssistantUIStore((state) => state.selectSettingsAssistant);
   const requestCreate = useAssistantUIStore((state) => state.requestCreate);
-  const [welcomeOpen, setWelcomeOpen] = React.useState(false);
 
   React.useEffect(() => {
     // The desktop split view always needs a detail selection. Mobile passes
@@ -345,24 +343,6 @@ export const AssistantsSettingsSidebar: React.FC<{ onItemSelect?: () => void }> 
   return (
     <SettingsSidebarLayout
       variant="background"
-      header={
-        <>
-          <p className="yuri-settings-group-description text-muted-foreground">
-            {t('assistants.settings.description')}
-            <a
-              href="#assistant-share-welcome"
-              className="underline underline-offset-2"
-              onClick={(event) => {
-                event.preventDefault();
-                setWelcomeOpen(true);
-              }}
-            >
-              {t('assistants.settings.descriptionLearnMore')}
-            </a>
-          </p>
-          <AssistantShareWelcome open={welcomeOpen} onOpenChange={setWelcomeOpen} />
-        </>
-      }
     >
       <SettingsGroup
         label={(
@@ -552,29 +532,28 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
             <AssistantAvatarEditor seed={draft.avatarSeed ?? selected?.id ?? 'new'} disabled={saving} onChange={(seed) => patchDraft('avatarSeed', seed)} />
 
             <SettingsGroup>
-                <SettingsRow itemId="assistants.name" label={t('assistants.settings.name')}>
-                  <Input id="assistant-name" value={draft.name} onChange={(event) => patchDraft('name', event.target.value)} className="min-w-0 flex-1" />
-                </SettingsRow>
-                 <SettingsRow itemId="assistants.model" label={t('assistants.settings.model')}>
-                   <ModelSelector providerId={draft.providerID} modelId={draft.modelID} variant={draft.variant ?? ''} providers={catalogProviders} onChange={(providerID, modelID, variant) => setDraft((current) => ({ ...current, providerID, modelID, variant: variant || null }))} className="yuri-settings-inline-value" />
-                 </SettingsRow>
+              <SettingsRow itemId="assistants.name" label={t('assistants.settings.name')}>
+                <Input id="assistant-name" value={draft.name} onChange={(event) => patchDraft('name', event.target.value)} className="min-w-0 flex-1" />
+              </SettingsRow>
+              <SettingsRow itemId="assistants.model" label={t('assistants.settings.model')}>
+                <ModelSelector providerId={draft.providerID} modelId={draft.modelID} variant={draft.variant ?? ''} providers={catalogProviders} onChange={(providerID, modelID, variant) => setDraft((current) => ({ ...current, providerID, modelID, variant: variant || null }))} className="yuri-settings-inline-value" />
+              </SettingsRow>
+              <SettingsRow
+                itemId="assistants.prompt"
+                label={t('assistants.settings.defaultPrompt')}
+                className="yuri-settings-split-row-stacked"
+              >
+                <Textarea
+                  embedded
+                  id="assistant-prompt"
+                  value={draft.defaultPrompt}
+                  onChange={(event) => patchDraft('defaultPrompt', event.target.value)}
+                  placeholder={t('assistants.settings.defaultPromptPlaceholder')}
+                  rows={12}
+                  outerClassName="min-h-[240px] max-h-[70vh]"
+                />
+              </SettingsRow>
             </SettingsGroup>
-
-            <SettingsField
-              itemId="assistants.prompt"
-              label={t('assistants.settings.defaultPrompt')}
-              className="yuri-settings-split-row-stacked"
-            >
-              <Textarea
-                embedded
-                id="assistant-prompt"
-                value={draft.defaultPrompt}
-                onChange={(event) => patchDraft('defaultPrompt', event.target.value)}
-                placeholder={t('assistants.settings.defaultPromptPlaceholder')}
-                rows={12}
-                outerClassName="min-h-[240px] max-h-[70vh]"
-              />
-            </SettingsField>
 
             <SettingsField
               itemId="assistants.workspace"
