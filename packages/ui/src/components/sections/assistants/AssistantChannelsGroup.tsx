@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
 import { useI18n, type I18nKey } from '@/lib/i18n';
-import { useAssistantWeixin } from '@/queries/assistantWeixinQueries';
+import { useAssistantWeixin, type AssistantWeixinStatus } from '@/queries/assistantWeixinQueries';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 
 const errorKey = (code: string): I18nKey => {
@@ -15,6 +15,7 @@ const errorKey = (code: string): I18nKey => {
   if (code === 'delivery_unknown') return 'assistants.weixin.error.deliveryUnknown';
   if (code === 'reply_unavailable') return 'assistants.weixin.error.replyUnavailable';
   if (code === 'channel_in_use') return 'assistants.weixin.error.channelInUse';
+  if (code === 'binding_changed') return 'assistants.weixin.error.bindingChanged';
   return 'assistants.weixin.error.generic';
 };
 
@@ -31,11 +32,13 @@ function WeixinChannelRows({ assistantID }: { assistantID: string }) {
   const [qr, setQR] = React.useState<{ value: string; url: string } | null>(null);
   const [qrError, setQRError] = React.useState(false);
   const [code, setCode] = React.useState('');
+  const [transferSource, setTransferSource] = React.useState<NonNullable<AssistantWeixinStatus['transferSources']>[number] | null>(null);
   const state = query.data;
   const value = state?.qrCode ?? '';
   const pending = mutation.isPending;
   const waiting = state?.status === 'waiting' || state?.status === 'scanned' || state?.status === 'verify';
   const bound = state?.status === 'connected' || state?.status === 'reconnecting';
+  const sources = !bound && !waiting && state?.status !== 'unsupported' ? state?.transferSources ?? [] : [];
   React.useEffect(() => {
     if (!value) return;
     let disposed = false;
@@ -47,6 +50,12 @@ function WeixinChannelRows({ assistantID }: { assistantID: string }) {
   const connect = useEvent(() => mutation.mutate({ type: 'login' }));
   const disconnect = useEvent(() => mutation.mutate({ type: 'disconnect' }));
   const retry = useEvent(() => mutation.mutate({ type: 'retry' }));
+  const transfer = useEvent(() => {
+    if (!transferSource) return;
+    mutation.mutate({ type: 'transfer', sourceAssistantID: transferSource.assistantID, revision: transferSource.revision }, {
+      onSuccess: () => setTransferSource(null),
+    });
+  });
   const verify = useEvent((event: React.FormEvent) => {
     event.preventDefault();
     mutation.mutate({ type: 'verify', code }, { onSuccess: () => setCode('') });
@@ -70,6 +79,16 @@ function WeixinChannelRows({ assistantID }: { assistantID: string }) {
                 {t(state ? 'assistants.weixin.connect' : 'assistants.actions.retry')}
               </Button></>}
       </SettingsRow>
+      {sources.map((source) => <SettingsRow key={source.assistantID}
+        className={transferSource?.assistantID === source.assistantID ? 'yuri-settings-split-row-stacked' : undefined}
+        label={t('assistants.weixin.transferFrom', { name: source.name })}
+        description={transferSource?.assistantID === source.assistantID ? t('assistants.weixin.transferWarning') : undefined}
+      >
+        {transferSource?.assistantID === source.assistantID ? <>
+          <Button size="sm" variant="ghost" disabled={pending} onClick={() => setTransferSource(null)}>{t('settings.common.actions.cancel')}</Button>
+          <Button size="sm" disabled={pending || transferSource.revision !== source.revision} onClick={transfer} aria-busy={pending}>{t('assistants.weixin.transferConfirm')}</Button>
+        </> : <Button size="sm" disabled={pending} onClick={() => setTransferSource(source)}>{t('assistants.weixin.transfer')}</Button>}
+      </SettingsRow>)}
       {waiting ? <SettingsRow controlClassName="flex-col items-center" label={t('assistants.weixin.scan')}>
         {value && qr?.value === value ? <img src={qr.url} alt={t('assistants.weixin.qrAlt')} className="size-48 max-w-full rounded-lg" width={192} height={192} />
           : <span className="flex size-48 items-center justify-center"><Icon name="loader-4" className="size-5 animate-spin motion-reduce:animate-none" /></span>}

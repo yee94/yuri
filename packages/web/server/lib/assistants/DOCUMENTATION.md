@@ -9,6 +9,10 @@ the existing `send()` pipeline and reads committed public replies through the in
 process leases are owned by `weixin/`, not ordinary Session delivery or UI state.
 See `weixin/DOCUMENTATION.md` for authorization, shared-context/output semantics,
 restart ambiguity, local disconnect and the explicit platform-verification limits.
+An existing local WeChat connection can be moved to an unbound Bot only through
+explicit revision-checked confirmation; the source stops syncing, receipt IDs and
+platform cursor survive, and histories/queued replies are not migrated. Repeated
+scanning does not create independent WeChat entries for the same user.
 
 ## New-contact greeting
 

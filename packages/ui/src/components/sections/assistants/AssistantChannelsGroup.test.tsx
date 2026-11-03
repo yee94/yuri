@@ -1,9 +1,10 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AssistantWeixinStatus } from '@/queries/assistantWeixinQueries';
 
 const fixture = vi.hoisted(() => ({
-  data: { status: 'disconnected', error: null, qrCode: undefined } as { status: string; error: string | null; qrCode?: string },
+  data: { status: 'disconnected', error: null, qrCode: undefined } as AssistantWeixinStatus,
   transport: 'host-a', mutate: vi.fn(), refetch: vi.fn(), qr: vi.fn(async (..._args: unknown[]) => 'data:image/png;base64,dGVzdA=='),
 }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -77,5 +78,32 @@ describe('per-Bot message channel settings', () => {
     await mount();
     expect(host.textContent).toContain('assistants.weixin.status.unsupported');
     expect(host.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('requires explicit confirmation to move, supports cancel and sends the selected binding revision', async () => {
+    fixture.data = { status: 'disconnected', error: null, transferSources: [{ assistantID: 'old', name: 'Old bot', revision: 'r1' }] };
+    await mount();
+    await act(async () => button('assistants.weixin.transfer').click());
+    expect(fixture.mutate).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('assistants.weixin.transferWarning');
+    await act(async () => button('settings.common.actions.cancel').click());
+    expect(fixture.mutate).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('assistants.weixin.transferWarning');
+    await act(async () => button('assistants.weixin.transfer').click());
+    await act(async () => button('assistants.weixin.transferConfirm').click());
+    expect(fixture.mutate).toHaveBeenCalledWith({ type: 'transfer', sourceAssistantID: 'old', revision: 'r1' }, expect.anything());
+    expect(fixture.qr).not.toHaveBeenCalled();
+  });
+
+  it('does not silently confirm a different binding revision or carry confirmation to another runtime', async () => {
+    fixture.data = { status: 'disconnected', error: null, transferSources: [{ assistantID: 'old', name: 'Old bot', revision: 'r1' }] };
+    await mount();
+    await act(async () => button('assistants.weixin.transfer').click());
+    fixture.data.transferSources![0] = { assistantID: 'old', name: 'Old bot', revision: 'r2' };
+    await act(async () => root?.render(<AssistantChannelsGroup assistantID="bot" />));
+    expect(button('assistants.weixin.transferConfirm').disabled).toBe(true);
+    fixture.transport = 'host-b';
+    await act(async () => root?.render(<AssistantChannelsGroup assistantID="bot" />));
+    expect(host.textContent).not.toContain('assistants.weixin.transferWarning');
   });
 });

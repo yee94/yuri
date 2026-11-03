@@ -32,6 +32,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
   const owner = randomUUID();
   const logins = new Map();
   const receivers = new Map();
+  const bindingWork = new Map();
   const operations = new Set();
   const recovered = new Set();
   const retiring = new Set();
@@ -54,8 +55,10 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
   const typing = createWeixinTyping({ api, clock, getBinding: store.get, isCurrent, canCancel: canControl });
   const pause = (ms, signal) => delay(ms, undefined, { signal }).catch(() => {});
   const stopReceiver = (assistantID) => {
-    receivers.get(assistantID)?.controller.abort();
+    const entry = receivers.get(assistantID);
+    entry?.controller.abort();
     receivers.delete(assistantID);
+    return entry?.done;
   };
   const setError = (binding, error) => {
     if (!isCurrent(binding)) return;
@@ -164,11 +167,20 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     try {
       const receiverSignal = receivers.get(binding.assistant_id)?.controller.signal;
       await api.sendText(current, delivery, receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal);
-      if (!isCurrent(binding)) return;
+      if (!isCurrent(binding) && !(retiring.has(binding.assistant_id) && canControl(binding))) return;
       store.sent(delivery.id);
       store.patch(binding.epoch, { error: null, updated_at: clock() });
     } catch (error) {
-      if (!isCurrent(binding)) return;
+      if (!isCurrent(binding)) {
+        if (retiring.has(binding.assistant_id) && canControl(binding)) {
+          // A failed move may resume this binding. Never strand an aborted send
+          // in 'sending', or automatically replay a request already on the wire.
+          store.markDelivery(delivery.id, 'unknown');
+          store.patch(binding.epoch, error?.code === 'auth_expired'
+            ? { status: 'expired', error: 'auth_expired' } : { error: 'delivery_unknown' });
+        }
+        return;
+      }
       // Network ambiguity is user-retryable, not an automatic duplicate reply.
       store.markDelivery(delivery.id, error?.ambiguous ? 'unknown' : 'blocked');
       setError(binding, error?.ambiguous ? new WeixinError('delivery_unknown') : error);
@@ -201,22 +213,34 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
           const controller = new AbortController();
           const entry = { controller };
           receivers.set(binding.assistant_id, entry);
-          track(receive(binding, controller.signal)).finally(() => {
+          entry.done = track(receive(binding, controller.signal)).finally(() => {
             if (receivers.get(binding.assistant_id) === entry) receivers.delete(binding.assistant_id);
           }).catch(() => {});
         }
       }
       // One slow Bot cannot prevent another account receiving or replying.
-      await Promise.allSettled(bindings.map((binding) => processBinding(binding).catch((error) => setError(binding, error))));
+      await Promise.allSettled(bindings.map((binding) => {
+        const work = processBinding(binding).catch((error) => setError(binding, error));
+        bindingWork.set(binding.assistant_id, work);
+        return work.finally(() => {
+          if (bindingWork.get(binding.assistant_id) === work) bindingWork.delete(binding.assistant_id);
+        });
+      }));
     } finally { ticking = false; }
   };
 
   const status = (assistantID) => {
     service.channelPage(assistantID, { tipOnly: true });
     const login = logins.get(assistantID);
-    if (login) return { status: login.status, qrCode: login.qrCode, expiresAt: login.expiresAt, error: login.error ?? null };
     const binding = store.get(assistantID);
-    if (!binding) return { status: 'disconnected', error: null };
+    const sources = !binding ? store.list().filter((row) => row.assistant_id !== assistantID && row.status !== 'expired') : [];
+    const names = sources.length ? new Map(service.snapshot().assistants.map((row) => [row.id, row.name])) : new Map();
+    const transferSources = sources.filter((row) => names.has(row.assistant_id)).map((row) => ({
+      assistantID: row.assistant_id, name: names.get(row.assistant_id), revision: row.epoch,
+    }));
+    const available = transferSources.length ? { transferSources } : {};
+    if (login) return { status: login.status, qrCode: login.qrCode, expiresAt: login.expiresAt, error: login.error ?? null, ...available };
+    if (!binding) return { status: 'disconnected', error: null, ...available };
     return {
       status: ownsLease ? binding.status : 'reconnecting',
       error: ownsLease ? (store.hasUnknown(binding.epoch) ? 'delivery_unknown' : binding.error) : 'channel_in_use',
@@ -301,6 +325,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     }
   };
   const forget = async (assistantID) => {
+    if (retiring.has(assistantID)) throw new WeixinError('channel_in_use');
     retiring.add(assistantID);
     logins.get(assistantID)?.controller.abort();
     logins.delete(assistantID);
@@ -316,11 +341,42 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     await forget(assistantID);
     return status(assistantID);
   };
+  const transfer = async (assistantID, input) => {
+    assertOwner();
+    const { sourceAssistantID, revision, language = 'en' } = input ?? {};
+    if (typeof sourceAssistantID !== 'string' || typeof revision !== 'string' || sourceAssistantID === assistantID) {
+      throw new WeixinError('validation_error');
+    }
+    service.channelPage(assistantID, { tipOnly: true });
+    service.channelPage(sourceAssistantID, { tipOnly: true });
+    if (retiring.has(assistantID) || retiring.has(sourceAssistantID)) throw new WeixinError('channel_in_use');
+    const source = store.get(sourceAssistantID);
+    if (!source || source.epoch !== revision || source.status === 'expired' || store.get(assistantID)) throw new WeixinError('binding_changed');
+    retiring.add(sourceAssistantID);
+    retiring.add(assistantID);
+    logins.get(assistantID)?.controller.abort();
+    logins.delete(assistantID);
+    try {
+      await Promise.allSettled([stopReceiver(sourceAssistantID), bindingWork.get(sourceAssistantID), typing.forget(sourceAssistantID)]);
+      assertOwner();
+      // Revalidate after draining: deletion or a stale confirmation must not move credentials.
+      service.channelPage(sourceAssistantID, { tipOnly: true });
+      const page = service.channelPage(assistantID, { tipOnly: true });
+      store.transfer({ sourceAssistantID, expectedEpoch: revision, assistantID,
+        generation: page.generation, ordinal: page.tipOrdinal, language: String(language).slice(0, 32), updatedAt: clock() });
+    } finally {
+      retiring.delete(sourceAssistantID);
+      retiring.delete(assistantID);
+      if (!closed) void track(tick());
+    }
+    return status(assistantID);
+  };
   const timer = setInterval(() => { void track(tick()); }, intervalMs);
   timer.unref?.();
   void track(tick());
   return {
     status, startLogin, disconnect, forget,
+    transfer: (assistantID, input) => track(transfer(assistantID, input)),
     verify: (assistantID, code) => {
       assertOwner();
       const login = logins.get(assistantID);
@@ -330,6 +386,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     },
     retry: (assistantID) => {
       assertOwner();
+      if (retiring.has(assistantID)) throw new WeixinError('channel_in_use');
       const binding = store.get(assistantID);
       if (!binding) throw new WeixinError('not_found');
       if (binding.status === 'expired') throw new WeixinError('auth_expired');

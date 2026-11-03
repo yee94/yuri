@@ -26,6 +26,7 @@ const inbound = (id = '1', peer = 'owner', text = 'hello') => ({
 function fixture({ directory = root(), configureAPI, service: externalService, clock } = {}) {
   const pages = new Map();
   const service = externalService ?? {
+    snapshot: () => ({ assistants: ['bot', 'other-bot', 'third-bot'].map((id) => ({ id, name: `Name ${id}` })) }),
     channelPage: vi.fn((id, { afterOrdinal = 0, generation = null } = {}) => {
       if (id === 'missing') throw Object.assign(new Error('not_found'), { code: 'not_found' });
       const page = pages.get(id) ?? { generation: 0, messages: [] };
@@ -171,6 +172,144 @@ describe('Weixin Host runtime', () => {
     expect(f.runtime.status('bot').status).toBe('connected');
   });
 
+  it('offers an explicit local move without scanning and preserves cursor/dedup across restart', async () => {
+    const f = fixture();
+    f.updates.push([inbound('1')]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(1));
+    f.reply('other-bot', 'old target history', 50);
+    const state = f.runtime.status('other-bot');
+    expect(state).toMatchObject({ status: 'disconnected', transferSources: [{ assistantID: 'bot', name: 'Name bot' }] });
+    expect(JSON.stringify(state)).not.toMatch(/test-token|context-1|peer_id|account_id/);
+    const revision = state.transferSources[0].revision;
+    const result = await f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision, language: 'zh-CN' });
+    expect(result).toEqual({ status: 'connected', error: null });
+    expect(f.runtime.status('bot').status).toBe('disconnected');
+    expect(f.api.getQRCode).toHaveBeenCalledTimes(1);
+    f.updates.push([inbound('1'), inbound('2')]);
+    f.reply('bot', 'late old bot reply');
+    f.reply('other-bot', 'new target reply', 51);
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(2));
+    expect(f.service.send.mock.calls[1][0]).toBe('other-bot');
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(1));
+    expect(f.api.sendText.mock.calls[0][1].text).toBe('new target reply');
+    expect(f.api.getUpdates.mock.calls.find(([binding]) => binding.assistant_id === 'other-bot')[0].cursor).toBe('next-cursor');
+    await f.runtime.close();
+    const restarted = fixture({ directory: f.directory });
+    restarted.updates.push([inbound('1'), inbound('2')]);
+    await vi.waitFor(() => expect(restarted.api.getUpdates).toHaveBeenCalled());
+    expect(restarted.api.getUpdates.mock.calls[0][0].assistant_id).toBe('other-bot');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(restarted.service.send).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale/occupied/missing/expired transfers without changing the original connection', async () => {
+    const f = fixture();
+    await f.bind();
+    const revision = f.runtime.status('other-bot').transferSources[0].revision;
+    await expect(f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision: 'stale' })).rejects.toMatchObject({ code: 'binding_changed' });
+    await expect(f.runtime.transfer('missing', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(f.runtime.transfer('bot', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'validation_error' });
+    const second = fixture({ directory: f.directory });
+    await expect(second.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'channel_in_use' });
+    await second.runtime.close();
+    await f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision });
+    await expect(f.runtime.transfer('third-bot', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'binding_changed' });
+    expect(f.runtime.status('other-bot').status).toBe('connected');
+    f.api.getQRStatus.mockResolvedValue({ status: 'confirmed', bot_token: 'second-token', ilink_bot_id: 'second-account', ilink_user_id: 'second-owner' });
+    await f.bind('bot');
+    const source = f.runtime.status('third-bot').transferSources.find((entry) => entry.assistantID === 'bot');
+    await expect(f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision: source.revision })).rejects.toMatchObject({ code: 'binding_changed' });
+    f.api.getUpdates.mockRejectedValue(new WeixinError('auth_expired'));
+    await vi.waitFor(() => expect(f.runtime.status('bot').status).toBe('expired'));
+    await expect(f.runtime.transfer('third-bot', { sourceAssistantID: 'bot', revision: source.revision })).rejects.toMatchObject({ code: 'binding_changed' });
+  });
+
+  it('drains old sending/typing, blocks concurrent mutations and fences a cancelled QR confirmation', async () => {
+    const f = fixture();
+    f.updates.push([inbound()]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalled());
+    let finishRead;
+    let oldSignal;
+    f.api.getUpdates.mockImplementationOnce((_binding, signal) => {
+      oldSignal = signal;
+      return new Promise((resolve) => { finishRead = resolve; });
+    });
+    let confirm;
+    f.api.getQRStatus.mockImplementation(() => new Promise((resolve) => { confirm = resolve; }));
+    await f.runtime.startLogin('other-bot');
+    await vi.waitFor(() => expect(finishRead).toBeTypeOf('function'));
+    f.runtime.onTurnEvent({ type: 'yuri:contact-turn-start', properties: { assistantID: 'bot', turnID: 'live' } });
+    await vi.waitFor(() => expect(f.api.sendTyping).toHaveBeenCalled());
+    let finishSend;
+    f.api.sendText.mockImplementationOnce((_binding, _delivery, signal) => {
+      expect(signal.aborted).toBe(false);
+      return new Promise((resolve) => { finishSend = resolve; });
+    });
+    f.reply('bot', 'in flight');
+    await vi.waitFor(() => expect(finishSend).toBeTypeOf('function'));
+    const revision = f.runtime.status('other-bot').transferSources[0].revision;
+    const moving = f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision });
+    expect(oldSignal.aborted).toBe(true);
+    await expect(f.runtime.transfer('third-bot', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'channel_in_use' });
+    await expect(f.runtime.disconnect('bot')).rejects.toMatchObject({ code: 'channel_in_use' });
+    expect(() => f.runtime.retry('bot')).toThrow('channel_in_use');
+    await expect(f.runtime.startLogin('other-bot')).rejects.toMatchObject({ code: 'channel_in_use' });
+    confirm({ status: 'confirmed', bot_token: 'stale-token', ilink_bot_id: 'stale-account', ilink_user_id: 'owner' });
+    finishRead({ msgs: [inbound('stale')], get_updates_buf: 'stale-cursor' });
+    finishSend({ ret: 0 });
+    await moving;
+    expect(f.api.sendTyping.mock.calls.map((call) => call[2])).toEqual([1, 2]);
+    expect(f.service.send).toHaveBeenCalledTimes(1);
+    expect(f.runtime.status('bot').status).toBe('disconnected');
+    expect(f.runtime.status('other-bot').status).toBe('connected');
+    await expect(f.runtime.transfer('third-bot', { sourceAssistantID: 'bot', revision })).rejects.toMatchObject({ code: 'binding_changed' });
+  });
+
+  it('preserves and resumes the source if the target disappears while draining', async () => {
+    const f = fixture();
+    await f.bind();
+    f.runtime.onTurnEvent({ type: 'yuri:contact-turn-start', properties: { assistantID: 'bot', turnID: 'live' } });
+    await vi.waitFor(() => expect(f.api.sendTyping).toHaveBeenCalled());
+    let finishCancel;
+    f.api.sendTyping.mockImplementationOnce(() => new Promise((resolve) => { finishCancel = resolve; }));
+    const revision = f.runtime.status('other-bot').transferSources[0].revision;
+    const moving = f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision }).catch((error) => error);
+    await vi.waitFor(() => expect(finishCancel).toBeTypeOf('function'));
+    f.service.channelPage.mockImplementationOnce(() => { throw Object.assign(new Error('not_found'), { code: 'not_found' }); });
+    finishCancel({});
+    expect(await moving).toMatchObject({ code: 'not_found' });
+    expect(f.runtime.status('bot').status).toBe('connected');
+    f.updates.push([inbound('after-failure')]);
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledWith('bot', expect.anything()));
+  });
+
+  it('a failed move leaves an aborted in-flight reply explicitly retryable, never stuck or automatically resent', async () => {
+    const f = fixture();
+    f.updates.push([inbound()]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalled());
+    f.runtime.onTurnEvent({ type: 'yuri:contact-turn-start', properties: { assistantID: 'bot', turnID: 'live' } });
+    await vi.waitFor(() => expect(f.api.sendTyping).toHaveBeenCalled());
+    let finishCancel;
+    f.api.sendTyping.mockImplementationOnce(() => new Promise((resolve) => { finishCancel = resolve; }));
+    f.api.sendText.mockImplementationOnce((_binding, _delivery, signal) => abortable(signal));
+    f.reply('bot', 'possibly delivered');
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(1));
+    const revision = f.runtime.status('other-bot').transferSources[0].revision;
+    const moving = f.runtime.transfer('other-bot', { sourceAssistantID: 'bot', revision }).catch((error) => error);
+    await vi.waitFor(() => expect(finishCancel).toBeTypeOf('function'));
+    f.service.channelPage.mockImplementationOnce(() => { throw Object.assign(new Error('not_found'), { code: 'not_found' }); });
+    finishCancel({});
+    expect(await moving).toMatchObject({ code: 'not_found' });
+    expect(f.runtime.status('bot')).toEqual({ status: 'connected', error: 'delivery_unknown' });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(f.api.sendText).toHaveBeenCalledTimes(1);
+    f.runtime.retry('bot');
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
+  });
+
   it('non-text input gives a text-only reply without invoking bot tools', async () => {
     const f = fixture();
     f.updates.push([{ ...inbound(), item_list: [null, { type: 2, image_item: { media: {} } }] }]);
@@ -266,6 +405,35 @@ describe('Weixin Host runtime', () => {
 });
 
 describe('Weixin durable store', () => {
+  it('moves atomically, preserves credentials/cursor/receipt IDs, drops old work, and rolls back failed writes', () => {
+    const store = createWeixinStore(root());
+    closers.push(() => store.close());
+    const initial = { token: 'test-token', peer_id: 'owner', base_url: 'https://ilinkai.weixin.qq.com', language: 'en', generation: 0, ordinal: 0, updated_at: 1 };
+    const a = store.bind({ ...initial, assistant_id: 'a', account_id: 'account-a' });
+    store.accept(a, 'cursor', [{ id: 'done', text: 'old', context: 'ctx' }, { id: 'pending', text: 'pending' }]);
+    store.markInbox('done', 'admitted');
+    store.enqueue(a.epoch, 'old-delivery', 'old reply');
+    const move = { sourceAssistantID: 'a', expectedEpoch: a.epoch, assistantID: 'b', generation: 5, ordinal: 42, language: 'zh-CN', updatedAt: 2 };
+    expect(() => store.transfer({ ...move, ordinal: null })).toThrow();
+    expect(store.get('a').epoch).toBe(a.epoch);
+    expect(store.pending(a.epoch)).toHaveLength(1);
+    expect(store.nextDelivery(a.epoch).text).toBe('old reply');
+    const b = store.transfer(move);
+    expect(store.get('a')).toBeNull();
+    expect(b).toMatchObject({ ...initial, assistant_id: 'b', language: 'zh-CN', generation: 5, ordinal: 42, updated_at: 2, cursor: 'cursor', context_token: 'ctx' });
+    expect(b.epoch).not.toBe(a.epoch);
+    expect(store.nextDelivery(b.epoch)).toBeUndefined();
+    store.accept(b, 'next', [{ id: 'done', text: 'replay' }, { id: 'pending', text: 'replay' }, { id: 'fresh', text: 'new' }]);
+    expect(store.pending(b.epoch).map((row) => row.id)).toEqual(['fresh']);
+    store.accept(a, 'stale', [{ id: 'stale', text: 'stale' }]);
+    expect(store.get('b').cursor).toBe('next');
+    expect(() => store.transfer(move)).toThrow('binding_changed');
+    store.bind({ ...initial, assistant_id: 'c', account_id: 'account-c' });
+    expect(() => store.transfer({ ...move, sourceAssistantID: 'b', expectedEpoch: b.epoch, assistantID: 'c' })).toThrow('binding_changed');
+    expect(store.get('b').epoch).toBe(b.epoch);
+    expect(store.get('c').account_id).toBe('account-c');
+  });
+
   it('rolls back a conflicting rebind, persists cursor/receipt together, and fences old epochs', () => {
     const store = createWeixinStore(root());
     closers.push(() => store.close());

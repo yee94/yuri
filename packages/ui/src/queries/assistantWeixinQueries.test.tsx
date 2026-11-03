@@ -66,6 +66,31 @@ describe('assistant WeChat query boundary', () => {
     }
   });
 
+  it('only exposes validated source identity/name/revision, never source credentials', () => {
+    const result = parseAssistantWeixinStatus({ status: 'disconnected', transferSources: [{ assistantID: 'old', name: 'Old bot', revision: 'r1', token: 'private' }] });
+    expect(result.transferSources).toEqual([{ assistantID: 'old', name: 'Old bot', revision: 'r1' }]);
+    expect(() => parseAssistantWeixinStatus({ status: 'disconnected', transferSources: [{ assistantID: 'old' }] })).toThrow('invalid_response');
+  });
+
+  it('sends explicit move identity/revision and invalidates other bots on the same host only', async () => {
+    state.fetch.mockImplementation(async () => Response.json({ status: 'connected', error: null }));
+    let hooks: ReturnType<typeof useAssistantWeixin>;
+    function Consumer() { hooks = useAssistantWeixin('new'); return null; }
+    element = document.createElement('div'); document.body.append(element); root = createRoot(element);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><Consumer /></QueryClientProvider>));
+    const oldKey = assistantWeixinQueryOptions('old').queryKey;
+    const remoteKey = assistantWeixinQueryOptions('old', 'host-b').queryKey;
+    queryClient.setQueryData(oldKey, { status: 'connected', error: null });
+    queryClient.setQueryData(remoteKey, { status: 'connected', error: null });
+    await act(async () => { await hooks!.mutation.mutateAsync({ type: 'transfer', sourceAssistantID: 'old', revision: 'r1' }); });
+    const call = state.fetch.mock.calls.find(([path]) => path.endsWith('/transfer'))!;
+    expect(call[0]).toBe('/api/yuri/assistants/new/weixin/transfer');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toMatchObject({ sourceAssistantID: 'old', revision: 'r1' });
+    expect(queryClient.getQueryState(oldKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(remoteKey)?.isInvalidated).toBe(false);
+  });
+
   it('fences a mutation that finishes after switching runtimes', async () => {
     let finish: ((response: Response) => void) | undefined;
     state.fetch.mockImplementation(async (_path: string, init: RequestInit) => init?.method === 'POST'

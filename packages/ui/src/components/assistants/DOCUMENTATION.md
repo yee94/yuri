@@ -13,6 +13,15 @@ routes; standalone VS Code and older unsupported Hosts show an explicit unsuppor
 state. See the backend `assistants/weixin/DOCUMENTATION.md` for permissions and
 delivery semantics. No new App deeplink or native SDK integration is included.
 
+Unbound Bots also show local connection candidates by the current owner's name.
+Moving requires a separate confirmation that discloses discarded pending messages
+and unsent replies; it sends the selected source ID and binding revision, not a
+freshly inferred default. A changed revision disables the old confirmation and a
+runtime/Bot switch clears it. Success refreshes all mounted channel queries on the
+captured Host, so the old Bot cannot retain a cached connected state. Cross-app
+bindings cannot be moved with local credentials; the conflict copy asks users to
+unlink in the owning application before scanning again.
+
 ## Creation and session return
 
 Creating a Bot forwards the current UI locale to the Host. The Host stores its

@@ -61,6 +61,19 @@ export function createWeixinStore(directory) {
         .run({ ...value, epoch: randomUUID() });
       return get(value.assistant_id);
     }),
+    transfer: db.transaction(({ sourceAssistantID, expectedEpoch, assistantID, generation, ordinal, language, updatedAt }) => {
+      const source = get(sourceAssistantID);
+      if (!source || source.epoch !== expectedEpoch || source.status === 'expired' || get(assistantID)) {
+        const error = new Error('binding_changed'); error.code = 'binding_changed'; throw error;
+      }
+      const epoch = randomUUID();
+      // Keep receipt IDs across moves so a replay cannot execute tools in the new Bot.
+      db.prepare("UPDATE inbox SET epoch=?,state='done',text='' WHERE epoch=?").run(epoch, source.epoch);
+      db.prepare('DELETE FROM outbox WHERE epoch=?').run(source.epoch);
+      db.prepare(`UPDATE binding SET assistant_id=?,epoch=?,generation=?,ordinal=?,language=?,updated_at=?,status='connected',error=NULL WHERE epoch=?`)
+        .run(assistantID, epoch, generation, ordinal, language, updatedAt, source.epoch);
+      return get(assistantID);
+    }),
     accept: db.transaction((binding, cursor, messages) => {
       if (get(binding.assistant_id)?.epoch !== binding.epoch) return;
       for (const message of messages) {

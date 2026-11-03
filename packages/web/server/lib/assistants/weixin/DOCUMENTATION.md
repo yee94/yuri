@@ -47,6 +47,46 @@ revocation API, so this is not a promise to revoke the platform's authorization.
 Deleting a Bot also forgets its local connection. Failed revision-checked Bot
 deletion leaves the connection intact.
 
+### Moving a connection between Yuri Bots
+
+The current WeChat flow supports one Bot entry for a scanning WeChat user, not a
+new independent entry on every scan. Multiple stored bindings represent separate
+platform accounts, not evidence that one user can create multiple contacts. QR
+`binded_redirect` and confirmed-account conflicts never silently steal a binding.
+
+For an unbound target, authenticated status responses optionally list local
+`transferSources` containing only the source Bot ID, display name and binding
+revision (epoch). No platform account/user IDs, tokens or context tickets leave
+the Host. The settings row offers an explicit two-step confirmation, including
+the loss of unprocessed inbound messages and queued outgoing replies. No QR or
+platform reauthorization is required to move an existing local authorization.
+
+`POST /api/yuri/assistants/:assistantID/weixin/transfer` accepts `sourceAssistantID`,
+`revision` and UI `language`. The Host requires the current lease, a live source
+matching that exact epoch and an unbound target; it will not overwrite even an
+expired target binding. Source/target are locked while receiving and sending are
+aborted/drained, live typing is cancelled, and target QR attempts are invalidated.
+Both Bots and the source epoch are revalidated after the wait. Concurrent moves,
+disconnects and QR starts cannot race this boundary; stale confirmations return
+`binding_changed` (409). Shutdown waits for the move before releasing storage.
+
+One SQLite transaction moves credentials, paired owner, cursor and reply context,
+assigns a new epoch, sets the target's current transcript tip and drops the source
+outbox. Receipt IDs survive under the new epoch as done, with cleared text, so
+platform replays cannot re-execute tools after a move or restart. Pending messages
+are not reassigned to the new Bot. Histories stay with their original Bots; already
+admitted tasks continue there without further WeChat synchronization. Already
+submitted HTTP sends cannot be recalled. Failed validation or transaction writes
+leave source credentials, cursor and queues intact and resume its receiver (an
+interrupted in-flight send still has the normal uncertain-delivery semantics).
+
+The UI invalidates the current Host's channel queries after mutations, including
+the source and target, and rejects stale-runtime completions. Connection candidates
+are dynamic entity rows, not global Settings search entries. A connection owned by
+WorkBuddy or another Host cannot be imported: users must unlink in that application
+and authorize Yuri through the platform flow. Local disconnect alone does not
+promise to revoke a remote application's authorization.
+
 ## Delivery semantics
 
 Incoming receipt, reply context and platform cursor commit together before calling
@@ -136,7 +176,8 @@ unlimited proactive notifications or arbitrary rich-card support.
 
 Focused tests cover wire behavior, business errors, QR fencing, owner isolation,
 dedup, restart, conflicting bindings, process lease, shutdown, generation changes,
-unknown delivery, HTTP protection, typing cadence/cancellation/stale completions,
+unknown delivery, HTTP protection, confirmed moves, failed-write rollback,
+cursor/dedup preservation, concurrent/stale moves, typing cancellation/stale completions,
 and real contact-pipeline execution with a fake WeChat service. Real-account
 QR/verification, phone-visible delivery and typing presentation still require
 manual testing; mocks and builds are not evidence of platform acceptance.

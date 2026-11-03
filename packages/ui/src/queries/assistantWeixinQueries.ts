@@ -10,18 +10,31 @@ export type AssistantWeixinStatus = {
   error: string | null;
   qrCode?: string | null;
   expiresAt?: number;
+  transferSources?: { assistantID: string; name: string; revision: string }[];
 };
-type Action = { type: 'login' | 'disconnect' | 'retry' } | { type: 'verify'; code: string };
+type Action = { type: 'login' | 'disconnect' | 'retry' } | { type: 'verify'; code: string }
+  | { type: 'transfer'; sourceAssistantID: string; revision: string };
 
 export function parseAssistantWeixinStatus(value: unknown): AssistantWeixinStatus {
   if (!value || typeof value !== 'object' || !('status' in value)
     || !statuses.some((status) => status === value.status)) throw new Error('invalid_response');
   const data = value as Record<string, unknown>;
+  let transferSources: AssistantWeixinStatus['transferSources'];
+  if (data.transferSources !== undefined) {
+    if (!Array.isArray(data.transferSources) || data.transferSources.length > 100) throw new Error('invalid_response');
+    transferSources = data.transferSources.map((source: unknown) => {
+      if (!source || typeof source !== 'object' || !('assistantID' in source) || !('name' in source) || !('revision' in source)
+        || typeof source.assistantID !== 'string' || !source.assistantID || typeof source.name !== 'string'
+        || typeof source.revision !== 'string' || !source.revision) throw new Error('invalid_response');
+      return { assistantID: source.assistantID, name: source.name, revision: source.revision };
+    });
+  }
   return {
     status: data.status as AssistantWeixinStatus['status'],
     error: typeof data.error === 'string' ? data.error : null,
     ...(typeof data.qrCode === 'string' && data.qrCode.length <= 8192 ? { qrCode: data.qrCode } : {}),
     ...(typeof data.expiresAt === 'number' ? { expiresAt: data.expiresAt } : {}),
+    ...(transferSources ? { transferSources } : {}),
   };
 }
 const key = (assistantID: string, transport = getRuntimeTransportIdentity()) => [transport, 'assistants', 'weixin', assistantID] as const;
@@ -63,12 +76,13 @@ export function useAssistantWeixin(assistantID: string) {
     mutationKey: [...key(assistantID, transport), 'change'],
     gcTime: 0,
     mutationFn: async (action: Action) => {
-      await queryClient.cancelQueries({ queryKey: key(assistantID, transport), exact: true });
+      await queryClient.cancelQueries({ queryKey: [transport, 'assistants', 'weixin'] });
       assertCurrent();
       const result = await request(assistantID, action.type === 'disconnect' ? '' : `/${action.type}`, {
         method: action.type === 'disconnect' ? 'DELETE' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action.type === 'verify' ? { code: action.code } : { language: useI18nStore.getState().locale }),
+        body: JSON.stringify(action.type === 'verify' ? { code: action.code }
+          : { ...(action.type === 'transfer' ? { sourceAssistantID: action.sourceAssistantID, revision: action.revision } : {}), language: useI18nStore.getState().locale }),
       });
       assertCurrent();
       return result;
@@ -76,7 +90,7 @@ export function useAssistantWeixin(assistantID: string) {
     onSuccess: (result) => queryClient.setQueryData(key(assistantID, transport), result),
     onSettled: () => {
       if (transport === getRuntimeTransportIdentity() && generation === getRuntimeGeneration()) {
-        void queryClient.invalidateQueries({ queryKey: key(assistantID, transport), exact: true });
+        void queryClient.invalidateQueries({ queryKey: [transport, 'assistants', 'weixin'] });
       }
     },
   });
