@@ -168,6 +168,7 @@ export function createAssistantChannelsRuntime({
   env = process.env,
   clock = Date.now,
   intervalMs = 2000,
+  discoveryTimeoutMs = 90_000,
 } = {}) {
   const configured = String(env.YURI_CHANNELS_ENABLED ?? '').trim().toLowerCase();
   const development = env.NODE_ENV === 'development'
@@ -191,7 +192,7 @@ export function createAssistantChannelsRuntime({
           hasSecret: false, transport: 'websocket',
         };
       },
-      save: disabled, retry: disabled, disconnect: disabled, transfer: disabled,
+      save: disabled, retry: disabled, disconnect: disabled, transfer: disabled, discover: disabled,
       forget: async () => {}, onTurnEvent: () => {}, close: async () => {},
     };
   }
@@ -204,6 +205,8 @@ export function createAssistantChannelsRuntime({
   const operations = new Set();
   const recovered = new Set();
   const retiring = new Set();
+  const discoveries = new Map();
+  const pendingAccounts = new Set();
   const lifetime = new AbortController();
   let closed = false;
   let ownsLease = false;
@@ -570,6 +573,7 @@ export function createAssistantChannelsRuntime({
     try {
       ownsLease = store.acquire(owner, clock());
       if (!ownsLease) {
+        for (const entry of discoveries.values()) entry.controller.abort();
         for (const key of [...receivers.keys()]) stopReceiver(key);
         return;
       }
@@ -642,6 +646,77 @@ export function createAssistantChannelsRuntime({
     };
   };
 
+  // Discovery is an explicit, bounded credential probe, never a saved binding
+  // or a second message execution pipeline. The first private sender is shown
+  // to the user for confirmation through the normal Save action.
+  const discover = async (assistantID, provider, input, { signal } = {}) => {
+    assertProvider(provider);
+    assertOwner();
+    const adapter = adapters[provider];
+    if (!adapter) throw new ChannelError('unsupported_provider');
+    service.channelPage(assistantID, { tipOnly: true });
+    const existing = store.get(assistantID, provider);
+    const field = exactField(input?.clientID, MAX_ACCOUNT_FIELD);
+    const secret = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
+    if (field.invalid || !field.value || secret.length > MAX_SECRET) throw new ChannelError('validation_error');
+    const clientID = field.value;
+    const accountKey = JSON.stringify([provider, clientID]);
+    const clientSecret = secret || (existing?.client_id === clientID ? existing.client_secret : '');
+    if (!clientSecret) throw new ChannelError('validation_error');
+    const key = channelKey(assistantID, provider);
+    if (retiring.has(key)) throw new ChannelError('channel_in_use');
+    if (store.listAll().some((row) => row.provider === provider && row.client_id === clientID && row.assistant_id !== assistantID)
+      || pendingAccounts.has(accountKey)) {
+      throw new ChannelError('account_in_use');
+    }
+    const controller = new AbortController();
+    const active = AbortSignal.any([controller.signal, lifetime.signal, AbortSignal.timeout(discoveryTimeoutMs), ...(signal ? [signal] : [])]);
+    const entry = { assistantID, provider, clientID, controller, done: null };
+    discoveries.set(key, entry);
+    pendingAccounts.add(accountKey);
+    retiring.add(key);
+    entry.done = (async () => {
+      let connection;
+      let onAbort;
+      try {
+        await Promise.allSettled([stopReceiver(key), bindingWork.get(key), inboundWork.get(key)]);
+        assertOwner();
+        service.channelPage(assistantID, { tipOnly: true });
+        if (active.aborted) throw new ChannelError('cancelled');
+        return await new Promise((resolve, reject) => {
+          const fail = (error) => reject(new ChannelError(safeError(error)));
+          onAbort = () => reject(new ChannelError(active.reason?.name === 'TimeoutError' ? 'discovery_timeout' : 'cancelled'));
+          active.addEventListener('abort', onAbort, { once: true });
+          connection = Promise.resolve().then(() => adapter.connect({
+            config: { clientID, clientSecret, ownerID: '' }, signal: active,
+            onReady: () => {},
+            onMessage: async (message) => {
+              if (active.aborted) return false;
+              try {
+                assertOwner();
+                service.channelPage(assistantID, { tipOnly: true });
+                const sender = exactField(message?.senderID, MAX_ACCOUNT_FIELD);
+                if (message?.chatType !== 'private' || sender.invalid || !sender.value) return false;
+                resolve({ ownerID: sender.value });
+                return true;
+              } catch (error) { fail(error); return false; }
+            },
+            onError: fail,
+          })).then(() => { if (!active.aborted) fail(new ChannelError('network_error')); }, fail);
+        });
+      } finally {
+        controller.abort();
+        if (onAbort) active.removeEventListener('abort', onAbort);
+        await connection;
+        discoveries.delete(key);
+        pendingAccounts.delete(accountKey);
+        retiring.delete(key);
+        if (!closed) void track(tick());
+      }
+    })();
+    return entry.done;
+  };
+
   const save = async (assistantID, provider, input) => {
     assertProvider(provider);
     assertOwner();
@@ -659,6 +734,7 @@ export function createAssistantChannelsRuntime({
     }
     const clientID = clientIDField.value;
     const ownerID = ownerIDField.value;
+    if (!ownerID) throw new ChannelError('owner_required');
     const accountChanged = Boolean(existing && existing.client_id !== clientID);
     // A new account must bring its own secret; never reuse a previous account's
     // credential after the client ID changes.
@@ -669,8 +745,11 @@ export function createAssistantChannelsRuntime({
     const expectedEpoch = existing?.epoch ?? null;
     const key = channelKey(assistantID, provider);
     if (retiring.has(key)) throw new ChannelError('channel_in_use');
+    const accountKey = JSON.stringify([provider, clientID]);
+    if (pendingAccounts.has(accountKey)) throw new ChannelError('account_in_use');
     const account = store.listAll().find((row) => row.provider === provider && row.client_id === clientID);
     if (account && account.assistant_id !== assistantID) throw new ChannelError('account_in_use');
+    pendingAccounts.add(accountKey);
     retiring.add(key);
     let bound = false;
     try {
@@ -704,6 +783,7 @@ export function createAssistantChannelsRuntime({
       bound = true;
     } finally {
       retiring.delete(key);
+      pendingAccounts.delete(accountKey);
       // Account conflict, a failed write or a stale binding must not strand the
       // previous receiver; resume it from its untouched row.
       if (!bound && !closed) void track(tick());
@@ -808,6 +888,9 @@ export function createAssistantChannelsRuntime({
     if (closed) return;
     if (!ownsLease) ownsLease = store.acquire(owner, clock());
     if (!ownsLease || !store.owns(owner, clock())) return;
+    const pendingDiscoveries = [...discoveries.values()].filter((entry) => entry.assistantID === assistantID);
+    for (const entry of pendingDiscoveries) entry.controller.abort();
+    await Promise.allSettled(pendingDiscoveries.map((entry) => entry.done));
     const rows = store.listByAssistant(assistantID);
     if (!rows.length) return;
     const keys = rows.map((row) => channelKey(assistantID, row.provider));
@@ -844,6 +927,7 @@ export function createAssistantChannelsRuntime({
 
   return {
     status,
+    discover: (assistantID, provider, input, options) => track(discover(assistantID, provider, input, options)),
     save: (assistantID, provider, input) => track(save(assistantID, provider, input)),
     transfer: (assistantID, provider, input) => track(transfer(assistantID, provider, input)),
     retry: (assistantID, provider) => track(retry(assistantID, provider)),

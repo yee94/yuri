@@ -23,7 +23,7 @@ const abortable = (signal) => new Promise((_, reject) => {
   signal.addEventListener('abort', () => reject(error), { once: true });
 });
 
-function fixture({ directory = root(), service: externalService, env = {}, intervalMs = 10, autoReady = true, includeDingtalk = false } = {}) {
+function fixture({ directory = root(), service: externalService, env = {}, intervalMs = 10, autoReady = true, includeDingtalk = false, discoveryTimeoutMs } = {}) {
   const pages = new Map();
   const seen = new Set();
   const service = externalService ?? {
@@ -59,11 +59,18 @@ function fixture({ directory = root(), service: externalService, env = {}, inter
     adapters: { wecom: adapter, feishu: adapter, ...(includeDingtalk ? { dingtalk: adapter } : {}) },
     env,
     intervalMs,
+    discoveryTimeoutMs,
   });
   closers.push(() => runtime.close());
   const save = (assistantID = 'bot', provider = 'wecom', input = {}) => runtime.save(assistantID, provider, {
     clientID: 'client', clientSecret: 'secret', ownerID: 'owner', language: 'zh-CN', ...input,
   });
+  const seedLegacyUnrestricted = () => {
+    const store = createAssistantChannelStore(directory);
+    try {
+      store.bind({ assistant_id: 'bot', provider: 'wecom', client_id: 'client', client_secret: 'secret', owner_id: '', language: 'zh-CN', generation: 0, ordinal: 0, updated_at: 1 });
+    } finally { store.close(); }
+  };
   const connected = async (assistantID = 'bot', provider = 'wecom') => {
     await vi.waitFor(
       () => expect(runtime.status(assistantID, provider).status).toBe('connected'),
@@ -75,13 +82,106 @@ function fixture({ directory = root(), service: externalService, env = {}, inter
     generation,
     messages: [{ ordinal, messageID: `reply-${ordinal}`, text, cards: [], status: 'complete' }],
   });
-  return { directory, runtime, service, adapter, connections, pages, save, connected, reply };
+  return { directory, runtime, service, adapter, connections, pages, save, connected, reply, seedLegacyUnrestricted };
 }
 
 describe('enterprise channel runtime', () => {
+  it.each(['wecom', 'feishu', 'dingtalk'])('discovers %s from a private message without saving credentials or executing tasks', async (provider) => {
+    const f = fixture({ includeDingtalk: true });
+    const probe = f.runtime.discover('bot', provider, { clientID: 'client', clientSecret: 'secret' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(1));
+    const connection = f.connections[0];
+    expect(f.runtime.status('bot', provider).configured).toBe(false);
+    expect(await connection.onMessage({ senderID: 'group-user', chatType: 'group' })).toBe(false);
+    expect(await connection.onMessage({ senderID: '', chatType: 'private' })).toBe(false);
+    expect(await connection.onMessage({ senderID: 'user_1', chatType: 'private', text: 'detect me' })).toBe(true);
+    await expect(probe).resolves.toEqual({ ownerID: 'user_1' });
+    expect(connection.signal.aborted).toBe(true);
+    expect(f.service.send).not.toHaveBeenCalled();
+    expect(f.runtime.status('bot', provider).configured).toBe(false);
+    await f.save('bot', provider, { ownerID: 'user_1' });
+    expect(f.runtime.status('bot', provider)).toMatchObject({ configured: true, ownerID: 'user_1' });
+  });
+
+  it('rejects empty owner IDs at the save boundary, including existing bindings', async () => {
+    const f = fixture();
+    await expect(f.save('bot', 'wecom', { ownerID: '' })).rejects.toMatchObject({ code: 'owner_required' });
+    await f.save();
+    await expect(f.save('bot', 'wecom', { ownerID: undefined })).rejects.toMatchObject({ code: 'owner_required' });
+    expect(f.runtime.status('bot', 'wecom').ownerID).toBe('owner');
+  });
+
+  it('cancels discovery and resumes the untouched saved connection, without reusing secrets across accounts', async () => {
+    const f = fixture();
+    await f.save();
+    const original = await f.connected();
+    const controller = new AbortController();
+    const probe = f.runtime.discover('bot', 'wecom', { clientID: 'client' }, { signal: controller.signal });
+    const result = expect(probe).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(2));
+    expect(original.signal.aborted).toBe(true);
+    expect(f.connections[1].config.clientSecret).toBe('secret');
+    controller.abort();
+    await result;
+    await vi.waitFor(() => expect(f.connections).toHaveLength(3));
+    expect(f.connections[2].signal.aborted).toBe(false);
+    expect(f.runtime.status('bot', 'wecom')).toMatchObject({ clientID: 'client', ownerID: 'owner', configured: true });
+    await expect(f.runtime.discover('bot', 'wecom', { clientID: 'new-account' })).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('expires a probe and cleans up its lane so it can be retried', async () => {
+    const f = fixture({ discoveryTimeoutMs: 50 });
+    await expect(f.runtime.discover('bot', 'wecom', { clientID: 'client', clientSecret: 'secret' })).rejects.toMatchObject({ code: 'discovery_timeout' });
+    expect(f.connections[0].signal.aborted).toBe(true);
+    expect(f.runtime.status('bot', 'wecom').configured).toBe(false);
+    await f.save();
+  });
+
+  it('fences competing discovery/save lanes and does not take an account from another Bot', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const input = { clientID: 'client', clientSecret: 'secret' };
+    const probe = f.runtime.discover('bot', 'wecom', input, { signal: controller.signal });
+    const result = expect(probe).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(1));
+    await expect(f.runtime.discover('other', 'wecom', input)).rejects.toMatchObject({ code: 'account_in_use' });
+    await expect(f.save('other')).rejects.toMatchObject({ code: 'account_in_use' });
+    await expect(f.save()).rejects.toMatchObject({ code: 'channel_in_use' });
+    controller.abort();
+    await result;
+    await f.save();
+    await expect(f.runtime.discover('other', 'wecom', input)).rejects.toMatchObject({ code: 'account_in_use' });
+  });
+
+  it('redacts discovery authentication failures and cancels an unsaved probe on shutdown', async () => {
+    const f = fixture();
+    const probe = f.runtime.discover('bot', 'wecom', { clientID: 'client', clientSecret: 'secret' });
+    const failed = expect(probe).rejects.toMatchObject({ code: 'auth_failed', message: 'auth_failed' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(1));
+    f.connections[0].onError(Object.assign(new Error('private upstream payload'), { code: 'auth_failed' }));
+    await failed;
+    const next = f.runtime.discover('bot', 'wecom', { clientID: 'client', clientSecret: 'secret' });
+    const cancelled = expect(next).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(2));
+    await f.runtime.close();
+    await cancelled;
+    expect(f.connections[1].signal.aborted).toBe(true);
+  });
+
+  it('cancels discovery when its Bot is forgotten, including probes with no saved binding', async () => {
+    const f = fixture();
+    const probe = f.runtime.discover('bot', 'wecom', { clientID: 'client', clientSecret: 'secret' });
+    const cancelled = expect(probe).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(1));
+    await f.runtime.forget('bot');
+    await cancelled;
+    expect(f.connections[0].signal.aborted).toBe(true);
+    expect(f.runtime.status('bot', 'wecom').configured).toBe(false);
+  });
+
   it('replies only on the originating channel and to its original sender; source-less output is pushed', async () => {
     const f = fixture();
-    await f.save('bot', 'wecom', { ownerID: '' });
+    f.seedLegacyUnrestricted();
     const wecom = await f.connected('bot', 'wecom');
     await f.save('bot', 'feishu');
     const feishu = await f.connected('bot', 'feishu');
@@ -182,9 +282,9 @@ describe('enterprise channel runtime', () => {
     expect(f.runtime.status('bot', 'wecom').configured).toBe(true);
   });
 
-  it('accepts platform-scoped private senders without an owner and derives reply targets from their identities', async () => {
+  it('preserves legacy unrestricted bindings until explicitly restricted by a save', async () => {
     const f = fixture();
-    await expect(f.save('bot', 'wecom', { ownerID: undefined })).resolves.toMatchObject({ ownerID: '' });
+    f.seedLegacyUnrestricted();
     const connection = await f.connected();
     f.reply('bot', 'no recipient yet', 1);
     await vi.waitFor(() => expect(f.service.channelPage).toHaveBeenCalled(), { interval: 10 });

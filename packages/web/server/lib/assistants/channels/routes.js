@@ -17,6 +17,8 @@ const SAFE_ERRORS = new Set([
   'cancelled',
   'binding_changed',
   'connection_replaced',
+  'owner_required',
+  'discovery_timeout',
 ]);
 
 const failureStatus = (code) => code === 'channel_disabled' ? 403
@@ -43,5 +45,15 @@ export function registerAssistantChannelRoutes(app, runtime) {
   app.put(root, (req, res) => respond(res, () => runtime.save(req.params.assistantID, req.params.provider, req.body)));
   app.post(`${root}/retry`, (req, res) => respond(res, () => runtime.retry(req.params.assistantID, req.params.provider)));
   app.post(`${root}/transfer`, (req, res) => respond(res, () => runtime.transfer(req.params.assistantID, req.params.provider, req.body)));
+  app.post(`${root}/discover`, (req, res) => {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    res.once('close', cancel);
+    respond(res, async () => {
+      try {
+        return await runtime.discover(req.params.assistantID, req.params.provider, req.body, { signal: controller.signal });
+      } finally { res.off('close', cancel); }
+    });
+  });
   app.delete(root, (req, res) => respond(res, () => runtime.disconnect(req.params.assistantID, req.params.provider)));
 }

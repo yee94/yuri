@@ -1,5 +1,14 @@
 # Assistant UI
 
+## Mobile settings save navigation
+
+After a successful Bot configuration write, `AssistantsSettingsPage` emits the
+localized saved notification and calls its optional `onSaved` owner callback.
+`MobileAssistantSettingsPage` uses the existing route Back action; the mobile
+Settings split editor returns to its Bot list through the existing stage/history
+handler. Failed writes and validation errors keep the draft/editor open without
+navigating. Desktop Settings does not pass this callback and stays in its editor.
+
 ## Desktop Mini Chat
 
 Direct-connected Electron surfaces expose Open in Mini Chat in each contact's
@@ -99,20 +108,30 @@ WeCom, Feishu and DingTalk share the platform channel contract in
 `/api/yuri/assistants/:assistantID/channels/:provider` (provider `wecom`,
 `feishu` or `dingtalk`). `GET` returns
 `{ provider, status, error, configured, clientID?, ownerID?, hasSecret, transport }`
-and never returns a secret. `PUT` saves `{ clientID, clientSecret?, ownerID?, language? }`
+and never returns a secret. `PUT` saves `{ clientID, clientSecret?, ownerID, language? }`
 and starts platform authentication. An omitted secret preserves the saved one only
 while `clientID` is unchanged; a first save or a changed client ID requires a new
 secret, so reusing the old account credential is impossible. `POST /retry` only
 reconnects, and `DELETE` disconnects and removes the configuration. `PUT`/`POST`/`DELETE`
-return the same snapshot shape (or `204` followed by a refetch). Saving never reports
+return the same snapshot shape (or `204` followed by a refetch), except discovery
+which returns `{ ownerID }`. Saving never reports
 `connected`: only an authenticated platform snapshot does. The channel uses the
 platform's native long-lived connection, not MCP streamable HTTP. The backend
 adapter is intentionally outside this UI contract.
 
-Each platform form requires one platform identifier and one secret. The optional
-`ownerID` narrows access to one private-chat sender (WeCom `userid`, Feishu `open_id`,
-DingTalk `senderStaffId`); leaving it blank relies on platform access controls.
-Its subtitle explains both modes, shared Bot context and how to obtain the correct
+Each platform form requires one platform identifier, one secret and a non-empty
+`ownerID` restricting access and proactive delivery to one private-chat sender
+(WeCom `userid`, Feishu `open_id`, DingTalk `senderStaffId`). If blank, Save stays
+disabled and the user can explicitly start automatic discovery after entering
+credentials, then send the robot a private message. `POST /discover` temporarily
+connects without saving credentials or executing the message, and fills the first
+private sender ID for user confirmation. It expires after 90 seconds; credential
+edits, manual owner edits, cancellation, dialog unmount and runtime switches abort
+the request. Late/aborted results never overwrite the form. The existing stored
+secret may be used only for the unchanged account. Successful configured Save
+shows a localized success notification and closes the dialog; failure leaves the
+form open. This means persisted configuration, not proof of platform connection.
+Its subtitle explains the restriction and how to obtain the correct
 ID, with a platform-specific official documentation link opened through the shared
 external URL helper. Group chats and multi-sender allowlists are unsupported. All
 channels on the same Bot share one conversation context.

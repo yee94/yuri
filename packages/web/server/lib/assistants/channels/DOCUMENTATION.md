@@ -67,6 +67,8 @@ createAssistantChannelsRuntime({
 
 - `status(assistantID, provider)` — sync read; validates the Bot first.
 - `save(assistantID, provider, input)` — save configuration and connect.
+- `discover(assistantID, provider, input, { signal })` — temporarily connect and
+  return the first private sender's `{ ownerID }`, without saving or running tools.
 - `transfer(assistantID, provider, input)` — explicitly move a local binding using
   `{ sourceAssistantID, revision }`, without returning or re-entering its secret.
 - `retry(assistantID, provider)` — explicit reconnect only.
@@ -83,15 +85,30 @@ createAssistantChannelsRuntime({
 | PUT | same | save + connect |
 | POST | same `/retry` | reconnect without resending unknown output |
 | POST | same `/transfer` | confirmed local rebind with source revision check |
+| POST | same `/discover` | bounded, abortable user-ID discovery before Save |
 | DELETE | same | disconnect |
 
-Save input is `{ clientID, clientSecret?, ownerID?, language? }`. An omitted or empty
-`ownerID` uses the platform's access scope without an additional Yuri sender filter;
-a non-empty value restricts the channel to that private sender. The first save
+Save input is `{ clientID, clientSecret?, ownerID, language? }`. A non-empty
+`ownerID` is required on every save (`owner_required` otherwise) and restricts the
+channel to that private sender. Existing unrestricted bindings remain readable and
+operational until explicitly updated; no silent owner selection/migration occurs.
+The first save
 requires `clientSecret`; an update with the same `clientID` and an empty or omitted
 secret keeps the stored one. A new `clientID` requires a new secret.
 Responses are `Cache-Control: no-store` and contain only safe error codes — no
 upstream bodies, secrets or routing targets.
+
+Discovery takes `{ clientID, clientSecret? }` and the same credential-preservation
+rules as Save. It returns only `{ ownerID }` after the first valid private message;
+groups and missing/oversized sender IDs do not qualify. The user confirms that ID
+through Save. The discovery message never enters the assistant execution pipeline.
+Credentials stay in the temporary connection, not SQLite or response DTOs.
+The request expires after 90 seconds (`discovery_timeout`), and HTTP disconnect,
+Bot deletion, lease loss and Host shutdown abort it. A discovery owns its lane and
+reserves its provider/account against concurrent saves or probes. It cannot take
+another Bot's bound account. An existing connection on this lane is drained first
+and resumed unchanged after discovery completes, fails or is cancelled. No other
+provider/account is stopped. Platform ACK/reconnect behavior remains adapter-owned.
 
 Status shape:
 

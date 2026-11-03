@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { toast } from 'sonner';
 
 const fixture = vi.hoisted(() => {
   const assistant = {
@@ -67,6 +68,7 @@ vi.mock('@/queries/assistantQueries', () => ({
 }));
 
 import { AssistantsSettingsPage, AssistantsSettingsSidebar } from './AssistantsSettingsPage';
+import { MobileAssistantSettingsPage } from '@/mobile/assistant/MobileAssistantSettingsPage';
 import { useAssistantUIStore } from '@/stores/useAssistantUIStore';
 import { normalizeModelIdentifier } from '@/lib/modelIdentifier';
 import { resolveAssistantAvatar } from '@/lib/assistant-avatar/recipe';
@@ -92,7 +94,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-const button = (label: string) => Array.from(host.querySelectorAll('button')).find((item) => item.textContent === label)!;
+const button = (label: string) => Array.from(host.querySelectorAll('button')).find((item) => item.textContent === label || item.getAttribute('aria-label') === label)!;
 
 test('the settings sidebar omits the introductory description and learn-more link', async () => {
   await act(async () => root.render(<AssistantsSettingsSidebar />));
@@ -131,6 +133,52 @@ test('route ID owns displayed and saved assistant while the Settings tab selecti
   expect(fixture.update).toHaveBeenCalledWith(fixture.assistant, expect.objectContaining({ name: 'Route assistant' }));
   expect(fixture.create).not.toHaveBeenCalled();
   expect(useAssistantUIStore.getState().settingsSelectedAssistantID).toBe('asst_settings_tab');
+});
+
+test('mobile Bot settings notify and return only after the save succeeds', async () => {
+  const onBack = vi.fn();
+  const success = vi.spyOn(toast, 'success').mockImplementation(() => {
+    expect(onBack).not.toHaveBeenCalled();
+    return 'saved-toast';
+  });
+  let finishSave!: (value: typeof fixture.assistant) => void;
+  fixture.update.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+  await act(async () => root.render(<MobileAssistantSettingsPage assistantID="asst_route" onBack={onBack} />));
+  await act(async () => button('assistants.settings.save').click());
+  expect(fixture.update).toHaveBeenCalledWith(fixture.assistant, expect.objectContaining({ name: 'Route assistant' }));
+  expect(success).not.toHaveBeenCalled();
+  expect(onBack).not.toHaveBeenCalled();
+  await act(async () => finishSave(fixture.assistant));
+  expect(success).toHaveBeenCalledWith('assistants.settings.toast.saved');
+  expect(onBack).toHaveBeenCalledOnce();
+  expect(useAssistantUIStore.getState().settingsSelectedAssistantID).toBe('asst_settings_tab');
+});
+
+test('mobile Bot settings preserve the editor on failure and return after a successful retry', async () => {
+  const onBack = vi.fn();
+  const success = vi.spyOn(toast, 'success').mockReturnValue('saved-toast');
+  const error = vi.spyOn(toast, 'error').mockReturnValue('failed-toast');
+  fixture.update.mockRejectedValueOnce(new Error('save failed'));
+  await act(async () => root.render(<MobileAssistantSettingsPage assistantID="asst_route" onBack={onBack} />));
+  await act(async () => button('assistants.settings.save').click());
+  expect(error).toHaveBeenCalledWith('assistants.settings.toast.saveFailed');
+  expect(success).not.toHaveBeenCalled();
+  expect(onBack).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLInputElement>('#assistant-name')?.value).toBe('Route assistant');
+  await act(async () => button('assistants.settings.save').click());
+  expect(success).toHaveBeenCalledWith('assistants.settings.toast.saved');
+  expect(onBack).toHaveBeenCalledOnce();
+});
+
+test('a late save does not navigate again after leaving mobile Bot settings', async () => {
+  const onBack = vi.fn();
+  let finishSave!: (value: typeof fixture.assistant) => void;
+  fixture.update.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+  await act(async () => root.render(<MobileAssistantSettingsPage assistantID="asst_route" onBack={onBack} />));
+  await act(async () => button('assistants.settings.save').click());
+  await act(async () => root.render(null));
+  await act(async () => finishSave(fixture.assistant));
+  expect(onBack).not.toHaveBeenCalled();
 });
 
 test('model and default prompt share the name card and no enable or manual share-default control remains', async () => {

@@ -53,6 +53,39 @@ const hookFor = async (provider: AssistantChannelProvider, assistantID = 'bot') 
 };
 
 describe('assistant platform channel query boundary', () => {
+  it('discovers through an abortable scoped POST without changing saved query data', async () => {
+    state.fetch.mockImplementation(async (path: string) => Response.json(path.endsWith('/discover') ? { ownerID: 'ou_user', ignored: 'private' } : state.response));
+    const hooks = await hookFor('feishu');
+    const controller = new AbortController();
+    let result;
+    await act(async () => { result = await hooks.discovery.mutateAsync({ clientID: 'app', clientSecret: 'secret', signal: controller.signal }); });
+    expect(result).toEqual({ ownerID: 'ou_user' });
+    const [path, init] = state.fetch.mock.calls.find(([path]) => path.endsWith('/discover'))!;
+    expect(path).toBe('/api/yuri/assistants/bot/channels/feishu/discover');
+    expect(init.signal).toBe(controller.signal);
+    expect(JSON.parse(init.body)).toEqual({ clientID: 'app', clientSecret: 'secret' });
+    expect(queryClient.getQueryData(assistantChannelQueryOptions('bot', 'feishu').queryKey)).toMatchObject({ configured: true });
+  });
+
+  it('rejects malformed, aborted and stale discovery responses', async () => {
+    state.fetch.mockImplementation(async (path: string) => Response.json(path.endsWith('/discover') ? { ownerID: '' } : state.response));
+    const hooks = await hookFor('feishu');
+    const controller = new AbortController();
+    await act(async () => {
+      await expect(hooks.discovery.mutateAsync({ clientID: 'app', signal: controller.signal })).rejects.toThrow('invalid_response');
+    });
+    state.fetch.mockImplementation(async () => { controller.abort(); return Response.json({ ownerID: 'stale' }); });
+    await act(async () => {
+      await expect(hooks.discovery.mutateAsync({ clientID: 'app', signal: controller.signal })).rejects.toThrow('cancelled');
+    });
+    state.transport = 'other-host';
+    state.fetch.mockClear();
+    await act(async () => {
+      await expect(hooks.discovery.mutateAsync({ clientID: 'app', signal: new AbortController().signal })).rejects.toThrow('runtime_stale');
+    });
+    expect(state.fetch.mock.calls.filter(([path]) => path.endsWith('/discover'))).toHaveLength(0);
+  });
+
   it('keys by host, Bot and provider, passes cancellation, and never exposes unlisted fields', async () => {
     const options = assistantChannelQueryOptions('bot', 'feishu');
     state.transport = 'host-b';

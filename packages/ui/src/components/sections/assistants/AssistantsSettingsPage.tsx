@@ -388,12 +388,13 @@ export const AssistantsSettingsSidebar: React.FC<{ onItemSelect?: () => void }> 
 
 interface AssistantsSettingsPageProps {
   onItemDeleted?: () => void;
+  onSaved?: () => void;
   saveActionContainer?: HTMLElement | null;
   /** Route-owned selection for a detail opened above an Assistant conversation. */
   assistantID?: string;
 }
 
-export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ onItemDeleted, assistantID, saveActionContainer }) => {
+export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ onItemDeleted, onSaved, assistantID, saveActionContainer }) => {
   const { t } = useI18n();
   const snapshotQuery = useAssistantSnapshotQuery();
   const capabilityQuery = useAssistantCapabilityQuery();
@@ -405,6 +406,8 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
   const requestCreate = useAssistantUIStore((state) => state.requestCreate);
   const [draft, setDraft] = React.useState<AssistantDraft>(emptyDraft);
   const [saving, setSaving] = React.useState(false);
+  const saveOwnerRevision = React.useRef(0);
+  React.useEffect(() => () => { saveOwnerRevision.current += 1; }, [selectedID]);
   const handledCreateRequestRef = React.useRef(0);
   const selected = snapshot?.assistants.find((assistant) => assistant.id === selectedID) ?? null;
   const selectedPresentation = selected ? getAssistantPresentation(selected.name) : null;
@@ -447,6 +450,7 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
       toast.error(t('assistants.settings.validation.required'));
       return;
     }
+    const ownerRevision = saveOwnerRevision.current;
     setSaving(true);
     try {
       const result = selected
@@ -454,6 +458,7 @@ export const AssistantsSettingsPage: React.FC<AssistantsSettingsPageProps> = ({ 
         : await createAssistant(draft);
       if (assistantID === undefined) selectSettingsAssistant(result.id);
       toast.success(t('assistants.settings.toast.saved'));
+      if (saveOwnerRevision.current === ownerRevision) onSaved?.();
     } catch {
       toast.error(t('assistants.settings.toast.saveFailed'));
     } finally {

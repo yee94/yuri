@@ -20,6 +20,7 @@ describe('authenticated enterprise channel routes', () => {
     await request(app).put(root).send({}).expect(403, { error: 'channel_disabled' });
     await request(app).post(`${root}/retry`).send({}).expect(403, { error: 'channel_disabled' });
     await request(app).post(`${root}/transfer`).send({}).expect(403, { error: 'channel_disabled' });
+    await request(app).post(`${root}/discover`).send({}).expect(403, { error: 'channel_disabled' });
     await request(app).delete(root).expect(403, { error: 'channel_disabled' });
     await runtime.close();
   });
@@ -41,6 +42,7 @@ describe('authenticated enterprise channel routes', () => {
       })),
       retry: vi.fn(async () => ({ provider: 'feishu', status: 'reconnecting', error: null })),
       transfer: vi.fn(async () => ({ provider: 'feishu', status: 'connecting', error: null })),
+      discover: vi.fn(async () => ({ ownerID: 'ou_user' })),
       disconnect: vi.fn(async () => ({ provider: 'feishu', status: 'disconnected', error: null })),
     };
     registerAssistantChannelRoutes(app, runtime);
@@ -61,6 +63,11 @@ describe('authenticated enterprise channel routes', () => {
     await request(app).post(`${root}/transfer`).auth('test-owner', { type: 'bearer' })
       .send({ sourceAssistantID: 'old', revision: 'r1' }).expect(200);
     expect(runtime.transfer).toHaveBeenCalledWith('bot', 'feishu', { sourceAssistantID: 'old', revision: 'r1' });
+    await request(app).post(`${root}/discover`).send({ clientID: 'client' }).expect(401);
+    expect(runtime.discover).not.toHaveBeenCalled();
+    await request(app).post(`${root}/discover`).auth('test-owner', { type: 'bearer' })
+      .send({ clientID: 'client', clientSecret: 'secret' }).expect('Cache-Control', 'no-store').expect(200, { ownerID: 'ou_user' });
+    expect(runtime.discover).toHaveBeenCalledWith('bot', 'feishu', { clientID: 'client', clientSecret: 'secret' }, { signal: expect.any(AbortSignal) });
     await request(app).delete(root).auth('test-owner', { type: 'bearer' }).expect(200);
     expect(runtime.disconnect).toHaveBeenCalledWith('bot', 'feishu');
   });
@@ -101,5 +108,32 @@ describe('authenticated enterprise channel routes', () => {
     const root = '/api/yuri/assistants/bot/channels/wecom';
     await request(app).put(root).send({}).expect(409, { error: 'connection_replaced' });
     await request(app).post(`${root}/retry`).expect(409, { error: 'binding_changed' });
+  });
+
+  it('aborts discovery when the HTTP caller closes the request', async () => {
+    const app = express();
+    app.use(express.json());
+    let signal;
+    registerAssistantChannelRoutes(app, {
+      discover: async (_assistantID, _provider, _body, options) => {
+        signal = options.signal;
+        return new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }));
+      },
+    });
+    const server = app.listen(0, '127.0.0.1');
+    try {
+      await new Promise((resolve) => server.once('listening', resolve));
+      const controller = new AbortController();
+      const pending = fetch(`http://127.0.0.1:${server.address().port}/api/yuri/assistants/bot/channels/wecom/discover`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: controller.signal,
+      }).catch(() => {});
+      await vi.waitFor(() => expect(signal).toBeDefined());
+      controller.abort();
+      await pending;
+      await vi.waitFor(() => expect(signal.aborted).toBe(true));
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

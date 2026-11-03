@@ -145,6 +145,23 @@ export function useAssistantChannel(assistantID: string, provider: AssistantChan
   const assertCurrent = () => {
     if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration()) throw new Error('runtime_stale');
   };
+  const discovery = useMutation({
+    mutationKey: [...key(assistantID, provider, transport), 'discover'],
+    gcTime: 0,
+    mutationFn: async ({ signal, ...input }: { clientID: string; clientSecret?: string; signal: AbortSignal }) => {
+      assertCurrent();
+      const response = await runtimeFetch(
+        `/api/yuri/assistants/${encodeURIComponent(assistantID)}/channels/${provider}/discover`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal },
+      );
+      const body: unknown = await response.json();
+      assertCurrent();
+      if (signal.aborted) throw new Error('cancelled');
+      if (!response.ok) throw new Error(errorCode(body));
+      if (!isRecord(body) || typeof body.ownerID !== 'string' || !body.ownerID.trim() || body.ownerID.length > 512) throw new Error('invalid_response');
+      return { ownerID: body.ownerID };
+    },
+  });
   const mutation = useMutation({
     mutationKey: [...key(assistantID, provider, transport), 'change'],
     gcTime: 0,
@@ -180,5 +197,5 @@ export function useAssistantChannel(assistantID: string, provider: AssistantChan
       }
     },
   });
-  return { query, mutation };
+  return { query, mutation, discovery };
 }

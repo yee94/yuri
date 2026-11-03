@@ -23,7 +23,7 @@ export function MobileAssistantSettingsPage({ assistantID, onBack }: {
       <div className="min-h-0 flex-1 overflow-hidden px-[var(--yuri-mobile-page-inline-inset)] pb-[var(--yuri-safe-area-bottom,env(safe-area-inset-bottom,0px))]">
         <MobileFloatingSurface className="yuri-mobile-settings-detail-card h-full">
           <ErrorBoundary>
-            <AssistantsSettingsPage key={assistantID} assistantID={assistantID} onItemDeleted={onBack} saveActionContainer={saveActionContainer} />
+            <AssistantsSettingsPage key={assistantID} assistantID={assistantID} onItemDeleted={onBack} onSaved={onBack} saveActionContainer={saveActionContainer} />
           </ErrorBoundary>
         </MobileFloatingSurface>
       </div>

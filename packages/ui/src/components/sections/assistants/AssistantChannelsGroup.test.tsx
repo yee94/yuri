@@ -19,6 +19,10 @@ const fixture = vi.hoisted(() => ({
   runtimeListeners: new Set<() => void>(),
   mutate: vi.fn(),
   channelMutate: vi.fn(),
+  discover: vi.fn(),
+  discoveryReset: vi.fn(),
+  discoveryPending: false,
+  toastSuccess: vi.fn(),
   refetch: vi.fn(),
   channelRefetch: vi.fn(),
   weixinMounts: 0,
@@ -27,6 +31,7 @@ const fixture = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+vi.mock('@/components/ui', () => ({ toast: { success: fixture.toastSuccess } }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeTransportIdentity: () => fixture.transport,
   getRuntimeGeneration: () => fixture.generation,
@@ -62,6 +67,7 @@ vi.mock('@/queries/assistantChannelQueries', () => ({
         refetch: fixture.channelRefetch,
       },
       mutation: { isPending: false, error: null, mutate: fixture.channelMutate },
+      discovery: { isPending: fixture.discoveryPending, error: null, mutate: fixture.discover, reset: fixture.discoveryReset },
     };
   },
 }));
@@ -77,6 +83,10 @@ afterEach(async () => {
   fixture.channel = { provider: 'wecom', status: 'disconnected', error: null, configured: false, hasSecret: false, transport: 'websocket' };
   fixture.mutate.mockClear();
   fixture.channelMutate.mockClear();
+  fixture.discover.mockClear();
+  fixture.discoveryReset.mockClear();
+  fixture.toastSuccess.mockClear();
+  fixture.discoveryPending = false;
   fixture.channelRefetch.mockClear();
   fixture.qr.mockClear();
   fixture.transport = 'host-a';
@@ -324,7 +334,7 @@ describe('per-Bot message channel settings', () => {
     expect(host.textContent).not.toContain('assistants.channels.actions.retry');
   });
 
-  it('allows an empty user ID and explains platform access with an official ID guide', async () => {
+  it.each(['wecom', 'feishu', 'dingtalk'] as const)('requires a user ID and auto-fills it after %s discovery before save', async (provider) => {
     fixture.channel = {
       provider: 'wecom',
       status: 'disconnected',
@@ -334,22 +344,98 @@ describe('per-Bot message channel settings', () => {
       transport: 'websocket',
     };
     await mount();
-    await act(async () => button('assistants.channels.wecom.title').click());
+    await act(async () => button(`assistants.channels.${provider}.title`).click());
     await act(async () => {
-      inputValue(field('assistants.channels.field.wecom.clientID')!, 'bot_1');
-      inputValue(field('assistants.channels.field.wecom.secret')!, 'secret_1');
+      inputValue(field(`assistants.channels.field.${provider}.clientID`)!, 'bot_1');
+      inputValue(field(`assistants.channels.field.${provider}.secret`)!, 'secret_1');
     });
-    expect(button('assistants.channels.actions.save').disabled).toBe(false);
-    expect(field('assistants.channels.field.wecom.ownerID')?.required).toBe(false);
+    expect(button('assistants.channels.actions.save').disabled).toBe(true);
+    expect(field(`assistants.channels.field.${provider}.ownerID`)?.required).toBe(true);
     expect(host.textContent).toContain('assistants.channels.field.ownerDescription');
-    expect(host.textContent).toContain('assistants.channels.field.wecom.ownerHelp');
-    expect(host.querySelector('a')?.href).toContain('github.com/WecomTeam/aibot-node-sdk');
+    expect(host.textContent).toContain(`assistants.channels.field.${provider}.ownerHelp`);
+    expect(host.querySelector('a')?.getAttribute('rel')).toBe('noopener noreferrer');
+    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    expect(fixture.channelMutate).not.toHaveBeenCalled();
+    await act(async () => button('assistants.channels.discovery.start').click());
+    expect(fixture.discover).toHaveBeenCalledWith({ clientID: 'bot_1', clientSecret: 'secret_1', signal: expect.any(AbortSignal) }, expect.anything());
+    const [input, callbacks] = fixture.discover.mock.calls[0]!;
+    expect(input.signal.aborted).toBe(false);
+    await act(async () => callbacks.onSuccess({ ownerID: 'user_1' }));
+    expect(field(`assistants.channels.field.${provider}.ownerID`)!.value).toBe('user_1');
+    expect(button('assistants.channels.actions.save').disabled).toBe(false);
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
     expect(fixture.channelMutate).toHaveBeenCalledWith({
-      type: 'save', clientID: 'bot_1', clientSecret: 'secret_1', ownerID: '',
+      type: 'save', clientID: 'bot_1', clientSecret: 'secret_1', ownerID: 'user_1',
     }, expect.anything());
-    await act(async () => inputValue(field('assistants.channels.field.wecom.ownerID')!, 'user_1'));
-    expect(button('assistants.channels.actions.save').disabled).toBe(false);
+    expect(dialog()).not.toBeNull();
+    expect(fixture.toastSuccess).not.toHaveBeenCalled();
+    await act(async () => fixture.channelMutate.mock.calls[0]![1].onSuccess({ configured: true }));
+    expect(dialog()).toBeNull();
+    expect(fixture.toastSuccess).toHaveBeenCalledWith('assistants.channels.saved');
+    expect(input.signal.aborted).toBe(true);
+  });
+
+  it('cancels discovery on credential edits and ignores late user IDs, then aborts on dialog close', async () => {
+    await mount();
+    await act(async () => button('assistants.channels.wecom.title').click());
+    await act(async () => {
+      inputValue(field('assistants.channels.field.wecom.clientID')!, 'client');
+      inputValue(field('assistants.channels.field.wecom.secret')!, 'secret');
+    });
+    await act(async () => button('assistants.channels.discovery.start').click());
+    const [input, callbacks] = fixture.discover.mock.calls[0]!;
+    await act(async () => inputValue(field('assistants.channels.field.wecom.secret')!, 'changed'));
+    expect(input.signal.aborted).toBe(true);
+    await act(async () => callbacks.onSuccess({ ownerID: 'stale-user' }));
+    expect(field('assistants.channels.field.wecom.ownerID')!.value).toBe('');
+    await act(async () => button('assistants.channels.discovery.start').click());
+    const [next] = fixture.discover.mock.calls[1]!;
+    await act(async () => button('settings.common.actions.cancel').click());
+    expect(next.signal.aborted).toBe(true);
+    expect(fixture.channelMutate).not.toHaveBeenCalled();
+  });
+
+  it('keeps Save disabled while waiting, supports cancellation, and does not close for an unconfigured save result', async () => {
+    await mount();
+    await act(async () => button('assistants.channels.wecom.title').click());
+    await act(async () => {
+      inputValue(field('assistants.channels.field.wecom.clientID')!, 'client');
+      inputValue(field('assistants.channels.field.wecom.secret')!, 'secret');
+    });
+    await act(async () => button('assistants.channels.discovery.start').click());
+    const [input] = fixture.discover.mock.calls[0]!;
+    fixture.discoveryPending = true;
+    await act(async () => root?.render(<AssistantChannelsGroup assistantID="bot" />));
+    expect(host.textContent).toContain('assistants.channels.discovery.waiting');
+    expect(button('assistants.channels.actions.save').disabled).toBe(true);
+    await act(async () => button('settings.common.actions.cancel').click());
+    expect(input.signal.aborted).toBe(true);
+    expect(fixture.discoveryReset).toHaveBeenCalled();
+    fixture.discoveryPending = false;
+    await act(async () => inputValue(field('assistants.channels.field.wecom.ownerID')!, 'manual-user'));
+    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => fixture.channelMutate.mock.calls[0]![1].onSuccess({ configured: false }));
+    expect(dialog()).not.toBeNull();
+    expect(fixture.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('aborts discovery on runtime generation change and ignores its late result', async () => {
+    await mount();
+    await act(async () => button('assistants.channels.wecom.title').click());
+    await act(async () => {
+      inputValue(field('assistants.channels.field.wecom.clientID')!, 'client');
+      inputValue(field('assistants.channels.field.wecom.secret')!, 'secret');
+    });
+    await act(async () => button('assistants.channels.discovery.start').click());
+    const [input, callbacks] = fixture.discover.mock.calls[0]!;
+    await act(async () => {
+      fixture.generation += 1;
+      for (const listener of fixture.runtimeListeners) listener();
+    });
+    expect(input.signal.aborted).toBe(true);
+    await act(async () => callbacks.onSuccess({ ownerID: 'stale-user' }));
+    expect(field('assistants.channels.field.wecom.ownerID')!.value).toBe('');
+    expect(button('assistants.channels.actions.save').disabled).toBe(true);
   });
 
   it('requires a new secret when the client ID changes instead of reusing the saved one', async () => {
@@ -371,6 +457,7 @@ describe('per-Bot message channel settings', () => {
     expect(host.textContent).not.toContain('assistants.channels.field.secretKeep');
     expect(button('assistants.channels.actions.save').disabled).toBe(true);
     await act(async () => inputValue(field('assistants.channels.field.dingtalk.secret')!, 'new-secret'));
+    await act(async () => inputValue(field('assistants.channels.field.dingtalk.ownerID')!, 'staff_1'));
     expect(button('assistants.channels.actions.save').disabled).toBe(false);
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
     expect(fixture.channelMutate).toHaveBeenCalledWith({
@@ -394,10 +481,10 @@ describe('per-Bot message channel settings', () => {
     expect(host.textContent).toContain(`assistants.channels.field.${provider}.ownerHelp`);
     expect(host.querySelector('a')?.href).toContain(url);
     const owner = field(`assistants.channels.field.${provider}.ownerID`)!;
-    expect(owner.required).toBe(false);
+    expect(owner.required).toBe(true);
     expect(document.getElementById(owner.getAttribute('aria-describedby')!)?.textContent)
       .toContain('assistants.channels.field.ownerDescription');
-    expect(button('assistants.channels.actions.save').disabled).toBe(false);
+    expect(button('assistants.channels.actions.save').disabled).toBe(true);
   });
 
   it('clears an unsaved secret as soon as the runtime changes, before any mutation', async () => {

@@ -2,6 +2,7 @@ import React from 'react';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toast } from '@/components/ui';
 import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import {
@@ -50,6 +51,7 @@ const channelErrorKey = (code: string | null): I18nKey => {
   if (code === 'connection_replaced') return 'assistants.channels.error.connectionReplaced';
   if (code === 'account_in_use' || code === 'already_bound') return 'assistants.channels.error.accountInUse';
   if (code === 'binding_changed') return 'assistants.weixin.error.bindingChanged';
+  if (code === 'discovery_timeout') return 'assistants.channels.discovery.timeout';
   return 'assistants.channels.error.generic';
 };
 
@@ -63,12 +65,13 @@ export function AssistantPlatformChannelPanel({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const { query, mutation } = useAssistantChannel(assistantID, provider);
+  const { query, mutation, discovery } = useAssistantChannel(assistantID, provider);
   const state = query.data;
   const [clientID, setClientID] = React.useState('');
   const [clientSecret, setClientSecret] = React.useState('');
   const [ownerID, setOwnerID] = React.useState('');
   const seeded = React.useRef(false);
+  const discoveryController = React.useRef<AbortController | null>(null);
   const [confirmingDisconnect, setConfirmingDisconnect] = React.useState(false);
   const [transferSource, setTransferSource] = React.useState<NonNullable<NonNullable<typeof state>['transferSources']>[number] | null>(null);
   const labels = fieldKeys[provider];
@@ -80,10 +83,14 @@ export function AssistantPlatformChannelPanel({
   );
 
   React.useEffect(() => {
+    discoveryController.current?.abort();
     setClientSecret('');
+    setOwnerID('');
     setConfirmingDisconnect(false);
     setTransferSource(null);
   }, [runtimeGeneration]);
+
+  React.useEffect(() => () => { discoveryController.current?.abort(); }, []);
 
   React.useEffect(() => {
     if (!state || seeded.current) return;
@@ -97,14 +104,35 @@ export function AssistantPlatformChannelPanel({
     if (!state || pending) return;
     const nextClientID = clientID.trim();
     const nextOwnerID = ownerID.trim();
-    if (!nextClientID) return;
-    if (!state.hasSecret && !clientSecret.trim()) return;
+    if (!nextClientID || !nextOwnerID || discovery.isPending) return;
+    if ((!state.hasSecret || nextClientID !== state.clientID) && !clientSecret.trim()) return;
     mutation.mutate({
       type: 'save',
       clientID: nextClientID,
       ownerID: nextOwnerID,
       ...(clientSecret ? { clientSecret } : {}),
-    }, { onSuccess: () => setClientSecret('') });
+    }, { onSuccess: (result) => {
+      if (!result?.configured) return;
+      setClientSecret('');
+      toast.success(t('assistants.channels.saved'));
+      onClose();
+    } });
+  };
+  const discover = () => {
+    discoveryController.current?.abort();
+    const controller = new AbortController();
+    discoveryController.current = controller;
+    discovery.mutate({ clientID: clientID.trim(), ...(clientSecret ? { clientSecret } : {}), signal: controller.signal }, {
+      onSuccess: (result) => {
+        if (controller.signal.aborted || discoveryController.current !== controller) return;
+        setOwnerID(result.ownerID);
+      },
+    });
+  };
+  const cancelDiscovery = () => {
+    discoveryController.current?.abort();
+    discoveryController.current = null;
+    discovery.reset();
   };
   const retry = () => mutation.mutate({ type: 'retry' });
   const disconnect = () => {
@@ -138,17 +166,16 @@ export function AssistantPlatformChannelPanel({
 
   const needsSecret = !state.hasSecret || clientID.trim() !== (state.clientID ?? '');
   const nextClientID = clientID.trim();
-  const canSave = Boolean(nextClientID && (!needsSecret || clientSecret.trim())) && !pending;
+  const canDiscover = Boolean(nextClientID && (!needsSecret || clientSecret.trim())) && !pending;
+  const canSave = canDiscover && Boolean(ownerID.trim()) && !discovery.isPending;
   const configured = state.configured;
   const sources = !configured ? (state.transferSources ?? []).filter((source) => !nextClientID || source.clientID === nextClientID) : [];
   const canRetry = configured && state.status !== 'connecting';
-  const errorKey = state.error
-    ? channelErrorKey(state.error)
-    : mutation.error?.message
-      ? channelErrorKey(mutation.error.message)
-      : query.isError
-        ? 'assistants.channels.error.generic' as I18nKey
-        : null;
+  const discoveryError = discovery.error?.name !== 'AbortError' && discovery.error?.message !== 'cancelled'
+    ? discovery.error?.message : undefined;
+  const code = discoveryError || mutation.error?.message || state.error;
+  const errorKey = code ? channelErrorKey(code)
+    : query.isError ? 'assistants.channels.error.generic' as I18nKey : null;
 
   return (
     <form className="yuri-settings-section-stack yuri-settings-channel-form" onSubmit={save}>
@@ -159,7 +186,7 @@ export function AssistantPlatformChannelPanel({
         >
           <Input
             value={clientID}
-            onChange={(event) => setClientID(event.target.value)}
+            onChange={(event) => { cancelDiscovery(); setClientID(event.target.value); setOwnerID(''); }}
             aria-label={t(labels.clientID)}
             autoComplete="off"
             maxLength={512}
@@ -174,7 +201,7 @@ export function AssistantPlatformChannelPanel({
           <Input
             type="password"
             value={clientSecret}
-            onChange={(event) => setClientSecret(event.target.value)}
+            onChange={(event) => { cancelDiscovery(); setClientSecret(event.target.value); }}
             aria-label={t(labels.secret)}
             autoComplete="new-password"
             maxLength={4096}
@@ -199,13 +226,24 @@ export function AssistantPlatformChannelPanel({
         >
           <Input
             value={ownerID}
-            onChange={(event) => setOwnerID(event.target.value)}
+            onChange={(event) => { cancelDiscovery(); setOwnerID(event.target.value); }}
             aria-label={t(labels.ownerID)}
             aria-describedby={`${assistantID}-${provider}-owner-help`}
             autoComplete="off"
             maxLength={512}
+            required
           />
         </SettingsRow>
+        {!ownerID.trim() ? <SettingsRow
+          className="yuri-settings-split-row-stacked"
+          description={t(discovery.isPending ? 'assistants.channels.discovery.waiting' : 'assistants.channels.discovery.hint')}
+        >
+          <Button size="sm" disabled={!canDiscover || discovery.isPending} aria-busy={discovery.isPending} onClick={discover}>
+            {discovery.isPending ? <Icon name="loader-4" className="size-4 animate-spin motion-reduce:animate-none" /> : null}
+            {t('assistants.channels.discovery.start')}
+          </Button>
+          {discovery.isPending ? <Button size="sm" variant="ghost" onClick={cancelDiscovery}>{t('settings.common.actions.cancel')}</Button> : null}
+        </SettingsRow> : null}
       </SettingsGroup>
 
       <SettingsGroup>
@@ -216,7 +254,7 @@ export function AssistantPlatformChannelPanel({
         >
           {transferSource?.assistantID === source.assistantID ? <>
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => setTransferSource(null)}>{t('settings.common.actions.cancel')}</Button>
-            <Button size="sm" disabled={pending || transferSource.revision !== source.revision} aria-busy={pending} onClick={() => {
+            <Button size="sm" disabled={pending || discovery.isPending || transferSource.revision !== source.revision} aria-busy={pending} onClick={() => {
               mutation.mutate({ type: 'transfer', sourceAssistantID: transferSource.assistantID, revision: transferSource.revision }, {
                 onSuccess: (result) => {
                   setTransferSource(null);
@@ -232,15 +270,15 @@ export function AssistantPlatformChannelPanel({
           description={errorKey && !(sources.length && errorKey === 'assistants.channels.error.accountInUse') ? t(errorKey) : undefined}
           className="yuri-settings-split-row-stacked"
         >
-          {canRetry ? <Button size="sm" variant="ghost" disabled={pending} onClick={retry}>{t('assistants.channels.actions.retry')}</Button> : null}
-          {configured && !confirmingDisconnect ? <Button size="sm" variant="ghost" disabled={pending} onClick={() => setConfirmingDisconnect(true)}>{t('assistants.channels.actions.disconnect')}</Button> : null}
+          {canRetry ? <Button size="sm" variant="ghost" disabled={pending || discovery.isPending} onClick={retry}>{t('assistants.channels.actions.retry')}</Button> : null}
+          {configured && !confirmingDisconnect ? <Button size="sm" variant="ghost" disabled={pending || discovery.isPending} onClick={() => setConfirmingDisconnect(true)}>{t('assistants.channels.actions.disconnect')}</Button> : null}
         </SettingsRow>
         {configured && confirmingDisconnect ? <SettingsRow
           className="yuri-settings-split-row-stacked"
           description={t('assistants.channels.disconnectWarning')}
         >
           <Button size="sm" variant="ghost" disabled={pending} onClick={() => setConfirmingDisconnect(false)}>{t('settings.common.actions.cancel')}</Button>
-          <Button size="sm" variant="destructive" disabled={pending} onClick={disconnect} aria-busy={pending}>
+          <Button size="sm" variant="destructive" disabled={pending || discovery.isPending} onClick={disconnect} aria-busy={pending}>
             {t('assistants.channels.actions.confirmDisconnect')}
           </Button>
         </SettingsRow> : null}

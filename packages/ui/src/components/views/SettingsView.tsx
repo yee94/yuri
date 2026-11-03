@@ -1090,6 +1090,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           return (
             <AssistantsSettingsPage
               onItemDeleted={isMobile ? handleMobileSplitItemDeleted : undefined}
+              onSaved={isMobile ? handleMobileSplitItemDeleted : undefined}
               saveActionContainer={isMobile ? assistantSaveActionContainer : undefined}
             />
           );
