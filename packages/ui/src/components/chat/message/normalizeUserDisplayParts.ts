@@ -92,7 +92,7 @@ const shouldKeepSyntheticUserText = (text: string): boolean => {
     return false;
 };
 
-/** Server goal auto-continuation (session-goal runtime). Never show as a user bubble. */
+/** Legacy Yuri Goal continuation in persisted history. Never show as a user bubble. */
 const isSessionGoalContinuationText = (text: string): boolean => {
     const trimmed = text.trimStart();
     return trimmed.startsWith('Continue working toward the active session goal.');

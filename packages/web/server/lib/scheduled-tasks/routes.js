@@ -1,11 +1,6 @@
 import { OpenCode } from '@opencode/client';
 import { isConnectedModel, loadConnectedCatalog } from '../llm/catalog.js';
 import { SCHEDULE_CONFLICT_CODE, scheduledTaskWriteGuard } from '../projects/project-config.js';
-import {
-  getSessionGoalCapability,
-  isSessionGoalSupported,
-  sessionGoalUnavailableMessage,
-} from '../session-goal/capability.js';
 
 const asNonEmptyString = (value) => {
   if (typeof value !== 'string') {
@@ -13,22 +8,6 @@ const asNonEmptyString = (value) => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-};
-
-/** Reject create/edit that enables goal when Host goal state is unavailable. */
-const rejectUnsupportedGoalExecution = (taskInput) => {
-  if (taskInput?.execution?.goalEnabled !== true) {
-    return null;
-  }
-  if (isSessionGoalSupported()) {
-    return null;
-  }
-  const capability = getSessionGoalCapability();
-  return {
-    error: sessionGoalUnavailableMessage(capability),
-    reason: capability.reason,
-    capability,
-  };
 };
 
 const parseProjectID = (req) => asNonEmptyString(req?.params?.projectId);
@@ -279,11 +258,6 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
       const project = await findProjectByID(projectID);
       if (!project) {
         return res.status(404).json({ error: 'Project not found' });
-      }
-
-      const goalRefusal = rejectUnsupportedGoalExecution(taskInput);
-      if (goalRefusal) {
-        return res.status(501).json(goalRefusal);
       }
 
       const taskID = asNonEmptyString(taskInput.id);

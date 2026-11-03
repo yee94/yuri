@@ -17,7 +17,6 @@ import {
   STOPPED_SESSION_FALLBACK_BUBBLE,
   UPDATE_ASSISTANT_SETTINGS_TOOL_NAME,
   WATCH_SESSION_TOOL_NAME,
-  WATCHED_SESSION_FALLBACK_BUBBLE,
   contactTurnHasSuccessfulReset,
   createContactTools,
   detectRequestedContactTools,
@@ -50,6 +49,11 @@ describe('contact tool protocol', () => {
       .toEqual([{ name: 'bash', arguments: { command: 'pwd' }, id: 'call_bash' }]);
     expect(parseContactNativeToolCalls([nativeCall('grep', { pattern: 'x' })], ['read']).protocolError).toContain('"grep" is not an available tool');
     expect(detectRequestedContactTools('把定时任务里的模型换成新的', ['schedule_task', 'list_scheduled_tasks'])).toEqual(['list_scheduled_tasks']);
+    expect(detectRequestedContactTools('帮我看一下定时任务并列出来', ['schedule_task', 'list_scheduled_tasks'])).toEqual(['list_scheduled_tasks']);
+    expect(detectRequestedContactTools('发这个定时任务的卡片', ['schedule_task', 'list_scheduled_tasks', 'reference_resource'])).toEqual([]);
+    expect(detectRequestedContactTools('What is this scheduled task for?', ['schedule_task', 'list_scheduled_tasks'])).toEqual([]);
+    expect(detectRequestedContactTools('不要重新创建定时任务，只发已有卡片', ['schedule_task', 'list_scheduled_tasks', 'reference_resource'])).toEqual([]);
+    expect(detectRequestedContactTools('不要新建助理，只引用现有助理', ['create_assistant', 'reference_resource'])).toEqual([]);
   });
   it('shows current-instance models with ordered favorites and recents using exact ids', () => {
     const prompt = formatConnectedModelsPrompt([
@@ -269,11 +273,90 @@ describe('contact tool protocol', () => {
 });
 
 describe('createContactTools', () => {
+  it('publishes an existing resource only through an explicit acknowledged reference tool', async () => {
+    const card = { type: 'card', cardType: 'session', sessionID: 'ses_found', directory: '/repo', title: 'Found', status: 'complete', branch: null };
+    const resolveResource = vi.fn(async () => card);
+    const onCard = vi.fn(async (card) => card);
+    const tools = createContactTools({ resolveResource, onCard });
+    const reference = tools.find((tool) => tool.name === 'reference_resource');
+    expect(reference).toBeDefined();
+    const result = await reference.execute('ref', { cardType: 'session', sessionID: 'ses_found' });
+    expect(resolveResource).toHaveBeenCalledWith({ cardType: 'session', sessionID: 'ses_found' }, undefined);
+    expect(onCard).toHaveBeenCalledExactlyOnceWith(card);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ sent: true, card });
+    expect(result.details.card).toEqual(card);
+    expect(result.terminate).toBe(false);
+  });
+
+  it('accepts redundant session project context without using it as lookup authority', async () => {
+    const card = { type: 'card', cardType: 'session', sessionID: 'ses_existing', directory: '/repo', title: 'Actual', status: 'busy', branch: null };
+    const resolveResource = vi.fn(async () => card);
+    const onCard = vi.fn(async (value) => value);
+    const tool = createContactTools({ resolveResource, onCard }).find((item) => item.name === 'reference_resource');
+    const result = await tool.execute('ref', { cardType: 'session', sessionID: 'ses_existing', projectID: 'project' });
+    expect(result.details).toMatchObject({ sent: true, card });
+    expect(resolveResource).toHaveBeenCalledExactlyOnceWith({ cardType: 'session', sessionID: 'ses_existing' }, undefined);
+    expect(onCard).toHaveBeenCalledExactlyOnceWith(card);
+  });
+
+  it.each([
+    { projectID: '' }, { projectID: null }, { projectID: 42 }, { projectID: 'p'.repeat(257) },
+    { projectID: 'project', directory: '/forged' }, { projectID: 'project', assistantID: 'another' },
+  ])('rejects malformed or forged session context %j before lookup', async (extra) => {
+    const resolveResource = vi.fn();
+    const onCard = vi.fn();
+    const tool = createContactTools({ resolveResource, onCard }).find((item) => item.name === 'reference_resource');
+    expect(await tool.execute('ref', { cardType: 'session', sessionID: 'ses_existing', ...extra }))
+      .toMatchObject({ isError: true, details: { error: 'validation_error' } });
+    expect(resolveResource).not.toHaveBeenCalled();
+    expect(onCard).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge a failed reference publication or publish after cancellation', async () => {
+    const controller = new AbortController();
+    const onCard = vi.fn(async () => { throw new Error('storage failed'); });
+    const resolveResource = vi.fn(async () => ({ type: 'card', cardType: 'session', sessionID: 's', directory: '/repo' }));
+    const tool = createContactTools({ resolveResource, onCard }).find((item) => item.name === 'reference_resource');
+    expect(tool).toBeDefined();
+    const failed = await tool.execute('ref', { cardType: 'session', sessionID: 's' });
+    expect(failed.isError).toBe(true);
+    expect(failed.details.card).toBeUndefined();
+    expect(failed.content[0].text).not.toContain('"sent":true');
+    controller.abort();
+    await expect(tool.execute('late', { cardType: 'session', sessionID: 's' }, controller.signal)).rejects.toThrow();
+    expect(onCard).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a resource lookup that resolves after cancellation and rejects forged identities', async () => {
+    const controller = new AbortController();
+    const onCard = vi.fn();
+    const tool = createContactTools({
+      onCard,
+      resolveResource: async () => {
+        controller.abort();
+        return { type: 'card', cardType: 'session', sessionID: 's', directory: '/repo' };
+      },
+    }).find((item) => item.name === 'reference_resource');
+    await expect(tool.execute('late', { cardType: 'session', sessionID: 's' }, controller.signal)).rejects.toThrow();
+    const mismatch = createContactTools({ onCard, resolveResource: async () => ({ type: 'card', cardType: 'session', sessionID: 'another', directory: '/repo' }) })
+      .find((item) => item.name === 'reference_resource');
+    expect(await mismatch.execute('forged', { cardType: 'session', sessionID: 's' })).toMatchObject({ isError: true });
+    expect(onCard).not.toHaveBeenCalled();
+  });
+
+  it('never claims a card was sent without a publisher acknowledgement', async () => {
+    const tool = createContactTools({
+      resolveResource: async () => ({ type: 'card', cardType: 'session', sessionID: 's', directory: '/repo' }),
+      onCard: async () => undefined,
+    }).find((item) => item.name === 'reference_resource');
+    expect(await tool.execute('unconfirmed', { cardType: 'session', sessionID: 's' })).toMatchObject({ isError: true, details: { error: 'reference_failed' } });
+  });
+
   it.each([
     { kind: 'cron', cron: '0 9 1 * *', timezone: 'UTC' },
     { kind: 'once', date: '2026-12-01', time: '09:00', timezone: 'UTC' },
     { kind: 'weekly', times: ['09:00', '18:00'], weekdays: [1, 3, 5], timezone: 'UTC' },
-  ])('emits the complete $kind schedule for both creation and update', async (schedule) => {
+  ])('returns reference IDs without auto-publishing on $kind creation or update', async (schedule) => {
     const task = { id: 'task', name: 'Review', schedule, execution: { prompt: 'Review' } };
     const onCard = vi.fn();
     const tools = createContactTools({
@@ -286,12 +369,13 @@ describe('createContactTools', () => {
       ['update_scheduled_task', { taskID: 'task', projectID: 'project' }],
     ]) {
       const result = await tools.find((tool) => tool.name === name).execute('call', params);
-      expect(result.details.card).toMatchObject({ ...schedule, taskID: 'task', projectID: 'project' });
+      expect(result.details.card).toBeUndefined();
+      expect(JSON.parse(result.content[0].text).reference).toEqual({ cardType: 'schedule', taskID: 'task', projectID: 'project' });
     }
-    expect(onCard).toHaveBeenCalledTimes(2);
+    expect(onCard).not.toHaveBeenCalled();
   });
 
-  it('exposes create_assistant, schedule_task, and assign_session and returns success cards', async () => {
+  it('exposes resource operations and returns IDs without silently sending cards', async () => {
     const onCard = vi.fn();
     const clearContactMemory = vi.fn(async () => ({ reset: true, memoryCleared: true }));
     const resetContact = vi.fn(async () => ({ reset: true, historyCleared: true }));
@@ -330,6 +414,7 @@ describe('createContactTools', () => {
       onCard,
     });
     expect(tools.map((tool) => tool.name)).toEqual([
+      'reference_resource',
       'search_memory',
       'read_memory',
       NEW_CONVERSATION_TOOL_NAME,
@@ -406,14 +491,14 @@ describe('createContactTools', () => {
     }])).toBe(false);
 
     const created = await tools.find((tool) => tool.name === CREATE_ASSISTANT_TOOL_NAME).execute('call_1', { name: 'FlowQA', model: 'opencode-go/deepseek-v4-flash' });
-    expect(created.details.card).toMatchObject({
-      type: 'card',
-      cardType: 'assistant',
-      assistantID: 'asst_flow',
+    expect(created.details.assistant).toMatchObject({
+      id: 'asst_flow',
       name: 'FlowQA',
       providerID: 'opencode-go',
       modelID: 'deepseek-v4-flash',
     });
+    expect(JSON.parse(created.content[0].text).reference).toEqual({ cardType: 'assistant', assistantID: 'asst_flow' });
+    expect(created.details.card).toBeUndefined();
     expect(created.terminate).toBe(false);
 
     const scheduled = await tools.find((tool) => tool.name === SCHEDULE_TASK_TOOL_NAME).execute('call_2', {
@@ -422,9 +507,7 @@ describe('createContactTools', () => {
       time: '18:00',
       timezone: 'Asia/Shanghai',
     });
-    expect(scheduled.details.card).toMatchObject({
-      type: 'card',
-      cardType: 'schedule',
+    expect(scheduled.details.scheduled).toMatchObject({
       taskID: 'task_1',
       name: 'Daily ping',
       time: '18:00',
@@ -439,14 +522,12 @@ describe('createContactTools', () => {
     expect(messaged.details.toAssistantID).toBe('asst_peer');
 
     const assigned = await tools.find((tool) => tool.name === ASSIGN_SESSION_TOOL_NAME).execute('call_4', { prompt: 'Fix login' });
-    expect(assigned.details.card).toMatchObject({
-      type: 'card',
-      cardType: 'session',
+    expect(assigned.details.assigned).toMatchObject({
       sessionID: 'ses_1',
       title: 'Login',
     });
     expect(assigned.terminate).toBe(true);
-    expect(onCard).toHaveBeenCalledTimes(3);
+    expect(onCard).not.toHaveBeenCalled();
   });
 
   it.each(['assign_session', 'watch_session'])('%s forwards AbortSignal and drops a late card after cancellation', async (name) => {
@@ -483,7 +564,7 @@ describe('createContactTools', () => {
     expect(action).toHaveBeenCalledTimes(1);
   });
 
-  it('watch_session emits a baseline session card and stop_session returns true abort results', async () => {
+  it('watch_session returns its baseline without a card and stop_session returns true abort results', async () => {
     const onCard = vi.fn();
     const watchSession = vi.fn(async () => ({
       sessionID: 'ses_watch',
@@ -505,14 +586,13 @@ describe('createContactTools', () => {
     });
     expect(watchSession).toHaveBeenCalledWith({ sessionID: 'ses_watch' });
     expect(watched.terminate).toBe(true);
-    expect(watched.content[0].text).toBe(WATCHED_SESSION_FALLBACK_BUBBLE);
-    expect(watched.details.card).toMatchObject({
-      type: 'card',
-      cardType: 'session',
+    expect(JSON.parse(watched.content[0].text).reference).toEqual({ cardType: 'session', sessionID: 'ses_watch' });
+    expect(watched.details.card).toBeUndefined();
+    expect(watched.details.watched).toMatchObject({
       sessionID: 'ses_watch',
       status: 'complete',
     });
-    expect(onCard).toHaveBeenCalledTimes(1);
+    expect(onCard).not.toHaveBeenCalled();
 
     const stopped = await tools.find((tool) => tool.name === STOP_SESSION_TOOL_NAME).execute('call_s', {
       sessionID: 'ses_watch',

@@ -424,17 +424,6 @@ export const persistSettings = async (changes: Record<string, unknown>, ctx?: Br
     delete restChanges.questionAutoDelegateEnabled;
   }
 
-  if ('sessionGoalDefaultBudgetEnabled' in restChanges && typeof restChanges.sessionGoalDefaultBudgetEnabled !== 'boolean') {
-    delete restChanges.sessionGoalDefaultBudgetEnabled;
-  }
-
-  if ('sessionGoalDefaultBudget' in restChanges) {
-    const budget = restChanges.sessionGoalDefaultBudget;
-    if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) {
-      delete restChanges.sessionGoalDefaultBudget;
-    }
-  }
-
   if (typeof restChanges.usageAutoRefresh !== 'boolean') {
     delete restChanges.usageAutoRefresh;
   }

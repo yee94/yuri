@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { decodeDataUrlStrict } from '../fs/prompt-attachment-store.js';
 import { parseContactCard, parseContactPart, serializeContactPart } from './cards.js';
+import { isMessageChannelTurn } from './message-channel-origin.js';
 
 /** Keep in sync with CONTACT_ATTACHMENT_HISTORICAL_MAX_BYTES in contact-attachments.js */
 const FINGERPRINT_DATA_URL_MAX_BYTES = 56 * 1024 * 1024;
@@ -736,13 +737,18 @@ export function readContactChannelPage(db, assistantID, { afterOrdinal = 0, gene
   return db.transaction(() => {
     const tip = getContactReadTip(db, assistantID);
     const after = generation === null || generation === tip.generation ? afterOrdinal : 0;
-    const rows = tipOnly ? [] : db.prepare(`SELECT * FROM assistant_contact_message WHERE assistant_id=? AND ordinal>?
-      ORDER BY ordinal ASC LIMIT 50`).all(assistantID, after);
+    const rows = tipOnly ? [] : db.prepare(`SELECT message.*, source.message_id AS source_user_message_id
+      FROM assistant_contact_message message
+      LEFT JOIN assistant_contact_message source ON source.message_id=message.turn_id
+        AND source.assistant_id=message.assistant_id AND source.role='user'
+      WHERE message.assistant_id=? AND message.ordinal>?
+      ORDER BY message.ordinal ASC LIMIT 50`).all(assistantID, after);
     return {
       generation: tip.generation,
       tipOrdinal: tip.ordinal,
       ordinal: rows.at(-1)?.ordinal ?? after,
-      messages: rows.filter((row) => row.role === 'assistant').map((row) => hydrateMessage(db, row)),
+      messages: rows.filter((row) => row.role === 'assistant'
+        && (!row.source_user_message_id || isMessageChannelTurn(row.turn_id))).map((row) => hydrateMessage(db, row)),
     };
   })();
 }

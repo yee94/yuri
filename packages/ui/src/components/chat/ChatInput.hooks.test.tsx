@@ -16,6 +16,11 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import * as mobileNavigation from '@/mobile/useMobileNavigationStore';
 import { createChatInputControllerWiring } from './chatInputSurfaceWiring';
 import type { ChatInputSurface } from './chatInputSurface';
+import { serializeComposerDocument } from '@/composer/document';
+import { parseSlashCommandInvocation } from '@/composer/inline-visual';
+import { getLocalChatCommand, preservesComposerResources } from './localCommandClassifier';
+import { stripLeadingSlashCommandSlot } from './typedSlashChipPromotion';
+import { shouldRouteComposerThroughQueue, assistantQueueAdmissionAvailable } from './queueAdmission';
 
 vi.mock('@/sync/session-ui-store', async () => {
     const { create } = await import('zustand');
@@ -38,6 +43,7 @@ let dictationTailEffect = '';
 let primaryCatalog = '';
 let modelControls = '';
 let primaryCreate = '';
+let dismissQuestions = '';
 const visit = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node)) declarations.set(node.name.getText(ast), `const ${node.getText(ast)};`);
     if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEventListener'
@@ -56,9 +62,95 @@ const visit = (node: ts.Node) => {
     }
     if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === 'MemoModelControls'
         && node.getText(ast).includes('min-w-0 flex-1 justify-end')) modelControls = node.getText(ast);
+    if (ts.isIfStatement(node) && node.thenStatement.getText(ast).includes('const dismissedQuestions =')) dismissQuestions = node.getText(ast);
     ts.forEachChild(node, visit);
 };
 visit(ast);
+
+// Execute the production admission boundary, stopping before resource/selection work.
+function admissionHandler(name: string, stopBefore: string, scope: Record<string, unknown>) {
+    const declaration = declarations.get(name)!;
+    const start = declaration.indexOf('=> {') + '=> {'.length;
+    const body = declaration.slice(start, declaration.indexOf(stopBefore));
+    const compiled = ts.transpileModule(`const handler = async (options) => { ${body}\nreturn { admitted: true, delivery: typeof delivery === 'undefined' ? undefined : delivery, steerAfterAdmit: typeof steerAfterAdmit === 'undefined' ? false : steerAfterAdmit }; };`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText;
+    return new Function(...Object.keys(scope), `${compiled}\nreturn handler;`)(...Object.values(scope));
+}
+
+function goalAdmissionScope(text: string, options: { armed?: boolean; running?: boolean; queued?: boolean } = {}) {
+    const snapshot = { message: text, document: { text, references: [] }, hasContent: true };
+    return {
+        surface: { active: true, kind: 'primary', deliveryTarget: { kind: 'primary' } },
+        submissionBlocked: false, inputMode: 'normal', currentSessionId: 'session', currentDirectory: '/repo',
+        getCurrentInputSnapshot: () => snapshot, submitBtwCommand: () => false, composerMentions: [],
+        useSessionBtwStore: { getState: () => ({ ask: vi.fn() }) },
+        useSessionGoalArmStore: { getState: () => ({ armed: options.armed ?? false }) },
+        useSessionUIStore: { getState: () => ({ stagedMessageEdit: null }) },
+        claimedByEstablishingFollowUp: () => false, isSubmissionInFlight: () => false,
+        sessionIsRunning: options.running ?? true, hasQueuedMessages: options.queued ?? true,
+        sendableAttachedFiles: [], attachedFiles: [], hasDrafts: false, captureSubmission: () => ({}),
+        serializeComposerDocument, parseSlashCommandInvocation, getLocalChatCommand, preservesComposerResources,
+        stripLeadingSlashCommandSlot, shouldRouteComposerThroughQueue, assistantQueueAdmissionAvailable,
+        isCommandAllowedForSubmission: () => true, isChatInputCommandAllowed: () => true,
+        queueFrozen: false, serverQueue: { mode: 'server' },
+        queueMessageFromEvent: vi.fn(), queuedMessages: [], controllerWiring: null,
+        newSessionDraftOpen: false, resolvedDraftBusy: false, beginSubmissionFlight: vi.fn(() => true),
+        ascendingId: () => 'pending-message', setNativeQueueAdmission: vi.fn(), setSteeringMessageIDs: vi.fn(),
+        surfaceResources: { captureRuntime: () => ({}) },
+        toast: { error: vi.fn() }, t: (key: string) => key,
+    };
+}
+
+it.each(['/goal ship the fix', '/goal pause', '/GOAL resume', '/\u2003goal clear', 'Implement plan'])('Goal submit bypasses ordinary queue admission: %s', async (text) => {
+    for (const queued of [false, true]) {
+        for (const running of [false, true]) {
+            for (const options of [undefined, { delivery: 'queue' }, { delivery: 'steer' }, { steerAfterAdmit: true }]) {
+                const scope = goalAdmissionScope(text, { armed: text === 'Implement plan', queued, running });
+                const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+                const result = await submit(options);
+                expect(result).toEqual({
+                    admitted: true,
+                    delivery: running ? options?.steerAfterAdmit ? 'steer' : options?.delivery : undefined,
+                    steerAfterAdmit: false,
+                });
+                expect(scope.queueMessageFromEvent).not.toHaveBeenCalled();
+                expect(scope.setNativeQueueAdmission).not.toHaveBeenCalled();
+                expect(scope.setSteeringMessageIDs).not.toHaveBeenCalled();
+            }
+        }
+    }
+});
+
+it.each(['/goal ship the fix', '/goal pause', '/goal resume', '/goal clear', 'Implement plan'])('queue button routes Goal immediately to the native command path: %s', async (text) => {
+    const handleSubmit = vi.fn();
+    const scope = { ...goalAdmissionScope(text, { armed: text === 'Implement plan' }), handleSubmit };
+    const queue = admissionHandler('handleQueueMessage', "if (!beginSubmissionFlight('queue'))", scope);
+    await queue();
+    expect(handleSubmit).toHaveBeenCalledExactlyOnceWith({ delivery: 'queue' });
+    expect(scope.beginSubmissionFlight).not.toHaveBeenCalled();
+});
+
+it('ordinary running follow-ups still enter the existing queue', async () => {
+    const scope = goalAdmissionScope('An ordinary follow-up');
+    const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+    expect(await submit({ delivery: 'queue' })).toBeUndefined();
+    expect(scope.queueMessageFromEvent).toHaveBeenCalledOnce();
+    expect(scope.beginSubmissionFlight).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('Goal commands never dismiss a question or interrupt its work (Goal: %s)', async (nativeGoal) => {
+    const sessionActions = { dismissOpenQuestionsForSession: vi.fn(async () => true), abortCurrentOperation: vi.fn() };
+    const compiled = ts.transpileModule(`async function run() { ${dismissQuestions} }`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText;
+    const run = new Function('currentSessionId', 'queuedOnly', 'resourcePolicy', 'nativeGoal', 'delivery', 'sessionActions', `${compiled}\nreturn run;`)(
+        'session', false, false, nativeGoal, 'steer', sessionActions,
+    );
+    await run();
+    expect(sessionActions.dismissOpenQuestionsForSession).toHaveBeenCalledTimes(nativeGoal ? 0 : 1);
+    expect(sessionActions.abortCurrentOperation).toHaveBeenCalledTimes(nativeGoal ? 0 : 1);
+});
 
 function surface<Props extends object>(body: string, scope: Record<string, unknown>): React.ComponentType<Props> {
     const compiled = ts.transpileModule(`const Surface = (props) => { ${body} };`, {

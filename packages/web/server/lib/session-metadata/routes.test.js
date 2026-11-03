@@ -53,7 +53,7 @@ describe('registerSessionMetadataRoutes', () => {
       .send({ patch: { yuri: { goal: { status: 'active' } } }, directory: '/repo' })
       .expect(200);
     expect(second.body.metadata).toEqual({
-      yuri: { assist: { recap: 'a' }, goal: { status: 'active', executionGeneration: 0 } },
+      yuri: { assist: { recap: 'a' }, goal: { status: 'active' } },
     });
     await expect(store.get('ses_1')).resolves.toEqual(second.body.metadata);
     expect(broadcastGlobalUiEvent).toHaveBeenLastCalledWith({
@@ -76,7 +76,7 @@ describe('registerSessionMetadataRoutes', () => {
       directory: '/repo',
       metadata: {
         yuri: {
-          goal: { id: 'g1', status: 'active', objective: 'ship', executionGeneration: 0 },
+          goal: { id: 'g1', status: 'active', objective: 'ship' },
         },
       },
     });

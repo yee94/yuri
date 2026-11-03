@@ -11,7 +11,6 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     openCodeWatcherRuntime,
     sessionRuntime,
     sessionTitleRuntime,
-    sessionGoalRuntime,
     questionAutoDelegateRuntime,
     scheduledTasksRuntime,
     getHealthCheckInterval,
@@ -45,7 +44,6 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     openCodeWatcherRuntime.stop();
     sessionRuntime.dispose();
     sessionTitleRuntime?.stop?.();
-    sessionGoalRuntime?.stop?.();
     questionAutoDelegateRuntime?.dispose?.();
     // Stop timers/queue only. Keep the process-lifetime run history store open so
     // in-flight attach/finalize can still write, and so exitProcess:false restarts

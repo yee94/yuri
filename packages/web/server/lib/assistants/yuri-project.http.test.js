@@ -61,7 +61,7 @@ describe('HTTP → real contact Agent → project registry → worker admission'
       expect(createWorker).not.toHaveBeenCalled();
       expect(promptWorker).not.toHaveBeenCalled();
     } finally {
-      runtime.close(); server.closeAllConnections();
+      await runtime.close(); server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       external.complete = null; external.client = null;
       await fs.rm(directory, { recursive: true, force: true });
@@ -86,7 +86,7 @@ describe('HTTP → real contact Agent → project registry → worker admission'
       provider: { list: async () => ({ data: [{ id: 'p' }] }) },
       model: { list: async () => ({ data: [{ id: 'm', providerID: 'p' }] }) },
       skill: { list: async () => ({ data: [] }) },
-      session: { create: creates, prompt: prompts, active: async () => ({}) },
+      session: { create: creates, prompt: prompts, active: async () => ({}), get: async ({ sessionID }) => ({ id: sessionID, directory: canonical, title: 'Hello', status: { type: 'busy' } }) },
     };
     const roots = [];
     const refresh = async () => {
@@ -113,6 +113,12 @@ describe('HTTP → real contact Agent → project registry → worker admission'
         expect(body.messages.find((message) => message.name === 'register_project')?.content).toContain(canonical);
         return call('assign_session', { projectPath: canonical, prompt: 'hello' });
       }
+      if (round === 5) {
+        expect(body.tools.map((tool) => tool.function.name)).toEqual(['reference_resource']);
+        expect(body.messages.find((message) => message.name === 'assign_session')?.content).toContain('ses_hello');
+        return call('reference_resource', { cardType: 'session', sessionID: 'ses_hello' });
+      }
+      expect(body.messages.find((message) => message.name === 'reference_resource')?.content).toContain('sent');
       return { text: '已在这个项目里创建会话并发送 hello。' };
     };
     const app = express(); app.use(express.json());
@@ -164,7 +170,7 @@ describe('HTTP → real contact Agent → project registry → worker admission'
       expect(prompts.mock.calls.at(-1)[0]).toEqual({ sessionID: 'ses_hello', id: 'ordinary-session', text: 'ordinary hello', delivery: 'steer' });
       expect(round).toBe(modelRounds);
     } finally {
-      runtime.close(); server.closeAllConnections();
+      await runtime.close(); server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       external.complete = null; external.client = null;
       await fs.rm(directory, { recursive: true, force: true });

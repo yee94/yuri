@@ -1395,6 +1395,118 @@ button.yuri-mobile-worktree-label-trigger:active,
   background: transparent;
 }
 
+.yuri-mobile-schedule-assistant-anchor {
+  --yuri-schedule-assistant-size: var(--yuri-mobile-collapsing-action-size, 2.5rem);
+  --yuri-schedule-assistant-width: calc(11.25rem * var(--dpt-n, 1));
+  --yuri-schedule-assistant-travel: calc(var(--yuri-schedule-assistant-width) - var(--yuri-schedule-assistant-size));
+  position: relative;
+  display: block;
+  width: var(--yuri-schedule-assistant-size);
+  height: 0;
+  flex: none;
+}
+
+button.yuri-mobile-schedule-assistant {
+  position: absolute;
+  top: 0;
+  right: 0;
+  isolation: isolate;
+  width: var(--yuri-schedule-assistant-width);
+  height: var(--yuri-schedule-assistant-size);
+  padding: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: transparent;
+  transform: translateY(-50%);
+  clip-path: inset(0 0 0 var(--yuri-schedule-assistant-travel) round 999px);
+}
+
+button.yuri-mobile-schedule-assistant:hover,
+button.yuri-mobile-schedule-assistant:active {
+  background: transparent;
+}
+
+button.yuri-mobile-schedule-assistant::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-background) 90%, var(--surface-muted));
+  content: "";
+  opacity: 0;
+  transform: scaleX(0.222222);
+  transform-origin: right center;
+}
+
+.yuri-mobile-schedule-assistant-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateX(var(--yuri-schedule-assistant-travel));
+}
+
+.yuri-mobile-schedule-assistant-label {
+  position: absolute;
+  inset-block: 0;
+  right: 0.75rem;
+  left: calc(var(--yuri-schedule-assistant-size) + 0.5rem);
+  display: block;
+  overflow: hidden;
+  color: var(--surface-foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: var(--yuri-schedule-assistant-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  visibility: hidden;
+  opacity: 0;
+}
+
+.yuri-mobile-schedule-assistant[data-visiting="true"] {
+  animation: yuri-schedule-assistant-clip 7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.yuri-mobile-schedule-assistant[data-visiting="true"]::before {
+  animation: yuri-schedule-assistant-wrap 7s linear both;
+}
+
+.yuri-mobile-schedule-assistant[data-visiting="true"] .yuri-mobile-schedule-assistant-face {
+  animation: yuri-schedule-assistant-face 7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.yuri-mobile-schedule-assistant[data-visiting="true"] .yuri-mobile-schedule-assistant-label {
+  animation: yuri-schedule-assistant-copy 7s ease-out both;
+}
+
+@keyframes yuri-schedule-assistant-clip {
+  0%, 7.143%, 100% { clip-path: inset(0 0 0 var(--yuri-schedule-assistant-travel) round 999px); }
+  14.286%, 91.429% { clip-path: inset(0 round 999px); }
+}
+
+@keyframes yuri-schedule-assistant-face {
+  0%, 7.143%, 100% { transform: translateX(var(--yuri-schedule-assistant-travel)); }
+  14.286%, 91.429% { transform: translateX(0); }
+}
+
+@keyframes yuri-schedule-assistant-wrap {
+  0%, 7.143%, 100% { opacity: 0; transform: scaleX(0.222222); }
+  14.286%, 91.429% { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes yuri-schedule-assistant-copy {
+  0%, 14.286%, 91.429%, 100% { opacity: 0; visibility: hidden; }
+  17.143%, 88.571% { opacity: 1; visibility: visible; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-mobile-schedule-assistant[data-visiting="true"],
+  .yuri-mobile-schedule-assistant[data-visiting="true"]::before,
+  .yuri-mobile-schedule-assistant[data-visiting="true"] .yuri-mobile-schedule-assistant-face,
+  .yuri-mobile-schedule-assistant[data-visiting="true"] .yuri-mobile-schedule-assistant-label {
+    animation-timing-function: steps(1, end);
+  }
+}
+
 .yuri-mobile-scheduled-workspace [data-slot="input"]:not(:focus) {
   border-color: transparent;
   background: var(--yuri-mobile-field-background);
@@ -1484,7 +1596,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   max-height: var(--yuri-mobile-segmented-item-height) !important;
   flex: none;
   padding: 0 !important;
-  border-radius: var(--yuri-mobile-segmented-item-radius) !important;
+  border-radius: 999px !important;
+  corner-shape: round;
 }
 
 .yuri-mobile-segmented-item:hover {

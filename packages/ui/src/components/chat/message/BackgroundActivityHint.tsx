@@ -1,10 +1,10 @@
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
-import { useRunningDescendantCount } from '@/sync/sync-context';
+import { useBackgroundTaskCount } from '@/sync/sync-context';
 
 export const BackgroundActivityHint = React.memo(({ sessionId }: { sessionId: string }) => {
     const { t } = useI18n();
-    const count = useRunningDescendantCount(sessionId);
+    const count = useBackgroundTaskCount(sessionId);
     if (count === 0) return null;
     return (
         <span

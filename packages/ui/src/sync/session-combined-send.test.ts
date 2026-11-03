@@ -28,6 +28,7 @@ import { commandQueryOptions } from '@/queries/commandQueries'
 import { installedSkillsQueryOptions } from '@/queries/installedSkillsQueries'
 import { queryClient } from '@/lib/queryRuntime'
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch'
+import { useSessionGoalArmStore } from '@/stores/useSessionGoalArmStore'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,7 @@ async function flushNotifications() {
 }
 
 function resetAll() {
+  useSessionGoalArmStore.getState().setArmed(false)
   useSessionUIStore.setState({ currentSessionId: null, currentSessionDirectory: null, newSessionDraft: { open: false, draftID: null, directoryOverride: null, parentID: null, draftSubmitting: false }, availableWorktreesByProject: new Map(), webUICreatedSessions: new Set<string>(), retainedPendingUserMessages: new Map() })
   useInputStore.setState({ pendingInputText: null, pendingInputMode: 'replace', attachedFiles: [] })
   useConfigStore.setState({ isConnected: true, currentAgentName: undefined, currentProviderId: 'openai', currentModelId: 'gpt-4o', agents: [] } as any)
@@ -349,6 +351,63 @@ beforeEach(() => {
 })
 
 // ─── tests ──────────────────────────────────────────────────────────────────
+
+describe('native goal send', () => {
+  test('first native Goal creates a draft session, forwards attachments and leaves no retained authored row', async () => {
+    const selection = vi.spyOn(opencodeClient, 'applySendSelection').mockResolvedValue(undefined);
+    const command = vi.fn(async () => 'native-command');
+    const prompt = vi.fn(async () => 'unexpected-prompt');
+    opencodeClient.sendCommand = command;
+    opencodeClient.sendMessage = prompt;
+    useSessionUIStore.getState().openNewSessionDraft({ permissionAutoAcceptEnabled: true });
+    try {
+      await useSessionUIStore.getState().sendMessage('/goal verify attachment', 'openai', 'gpt-4o', undefined, [
+        { id: 'file_1', filename: 'note.txt', mimeType: 'text/plain', dataUrl: 'data:text/plain;base64,b2s=' } as any,
+      ]);
+      expect(command).toHaveBeenCalledWith(expect.objectContaining({
+        id: SESSION_ID, directory: PROJECT.path, command: 'goal', arguments: 'verify attachment',
+        files: [expect.objectContaining({ filename: 'note.txt' })],
+      }));
+      expect(prompt).not.toHaveBeenCalled();
+      expect(useSessionUIStore.getState().retainedPendingUserMessages.get(SESSION_ID)).toBeUndefined();
+    } finally { selection.mockRestore(); }
+  });
+
+  test.each(['ship the fix', 'pause', 'resume', 'clear'])('routes /goal %s directly without a duplicate prompt or optimistic user row', async (text) => {
+    const add = vi.fn(); setOptimisticRefs(add, vi.fn())
+    const selection = vi.spyOn(opencodeClient, 'applySendSelection').mockResolvedValue(undefined)
+    const command = vi.fn(async () => 'native-command')
+    const prompt = vi.fn(async () => 'unexpected-prompt')
+    opencodeClient.sendCommand = command
+    opencodeClient.sendMessage = prompt
+    try {
+      for (const delivery of [undefined, 'queue', 'steer'] as const) {
+        command.mockClear(); selection.mockClear()
+        await routeMessage({ sessionId: SESSION_ID, directory: PROJECT.path, content: `/goal ${text}`, providerID: 'openai', modelID: 'gpt-4o', delivery })
+        expect(command).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command: 'goal', arguments: text, directory: PROJECT.path, delivery }))
+        expect(prompt).not.toHaveBeenCalled()
+        expect(add).not.toHaveBeenCalled()
+        if (delivery === 'queue') expect(selection).not.toHaveBeenCalled()
+        else expect(selection).toHaveBeenCalledOnce()
+      }
+    } finally { selection.mockRestore() }
+  })
+
+  test('armed send uses native command and keeps the arm on rejection for a real retry', async () => {
+    const selection = vi.spyOn(opencodeClient, 'applySendSelection').mockResolvedValue(undefined)
+    const command = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('native-command')
+    opencodeClient.sendCommand = command
+    useSessionGoalArmStore.getState().setArmed(true, 'verify the entire plan')
+    const send = () => useSessionUIStore.getState().sendMessage('Implement plan', 'openai', 'gpt-4o', undefined, undefined, undefined, undefined, undefined, 'normal', { sessionId: SESSION_ID, directoryHint: PROJECT.path })
+    try {
+      await expect(send()).rejects.toThrow('offline')
+      expect(useSessionGoalArmStore.getState().armed).toBe(true)
+      await send()
+      expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'goal', arguments: 'verify the entire plan' }))
+      expect(useSessionGoalArmStore.getState().armed).toBe(false)
+    } finally { selection.mockRestore(); useSessionGoalArmStore.getState().setArmed(false) }
+  })
+})
 
 describe('handleCombinedDraftSend', () => {
 

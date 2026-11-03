@@ -395,6 +395,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.header.actions.scheduledTasks': 'スケジュールタスク',
   'sessions.scheduledTasks.dialog.title': 'スケジュールタスク',
   'sessions.scheduledTasks.dialog.actions.create': '作成',
+  'sessions.scheduledTasks.assistant.offer': '作成を手伝いましょうか？',
+  'sessions.scheduledTasks.assistant.openAria': '{name}との会話を開いてスケジュールを作成',
   'sessions.scheduledTasks.dialog.actions.moreAria': '{taskName} のその他の操作',
   'sessions.scheduledTasks.dialog.actions.delete': '削除',
   'sessions.scheduledTasks.dialog.actions.pause': '一時停止',

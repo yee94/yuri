@@ -16,7 +16,7 @@ describe('Phase 7 UI client cutover', () => {
       'web/src/api/files.ts',
       'web/server/lib/opencode/network-runtime.js',
       'web/server/lib/opencode/lifecycle.js',
-      'web/server/lib/session-goal/runtime.js',
+      'web/server/lib/opencode/native-goal.js',
       'vscode/src/extension.ts',
       'vscode/src/opencode-sidecar.ts',
     ];

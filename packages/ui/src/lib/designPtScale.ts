@@ -3,22 +3,22 @@ import '@/lib/brand-storage-bootstrap';
 export const DESIGN_PT_PER_INCH = 163;
 export const DESIGN_PT_SCALE_MIN = 0.85;
 export const DESIGN_PT_SCALE_MAX = 1.2;
-/** iOS --dpt. Confirmed readability lift from the previous 1.0. */
-export const IOS_DESIGN_PT_SCALE = 10 / 9;
+/** iOS --dpt. A 5% readability lift from the previous 10/9. */
+export const IOS_DESIGN_PT_SCALE = (10 / 9) * 1.05;
 /**
  * Previous Android ceiling. Typical xdpi/density math already lands at or
  * below this, so raising only the cap is a no-op — the result stays 0.9.
  */
 export const ANDROID_DESIGN_PT_PREVIOUS_CAP = 0.9;
 /**
- * Android --dpt ceiling. A small readability lift from 0.95 toward 1.
+ * Android --dpt ceiling. A 5% readability lift from the previous 0.98.
  * Applied as a multiply so phones already at ~0.9 actually move.
  */
-export const ANDROID_DESIGN_PT_SCALE_MAX = 0.98;
+export const ANDROID_DESIGN_PT_SCALE_MAX = 0.98 * 1.05;
 export const ANDROID_DESIGN_PT_READABILITY_BUMP =
   ANDROID_DESIGN_PT_SCALE_MAX / ANDROID_DESIGN_PT_PREVIOUS_CAP;
-/** v8 invalidates v7 (0.95 cap) so the 0.98 lift is not masked. */
-export const DESIGN_PT_STORAGE_KEY = 'yuri.designPtScale.v8';
+/** v9 invalidates v8 (0.98 cap) so the 5% lift is not masked. */
+export const DESIGN_PT_STORAGE_KEY = 'yuri.designPtScale.v9';
 
 export interface PhysicalScaleMetrics {
   xdpi: number;
@@ -33,7 +33,7 @@ export function clampDesignPtScale(value: number): number {
 
 /**
  * CSS px per physical inch is ppi/density in Android WebView (1 CSS px = 1 dp).
- * Scale so 1 design pt ≈ 1/163 inch, multiply by the 0.9→0.98 lift, then cap.
+ * Scale so 1 design pt ≈ 1/163 inch, multiply by the 0.9→1.029 lift, then cap.
  */
 export function computeDesignPtScale(metrics: PhysicalScaleMetrics | null | undefined): number {
   if (!metrics) return ANDROID_DESIGN_PT_SCALE_MAX;
@@ -51,6 +51,7 @@ export function readCachedDesignPtScale(): number {
     const capacitor = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor;
     const platform = capacitor?.getPlatform?.();
     if (platform === 'android') {
+      if (!Number.isFinite(raw) || raw <= 0) return ANDROID_DESIGN_PT_SCALE_MAX;
       return Math.min(ANDROID_DESIGN_PT_SCALE_MAX, clampDesignPtScale(raw));
     }
     if (platform === 'ios') {

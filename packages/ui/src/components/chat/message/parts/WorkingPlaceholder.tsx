@@ -1,7 +1,7 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { useI18n } from '@/lib/i18n';
-import { formatGoalDuration } from '@/lib/sessionGoalMetadata';
+import { formatDuration } from '@/lib/formatDuration';
 import { MorphOrb } from './MorphOrb';
 
 interface WorkingPlaceholderProps {
@@ -256,7 +256,7 @@ export function WorkingPlaceholder({
 
   const label = displayedText;
   const elapsed = typeof turnStartedAt === 'number' && isWorking
-    ? formatGoalDuration(Math.max(0, now - turnStartedAt))
+    ? formatDuration(Math.max(0, now - turnStartedAt))
     : null;
 
   return (

@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Changer d’espace de travail démarre une nouvelle session d’assistant.',
   'assistants.settings.scheduledTasks.title': 'Tâches planifiées',
   'assistants.settings.scheduledTasks.empty': 'Cet assistant n’a encore créé aucune tâche planifiée.',
-  'assistants.settings.scheduledTasks.loadError': 'La vérification des tâches planifiées est incomplète.',
   'assistants.settings.scheduledTasks.open': 'Ouvrir les tâches planifiées de {name}',
   'assistants.settings.save': 'Enregistrer l’assistant',
   'assistants.settings.empty': 'Créez votre premier assistant.',

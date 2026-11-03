@@ -9,6 +9,16 @@ Settings split editor returns to its Bot list through the existing stage/history
 handler. Failed writes and validation errors keep the draft/editor open without
 navigating. Desktop Settings does not pass this callback and stays in its editor.
 
+## Settings scheduled-task list
+
+Each available task is a normal-flow shared `Button` row containing its name,
+schedule and execution status. The row itself owns navigation and keyboard focus;
+no invisible button overlays its content. Unresolved associations and failed reads
+do not add a verification notice or retry row. Existing tasks stay visible after
+partial/refresh failures, and a failed read never becomes the successful empty
+state. With no available tasks after a failed read, the group is omitted. Query
+fallback and automatic refresh behavior remain unchanged across shared runtimes.
+
 ## Desktop Mini Chat
 
 Direct-connected Electron surfaces expose Open in Mini Chat in each contact's
@@ -184,6 +194,17 @@ bindings cannot be moved with local credentials; the conflict copy asks users to
 unlink in the owning application before scanning again.
 
 ## Creation and session return
+
+The phone Schedule root header offers a zero-height anchored Bot shortcut. It
+selects the pinned contact using the existing latest-pin/tie semantics, or the
+first contact in the authoritative snapshot catalog when none is pinned (not
+message-recency order or the previously selected contact). The existing snapshot
+Query supplies only ID, name and avatar seed; unknown/disabled/empty catalogs show
+no shortcut, while a failed refresh retains its known target. Clicking its face
+or copy calls the existing mobile `openAssistant` route, preserving Schedule as
+the Back destination. It opens no creation dialog and sends no automatic message.
+Inactive tabs, covered pages and an open task editor unmount the shortcut observer
+and live avatar. The saved avatar uses the existing motion/visibility runtime.
 
 Creating a Bot forwards the current UI locale to the Host. The Host stores its
 single welcome message in the contact transcript and returns its preview in the

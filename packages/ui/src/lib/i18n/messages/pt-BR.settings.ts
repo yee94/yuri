@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Alterar o espaço de trabalho inicia uma nova sessão do assistente.',
   'assistants.settings.scheduledTasks.title': 'Tarefas agendadas',
   'assistants.settings.scheduledTasks.empty': 'Este assistente ainda não criou nenhuma tarefa agendada.',
-  'assistants.settings.scheduledTasks.loadError': 'A verificação das tarefas agendadas está incompleta.',
   'assistants.settings.scheduledTasks.open': 'Abrir as tarefas agendadas de {name}',
   'assistants.settings.save': 'Salvar assistente',
   'assistants.settings.empty': 'Crie seu primeiro assistente.',

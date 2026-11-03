@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { createLarkChannel } from '@larksuite/channel';
 import { createAssistantChannelAdapters, createFeishuSdkAdapter, outboundUuid } from './sdk-adapters.js';
 
+describe('Feishu native image delivery', () => {
+  it('uploads multipart bytes and sends image_key with the same durable UUID', async () => {
+    const fetchImpl = vi.fn(async (url) => Response.json(String(url).includes('tenant_access_token')
+      ? { code: 0, tenant_access_token: 'token', expire: 7200 }
+      : String(url).endsWith('/images') ? { code: 0, data: { image_key: 'img_uploaded' } } : { code: 0 }));
+    const bridge = createFeishuSdkAdapter({ fetchImpl });
+    await bridge.send({ config: { clientID: 'app', clientSecret: 'secret', ownerID: 'owner' }, id: 'stable-image',
+      image: { buffer: Buffer.from('image'), mime: 'image/png', filename: 'image.png' } });
+    const form = fetchImpl.mock.calls[1][1].body;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get('image_type')).toBe('message');
+    expect(Buffer.from(await form.get('image').arrayBuffer())).toEqual(Buffer.from('image'));
+    expect(fetchImpl.mock.calls[1][1].headers['Content-Type']).toBeUndefined();
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ receive_id: 'owner', msg_type: 'image', content: JSON.stringify({ image_key: 'img_uploaded' }), uuid: 'stable-image' });
+  });
+});
+
 /**
  * Mimics the real `@larksuite/vercel-chat-adapter` lifecycle: it asks the
  * bridge for a channel through `channelFactory`, wires its own normalized

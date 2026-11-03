@@ -1,26 +1,29 @@
 ---
-title: Keep a session working toward an outcome
-description: Arm goal mode with /goal, send an objective, and control automatic continuation.
+title: Session goals
+description: Use OpenCode's native goals to keep a session working toward an outcome.
 ---
 
-# Keep a session working toward an outcome
+# Session goals
 
-A normal message asks for a turn. A goal gives the host an outcome to pursue across turns. Write down what would count as finished before enabling it.
+Yuri displays OpenCode's native Goal state. OpenCode owns the objective, review, continuation and limits; Yuri does not run a separate goal loop.
 
-## Arm, review, then send
+## Start a goal
 
-Use `/goal` in the project session composer. This arms goal mode; it does not submit the task. Any objective written after the command remains editable in the input. Review it and send the message to begin.
+Enter `/goal <objective>` in a project session, review the text, then send it. Selecting `/goal` from autocomplete only inserts the command. A bare `/goal` displays the current goal's reason; it does not arm a new goal.
 
-For example: “Find the failing parser case, fix it, and run the parser test file. Report the command and result.” Include the relevant constraints in the objective itself.
+Write a self-contained outcome with verification criteria, up to 4000 characters. For example: “Fix the failing parser case, run its tests, and report the command and result.” Plan and answer dialogs and [scheduled tasks](/scheduled-tasks/) can also run as a goal through the same native command.
 
-The goal chip appears only when armed or attached to a session. It is not an always-visible launch button. Goal UI depends on the Chat setting and is unavailable in VS Code.
+## Status and controls
 
-## Read the strip above the input
+The strip above the input shows the objective, native status and continuation count. Open its details to read OpenCode's reason. States are active, paused and complete. The Chat display setting affects visibility only; shared Goal UI is available in web, desktop, VS Code and mobile.
 
-The strip reports progress, status and token usage. **Evaluating** means the host is deciding whether another turn is needed. Use **Pause** to interrupt the loop, or **Resume** when a paused or blocked task is ready to continue. The chip's removal control clears goal mode or the attached goal.
+- `/goal pause` pauses automatic continuation; it does not interrupt work already running.
+- `/goal resume` resumes a paused goal.
+- `/goal clear` removes the goal without interrupting the current turn.
+- Use the session's Stop action to interrupt current work.
 
-If the session asks a question, answer it and check the goal status before resuming. Completion is still something to verify against the files and results.
+Yuri adds no Token budget, objective distillation or question-triggered pause. OpenCode determines when to continue or stop. Verify completion against the actual files and results.
 
-## Leave the host in charge
+## Execution ownership
 
-The loop runs on the host, so closing a browser tab does not itself stop it. Shutting down the host does. Limits and errors can stop automatic continuation before the objective is complete. For recurring execution, configure a [scheduled task](/scheduled-tasks/) rather than leaving a single goal to act as a timer.
+Closing a browser tab does not stop the OpenCode service. Keep that service available for execution. Old Yuri goals are not imported or resumed automatically; create a native goal to continue them. Use a scheduled task for recurring work, not a single goal as a timer.

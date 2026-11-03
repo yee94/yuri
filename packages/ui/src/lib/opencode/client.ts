@@ -1660,7 +1660,11 @@ class OpencodeService {
     files?: Array<FileInputLite>;
     messageId?: string;
     directory?: string | null;
+    delivery?: 'steer' | 'queue';
   }): Promise<string> {
+    const generation = getRuntimeGeneration();
+    const runtimeKey = getRuntimeKey();
+    const client = params.directory ? this.getScopedSdkClient(params.directory) : this.client;
     const tempMessageId = params.messageId ?? ascendingId("msg");
 
     const parts = params.arguments?.trim() || params.files?.length
@@ -1672,15 +1676,16 @@ class OpencodeService {
 
     // SessionCommandInput is { sessionID, name, text, files?, agents?, skills? }.
     // model/agent/command/arguments/id are not on the 2.0.12 surface; command() returns void.
-    void params.directory;
     void params.providerID;
     void params.modelID;
     void params.agent;
     void params.variant;
-    await this.client.session.command({
+    if (generation !== getRuntimeGeneration() || runtimeKey !== getRuntimeKey()) throw new Error('Runtime changed while preparing command');
+    await client.session.command({
       sessionID: params.id,
       name: params.command,
       text,
+      ...(params.delivery ? { delivery: params.delivery } : {}),
       ...(files.length > 0 ? { files } : {}),
     });
     return tempMessageId;

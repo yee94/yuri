@@ -2404,7 +2404,6 @@
   'assistants.settings.workspaceChangeHint': '切換工作區會開始新的助理工作階段。',
   'assistants.settings.scheduledTasks.title': '排程任務',
   'assistants.settings.scheduledTasks.empty': '此助理尚未建立排程任務。',
-  'assistants.settings.scheduledTasks.loadError': '排程任務資訊未能完整驗證。',
   'assistants.settings.scheduledTasks.open': '開啟 {name} 的排程任務',
   'assistants.settings.save': '儲存助理',
   'assistants.settings.empty': '建立你的第一個助理。',

@@ -7,7 +7,7 @@ During Yuri 2.x, the projection owner reads the prior product namespace only if 
 
 ## Why
 
-Session goal progress, Host archive stamps, titles, and other Host state under
+Host archive stamps, title authority, and other Host state under
 the `yuri` namespace travel with the OpenCode session. `session.update`
 (`PATCH /api/session/:id`, body `{ title?, metadata?, permissions? }`) replaces
 `metadata` wholesale. Archive is `metadata.yuri.archive.archivedAt` on
@@ -24,7 +24,7 @@ empty catalog: a failed read stays unwritable and does not clear other sessions.
 A session OpenCode still has is listed even when the side file has no row.
 One failed copy does not delete the other rows or the other OpenCode sessions.
 
-Fork-specific fields (`goal`, `assistant`, `scheduledTask`, `llm`, `smallModel`,
+Fork-specific fields (`assistant`, `scheduledTask`, `llm`, `smallModel`,
 and the rest of `yuri`) are merged onto the record. They are not dropped
 to match a narrower upstream metadata shape.
 
@@ -56,8 +56,8 @@ to match a narrower upstream metadata shape.
 - Writes are JSON Merge Patch (RFC 7386): nested objects merge key-by-key; `null` deletes a key.
 - Mutations are fully serialized (read-merge-write + persist) so concurrent writers cannot lose neighbors.
 - Committed `entries` update **only after** successful persist — concurrent readers never observe uncommitted drafts. Persist failure keeps the last committed snapshot and surfaces the error.
-- `mutateSessionMetadata(sessionID, decide)` runs `decide(committedMetadata)` on the same exclusive lock. Return `{ ok: false, reason? }` to reject without writing, or `{ ok: true, patch }` to merge-persist-publish. Session-goal uses this for generation/status preconditions.
-- Goal-shaped metadata PUT patches advance `yuri.goal.executionGeneration` via `withGoalExecutionGeneration` inside the mutate lock (pause/resume/condition changes).
+- `mutateSessionMetadata(sessionID, decide)` runs `decide(committedMetadata)` on the same exclusive lock. Return `{ ok: false, reason? }` to reject without writing, or `{ ok: true, patch }` to merge-persist-publish.
+- Goal state is owned by OpenCode's native `opencode.goal` plugin, not this store. Legacy `yuri.goal` values are inert; generic metadata writes no longer normalize or execute them.
 - A failed or **corrupt** file read is **not** empty success — the store stays unwritable, keeps the file, and throws; it does not overwrite unknown disk state with `{}`.
 - Entries are keyed by `sessionID` only (not directory). Runtime isolation is the Host data dir. Multiple Hosts sharing one data file are outside the current contract.
 - Generic metadata patches **cannot** wipe Host archive: `yuri.archive` is stripped from the patch and restored after merge (including null ancestor deletes). Archive writes use `setSessionMetadata(..., { allowArchive: true })`.
@@ -81,19 +81,16 @@ Wired from `packages/web/server/index.js` + `feature-routes-runtime.js`:
 3. global hub `projectOutboundSessionPayload` → live + replay session lifecycle authority
 4. session-index sync `projectSessions` + event-ingest `projectSession` / `onSessionDeleted`
 5. `createSessionArchiveService` after session index exists
-6. session-goal `readSessionMetadata` / `mutateSessionMetadata` / `persistSessionGoal`
-7. `registerSessionMetadataRoutes` (metadata + archive)
-8. assistants `archiveSessionHost` → shared Host archive, which write-throughs `metadata` onto the OpenCode session record without clearing `title`
-9. system session creators persist isolation through `persistSessionMetadata`
+6. `registerSessionMetadataRoutes` (metadata + archive)
+7. assistants `archiveSessionHost` → shared Host archive, which write-throughs `metadata` onto the OpenCode session record without clearing `title`
+8. system session creators persist isolation through `persistSessionMetadata`
    (`setSessionMetadata` + `yuri:session-metadata` broadcast) and then
    `onSystemSessionPersisted` (index upsert that removes the row). Wired from
    `index.js` into scheduled-task runtime, LLM attachment generate, and
    Assistant binding create. Create-time `metadata` is merged onto the session record; it is not a second authority.
 
-Capability is open (`supported: true`). Manual UI metadata writes, session-goal
-routes, and scheduled-task goal create all persist `yuri.goal` through
-this store. After first create/resume persist, the server notifies the goal
-runtime with a synthetic `session.updated` so the loop can arm.
+Goal creation and controls execute native `session.command({ name: 'goal', text })`.
+The Host has no goal routes, objective-file API, progress auditor or continuation scheduler.
 
 System ownership for sidebar / session-index / notifications is established when Host metadata
 carries a non-empty `yuri.assistant.assistantID` (unless

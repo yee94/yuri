@@ -191,6 +191,15 @@ test('URL-disabled hosts consume an exact task request on first mount', async ()
   expect(useUIStore.getState().scheduledTaskOpenRequest).toBeNull();
 });
 
+test('mobile Schedule uses the same circular inverse glass add action as Projects and Bots', async () => {
+  await render(<ScheduledTasksWorkspace presentation="mobile-tab" />);
+  const create = host.querySelector<HTMLButtonElement>('[aria-label="sessions.scheduledTasks.dialog.actions.create"]')!;
+  expect(create.classList.contains('yuri-mobile-floating-action')).toBe(true);
+  expect(create.classList.contains('yuri-mobile-inverse-action')).toBe(true);
+  expect(create.classList.contains('yuri-mobile-segmented-action')).toBe(true);
+  expect(create.classList.contains('size-10')).toBe(true);
+});
+
 test('late mobile layout detection transfers a deep-linked editor to the shared sheet', async () => {
   window.history.replaceState({}, '', path('project/a'));
   useUIStore.setState({ isMobile: false });

@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Changing workspace starts a new bot session.',
   'assistants.settings.scheduledTasks.title': 'Scheduled tasks',
   'assistants.settings.scheduledTasks.empty': 'This bot has not created any scheduled tasks yet.',
-  'assistants.settings.scheduledTasks.loadError': 'Scheduled task verification is incomplete.',
   'assistants.settings.scheduledTasks.open': 'Open scheduled tasks for {name}',
   'assistants.settings.save': 'Save bot',
   'assistants.settings.empty': 'Create your first bot.',

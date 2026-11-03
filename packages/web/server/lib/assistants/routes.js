@@ -1,7 +1,6 @@
 import { AssistantError, createAssistantsService } from './service.js';
 import { isSafeInlineImageMime } from './contact-attachments.js';
 import { createChatCompletion } from '../llm/completions.js';
-import { setAssignedSessionSettleHandler } from '../session-goal/runtime.js';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
 import path from 'node:path';
 import { createWeixinRuntime } from './weixin/runtime.js';
@@ -58,7 +57,6 @@ export const registerAssistantRoutes = (app, dependencies) => {
     onSystemSessionPersisted: dependencies.onSystemSessionPersisted,
     createChatCompletion: boundCompletion,
   });
-  setAssignedSessionSettleHandler(({ sessionId, status }) => service.reportAssignedSessionSettle(sessionId, status));
   const unsubscribeTaskResults = dependencies.setTaskResultHandler?.((run) => service.reportScheduledTaskResult(run));
   app.use('/api/yuri/assistants', (req, res, next) => Promise.resolve(dependencies.refreshAllowedRoots?.()).then(next).catch((error) => respond(res, () => { throw error; })));
   app.get('/api/yuri/assistants/capability', (_req, res) => respond(res, () => service.capability()));
@@ -141,7 +139,6 @@ export const registerAssistantRoutes = (app, dependencies) => {
   registerAssistantChannelRoutes(app, channels);
   return { service, close: async () => {
     unsubscribeTaskResults?.();
-    setAssignedSessionSettleHandler(null);
     await Promise.all([weixin.close(), channels.close()]);
     service.close();
   } };

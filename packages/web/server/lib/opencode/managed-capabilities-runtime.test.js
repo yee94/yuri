@@ -88,7 +88,7 @@ describe('scheduled_task plugin', () => {
     expect(runSchema.required).toEqual(['operation', 'taskId']);
     expect(plugin.tool.scheduled_task.args.request.properties.schedule.properties).toEqual(expect.objectContaining({ kind: expect.any(Object), time: expect.any(Object), times: expect.any(Object), weekdays: expect.any(Object), date: expect.any(Object), cron: expect.any(Object), timezone: expect.any(Object) }));
     expect(plugin.tool.scheduled_task.args.request.properties.schedule.properties.at).toBeUndefined();
-    expect(plugin.tool.scheduled_task.args.request.properties.execution).toMatchObject({ additionalProperties: false, properties: expect.objectContaining({ prompt: expect.any(Object), providerID: expect.any(Object), modelID: expect.any(Object), agent: expect.any(Object), variant: expect.any(Object), goalEnabled: expect.any(Object), goalTokenBudget: expect.any(Object) }) });
+    expect(plugin.tool.scheduled_task.args.request.properties.execution).toMatchObject({ additionalProperties: false, properties: expect.objectContaining({ prompt: expect.any(Object), providerID: expect.any(Object), modelID: expect.any(Object), agent: expect.any(Object), variant: expect.any(Object), goalEnabled: expect.any(Object) }) });
     const defaultConfig = {};
     await plugin.config(defaultConfig);
     expect(defaultConfig.permission).toEqual({ scheduled_task: 'ask' });

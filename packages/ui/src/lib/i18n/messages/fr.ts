@@ -176,6 +176,8 @@ export const dict = {
   'sessions.sidebar.header.actions.scheduledTasks': 'Tâches planifiées',
   'sessions.scheduledTasks.dialog.title': 'Tâches planifiées',
   'sessions.scheduledTasks.dialog.actions.create': 'Créer',
+  'sessions.scheduledTasks.assistant.offer': 'Je vous aide à la créer ?',
+  'sessions.scheduledTasks.assistant.openAria': 'Ouvrir une conversation avec {name} pour créer une tâche planifiée',
   'sessions.scheduledTasks.dialog.actions.moreAria': 'Plus d’actions pour {taskName}',
   'sessions.scheduledTasks.dialog.actions.delete': 'Supprimer',
   'sessions.scheduledTasks.dialog.actions.pause': 'Pause',

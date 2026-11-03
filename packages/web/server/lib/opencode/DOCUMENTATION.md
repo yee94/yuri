@@ -10,6 +10,10 @@ diagnostics use provider/location/session-active V2 routes and location query
 encoding, not removed V1 endpoints.
 
 ## Entrypoints and structure
+- `native-goal.js`: official `@opencode/schema/goal` RPC read adapter shared by
+  scheduled tasks, Assistant reconciliation and notification suppression. It
+  validates native state and distinguishes an absent plugin from transport/auth
+  failure. It owns no Goal persistence, auditing, objective files or continuation.
 - Pairing transport discovery includes the serving host's `serverName` (OS
   hostname), not the browser's machine name. The pairing form uses it as an
   editable default and preserves edits made while discovery is pending. The

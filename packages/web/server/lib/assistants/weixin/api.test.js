@@ -1,9 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createWeixinAPI, weixinOrigin } from './api.js';
+import { createDecipheriv, createHash } from 'node:crypto';
 
 const binding = { base_url: 'https://ilinkai.weixin.qq.com', token: 'test-token', peer_id: 'owner', cursor: 'cursor', context_token: 'context' };
 
 describe('Weixin wire transport', () => {
+  it('encrypts/uploads the image without bot credentials on CDN, then sends a native image with stable ID', async () => {
+    const buffer = Buffer.from('image bytes');
+    const fetchImpl = vi.fn(async (url) => String(url).includes('getuploadurl') ? Response.json({ ret: 0, upload_param: 'upload-capability' })
+      : String(url).includes('/c2c/upload') ? new Response(null, { headers: { 'x-encrypted-param': 'download-capability' } }) : Response.json({ ret: 0 }));
+    await createWeixinAPI({ fetchImpl }).sendImage(binding, { id: 'image-stable', image: { buffer } });
+    const uploadRequest = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(uploadRequest).toMatchObject({ media_type: 1, to_user_id: 'owner', rawsize: buffer.length, rawfilemd5: createHash('md5').update(buffer).digest('hex'), no_need_thumb: true });
+    const [cdnURL, cdn] = fetchImpl.mock.calls[1];
+    expect(new URL(cdnURL).searchParams.get('encrypted_query_param')).toBe('upload-capability');
+    expect(cdn.headers.Authorization).toBeUndefined();
+    expect(cdn.redirect).toBe('error');
+    const decrypt = createDecipheriv('aes-128-ecb', Buffer.from(uploadRequest.aeskey, 'hex'), null);
+    expect(Buffer.concat([decrypt.update(cdn.body), decrypt.final()])).toEqual(buffer);
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body).msg).toMatchObject({ client_id: 'image-stable', to_user_id: 'owner', context_token: 'context',
+      item_list: [{ type: 2, image_item: { media: { encrypt_query_param: 'download-capability', aes_key: Buffer.from(uploadRequest.aeskey).toString('base64'), encrypt_type: 1 }, mid_size: cdn.body.length } }] });
+  });
+
+  it('never sends an image after a rejected upload, unsafe CDN or stale generation', async () => {
+    for (const mode of ['unsafe', 'missing-header', 'stale']) {
+      const fetchImpl = vi.fn(async (url) => String(url).includes('getuploadurl')
+        ? Response.json(mode === 'unsafe' ? { upload_full_url: 'https://127.0.0.1/c2c/upload' } : { upload_param: 'opaque' })
+        : new Response(null, { headers: mode === 'stale' ? { 'x-encrypted-param': 'download' } : {} }));
+      await expect(createWeixinAPI({ fetchImpl }).sendImage(binding, { id: 'id', image: { buffer: Buffer.from('image') },
+        beforeSend: () => { throw new Error('cancelled'); } })).rejects.toThrow();
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('sendmessage'))).toBe(false);
+    }
+  });
   it('uses QR POST, app headers and private local-token hints without bot authorization', async () => {
     const fetchImpl = vi.fn(async () => Response.json({ qrcode: 'opaque', qrcode_img_content: 'https://example.com/qr' }));
     await createWeixinAPI({ fetchImpl }).getQRCode(undefined, ['existing']);

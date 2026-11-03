@@ -1,6 +1,6 @@
 export const CONTACT_CARD_TYPES = Object.freeze(['session', 'assistant', 'schedule']);
 const CARD_TYPES = new Set(CONTACT_CARD_TYPES);
-// Assign / create_assistant / schedule_task auto-insert these cards.
+// Assistant tools explicitly publish these cards through reference_resource.
 // project | worktree | watch MUST reuse this slot. Do not invent a second card system.
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

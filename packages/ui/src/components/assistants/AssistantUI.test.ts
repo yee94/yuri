@@ -158,7 +158,7 @@ describe('Assistant UI product contract', () => {
     expect(view).not.toContain('mobileSelectorOpen');
   });
 
-  test('lists the selected Assistant scheduled tasks with an explicit fallback and retry state', async () => {
+  test('lists the selected Assistant scheduled tasks with a fallback but no verification notice', async () => {
     const [settings, queries, english] = await Promise.all([
       read('../sections/assistants/AssistantsSettingsPage.tsx'),
       read('../../queries/assistantQueries.ts'),
@@ -172,7 +172,7 @@ describe('Assistant UI product contract', () => {
     expect(settings).toContain("card.cardType === 'schedule'");
     expect(settings).toContain('openScheduledTask(entry.projectId, entry.task.id)');
     expect(settings).toContain('scheduledTasksQuery.isError');
-    expect(settings).toContain("t('assistants.settings.scheduledTasks.loadError')");
+    expect(settings).not.toContain("t('assistants.settings.scheduledTasks.loadError')");
     expect(settings).toContain("t('assistants.settings.scheduledTasks.empty')");
     expect(english).toContain("'assistants.settings.scheduledTasks.title': 'Scheduled tasks'");
   });

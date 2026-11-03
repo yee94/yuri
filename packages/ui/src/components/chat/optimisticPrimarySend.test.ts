@@ -52,6 +52,12 @@ describe('shouldOptimisticPrimarySend', () => {
         expect(shouldOptimisticPrimarySend({ ...eligible, delivery: 'steer' })).toBe(true);
     });
 
+    test('native Goal notices and armed plan sends never paint authored optimistic rows', () => {
+        expect(shouldOptimisticPrimarySend({ ...eligible, nativeGoal: true })).toBe(false);
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ChatInput.tsx'), 'utf8');
+        expect(source.match(/shouldOptimisticPrimarySend\(\{[\s\S]*?\}\)/)?.[0]).toContain('nativeGoal,');
+    });
+
     test('skips secondary, queue-only, resource-preserving, shell, and missing session', () => {
         expect(shouldOptimisticPrimarySend({ ...eligible, surfaceKind: 'secondary' })).toBe(false);
         expect(shouldOptimisticPrimarySend({ ...eligible, queuedOnly: true })).toBe(false);

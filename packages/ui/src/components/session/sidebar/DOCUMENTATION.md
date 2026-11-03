@@ -53,7 +53,7 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   this shortcut. Its outer popup uses the shared `yuri-popup-surface` frost and
   light elevation; device rows stay transparent rather than nested material cards.
 
-- Navigation loading includes live busy/retry descendants through `useSessionActivity`; a parent remains loading after its own reply completes while background subagents run. `useRunningSessionIds` uses the same shared tree projection for pinned/in-progress and always-visible rows. Execution reads the parent's own status. Manual transcript refresh remains available during busy/retry so missed terminal events cannot block recovery.
+- Navigation loading includes live busy/retry descendants and Agent-owned running shells through `useSessionActivity`; a parent remains loading after its own reply completes while background subagents or shells run. Shell owners and their ancestors share the same projection, without changing the parent's raw execution status. `useRunningSessionIds` uses the same shared tree projection for pinned/in-progress and always-visible rows. Execution reads the parent's own status. Manual transcript refresh remains available during busy/retry so missed terminal events cannot block recovery.
 - `SessionSidebar.tsx` now acts mainly as orchestration; core logic moved to focused hooks/components.
 - Sidebar is now a single multi-project tree: an optional pinned + in-progress
   top section, then projects, then worktrees/archived groups, then sessions.

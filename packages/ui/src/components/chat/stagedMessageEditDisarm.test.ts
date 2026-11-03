@@ -106,6 +106,7 @@ describe('sent-message edit submission routing', () => {
         const context = {
             useEvent: (fn: unknown) => fn,
             useSessionUIStore: { getState: () => ({ stagedMessageEdit: input.editing ? { sessionId: 'session-a', messageId: 'msg_1' } : null }) },
+            useSessionGoalArmStore: { getState: () => ({ armed: false }) }, parseSlashCommandInvocation: () => null,
             currentSessionId: 'session-a', surface: { kind: 'primary', deliveryTarget: { kind: 'primary' } },
             sessionIsRunning: input.busy, hasQueuedMessages: input.queued,
             queueFrozen: input.frozen ?? false, serverQueue: { mode: 'server' }, inputMode: 'normal', followUpBehavior: 'queue',

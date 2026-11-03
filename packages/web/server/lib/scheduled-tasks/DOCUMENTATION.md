@@ -329,17 +329,10 @@ Every actual run (timer or manual):
    - metadata: `yuri.scheduledTask = { projectID, taskID, runID, name }`
     - SDK/HTTP calls receive `{ signal }` as the second request-options argument
       (`client.session.create(params, { signal })`, same for `prompt` /
-      `command` / `command.list`; raw `fetch` for goal PATCH
-      pass `signal` in `RequestInit`).
+      `command` / `command.list` and native goal RPC reads).
  5. `attachSession(runID, sessionID)` immediately after create.
     - If attach fails, the runtime fails the run without prompting.
-  6. When `goalEnabled`: refuse before OpenCode ready / session create if
-      `persistSessionGoal` is not injected; otherwise write objective file,
-      persist an active goal into the Host session-metadata store, optionally
-      notify `onGoalPersisted` to arm the goal loop, then command or
-      `session.prompt`. Non-cancellable async gaps (small-model distill,
-      objective file write) check `signal.throwIfAborted()` before continuing so
-      a timed-out run never prompts.
+  6. When `goalEnabled`, validate the native objective (1–4000 characters, not a control word), then execute `session.command({ sessionID, name: 'goal', text: prompt })`. No objective file, Host goal metadata, small-model distillation or extra prompt is written. OpenCode owns kickoff, auditing and continuation.
     **Admission is not completion:** `session.prompt` / command return when the
     turn is accepted, not when the agent finishes.
   7. Wait for the real session outcome (bounded by the same watchdog):
@@ -379,9 +372,9 @@ Every actual run (timer or manual):
        deleted sessions. Transport failures never match.
      - Assistant `error` (and terminal finish `error` / `length` /
        `content-filter`) finalizes as `error`.
-      - Goal-enabled runs: settle via Host goal terminal status when the store
-        seam is available (`readSessionMetadata` preferred over OpenCode
-        `session.get`). Store read failure is never empty-goal success.
+      - Goal-enabled runs: read native `opencode.goal` state. Only `complete`
+        succeeds; `paused` fails with its native reason. Failed or absent reads
+        stay unknown, never first-turn success.
      - `durationMs` / `finishedAt` are wall-clock from run start through this
        settlement — not the prompt admission latency.
  8. On watchdog timeout after a session exists: immediately throw the canonical
@@ -476,24 +469,9 @@ is already `success`, or if the snapshot is still error/busy/unknown
 (`session.active` failure and goal-unsupported goal tasks stay unknown).
 Observer failures are logged and must not throw out of the event bus.
 
-## Goal safety gating
+## Native Goal execution
 
-Session goal Host state is advertised by
-`packages/web/server/lib/session-goal/capability.js` as `{ supported: true }`.
-Goal records live in the Yuri session-metadata store (same seam as
-manual UI / `session-goal` runtime). Scheduled runs inject
-`persistSessionGoal`, `readSessionMetadata`, and optional `onGoalPersisted`
-from `server/index.js`.
-
-| Path | Behavior |
-|---|---|
-| `PUT` scheduled task / managed-tool create·update with `execution.goalEnabled` | Allowed when capability supported |
-| Existing `goalEnabled` task due or manual run | Requires `persistSessionGoal`; without it fail **before** OpenCode ready / session create / objective write / prompt; with it write objective + active goal then prompt |
-| Ordinary non-goal task | Unchanged |
-| Post-run observer on a goal-enabled task | Prefer Host store goal terminal status; never invent success from assistant-tail idle alone when goal is active |
-
-Do not treat objective-file hints or first-turn assistant idle as a registered
-goal success without a store-backed goal record.
+Goal runs use OpenCode's `goal` command and `client.rpc(Goal.Definition).get` via `opencode/native-goal.js`. Once live execution is inactive, native `complete` means success and `paused` means error with the native reason; active, absent or failed goal reads never become first-turn assistant success. Recovery and post-run observation use the same native authority. Old task Token-budget fields are no longer emitted or enforced; OpenCode owns its round limits. Existing `goalEnabled` tasks retain their setting and use the native command on their next run. Old Host goal metadata and objective files are not imported or executed.
 
 Run start also emits `scheduled-task-ran` with `status: running` as soon as
 task state is persisted, so the outer task list can show in-progress before
@@ -504,12 +482,11 @@ the session is attached.
 - Timeout path: abort the per-run signal → cancel in-flight cancellable
   SDK/HTTP → start best-effort OpenCode `session.interrupt` via the create-time
   abort listener (independent of whether the current await is cancellable) →
-  **do not wait** for non-cancellable helpers (small-model distill /
-  `writeObjective`) to finish → history and task state finalize as `error`
+   **do not wait** for non-cancellable work to finish → history and task state finalize as `error`
   with `schedule run timed out` within the watchdog bound. The detached
   `runPromise` is settled with a catch so late rejections are not unhandled.
 - When uncancellable helper work eventually finishes, post-await
-  `throwIfAborted` gates stop goal PATCH / command / `session.prompt`.
+  `throwIfAborted` gates stop command / `session.prompt`.
 - Non-timeout failures: no timeout abort; no forced `session.interrupt` from the
   watchdog.
 - Runtime `stop()` clears timers, project-sync retries, and the queue, and aborts
@@ -517,9 +494,7 @@ the session is attached.
 - Remaining non-cancellable edges: work already fully admitted and completed
   HTTP-wise before timeout cannot be rolled back by aborting the HTTP request
   alone; `session.interrupt` is the upstream stop for admitted command/prompt
-  execution. Small-model distillation and objective file writes are not passed
-  a signal; the watchdog does not await them, and abort gates block later
-  stages after they complete.
+  execution. The Host no longer performs Goal distillation or objective-file writes.
 
 ## Shutdown
 

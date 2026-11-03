@@ -400,6 +400,8 @@ export const dict = {
   'sessions.scheduledTasks.dialog.project.empty': 'No projects',
   'sessions.scheduledTasks.dialog.actions.newTask': 'New schedule',
   'sessions.scheduledTasks.dialog.actions.create': 'Create',
+  'sessions.scheduledTasks.assistant.offer': 'Want me to create it?',
+  'sessions.scheduledTasks.assistant.openAria': 'Open a conversation with {name} to create a schedule',
   'sessions.scheduledTasks.dialog.actions.moreAria': 'More actions for {taskName}',
   'sessions.scheduledTasks.dialog.actions.delete': 'Delete',
   'sessions.scheduledTasks.dialog.actions.pause': 'Pause',

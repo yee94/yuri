@@ -402,6 +402,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.header.actions.scheduledTasks": "Tarefas agendadas",
   "sessions.scheduledTasks.dialog.title": "Tarefas agendadas",
   "sessions.scheduledTasks.dialog.actions.create": "Criar",
+  "sessions.scheduledTasks.assistant.offer": "Quer que eu crie?",
+  "sessions.scheduledTasks.assistant.openAria": "Abrir uma conversa com {name} para criar uma tarefa agendada",
   "sessions.scheduledTasks.dialog.actions.moreAria": "Mais ações para {taskName}",
   "sessions.scheduledTasks.dialog.actions.delete": "Excluir",
   "sessions.scheduledTasks.dialog.actions.pause": "Pausar",

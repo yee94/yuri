@@ -408,6 +408,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.header.actions.scheduledTasks': '排程任務',
   'sessions.scheduledTasks.dialog.title': '排程任務',
   'sessions.scheduledTasks.dialog.actions.create': '建立',
+  'sessions.scheduledTasks.assistant.offer': '讓我幫你建立嗎？',
+  'sessions.scheduledTasks.assistant.openAria': '開啟與{name}的對話，協助建立排程任務',
   'sessions.scheduledTasks.dialog.actions.moreAria': '{taskName} 的更多操作',
   'sessions.scheduledTasks.dialog.actions.delete': '刪除',
   'sessions.scheduledTasks.dialog.actions.pause': '暫停',

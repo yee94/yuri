@@ -13,8 +13,9 @@ export async function requestJSON(url, { body, headers, signal, fetchImpl = fetc
   requestSignal.throwIfAborted();
   let response;
   try {
+    const multipart = body instanceof FormData;
     response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: requestSignal,
-      headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+      headers: { ...(!multipart ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: multipart ? body : JSON.stringify(body) });
   } catch { throw channelError(signal?.aborted ? 'cancelled' : 'network_error', sending); }
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});

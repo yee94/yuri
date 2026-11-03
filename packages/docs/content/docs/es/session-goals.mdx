@@ -1,74 +1,29 @@
 ---
 title: Objetivos de sesión
-description: Convierte un prompt en un objetivo hacia el que el agente trabaja automáticamente.
+description: Usa los objetivos nativos de OpenCode para avanzar hacia un resultado.
 ---
 
 # Objetivos de sesión
 
-Un objetivo convierte un solo prompt en una línea de meta. En lugar de empujar al agente con "continúa" tras cada respuesta, defines el objetivo una vez — y Yuri mantiene la sesión trabajando hacia él automáticamente, comprobando el progreso con un auditor independiente después de cada turno. Sigue funcionando incluso mientras no estás.
+Yuri muestra el estado nativo de Goal de OpenCode. OpenCode gestiona el objetivo, la revisión, las continuaciones y los límites; Yuri no ejecuta otro bucle.
 
-## Iniciar un objetivo
+## Iniciar
 
-1. Pulsa el botón de diana en el compositor. Se ilumina — el modo objetivo está armado.
-2. Escribe tu prompt y envíalo. Ese mensaje se convierte en el objetivo.
+Escribe `/goal <objetivo>` en una sesión de proyecto, revísalo y envíalo. Elegir la sugerencia solo inserta el comando. `/goal` sin argumentos muestra el motivo del objetivo actual; no prepara uno nuevo.
 
-Funciona igual en una sesión existente y en un borrador de sesión nueva: arma la diana, escribe el primer mensaje, envía — la nueva sesión arranca con el objetivo ya activo.
+Describe el resultado y los criterios de verificación en un máximo de 4000 caracteres. Los planes, las sesiones derivadas de respuestas y las [tareas programadas](/es/scheduled-tasks/) también usan el mismo comando nativo para ejecutar un objetivo.
 
-### Más formas de iniciar un objetivo
+## Estado y controles
 
-- **Desde una respuesta del agente**: en el diálogo "Start new session from this answer", marca **Ejecutar como objetivo** — la respuesta se entrega como una tarea que la nueva sesión ejecuta hasta completarla (combínalo con **Create worktree** para una ejecución aislada).
-- **Desde un plan**: al implementar un plan guardado en una sesión o worktree nuevos, marca **Ejecutar como objetivo** en el diálogo. El objetivo lleva el contenido del plan, así que el auditor juzga el progreso contra el plan real.
-- **Según un horario**: marca **Ejecutar como objetivo** en una [tarea programada](/scheduled-tasks/) para que las ejecuciones recurrentes persigan su prompt hasta completarlo.
+La franja muestra el objetivo, el estado nativo y el número de continuaciones. Abre los detalles para leer el motivo de OpenCode. Los estados son activo, pausado y completado. El ajuste de Chat solo controla la visibilidad; la interfaz es compartida por web, escritorio, VS Code y móvil.
 
-## Escribe un objetivo autocontenido
+- `/goal pause` pausa las continuaciones automáticas, sin interrumpir el trabajo en curso.
+- `/goal resume` reanuda un objetivo pausado.
+- `/goal clear` elimina el objetivo, sin interrumpir el turno actual.
+- Para interrumpir el trabajo actual, usa el botón de detener de la sesión.
 
-El auditor de progreso solo ve tu objetivo y la última respuesta del agente — no el historial del chat. Redacta el mensaje-objetivo de forma que alguien sin el contexto de la conversación entienda cómo es el estado final.
+Yuri no añade presupuesto de tokens, resumen del objetivo ni pausas automáticas ante preguntas. Comprueba la finalización con los archivos y resultados reales.
 
-- Bien: "Añade tests para el módulo de exportación y haz que toda la suite pase."
-- No tan bien: "Arréglalo" o "Continúa con esa idea."
+## Ejecución
 
-Para pequeños ajustes contextuales no necesitas un objetivo — envía un mensaje normal.
-
-## Cómo funciona
-
-Cuando el agente se detiene y la sesión queda en silencio un momento, Yuri:
-
-1. Pide a un modelo pequeño y barato que audite el último turno contra el objetivo: ¿seguir, hecho o atascado?
-2. Si el veredicto es "seguir", envía un prompt de continuación y el agente retoma el trabajo.
-3. Si el objetivo se ha logrado de forma verificable, el objetivo se completa y recibes una notificación.
-4. Si el agente está realmente atascado (necesita tu intervención), el objetivo se detiene como bloqueado — pero solo después de que el auditor lo diga tres veces seguidas, así que un tropiezo puntual nunca termina el objetivo.
-
-También hay topes de seguridad: un presupuesto de tokens opcional, un límite de continuaciones automáticas y una parada ante errores de turno. Si el contexto de la sesión se compacta a mitad del trabajo, el objetivo simplemente continúa — chocar con la ventana de contexto es prueba de que el trabajo no había terminado.
-
-### Detener y reanudar
-
-- El **botón de detener** aborta el turno en curso y pausa el objetivo — tu "para" explícito siempre gana al bucle.
-- **Pausar** en la franja del objetivo hace lo mismo desde el otro lado: pausa el objetivo y detiene el turno en curso.
-- Mientras está pausado, chatea con normalidad — el bucle no interfiere.
-- **Reanudar** rearma el bucle: en una sesión inactiva el empujón de continuación sale de inmediato; si el agente está trabajando, el bucle se reengancha en su siguiente pausa.
-- Cuando el agente hace una pregunta, el objetivo se pausa automáticamente. El turno actual sigue esperando tu respuesta; cuando contestes, pulsa **Reanudar** para que el bucle continúe.
-
-## Observar y gestionar
-
-- La franja sobre el compositor muestra la última nota de progreso, el estado y el uso de tokens, con un botón de pausar/reanudar integrado. Cuando el agente se ha detenido y el objetivo sigue activo, la franja muestra un **Evaluando…** giratorio — es la ventana de silencio y la auditoría en marcha.
-- El botón de diana permanece encendido mientras el objetivo corre (azul), se vuelve verde al completarse y rojo cuando está bloqueado o sin presupuesto. Púlsalo para abrir el diálogo del objetivo: edita el objetivo o el presupuesto, o elimínalo. Un objetivo completado es de solo lectura — elimínalo y arma uno nuevo.
-- En la barra lateral de sesiones aparece una pequeña diana junto a la fecha de la sesión, coloreada según el estado del objetivo.
-
-## Notificaciones
-
-Mientras un objetivo está activo, las notificaciones por turno de "agente listo" se suprimen — solo harían eco de las continuaciones del propio bucle. Cuando el objetivo se resuelve (completado, bloqueado o presupuesto alcanzado) recibes una única notificación final, en el escritorio y como push móvil. Obedece el mismo ajuste de "notificar al completar"; las solicitudes de permisos, las preguntas y las notificaciones de error siguen funcionando con normalidad.
-
-## Presupuesto de tokens
-
-En **Ajustes → Chat → Objetivo** puedes definir un presupuesto de tokens predeterminado para nuevos objetivos. Al alcanzarlo, el objetivo se detiene como "presupuesto alcanzado" en lugar de gastar más — puedes subir el presupuesto y reanudar desde el diálogo del objetivo.
-
-## Ten en cuenta
-
-- El bucle del objetivo corre en el servidor de Yuri, no en tu pestaña del navegador. Cierra la pestaña, bloquea el teléfono — el agente sigue trabajando y recibirás una notificación cuando el objetivo termine. El servidor (app de escritorio o proceso `yuri`) debe seguir en marcha.
-- Los objetivos usan el proveedor y modelo de tu propia sesión, incluidas las llamadas del auditor — nada sale hacia proveedores que no uses ya.
-- Un objetivo por sesión a la vez.
-
-## Relacionado
-
-- [Tareas programadas](/scheduled-tasks/) — ejecutar un prompt según un horario; activa allí "Ejecutar como objetivo" para que la ejecución programada persiga su prompt hasta completarlo
-- [Notificaciones](/notifications/) — cómo te enteras de un objetivo terminado
+Cerrar una pestaña no detiene el servicio OpenCode. Mantenlo disponible durante la ejecución. Los antiguos objetivos de Yuri no se importan ni reanudan automáticamente; crea un objetivo nativo para continuarlos. Para trabajo recurrente, usa tareas programadas.

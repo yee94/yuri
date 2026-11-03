@@ -2,7 +2,7 @@
  * HTTP surface for Yuri-owned session metadata and Host archive.
  *
  * OpenCode 2.x has no session-metadata update route. Clients (and Host
- * features such as session goal) merge-patch state here; the proxy folds the
+ * features such as session archive) merge-patch state here; the proxy folds the
  * store back onto session list/detail responses.
  *
  * Archive is a separate Host operation:
@@ -14,7 +14,6 @@
 
 import express from 'express';
 
-import { withGoalExecutionGeneration } from '../session-goal/runtime.js';
 import { createSessionMetadataStore } from './session-metadata-store.js';
 import { SessionArchiveError } from './session-archive.js';
 
@@ -59,42 +58,9 @@ export const registerSessionMetadataRoutes = (app, deps = {}) => {
     }
 
     try {
-      // Goal pause/resume/condition writes must advance executionGeneration so
-      // in-flight audits lose commit rights. Normalize inside the exclusive
-      // mutate boundary (same lock as persist) for UI merge-patches.
-      let metadata;
-      if (
-        typeof sessionMetadataStore.mutateSessionMetadata === 'function'
-        && isPlainObject(patch.yuri)
-        && Object.prototype.hasOwnProperty.call(patch.yuri, 'goal')
-        && isPlainObject(patch.yuri.goal)
-      ) {
-        const result = await sessionMetadataStore.mutateSessionMetadata(sessionId, (current) => {
-          const previousGoal = isPlainObject(current?.yuri?.goal)
-            ? current.yuri.goal
-            : null;
-          return {
-            ok: true,
-            patch: {
-              ...patch,
-              yuri: {
-                ...patch.yuri,
-                goal: withGoalExecutionGeneration(previousGoal, patch.yuri.goal),
-              },
-            },
-          };
-        }, {
-          directory: asNonEmptyString(body.directory) || undefined,
-        });
-        if (!result?.committed) {
-          throw new Error(result?.reason || 'session metadata mutate was rejected');
-        }
-        metadata = result.metadata;
-      } else {
-        metadata = await sessionMetadataStore.setSessionMetadata(sessionId, patch, {
-          directory: asNonEmptyString(body.directory) || undefined,
-        });
-      }
+      const metadata = await sessionMetadataStore.setSessionMetadata(sessionId, patch, {
+        directory: asNonEmptyString(body.directory) || undefined,
+      });
       const directory = asNonEmptyString(body.directory) || '';
       if (typeof onMetadataWritten === 'function') {
         try {

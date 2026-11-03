@@ -51,6 +51,14 @@ const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), 
   headers: { 'Content-Type': 'application/json' },
 });
 
+const nativeGoalEvent = (status = 'complete') => ({
+  type: 'rpc.opencode.goal.changed', location: { directory: '/repo' },
+  data: { sessionID: 'ses_goal', goal: {
+    id: 'g1', objective: 'Verify native Goal', status, reason: 'Verified',
+    rounds: 1, maxRounds: 50, boot: 'boot', updatedAt: 1,
+  } },
+});
+
 afterEach(() => {
   runtimes.splice(0).forEach(runtime => runtime.dispose());
   vi.unstubAllGlobals();
@@ -718,12 +726,7 @@ describe('notification event toggles', () => {
     const { runtime, sendPushToAllUiSessions } = createRuntime({
       readSettingsFromDisk: vi.fn(async () => ({ ...defaultSettings, notifyOnGoals: false })),
     });
-    await runtime.sendGoalSettlePush({
-      sessionId: 'ses_goal',
-      status: 'complete',
-      title: 'Goal completed',
-      body: 'all done',
-    });
+    await runtime.maybeSendPushForTrigger(nativeGoalEvent());
     expect(sendPushToAllUiSessions).not.toHaveBeenCalled();
   });
 
@@ -818,15 +821,13 @@ describe('notification event toggles', () => {
     );
   });
 
-  it('still sends goal settle push by default', async () => {
+  it('sends goal completion from the native changed event, not from Host metadata', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ id: 'ses_goal', title: 'Goal run' })));
     const { runtime, sendPushToAllUiSessions } = createRuntime();
-    await runtime.sendGoalSettlePush({
-      sessionId: 'ses_goal',
-      status: 'complete',
-      title: 'Goal completed',
-      body: 'all done',
-    });
+    await runtime.maybeSendPushForTrigger(nativeGoalEvent('active'));
+    await runtime.maybeSendPushForTrigger(nativeGoalEvent('paused'));
+    expect(sendPushToAllUiSessions).not.toHaveBeenCalled();
+    await runtime.maybeSendPushForTrigger(nativeGoalEvent());
     expect(sendPushToAllUiSessions).toHaveBeenCalledTimes(1);
     expect(sendPushToAllUiSessions.mock.calls[0][0]).toMatchObject({ tag: 'goal-ses_goal' });
     expect(sendPushToAllUiSessions.mock.calls[0][0].data).toMatchObject({ sessionName: 'Goal run' });

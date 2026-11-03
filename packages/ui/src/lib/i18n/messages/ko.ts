@@ -395,6 +395,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.header.actions.scheduledTasks': '예약 작업',
   'sessions.scheduledTasks.dialog.title': '예약 작업',
   'sessions.scheduledTasks.dialog.actions.create': '만들기',
+  'sessions.scheduledTasks.assistant.offer': '제가 만들어 드릴까요?',
+  'sessions.scheduledTasks.assistant.openAria': '{name}와의 대화를 열어 예약 작업 만들기',
   'sessions.scheduledTasks.dialog.actions.moreAria': '{taskName} 추가 작업',
   'sessions.scheduledTasks.dialog.actions.delete': '삭제',
   'sessions.scheduledTasks.dialog.actions.pause': '일시 중지',

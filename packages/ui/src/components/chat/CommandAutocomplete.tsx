@@ -232,10 +232,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'yuri:goal', name: 'goal', source: 'yuri' as const, description: t('chat.goal.button.armAria'), isBuiltIn: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
             ? [{ id: 'yuri:catch-up', name: 'catch-up', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isYuri: true }]
             : []
           ),
@@ -294,10 +290,6 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
           ),
           ...(canStartSessionCommand
             ? [{ id: 'yuri:craft-goal', name: 'craft-goal', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:goal', name: 'goal', source: 'yuri' as const, description: t('chat.goal.button.armAria'), isBuiltIn: true }]
             : []
           ),
           ...(canStartSessionCommand

@@ -22,7 +22,7 @@ runtime resolution fallback.
 
 `transport.js` remains the owner of the small HTTP helpers
 (`channelError`, `requestJSON`, `officialURL`). Channel adapters use
-`requestJSON` for the two documented outbound REST calls and do **not** use the
+`requestJSON` for documented outbound REST calls (JSON or multipart) and do **not** use the
 removed `socketLoop`; no adapter opens a raw WebSocket or decodes protobuf.
 
 ## Feishu
@@ -50,6 +50,12 @@ Wire evidence: `@larksuite/channel@0.7.1` and
   short row IDs verbatim and hashes longer ones to 40 hex characters.
   `tenant_access_token/internal` uses `{app_id, app_secret}` and caches until
   `expire - 180s`.
+- Image output first uploads multipart `image_type=message` and `image` to
+  `POST /open-apis/im/v1/images`, then sends `msg_type: image` with
+  `content: {"image_key": ...}` and the same durable UUID policy. The app needs
+  `im:resource` or `im:resource:upload` in addition to message-send permission.
+  Upload failure never counts as a submitted chat message.
+  Reference: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/create
 
 ACK durability: the Chat adapter's normalized `message` path is not awaited by
 the vendor dispatcher, so it cannot gate the ACK. `sdk-adapters.js` therefore
@@ -115,6 +121,11 @@ Wire evidence: official `https://github.com/WecomTeam/aibot-node-sdk`,
   outbox as sent (platform accepted, not proof the user read it). Nonzero ACKs are
   definite failures; timeout, cancellation or disconnection after submission are
   `delivery_unknown` and are never automatically resent.
+- Native images use public `uploadMedia(buffer, {type:'image', filename})` and
+  `sendMediaMessage(chatid, 'image', media_id)` from the installed official SDK.
+  The SDK owns init/chunk/finish and the final message ACK; Yuri does not write
+  its own chunk framing. Local-WebSocket tests exercise the full SDK upload plus
+  final-ACK wait. Real-account acceptance/quotas still require platform testing.
 - A configured owner fixes the private recipient; otherwise the runtime's private
   durable `target.userID` supplies it. Missing recipients fail before sending.
 - Incoming messages preserve `msgid` for durable dedup, use standard Chat `Message`
@@ -128,6 +139,17 @@ Wire evidence: official `https://github.com/WecomTeam/aibot-node-sdk`,
   successful consecutive sends, nonzero ACKs and cancellation.
 
 ## DingTalk
+
+Image output uploads multipart `type=image`/`media` to the official legacy
+`https://oapi.dingtalk.com/media/upload` endpoint, then uses the existing private
+batch-send API with `msgKey: sampleImageMsg` and `msgParam: {photoURL: media_id}`.
+The legacy upload API requires the access token in its query; it is ephemeral,
+never persisted/logged or included in a transcript/error. Generated local images
+need no publicly hosted URL. Platform size/format/permission failures remain
+explicit delivery failures rather than a false text-only success. No automatic
+lossy resize, new image dependency or public image-hosting service is introduced.
+References: https://developers.dingtalk.com/document/app/upload-media-files and
+https://open.dingtalk.com/document/orgapp/types-of-messages-sent-by-robots
 
 Wire evidence: `dingtalk-stream@2.1.5` `dist/client.mjs` and
 `src/client.ts` of `open-dingtalk/dingtalk-stream-sdk-nodejs`; OpenAPI metadata

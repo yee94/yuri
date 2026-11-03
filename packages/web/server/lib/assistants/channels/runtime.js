@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createAssistantChannelStore } from './store.js';
 import { encodeWeixinTOON } from '../weixin/toon.js';
 import { isMessageChannelTurn } from '../message-channel-origin.js';
+import { prepareChannelOutput, readChannelDeliveryImage, channelImageFailure } from '../channel-output.js';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const PROVIDER = /^[a-z][a-z0-9_]{1,31}$/;
@@ -10,7 +11,6 @@ const MAX_PLATFORM_ID = 256;
 const MAX_ACCOUNT_FIELD = 512;
 const MAX_SECRET = 4096;
 const MAX_TEXT = 20_000;
-const MAX_CHUNK = 3500;
 const MAX_TARGET_BYTES = 16_384;
 const BACKLOG_MAX = 100;
 const AUTH_ERRORS = new Set(['auth_failed', 'auth_expired']);
@@ -144,15 +144,6 @@ const parseTarget = (value) => {
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === 'object' ? parsed : undefined;
   } catch { return undefined; }
-};
-
-const chunkText = (text) => {
-  const chars = Array.from(text);
-  const chunks = [];
-  for (let index = 0; index < chars.length; index += MAX_CHUNK) {
-    chunks.push(chars.slice(index, index + MAX_CHUNK).join(''));
-  }
-  return chunks;
 };
 
 /**
@@ -441,25 +432,31 @@ export function createAssistantChannelsRuntime({
     }
   };
 
-  const enqueuePage = (binding, page) => {
+  const enqueuePage = async (binding, page) => {
     if (!binding.owner_id && !binding.target) {
       store.collect(binding, page, [], clock());
       return;
     }
-    const deliveries = page.messages.flatMap((message) => {
+    const deliveries = [];
+    const receiverSignal = receivers.get(channelKey(binding.assistant_id, binding.provider))?.controller.signal;
+    const signal = receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal;
+    const assertCurrent = () => {
+      if (!isCurrent(binding) || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== page.generation) throw new ChannelError('cancelled');
+    };
+    for (const message of page.messages) {
       const receipt = store.receipt(message.turnID, binding.epoch);
-      if (isMessageChannelTurn(message.turnID) && !receipt) return [];
+      if (isMessageChannelTurn(message.turnID) && !receipt) continue;
       // A channel reply uses its own durable sender, not another later sender.
-      if (receipt && !receipt.target && !binding.owner_id) return [];
-      const text = message.status === 'error' ? feedback(binding.language, 'failed')
-        : message.text?.trim() && !message.text.trim().startsWith('oc.settle.') ? message.text.trim()
-          : message.cards.map((card) => card.title || card.name || '').filter(Boolean).join('\n');
-      return chunkText(text).filter(Boolean).map((chunk, index) => ({
+      if (receipt && !receipt.target && !binding.owner_id) continue;
+      const output = await prepareChannelOutput(message, { service, assistantID: binding.assistant_id,
+        generation: page.generation, language: binding.language, failureText: feedback(binding.language, 'failed'), signal, assertCurrent });
+      deliveries.push(...output.map((part, index) => ({
         id: `yuri_${digest(`${binding.epoch}:${page.generation}:${message.messageID}:${index}`)}`,
-        text: chunk,
+        ...part,
         ...(receipt ? { target: receipt.target || '' } : {}),
-      }));
-    });
+      })));
+    }
+    assertCurrent();
     store.collect(binding, page, deliveries, clock());
   };
 
@@ -487,10 +484,18 @@ export function createAssistantChannelsRuntime({
       store.markDelivery(delivery.id, 'sending');
       const signal = AbortSignal.any([lifetime.signal, receiver.controller.signal]);
       try {
+        const image = await readChannelDeliveryImage(service, binding.assistant_id, delivery.image ? JSON.parse(delivery.image) : null, signal);
+        if (!isCurrent(binding) || signal.aborted
+          || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== row.generation) throw new ChannelError('cancelled');
         await adapter.send({
           config: configOf(row),
           target: parseTarget(delivery.target),
           text: delivery.text,
+          ...(image ? { image } : {}),
+          beforeSend: () => {
+            signal.throwIfAborted();
+            if (!isCurrent(binding) || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== row.generation) throw new ChannelError('cancelled');
+          },
           id: delivery.id,
           signal,
         });
@@ -527,6 +532,9 @@ export function createAssistantChannelsRuntime({
           store.patch(binding.epoch, { error: 'delivery_unknown', updated_at: clock() });
         } else {
           store.failDelivery(delivery.id);
+          if (delivery.image && delivery.attempts >= 2) {
+            store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language), delivery.target);
+          }
           // A send failure never proves the connection is ready/connected.
           store.patch(binding.epoch, {
             error: store.hasBlocked(binding.epoch) ? 'delivery_failed' : code,
@@ -551,7 +559,7 @@ export function createAssistantChannelsRuntime({
       throw error;
     }
     if (!isCurrent(binding)) return;
-    enqueuePage(binding, page);
+    await enqueuePage(binding, page);
     const key = channelKey(binding.assistant_id, binding.provider);
     if (!inboundWork.has(key)) {
       const work = track(processIncoming(binding, page.generation)).catch((error) => setError(binding, error));

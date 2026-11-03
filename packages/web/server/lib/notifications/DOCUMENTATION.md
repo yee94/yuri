@@ -59,6 +59,12 @@ Android notification-only subscriptions send the App locale in `Accept-Language`
 
 ### Trigger runtime API (runtime.js)
 
+Native Goal completion notifications consume `rpc.opencode.goal.changed` with the
+official Goal schema. Only native `complete` triggers goal-completion push;
+active/paused/cleared or malformed snapshots do not. Ordinary per-turn completion
+suppression reads native Goal RPC, never legacy `yuri.goal` metadata. No Host Goal
+auditor, token budget, objective file or continuation loop remains.
+
 Ordinary completion means the whole root-session family has stopped. An assistant `finish: stop`, `session.idle`, or `session.execution.succeeded` is only a candidate. Before fanout, the barrier reads successful process-wide `session.active` membership and resolves active IDs' authoritative parent chains, including nested descendants and idle intermediate parents. It never depends on focused UI, loaded transcripts, or a cached tool's apparent completion. A candidate root remains pending while it or any descendant runs; child terminals recheck the pending root rather than sending a separate child notification. Metadata lookup concurrency is capped at four per check, with per-check parent-read deduplication and the Host's existing identity cache.
 
 Failed/malformed activity or unknown/cyclic ancestry defers completion rather than treating it as empty. While candidates exist, a single two-second retry timer recovers failed reads and missed child terminal events; no candidates means no polling. Execution/retry/step starts invalidate in-flight eligibility, and a new root run cancels its older candidate. Parent failures, deletion and user interruption cancel success. Event revisions fence stale reads and notification-template enrichment. Successful handling deduplicates terminal events for that root until a new execution starts, replacing the old five-second cooldown so a legitimate short next task can notify. Pending/dedup state is in-memory for the runtime lifetime; historical completions are not replayed after Host restart. `dispose()` clears completion retries and question/permission timers; VS Code also resets its gate on runtime switches.

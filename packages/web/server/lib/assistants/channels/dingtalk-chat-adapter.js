@@ -423,11 +423,11 @@ export class DingTalkChatAdapter {
     }
   }
 
-  async send({ config, target, text, signal } = {}) {
+  async send({ config, target, text, image, signal, beforeSend } = {}) {
     const credentials = credentialsFrom(config);
     const userId = config.ownerID || target?.userID;
     if (!nonEmptyString(userId)) throw channelError('invalid_response');
-    await this._sendText({ credentials, userId, text: typeof text === 'string' ? text : '', signal });
+    await this._sendText({ credentials, userId, text: typeof text === 'string' ? text : '', image, signal, beforeSend });
   }
 
   // ── internals ──────────────────────────────────────────────────────────
@@ -565,14 +565,26 @@ export class DingTalkChatAdapter {
     return json.accessToken;
   }
 
-  async _sendText({ credentials, userId, text, signal } = {}) {
+  async _sendText({ credentials, userId, text, image, signal, beforeSend } = {}) {
     const token = await this._accessToken(credentials, { signal });
+    let mediaID;
+    if (image) {
+      const form = new FormData();
+      form.set('type', 'image');
+      form.set('media', new Blob([image.buffer], { type: image.mime }), image.filename);
+      const uploaded = await requestJSON(`https://oapi.dingtalk.com/media/upload?${new URLSearchParams({ access_token: token, type: 'image' })}`, {
+        body: form, signal, fetchImpl: this.fetchImpl,
+      });
+      if (uploaded?.errcode !== 0 || !nonEmptyString(uploaded?.media_id)) throw channelError('delivery_failed');
+      mediaID = uploaded.media_id;
+    }
+    beforeSend?.();
     const json = await requestJSON(`${DINGTALK_ORIGIN}${BATCH_SEND_PATH}`, {
       body: {
         robotCode: credentials.clientId,
         userIds: [userId],
-        msgKey: 'sampleText',
-        msgParam: JSON.stringify({ content: text }),
+        msgKey: image ? 'sampleImageMsg' : 'sampleText',
+        msgParam: JSON.stringify(image ? { photoURL: mediaID } : { content: text }),
       },
       headers: { 'x-acs-dingtalk-access-token': token },
       signal,
@@ -618,7 +630,7 @@ export function createDingtalkSdkAdapter(options = {}) {
       }
     },
 
-    async send({ config, target, text, signal } = {}) {
+    async send({ config, target, text, image, signal, beforeSend } = {}) {
       if (!config) throw channelError('invalid_response');
       const adapter = new DingTalkChatAdapter({
         ...options,
@@ -627,7 +639,7 @@ export function createDingtalkSdkAdapter(options = {}) {
         ownerId: config.ownerID,
         tokenCache: tokens,
       });
-      await adapter.send({ config, target, text, signal });
+      await adapter.send({ config, target, text, image, signal, beforeSend });
     },
   };
 }

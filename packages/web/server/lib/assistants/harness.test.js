@@ -516,7 +516,7 @@ describe('createContactStreamFn', () => {
       }],
       AgentImpl,
     })
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_native', cardType: 'session' })])
+    expect(result.cards).toEqual([])
     expect(result.bubbles.join('\n')).not.toContain('Watching that coding session')
   })
 
@@ -763,7 +763,7 @@ describe('runContactTurn', () => {
       })
       expect(createChatCompletion).toHaveBeenCalledTimes(3)
       expect(assignWork).toHaveBeenCalledTimes(1)
-      expect(result.cards[0].sessionID).toBe('ses_once')
+      expect(result.cards).toEqual([])
       expect(fs.existsSync(path.join(workspace, 'unexpected.txt'))).toBe(false)
       expect(JSON.stringify(createChatCompletion.mock.calls[1][0].body.messages)).toContain('Send Yuri operation tools one at a time')
       expect(result.bubbles).toEqual(['任务已经交给工作会话。'])
@@ -808,7 +808,7 @@ describe('runContactTurn', () => {
       })
       expect(result.tools.map((tool) => tool.name)).toEqual([...PI_CODING_TOOL_NAMES, ...tools.map((tool) => tool.name).filter((name) => !['create_assistant', 'schedule_task', 'update_scheduled_task'].includes(name)), 'load_tools', 'notify_user'])
       expect(assignWork).toHaveBeenCalledTimes(1)
-      expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_mixed' })])
+      expect(result.cards).toEqual([])
       // Assignment terminates mutations; a tools-disabled completion summarizes the result.
       expect(createChatCompletion).toHaveBeenCalledTimes(4)
       // Tool call/result association: after read, the next completion sees a named tool result.
@@ -822,7 +822,7 @@ describe('runContactTurn', () => {
       fs.rmSync(workspace, { recursive: true, force: true })
     }
   })
-  it('real Agent loop: looping assign fences create only one worker + one card (terminate)', async () => {
+  it('real Agent loop: terminal assign creates only one worker without automatically sending a card', async () => {
     const assignWork = vi.fn(async () => ({
       sessionID: 'ses_once',
       directory: '/repo',
@@ -849,11 +849,11 @@ describe('runContactTurn', () => {
       createChatCompletion,
     })
     expect(assignWork).toHaveBeenCalledTimes(1)
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_once', cardType: 'session' })])
-    expect(result.cards).toHaveLength(1)
+    expect(result.cards).toEqual([])
     // Card is the user-facing confirm — English toolText must not leak into bubbles.
     expect(result.bubbles.join('\n')).not.toContain('Opened a coding session.')
-    // The result summary has no tools and cannot create another worker.
+    // The result phase only offers references and cannot create another worker.
+    expect(createChatCompletion.mock.calls[1][0].body.tools.map((tool) => tool.function.name)).toEqual(['reference_resource'])
     expect(createChatCompletion).toHaveBeenCalledTimes(2)
     expect(completions).toBe(2)
   })
@@ -871,7 +871,7 @@ describe('runContactTurn', () => {
     })
     expect(assignWork).toHaveBeenCalledOnce()
     expect(deliverPeerMessage).not.toHaveBeenCalled()
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_article' })])
+    expect(result.cards).toEqual([])
     expect(result.bubbles).toEqual(['已交给工作会话。'])
     expect(createChatCompletion).toHaveBeenCalledTimes(2)
   })
@@ -913,8 +913,7 @@ describe('runContactTurn', () => {
     })
     expect(listProjects).toHaveBeenCalledTimes(1)
     expect(assignWork).toHaveBeenCalledTimes(1)
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_prereq' })])
-    expect(result.cards).toHaveLength(1)
+    expect(result.cards).toEqual([])
     expect(createChatCompletion.mock.calls.length).toBeLessThanOrEqual(3)
   })
 
@@ -935,7 +934,7 @@ describe('runContactTurn', () => {
     }
     const result = await runContactTurn({
       assistant: { providerID: 'p', modelID: 'm', defaultPrompt: '' },
-      history: [], userText: '建会话', tools: createContactTools(),
+      history: [], userText: '建会话', tools: createContactTools().filter((tool) => tool.name !== 'reference_resource'),
       createChatCompletion: vi.fn(async () => ({ text: '已安排工作。' })), AgentImpl,
     })
     expect(prompts).toHaveLength(2)
@@ -1092,7 +1091,7 @@ describe('runContactTurn', () => {
     }
   })
 
-  it('attaches Yuri tools only and collects session cards from tool results', async () => {
+  it('attaches Yuri tools only and ignores implicit cards in operation results', async () => {
     const assignTool = {
       name: 'assign_session',
       label: 'Assign session',
@@ -1151,7 +1150,7 @@ describe('runContactTurn', () => {
     // Keep assistant spoken/confirm text; do not paint English assign toolText.
     expect(result.bubbles).toEqual(['Opening that.', '任务已安排。'])
     expect(result.bubbles.join('\n')).not.toContain('opened')
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_1', cardType: 'session' })])
+    expect(result.cards).toEqual([])
     expect(result.thinkingLevel).toBe('off')
   })
 
@@ -1195,7 +1194,7 @@ describe('runContactTurn', () => {
     })
     expect(result.bubbles.join('\n')).not.toMatch(/Let me think|assign_session/)
     expect(result.bubbles.join('\n')).not.toContain('Opened a coding session.')
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_plan' })])
+    expect(result.cards).toEqual([])
   })
 
   it('keeps a short notify_user preamble then the model summary', async () => {
@@ -1238,7 +1237,7 @@ describe('runContactTurn', () => {
       AgentImpl,
     })
     expect(result.bubbles).toEqual(['我去找一下', '已安排工作。'])
-    expect(result.cards).toEqual([expect.objectContaining({ sessionID: 'ses_speak' })])
+    expect(result.cards).toEqual([])
   })
 
   it('does not paint read_session quoted transcript JSON as a contact bubble', async () => {
@@ -1311,6 +1310,25 @@ describe('runContactTurn', () => {
     })
     expect(result.bubbles).toEqual(['我去读一下这个会话。', '这个会话目前为空。'])
     expect(result.bubbles.join('\n')).not.toContain('Referenced conversation data')
+  })
+
+  it('summarizes terminal failures as quoted evidence without native tool history when tools are disabled', async () => {
+    const assignWork = vi.fn(async () => { throw new Error('Fixture worker creation unavailable') })
+    const createChatCompletion = vi.fn(async ({ body }) => {
+      if (body.tools.length > 0) return toolCall('assign_session', { prompt: 'Review release', projectPath: '/repo' })
+      // Some providers reject historical native tool calls without definitions.
+      expect(body.messages.some((message) => message.role === 'tool' || message.tool_calls?.length)).toBe(false)
+      expect(JSON.stringify(body.messages)).toContain('Fixture worker creation unavailable')
+      expect(JSON.stringify(body.messages)).toContain('assign_session')
+      return { text: '会话没有创建成功，请稍后重试。' }
+    })
+    const result = await runContactTurn({
+      assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '新建一个编码会话',
+      tools: createContactTools({ assignWork }), createChatCompletion,
+    })
+    expect(assignWork).toHaveBeenCalledTimes(1)
+    expect(result.cards).toEqual([])
+    expect(result.bubbles).toEqual(['会话没有创建成功，请稍后重试。'])
   })
 
   it('injects the registered projects catalog with the user message, not the cached system prompt', async () => {
@@ -1408,15 +1426,11 @@ describe('runContactTurn', () => {
       modelID: 'deepseek-v4-flash',
       mode: 'continuous',
     })
-    expect(result.cards).toEqual([expect.objectContaining({
-      cardType: 'assistant',
-      name: 'FlowNL',
-      assistantID: 'asst_flow',
-    })])
+    expect(result.cards).toEqual([])
     // Turn-boundary keeps pre-retry spoken; English tool confirm still stays out.
     expect(result.bubbles.join('')).toContain('好的，我来直接创建')
     expect(result.bubbles.join('')).not.toContain('Created assistant FlowNL')
-    expect(result.cards).toHaveLength(1)
+    expect(result.cards).toHaveLength(0)
     expect(result.thinkingLevel).toBe('off')
   })
 

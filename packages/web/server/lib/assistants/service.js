@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
+import { getNativeSessionGoal } from '../opencode/native-goal.js';
 import { validAssistantDeliveryParts } from '../assistant-delivery-parts.js';
 import { createContactMemoryReader } from './memory.js';
 import { getContactGreeting } from './contact-greeting.js';
+import { loadChannelImage } from './channel-image.js';
 import { getWorktrees as defaultListWorktrees } from '../git/service.js';
-import { contactCardIdentity, parseContactCard, parseContactPart } from './cards.js';
+import { contactCardIdentity, createAssistantCardPart, createScheduleCardPart, createSessionCardPart, parseContactCard, parseContactPart } from './cards.js';
 import { ensureContactSummary } from './summary.js';
 import {
   CONTACT_PAGE_DEFAULT_LIMIT,
@@ -47,6 +49,7 @@ import {
   canonicalDescriptorFromRow,
   ensureContactAttachmentSchema,
   getContactAttachmentRow,
+  getContactAttachmentByUploadID,
   ingestDataUrlFilePart,
   isSafeInlineImageMime,
   materializeContactHistory,
@@ -152,8 +155,8 @@ const isMissingError = (error) => {
 };
 const ASSISTANT_SUCCESS_FINISH = new Set(['stop']);
 const ASSISTANT_ERROR_FINISH = new Set(['error', 'length', 'content-filter']);
-const GOAL_ACTIVE_STATUSES = new Set(['active', 'paused']);
-const GOAL_ERROR_STATUSES = new Set(['blocked', 'budgetLimited']);
+const GOAL_ACTIVE_STATUSES = new Set(['active']);
+const GOAL_ERROR_STATUSES = new Set(['paused']);
 const isTransientMessagesFailure = (result, error) => {
   if (error) {
     if (error instanceof AssistantError) return false;
@@ -626,7 +629,6 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     return null;
   };
   // Stash assign delivery message IDs until the session card watch is written.
-  const pendingAssignMessageIDs = new Map();
   // Assigned-session complete/error/cancelled resumes the contact LLM (no canned settle bubble).
   // Assigned after inContactTurnLane exists; reportAssignedSession only schedules via this ref.
   const assignedSessionResumeRef = { schedule: null };
@@ -795,12 +797,6 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     void assignedCompletion.observe({ kind: 'complete', sessionId: sessionID }, { sessionID, options });
     return true;
   };
-  const goalOfSession = (session) => {
-    const goal = session?.metadata?.yuri?.goal;
-    if (!goal || typeof goal !== 'object') return null;
-    const status = typeof goal.status === 'string' ? goal.status.trim() : '';
-    return status ? { status } : null;
-  };
   /** Messages that belong to this delivery watermark (assign prompt messageID). */
   const messagesOwnedByDelivery = (messages, deliveryMessageID) => {
     if (!Array.isArray(messages)) return [];
@@ -865,7 +861,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     if (!finish && !assistantInfo.time?.completed) return null;
     return null;
   };
-  const inferAssignedSessionSettleStatus = (getResult, messagesResult, { deliveryMessageID = null, activeBusy = null } = {}) => {
+  const inferAssignedSessionSettleStatus = (getResult, messagesResult, { deliveryMessageID = null, activeBusy = null, goal = null } = {}) => {
     // Another Host may share this watch store but use a different OpenCode database.
     // Absence there is not an authoritative terminal result for the owning worker.
     if (isMissing(getResult)) return null;
@@ -874,8 +870,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     if (activeBusy === true) return null;
     const session = sessionRecord(getResult);
     if (session?.error) return isUserAbort(session.error) ? 'cancelled' : 'error';
-    const goal = goalOfSession(session);
-    // Goal settle is owned by the session-goal reporter — never invent success.
+    // Goal completion comes only from OpenCode's native plugin state.
     if (goal && GOAL_ACTIVE_STATUSES.has(goal.status)) return null;
     if (goal && GOAL_ERROR_STATUSES.has(goal.status)) return 'error';
     if (goal && goal.status === 'complete') return 'complete';
@@ -952,9 +947,11 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           else messagesResult = null;
         }
         if (closed) return;
+        const goal = await getNativeSessionGoal(client(), watch.sessionID, directory);
         const status = inferAssignedSessionSettleStatus(getResult, messagesResult, {
           deliveryMessageID: watch.messageID,
           activeBusy,
+          goal,
         });
         if (status) reportAssignedSession(watch.sessionID, status);
       } catch {
@@ -972,6 +969,11 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       payload,
     );
     const body = eventBody(payload);
+    if (payload.type === 'rpc.opencode.goal.changed' && nonEmptyString(body?.sessionID)) {
+      if (body.goal?.status === 'complete') return reportAssignedSession(body.sessionID, 'complete');
+      if (body.goal?.status === 'paused') return reportAssignedSession(body.sessionID, 'error');
+      return false;
+    }
     // Message lifecycle still requires a body; execution/status may carry sessionID on body only.
     if (payload.type === 'message.updated') {
       if (!plainObject(body)) return false;
@@ -1705,14 +1707,18 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
 
   const persistPublishedContactCard = (assistantID, { userMessageID, turnID, index, card: cardInput }) => {
     const card = parseContactCard({ type: 'card', cardType: cardInput?.cardType || 'session', ...cardInput });
-    if (!card) return false;
+    if (!card) throw new AssignError(ASSIGN_CODES.VALIDATION, 'Invalid resource reference.');
     const cardID = contactCardMessageID(userMessageID, index);
-    if (getContactMessage(db, cardID)) return false;
     db.exec('BEGIN IMMEDIATE');
     try {
-      if (getContactMessage(db, cardID)) {
+      editable(assistantID);
+      if (!getContactMessage(db, userMessageID)) throw new AssignError(ASSIGN_CODES.VALIDATION, 'This turn no longer belongs to the transcript.');
+      const existing = getContactMessage(db, cardID);
+      if (existing) {
+        const published = existing.parts.find((part) => part.type === 'card');
+        if (!published || contactCardIdentity(published) !== contactCardIdentity(card)) throw new AssignError(ASSIGN_CODES.VALIDATION, 'Reference slot already belongs to another resource.');
         db.exec('COMMIT');
-        return false;
+        return published;
       }
       insertContactMessage(db, {
         messageID: cardID,
@@ -1725,23 +1731,9 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         status: 'complete',
         parts: [card],
       });
-      if (card.cardType === 'session' && card.sessionID) {
-        const deliveryMessageID = pendingAssignMessageIDs.get(card.sessionID)
-            || (nonEmptyString(card.messageID) ? card.messageID : null);
-          if (pendingAssignMessageIDs.has(card.sessionID)) pendingAssignMessageIDs.delete(card.sessionID);
-          upsertContactWatch(db, {
-          assistantID,
-          sessionID: card.sessionID,
-          directory: card.directory,
-          status: card.status === 'error' || card.status === 'question' || card.status === 'complete' ? card.status : 'busy',
-          updatedAt: now(),
-          messageID: deliveryMessageID || null,
-        });
-        if (deliveryMessageID) void assignedCompletion.observe({ kind: 'running', sessionId: card.sessionID });
-      }
       bump();
       db.exec('COMMIT');
-      return true;
+      return card;
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
@@ -1775,17 +1767,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   };
 
   const rememberPublishedContactCard = (assistantID, { userMessageID, turnID, assignedCards, card }) => {
-    assignedCards.push(card);
-    try {
-      persistPublishedContactCard(assistantID, {
-        userMessageID,
-        turnID,
-        index: assignedCards.length - 1,
-        card,
-      });
-    } catch {
-      // Publishing a card must not abort the live turn.
-    }
+    const index = assignedCards.findIndex((item) => contactCardIdentity(item) === contactCardIdentity(card));
+    const published = persistPublishedContactCard(assistantID, {
+      userMessageID, turnID, index: index < 0 ? assignedCards.length : index, card,
+    });
+    if (index < 0) assignedCards.push(published);
+    return published;
   };
 
   /** Persist remaining assistant bubbles/cards for an already-admitted user turn (no user row). */
@@ -1833,20 +1820,6 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           parts: [card],
         });
         ordinal += 1;
-        if (card.cardType === 'session' && card.sessionID) {
-          const deliveryMessageID = pendingAssignMessageIDs.get(card.sessionID)
-              || (nonEmptyString(card.messageID) ? card.messageID : null);
-            if (pendingAssignMessageIDs.has(card.sessionID)) pendingAssignMessageIDs.delete(card.sessionID);
-            upsertContactWatch(db, {
-            assistantID,
-            sessionID: card.sessionID,
-            directory: card.directory,
-            status: card.status === 'error' || card.status === 'question' || card.status === 'complete' ? card.status : 'busy',
-            updatedAt: now(),
-            messageID: deliveryMessageID || null,
-          });
-          if (deliveryMessageID) void assignedCompletion.observe({ kind: 'running', sessionId: card.sessionID });
-        }
       });
       bump();
       db.exec('COMMIT');
@@ -2459,14 +2432,26 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       lookupMessage: (lookup) => lookupAssignMessage({ ...lookup, signal }),
       messageID: params?.messageID || `msg_assign_${id()}`,
     });
-    // Stash until the session card watch is written so reuse cannot settle on an old tail.
+    // Watch admission belongs to assignment, independently of whether a card is sent.
     if (nonEmptyString(assigned?.sessionID) && nonEmptyString(assigned?.messageID)) {
-      pendingAssignMessageIDs.set(assigned.sessionID, assigned.messageID);
+      try {
+        db.transaction(() => {
+          upsertContactWatch(db, {
+            assistantID: row.assistant_id, sessionID: assigned.sessionID,
+            directory: assigned.directory, status: assigned.status || 'busy',
+            updatedAt: now(), messageID: assigned.messageID,
+          });
+          bump();
+        }).immediate();
+      } catch {
+        return { ...assigned, watchError: 'watch_registration_failed' };
+      }
+      void assignedCompletion.observe({ kind: 'running', sessionId: assigned.sessionID });
     }
     return assigned;
   };
   /** Watch an existing session only — no prompt. Baseline status avoids false settle resume. */
-  const watchSessionWork = async (_row, params = {}) => {
+  const watchSessionWork = async (row, params = {}) => {
     const sessionID = typeof params.sessionID === 'string' ? params.sessionID.trim() : '';
     if (!sessionID) {
       throw new AssignError(ASSIGN_CODES.VALIDATION, 'watch_session requires sessionID.');
@@ -2488,6 +2473,14 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         status = 'busy';
       }
     }
+    params.signal?.throwIfAborted();
+    db.transaction(() => {
+      upsertContactWatch(db, {
+        assistantID: row.assistant_id, sessionID: resolved.sessionID,
+        directory: resolved.directory, status, updatedAt: now(), messageID: null,
+      });
+      bump();
+    }).immediate();
     return {
       sessionID: resolved.sessionID,
       directory: resolved.directory,
@@ -2778,6 +2771,33 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       }
     }
     return { tasks, ...(failed.length > 0 ? { partial: true, failed } : {}) };
+  };
+  const resolveContactResource = async (input, signal) => {
+    signal?.throwIfAborted();
+    if (input.cardType === 'session') {
+      const resolved = await resolveReferencedSession({ sessionID: input.sessionID, signal, includeMessages: false });
+      return createSessionCardPart(resolved);
+    }
+    if (input.cardType === 'assistant') {
+      const target = output(editable(input.assistantID));
+      return createAssistantCardPart({ ...target, assistantID: target.id });
+    }
+    const projects = await listProjects();
+    if (!Array.isArray(projects)) throw new AssignError(ASSIGN_CODES.UPSTREAM, 'Project lookup failed.');
+    if (!normalizeRegisteredProjects(projects).some((project) => project.id === input.projectID)) throw new AssignError(ASSIGN_CODES.PROJECT_REQUIRED, 'The task project is not registered.');
+    if (typeof listScheduledTasks !== 'function') throw new AssignError(ASSIGN_CODES.UPSTREAM, 'Task lookup is unavailable.');
+    const tasks = await listScheduledTasks(input.projectID);
+    signal?.throwIfAborted();
+    if (!Array.isArray(tasks)) throw new AssignError(ASSIGN_CODES.UPSTREAM, 'Task lookup failed.');
+    const task = tasks.find((task) => task?.id === input.taskID);
+    if (!task) throw new AssignError(ASSIGN_CODES.NOT_FOUND, 'The scheduled task no longer exists.');
+    return createScheduleCardPart({
+      taskID: task.id, projectID: input.projectID, name: task.name,
+      kind: task.schedule?.kind, time: task.schedule?.time || task.schedule?.times?.[0],
+      timezone: task.schedule?.timezone, prompt: task.execution?.prompt,
+      cron: task.schedule?.cron ?? null, date: task.schedule?.date ?? null,
+      times: task.schedule?.times ?? null, weekdays: task.schedule?.weekdays ?? null,
+    });
   };
   const updateScheduledTaskWork = async (row, params, signal) => {
     signal?.throwIfAborted();
@@ -3224,9 +3244,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             return output(editable(targetID));
           },
           currentAssistant: assistantSnapshot,
+          resolveResource: resolveContactResource,
           onCard: (card) => {
-            if (contactResetThisTurn) return;
-            rememberPublishedContactCard(assistantID, {
+            controller.signal.throwIfAborted();
+            if (contactResetThisTurn) throw new AssignError(ASSIGN_CODES.VALIDATION, 'This turn reset its context.');
+            editable(assistantID);
+            return rememberPublishedContactCard(assistantID, {
               userMessageID: messageID, turnID, assignedCards, card,
             });
           },
@@ -3568,9 +3591,13 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             },
             updateAssistantSettings: (patch) => updateContactSettings(row.assistant_id, patch),
             currentAssistant: assistantSnapshot,
+            resolveResource: resolveContactResource,
             onCard: (card) => {
-              if (contactResetThisTurn) return;
-              rememberPublishedContactCard(row.assistant_id, {
+              controller.signal.throwIfAborted();
+              if (contactResetThisTurn) throw new AssignError(ASSIGN_CODES.VALIDATION, 'This turn reset its context.');
+              editable(row.assistant_id);
+              if (!getContactMessage(db, messageID)) throw new AssignError(ASSIGN_CODES.VALIDATION, 'This turn no longer belongs to the transcript.');
+              return rememberPublishedContactCard(row.assistant_id, {
                 userMessageID: messageID, turnID, assignedCards, card,
               });
             },
@@ -3862,9 +3889,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         parts: [card],
       });
       if (card.cardType === 'session' && card.sessionID) {
-        const deliveryMessageID = pendingAssignMessageIDs.get(card.sessionID)
-          || (nonEmptyString(card.messageID) ? card.messageID : null);
-        if (pendingAssignMessageIDs.has(card.sessionID)) pendingAssignMessageIDs.delete(card.sessionID);
+        const deliveryMessageID = nonEmptyString(card.messageID) ? card.messageID : null;
         upsertContactWatch(db, {
           assistantID: row.assistant_id,
           sessionID: card.sessionID,
@@ -4108,11 +4133,33 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     active(assistantID);
     return readContactChannelPage(db, assistantID, options);
   };
-  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
+  const prepareChannelImage = async (assistantID, source, { generation, uploadID, signal }) => {
+    const row = active(assistantID);
+    const assertGeneration = () => {
+      signal?.throwIfAborted();
+      if (channelPage(assistantID, { tipOnly: true }).generation !== generation) fail('cancelled');
+    };
+    assertGeneration();
+    const existing = getContactAttachmentByUploadID(db, assistantID, uploadID);
+    if (existing && existing.generation === generation) return canonicalDescriptorFromRow(existing);
+    const { buffer, mime, filename } = await loadChannelImage(source, {
+      cwd: resolveAssistantCwd({ workspacePath: row.workspace_path, effectiveWorkspacePath: effectiveWorkspace(row) }),
+      allowedRoots: getAllowedRoots(), signal,
+      readAttachment: (attachmentID) => getAssistantContactAttachment(assistantID, attachmentID),
+    });
+    assertGeneration();
+    const image = await putAssistantContactAttachment(assistantID, uploadID, {
+      stream: { body: buffer }, signal,
+      headers: { 'content-type': mime, 'x-attachment-filename': filename,
+        'x-content-size': String(buffer.length), 'x-content-sha256': crypto.createHash('sha256').update(buffer).digest('hex') },
+    });
+    assertGeneration();
+    return image;
+  };
+  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, prepareChannelImage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
     assignedCompletion.dispose();
     cancelAssignedResumes({});
     sessionAbortInflight.clear();
-    pendingAssignMessageIDs.clear();
     for (const turn of contactControllers.values()) turn.controller.abort();
     if (!closed) {
       closed = true;

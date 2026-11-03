@@ -28,6 +28,9 @@ service protocol. No OpenClaw runtime or new dependency is installed.
   and MIME identification; no arbitrary URL fetch or credential forwarding.
 - `toon.js`: local JSON-only TOON encoder (objects, lists, primitive/tabular
   arrays); no new dependency, key folding, raw-string emission or decoding API.
+- `../channel-output.js` / `../channel-image.js`: shared published-image projection
+  and bounded image materialization for all four channels; no WeChat-only output
+  parser or second attachment store.
 - `assistants/service.channelPage()` is an internal bounded, ascending durable
   output seam. It validates the Bot and uses the contact-store generation. It does
   not expose credentials or replace the contact execution engine.
@@ -132,10 +135,26 @@ data directory cannot steal a live account. After any network wait, epoch/lease
 checks fence stale writes. Cross-machine copies of credentials/data are unsupported.
 
 Binding starts at the current contact tip, so existing history/greetings are not
-sent. Subsequent **public assistant replies**, including App-initiated and background
-task replies, sync to the paired owner. Plain text is sent as text; current cards
-become title/name text, not interactive WeChat cards or deeplinks. Internal settle
+sent. Subsequent **public assistant replies eligible for external delivery**,
+including background task replies, sync to the paired owner. Built-in Yuri IM
+replies are excluded by the shared contact feed and stay in their conversation.
+Plain text is sent as text; internal cards
+are unsupported output and silently skipped, with no title/link/deeplink fallback,
+error notice or retry. They remain visible in Yuri. Internal settle
 markers are omitted and failures use a safe generic message, never raw tool errors.
+Published Markdown images and image file parts are sent as native images, in order
+with surrounding text, subject to the same original-channel routing. Images are
+snapshotted to owned contact attachments before the feed watermark commits; the
+additive outbox `image` column stores only opaque descriptors (legacy rows remain
+text). Restart/retry reads immutable snapshot bytes, not a possibly deleted source
+file. `api.sendImage()` obtains upload parameters, AES-128-ECB/PKCS#7 encrypts the
+bytes, and POSTs only to the fixed official `/c2c/upload` CDN without bot credentials.
+Only HTTP 200 plus `x-encrypted-param` permits the final `type: 2` image send with
+the stable delivery client ID and reply context. Upload failure is not an ambiguous
+chat send; a failed final send keeps the existing blocked/unknown semantics. A
+definite failure produces a safe text notice and does not discard later output.
+The adapter rechecks generation/ownership after upload before sending. Source,
+size, SSRF and format bounds are documented in `../DOCUMENTATION.md`.
 Generation reset drops queued output from the previous transcript. An already submitted HTTP request
 cannot be recalled, including during disconnect/reset.
 
@@ -227,7 +246,8 @@ content and stale runtime mutations cannot overwrite a new Host's cache.
 ### Typing presence
 
 Only live `yuri:contact-turn-start/end` events drive typing, including App-initiated
-or background contact turns without a channel source, which may push to WeChat.
+or background contact turns. Presence is separate from output routing: built-in
+Yuri IM replies are never pushed to WeChat.
 Replies to channel-originated turns require an exact receipt in this binding:
 WeChat inputs reply only here, and enterprise-channel inputs never broadcast here.
 The persisted contact turn ID identifies the original admitted input across restart.

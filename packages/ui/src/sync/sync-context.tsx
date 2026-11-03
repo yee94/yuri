@@ -15,6 +15,7 @@ import { sessionDisplayStatus, sessionDisplayStatusObservedAt } from "./session-
 import { refreshQuestionAutoDelegate } from "@/lib/questionAutoDelegate"
 import { sessionEvents } from "@/lib/sessionEvents"
 import { invalidateGitBranchesQuery } from "@/queries/gitBranchQueries"
+import { handleSessionGoalEvent } from '@/queries/sessionGoalQueries'
 import { QuestionAutoDelegateNotifications } from "@/components/chat/QuestionAutoDelegateStatus"
 import { bindStreamReconnect, noteStreamActivity, requestStreamReconnect } from "./stream-liveness"
 import { isVSCodeRuntime } from "@/lib/desktop"
@@ -138,6 +139,7 @@ import {
 } from "./global-session-status"
 import { fetchSessionActiveSnapshot } from "@/queries/sessionActiveQueries"
 import { mountSessionActivityIdentitySync } from "./session-activity-identity"
+import { getSessionShellActivity } from "./session-shell-activity"
 import { applyWorktreeBootstrapStatusEvent } from "@/lib/worktrees/worktreeBootstrap"
 import type { State } from "./types"
 import type { SessionStatus } from '@/lib/opencode/v2-types'
@@ -233,10 +235,10 @@ export function useSessionActivity(sessionID: string): boolean {
   return React.useSyncExternalStore(reader.subscribe, read, read)
 }
 
-export function useRunningDescendantCount(sessionID: string): number {
+export function useBackgroundTaskCount(sessionID: string): number {
   const { childStores } = useSyncSystem()
   const reader = getSessionActivityReader(childStores)
-  const read = React.useMemo(() => () => reader.readDescendantCount(sessionID), [reader, sessionID])
+  const read = React.useMemo(() => () => reader.readBackgroundCount(sessionID), [reader, sessionID])
   return React.useSyncExternalStore(reader.subscribe, read, read)
 }
 
@@ -2214,6 +2216,11 @@ export function handleEvent(
   childStores: ChildStoreManager,
   routingIndex: EventRoutingIndex,
 ) {
+  if (payload.type.startsWith('shell.') || payload.type === 'server.instance.disposed' || payload.type === 'location.shutdown') {
+    getSessionShellActivity(childStores).event(rawDirectory, payload)
+    if (payload.type.startsWith('shell.')) return
+  }
+  if (handleSessionGoalEvent(rawDirectory, payload)) return
   if (payload.type === 'session.moved') {
     const props = payload.properties as { sessionID?: string; location?: { directory?: string }; projectID?: string; subpath?: string; eventCreated?: number; eventSequence?: number }
     const id = props.sessionID
@@ -3103,6 +3110,8 @@ export function SyncProvider(props: {
   // Event pipeline — created once per mount. No class, no start/stop.
   // Abort controller owned by the pipeline closure. Cleanup aborts + flushes.
   useEffect(() => {
+    const shellActivity = getSessionShellActivity(childStores)
+    const resetShells = subscribeRuntimeEndpointChanged(() => shellActivity.clear())
     const pipeline = createEventPipeline({
       sdk: props.sdk,
       transport: messageStreamTransport,
@@ -3179,6 +3188,8 @@ export function SyncProvider(props: {
         noteStreamActivity(now)
       },
       onReconnect: () => {
+        void shellActivity.refresh().catch(() => { /* Preserve live shells when authority is unavailable. */ })
+        handleSessionGoalEvent('', { type: 'server.connected' })
         // Match upstream: seed the complete process membership even before a
         // directory or child-session catalog exists. Directory resyncs share
         // this Query flight and still apply only their own known IDs.
@@ -3259,6 +3270,8 @@ export function SyncProvider(props: {
         pipelineReconnectRef.current = null
       }
       pipeline.cleanup()
+      resetShells()
+      shellActivity.clear()
     }
   }, [props.sdk, childStores, routingIndex, messageStreamTransport, triggerDirectoryResync])
 

@@ -1,7 +1,6 @@
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
-import { registerSessionGoalRoutes } from '../session-goal/routes.js';
 import { registerSessionMetadataRoutes } from '../session-metadata/routes.js';
 import { registerGitHubRoutes } from '../github/routes.js';
 import { registerGitRoutes } from '../git/routes.js';
@@ -153,7 +152,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       sessionMetadataStore = null,
       sessionArchiveService = null,
       onSessionMetadataWritten = null,
-      persistSessionGoal = null,
       persistSessionMetadata = null,
       onSystemSessionPersisted = null,
       readSessionMetadata = null,
@@ -456,28 +454,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
         throw new Error('Small model service is not configured');
       });
     registerSmallModelRoutes(app, { getSmallModelService });
-    registerSessionGoalRoutes(app, {
-      // Reuse the index-provided store seam — do not invent a second store.
-      persistSessionGoal: typeof persistSessionGoal === 'function'
-        ? persistSessionGoal
-        : (sessionMetadataStore
-          ? async (sessionId, _directory, goal) => {
-            const metadata = await sessionMetadataStore.setSessionMetadata(sessionId, {
-              yuri: { goal },
-            });
-            return metadata;
-          }
-          : null),
-      readSessionMetadata: typeof readSessionMetadata === 'function'
-        ? readSessionMetadata
-        : (sessionMetadataStore
-          ? (sessionId) => sessionMetadataStore.get(sessionId)
-          : null),
-      // Same arm path as PUT /api/yuri/sessions/:id/metadata.
-      onGoalPersisted: typeof onSessionMetadataWritten === 'function'
-        ? onSessionMetadataWritten
-        : null,
-    });
     if (sessionMetadataStore) {
       registerSessionMetadataRoutes(app, {
         sessionMetadataStore,

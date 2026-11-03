@@ -172,7 +172,7 @@ import { SessionGoalButton, SessionGoalObjectiveCounter } from '@/components/cha
 import { useSessionGoal } from '@/hooks/useSessionGoal';
 import { useSessionGoalArmStore } from '@/stores/useSessionGoalArmStore';
 import type { Part } from '@/lib/opencode/v2-types';
-import { consumesImmediateCommandText, getGoalCommandObjective, getLocalChatCommand, preservesComposerResources } from './localCommandClassifier';
+import { consumesImmediateCommandText, getLocalChatCommand, preservesComposerResources } from './localCommandClassifier';
 import { submitBtwCommand } from './btwCommand';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { BtwComposerSurface } from '@/components/layout/BtwPanel';
@@ -233,6 +233,7 @@ import {
     COMPOSER_TRIGGER_ICON_SLOT,
     composerTriggerIconDisplay,
     composerTriggerIconVisual,
+    parseSlashCommandInvocation,
     stripComposerTriggerIconSlot,
     stripComposerTriggerIconSlotsForPlainText,
 } from '@/composer/inline-visual';
@@ -2641,6 +2642,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         }))) return;
         if (submissionBlocked) return;
         if (!inputSnapshot.hasContent || !currentSessionId) return;
+        if (surface.kind === 'primary' && inputMode === 'normal'
+            && (useSessionGoalArmStore.getState().armed || parseSlashCommandInvocation(logicalMessage)?.commandName.toLowerCase() === 'goal')) {
+            void handleSubmit(sessionIsRunning ? { delivery: 'queue' } : undefined);
+            return;
+        }
         // A running turn remains submit-capable while queue ownership is frozen.
         // Steer uses the captured session/runtime path and avoids an unsafe queue admit.
         // Release is not needed here: we never took a flight before this branch.
@@ -3069,13 +3075,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         const stagedEditAtSubmit = useSessionUIStore.getState().stagedMessageEdit;
         const replacingMessage = surface.kind === 'primary' && !queuedOnly
             && Boolean(currentSessionId && stagedEditAtSubmit?.sessionId === currentSessionId);
-        const steerAfterAdmit = !replacingMessage && options?.steerAfterAdmit === true
-            && sessionIsRunning
-            && surface.kind === 'primary';
-        const requestedDelivery = replacingMessage ? 'steer' : steerAfterAdmit ? 'queue' : options?.delivery;
-        const delivery = requestedDelivery === 'queue' && sessionIsRunning
-            ? 'queue'
-            : requestedDelivery === 'steer' && sessionIsRunning ? 'steer' : undefined;
         const inputSnapshot = options?.presetText != null
             ? {
                 message: options.presetText,
@@ -3097,6 +3096,16 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         const requestedCommandName = directInputIsAuthored && inputMode === 'normal' && normalizedInput.startsWith('/')
             ? stripLeadingSlashCommandSlot(normalizedInput.slice(1).trim()).split(/\s+/)[0]?.toLowerCase()
             : undefined;
+        const nativeGoal = surface.kind === 'primary' && inputMode === 'normal'
+            && (useSessionGoalArmStore.getState().armed || parseSlashCommandInvocation(logicalInputMessage)?.commandName.toLowerCase() === 'goal');
+        const steerAfterAdmit = !nativeGoal && !replacingMessage && options?.steerAfterAdmit === true
+            && sessionIsRunning
+            && surface.kind === 'primary';
+        const requestedDelivery = replacingMessage || (nativeGoal && options?.steerAfterAdmit)
+            ? 'steer' : steerAfterAdmit ? 'queue' : options?.delivery;
+        const delivery = requestedDelivery === 'queue' && sessionIsRunning
+            ? 'queue'
+            : requestedDelivery === 'steer' && sessionIsRunning ? 'steer' : undefined;
 
         // Policy is resolved before model routing, queue admission, and every
         // resource-consuming local command. Rejection retains the full draft.
@@ -3121,7 +3130,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             }
             return;
         }
-        const routeThroughQueue = !replacingMessage && !steerAfterAdmit && shouldRouteComposerThroughQueue({
+        const routeThroughQueue = !nativeGoal && !replacingMessage && !steerAfterAdmit && shouldRouteComposerThroughQueue({
             hasQueuedMessages, sessionIsRunning, queuedOnly, delivery,
         });
         if (!queuedOnly && localCommand && localCommand !== 'model') {
@@ -3227,7 +3236,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         // cannot proceed. Local commands retain their existing resource policy.
         const clearedComposerBeforeDispatch = !queuedOnly && !resourcePolicy;
         const nativeQueueMessageID = surface.kind === 'primary' && currentSessionId
-            && delivery === 'queue' && !queuedOnly && !resourcePolicy && !localCommand && inputMode === 'normal'
+            && delivery === 'queue' && !queuedOnly && !resourcePolicy && !localCommand && !nativeGoal && inputMode === 'normal'
             ? ascendingId('msg')
             : undefined;
         const clearNativeQueueAdmission = () => {
@@ -3301,6 +3310,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             resourcePolicy,
             inputMode,
             localCommand,
+            nativeGoal,
         });
         if (shouldCreateOptimisticPrimarySend && currentSessionId) {
             const sessionDirectoryForOptimistic =
@@ -3485,7 +3495,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         // the queue here: this submission already owns its payload
         // (inputSnapshot), while the queue path re-reads the composer we just
         // cleared and would silently admit nothing.
-        if (currentSessionId && !queuedOnly && !resourcePolicy && delivery !== 'queue') {
+        if (currentSessionId && !queuedOnly && !resourcePolicy && !nativeGoal && delivery !== 'queue') {
             const dismissedQuestions = await sessionActions.dismissOpenQuestionsForSession(currentSessionId);
             if (dismissedQuestions) {
                 await sessionActions.abortCurrentOperation(currentSessionId);
@@ -3916,19 +3926,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     await restoreFailedSubmission();
                     toast.error(error instanceof Error ? error.message : t('chat.chatInput.toast.reviewFailed'));
                 }
-                return;
-            }
-            else if (commandName === 'goal' && (currentSessionId || newSessionDraftOpen)) {
-                // `/goal` only arms goal mode — never auto-sends. Strip the slash
-                // token and leave any trailing objective in the composer so the
-                // user can keep editing, then send as a normal armed message.
-                abortEstablishing();
-                useSessionGoalArmStore.getState().setArmed(true);
-                const objectiveDraft = getGoalCommandObjective(normalizedCommand, inputMode) ?? '';
-                replacePlainDocument(objectiveDraft);
-                messageRef.current = objectiveDraft;
-                setHistoryIndex(-1);
-                if (!objectiveDraft) setExpandedInput(false);
                 return;
             }
             else if (commandName === 'craft-goal' && (currentSessionId || newSessionDraftOpen)) {

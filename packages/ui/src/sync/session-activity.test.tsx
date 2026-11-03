@@ -13,6 +13,7 @@ import { resyncDirectorySessionStatuses } from './session-status-reconciliation'
 import { QueryClient } from '@tanstack/react-query';
 import { collectDirectoryStatusRestoreSessionIds } from './reconnect-recovery';
 import { listInProgressHomeSessions } from '@/components/session/sidebar/pinnedSessions';
+import { getSessionShellActivity } from './session-shell-activity';
 
 vi.hoisted(() => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ home: '/workspace', data: [] })));
@@ -59,6 +60,30 @@ test('a completed parent keeps its session loading while a background descendant
   await act(async () => store.setState({ session_status: { parent: { type: 'idle' }, child: { type: 'idle' } } }));
   expect(host.firstElementChild?.getAttribute('data-loading')).toBe('false');
   expect(unrelatedRenders).toBe(rendersBefore);
+});
+
+test('shell-only activity updates its session spinner without rerendering unrelated rows or changing execution', async () => {
+  const children = new ChildStoreManager();
+  const store = children.ensureChild('/workspace', { bootstrap: false });
+  store.setState({ session: [{ id: 'parent' }] as Session[], session_status: { parent: { type: 'idle' } } });
+  const shells = getSessionShellActivity(children);
+  let unrelatedRenders = 0;
+  function Row({ id }: { id: string }) {
+    const running = useSessionActivity(id);
+    if (id === 'other') unrelatedRenders += 1;
+    return <span data-loading={running} />;
+  }
+  root = createRoot(host);
+  await act(async () => root!.render(<context.Provider value={{ childStores: children }}><Row id="parent" /><Row id="other" /></context.Provider>));
+  const renders = unrelatedRenders;
+  await act(async () => shells.event('/workspace', { type: 'shell.created', properties: {
+    info: { id: 'sh_tests', status: 'running', metadata: { sessionID: 'parent' } },
+  } }));
+  expect(host.firstElementChild?.getAttribute('data-loading')).toBe('true');
+  expect(store.getState().session_status.parent.type).toBe('idle');
+  await act(async () => shells.event('/workspace', { type: 'shell.exited', properties: { id: 'sh_tests', status: 'exited' } }));
+  expect(host.firstElementChild?.getAttribute('data-loading')).toBe('false');
+  expect(unrelatedRenders).toBe(renders);
 });
 
 test.each([false, true])('reconnect retains active children before their details or catalog have loaded (previous idle=%s)', async (previousIdle) => {

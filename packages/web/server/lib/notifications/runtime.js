@@ -1,5 +1,9 @@
 import { readNotificationSessionRecord } from './template-runtime.js';
 import { completionEvent, createFamilyCompletionGate } from './family-completion-gate.js';
+import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
+import { getNativeSessionGoal } from '../opencode/native-goal.js';
+import { Goal } from '@opencode/schema/goal';
+import { Schema } from 'effect';
 
 const trimmedText = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
 
@@ -445,22 +449,12 @@ export const createNotificationTriggerRuntime = (deps) => {
     return trimmedText(meta?.title);
   };
 
-  // A session with an ACTIVE goal suppresses per-turn ready notifications;
-  // the session-goal runtime sends its own notification when the goal
-  // settles. Fetch failures fall through to normal notification behavior.
+  // The native goal remains active until OpenCode's own reviewer settles it.
   const hasActiveSessionGoal = async (sessionId, directory) => {
     if (!sessionId) return false;
     try {
-      const base = buildOpenCodeUrl(`/session/${encodeURIComponent(sessionId)}`, '');
-      const url = directory ? `${base}?directory=${encodeURIComponent(directory)}` : base;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
-        signal: AbortSignal.timeout(2000),
-      });
-      if (!response.ok) return false;
-      const session = readNotificationSessionRecord(await response.json().catch(() => null));
-      const goal = session?.metadata?.yuri?.goal;
+      const client = makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), authHeaders: getOpenCodeAuthHeaders() });
+      const goal = await getNativeSessionGoal(client, sessionId, directory, AbortSignal.timeout(2000));
       return Boolean(goal && typeof goal === 'object' && goal.status === 'active');
     } catch {
       return false;
@@ -555,7 +549,7 @@ export const createNotificationTriggerRuntime = (deps) => {
 
         // While a goal drives the session, per-turn "ready" notifications are
         // noise produced by the goal loop itself — the goal's own settle
-        // notification (complete/blocked/budget) is the final word instead.
+        // notification comes from OpenCode's native Goal changed event instead.
         if (await hasActiveSessionGoal(sessionId, notificationDirectory)) {
           return;
         }
@@ -883,6 +877,18 @@ export const createNotificationTriggerRuntime = (deps) => {
   const nativeFailures = new Map();
   const maybeSendPushForTrigger = async (payload) => {
     maybeCacheSessionMetaFromPayload(payload);
+    if (payload.type === 'rpc.opencode.goal.changed') {
+      const parsed = Schema.decodeUnknownExit(Goal.Definition.events.changed.schema)(payload.properties ?? payload.data);
+      if (parsed._tag === 'Failure' || parsed.value.goal?.status !== 'complete') return;
+      const { sessionID, goal } = parsed.value;
+      const directory = extractDirectoryFromPayload(payload);
+      if (await shouldSkipSystemSessionNotification(sessionID, directory)) return;
+      await sendGoalSettlePush({
+        sessionId: sessionID, directory, status: 'complete', title: 'Goal complete',
+        body: [goal.objective, goal.reason].filter(Boolean).join(' — ').slice(0, 240),
+      });
+      return;
+    }
     const event = completionEvent(payload);
     if (event) {
       if (event.kind === 'running' || payload.type === 'session.deleted') nativeFailures.delete(event.sessionId);
@@ -920,6 +926,11 @@ export const createNotificationTriggerRuntime = (deps) => {
   const sendGoalSettlePush = async ({ sessionId, directory, status, title, body }) => {
     const settings = await readSettingsFromDisk();
     if (settings.notifyOnGoals === false) return;
+    if (settings.nativeNotificationsEnabled && (settings.notificationMode === 'always' || !getIsWindowFocused?.())) {
+      const notification = { title, body, tag: `goal-${sessionId}`, kind: 'goal', sessionId, directory };
+      const desktopNotificationDelivered = emitDesktopNotification(notification);
+      broadcastUiNotification(notification, { desktopNotificationDelivered });
+    }
     let sessionName = '';
     try {
       const base = buildOpenCodeUrl(`/session/${encodeURIComponent(sessionId)}`, '');
@@ -936,7 +947,7 @@ export const createNotificationTriggerRuntime = (deps) => {
     } catch {
       // Session name is presentation sugar for the mobile push — never block on it.
     }
-    const type = status === 'complete' ? 'goal_complete' : (status === 'budgetLimited' ? 'goal_budget' : 'goal_blocked');
+    const type = status === 'complete' ? 'goal_complete' : 'goal_blocked';
     await fanoutPush(
       {
         title,

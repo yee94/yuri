@@ -66,6 +66,7 @@ import {
   shareSession as shareSessionAction,
   unshareSession as unshareSessionAction,
   optimisticSend,
+  rollbackOptimisticSend,
   optimisticInsertUserMessage,
   settleSessionPromptAfterSend,
   revertToMessage as revertToMessageAction,
@@ -86,8 +87,6 @@ import { useInputStore, type InputDraftRuntimeCapture, type DraftOwnershipCommit
 import { deriveNewSessionDraftID, newSessionDraftKey, sessionDraftKey, type DraftKey } from "./input-draft-types"
 import { useComposerSendStore } from "./composer-send-manager"
 import { useSessionGoalArmStore } from "@/stores/useSessionGoalArmStore"
-import { setSessionGoal } from "@/lib/sessionGoalActions"
-import { wrapSystemReminder } from "@/lib/systemReminder"
 import { useUIStore } from "@/stores/useUIStore"
 import { resolveRevertRedoTarget, resolveRevertUndoTarget } from "./conversation-order"
 import { useSelectionStore } from "./selection-store"
@@ -301,6 +300,21 @@ export async function routeMessage(params: {
   // Reserved-slot chips (`/\u2003name`) must not treat the icon em-space as the
   // first argument separator; that path is common after chip copy/paste.
   const slashInvocation = parseSlashCommandInvocation(params.content)
+  if (slashInvocation?.commandName.toLowerCase() === 'goal') {
+    // Native goals create synthetic notices, not authored user rows.
+    if (params.ticket) rollbackOptimisticSend(params.ticket)
+    if (applyComposerSelection && (sendSelection.model || sendSelection.agent)) {
+      await opencodeClient.applySendSelection(params.sessionId, { model: sendSelection.model, agent: sendSelection.agent }, requestDirectory)
+    }
+    const messageID = await opencodeClient.sendCommand({
+      id: params.sessionId, providerID: params.providerID, modelID: params.modelID,
+      command: 'goal', arguments: slashInvocation.argumentsText,
+      directory: requestDirectory, files: params.files, delivery: params.delivery,
+    })
+    useSessionUIStore.getState().clearRetainedPendingUserMessages(params.sessionId, [params.messageID ?? messageID])
+    onSendConfirmed(messageID)
+    return
+  }
   if (slashInvocation) {
     // Match composer/autocomplete: catalog names are case-insensitive. Keep the
     // catalog's canonical `command.name` for sendCommand / [command:…] rewrite so
@@ -2085,9 +2099,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   // ---------------------------------------------------------------------------
   // sendMessage — calls SDK, reads domain data from sync
   // ---------------------------------------------------------------------------
-  // Armed goal (composer target button): the sent prompt becomes the goal
-  // objective; budget comes from the global default setting. Fire-and-forget —
-  // a failed metadata patch must not fail the send.
+  // Armed UI flows submit the objective through OpenCode's native /goal command.
   sendMessage: async (
     content: string,
     providerID: string,
@@ -2124,34 +2136,10 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const trimmedAgent = typeof agent === "string" && agent.trim().length > 0 ? agent.trim() : undefined
 
     const goalArm = inputMode !== "shell" && content.trim().length > 0
-      ? useSessionGoalArmStore.getState().consume()
+      ? useSessionGoalArmStore.getState()
       : { armed: false, objectiveOverride: null }
     const goalArmed = goalArm.armed
-    if (goalArmed) {
-      // Teach the agent the goal protocol from turn one — without this it
-      // only learns about goal mode from the first server continuation.
-      const uiState = useUIStore.getState()
-      const budgetLine = uiState.sessionGoalDefaultBudgetEnabled
-        ? ` A token budget of ${uiState.sessionGoalDefaultBudget} tokens applies to this goal.`
-        : ""
-      const goalIntro = wrapSystemReminder(
-        "Goal mode is active for this session. The user message above defines the goal objective. "
-        + "Work toward it across turns; whenever you stop before the objective is verifiably complete, the system will automatically prompt you to continue. "
-        + "Progress is evaluated independently after each turn, so end every turn with a clear, factual statement of what is done, what was verified, and what remains."
-        + budgetLine,
-      )
-      additionalParts = [...(additionalParts ?? []), { text: goalIntro, synthetic: true }]
-    }
-    const applyArmedGoal = (goalSessionId: string, goalDirectory: string | null | undefined) => {
-      if (!goalArmed) return
-      const uiState = useUIStore.getState()
-      const tokenBudget = uiState.sessionGoalDefaultBudgetEnabled ? uiState.sessionGoalDefaultBudget : null
-      const objective = goalArm.objectiveOverride?.trim() || content
-      void setSessionGoal(goalSessionId, goalDirectory ?? undefined, { objective, tokenBudget }, null)
-        .catch((error) => {
-          console.warn("[session-ui-store] failed to set goal from armed send", error)
-        })
-    }
+    if (goalArmed) content = `/goal ${goalArm.objectiveOverride?.trim() || content}`
 
     // ---- New session from draft ----
     if (!options?.sessionId && draft?.open) {
@@ -2174,7 +2162,6 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
           attachments,
           additionalParts,
           messageID: options?.messageID,
-          onSessionReady: applyArmedGoal,
         })
         return
       }
@@ -2256,7 +2243,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       promoteProjectForConversation(createdDraftSession.directory, get().availableWorktreesByProject,
         getSyncSessions(createdDraftSession.directory ?? undefined).find((session) => session.id === createdDraftSession.sessionId)
           ?? useGlobalSessionsStore.getState().sessionsByDirectory.get(createdDraftSession.directory ?? '')?.find((session) => session.id === createdDraftSession.sessionId))
-      applyArmedGoal(createdDraftSession.sessionId, createdDraftSession.directory)
+      if (goalArmed) useSessionGoalArmStore.getState().consume()
       return
     }
 
@@ -2379,9 +2366,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     promoteProjectForConversation(currentSessionDirectory, get().availableWorktreesByProject,
       getSyncSessions(currentSessionDirectory ?? undefined).find((session) => session.id === targetSessionId)
         ?? useGlobalSessionsStore.getState().sessionsByDirectory.get(currentSessionDirectory ?? '')?.find((session) => session.id === targetSessionId))
-    if (targetSessionId) {
-      applyArmedGoal(targetSessionId, currentSessionDirectory)
-    }
+    if (goalArmed) useSessionGoalArmStore.getState().consume()
   },
 
   // ---------------------------------------------------------------------------

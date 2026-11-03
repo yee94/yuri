@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { assignedSessionResumeMessageID, createAssistantsService } from './service.js';
 import { assistantContractFixtures } from './contracts.js';
@@ -12,6 +12,9 @@ import {
 } from './contact-tools.js';
 import { runContactTurn as realRunContactTurn } from './harness.js';
 import { AVATAR_COLORS, resolveAssistantAvatar } from '../../../../ui/src/lib/assistant-avatar/recipe.ts';
+vi.mock('../opencode/native-goal.js', () => ({ getNativeSessionGoal: vi.fn(async () => null) }));
+import { getNativeSessionGoal } from '../opencode/native-goal.js';
+beforeEach(() => { getNativeSessionGoal.mockReset().mockResolvedValue(null); });
 
 const require = createRequire(import.meta.url);
 const root = () => fs.mkdtempSync(path.join(os.tmpdir(), 'assistants-'));
@@ -121,6 +124,11 @@ const assistantInput = { name: 'A', providerID: 'p', modelID: 'm' };
 const greetingText = "Hi, I'm A. How can I help you?";
 const toolBatch = (calls, content = '') => ({ completion: { choices: [{ message: { content, tool_calls: calls.map(([name, args, id = `call_${name}`]) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } })) } }] } });
 const sayThen = (text, name, args) => toolBatch([['notify_user', { text }], [name, args]]);
+const referenceResult = async (tools, result) => {
+  const reference = await tools.find((tool) => tool.name === 'reference_resource').execute('reference', JSON.parse(result.content[0].text).reference);
+  expect(reference.isError).not.toBe(true);
+  return reference.details.card;
+};
 
 describe('assistants service', () => {
   it('persists pins across clients and restarts without changing catalog, session or share-default order', async () => {
@@ -2771,9 +2779,11 @@ describe('assistants service', () => {
       toolBatch([['load_tools', { domain: 'yuri.projects' }]]),
       toolBatch([['register_project', { path: workspace }]]),
       toolBatch([['assign_session', { projectPath: workspace, prompt: 'hello' }]]),
+      toolBatch([['reference_resource', { cardType: 'session', sessionID: 'ses_registered' }]]),
     ];
     const service = setup(directory, {
       create: async (input) => { creates.push(input); return { id: 'ses_registered' }; },
+      get: async ({ sessionID }) => ({ id: sessionID, directory: workspace, title: 'Hello', status: { type: 'busy' } }),
       prompt: async (input) => { prompts.push(input); return { id: 'inbox_hello', type: 'user' }; },
     }, {
       getAllowedRoots: () => projects.map((project) => project.path),
@@ -2827,6 +2837,7 @@ describe('assistants service', () => {
     const prompts = [];
     const archives = [];
     const service = setup(directory, {
+      get: async ({ sessionID }) => ({ id: sessionID, directory: project, title: 'Login', status: { type: 'busy' } }),
       create: async (input) => {
         creates.push(input);
         return { data: { id: `ses_${creates.length}` } };
@@ -2846,7 +2857,7 @@ describe('assistants service', () => {
         return {
           text: 'Opened the login session.',
           bubbles: ['Opened the login session.'],
-          cards: result.details.card ? [result.details.card] : [],
+          cards: [await referenceResult(tools, result)],
           tools,
         };
       },
@@ -2889,6 +2900,7 @@ describe('assistants service', () => {
     fs.mkdirSync(project, { recursive: true });
     const creates = [];
     const service = setup(directory, {
+      get: async ({ sessionID }) => ({ id: sessionID, directory: project, title: 'Once', status: { type: 'busy' } }),
       create: async (input) => {
         creates.push(input);
         return { data: { id: `ses_${creates.length}` } };
@@ -2908,7 +2920,7 @@ describe('assistants service', () => {
         return {
           text: first.content[0].text,
           bubbles: [first.content[0].text],
-          cards: first.details.card ? [first.details.card, second.details.card].filter(Boolean) : [],
+          cards: [await referenceResult(tools, first), await referenceResult(tools, second)],
           tools,
         };
       },
@@ -3449,7 +3461,7 @@ describe('assistants service', () => {
         return {
           text: '在听',
           bubbles: ['在听'],
-          cards: result.details.card ? [result.details.card] : [],
+          cards: [await referenceResult(tools, result)],
         };
       },
     });
@@ -3493,7 +3505,7 @@ describe('assistants service', () => {
         return {
           text: '盯着',
           bubbles: ['盯着'],
-          cards: result.details.card ? [result.details.card] : [],
+          cards: [await referenceResult(tools, result)],
         };
       },
     });
@@ -3532,7 +3544,7 @@ describe('assistants service', () => {
         }
         const result = await tools.find((tool) => tool.name === 'watch_session').execute('watch', { sessionID: 'ses_once' });
         expect(result.isError).not.toBe(true);
-        return { text: '在听', bubbles: ['在听'], cards: [result.details.card] };
+        return { text: '在听', bubbles: ['在听'], cards: [await referenceResult(tools, result)] };
       },
     };
     const client = { get: async ({ sessionID }) => ({ data: { id: sessionID, directory, status: { type: 'busy' } } }) };
@@ -3796,7 +3808,7 @@ describe('assistants service', () => {
         return {
           text: 'Created FlowQA.',
           bubbles: ['Created FlowQA.'],
-          cards: result.details.card ? [result.details.card] : [],
+          cards: [await referenceResult(tools, result)],
           tools,
         };
       },
@@ -4061,7 +4073,8 @@ describe('assistants service', () => {
     expect(missing.details.error).toBe('model_not_found');
     expect(patches).toEqual([{ projectID: 'proj_a', taskID: 'task_a', patch: { execution: { providerID: 'new-provider', modelID: 'new-model' } } }]);
     expect(synced).toEqual(['proj_a']);
-    expect(updated.details.card).toMatchObject({ taskID: 'task_a' });
+    expect(updated.details.card).toBeUndefined();
+    expect(JSON.parse(updated.content[0].text).reference).toEqual({ cardType: 'schedule', projectID: 'proj_a', taskID: 'task_a' });
     service.close();
   });
 
@@ -4070,6 +4083,7 @@ describe('assistants service', () => {
     const upserts = [];
     const service = setup(directory, {}, {
       listProjects: async () => [{ id: 'proj_app', path: directory }],
+      listScheduledTasks: async () => upserts.map(({ task }) => ({ ...task, id: 'task_ping' })),
       upsertScheduledTask: async (projectID, task) => {
         upserts.push({ projectID, task });
         return {
@@ -4095,7 +4109,7 @@ describe('assistants service', () => {
         return {
           text: 'Scheduled the ping.',
           bubbles: ['Scheduled the ping.'],
-          cards: result.details.card ? [result.details.card] : [],
+          cards: [await referenceResult(tools, result)],
           tools,
         };
       },
@@ -4132,7 +4146,7 @@ describe('assistants service', () => {
       assistantID: host.id,
       projectID: 'proj_app',
       taskID: 'task_ping',
-      task: null,
+      task: expect.objectContaining({ id: 'task_ping' }),
     })]);
     service.close();
   });
@@ -6644,12 +6658,12 @@ describe('read_session referenced conversation', () => {
         if (userText === 'watch') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
           const result = await watch.execute('call_w', { sessionID: 'ses_abort_race' });
-          return { text: '盯着', bubbles: ['盯着'], cards: result.details.card ? [result.details.card] : [] };
+          return { text: '盯着', bubbles: ['盯着'], cards: [await referenceResult(tools, result)] };
         }
         if (userText === 'peer watch') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
           const result = await watch.execute('call_peer_w', { sessionID: 'ses_abort_race' });
-          return { text: 'peer盯', bubbles: ['peer盯'], cards: result.details.card ? [result.details.card] : [] };
+          return { text: 'peer盯', bubbles: ['peer盯'], cards: [await referenceResult(tools, result)] };
         }
         const stop = tools.find((tool) => tool.name === 'stop_session');
         const stopPromise = stop.execute('call_s', { sessionID: 'ses_abort_race' });
@@ -6721,13 +6735,13 @@ describe('read_session referenced conversation', () => {
         }
         if (userText === 'watch both') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
-          await watch.execute('w1', { sessionID: 'ses_fail_abort' });
-          await watch.execute('w2', { sessionID: 'ses_other_worker' });
+          await referenceResult(tools, await watch.execute('w1', { sessionID: 'ses_fail_abort' }));
+          await referenceResult(tools, await watch.execute('w2', { sessionID: 'ses_other_worker' }));
           return { text: '双盯', bubbles: ['双盯'], cards: [] };
         }
         if (userText === 'peer watch fail') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
-          await watch.execute('peer_w', { sessionID: 'ses_fail_abort' });
+          await referenceResult(tools, await watch.execute('peer_w', { sessionID: 'ses_fail_abort' }));
           return { text: 'peer盯', bubbles: ['peer盯'], cards: [] };
         }
         const stop = tools.find((tool) => tool.name === 'stop_session');
@@ -6797,12 +6811,12 @@ describe('read_session referenced conversation', () => {
         if (userText === 'watch') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
           const result = await watch.execute('w', { sessionID: 'ses_silent' });
-          return { text: '盯', bubbles: ['盯'], cards: result.details.card ? [result.details.card] : [] };
+          return { text: '盯', bubbles: ['盯'], cards: [await referenceResult(tools, result)] };
         }
         if (userText === 'peer silent watch') {
           const watch = tools.find((tool) => tool.name === 'watch_session');
           const result = await watch.execute('peer_silent', { sessionID: 'ses_silent' });
-          return { text: 'peer盯', bubbles: ['peer盯'], cards: result.details.card ? [result.details.card] : [] };
+          return { text: 'peer盯', bubbles: ['peer盯'], cards: [await referenceResult(tools, result)] };
         }
         const stop = tools.find((tool) => tool.name === 'stop_session');
         const result = await stop.execute('s', { sessionID: 'ses_silent' });

@@ -86,6 +86,42 @@ function fixture({ directory = root(), service: externalService, env = {}, inter
 }
 
 describe('enterprise channel runtime', () => {
+  it.each(['wecom', 'feishu', 'dingtalk'])('routes text and generated images through %s without broadcasting another channel output', async (provider) => {
+    const f = fixture({ includeDingtalk: true });
+    const buffer = Buffer.from('image');
+    f.service.prepareChannelImage = vi.fn(async () => ({ attachmentID: 'att_generated' }));
+    f.service.getAssistantContactAttachment = vi.fn(async () => ({ buffer, mime: 'image/png', filename: 'generated.png' }));
+    await f.save('bot', provider);
+    const connection = await f.connected('bot', provider);
+    await connection.onMessage({ id: 'image-turn', senderID: 'owner', chatType: 'private', text: 'draw' });
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    const turnID = f.service.send.mock.calls[0][1].messageID;
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'other-image', turnID: 'weixin:not-this-channel', text: '![private](/private.png)', cards: [], status: 'complete' },
+      { ordinal: 2, messageID: 'own-image', turnID, text: 'Here\n\n![generated](/generated.png)\n\nDone', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.adapter.send).toHaveBeenCalledTimes(3));
+    expect(f.adapter.send.mock.calls.map(([part]) => part.image ? 'image' : part.text)).toEqual(['Here', 'image', 'Done']);
+    expect(f.adapter.send.mock.calls[1][0]).toMatchObject({ image: { buffer }, target: { userID: 'owner' } });
+    expect(f.service.prepareChannelImage).toHaveBeenCalledOnce();
+    const db = new Database(path.join(f.directory, 'channel.sqlite'));
+    try { expect(db.prepare("SELECT text,image FROM outbox WHERE state='sent'").all()).toEqual(Array(3).fill({ text: '', image: '' })); }
+    finally { db.close(); }
+  });
+
+  it('does not deliver an image prepared across a transcript reset', async () => {
+    const f = fixture();
+    let release;
+    f.service.prepareChannelImage = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    await f.save();
+    await f.connected();
+    f.reply('bot', '![generated](/generated.png)');
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    f.pages.set('bot', { generation: 1, messages: [] });
+    release({ attachmentID: 'old-image' });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(f.adapter.send).not.toHaveBeenCalled();
+  });
   it.each(['wecom', 'feishu', 'dingtalk'])('discovers %s from a private message without saving credentials or executing tasks', async (provider) => {
     const f = fixture({ includeDingtalk: true });
     const probe = f.runtime.discover('bot', provider, { clientID: 'client', clientSecret: 'secret' });
@@ -479,7 +515,7 @@ describe('enterprise channel runtime', () => {
     expect(f.adapter.send.mock.calls[0][0].id).toBe(deliveryID);
   });
 
-  it.each(['wecom', 'feishu', 'dingtalk'])('a failed %s card does not block later text or Bot input', async (provider) => {
+  it.each(['wecom', 'feishu', 'dingtalk'])('a failed %s notification does not block later text or Bot input', async (provider) => {
     const f = fixture({ includeDingtalk: true });
     f.adapter.send.mockImplementation(async ({ text }) => {
       if (text === 'Article notes') throw Object.assign(new Error('rejected'), { code: 'validation_error' });
@@ -487,7 +523,7 @@ describe('enterprise channel runtime', () => {
     await f.save('bot', provider);
     const connection = await f.connected('bot', provider);
     f.pages.set('bot', { generation: 0, messages: [
-      { ordinal: 1, messageID: 'card', text: '', cards: [{ cardType: 'session', title: 'Article notes', sessionID: 'ses_article' }], status: 'complete' },
+      { ordinal: 1, messageID: 'notification', text: 'Article notes', cards: [], status: 'complete' },
       { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
     ] });
     await vi.waitFor(() => expect(f.adapter.send.mock.calls.some(([input]) => input.text === 'Note saved')).toBe(true));
@@ -497,13 +533,13 @@ describe('enterprise channel runtime', () => {
     expect(f.adapter.send.mock.calls.filter(([input]) => input.text === 'Note saved')).toHaveLength(1);
   });
 
-  it('continues later output after an uncertain card send, including after restart, without resending the card', async () => {
+  it('continues later output after an uncertain notification send, including after restart, without resending it', async () => {
     const f = fixture();
     f.adapter.send.mockRejectedValueOnce(Object.assign(new Error('timeout'), { ambiguous: true }));
     await f.save();
     await f.connected();
     f.pages.set('bot', { generation: 0, messages: [
-      { ordinal: 1, messageID: 'card', text: '', cards: [{ title: 'Article notes' }], status: 'complete' },
+      { ordinal: 1, messageID: 'notification', text: 'Article notes', cards: [], status: 'complete' },
       { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
     ] });
     await vi.waitFor(() => expect(f.adapter.send).toHaveBeenCalledTimes(2));

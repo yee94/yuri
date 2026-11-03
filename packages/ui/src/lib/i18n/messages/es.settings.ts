@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Cambiar el espacio de trabajo inicia una nueva sesión del asistente.',
   'assistants.settings.scheduledTasks.title': 'Tareas programadas',
   'assistants.settings.scheduledTasks.empty': 'Este asistente aún no ha creado ninguna tarea programada.',
-  'assistants.settings.scheduledTasks.loadError': 'La verificación de las tareas programadas está incompleta.',
   'assistants.settings.scheduledTasks.open': 'Abrir las tareas programadas de {name}',
   'assistants.settings.save': 'Guardar asistente',
   'assistants.settings.empty': 'Crea tu primer asistente.',

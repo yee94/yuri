@@ -2,19 +2,25 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } from '@/components/ui/chromeCdpHarness';
 import { dict } from '@/lib/i18n/messages/en';
 import { dict as zh } from '@/lib/i18n/messages/zh-CN';
 import { QueuedMessageChips } from './QueuedMessageChips';
 import type { SessionComposerPendingItem, SessionInboxChip } from '@/sync/session-inbox-overlay';
+import type { MessageQueueItem, MessageQueueScope } from '@/lib/message-queue-server';
 
-const fixture = vi.hoisted(() => ({ items: [] as unknown[], mode: 'legacy', chinese: false, mobile: false, edit: vi.fn(), focus: vi.fn() }));
+const fixture = vi.hoisted(() => ({ items: [] as unknown[], scope: null as MessageQueueScope | null, reorder: vi.fn(), haptic: vi.fn(), mode: 'legacy', chinese: false, mobile: false, edit: vi.fn(), focus: vi.fn() }));
+vi.mock('@/hooks/streamingHaptics', () => ({ triggerMobileHaptic: fixture.haptic }));
 vi.mock('@/sync/session-inbox-edit', () => ({ editSessionInboxIntoDraft: fixture.edit }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: keyof typeof dict) => (fixture.chinese ? zh : dict)[key] }) }));
 vi.mock('@/components/ui', () => ({ toast: { error: vi.fn() } }));
 vi.mock('@/lib/persistence', () => ({ updateDesktopSettings: vi.fn() }));
 vi.mock('@/sync/message-queue-server-runtime', () => ({ isMessageQueuePendingAdmissionItem: (item: { kind?: string }) => item.kind === 'pending-admission' }));
 vi.mock('@/sync/queue-abort-optimistic', () => ({ isQueueItemSendPendingByAbortOptimistic: () => false, subscribeQueueAbortOptimistic: () => () => {}, getQueueAbortOptimisticRevision: () => 0 }));
-vi.mock('@/sync/use-message-queue-server', () => ({ useMessageQueueServerScope: () => ({ mode: fixture.mode, items: fixture.items, runtimeCapture: { generation: 1 }, actions: {}, scope: null }) }));
+vi.mock('@/sync/use-message-queue-server', () => ({ useMessageQueueServerScope: () => ({ mode: fixture.mode, items: fixture.items, runtimeCapture: { generation: 1 }, actions: { captureRuntime: () => ({ transportIdentity: 'test', generation: 1 }), reorder: fixture.reorder }, scope: fixture.scope }) }));
 vi.mock('@/hooks/useQueuedMessageAutoSend', () => ({ useQueueScopeDispatchFlight: () => false }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (state: { isMobile: boolean }) => unknown) => select({ isMobile: fixture.mobile }) }));
 let root: Root;
@@ -24,11 +30,13 @@ const inbox: SessionInboxChip = { kind: 'session-inbox', requestID: 'inbox', que
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fixture.items = []; fixture.mode = 'legacy'; fixture.chinese = false; fixture.mobile = false;
+  fixture.scope = null; fixture.reorder.mockReset().mockResolvedValue({ status: 'committed' });
+  fixture.haptic.mockReset();
   fixture.edit.mockReset().mockResolvedValue(true); fixture.focus.mockReset();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); vi.restoreAllMocks(); });
 async function render(items: SessionComposerPendingItem[] = [], onSteerClientPending?: (id: string) => Promise<void>, steeringMessageIDs?: ReadonlySet<string>, compactionBarrier = false) {
   const key = { transportIdentity: 'test', owner: { kind: 'session' as const, ownerID: 's' } };
   await act(async () => root.render(<QueryClientProvider client={client}><QueuedMessageChips
@@ -189,3 +197,85 @@ it('keeps steer and captured Host/Assistant queue copy separate and empty shell 
   await render(); expect(host.textContent).toContain('Captured task'); expect(host.textContent).not.toContain('Inherits');
   fixture.items = []; await render(); expect(host.querySelector('[data-yuri-queue-card]')).toBeNull();
 });
+function prepareSortableQueue() {
+  fixture.mobile = true;
+  fixture.mode = 'server';
+  const items: MessageQueueItem[] = [
+    { queueItemID: 'first', operationID: 'op-first', messageID: 'msg-first', content: 'First task', status: 'queued', attemptCount: 0, position: 0, rowVersion: 1, createdAt: 1 },
+    { queueItemID: 'second', operationID: 'op-second', messageID: 'msg-second', content: 'Second task', status: 'queued', attemptCount: 0, position: 1, rowVersion: 1, createdAt: 2 },
+  ];
+  fixture.items = items;
+  fixture.scope = { scopeID: 'scope', revision: 1, directory: '/a', sessionID: 's', worktreeState: 'active', items, itemCount: items.length };
+}
+it.each(['long-press', 'release-in-place', 'tap', 'quick-swipe', 'cancel'] as const)('commits mobile queue order only after a completed long-press drag (%s)', async (gesture) => {
+  prepareSortableQueue();
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.getAttribute('role') === 'group') return new DOMRect(0, this.textContent?.includes('Second task') ? 100 : 60, 350, 32);
+    return originalRect.call(this);
+  });
+  await render();
+  const handle = host.querySelector<HTMLButtonElement>(`button[aria-label="${dict['chat.queuedMessage.reorderAria']}"]`)!;
+  const touch = (type: string, y: number) => {
+    const point = { identifier: 1, clientX: 10, clientY: y, target: handle };
+    const event = new TouchEvent(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      touches: { value: type === 'touchend' || type === 'touchcancel' ? [] : [point] },
+      changedTouches: { value: [point] },
+    });
+    handle.dispatchEvent(event);
+  };
+  await act(async () => { touch('touchstart', 76); });
+  expect(fixture.haptic).not.toHaveBeenCalled();
+  if (gesture === 'long-press' || gesture === 'release-in-place' || gesture === 'cancel') {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+    expect(fixture.haptic).toHaveBeenCalledExactlyOnceWith('light', { bypassCadence: true });
+  }
+  if (gesture !== 'tap' && gesture !== 'release-in-place') await act(async () => { touch('touchmove', 116); });
+  expect(fixture.reorder).not.toHaveBeenCalled();
+  await act(async () => { touch(gesture === 'cancel' ? 'touchcancel' : 'touchend', gesture === 'release-in-place' ? 76 : 116); });
+  if (gesture === 'long-press') {
+    expect(fixture.reorder).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ scopeID: 'scope', revision: 1, queueItemIDs: ['second', 'first'] }));
+  } else {
+    expect(fixture.reorder).not.toHaveBeenCalled();
+  }
+  const releasedDrag = gesture === 'long-press' || gesture === 'release-in-place';
+  expect(fixture.haptic).toHaveBeenCalledTimes(releasedDrag ? 2 : gesture === 'cancel' ? 1 : 0);
+  if (releasedDrag) expect(fixture.haptic).toHaveBeenNthCalledWith(2, 'light', { bypassCadence: true });
+});
+it.skipIf(!resolveChrome())('preserves touch ownership on enabled queue drag handles under production mobile CSS', async () => {
+  prepareSortableQueue();
+  await render();
+  const selector = `button[aria-label="${dict['chat.queuedMessage.reorderAria']}"]`;
+  expect([...host.querySelectorAll<HTMLButtonElement>(selector)].map((button) => button.disabled)).toEqual([false, false]);
+  const css = await compileProductionCssAsync(join(dirname(fileURLToPath(import.meta.url)), '../..'));
+  const work = mkdtempSync(join(evidenceRoot(), 'queue-touch-'));
+  const browser = await openChromeSession({ width: 390, height: 844 });
+  try {
+    const file = join(work, 'index.html');
+    writeFileSync(file, `<!doctype html><html class="device-mobile mobile-pointer"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${host.innerHTML}</body></html>`);
+    const page = await openPageSession(browser, { width: 390, height: 844, standalone: false });
+    await page.navigateFile(file);
+    const samples = await page.evaluate<Array<{ runtime: string; drag: string[]; edit: string }>>(`(() => {
+      return [
+        ['android', 'device-mobile mobile-pointer yuri-capacitor-app yuri-platform-android'],
+        ['ios', 'device-mobile mobile-pointer yuri-capacitor-app yuri-platform-ios'],
+        ['hosted-mobile', 'device-mobile mobile-pointer'],
+      ].map(([runtime, classes]) => {
+        document.documentElement.className = classes;
+        return {
+          runtime,
+          drag: [...document.querySelectorAll(${JSON.stringify(selector)})].map(button => getComputedStyle(button).touchAction),
+          edit: getComputedStyle(document.querySelector('button[aria-label="edit"]')).touchAction,
+        };
+      });
+    })()`);
+    for (const sample of samples) {
+      expect(sample.drag, sample.runtime).toEqual(['none', 'none']);
+      expect(sample.edit, sample.runtime).toBe('manipulation');
+    }
+  } finally {
+    await browser.close();
+    rmSync(work, { recursive: true, force: true });
+  }
+}, 120_000);

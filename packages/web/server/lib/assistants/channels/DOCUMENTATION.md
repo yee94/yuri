@@ -55,7 +55,8 @@ The seam is deliberately narrow so an SDK upgrade changes only the bridge:
 
 `service.channelPage()` is the internal bounded, ascending public-output seam. It
 validates the Bot, uses the contact-store generation and returns only assistant
-rows. It does not expose credentials or replace the contact execution engine.
+rows eligible for external delivery, excluding replies to built-in Yuri IM input.
+It does not expose credentials or replace the contact execution engine.
 
 ## Runtime API
 
@@ -161,7 +162,7 @@ Adapters are injected by provider key and must implement exactly:
 ```js
 {
   connect({ config, signal, onReady, onMessage, onError }): Promise<void>,
-  send({ config, target, text, id, signal }): Promise<void>,
+  send({ config, target, text, image?, id, signal, beforeSend? }): Promise<void>,
 }
 ```
 
@@ -181,6 +182,22 @@ Adapters are injected by provider key and must implement exactly:
   user-controlled URL. An abort after submission must reject with `ambiguous: true`
   so the row becomes `unknown` instead of being retried.
 - Adapters must honor `signal`; shutdown and disconnect abort platform I/O.
+- Output is either plain `text` or one `image: { buffer, mime, filename }`.
+  The shared `../channel-output.js` projector snapshots published Markdown/file
+  images through the existing contact attachment store. Outbox's additive `image`
+  column defaults to empty for legacy text rows and stores only the descriptor;
+  bytes are materialized immediately before dispatch and cleared from the row on
+  success. Each image retains its own target and stable ID, so partial failure or
+  restart cannot resend earlier text. A blocked image produces a safe failure
+  notice; unknown delivery stays unknown and is not automatically resent.
+  After upload, adapters call `beforeSend()` to fence a reset/rebind before the
+  actual platform send. Upload failure is definite (no chat message was submitted),
+  unlike an interrupted/ambiguous final send. Source/size bounds live in
+  `../DOCUMENTATION.md` under message channel output.
+- Internal Yuri cards of every type are unsupported output: the shared projector
+  silently skips them without title/anchor/deeplink fallback or an error notice.
+  Card-only rows advance the feed without creating deliveries/retries; ordinary
+  text and images in mixed output still send. The original Yuri cards are unchanged.
 
 ## Authorization and persistence
 
@@ -245,7 +262,7 @@ removes all three rows, receipts and deliveries in one transaction.
   without a new slot, even when the backlog is full.
 - **Isolation:** each account has one receiver, one serial inbound worker and one
   serial outbound scheduler. A slow Bot cannot block another account.
-- **Output source:** all public assistant replies, including App-initiated and
+- **Output source:** externally eligible public assistant replies, including
   background replies, come from `channelPage`. Binding starts at the current
   contact tip, so previous history/greetings are not sent. Internal settle markers
   are omitted; failures use a safe generic message.
@@ -253,8 +270,11 @@ removes all three rows, receipts and deliveries in one transaction.
   go only to the channel that admitted the original input. Its persisted contact
   `turnID` is the reserved `channel:*`/`weixin:*` receipt ID, and exact receipt
   ownership by binding epoch gates delivery; another channel never broadcasts it.
-  Only App/background turns without a channel origin are proactively pushed to
-  all eligible bound platforms. Selection never uses the latest conversation turn.
+  Built-in Yuri IM replies stay in the Yuri conversation: the shared contact feed
+  resolves their persisted `turnID` to the original admitted user row and excludes
+  them from every external channel. Only proactive turns without a channel origin,
+  such as scheduled-task result reviews, may be pushed to all eligible bound
+  platforms. Selection never uses the latest conversation turn.
   Each enterprise receipt keeps its own private reply target, so a later sender
   cannot redirect an earlier reply. The inbox target column is added in place for
   existing databases; legacy receipts without a target and without a fixed owner
@@ -296,7 +316,7 @@ removes all three rows, receipts and deliveries in one transaction.
 
 ## Not in this layer
 
-Live typing/presence, platform media download, template cards, interactive
+Live typing/presence, inbound platform media download, template cards, interactive
 callbacks and per-provider protocol routing are intentionally absent. Those belong
 to adapters or a shared SDK. This layer also does not promise server-side
 exactly-once delivery or platform token revocation.

@@ -7,7 +7,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
-import { NumberInput } from '@/components/ui/number-input';
 import { Button } from '@/components/ui/button';
 import {
   groupedCardClassName,
@@ -476,7 +475,6 @@ type ScheduledTaskDraft = {
     variant: string;
     agent: string;
     goalEnabled: boolean;
-    goalTokenBudget: number | null;
   };
   state?: ScheduledTask['state'];
 };
@@ -527,7 +525,6 @@ const toDraft = (
         variant: defaults.variant,
         agent: defaults.agent,
         goalEnabled: false,
-        goalTokenBudget: null,
       },
     };
   }
@@ -562,9 +559,6 @@ const toDraft = (
       variant: task.execution.variant || '',
       agent: task.execution.agent || '',
       goalEnabled: task.execution.goalEnabled === true,
-      goalTokenBudget: typeof task.execution.goalTokenBudget === 'number' && task.execution.goalTokenBudget > 0
-        ? task.execution.goalTokenBudget
-        : null,
     },
     state: task.state,
   };
@@ -1167,9 +1161,6 @@ export function ScheduledTaskEditorDialog(props: {
         ...(draft.execution.variant.trim() ? { variant: draft.execution.variant.trim() } : {}),
         ...(draft.execution.agent.trim() ? { agent: draft.execution.agent.trim() } : {}),
         ...(draft.execution.goalEnabled ? { goalEnabled: true } : {}),
-        ...(draft.execution.goalEnabled && draft.execution.goalTokenBudget
-          ? { goalTokenBudget: draft.execution.goalTokenBudget }
-          : {}),
       },
       ...(draft.state ? { state: draft.state } : {}),
     };
@@ -1685,35 +1676,6 @@ export function ScheduledTaskEditorDialog(props: {
               />
               <span className="typography-meta">{t('sessions.scheduledTasks.editor.goal.label')}</span>
             </label>
-            {draft.execution.goalEnabled ? (
-              <label className="inline-flex cursor-pointer items-center gap-2">
-                <Checkbox
-                  checked={draft.execution.goalTokenBudget !== null}
-                  onChange={(hasBudget) => setDraft((prev) => ({
-                    ...prev,
-                    execution: { ...prev.execution, goalTokenBudget: hasBudget ? 200_000 : null },
-                  }))}
-                  ariaLabel={t('sessions.scheduledTasks.editor.goal.budgetAria')}
-                />
-                <span className="typography-meta">{t('sessions.scheduledTasks.editor.goal.budgetLabel')}</span>
-              </label>
-            ) : null}
-            {draft.execution.goalEnabled && draft.execution.goalTokenBudget !== null ? (
-              <NumberInput
-                value={draft.execution.goalTokenBudget}
-                onValueChange={(value) => {
-                  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-                    setDraft((prev) => ({
-                      ...prev,
-                      execution: { ...prev.execution, goalTokenBudget: Math.floor(value) },
-                    }));
-                  }
-                }}
-                min={1000}
-                max={100000000}
-                step={50000}
-              />
-            ) : null}
           </div> : null}
       </div>
     </div>

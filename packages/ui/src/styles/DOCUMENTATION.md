@@ -182,6 +182,16 @@ use the same `Button mobileGlass` material as search/back controls.
 `yuri-mobile-inverse-action` only inverts fill/icon surface colors; it introduces
 no separate shadow, reflection, or blur tokens and retains the shared effects.
 
+The Schedule filter's add action uses that same `mobileGlass` / `mobileIcon` /
+inverse-action recipe with an explicitly round segmented-action radius.
+Its header Bot shortcut has a zero-height anchor in the existing trailing row;
+the absolute capsule changes only clipping, face/background transforms and copy
+opacity. After a short entrance it moves left, reveals localized text for five
+seconds, then retracts right without changing header/spacer/content geometry.
+The closed clip excludes the invisible text from hit testing. Reduced motion
+uses discrete states rather than travel. Shared avatar visibility/motion gates
+own live eye animation; no per-frame React state or new animation clock is added.
+
 Legitimate glass fallbacks:
 
 | Gate | Behavior |
@@ -315,18 +325,25 @@ the preview, and resumes following when the reader scrolls back to the end.
 `--dpt` is `1px` everywhere except Capacitor native shells, where
 `packages/ui/src/lib/designPtScale.ts` overwrites it.
 
-- iOS: `10/9`.
-- Android: physical `xdpi/ydpi` so `1dpt ≈ 1/163in`, then × `0.98/0.9`
-  and cap at `0.98`. Typical math already sits at ~0.9, so a cap-only
+- iOS: `(10/9) × 1.05 ≈ 1.1667`.
+- Android: physical `xdpi/ydpi` so `1dpt ≈ 1/163in`, then × `1.029/0.9`
+  and cap at `1.029`. Typical math already sits at ~0.9, so a cap-only
   change stays 0.9; the multiply is what actually moves those phones.
-  This lifts Android sizing by about 3.2% from the previous 0.95 cap.
+  Both platforms are 5% larger than the previous iOS `10/9` and Android
+  `0.98` scales, including Android values below the cap. Desktop, VS Code
+  and hosted mobile keep their existing scale; native iOS controls are separate.
 
-Cache key `yuri.designPtScale.v8` drops v7 (`0.95` cap).
+Cache key `yuri.designPtScale.v9` drops v8 (`0.98` cap). Missing or invalid
+Android cache values use the new cap until native calibration completes;
+valid calibrated values still restore unchanged. iOS always restores its
+current fixed scale. User font-size and density settings remain unchanged.
 
 `scripts/postcss-dpt-font-size.mjs` rewrites compiled `font-size`,
 `line-height`, and `--text-*` px/rem values to `calc(N * var(--dpt))`.
 It does not touch `1px` hairlines, media queries, safe-area, or keyboard
-insets. Layout spacing stays CSS px/rem.
+insets. Bare rem geometry and Tailwind spacing utilities ride
+`--padding-scale = --user-padding-scale × --dpt-n`; fixed px geometry and
+geometry custom properties do not automatically scale. This is not page zoom.
 
 Tailwind `text-xs` … `text-9xl` are owned in `@theme inline`
 (`design-system.css`) as `calc(N * var(--dpt))`, same pattern as the

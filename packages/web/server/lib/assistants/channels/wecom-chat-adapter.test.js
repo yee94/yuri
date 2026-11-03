@@ -34,6 +34,27 @@ async function connect(overrides = {}) {
 }
 
 describe('official WeCom Chat adapter ACK boundary', () => {
+  it('uses official chunked media upload then waits for the native image send ACK', async () => {
+    const h = await connect();
+    let settled = false;
+    const buffer = Buffer.from('generated image bytes');
+    const sending = h.bridge.send({ config, image: { buffer, mime: 'image/png', filename: 'image.png' } }).then(() => { settled = true; });
+    await vi.waitFor(() => expect(h.frames).toHaveLength(1));
+    expect(h.frames[0]).toMatchObject({ cmd: 'aibot_upload_media_init', body: { type: 'image', filename: 'image.png', total_size: buffer.length } });
+    h.socket().send(JSON.stringify({ headers: h.frames[0].headers, errcode: 0, body: { upload_id: 'upload-one' } }));
+    await vi.waitFor(() => expect(h.frames).toHaveLength(2));
+    expect(Buffer.from(h.frames[1].body.base64_data, 'base64')).toEqual(buffer);
+    h.ack(1);
+    await vi.waitFor(() => expect(h.frames).toHaveLength(3));
+    expect(h.frames[2].cmd).toBe('aibot_upload_media_finish');
+    h.socket().send(JSON.stringify({ headers: h.frames[2].headers, errcode: 0, body: { media_id: 'media-one', type: 'image' } }));
+    await vi.waitFor(() => expect(h.frames).toHaveLength(4));
+    expect(h.frames[3]).toMatchObject({ cmd: 'aibot_send_msg', body: { chatid: 'owner', msgtype: 'image', image: { media_id: 'media-one' } } });
+    expect(settled).toBe(false);
+    h.ack(3);
+    await sending;
+    expect(settled).toBe(true);
+  });
   it('waits for real SDK ACKs and sends a second reply without blocking the lane', async () => {
     const h = await connect();
     let settled = false;

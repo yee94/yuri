@@ -2,6 +2,8 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { toast } from 'sonner';
+import type { AssistantScheduledTaskEntry } from '@/queries/assistantQueries';
+import type { GlobalScheduledTask } from '@/lib/scheduledTasksApi';
 
 const fixture = vi.hoisted(() => {
   const assistant = {
@@ -18,6 +20,10 @@ const fixture = vi.hoisted(() => {
     weixin: vi.fn(),
     providers: { data: [] },
     config: { providers: [], opencodeDefaultModel: undefined as string | undefined },
+    scheduledTasks: { data: { tasks: [] as AssistantScheduledTaskEntry[] }, hasData: true, isPending: false, isError: false, refetch: vi.fn() },
+    contact: { data: { messages: [] as { cards: { cardType: string; projectID: string; taskID: string }[] }[] }, isPending: false, isError: false, refetch: vi.fn() },
+    globalTasks: { data: { tasks: [] as GlobalScheduledTask[], failedProjectIds: [] as string[] }, isPending: false, isError: false, refetch: vi.fn() },
+    openTask: vi.fn(),
   };
 });
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -58,14 +64,15 @@ vi.mock('@/queries/assistantWeixinQueries', () => ({
 vi.mock('@/queries/assistantQueries', () => ({
   useAssistantSnapshotQuery: () => fixture.snapshot,
   useAssistantCapabilityQuery: () => ({ data: { supported: true, enabled: true }, isSuccess: true }),
-  useAssistantScheduledTasksQuery: () => ({ data: { tasks: [] } }),
-  useAssistantContactMessagesQuery: () => ({}),
-  useGlobalScheduledTasksQuery: () => ({}),
+  useAssistantScheduledTasksQuery: () => ({ ...fixture.scheduledTasks, data: fixture.scheduledTasks.hasData ? fixture.scheduledTasks.data : undefined }),
+  useAssistantContactMessagesQuery: () => fixture.contact,
+  useGlobalScheduledTasksQuery: () => fixture.globalTasks,
   updateAssistant: fixture.update,
   createAssistant: fixture.create,
   deleteAssistant: fixture.remove,
   fetchAssistantCapability: vi.fn(),
 }));
+vi.mock('@/lib/scheduledTaskNavigation', () => ({ openScheduledTask: fixture.openTask }));
 
 import { AssistantsSettingsPage, AssistantsSettingsSidebar } from './AssistantsSettingsPage';
 import { MobileAssistantSettingsPage } from '@/mobile/assistant/MobileAssistantSettingsPage';
@@ -81,6 +88,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   fixture.snapshot.data.assistants = [fixture.assistant];
   fixture.config.opencodeDefaultModel = undefined;
+  fixture.scheduledTasks.data.tasks = [];
+  fixture.scheduledTasks.hasData = true;
+  fixture.scheduledTasks.isPending = false;
+  fixture.scheduledTasks.isError = false;
+  fixture.contact.data.messages = [];
+  fixture.contact.isError = false;
+  fixture.globalTasks.data.tasks = [];
+  fixture.globalTasks.data.failedProjectIds = [];
+  fixture.globalTasks.isError = false;
   previousSelection = useAssistantUIStore.getState().settingsSelectedAssistantID;
   useAssistantUIStore.getState().selectSettingsAssistant('asst_settings_tab');
   host = document.createElement('div');
@@ -95,6 +111,97 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const button = (label: string) => Array.from(host.querySelectorAll('button')).find((item) => item.textContent === label || item.getAttribute('aria-label') === label)!;
+
+const scheduledTask = (): GlobalScheduledTask => ({
+  projectId: 'project-route',
+  task: {
+    id: 'task-route', name: 'Daily cleanup', enabled: true,
+    schedule: { kind: 'daily', time: '22:00', timezone: 'Asia/Shanghai' },
+    execution: { prompt: 'Clean up', providerID: 'provider', modelID: 'model' },
+    state: { createdAt: 1, updatedAt: 2, lastStatus: 'success' },
+  },
+});
+
+const scheduledTaskMapping = (entry: GlobalScheduledTask): AssistantScheduledTaskEntry => ({
+  assistantID: 'asst_route',
+  projectID: entry.projectId,
+  taskID: entry.task.id,
+  createdAt: 1,
+  projectPath: null,
+  projectLabel: null,
+  task: entry.task,
+});
+
+test('scheduled-task navigation uses the visible row rather than a covering button', async () => {
+  const entry = scheduledTask();
+  fixture.scheduledTasks.data.tasks = [scheduledTaskMapping(entry)];
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  const open = button('assistants.settings.scheduledTasks.open');
+  expect(open).toBeDefined();
+  expect(open.textContent).toContain('Daily cleanup');
+  expect(open.textContent).toContain('sessions.scheduledTasks.dialog.status.success');
+  expect(open.classList.contains('absolute')).toBe(false);
+  expect(open.querySelector('button')).toBeNull();
+  await act(async () => open.click());
+  expect(fixture.openTask).toHaveBeenCalledExactlyOnceWith('project-route', 'task-route');
+});
+
+test.each(['unresolved', 'refresh-error', 'fallback-error'] as const)(
+  'scheduled-task %s preserves available rows without verification or retry controls', async (failure) => {
+    const entry = scheduledTask();
+    fixture.scheduledTasks.data.tasks = [scheduledTaskMapping(entry)];
+    if (failure === 'unresolved') {
+      fixture.scheduledTasks.data.tasks.push({ ...scheduledTaskMapping(entry), taskID: 'missing-task', task: null });
+    } else {
+      fixture.scheduledTasks.isError = true;
+      fixture.contact.isError = failure === 'fallback-error';
+      fixture.globalTasks.isError = failure === 'fallback-error';
+    }
+    await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+    const group = host.querySelector('[aria-label="assistants.settings.scheduledTasks.title"]')!;
+    expect(group.textContent).toContain('Daily cleanup');
+    expect(group.textContent).not.toContain('assistants.settings.scheduledTasks.loadError');
+    expect(group.textContent).not.toContain('assistants.actions.retry');
+    expect(group.querySelectorAll('.yuri-settings-group-row')).toHaveLength(1);
+    expect(fixture.scheduledTasks.refetch).not.toHaveBeenCalled();
+  },
+);
+
+test('an unresolved task does not turn into a successful empty result', async () => {
+  fixture.scheduledTasks.data.tasks = [{ ...scheduledTaskMapping(scheduledTask()), task: null }];
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  expect(host.textContent).not.toContain('assistants.settings.scheduledTasks.empty');
+  expect(host.textContent).not.toContain('assistants.settings.scheduledTasks.loadError');
+  expect(host.querySelector('[aria-label="assistants.settings.scheduledTasks.title"]')).toBeNull();
+});
+
+test('failed scheduled-task reads keep the legacy card fallback without a retry row', async () => {
+  const entry = scheduledTask();
+  fixture.scheduledTasks.hasData = false;
+  fixture.scheduledTasks.isError = true;
+  fixture.contact.data.messages = [{ cards: [{ cardType: 'schedule', projectID: entry.projectId, taskID: entry.task.id }] }];
+  fixture.globalTasks.data.tasks = [entry];
+  fixture.globalTasks.data.failedProjectIds = ['unrelated-project'];
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  const group = host.querySelector('[aria-label="assistants.settings.scheduledTasks.title"]')!;
+  expect(group.textContent).toContain('Daily cleanup');
+  expect(group.textContent).not.toContain('assistants.settings.scheduledTasks.loadError');
+  expect(group.textContent).not.toContain('assistants.actions.retry');
+  await act(async () => button('assistants.settings.scheduledTasks.open').click());
+  expect(fixture.openTask).toHaveBeenCalledExactlyOnceWith('project-route', 'task-route');
+});
+
+test('scheduled-task loading and authoritative empty results keep their distinct states', async () => {
+  fixture.scheduledTasks.isPending = true;
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  const group = () => host.querySelector('[aria-label="assistants.settings.scheduledTasks.title"]')!;
+  expect(group().textContent).toContain('common.loading');
+  expect(group().textContent).not.toContain('assistants.settings.scheduledTasks.empty');
+  fixture.scheduledTasks.isPending = false;
+  await act(async () => root.render(<AssistantsSettingsPage assistantID="asst_route" />));
+  expect(group().textContent).not.toContain('common.loading');
+  expect(group().textContent).toContain('assistants.settings.scheduledTasks.empty');
+});
 
 test('the settings sidebar omits the introductory description and learn-more link', async () => {
   await act(async () => root.render(<AssistantsSettingsSidebar />));

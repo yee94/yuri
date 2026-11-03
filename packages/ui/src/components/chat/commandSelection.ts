@@ -3,7 +3,7 @@
  *
  * Pure local fire-and-forget actions with no free-form draft:
  * session create/compact/fork, undo/redo, reload configuration, open model
- * picker, arm goal, open the /btw side conversation.
+ * picker, open the /btw side conversation.
  *
  * Everything else inserts into the composer so the user can keep typing
  * (or confirm deliberately with a second Enter): /loop and other custom
@@ -18,8 +18,6 @@ export const AUTO_SUBMIT_SLASH_COMMANDS = new Set([
   'redo',
   // Opens the model selector immediately — never sends a chat message.
   'model',
-  // Arm-only local switch — never sends a message, only flips goal mode.
-  'goal',
   // Opens the side conversation; its draft lives in the panel composer.
   'btw',
 ]);

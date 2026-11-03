@@ -2405,7 +2405,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Zmiana obszaru roboczego rozpoczyna nową sesję asystenta.',
   'assistants.settings.scheduledTasks.title': 'Zaplanowane zadania',
   'assistants.settings.scheduledTasks.empty': 'Ten asystent nie utworzył jeszcze żadnych zaplanowanych zadań.',
-  'assistants.settings.scheduledTasks.loadError': 'Weryfikacja zaplanowanych zadań jest niepełna.',
   'assistants.settings.scheduledTasks.open': 'Otwórz zaplanowane zadania asystenta {name}',
   'assistants.settings.save': 'Zapisz asystenta',
   'assistants.settings.empty': 'Utwórz pierwszego asystenta.',

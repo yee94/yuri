@@ -361,10 +361,6 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
     const setSessionTitleRefreshEnabled = useUIStore(state => state.setSessionTitleRefreshEnabled);
     const sessionGoalEnabled = useUIStore(state => state.sessionGoalEnabled);
     const setSessionGoalEnabled = useUIStore(state => state.setSessionGoalEnabled);
-    const sessionGoalDefaultBudgetEnabled = useUIStore(state => state.sessionGoalDefaultBudgetEnabled);
-    const setSessionGoalDefaultBudgetEnabled = useUIStore(state => state.setSessionGoalDefaultBudgetEnabled);
-    const sessionGoalDefaultBudget = useUIStore(state => state.sessionGoalDefaultBudget);
-    const setSessionGoalDefaultBudget = useUIStore(state => state.setSessionGoalDefaultBudget);
     const setShowReasoningTraces = useUIStore(state => state.setShowReasoningTraces);
     const collapsibleThinkingBlocks = useUIStore(state => state.collapsibleThinkingBlocks);
     const setCollapsibleThinkingBlocks = useUIStore(state => state.setCollapsibleThinkingBlocks);
@@ -1714,22 +1710,12 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                 </div>
                             )}
 
-                            {/* The goal loop runs in the web server — VS Code only renders
-                                goal state, so the settings section is hidden there too. */}
-                            {shouldShow('sessionGoal') && !isVSCode && (
+                            {shouldShow('sessionGoal') && (
                                 <ResponsiveSettingsGroup
                                     isMobile={isMobile}
                                     label={(
                                         <div className="flex items-center gap-1.5">
                                             <span>{t('settings.yuri.visual.goal.sectionTitle')}</span>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <Icon name="information" className="h-3.5 w-3.5 cursor-help text-muted-foreground/60" />
-                                                </TooltipTrigger>
-                                                <TooltipContent sideOffset={8} className="max-w-sm">
-                                                    {t('settings.yuri.visual.goal.description')}
-                                                </TooltipContent>
-                                            </Tooltip>
                                         </div>
                                     )}
                                 >
@@ -1743,31 +1729,6 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                             onChange={setSessionGoalEnabled}
                                             ariaLabel={t('settings.yuri.visual.field.sessionGoalAria')}
                                         />
-                                    </ResponsiveSettingsRow>
-                                    <ResponsiveSettingsRow
-                                        isMobile={isMobile}
-                                        itemId="chat.session-goal-budget"
-                                        label={t('settings.yuri.visual.goal.budgetLabel')}
-                                    >
-                                        <Checkbox
-                                            checked={sessionGoalDefaultBudgetEnabled}
-                                            onChange={setSessionGoalDefaultBudgetEnabled}
-                                            disabled={!sessionGoalEnabled}
-                                            ariaLabel={t('settings.yuri.visual.goal.budgetAria')}
-                                        />
-                                        {sessionGoalEnabled && sessionGoalDefaultBudgetEnabled ? (
-                                            <NumberInput
-                                                value={sessionGoalDefaultBudget}
-                                                onValueChange={(value) => {
-                                                    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-                                                        setSessionGoalDefaultBudget(Math.floor(value));
-                                                    }
-                                                }}
-                                                min={1000}
-                                                max={100000000}
-                                                step={50000}
-                                            />
-                                        ) : null}
                                     </ResponsiveSettingsRow>
                                 </ResponsiveSettingsGroup>
                             )}

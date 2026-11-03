@@ -442,7 +442,7 @@ export class WecomChatAdapter {
     }
   }
 
-  async send({ config, target, text, signal } = {}) {
+  async send({ config, target, text, image, signal, beforeSend } = {}) {
     const normalized = requireConfig(config);
     const chatId = this.ownerId || target?.userID;
     if (!nonEmptyString(chatId)) throw channelError('invalid_response');
@@ -455,10 +455,24 @@ export class WecomChatAdapter {
     if (!client || !client.isConnected || !this.ready) throw channelError('network_error');
 
     const content = typeof text === 'string' ? text : '';
+    let mediaID;
+    if (image) {
+      try {
+        const uploaded = await withAbort(client.uploadMedia(image.buffer, { type: 'image', filename: image.filename }), signal);
+        if (!nonEmptyString(uploaded?.media_id)) throw channelError('delivery_failed');
+        mediaID = uploaded.media_id;
+      } catch {
+        // Uploading a resource never delivers a chat message; a retry is safe.
+        throw channelError(signal?.aborted ? 'cancelled' : 'delivery_failed');
+      }
+      signal?.throwIfAborted();
+      if (this.client !== client || !client.isConnected || !this.ready) throw channelError('network_error');
+    }
     let frame;
+    beforeSend?.();
     try {
       // `sendMessage` resolves only after the platform ACK with errcode 0.
-      frame = await withAbort(client.sendMessage(chatId, {
+      frame = await withAbort(image ? client.sendMediaMessage(chatId, 'image', mediaID) : client.sendMessage(chatId, {
         msgtype: 'markdown',
         markdown: { content },
       }), signal);

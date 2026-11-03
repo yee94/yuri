@@ -789,8 +789,6 @@ interface UIStore {
   showReasoningTraces: boolean;
   sessionTitleRefreshEnabled: boolean;
   sessionGoalEnabled: boolean;
-  sessionGoalDefaultBudgetEnabled: boolean;
-  sessionGoalDefaultBudget: number;
   collapsibleThinkingBlocks: boolean;
   chatRenderMode: ChatRenderMode;
   activityRenderMode: ActivityRenderMode;
@@ -981,8 +979,6 @@ interface UIStore {
   setShowReasoningTraces: (value: boolean) => void;
   setSessionTitleRefreshEnabled: (value: boolean) => void;
   setSessionGoalEnabled: (value: boolean) => void;
-  setSessionGoalDefaultBudgetEnabled: (value: boolean) => void;
-  setSessionGoalDefaultBudget: (value: number) => void;
   setCollapsibleThinkingBlocks: (value: boolean) => void;
   setChatRenderMode: (value: ChatRenderMode) => void;
   setActivityRenderMode: (value: ActivityRenderMode) => void;
@@ -1167,8 +1163,6 @@ export const useUIStore = create<UIStore>()(
         showReasoningTraces: true,
         sessionTitleRefreshEnabled: true,
         sessionGoalEnabled: true,
-        sessionGoalDefaultBudgetEnabled: false,
-        sessionGoalDefaultBudget: 200_000,
         collapsibleThinkingBlocks: true,
         chatRenderMode: 'sorted',
         activityRenderMode: 'collapsed',
@@ -2176,13 +2170,6 @@ export const useUIStore = create<UIStore>()(
           set({ sessionGoalEnabled: value });
         },
 
-        setSessionGoalDefaultBudgetEnabled: (value) => {
-          set({ sessionGoalDefaultBudgetEnabled: value });
-        },
-
-        setSessionGoalDefaultBudget: (value) => {
-          set({ sessionGoalDefaultBudget: value });
-        },
 
         setCollapsibleThinkingBlocks: (value) => {
           set({ collapsibleThinkingBlocks: value });
@@ -3000,8 +2987,6 @@ export const useUIStore = create<UIStore>()(
           showReasoningTraces: state.showReasoningTraces,
           sessionTitleRefreshEnabled: state.sessionTitleRefreshEnabled,
           sessionGoalEnabled: state.sessionGoalEnabled,
-          sessionGoalDefaultBudgetEnabled: state.sessionGoalDefaultBudgetEnabled,
-          sessionGoalDefaultBudget: state.sessionGoalDefaultBudget,
           collapsibleThinkingBlocks: state.collapsibleThinkingBlocks,
           chatRenderMode: state.chatRenderMode,
           activityRenderMode: state.activityRenderMode,

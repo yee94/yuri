@@ -224,13 +224,8 @@ const AssistantScheduledTasksGroup: React.FC<{ assistantID: string }> = ({ assis
     || globalTasksQuery.isError
     || failedFallbackProject
     || hasUnresolvedMappedTask;
-  const retry = useEvent(() => {
-    void scheduledTasksQuery.refetch();
-    if (fallbackEnabled) {
-      void contactQuery.refetch();
-      void globalTasksQuery.refetch();
-    }
-  });
+
+  if (!loading && hasLoadError && tasks.length === 0) return null;
 
   return (
     <SettingsGroup label={t('assistants.settings.scheduledTasks.title')} ariaLabel={t('assistants.settings.scheduledTasks.title')}>
@@ -252,10 +247,15 @@ const AssistantScheduledTasksGroup: React.FC<{ assistantID: string }> = ({ assis
                 ? t('sessions.scheduledTasks.dialog.status.error')
                 : t('sessions.scheduledTasks.dialog.status.idle');
         return (
-          <SettingsRow
+          <Button
             key={scheduledTaskIdentity(entry)}
-            className="group relative cursor-pointer transition-colors hover:bg-interactive-hover"
-            label={(
+            type="button"
+            variant="ghost"
+            className="yuri-settings-group-row yuri-settings-split-row h-auto rounded-none text-left font-normal focus-visible:ring-inset"
+            onClick={() => openScheduledTask(entry.projectId, entry.task.id)}
+            aria-label={t('assistants.settings.scheduledTasks.open', { name: entry.task.name })}
+          >
+            <span className="yuri-settings-split-row-copy">
               <span className="flex min-w-0 items-center gap-3">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-muted)] text-muted-foreground">
                   <Icon name="calendar" className="size-3.5" />
@@ -265,34 +265,17 @@ const AssistantScheduledTasksGroup: React.FC<{ assistantID: string }> = ({ assis
                   <span className="mt-0.5 block typography-micro truncate text-muted-foreground">{formatScheduledTask(entry.task, t)}</span>
                 </span>
               </span>
-            )}
-            controlClassName="min-w-fit"
-          >
-            <span className="flex items-center gap-2 text-muted-foreground">
+            </span>
+            <span className="yuri-settings-split-row-control min-w-fit text-muted-foreground">
               <span className={`inline-flex items-center gap-1.5 typography-micro ${statusMeta.className}`}>
                 <Icon name={statusMeta.icon} className={`size-3.5 ${status === 'running' ? 'animate-spin' : ''}`} />
                 {statusLabel}
               </span>
               <Icon name="arrow-right-s" className="size-4" />
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute inset-0 z-10 h-auto w-auto rounded-none bg-transparent p-0 hover:bg-transparent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
-              onClick={() => openScheduledTask(entry.projectId, entry.task.id)}
-              aria-label={t('assistants.settings.scheduledTasks.open', { name: entry.task.name })}
-            >
-              <span className="sr-only">{t('assistants.settings.scheduledTasks.open', { name: entry.task.name })}</span>
-            </Button>
-          </SettingsRow>
+          </Button>
         );
       })}
-      {hasLoadError ? (
-        <SettingsRow label={t('assistants.settings.scheduledTasks.loadError')}>
-          <Button variant="outline" size="sm" onClick={retry}>{t('assistants.actions.retry')}</Button>
-        </SettingsRow>
-      ) : null}
       {!loading && !hasLoadError && tasks.length === 0 ? (
         <SettingsRow label={t('assistants.settings.scheduledTasks.empty')}>
           <Icon name="calendar" className="size-4 text-muted-foreground" />

@@ -494,6 +494,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.openSettings': 'Ustawienia',
   'sessions.scheduledTasks.dialog.title': 'Zaplanowane zadania',
   'sessions.scheduledTasks.dialog.actions.create': 'Utwórz',
+  'sessions.scheduledTasks.assistant.offer': 'Pomóc w utworzeniu?',
+  'sessions.scheduledTasks.assistant.openAria': 'Otwórz rozmowę z {name}, aby utworzyć zadanie cykliczne',
   'sessions.scheduledTasks.dialog.actions.moreAria': 'Więcej działań dla {taskName}',
   'sessions.scheduledTasks.dialog.actions.delete': 'Usuń',
   'sessions.scheduledTasks.dialog.actions.pause': 'Wstrzymaj',

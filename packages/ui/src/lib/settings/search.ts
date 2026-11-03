@@ -301,15 +301,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     id: 'chat.session-goal',
     page: 'chat',
     titleKey: 'settings.yuri.visual.field.sessionGoal',
-    keywords: ['goal', 'objective', 'auto continue', 'small model'],
-    isAvailable: (ctx) => !ctx.isVSCode,
-  },
-  {
-    id: 'chat.session-goal-budget',
-    page: 'chat',
-    titleKey: 'settings.yuri.visual.goal.budgetLabel',
-    keywords: ['goal', 'budget', 'tokens', 'limit'],
-    isAvailable: (ctx) => !ctx.isVSCode,
+    keywords: ['goal', 'objective', 'auto continue'],
   },
   {
     id: 'chat.reasoning-traces',

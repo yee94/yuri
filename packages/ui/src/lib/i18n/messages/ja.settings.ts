@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'ワークスペースを切り替えると、新しいアシスタントセッションが開始されます。',
   'assistants.settings.scheduledTasks.title': 'スケジュールタスク',
   'assistants.settings.scheduledTasks.empty': 'このアシスタントが作成したスケジュールタスクはまだありません。',
-  'assistants.settings.scheduledTasks.loadError': 'スケジュールタスクの確認が完了していません。',
   'assistants.settings.scheduledTasks.open': '{name} のスケジュールタスクを開く',
   'assistants.settings.save': 'アシスタントを保存',
   'assistants.settings.empty': '最初のアシスタントを作成してください。',

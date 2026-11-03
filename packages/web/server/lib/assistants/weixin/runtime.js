@@ -6,14 +6,9 @@ import { createWeixinTyping } from './typing.js';
 import { prepareWeixinInput } from './inbound.js';
 import { createWeixinChatAdapter } from './chat-adapter.js';
 import { isMessageChannelTurn } from '../message-channel-origin.js';
+import { prepareChannelOutput, readChannelDeliveryImage, channelImageFailure } from '../channel-output.js';
 
 const digest = (value) => createHash('sha256').update(value).digest('hex');
-const chunks = (text) => {
-  const chars = Array.from(text);
-  const result = [];
-  for (let index = 0; index < chars.length; index += 3500) result.push(chars.slice(index, index + 3500).join(''));
-  return result;
-};
 const feedback = (language, kind) => {
   const messages = language.startsWith('zh') ? {
     interrupted: 'Yuri 主机已重启，上一条请求可能未完成。请先检查任务状态，再决定是否重试。',
@@ -176,15 +171,21 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       throw error;
     }
     if (binding.status === 'expired') return;
-    const deliveries = page.messages.flatMap((message) => {
-      if (isMessageChannelTurn(message.turnID) && !store.hasReceipt(message.turnID, binding.epoch)) return [];
-      const text = message.status === 'error' ? feedback(binding.language, 'failed')
-        : message.text?.trim() && !message.text.trim().startsWith('oc.settle.') ? message.text.trim()
-          : message.cards.map((card) => card.title || card.name || '').filter(Boolean).join('\n');
-      return chunks(text).map((chunk, index) => ({
-        id: `yuri_${digest(`${binding.epoch}:${page.generation}:${message.messageID}:${index}`)}`, text: chunk,
-      }));
-    });
+    const deliveries = [];
+    const receiverSignal = receivers.get(binding.assistant_id)?.controller.signal;
+    const signal = receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal;
+    const assertCurrent = () => {
+      if (!isCurrent(binding) || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== page.generation) throw new WeixinError('cancelled');
+    };
+    for (const message of page.messages) {
+      if (isMessageChannelTurn(message.turnID) && !store.hasReceipt(message.turnID, binding.epoch)) continue;
+      const output = await prepareChannelOutput(message, { service, assistantID: binding.assistant_id,
+        generation: page.generation, language: binding.language, failureText: feedback(binding.language, 'failed'), signal, assertCurrent });
+      deliveries.push(...output.map((part, index) => ({
+        id: `yuri_${digest(`${binding.epoch}:${page.generation}:${message.messageID}:${index}`)}`, ...part,
+      })));
+    }
+    assertCurrent();
     store.collect(binding, page, deliveries);
     if (!inboundWork.has(binding.assistant_id)) {
       const work = track(processIncoming(binding, page.generation)).catch((error) => setError(binding, error));
@@ -202,8 +203,12 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       const receiverSignal = receivers.get(binding.assistant_id)?.controller.signal;
       const adapter = createWeixinChatAdapter({ api, clock, getBinding: () => isCurrent(binding) ? store.get(binding.assistant_id) : null });
       const threadID = await adapter.openDM(current.peer_id);
-      await adapter.postMessage(threadID, delivery.text, { id: delivery.id,
-        signal: receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal });
+      const signal = receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal;
+      const image = await readChannelDeliveryImage(service, binding.assistant_id, delivery.image ? JSON.parse(delivery.image) : null, signal);
+      assertCurrent();
+      signal.throwIfAborted();
+      await adapter.postMessage(threadID, image ? { raw: '', files: [{ data: image.buffer, mimeType: image.mime, filename: image.filename }] } : delivery.text,
+        { id: delivery.id, signal, beforeSend: assertCurrent });
       if (!isCurrent(binding) && !(retiring.has(binding.assistant_id) && canControl(binding))) return;
       store.sent(delivery.id);
       store.patch(binding.epoch, { error: store.hasUnknown(binding.epoch) ? 'delivery_unknown'
@@ -221,6 +226,9 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       }
       // Network ambiguity is user-retryable, not an automatic duplicate reply.
       store.markDelivery(delivery.id, error?.ambiguous ? 'unknown' : 'blocked');
+      if (delivery.image && !error?.ambiguous) {
+        store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language));
+      }
       setError(binding, error?.ambiguous ? new WeixinError('delivery_unknown') : error);
     }
   };

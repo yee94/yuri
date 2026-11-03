@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': '切换工作区会开始新的助理会话。',
   'assistants.settings.scheduledTasks.title': '定时任务',
   'assistants.settings.scheduledTasks.empty': '此助理尚未创建定时任务。',
-  'assistants.settings.scheduledTasks.loadError': '定时任务信息未能完整验证。',
   'assistants.settings.scheduledTasks.open': '打开 {name} 的定时任务',
   'assistants.settings.save': '保存助理',
   'assistants.settings.empty': '创建你的第一个助理。',

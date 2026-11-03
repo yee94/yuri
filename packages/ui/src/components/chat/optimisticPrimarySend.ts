@@ -2,7 +2,7 @@
  * Whether primary submit should create a pre-await optimistic send ticket.
  * Excludes secondary surfaces, queue-only submits, resource-preserving paths,
  * shell mode, and local commands (/fork, /undo, /redo, and other local magic).
- * Ordinary remote slash prompts remain eligible when other gates pass.
+ * Ordinary remote slash prompts remain eligible; native Goal notices do not.
  */
 export const shouldOptimisticPrimarySend = (input: {
     surfaceKind: 'primary' | 'secondary';
@@ -12,6 +12,7 @@ export const shouldOptimisticPrimarySend = (input: {
     resourcePolicy: boolean;
     inputMode: 'normal' | 'shell';
     localCommand: string | null;
+    nativeGoal?: boolean;
 }): boolean => (
     input.surfaceKind === 'primary'
     && !!input.currentSessionId
@@ -20,4 +21,5 @@ export const shouldOptimisticPrimarySend = (input: {
     && !input.resourcePolicy
     && input.inputMode !== 'shell'
     && !input.localCommand
+    && !input.nativeGoal
 );

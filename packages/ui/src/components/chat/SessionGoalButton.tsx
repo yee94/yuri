@@ -3,9 +3,8 @@ import { Icon } from '@/components/icon/Icon';
 import { toast } from '@/components/ui';
 import { useSessionGoal } from '@/hooks/useSessionGoal';
 import { useSessionGoalArmStore } from '@/stores/useSessionGoalArmStore';
-import { SESSION_GOAL_OBJECTIVE_CHAR_LIMIT } from '@/lib/sessionGoalMetadata';
+import { SESSION_GOAL_OBJECTIVE_CHAR_LIMIT } from '@/lib/opencode/goal';
 import { clearSessionGoal } from '@/lib/sessionGoalActions';
-import { isVSCodeRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -16,7 +15,7 @@ interface SessionGoalButtonProps {
   draftOpen?: boolean;
 }
 
-// Goal mode starts through /goal (arm only — never auto-sends). This compact
+// Goal mode starts through the native /goal command. This compact
 // chip is visible only while the next message is armed or the session has a
 // goal, and provides direct removal.
 export const SessionGoalButton: React.FC<SessionGoalButtonProps> = React.memo(({
@@ -30,13 +29,12 @@ export const SessionGoalButton: React.FC<SessionGoalButtonProps> = React.memo(({
   const setArmed = useSessionGoalArmStore((state) => state.setArmed);
   const [busy, setBusy] = React.useState(false);
 
-  if (isVSCodeRuntime() || !enabled || (!sessionId && !draftOpen) || (!armed && !goal)) {
+  if (!enabled || (!sessionId && !draftOpen) || (!armed && !goal)) {
     return null;
   }
 
   const colorClass = (() => {
     if (goal?.status === 'complete') return 'text-[var(--status-success)]';
-    if (goal?.status === 'blocked' || goal?.status === 'budgetLimited') return 'text-[var(--status-error)]';
     if (armed || goal?.status === 'active' || goal?.status === 'paused') return 'text-[var(--status-info)]';
     return '';
   })();
@@ -84,8 +82,8 @@ interface SessionGoalObjectiveCounterProps {
 }
 
 // Tiny hot-path leaf next to the target button: while goal mode is armed the
-// typed message becomes the objective, which the server clamps to 2000
-// chars — surface that limit during typing instead of truncating silently.
+// typed message becomes the objective; expose the native 4000-character
+// limit during typing instead of truncating silently.
 // Renders null when not armed, so normal typing shows nothing.
 export const SessionGoalObjectiveCounter: React.FC<SessionGoalObjectiveCounterProps> = React.memo(({ length }) => {
   const { t } = useI18n();

@@ -80,6 +80,33 @@ it('channel output feed is ascending, bounded, generation-aware and isolated by 
   } finally { db.close(); }
 });
 
+it('keeps Yuri user-turn replies out of external feeds without filtering channel or proactive replies', () => {
+  const db = openDb();
+  try {
+    insert(db, 'a', { role: 'user', messageID: 'app', text: 'hello' });
+    insert(db, 'a', { role: 'user', messageID: 'channel:feishu:input', text: 'external' });
+    insert(db, 'a', { role: 'assistant', turnID: 'app', text: 'local streamed reply' });
+    insert(db, 'a', { role: 'assistant', turnID: 'app', text: 'local error', status: 'error' });
+    insert(db, 'a', { role: 'assistant', turnID: 'channel:feishu:input', text: 'external reply' });
+    insert(db, 'a', { role: 'assistant', turnID: 'scheduled_result', text: 'proactive result' });
+    insert(db, 'b', { role: 'assistant', turnID: 'app', text: 'different Bot' });
+    expect(readContactChannelPage(db, 'a').messages.map((message) => message.text)).toEqual(['external reply', 'proactive result']);
+    expect(readContactChannelPage(db, 'a', { afterOrdinal: 2 }).messages.map((message) => message.text)).toEqual(['external reply', 'proactive result']);
+    expect(readContactChannelPage(db, 'b').messages.map((message) => message.text)).toEqual(['different Bot']);
+    insert(db, 'a', { role: 'user', messageID: 'local-only', text: 'hello again' });
+    insert(db, 'a', { role: 'assistant', turnID: 'local-only', text: 'local final reply' });
+    const filtered = readContactChannelPage(db, 'a', { afterOrdinal: 6 });
+    expect(filtered.messages).toEqual([]);
+    expect(filtered.ordinal).toBe(8);
+    expect(filtered.tipOrdinal).toBe(8);
+    const reopened = new (require('better-sqlite3'))(db.name);
+    try {
+      ensureContactSchema(reopened);
+      expect(readContactChannelPage(reopened, 'a').messages.map((message) => message.text)).toEqual(['external reply', 'proactive result']);
+    } finally { reopened.close(); }
+  } finally { db.close(); }
+});
+
 const insert = (db, assistantID, {
   role, text = '', parts, status = 'complete', fromAssistantID = null, fromAssistantName = null, turnID = null, messageID = null, createdAt = Date.now(),
 }) => {

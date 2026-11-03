@@ -395,6 +395,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.header.actions.scheduledTasks': '计划',
   'sessions.scheduledTasks.dialog.title': '计划',
   'sessions.scheduledTasks.dialog.actions.create': '创建',
+  'sessions.scheduledTasks.assistant.offer': '让我帮你创建吗？',
+  'sessions.scheduledTasks.assistant.openAria': '打开与{name}的对话，帮你创建定时任务',
   'sessions.scheduledTasks.dialog.actions.moreAria': '{taskName} 的更多操作',
   'sessions.scheduledTasks.dialog.actions.delete': '删除',
   'sessions.scheduledTasks.dialog.actions.pause': '暂停',

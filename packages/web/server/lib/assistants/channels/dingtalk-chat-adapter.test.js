@@ -92,6 +92,14 @@ afterEach(() => {
 });
 
 describe('dingtalk Chat SDK adapter', () => {
+  it('uploads local image bytes and sends sampleImageMsg only to the original private user', async () => {
+    const fetchImpl = vi.fn(async (url) => Response.json(String(url).includes('accessToken') ? { accessToken: 'token', expireIn: 7200 }
+      : String(url).includes('/media/upload') ? { errcode: 0, media_id: '@uploaded' } : {}));
+    const bridge = createDingtalkSdkAdapter({ fetchImpl });
+    await bridge.send({ config, image: { buffer: Buffer.from('image'), mime: 'image/png', filename: 'image.png' } });
+    expect(fetchImpl.mock.calls[1][1].body).toBeInstanceOf(FormData);
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ robotCode: config.clientID, userIds: [config.ownerID], msgKey: 'sampleImageMsg', msgParam: JSON.stringify({ photoURL: '@uploaded' }) });
+  });
   it('accepts platform-scoped private senders without a binding and replies to the persisted user', async () => {
     const h = harness();
     const controller = new AbortController();

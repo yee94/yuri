@@ -74,6 +74,9 @@ export function createAssistantChannelStore(directory) {
   `);
   const inboxColumns = db.prepare("SELECT name FROM pragma_table_info('inbox')").all();
   if (!inboxColumns.some((column) => column.name === 'target')) db.exec("ALTER TABLE inbox ADD COLUMN target TEXT NOT NULL DEFAULT ''");
+  if (!db.prepare("SELECT name FROM pragma_table_info('outbox')").all().some((column) => column.name === 'image')) {
+    db.exec("ALTER TABLE outbox ADD COLUMN image TEXT NOT NULL DEFAULT ''");
+  }
 
   const get = (assistantID, provider) => db.prepare(
     'SELECT * FROM channel WHERE assistant_id=? AND provider=?',
@@ -85,9 +88,9 @@ export function createAssistantChannelStore(directory) {
     db.prepare(`UPDATE channel SET ${keys.map((key) => `${key}=?`).join(',')} WHERE epoch=?`)
       .run(...keys.map((key) => values[key]), epoch);
   };
-  const enqueue = (epoch, id, text, target = '') => db.prepare(
-    'INSERT OR IGNORE INTO outbox(id,epoch,target,text) VALUES (?,?,?,?)',
-  ).run(id, epoch, target, text);
+  const enqueue = (epoch, id, text, target = '', image = '') => db.prepare(
+    'INSERT OR IGNORE INTO outbox(id,epoch,target,text,image) VALUES (?,?,?,?,?)',
+  ).run(id, epoch, target, text, image);
   const dropChannelQueues = (epoch) => {
     db.prepare('DELETE FROM inbox WHERE epoch=?').run(epoch);
     db.prepare('DELETE FROM outbox WHERE epoch=?').run(epoch);
@@ -196,7 +199,7 @@ export function createAssistantChannelStore(directory) {
         db.prepare('DELETE FROM outbox WHERE epoch=?').run(binding.epoch);
       }
       for (const delivery of deliveries) {
-        enqueue(binding.epoch, delivery.id, delivery.text, delivery.target ?? current.target ?? '');
+        enqueue(binding.epoch, delivery.id, delivery.text, delivery.target ?? current.target ?? '', delivery.image ? JSON.stringify(delivery.image) : '');
       }
       db.prepare('UPDATE channel SET generation=?,ordinal=?,updated_at=? WHERE epoch=?')
         .run(page.generation, page.ordinal, updatedAt, binding.epoch);
@@ -205,7 +208,7 @@ export function createAssistantChannelStore(directory) {
       "SELECT * FROM outbox WHERE epoch=? AND state='pending' ORDER BY sequence LIMIT 1",
     ).get(epoch),
     markDelivery: (id, state) => db.prepare('UPDATE outbox SET state=? WHERE id=?').run(state, id),
-    sent: (id) => db.prepare("UPDATE outbox SET state='sent',text='',target='' WHERE id=?").run(id),
+    sent: (id) => db.prepare("UPDATE outbox SET state='sent',text='',target='',image='' WHERE id=?").run(id),
     failDelivery: (id, maxAttempts = 3) => {
       const row = db.prepare('SELECT attempts FROM outbox WHERE id=?').get(id);
       if (!row) return;

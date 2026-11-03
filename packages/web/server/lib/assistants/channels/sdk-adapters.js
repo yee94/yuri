@@ -323,17 +323,29 @@ export function createFeishuSdkAdapter({
      * `@larksuite/channel` exposes no `uuid`. The documented HTTP call keeps
      * `msg_type: text` and a stable `uuid` for one attempt.
      */
-    async send({ config, target, text, id, signal } = {}) {
+    async send({ config, target, text, image, id, signal, beforeSend } = {}) {
       const { clientID, clientSecret, ownerID } = requireConfig(config);
       const userID = ownerID || target?.userID;
       if (!nonEmptyString(userID)) throw channelError('invalid_response');
       const token = await feishuAccessToken(tokens, { clientID, clientSecret, signal, fetchImpl });
+      let imageKey;
+      if (image) {
+        const form = new FormData();
+        form.set('image_type', 'message');
+        form.set('image', new Blob([image.buffer], { type: image.mime }), image.filename);
+        const uploaded = await requestJSON(`${FEISHU_ORIGIN}/open-apis/im/v1/images`, {
+          body: form, headers: { Authorization: `Bearer ${token}` }, signal, fetchImpl,
+        });
+        if (uploaded?.code !== 0 || !nonEmptyString(uploaded?.data?.image_key)) throw channelError('delivery_failed');
+        imageKey = uploaded.data.image_key;
+      }
       const uuid = outboundUuid(id);
+      beforeSend?.();
       const json = await requestJSON(`${FEISHU_ORIGIN}${FEISHU_MESSAGE_PATH}?receive_id_type=open_id`, {
         body: {
           receive_id: userID,
-          msg_type: 'text',
-          content: JSON.stringify({ text: typeof text === 'string' ? text : '' }),
+          msg_type: image ? 'image' : 'text',
+          content: JSON.stringify(image ? { image_key: imageKey } : { text: typeof text === 'string' ? text : '' }),
           ...(uuid ? { uuid } : {}),
         },
         headers: { Authorization: `Bearer ${token}` },

@@ -26,6 +26,7 @@ import { isMessageQueuePendingAdmissionItem, type MessageQueueServerDisplayItem,
 import type { MessageQueueEditResult } from '@/sync/message-queue-edit-bridge';
 import { useI18n } from '@/lib/i18n';
 import { useQueueScopeDispatchFlight } from '@/hooks/useQueuedMessageAutoSend';
+import { triggerMobileHaptic } from '@/hooks/streamingHaptics';
 import { useUIStore } from '@/stores/useUIStore';
 import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
@@ -173,6 +174,7 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                 {...attributes}
                 {...listeners}
                 disabled={isDragDisabled}
+                data-mobile-press-feedback="none"
                 aria-busy={reorderPending || undefined}
                 className={cn(
                     'flex flex-shrink-0 touch-none select-none items-center justify-center text-muted-foreground',
@@ -642,7 +644,12 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
         useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     );
 
+    const handleDragStart = useEvent(() => {
+        triggerMobileHaptic('light', { bypassCadence: true });
+    });
+
     const handleDragEnd = useEvent((event: DragEndEvent) => {
+        triggerMobileHaptic('light', { bypassCadence: true });
         if (frozen) return;
         const { active, over } = event;
         if (!over || active.id === over.id) return;
@@ -901,6 +908,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
                         <DndContext
                             sensors={sensors}
                             collisionDetection={closestCenter}
+                            onDragStart={handleDragStart}
                             onDragEnd={handleDragEnd}
                         >
                             <SortableContext

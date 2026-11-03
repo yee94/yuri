@@ -402,6 +402,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.header.actions.scheduledTasks": "Заплановані завдання",
   "sessions.scheduledTasks.dialog.title": "Заплановані завдання",
   "sessions.scheduledTasks.dialog.actions.create": "Створити",
+  "sessions.scheduledTasks.assistant.offer": "Допомогти створити?",
+  "sessions.scheduledTasks.assistant.openAria": "Відкрити розмову з {name}, щоб створити заплановане завдання",
   "sessions.scheduledTasks.dialog.actions.moreAria": "Додаткові дії для {taskName}",
   "sessions.scheduledTasks.dialog.actions.delete": "Видалити",
   "sessions.scheduledTasks.dialog.actions.pause": "Призупинити",

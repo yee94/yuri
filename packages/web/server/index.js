@@ -80,10 +80,6 @@ import { resolveTranscriptCacheDbPath } from './lib/transcript-cache/resolve-db-
 import { createMessageQueueRuntime } from './lib/message-queue/runtime.js';
 import { resolveMessageQueueDbPath } from './lib/message-queue/resolve-db-path.js';
 import { createYuriEventBroadcaster } from './lib/opencode/feature-routes-runtime.js';
-import {
-  createSessionGoalRuntime,
-  withGoalExecutionGeneration,
-} from './lib/session-goal/runtime.js';
 import { createSessionMetadataStore } from './lib/session-metadata/session-metadata-store.js';
 import {
   createHttpSessionRecordClient,
@@ -840,34 +836,6 @@ void ensureSessionMetadataReady().then((ok) => {
 });
 
 /**
- * Goal write through the Host metadata store.
- * Advances executionGeneration on pause/resume/condition changes so late audits
- * cannot commit against a prior execution permit. Broadcasts only after commit.
- */
-const persistSessionGoalToStore = async (sessionId, _directory, goal) => {
-  const result = await sessionMetadataStore.mutateSessionMetadata(sessionId, (current) => {
-    const previousGoal = current?.yuri?.goal && typeof current.yuri.goal === 'object'
-      ? current.yuri.goal
-      : null;
-    const nextGoal = withGoalExecutionGeneration(previousGoal, goal);
-    return { ok: true, patch: { yuri: { goal: nextGoal } } };
-  });
-  if (!result?.committed) {
-    throw new Error(result?.reason || 'session goal persist was rejected');
-  }
-  const metadata = result.metadata;
-  try {
-    broadcastGlobalUiEvent({
-      type: 'yuri:session-metadata',
-      properties: { sessionID: sessionId, metadata },
-    });
-  } catch (error) {
-    console.warn('[session-metadata] broadcast failed:', error?.message ?? error);
-  }
-  return metadata;
-};
-
-/**
  * Isolation / Host metadata write. Same store + broadcast seam as goal persist.
  * Callers pass an RFC 7386 merge patch; the store returns the committed object.
  */
@@ -922,78 +890,6 @@ const projectHostSessionPayload = (payload) => {
   ));
 };
 
-const sessionGoalRuntime = createSessionGoalRuntime({
-  buildOpenCodeUrl,
-  getOpenCodeAuthHeaders,
-  serverOpenCodeFetch,
-  getSmallModelService,
-  shouldKeepGoalActiveForQuestion: (sessionId) => (
-    questionAutoDelegateRuntime?.isAutoHandling(sessionId) === true
-  ),
-  isQuestionBlockingGoal: (sessionId) => (
-    questionAutoDelegateRuntime?.isBlockingSession(sessionId) === true
-  ),
-  onGoalPaused: (sessionId, directory) => (
-    questionAutoDelegateRuntime?.pauseForSessionTree?.(sessionId, directory)
-  ),
-  readSessionMetadata: (sessionId) => sessionMetadataStore.get(sessionId),
-  // Conditional commit on the store's exclusive serial boundary (generation +
-  // status preconditions share the lock with persist). Broadcast-only on
-  // success — do not feed progress writes back into processPayload.
-  mutateSessionMetadata: async (sessionId, decide) => {
-    const result = await sessionMetadataStore.mutateSessionMetadata(sessionId, decide);
-    if (result?.committed) {
-      try {
-        broadcastGlobalUiEvent({
-          type: 'yuri:session-metadata',
-          properties: { sessionID: sessionId, metadata: result.metadata },
-        });
-      } catch (error) {
-        console.warn('[session-metadata] broadcast failed:', error?.message ?? error);
-      }
-    }
-    return result;
-  },
-  persistSessionGoal: async (sessionId, directory, goal) => {
-    const metadata = await persistSessionGoalToStore(sessionId, directory, goal);
-    return metadata?.yuri?.goal ?? goal;
-  },
-  emitGoalNotification: async ({ sessionId, directory, status, goal }) => {
-    // The goal settle notification replaces the per-turn ready notifications
-    // (suppressed while the goal is active) — so it obeys the same toggle.
-    const settings = await readSettingsFromDisk();
-    if (settings.notifyOnCompletion === false) {
-      return;
-    }
-    const title = status === 'complete'
-      ? 'Goal complete'
-      : (status === 'budgetLimited' ? 'Goal reached its token budget' : 'Goal blocked');
-    const detail = goal?.statusReason && goal.statusReason !== 'verified by audit' && goal.statusReason !== 'reported by agent'
-      ? goal.statusReason
-      : (goal?.note || '');
-    const objective = typeof goal?.objective === 'string' ? goal.objective.slice(0, 140) : '';
-    const notificationPayload = {
-      title,
-      body: [objective, detail].filter(Boolean).join(' — ').slice(0, 240),
-      tag: `goal-${sessionId}`,
-      kind: 'goal',
-      sessionId,
-      directory,
-    };
-    const desktopNotificationDelivered = emitDesktopNotification(notificationPayload);
-    broadcastUiNotification(notificationPayload, { desktopNotificationDelivered });
-    void notificationTriggerRuntime.sendGoalSettlePush({
-      sessionId,
-      directory,
-      status,
-      title,
-      body: notificationPayload.body,
-    }).catch((error) => {
-      console.warn('[session-goal] push fanout failed:', error?.message || error);
-    });
-  },
-});
-
 const globalMessageStreamHub = createGlobalMessageStreamHub({
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
@@ -1026,12 +922,6 @@ questionAutoDelegateRuntime = createQuestionAutoDelegateRuntime({
   readSettingsFromDiskMigrated,
   broadcastGlobalUiEvent,
   broadcastYuriEvent: broadcastQuestionAutoDelegateTip,
-  onUserTakeover: ({ sessionID, directory }) => {
-    // User pause / manual claim / feature disable → goal pause on root owner.
-    void sessionGoalRuntime.pauseForQuestion?.(sessionID, directory)?.catch((error) => {
-      console.warn('[question-auto-delegate] goal pause on takeover failed:', error?.message ?? error);
-    });
-  },
 });
 questionAutoDelegateRuntime.start();
 
@@ -1048,10 +938,9 @@ const openCodeWatcherRuntime = createOpenCodeWatcherRuntime({
   },
 });
 
-// Session-title and session-goal subscribe to the hub directly: they need the
+// Session-title subscribes to the hub directly: it needs the
 // envelope's directory to route their own OpenCode calls to the right instance.
 console.log('[session-title] listening for session events');
-console.log('[session-goal] listening for session events');
 globalMessageStreamHub.subscribeStatus((status) => {
   if (status.type === 'connect') sessionTitleRuntime.processPayload({ type: 'server.connected' });
 });
@@ -1063,7 +952,6 @@ globalMessageStreamHub.subscribeEvent((event) => {
     ? event.directory
     : '';
   sessionTitleRuntime.processPayload(payload, directory);
-  sessionGoalRuntime.processPayload(payload, directory);
 });
 
 const processForwardedEventPayload = (payload, emitSyntheticEvent) => {
@@ -1307,28 +1195,10 @@ const scheduledTasksRuntime = createScheduledTasksRuntime({
   },
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
-  getSmallModelService,
   waitForOpenCodeReady,
   runHistoryStore: scheduledTaskRunHistoryStore,
-  // Same Host store seam as session-goal / manual UI metadata writes.
-  readSessionMetadata: (sessionId) => sessionMetadataStore.get(sessionId),
   persistSessionMetadata: persistSessionMetadataToStore,
   onSystemSessionPersisted: hideSystemSessionFromIndex,
-  persistSessionGoal: persistSessionGoalToStore,
-  // Arm the goal loop after first persist only — do not feed progress writes
-  // back through processPayload (session-goal runtime already broadcasts those).
-  onGoalPersisted: ({ sessionID, directory, metadata }) => {
-    sessionGoalRuntime.processPayload({
-      type: 'session.updated',
-      properties: {
-        info: {
-          id: sessionID,
-          directory: directory || '',
-          metadata,
-        },
-      },
-    }, directory || '');
-  },
   emitTaskRunEvent: (event) => {
     for (const client of uiYuriEventClients) {
       try {
@@ -1385,7 +1255,7 @@ const completeOpenCodeStartup = () => {
     startHealthMonitoring();
   }
   // The global watcher used to start only for desktop notifications; session-title
-  // and session-goal also ride its event hub, so it now starts unconditionally
+  // also rides its event hub, so it now starts unconditionally
   // once OpenCode is up. Controlled retry when metadata is not yet ready.
   const startWatcherWithRetry = (attempt = 0) => {
     void ensureGlobalWatcherStarted().catch((error) => {
@@ -1430,7 +1300,6 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   syncToHmrState,
   openCodeWatcherRuntime,
   sessionTitleRuntime,
-  sessionGoalRuntime,
   questionAutoDelegateRuntime,
   sessionRuntime,
   getHealthCheckInterval: () => healthCheckInterval,
@@ -2051,25 +1920,13 @@ async function main(options = {}) {
         return sessionArchiveServiceRef.archiveSession(...args);
       },
     },
-    // Same store seam as sessionGoalRuntime / scheduledTasksRuntime.
     readSessionMetadata: (sessionId) => sessionMetadataStore.get(sessionId),
     persistSessionMetadata: persistSessionMetadataToStore,
     onSystemSessionPersisted: hideSystemSessionFromIndex,
-    persistSessionGoal: persistSessionGoalToStore,
     onSessionMetadataWritten: ({ sessionID, directory, metadata }) => {
       sessionTitleRuntime.processPayload({
         type: 'yuri:session-metadata',
         properties: { sessionID, directory, metadata },
-      }, directory || '');
-      sessionGoalRuntime.processPayload({
-        type: 'session.updated',
-        properties: {
-          info: {
-            id: sessionID,
-            directory: directory || '',
-            metadata,
-          },
-        },
       }, directory || '');
     },
     getSmallModelService,

@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': 'Зміна робочого простору розпочне новий сеанс асистента.',
   'assistants.settings.scheduledTasks.title': 'Заплановані завдання',
   'assistants.settings.scheduledTasks.empty': 'Цей асистент ще не створив запланованих завдань.',
-  'assistants.settings.scheduledTasks.loadError': 'Перевірка запланованих завдань не завершена.',
   'assistants.settings.scheduledTasks.open': 'Відкрити заплановані завдання для {name}',
   'assistants.settings.save': 'Зберегти асистента',
   'assistants.settings.empty': 'Створіть першого асистента.',

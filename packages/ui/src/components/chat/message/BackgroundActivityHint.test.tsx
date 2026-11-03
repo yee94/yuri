@@ -5,6 +5,7 @@ import type { Session } from '@/lib/opencode/v2-types';
 import { ChildStoreManager } from '@/sync/child-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { BackgroundActivityHint } from './BackgroundActivityHint';
+import { getSessionShellActivity } from '@/sync/session-shell-activity';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string, values?: { count: number }) =>
     values ? `${values.count} 个后台任务进行中` : key }) }));
@@ -38,6 +39,13 @@ test.each([false, true])('live descendants retain non-interactive footer activit
         <BackgroundActivityHint sessionId="parent" />
     </context.Provider>));
     const button = host.querySelector<HTMLElement>('[data-background-activity]')!;
+    expect(button.textContent).toBe('1 个后台任务进行中');
+    const shells = getSessionShellActivity(children);
+    await act(async () => shells.event('/workspace', { type: 'shell.created', properties: {
+        info: { id: 'sh_tests', status: 'running', metadata: { sessionID: 'parent' } },
+    } }));
+    expect(button.textContent).toBe('2 个后台任务进行中');
+    await act(async () => shells.event('/workspace', { type: 'shell.exited', properties: { id: 'sh_tests', status: 'exited' } }));
     expect(button.textContent).toBe('1 个后台任务进行中');
     expect(button.querySelector('.animate-text-shimmer')).not.toBeNull();
     expect(button.querySelector('svg')).toBeNull();

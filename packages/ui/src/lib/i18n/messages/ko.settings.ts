@@ -2404,7 +2404,6 @@ export const settingsDict = {
   'assistants.settings.workspaceChangeHint': '작업 공간을 전환하면 새 어시스턴트 세션이 시작됩니다.',
   'assistants.settings.scheduledTasks.title': '예약 작업',
   'assistants.settings.scheduledTasks.empty': '이 어시스턴트가 만든 예약 작업이 아직 없습니다.',
-  'assistants.settings.scheduledTasks.loadError': '예약 작업 확인이 완료되지 않았습니다.',
   'assistants.settings.scheduledTasks.open': '{name}의 예약 작업 열기',
   'assistants.settings.save': '어시스턴트 저장',
   'assistants.settings.empty': '첫 어시스턴트를 만드세요.',

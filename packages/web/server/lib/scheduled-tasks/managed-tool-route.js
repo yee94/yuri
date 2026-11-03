@@ -1,8 +1,3 @@
-import {
-  getSessionGoalCapability,
-  isSessionGoalSupported,
-  sessionGoalUnavailableMessage,
-} from '../session-goal/capability.js';
 import { MANAGED_SCHEDULED_TASK_TOOL_PATH } from './managed-tool-contract.js';
 
 const MAX_ID_LENGTH = 512;
@@ -157,12 +152,11 @@ const validateTaskInputFields = (input) => {
   }
   if (input.execution !== undefined) {
     const execution = asObject(input.execution, 'input.execution');
-    hasOnlyKeys(execution, new Set(['prompt', 'providerID', 'modelID', 'agent', 'variant', 'goalEnabled', 'goalTokenBudget']), 'input.execution');
+    hasOnlyKeys(execution, new Set(['prompt', 'providerID', 'modelID', 'agent', 'variant', 'goalEnabled']), 'input.execution');
     for (const key of ['prompt', 'providerID', 'modelID', 'agent', 'variant']) {
       if (execution[key] !== undefined) asString(execution[key], `input.execution.${key}`, key === 'prompt' ? MAX_PROMPT_LENGTH : MAX_ID_LENGTH);
     }
     if (execution.goalEnabled !== undefined && typeof execution.goalEnabled !== 'boolean') throw new Error('input.execution.goalEnabled is invalid');
-    if (execution.goalTokenBudget !== undefined && (!Number.isFinite(execution.goalTokenBudget) || execution.goalTokenBudget <= 0)) throw new Error('input.execution.goalTokenBudget is invalid');
   }
 };
 
@@ -268,17 +262,6 @@ export const registerScheduledTaskToolRoute = (app, dependencies) => {
         : new Set(['taskId', 'name', 'enabled', 'schedule', 'execution']), 'input');
       validateTaskInputFields(input);
 
-      const refuseGoalExecution = (execution) => {
-        if (execution?.goalEnabled !== true || isSessionGoalSupported()) {
-          return null;
-        }
-        const capability = getSessionGoalCapability();
-        const error = new Error(sessionGoalUnavailableMessage(capability));
-        error.statusCode = 501;
-        error.capability = capability;
-        return error;
-      };
-
       if (operation === 'update') {
         const patch = {
           ...(input.name === undefined ? {} : { name: input.name }),
@@ -286,8 +269,6 @@ export const registerScheduledTaskToolRoute = (app, dependencies) => {
           ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
           ...(input.execution === undefined ? {} : { execution: input.execution }),
         };
-        const goalRefusal = refuseGoalExecution(patch.execution);
-        if (goalRefusal) throw goalRefusal;
         const patched = await projectConfigRuntime.patchScheduledTask(project.id, taskID, patch);
         if (!patched?.task) return res.status(404).json({ error: 'Schedule not found' });
         const schedulerSynced = await syncAfterMutation(project.id, operation);
@@ -303,8 +284,6 @@ export const registerScheduledTaskToolRoute = (app, dependencies) => {
       if (operation === 'create' && (!execution.providerID || !execution.modelID)) {
         throw new Error('execution.providerID and execution.modelID are required from the user message or input');
       }
-      const goalRefusal = refuseGoalExecution(execution);
-      if (goalRefusal) throw goalRefusal;
       const taskInput = {
         ...(input.name === undefined ? {} : { name: input.name }),
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -318,14 +297,6 @@ export const registerScheduledTaskToolRoute = (app, dependencies) => {
       const statusCode = error?.statusCode || (isValidationError(error?.message || '') ? 400 : 500);
       if (statusCode >= 500 && statusCode !== 501) {
         logger.error?.('[ScheduledTaskTool] request failed', { operation: req.body?.operation, statusCode });
-      }
-      if (statusCode === 501) {
-        const capability = error?.capability || getSessionGoalCapability();
-        return res.status(501).json({
-          error: error?.message || sessionGoalUnavailableMessage(capability),
-          reason: capability.reason,
-          capability,
-        });
       }
       return res.status(statusCode).json({ error: statusCode >= 500 ? 'Failed to manage schedule' : (error?.message || 'Invalid schedule request') });
     }

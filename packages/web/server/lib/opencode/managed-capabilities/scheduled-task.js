@@ -32,7 +32,7 @@ export default async function scheduledTaskPlugin() {
         description: 'Scheduled prompt and execution settings. providerID and modelID default to the current session model.',
         additionalProperties: false,
         properties: {
-          prompt: { type: 'string' }, providerID: { type: 'string' }, modelID: { type: 'string' }, agent: { type: 'string' }, variant: { type: 'string' }, goalEnabled: { type: 'boolean' }, goalTokenBudget: { type: 'number', minimum: 1 },
+          prompt: { type: 'string' }, providerID: { type: 'string' }, modelID: { type: 'string' }, agent: { type: 'string' }, variant: { type: 'string' }, goalEnabled: { type: 'boolean' },
         },
       },
     },

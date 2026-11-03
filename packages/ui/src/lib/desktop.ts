@@ -135,8 +135,6 @@ export type DesktopSettings = {
   smallModelUseDefault?: boolean;
   sessionTitleRefreshEnabled?: boolean;
   sessionGoalEnabled?: boolean;
-  sessionGoalDefaultBudgetEnabled?: boolean;
-  sessionGoalDefaultBudget?: number;
   smallModelOverride?: string; // format: "provider/model"
   summaryModelMode?: 'provider' | 'custom';
   summaryProviderID?: string;

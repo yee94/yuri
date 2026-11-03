@@ -2,7 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-const fixtures = vi.hoisted(() => ({ commands: [], skills: [], messages: [] }));
+const fixtures = vi.hoisted(() => ({ commands: [] as Array<{ name: string; isBuiltIn: boolean }>, skills: [], messages: [] }));
 vi.mock('@/queries/commandQueries', () => ({ useCommandsQuery: () => ({ data: fixtures.commands, isFetching: false }) }));
 vi.mock('@/queries/installedSkillsQueries', () => ({ useInstalledSkillsQuery: () => ({ data: fixtures.skills }) }));
 vi.mock('@/sync/sync-context', () => ({ useSessionMessages: () => fixtures.messages }));
@@ -20,7 +20,21 @@ import { useUIStore } from '@/stores/useUIStore';
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
+  fixtures.commands = [];
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+});
+
+test.each([false, true])('native goal has exactly one entry and inserts without local auto-submit (mobile=%s)', async (isMobile) => {
+  fixtures.commands = [{ name: 'goal', isBuiltIn: true }];
+  useUIStore.setState({ isMobile });
+  const ref = React.createRef<CommandAutocompleteHandle>();
+  const select = vi.fn();
+  await act(async () => root.render(<CommandAutocomplete ref={ref} searchQuery="goal" onCommandSelect={select} onClose={() => {}}
+    commandContext={{ sessionID: null, hasMessages: false, hasNewDraft: true }} />));
+  const rows = Array.from(document.querySelectorAll('.cursor-pointer'));
+  expect(rows.filter((row) => row.textContent?.startsWith('/goal'))).toHaveLength(1);
+  await act(async () => ref.current!.handleKeyDown('Enter'));
+  expect(select).toHaveBeenCalledWith(expect.objectContaining({ name: 'goal', source: 'opencode' }), false);
 });
 afterEach(async () => { await act(async () => root.unmount()); document.body.innerHTML = ''; });
 

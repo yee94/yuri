@@ -58,6 +58,25 @@ function fixture({ directory = root(), configureAPI, service: externalService, c
 }
 
 describe('Weixin Host runtime', () => {
+  it('delivers a generated image natively, ordered with prose, only on its source channel', async () => {
+    const f = fixture();
+    f.api.sendImage = vi.fn(async () => ({ ret: 0 }));
+    f.service.prepareChannelImage = vi.fn(async () => ({ attachmentID: 'att_generated' }));
+    f.service.getAssistantContactAttachment = vi.fn(async () => ({ buffer: Buffer.from('image'), mime: 'image/png', filename: 'generated.png' }));
+    f.updates.push([inbound('draw')]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    const turnID = f.service.send.mock.calls[0][1].messageID;
+    f.pages.set('bot', { generation: 0, messages: [
+      { ordinal: 1, messageID: 'foreign', turnID: 'channel:wecom:foreign', text: '![foreign](/foreign.png)', cards: [], status: 'complete' },
+      { ordinal: 2, messageID: 'own', turnID, text: 'Before ![generated](/generated.png) after', cards: [], status: 'complete' },
+    ] });
+    await vi.waitFor(() => expect(f.api.sendImage).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));
+    expect(f.api.sendText.mock.calls.map(([, part]) => part.text)).toEqual(['Before', 'after']);
+    expect(f.api.sendImage.mock.calls[0][1]).toMatchObject({ image: { buffer: Buffer.from('image') } });
+    expect(f.service.prepareChannelImage).toHaveBeenCalledOnce();
+  });
   it('does not broadcast other channel replies to WeChat but pushes source-less messages', async () => {
     const f = fixture();
     f.updates.push([inbound('own-turn')]);
@@ -189,13 +208,13 @@ describe('Weixin Host runtime', () => {
     expect(f.api.sendText.mock.calls[1][1].id).toBe(originalId);
   });
 
-  it.each([false, true])('a rejected or uncertain card send does not block later text or Bot input (ambiguous=%s)', async (ambiguous) => {
+  it.each([false, true])('a rejected or uncertain notification send does not block later text or Bot input (ambiguous=%s)', async (ambiguous) => {
     const f = fixture({ configureAPI: (api) => api.sendText.mockRejectedValueOnce(new WeixinError('reply_unavailable', { ambiguous })) });
     f.updates.push([inbound()]);
     await f.bind();
     await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
     f.pages.set('bot', { generation: 0, messages: [
-      { ordinal: 1, messageID: 'card', text: '', cards: [{ cardType: 'session', title: 'Article notes', sessionID: 'ses_article' }], status: 'complete' },
+      { ordinal: 1, messageID: 'notification', text: 'Article notes', cards: [], status: 'complete' },
       { ordinal: 2, messageID: 'result', text: 'Note saved', cards: [], status: 'complete' },
     ] });
     await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledTimes(2));

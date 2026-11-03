@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, createCipheriv, randomBytes } from 'node:crypto';
 import { downloadWeixinMedia } from './media.js';
 
 // Wire-format reference: Tencent/openclaw-weixin (MIT), docs/protocol.md.
@@ -103,6 +103,48 @@ export function createWeixinAPI({ fetchImpl = fetch } = {}) {
       token: binding.token, signal, timeoutMs: 5000, allowEmpty: true,
       body: { ilink_user_id: binding.peer_id, typing_ticket: ticket, status },
     }),
+    sendImage: async (binding, delivery, signal) => {
+      const buffer = delivery.image?.buffer;
+      if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > 20 * 1024 * 1024) throw new WeixinError('validation_error');
+      const key = randomBytes(16);
+      const filekey = randomBytes(16).toString('hex');
+      const cipher = createCipheriv('aes-128-ecb', key, null);
+      const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
+      const uploaded = await request(binding.base_url, '/ilink/bot/getuploadurl', {
+        token: binding.token, signal,
+        body: { filekey, media_type: 1, to_user_id: binding.peer_id, rawsize: buffer.length,
+          rawfilemd5: createHash('md5').update(buffer).digest('hex'), filesize: encrypted.length,
+          no_need_thumb: true, aeskey: key.toString('hex') },
+      });
+      const url = new URL(uploaded.upload_full_url || 'https://novac2c.cdn.weixin.qq.com/c2c/upload');
+      if (!uploaded.upload_full_url) {
+        if (typeof uploaded.upload_param !== 'string' || !uploaded.upload_param) throw new WeixinError('invalid_response');
+        url.searchParams.set('encrypted_query_param', uploaded.upload_param);
+        url.searchParams.set('filekey', filekey);
+      }
+      if (url.protocol !== 'https:' || url.hostname !== 'novac2c.cdn.weixin.qq.com' || url.port
+        || url.username || url.password || url.hash || url.pathname !== '/c2c/upload') throw new WeixinError('invalid_response');
+      const uploadSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+      uploadSignal.throwIfAborted();
+      let response;
+      try {
+        response = await fetchImpl(url.href, { method: 'POST', body: encrypted, redirect: 'error',
+          headers: { 'Content-Type': 'application/octet-stream' }, signal: uploadSignal });
+      } catch { throw new WeixinError(signal?.aborted ? 'cancelled' : 'network_error'); }
+      await response.body?.cancel().catch(() => {});
+      const param = response.headers.get('x-encrypted-param');
+      if (response.status !== 200 || !param || param.length > 65_536) throw new WeixinError('invalid_response');
+      uploadSignal.throwIfAborted();
+      delivery.beforeSend?.();
+      return request(binding.base_url, '/ilink/bot/sendmessage', {
+        token: binding.token, signal, sending: true,
+        body: { msg: { from_user_id: '', to_user_id: binding.peer_id, client_id: delivery.id,
+          message_type: 2, message_state: 2, context_token: binding.context_token || undefined,
+          item_list: [{ type: 2, image_item: { media: { encrypt_query_param: param,
+            aes_key: Buffer.from(key.toString('hex')).toString('base64'), encrypt_type: 1 }, mid_size: encrypted.length } }],
+        } },
+      });
+    },
     sendText: (binding, delivery, signal) => request(binding.base_url, '/ilink/bot/sendmessage', {
       token: binding.token, signal, sending: true,
       body: { msg: {

@@ -75,11 +75,17 @@ export function createWeixinChatAdapter({ api, getBinding, clock = Date.now }) {
       return message;
     },
     renderFormatted: (content) => stringifyMarkdown(content),
-    postMessage: async (threadID, message, { id = `yuri_${randomUUID()}`, signal } = {}) => {
+    postMessage: async (threadID, message, { id = `yuri_${randomUUID()}`, signal, beforeSend } = {}) => {
       const current = binding();
       const target = decodeThreadId(threadID);
       if (target.accountID !== current.account_id || target.peerID !== current.peer_id) throw new WeixinError('validation_error');
-      if (message?.files?.length || message?.attachments?.length) return unsupported();
+      if (message?.files?.length) {
+        if (message.files.length !== 1 || !message.files[0]?.mimeType?.startsWith('image/') || !Buffer.isBuffer(message.files[0].data)) return unsupported();
+        const file = message.files[0];
+        await api.sendImage(current, { id, image: { buffer: file.data, mime: file.mimeType, filename: file.filename }, beforeSend }, signal);
+        return { id, raw: { id } };
+      }
+      if (message?.attachments?.length) return unsupported();
       const text = typeof message === 'string' ? message : typeof message?.raw === 'string' ? message.raw
         : typeof message?.markdown === 'string' ? message.markdown : message?.ast ? stringifyMarkdown(message.ast) : null;
       if (text === null) return unsupported();

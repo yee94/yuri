@@ -282,14 +282,12 @@ const normalizeExecution = (value) => {
   const variant = asNonEmptyString(value.variant);
   const agent = asNonEmptyString(value.agent);
   const goalEnabled = value.goalEnabled === true;
-  const goalTokenBudget = typeof value.goalTokenBudget === 'number'
-    && Number.isFinite(value.goalTokenBudget)
-    && value.goalTokenBudget > 0
-    ? Math.floor(value.goalTokenBudget)
-    : undefined;
 
   if (!prompt) {
     throw new Error('execution.prompt is required');
+  }
+  if (goalEnabled && (prompt.length > 4000 || ['pause', 'resume', 'clear'].includes(prompt.toLowerCase()))) {
+    throw new Error('execution.prompt is invalid for a native goal (1–4000 characters, not pause/resume/clear)');
   }
   if (!providerID) {
     throw new Error('execution.providerID is required');
@@ -305,7 +303,6 @@ const normalizeExecution = (value) => {
     ...(variant ? { variant } : {}),
     ...(agent ? { agent } : {}),
     ...(goalEnabled ? { goalEnabled: true } : {}),
-    ...(goalEnabled && goalTokenBudget ? { goalTokenBudget } : {}),
   };
 };
 

@@ -38,6 +38,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { queryClient, queryKeys } from '@/lib/queryRuntime';
 import { useMobileBackRoute } from '@/mobile/mobileBackNavigation';
 import { MobileTabPageHeader } from '@/mobile/MobileTabPageHeader';
+import { MobileScheduleAssistantHint } from '@/mobile/scheduled/MobileScheduleAssistantHint';
 import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback';
 import { isIPadApp } from '@/lib/platform';
 import { parseRoute, updateBrowserURL } from '@/lib/router';
@@ -868,7 +869,12 @@ export function ScheduledTasksWorkspace({
             : 'contents',
         )}
       >
-      {isMobileTab ? <MobileTabPageHeader title={t('sessions.scheduledTasks.dialog.title')} /> : null}
+      {isMobileTab ? (
+        <MobileTabPageHeader
+          title={t('sessions.scheduledTasks.dialog.title')}
+          trailing={<MobileScheduleAssistantHint active={editorMode === 'closed'} />}
+        />
+      ) : null}
       {isMobilePanel && !isMobileTab ? (
         <MobileSheetHeaderActions>
           {editorMode === 'edit' && selectedTaskEntry ? (
@@ -1054,14 +1060,15 @@ export function ScheduledTasksWorkspace({
             </div>
             {isMobileTab ? (
               <Button
-                variant="ghost"
+                variant="mobileGlass"
+                size="mobileIcon"
                 data-mobile-press-feedback="compact"
-                className="yuri-mobile-segmented-action shrink-0 bg-foreground text-background transition-[background-color,box-shadow] duration-150 ease-out hover:bg-foreground/90 hover:text-background hover:shadow-sm active:bg-interactive-active motion-reduce:transition-none"
+                className="yuri-mobile-segmented-action yuri-mobile-inverse-action shrink-0"
                 onClick={handleCreate}
                 disabled={!createProjectID}
                 aria-label={t('sessions.scheduledTasks.dialog.actions.create')}
               >
-                <Icon name="add" className="size-4" />
+                <Icon name="add" className="size-5" />
               </Button>
             ) : (
               <div className="flex min-w-0 items-center gap-2">
