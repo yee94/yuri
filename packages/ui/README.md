@@ -46,6 +46,10 @@ theme-owned. Non-hex custom CSS colors are preserved. Theme resolution and CSS
 generation apply the same rule, including custom, embedded and VS Code themes,
 so direct color consumers and saved splash colors agree with CSS tokens.
 
+Light-mode UI selection tokens use a shared neutral 7% foreground/background mix
+and ordinary foreground, including header and preview controls. Dark-mode UI
+selection and raw editor/terminal text-selection palettes stay theme-owned.
+
 ## Startup logo geometry
 
 The mobile HTML also includes the canonical 120 × 120 logo inside `#root` before

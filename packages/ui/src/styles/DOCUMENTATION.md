@@ -2,13 +2,15 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
-## Preview control selection
+## Control selection
 
-`design-system.css` owns the `yuri-preview-controls` selection-token scope shared
-by the ContextPanel header and Markdown preview toggles (collapsed, expanded and
-docked toolbars). Light mode uses the header's neutral 7% foreground/background
-mix and ordinary foreground; dark mode retains the theme's selection tokens.
-The scope stays on controls, not preview content or editor text selections.
+`lib/theme/cssGenerator.ts` owns the global `--interactive-selection` and
+`--interactive-selection-foreground` tokens. Light mode uses a neutral 7%
+foreground/background mix and ordinary foreground for every selection-token
+consumer, including header folder buttons, preview toggles and panel tabs.
+Dark mode retains the theme's selection tokens. Controls do not add local
+selection-color overrides. Raw theme selection colors used by CodeMirror and
+terminal text selection remain unchanged.
 
 ## Android native scrollbars
 

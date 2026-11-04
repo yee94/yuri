@@ -134,6 +134,18 @@ describe('built-in Cursor and Osaka Jade palettes', () => {
     expect(theme.colors.status.error).toBe('#DA1E28');
   });
 
+  test('uses neutral global UI selection in light themes without changing dark or raw text-selection palettes', () => {
+    const generator = new CSSVariableGenerator();
+    for (const theme of themes) {
+      const original = { ...theme.colors.interactive };
+      const css = generator.generate(theme);
+      const light = theme.metadata.variant === 'light';
+      expect(css, theme.metadata.id).toContain(`--interactive-selection: ${light ? 'color-mix(in srgb, var(--surface-foreground) 7%, var(--background))' : original.selection};`);
+      expect(css, theme.metadata.id).toContain(`--interactive-selection-foreground: ${light ? 'var(--surface-foreground)' : original.selectionForeground};`);
+      expect(theme.colors.interactive, theme.metadata.id).toEqual(original);
+    }
+  });
+
   test('keeps previously registered themes and does not enable other commented palettes', () => {
     const ids = new Set(themes.map((theme) => theme.metadata.id));
 

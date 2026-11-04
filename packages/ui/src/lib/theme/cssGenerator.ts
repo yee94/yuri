@@ -49,7 +49,7 @@ export class CSSVariableGenerator {
 
     cssVars.push(...this.generatePrimaryColors(theme.colors.primary));
     cssVars.push(...this.generateSurfaceColors(theme.colors.surface));
-    cssVars.push(...this.generateInteractiveColors(theme.colors.interactive));
+    cssVars.push(...this.generateInteractiveColors(theme));
     cssVars.push(...this.generateStatusColors(theme.colors.status));
     cssVars.push(...this.generatePullRequestColors(theme));
 
@@ -237,13 +237,15 @@ const sidebarBaseRgb = hexToRgb(theme.colors.surface.muted);
     return vars;
   }
 
-  private generateInteractiveColors(interactive: Theme['colors']['interactive']): string[] {
+  private generateInteractiveColors(theme: Theme): string[] {
+    const { interactive } = theme.colors;
+    const isLight = theme.metadata.variant === 'light';
     const vars: string[] = [];
     vars.push(`  --interactive-border: ${interactive.border};`);
     vars.push(`  --interactive-border-hover: ${interactive.borderHover};`);
     vars.push(`  --interactive-border-focus: ${interactive.borderFocus};`);
-    vars.push(`  --interactive-selection: ${interactive.selection};`);
-    vars.push(`  --interactive-selection-foreground: ${interactive.selectionForeground};`);
+    vars.push(`  --interactive-selection: ${isLight ? 'color-mix(in srgb, var(--surface-foreground) 7%, var(--background))' : interactive.selection};`);
+    vars.push(`  --interactive-selection-foreground: ${isLight ? 'var(--surface-foreground)' : interactive.selectionForeground};`);
     vars.push(`  --interactive-focus: ${interactive.focus};`);
     vars.push(`  --interactive-focus-ring: ${interactive.focusRing};`);
     vars.push(`  --interactive-cursor: ${interactive.cursor};`);

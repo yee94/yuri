@@ -188,7 +188,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview controls share the header selection-token scope', async (toolbar) => {
+test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview controls use global selection tokens without local overrides', async (toolbar) => {
   window.localStorage.setItem('yuri:files:md-viewer-mode', 'preview');
   harness.files.readFile.mockResolvedValue({ content: '# Report' });
   useUIStore.setState({ expandedEditorToolbar: toolbar === 'docked' });
@@ -198,8 +198,8 @@ test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview con
 
   const header = host.querySelector('[data-context-panel] header')!;
   const toggle = host.querySelector<HTMLButtonElement>('[aria-label="filesView.editor.switchToEditMode"]')!;
-  expect(header.classList.contains('yuri-preview-controls')).toBe(true);
-  expect(toggle.classList.contains('yuri-preview-controls')).toBe(true);
+  expect(header.className).not.toContain('--interactive-selection');
+  expect(toggle.className).not.toContain('--interactive-selection:');
   expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(true);
   await act(async () => toggle.click());
   expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(false);
@@ -758,7 +758,7 @@ describe('file reference failure lifecycle', () => {
     const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs).toHaveLength(2);
     expect(tablist.closest('header')?.classList.contains('app-region-drag')).toBe(true);
-    expect(tablist.closest('header')?.classList.contains('yuri-preview-controls')).toBe(true);
+    expect(tablist.closest('header')?.className).not.toContain('--interactive-selection');
     expect(host.querySelector('[data-context-preview-content]')?.className).not.toContain('--interactive-selection');
     expect(host.querySelector('[data-context-file-path]')).toBeNull();
     expect(tabs[1].getAttribute('title')).toContain('second.md');

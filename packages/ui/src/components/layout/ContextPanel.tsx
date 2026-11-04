@@ -2886,7 +2886,7 @@ export const ContextPanel: React.FC<{
   const header = (
     <header
       className={cn(
-        'yuri-preview-controls app-region-drag flex shrink-0 select-none items-center pl-2',
+        'app-region-drag flex shrink-0 select-none items-center pl-2',
         currentTheme.metadata.variant === 'light' && [
           '[--interactive-hover:color-mix(in_srgb,var(--surface-foreground)_6%,var(--background))]',
           '[--interactive-active:color-mix(in_srgb,var(--surface-foreground)_10%,var(--background))]',
