@@ -497,8 +497,7 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
           </Button>
         </div>
 
-        <div className="space-y-2 rounded-lg border border-border/60 p-2">
-          <div className="typography-meta text-muted-foreground">{t('settings.remoteInstances.page.sync.scope.title')}</div>
+        <SettingsGroup label={t('settings.remoteInstances.page.sync.scope.title')}>
           {!scopeReady ? (
             <div className="typography-micro text-muted-foreground">
               {phase === 'scanning-local' || phase === 'comparing-remote'
@@ -519,73 +518,62 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
           )).map((item) => {
             const checked = selections[item.kind][item.index] !== false;
             return (
-              <div key={item.key} className="flex items-center gap-2 typography-meta">
-                <SettingsSwitch
-                  checked={checked}
-                  disabled={isApplying || !scopeReady || !preview}
-                  ariaLabel={item.label}
-                  onChange={(nextChecked) => {
-                    if (!scopeReady) return;
-                    const list = [...selections[item.kind]];
-                    list[item.index] = nextChecked;
-                    const next = { ...selections, [item.kind]: list };
-                    setSelections(next);
-                    void runCompareRemote(direction, next);
-                  }}
-                />
-                <span className="font-mono">{item.label}</span>
-              </div>
-            );
-          })}
-          <div className="flex items-center gap-2 typography-meta">
-            <SettingsSwitch
-              checked={selections.agentsRoot}
-              disabled={isApplying || !scopeReady || !preview}
-              ariaLabel={t('settings.remoteInstances.page.sync.section.agentsRoot')}
-              onChange={(checked) => {
-                if (!scopeReady) return;
-                const next = { ...selections, agentsRoot: checked };
-                setSelections(next);
-                void runCompareRemote(direction, next);
-              }}
-            />
-            {t('settings.remoteInstances.page.sync.section.agentsRoot')}
-          </div>
-          <div className="flex items-center gap-2 typography-meta">
-            <SettingsSwitch
-              checked={selections.providerCredentials}
-              disabled={isApplying || !scopeReady || !preview}
-              ariaLabel={t('settings.remoteInstances.page.sync.section.providerCredentials')}
-              onChange={(checked) => {
-                if (!scopeReady) return;
-                const next = { ...selections, providerCredentials: checked };
-                setSelections(next);
-                void runCompareRemote(direction, next);
-              }}
-            />
-            <span className="min-w-0" title={t('settings.remoteInstances.page.sync.hint.providerCredentials')}>
-              <span className="truncate">{t('settings.remoteInstances.page.sync.section.providerCredentials')}</span>
-            </span>
-          </div>
-
-          {preview?.plan.magpieAvailable ? (
-            <div className="flex items-center gap-2 typography-meta">
-              <SettingsSwitch
-                checked={selections.magpie === true}
-                disabled={isApplying}
-                ariaLabel={t('settings.remoteInstances.page.sync.section.magpie')}
-                onChange={(checked) => {
-                  const next = { ...selections, magpie: checked };
+              <SettingsToggleRow
+                key={item.key}
+                label={<span className="font-mono break-all">{item.label}</span>}
+                checked={checked}
+                disabled={isApplying || !scopeReady || !preview}
+                ariaLabel={item.label}
+                onChange={(nextChecked) => {
+                  if (!scopeReady) return;
+                  const list = [...selections[item.kind]];
+                  list[item.index] = nextChecked;
+                  const next = { ...selections, [item.kind]: list };
                   setSelections(next);
                   void runCompareRemote(direction, next);
                 }}
               />
-              <span className="min-w-0" title={t('settings.remoteInstances.page.sync.hint.magpie')}>
-                <span className="truncate">{t('settings.remoteInstances.page.sync.section.magpie')}</span>
-              </span>
-            </div>
+            );
+          })}
+          <SettingsToggleRow
+            label={t('settings.remoteInstances.page.sync.section.agentsRoot')}
+            checked={selections.agentsRoot}
+            disabled={isApplying || !scopeReady || !preview}
+            ariaLabel={t('settings.remoteInstances.page.sync.section.agentsRoot')}
+            onChange={(checked) => {
+              if (!scopeReady) return;
+              const next = { ...selections, agentsRoot: checked };
+              setSelections(next);
+              void runCompareRemote(direction, next);
+            }}
+          />
+          <SettingsToggleRow
+            label={<span title={t('settings.remoteInstances.page.sync.hint.providerCredentials')}>{t('settings.remoteInstances.page.sync.section.providerCredentials')}</span>}
+            checked={selections.providerCredentials}
+            disabled={isApplying || !scopeReady || !preview}
+            ariaLabel={t('settings.remoteInstances.page.sync.section.providerCredentials')}
+            onChange={(checked) => {
+              if (!scopeReady) return;
+              const next = { ...selections, providerCredentials: checked };
+              setSelections(next);
+              void runCompareRemote(direction, next);
+            }}
+          />
+
+          {preview?.plan.magpieAvailable ? (
+            <SettingsToggleRow
+              label={<span title={t('settings.remoteInstances.page.sync.hint.magpie')}>{t('settings.remoteInstances.page.sync.section.magpie')}</span>}
+              checked={selections.magpie === true}
+              disabled={isApplying}
+              ariaLabel={t('settings.remoteInstances.page.sync.section.magpie')}
+              onChange={(checked) => {
+                const next = { ...selections, magpie: checked };
+                setSelections(next);
+                void runCompareRemote(direction, next);
+              }}
+            />
           ) : null}
-        </div>
+        </SettingsGroup>
 
         <div className="flex flex-wrap gap-x-4 gap-y-2" aria-busy={phase === 'scanning-local' || phase === 'comparing-remote'}>
           {SYNC_STEP_KEYS.map((key, index) => {
@@ -2787,16 +2775,20 @@ export const RemoteInstancesPage: React.FC = () => {
                     })}
                   </div>
                   {addDeviceTransport === 'lan' ? (
-                    <div className="flex items-center gap-2 pt-1">
-                      <SettingsSwitch checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')} />
-                      <span className="typography-meta text-muted-foreground">{t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')}</span>
-                    </div>
+                    <SettingsToggleRow
+                      checked={addDeviceFallback}
+                      onChange={setAddDeviceFallback}
+                      label={t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')}
+                      ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')}
+                    />
                   ) : null}
                   {addDeviceTransport === 'relay' && transportOptions?.lanUrl ? (
-                    <div className="flex items-center gap-2 pt-1">
-                      <SettingsSwitch checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')} />
-                      <span className="typography-meta text-muted-foreground">{t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')}</span>
-                    </div>
+                    <SettingsToggleRow
+                      checked={addDeviceFallback}
+                      onChange={setAddDeviceFallback}
+                      label={t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')}
+                      ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')}
+                    />
                   ) : null}
                   <Collapsible open={addDeviceAdvancedOpen} onOpenChange={setAddDeviceAdvancedOpen} className="pt-3">
                     <CollapsibleTrigger className="px-0 hover:bg-transparent">

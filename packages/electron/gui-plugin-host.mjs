@@ -258,9 +258,15 @@ export function createGuiPluginMainHost({ getClient, windows, app, authorize, au
           const listed = inventory.find((item) => item.id === input.id && item.features.gui && item.state.status === 'active');
           if (!listed) {
             const old = instances.get(input.id); if (old) await stop(old);
-            throw failure('GUI_PLUGIN_UNAVAILABLE');
+            return null;
           }
-          const bundle = (await client.plugin.gui({ id: input.id }, { signal })).data;
+          let bundle;
+          try { bundle = (await client.plugin.gui({ id: input.id }, { signal })).data; }
+          catch (error) {
+            if (error?._tag !== 'PluginNotFoundError' || error.pluginID !== input.id) throw error;
+            const old = instances.get(input.id); if (old) await stop(old);
+            return null;
+          }
           assertOwner(owner);
           if (bundle.revision !== input.revision) throw failure('GUI_PLUGIN_REVISION_MISMATCH');
           let instance = instances.get(input.id);

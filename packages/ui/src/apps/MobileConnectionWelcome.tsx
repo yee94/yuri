@@ -114,7 +114,6 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
 
   const status = (saved: MobileSavedConnection) => {
     if (attemptId === saved.id && isBusy && !pendingConnection && panel !== 'rename' && panel !== 'remove') return t('mobile.connect.connecting');
-    if (attemptId === saved.id && error) return t('mobile.connect.history.failed');
     return saved.id === latest?.id && saved.lastUsedAt > 0
       ? t('mobile.connect.history.lastUsed')
       : t('mobile.instances.status.saved');
@@ -190,6 +189,11 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
                     <span className="block typography-small font-normal text-muted-foreground">{status(saved)}</span>
                   </span>
                 </Button>
+                {error && attemptId === saved.id && !sheetOpen && !isBusy ? (
+                  <Button variant="ghost" size="icon" disabled={disabled} aria-label={t('desktopHostSwitcher.actions.retry')} onClick={() => void connectSaved(saved)}>
+                    <Icon name="error-warning-fill" className="size-5 text-[var(--status-error)]" />
+                  </Button>
+                ) : null}
                 <DropdownMenu open={menuId === saved.id} onOpenChange={(open) => setMenuId(open ? saved.id : null)}>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" disabled={disabled} aria-label={t('mobile.connect.history.actions', { name: saved.label })}><Icon name="more" className="size-5" /></Button>
@@ -200,12 +204,6 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              {error && attemptId === saved.id && !sheetOpen ? (
-                <div className="px-3 pb-2">
-                  <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p>
-                  <Button variant="link" size="sm" disabled={disabled} onClick={() => void connectSaved(saved)}>{t('desktopHostSwitcher.actions.retry')}</Button>
-                </div>
-              ) : null}
             </div>
           ))}
           {error && !attemptId && !sheetOpen ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}

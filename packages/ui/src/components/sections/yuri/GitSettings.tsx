@@ -1,5 +1,4 @@
 import React from 'react';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Radio } from '@/components/ui/radio';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -8,7 +7,7 @@ import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { setFilesViewShowGitignored, useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
+import { SettingsGroup, SettingsRow, SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 
 export const GitSettings: React.FC = () => {
   const { t } = useI18n();
@@ -155,53 +154,21 @@ export const GitSettings: React.FC = () => {
           </div>
         </SettingsRow>
 
-        <div
-          data-settings-item="git.gitmoji"
-          className="yuri-settings-group-row group flex cursor-pointer items-center gap-2"
-          role="button"
-          tabIndex={0}
-          aria-pressed={settingsGitmojiEnabled}
-          onClick={() => {
-            void handleGitmojiChange(!settingsGitmojiEnabled);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === ' ' || event.key === 'Enter') {
-              event.preventDefault();
-              void handleGitmojiChange(!settingsGitmojiEnabled);
-            }
-          }}
-        >
-          <SettingsSwitch
-            checked={settingsGitmojiEnabled}
-            onChange={(checked) => {
-              void handleGitmojiChange(checked);
-            }}
-            ariaLabel={t('settings.yuri.git.enableGitmojiAria')}
-          />
-          <span className="typography-ui-label text-foreground">{t('settings.yuri.git.enableGitmoji')}</span>
-        </div>
+        <SettingsToggleRow
+          itemId="git.gitmoji"
+          checked={settingsGitmojiEnabled}
+          onChange={(checked) => { void handleGitmojiChange(checked); }}
+          label={t('settings.yuri.git.enableGitmoji')}
+          ariaLabel={t('settings.yuri.git.enableGitmojiAria')}
+        />
 
-        <div
-          data-settings-item="git.gitignored-files"
-          className="yuri-settings-group-row group flex cursor-pointer items-center gap-2"
-          role="button"
-          tabIndex={0}
-          aria-pressed={showGitignored}
-          onClick={() => setFilesViewShowGitignored(!showGitignored)}
-          onKeyDown={(event) => {
-            if (event.key === ' ' || event.key === 'Enter') {
-              event.preventDefault();
-              setFilesViewShowGitignored(!showGitignored);
-            }
-          }}
-        >
-          <SettingsSwitch
-            checked={showGitignored}
-            onChange={setFilesViewShowGitignored}
-            ariaLabel={t('settings.yuri.git.showGitignoredAria')}
-          />
-          <span className="typography-ui-label text-foreground">{t('settings.yuri.git.showGitignored')}</span>
-        </div>
+        <SettingsToggleRow
+          itemId="git.gitignored-files"
+          checked={showGitignored}
+          onChange={setFilesViewShowGitignored}
+          label={t('settings.yuri.git.showGitignored')}
+          ariaLabel={t('settings.yuri.git.showGitignoredAria')}
+        />
     </SettingsGroup>
   );
 };

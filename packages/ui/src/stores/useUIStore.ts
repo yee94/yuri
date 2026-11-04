@@ -874,7 +874,6 @@ interface UIStore {
   collapsibleUserMessages: boolean;
   stickyUserHeader: boolean;
   promptNavigatorEnabled: boolean;
-  expandedEditorToolbar: boolean;
   showSplitAssistantMessageActions: boolean;
   /** Show assistant generation TPS (tok/s) next to message duration/meta. */
   showAssistantTps: boolean;
@@ -1063,7 +1062,6 @@ interface UIStore {
   setCollapsibleUserMessages: (value: boolean) => void;
   setStickyUserHeader: (value: boolean) => void;
   setPromptNavigatorEnabled: (value: boolean) => void;
-  setExpandedEditorToolbar: (value: boolean) => void;
   setShowSplitAssistantMessageActions: (value: boolean) => void;
   setShowAssistantTps: (value: boolean) => void;
   setAllowPromptingSubagentSessions: (value: boolean) => void;
@@ -1241,7 +1239,6 @@ export const useUIStore = create<UIStore>()(
         collapsibleUserMessages: true,
         stickyUserHeader: false,
         promptNavigatorEnabled: false,
-        expandedEditorToolbar: false,
         showSplitAssistantMessageActions: false,
         showAssistantTps: true,
         allowPromptingSubagentSessions: false,
@@ -2735,9 +2732,6 @@ export const useUIStore = create<UIStore>()(
         setPromptNavigatorEnabled: (value) => {
           set({ promptNavigatorEnabled: value });
         },
-        setExpandedEditorToolbar: (value: boolean) => {
-          set({ expandedEditorToolbar: value });
-        },
         setShowSplitAssistantMessageActions: (value) => {
           set({ showSplitAssistantMessageActions: value });
         },
@@ -3054,7 +3048,6 @@ export const useUIStore = create<UIStore>()(
           collapsibleUserMessages: state.collapsibleUserMessages,
           stickyUserHeader: state.stickyUserHeader,
           promptNavigatorEnabled: state.promptNavigatorEnabled,
-          expandedEditorToolbar: state.expandedEditorToolbar,
           showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
           showAssistantTps: state.showAssistantTps,
           allowPromptingSubagentSessions: state.allowPromptingSubagentSessions,

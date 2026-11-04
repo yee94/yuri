@@ -102,6 +102,7 @@ export const iconSpriteData = {
   "emotion-happy": `<circle cx="12" cy="12" r="10" /> <path d="M8 14s1.5 2 4 2 4-2 4-2" /> <line x1="9" x2="9.01" y1="9" y2="9" /> <line x1="15" x2="15.01" y1="9" y2="9" />`,
   "equalizer-2": `<path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" />`,
   "error-warning": `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> <path d="M12 9v4" /> <path d="M12 17h.01" />`,
+  "error-warning-fill": `<path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM11 15V17H13V15H11ZM11 7V13H13V7H11Z" fill="currentColor" stroke="none"/>`,
   "exclamation-fill": `<path d="M10.5 4h3v10h-3zm0 13h3v3h-3z" fill="currentColor" stroke="none" />`,
   "expand-diagonal": `<path d="M15 3h6v6" /> <path d="m21 3-7 7" /> <path d="m3 21 7-7" /> <path d="M9 21H3v-6" />`,
   "expand-up-down": `<path d="m7 15 5 5 5-5" /> <path d="m7 9 5-5 5 5" />`,

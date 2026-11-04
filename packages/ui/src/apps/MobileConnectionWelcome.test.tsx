@@ -84,10 +84,32 @@ test('history connects only the tapped device and marks only its row busy or fai
   const recent = [...document.querySelectorAll('.yuri-welcome-history-row')].find((item) => item.textContent?.includes('Recent device'))!;
   expect(recent.textContent).not.toContain('mobile.connect.connecting');
   conn.isBusy = false; conn.error = 'offline'; await render();
-  expect(row.textContent).toContain('mobile.connect.history.failed');
-  expect(document.querySelector('[role="alert"]')?.textContent).toBe('offline');
-  await click(button('desktopHostSwitcher.actions.retry'));
+  expect(row.textContent).not.toContain('mobile.connect.history.failed');
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.body.textContent).not.toContain('offline');
+  const retry = document.querySelector<HTMLButtonElement>('[aria-label="desktopHostSwitcher.actions.retry"]')!;
+  expect(retry.textContent).toBe('');
+  expect(retry.querySelector('use')?.getAttribute('href')).toBe('#yuri-error-warning-fill');
+  expect(retry.previousElementSibling).toBe(row);
+  expect(retry.nextElementSibling?.getAttribute('aria-label')).toBe('mobile.connect.history.actions');
+  expect(recent.parentElement?.querySelector('[aria-label="desktopHostSwitcher.actions.retry"]')).toBeNull();
+  vi.mocked(conn.connect).mockImplementation(async () => {
+    conn.isBusy = true; conn.error = null;
+    root.render(<MobileConnectionWelcome connection={{ ...conn }} />);
+  });
+  await click(retry);
   expect(conn.connect).toHaveBeenCalledTimes(2);
+  expect(conn.connect).toHaveBeenLastCalledWith({ id: 'a', candidates: saved[1].candidates, label: 'Older device' });
+  expect(document.querySelector('[aria-label="desktopHostSwitcher.actions.retry"]')).toBeNull();
+  expect(row.textContent).toContain('mobile.connect.connecting');
+  expect(row.querySelector('use')?.getAttribute('href')).toBe('#yuri-loader-4');
+  expect(row.disabled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="mobile.connect.history.actions"]')?.disabled).toBe(true);
+  conn.isBusy = false; conn.error = 'offline again'; await render();
+  expect(document.querySelector('[aria-label="desktopHostSwitcher.actions.retry"]')).not.toBeNull();
+  expect(document.body.textContent).not.toContain('offline again');
+  await click(row);
+  expect(conn.connect).toHaveBeenCalledTimes(3);
 });
 
 test('password challenge uses the same sheet and keeps the history page beneath it', async () => {

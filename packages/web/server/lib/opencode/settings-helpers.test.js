@@ -39,6 +39,14 @@ const createTestHelpersWithRealSanitizers = () => {
 };
 
 describe('settings helpers', () => {
+  it('ignores retired editor toolbar preferences in updates and stored settings', () => {
+    const helpers = createTestHelpers();
+    for (const expandedEditorToolbar of [true, false, null, {}, 'invalid']) {
+      expect(helpers.sanitizeSettingsUpdate({ expandedEditorToolbar, userMessageRenderingMode: 'plain' }))
+        .toEqual({ userMessageRenderingMode: 'plain' });
+      expect(helpers.formatSettingsResponse({ expandedEditorToolbar })).not.toHaveProperty('expandedEditorToolbar');
+    }
+  });
   it('round-trips the Volcengine dictation provider without accepting speech credentials', () => {
     const helpers = createTestHelpers();
     const normalized = helpers.sanitizeSettingsUpdate({ sttProvider: 'volcengine', volcengineApiKey: 'credential-sentinel' });

@@ -16,6 +16,13 @@ function setup() {
   return { client, refresh, invalidate, refreshProjections, onError, switchRuntime: () => { identity = { transport: 'runtime-b', generation: 2 }; } };
 }
 
+function observeGuiInventory(client: QueryClient) {
+  const queryKey = ['runtime-a', 'plugins', 'gui', null, 'inventory'];
+  const data = [{ id: 'preview', features: { gui: true }, state: { status: 'active' } }];
+  client.setQueryData(queryKey, data);
+  return new QueryObserver(client, { queryKey, queryFn: async () => data }).subscribe(() => {});
+}
+
 describe('V2 configuration event refresh', () => {
   it('coalesces a credential/provider/model burst and invalidates every directory, not sessions or other runtimes', async () => {
     const s = setup();
@@ -161,6 +168,7 @@ describe('V2 configuration event refresh', () => {
 
   it('does not carry a plugin change into a trailing reconnect batch', async () => {
     const s = setup();
+    const stopInventory = observeGuiInventory(s.client);
     const key = ['runtime-a', 'plugins', 'gui', null, 'bundle', 'preview'];
     s.client.setQueryData(key, { revision: 'one' });
     let release!: (value: { revision: string }) => void;
@@ -172,14 +180,15 @@ describe('V2 configuration event refresh', () => {
     s.refresh.event('server.connected');
     release({ revision: 'two' });
     await vi.advanceTimersByTimeAsync(120);
-    expect(s.invalidate).toHaveBeenCalledTimes(2);
+    expect(s.invalidate.mock.calls.filter(([filters]) => filters?.refetchType === 'active')).toHaveLength(2);
     expect(queryFn).toHaveBeenCalledOnce();
     expect(s.client.getQueryState(key)?.isInvalidated).toBe(false);
-    stop(); s.refresh.dispose(); s.client.clear();
+    stop(); stopInventory(); s.refresh.dispose(); s.client.clear();
   });
 
   it('retains a real plugin update queued during a reconnect pull', async () => {
     const s = setup();
+    const stopInventory = observeGuiInventory(s.client);
     const key = ['runtime-a', 'plugins', 'gui', null, 'bundle', 'preview'];
     s.client.setQueryData(key, { revision: 'one' });
     const queryFn = vi.fn(async () => ({ revision: 'two' }));
@@ -193,6 +202,6 @@ describe('V2 configuration event refresh', () => {
     await vi.advanceTimersByTimeAsync(120);
     expect(queryFn).toHaveBeenCalledOnce();
     expect(s.client.getQueryData(key)).toEqual({ revision: 'two' });
-    stop(); s.refresh.dispose(); s.client.clear();
+    stop(); stopInventory(); s.refresh.dispose(); s.client.clear();
   });
 });

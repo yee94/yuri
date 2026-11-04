@@ -169,7 +169,6 @@ const VisualSectionContent: React.FC<VisualSectionContentProps> = ({ mobile }) =
         "fileEditorKeymap",
         "spacing",
         "inputBarOffset",
-        "expandedEditorToolbar",
         ...(!isVSCode ? ["terminalQuickKeys" as const] : []),
         "reportUsage",
       ]}

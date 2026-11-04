@@ -180,16 +180,18 @@ it('isolates a failed lazy plugin surface from the main application', async () =
   } finally { errors.mockRestore(); }
 });
 
-it('reports load failures once per runtime without a loading dialog', async () => {
+it('retains load failure diagnostics without global notifications across runtimes', async () => {
   state.list.mockRejectedValue(new Error('offline'));
   await act(async () => draw()); await settle();
-  expect(state.toastError).toHaveBeenCalledExactlyOnceWith('guiPlugins.failed', { description: 'offline' });
+  expect(context.error).toBe('offline');
+  expect(state.toastError).not.toHaveBeenCalled();
   await act(async () => draw()); await settle();
-  expect(state.toastError).toHaveBeenCalledOnce();
+  expect(state.toastError).not.toHaveBeenCalled();
   state.transport = 'host-b';
   await act(async () => { window.dispatchEvent(new CustomEvent('yuri:runtime-endpoint-changed')); });
   await settle();
-  expect(state.toastError).toHaveBeenCalledTimes(2);
+  expect(context.error).toBe('offline');
+  expect(state.toastError).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
@@ -248,6 +250,34 @@ it.each(['disable', 'switch'])('releases a late native activation after %s inste
   await settle();
   expect(state.hosts[0].install).not.toHaveBeenCalled();
   expect(request).toHaveBeenCalledWith('release', { lease: 'late' });
+});
+
+it('keeps an uninstall racing native activation silent and preserves unrelated plugins', async () => {
+  const other = { ...plugin, id: 'other' };
+  state.list.mockResolvedValue({ data: [plugin, other] });
+  let complete!: (value: unknown) => void;
+  const request = vi.fn<NativeGuiBridge['request']>(async (action, input) => {
+    if (action !== 'acquire') return { ok: true };
+    if (input?.id === 'dsl') return new Promise((resolve) => { complete = resolve; });
+    return { ok: true, value: { lease: 'other-lease', bundle, os: 'macos', app: { version: '1', packaged: false } } };
+  });
+  state.nativeBridge = { request, subscribe: () => () => {} };
+  await load();
+  const host = state.hosts[0];
+  await vi.waitFor(async () => {
+    await settle();
+    expect(host.install).toHaveBeenCalledWith('other', bundle, expect.anything());
+  });
+  state.list.mockResolvedValue({ data: [other] });
+  await act(async () => complete({ ok: true, value: null }));
+  await settle();
+  expect(state.toastError).not.toHaveBeenCalled();
+  expect(context.inventory.map((entry) => entry.id)).toEqual(['other']);
+  expect(host.uninstall).toHaveBeenCalledWith('dsl');
+  expect(host.uninstall).not.toHaveBeenCalledWith('other');
+  expect(host.install.mock.calls.some(([id]) => id === 'dsl')).toBe(false);
+  expect(host.dispose).not.toHaveBeenCalled();
+  for (const [, , native] of host.install.mock.calls) native?.dispose();
 });
 
 it('keeps remote GUI rendering after native privilege restriction is acknowledged', async () => {

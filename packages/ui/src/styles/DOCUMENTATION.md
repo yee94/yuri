@@ -104,6 +104,11 @@ the existing `yuri-segmented-selected-pill` material. Equal-width Off / On
 segments reserve their geometry in both states and accept the global 36px
 Button touch minimum. They retain a keyboard focus indicator independently
 of the borderless text/value-input recipe above.
+Appearance color mode reuses this track, option, and selected-pill material with
+three content-sized columns. Options keep a transparent button background on
+hover and press; only the selected pill paints a segment background.
+On hover-capable devices, unselected enabled options subtly shift their text
+toward the foreground token on hover, without changing the background.
 
 ## Voice color calibration
 

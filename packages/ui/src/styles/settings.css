@@ -59,13 +59,20 @@
   corner-shape: round;
   font-weight: 400;
   color: var(--surface-muted-foreground);
+  background: transparent;
 }
 
-.yuri-settings-switch .yuri-settings-switch-option[data-checked] {
+@media (hover: hover) {
+  .yuri-settings-switch .yuri-settings-switch-option:not([data-checked], [aria-pressed="true"], :disabled):hover {
+    color: color-mix(in srgb, var(--surface-muted-foreground) 80%, var(--surface-foreground));
+  }
+}
+
+.yuri-settings-switch .yuri-settings-switch-option:is([data-checked], [aria-pressed="true"]) {
   color: var(--surface-elevated-foreground, var(--foreground));
 }
 
-.dark .yuri-settings-switch .yuri-settings-switch-option[data-checked] {
+.dark .yuri-settings-switch .yuri-settings-switch-option:is([data-checked], [aria-pressed="true"]) {
   color: var(--interactive-selection-foreground);
 }
 

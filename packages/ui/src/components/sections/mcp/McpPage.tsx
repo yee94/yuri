@@ -1,7 +1,6 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui';
@@ -48,7 +47,7 @@ import {
 } from '@/components/ui/select';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
-import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
+import { SettingsGroup, SettingsRow, SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 import { SettingsActionHeader } from '@/components/sections/shared/SettingsActionHeader';
 
 // ─────────────────────────────────────────────────────────────
@@ -1481,26 +1480,12 @@ export const McpPage: React.FC = () => {
               </div>
             )}
 
-            <div
-              className="group flex cursor-pointer items-center gap-2"
-              role="button"
-              tabIndex={0}
-              aria-pressed={enabled}
-              onClick={() => setEnabled(!enabled)}
-              onKeyDown={(event) => {
-                if (event.key === ' ' || event.key === 'Enter') {
-                  event.preventDefault();
-                  setEnabled(!enabled);
-                }
-              }}
-            >
-              <SettingsSwitch
-                checked={enabled}
-                onChange={setEnabled}
-                ariaLabel={t('settings.mcp.page.server.enableAria')}
-              />
-              <span className="typography-ui-label text-foreground">{t('settings.mcp.page.server.enable')}</span>
-            </div>
+            <SettingsToggleRow
+              checked={enabled}
+              onChange={setEnabled}
+              label={t('settings.mcp.page.server.enable')}
+              ariaLabel={t('settings.mcp.page.server.enableAria')}
+            />
 
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
@@ -1635,22 +1620,12 @@ export const McpPage: React.FC = () => {
                     </div>
 
                     <div className="space-y-3">
-                      <div
-                        className="group flex cursor-pointer items-center gap-2 py-1.5"
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={oauthEnabled}
-                        onClick={() => setOauthEnabled(!oauthEnabled)}
-                        onKeyDown={(event) => {
-                          if (event.key === ' ' || event.key === 'Enter') {
-                            event.preventDefault();
-                            setOauthEnabled(!oauthEnabled);
-                          }
-                        }}
-                      >
-                        <SettingsSwitch checked={oauthEnabled} onChange={setOauthEnabled} ariaLabel={t('settings.mcp.page.advanced.oauthAutoDetectionAria')} />
-                        <span className="typography-ui-label text-foreground">{t('settings.mcp.page.advanced.oauthAutoDetection')}</span>
-                      </div>
+                      <SettingsToggleRow
+                        checked={oauthEnabled}
+                        onChange={setOauthEnabled}
+                        label={t('settings.mcp.page.advanced.oauthAutoDetection')}
+                        ariaLabel={t('settings.mcp.page.advanced.oauthAutoDetectionAria')}
+                      />
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Input

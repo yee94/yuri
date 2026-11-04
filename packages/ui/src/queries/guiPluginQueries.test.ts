@@ -1,4 +1,4 @@
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { CancelledError, QueryClient, QueryObserver } from '@tanstack/react-query';
 import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { guiBundleOptions, guiInventoryOptions } from './guiPluginQueries';
@@ -9,6 +9,8 @@ vi.mock('@/lib/runtime-switch', () => ({ getRuntimeGeneration: () => runtime.gen
 beforeEach(() => { runtime.transport = 'host-a'; runtime.generation = 0; });
 
 afterEach(() => vi.useRealTimers());
+
+const inventoryFor = (...ids: string[]) => ({ data: ids.map((id) => ({ id, features: { gui: true }, state: { status: 'active' } })) });
 
 describe('GUI plugin snapshots', () => {
   it('rejects late inventory after a runtime switch instead of caching it as current', async () => {
@@ -44,7 +46,7 @@ describe('GUI plugin snapshots', () => {
   it('reconnect refreshes inventory without reloading cached bundles, while real updates still reload them', async () => {
     vi.useFakeTimers();
     const gui = vi.fn().mockResolvedValue({ data: { code: 'exports.default={setup(){}}', revision: 'one', options: {} } });
-    const list = vi.fn().mockResolvedValue({ data: [] });
+    const list = vi.fn().mockResolvedValue(inventoryFor('dsl'));
     const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
     const client = new QueryClient();
     const options = guiBundleOptions('host-a', 'dsl', api);
@@ -79,11 +81,150 @@ describe('GUI plugin snapshots', () => {
     client.clear();
   });
 
+  it('waits for refreshed inventory before loading bundles, cancels removed plugins, and supports reinstall', async () => {
+    vi.useFakeTimers();
+    const gui = vi.fn(async ({ id }: { id: string }) => ({ data: { code: id, revision: 'one', options: {} } }));
+    const list = vi.fn().mockResolvedValue(inventoryFor('removed', 'kept'));
+    const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
+    const client = new QueryClient();
+    const inventory = guiInventoryOptions('host-a', api);
+    const removed = guiBundleOptions('host-a', 'removed', api);
+    const kept = guiBundleOptions('host-a', 'kept', api);
+    await client.fetchQuery(inventory);
+    await Promise.all([client.fetchQuery(removed), client.fetchQuery(kept)]);
+    const stops = [
+      new QueryObserver(client, inventory).subscribe(() => {}),
+      new QueryObserver(client, removed).subscribe(() => {}),
+      new QueryObserver(client, kept).subscribe(() => {}),
+    ];
+    const refresh = createConfigLiveRefresh({ client, identity: () => ({ transport: 'host-a', generation: 0 }), refreshProjections: async () => {}, onError: () => {} });
+    let complete!: (value: ReturnType<typeof inventoryFor>) => void;
+    list.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    gui.mockClear();
+    refresh.event('plugin.updated');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(gui).not.toHaveBeenCalled();
+    complete(inventoryFor('kept'));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(gui.mock.calls.map(([input]) => input.id)).toEqual(['kept']);
+    expect(client.getQueryState(removed.queryKey)).toMatchObject({ fetchStatus: 'idle', error: null });
+    expect(list).toHaveBeenCalledTimes(2);
+    list.mockResolvedValue(inventoryFor('removed', 'kept'));
+    gui.mockClear();
+    refresh.event('plugin.updated');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(gui.mock.calls.map(([input]) => input.id).sort()).toEqual(['kept', 'removed']);
+    stops.forEach((stop) => stop()); refresh.dispose(); client.clear();
+  });
+
+  it('cancels a bundle removed after inventory was read instead of recording a load failure', async () => {
+    const list = vi.fn().mockResolvedValueOnce(inventoryFor('dsl')).mockResolvedValue(inventoryFor());
+    const gui = vi.fn().mockRejectedValue(Object.assign(new Error('Removed'), { _tag: 'PluginNotFoundError', pluginID: 'dsl' }));
+    const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
+    const client = new QueryClient();
+    const options = guiBundleOptions('host-a', 'dsl', api);
+    const previous = { code: 'previous', revision: 'previous', options: {} };
+    await client.fetchQuery(guiInventoryOptions('host-a', api));
+    client.setQueryData(options.queryKey, previous);
+    await client.fetchQuery({ ...options, staleTime: 0 });
+    expect(gui).toHaveBeenCalledOnce();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(client.getQueryState(options.queryKey)).toMatchObject({ data: previous, fetchStatus: 'idle', error: null });
+    expect(client.getQueryData(guiInventoryOptions('host-a').queryKey)).toEqual([]);
+    client.clear();
+  });
+
+  it('aborts an already running bundle request when refreshed inventory removes its owner', async () => {
+    vi.useFakeTimers();
+    const list = vi.fn().mockResolvedValue(inventoryFor('dsl'));
+    let bundleSignal!: AbortSignal;
+    const gui = vi.fn((_input, { signal }: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+      bundleSignal = signal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
+    const client = new QueryClient();
+    const inventory = guiInventoryOptions('host-a', api);
+    await client.fetchQuery(inventory);
+    const stopInventory = new QueryObserver(client, inventory).subscribe(() => {});
+    const options = guiBundleOptions('host-a', 'dsl', api);
+    const pending = client.fetchQuery(options).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gui).toHaveBeenCalledOnce();
+    list.mockResolvedValue(inventoryFor());
+    const refresh = createConfigLiveRefresh({ client, identity: () => ({ transport: 'host-a', generation: 0 }), refreshProjections: async () => {}, onError: () => {} });
+    refresh.event('plugin.updated');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(bundleSignal.aborted).toBe(true);
+    expect(await pending).toBeInstanceOf(CancelledError);
+    expect(client.getQueryState(options.queryKey)).toMatchObject({ fetchStatus: 'idle', error: null });
+    expect(gui).toHaveBeenCalledOnce();
+    stopInventory(); refresh.dispose(); client.clear();
+  });
+
+  it('does not treat an inventory refresh failure as plugin removal', async () => {
+    vi.useFakeTimers();
+    const list = vi.fn().mockResolvedValue(inventoryFor('dsl'));
+    const gui = vi.fn().mockResolvedValue({ data: { code: 'working', revision: 'one', options: {} } });
+    const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
+    const client = new QueryClient();
+    const inventory = { ...guiInventoryOptions('host-a', api), retry: false };
+    const options = guiBundleOptions('host-a', 'dsl', api);
+    await client.fetchQuery(inventory);
+    const previous = await client.fetchQuery(options);
+    const stopInventory = new QueryObserver(client, inventory).subscribe(() => {});
+    const stopBundle = new QueryObserver(client, options).subscribe(() => {});
+    list.mockRejectedValue(new Error('offline'));
+    const refresh = createConfigLiveRefresh({ client, identity: () => ({ transport: 'host-a', generation: 0 }), refreshProjections: async () => {}, onError: () => {} });
+    refresh.event('plugin.updated');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(client.getQueryState(inventory.queryKey)?.status).toBe('error');
+    expect(client.getQueryData(options.queryKey)).toBe(previous);
+    expect(client.getQueryState(options.queryKey)).toMatchObject({ status: 'success', error: null });
+    expect(gui).toHaveBeenCalledOnce();
+    stopInventory(); stopBundle(); refresh.dispose(); client.clear();
+  });
+
+  it('replaces an older in-flight refresh when a surviving plugin changes', async () => {
+    vi.useFakeTimers();
+    const list = vi.fn().mockResolvedValue(inventoryFor('dsl'));
+    let olderSignal!: AbortSignal;
+    let finishOlder!: (value: unknown) => void;
+    const gui = vi.fn().mockImplementationOnce((_input, { signal }) => {
+      olderSignal = signal;
+      return new Promise((resolve) => { finishOlder = resolve; });
+    }).mockResolvedValue({ data: { code: 'new', revision: 'new', options: {} } });
+    const api = { plugin: { gui, list } } as unknown as OpenCodeClient;
+    const client = new QueryClient();
+    const inventory = guiInventoryOptions('host-a', api);
+    const options = guiBundleOptions('host-a', 'dsl', api);
+    await client.fetchQuery(inventory);
+    client.setQueryData(options.queryKey, { code: 'old', revision: 'old', options: {} });
+    const stopInventory = new QueryObserver(client, inventory).subscribe(() => {});
+    const stopBundle = new QueryObserver(client, options).subscribe(() => {});
+    const older = client.fetchQuery({ ...options, staleTime: 0 }).catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    const refresh = createConfigLiveRefresh({ client, identity: () => ({ transport: 'host-a', generation: 0 }), refreshProjections: async () => {}, onError: () => {} });
+    refresh.event('plugin.updated');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(olderSignal.aborted).toBe(true);
+    expect(client.getQueryData(options.queryKey)).toMatchObject({ revision: 'new' });
+    finishOlder({ data: { code: 'late', revision: 'late', options: {} } });
+    await older;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.getQueryData(options.queryKey)).toMatchObject({ revision: 'new' });
+    stopInventory(); stopBundle(); refresh.dispose(); client.clear();
+  });
+
   it('reconnect retries a bundle that has never loaded successfully', async () => {
     vi.useFakeTimers();
     const gui = vi.fn().mockRejectedValueOnce(new Error('offline'));
     const client = new QueryClient();
-    const options = { ...guiBundleOptions('host-a', 'dsl', { plugin: { gui } } as unknown as OpenCodeClient), retry: false, retryOnMount: false };
+    const api = { plugin: { gui, list: vi.fn().mockResolvedValue(inventoryFor('dsl')) } } as unknown as OpenCodeClient;
+    const inventory = guiInventoryOptions('host-a', api);
+    await client.fetchQuery(inventory);
+    const stopInventory = new QueryObserver(client, inventory).subscribe(() => {});
+    const options = { ...guiBundleOptions('host-a', 'dsl', api), retry: false, retryOnMount: false };
     await expect(client.fetchQuery(options)).rejects.toThrow('offline');
     const stop = new QueryObserver(client, options).subscribe(() => {});
     gui.mockResolvedValue({ data: { code: 'exports.default={setup(){}}', revision: 'one', options: {} } });
@@ -96,6 +237,7 @@ describe('GUI plugin snapshots', () => {
     expect(client.getQueryData(options.queryKey)).toMatchObject({ revision: 'one' });
     refresh.dispose();
     stop();
+    stopInventory();
     client.clear();
   });
 

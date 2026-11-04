@@ -341,7 +341,7 @@ const WEEK_START_OPTIONS: Option<'auto' | 'monday' | 'sunday'>[] = [
     },
 ];
 
-type VisibleSetting = 'questionAutoDelegate' | 'sessionAssist' | 'sessionGoal' | 'theme' | 'sidebarBrand' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'iosNativeUi' | 'fontSize' | 'codeFontSize' | 'terminalFontSize' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'chatRenderMode' | 'messageTransport' | 'collapsibleUserMessages' | 'splitAssistantMessageActions' | 'showAssistantTps' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'reasoning' | 'showSubagentTaskDetails' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar';
+type VisibleSetting = 'questionAutoDelegate' | 'sessionAssist' | 'sessionGoal' | 'theme' | 'sidebarBrand' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'iosNativeUi' | 'fontSize' | 'codeFontSize' | 'terminalFontSize' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'chatRenderMode' | 'messageTransport' | 'collapsibleUserMessages' | 'splitAssistantMessageActions' | 'showAssistantTps' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'reasoning' | 'showSubagentTaskDetails' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage';
 
 interface YuriVisualSettingsProps {
     /** Which settings to show. If undefined, shows all. */
@@ -367,8 +367,6 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
 
     const collapsibleUserMessages = useUIStore(state => state.collapsibleUserMessages);
     const setCollapsibleUserMessages = useUIStore(state => state.setCollapsibleUserMessages);
-    const expandedEditorToolbar = useUIStore(state => state.expandedEditorToolbar);
-    const setExpandedEditorToolbar = useUIStore(state => state.setExpandedEditorToolbar);
     const iosNativeUiEnabled = useIosNativeUiStore((state) => state.enabled);
     const setIosNativeUiEnabled = useIosNativeUiStore((state) => state.setEnabled);
     const chatRenderMode = useUIStore(state => state.chatRenderMode);
@@ -438,14 +436,33 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
     const [clearingTranscriptCache, setClearingTranscriptCache] = React.useState(false);
 
     // macOS-desktop-only vibrancy toggle. Changing it needs a full relaunch
-    // (vibrancy is a window-creation option), so we persist + restart on save.
+    // (vibrancy is a window-creation option), so confirm before persisting + restarting.
     const macVibrancySupported = React.useMemo(
         () => isDesktopShell() && typeof window !== 'undefined' && window.__YURI_ELECTRON__?.macVibrancySupported === true,
         [],
     );
     const macVibrancyEnabled = typeof window !== 'undefined' && window.__YURI_ELECTRON__?.macVibrancy === true;
     const [vibrancyChecked, setVibrancyChecked] = React.useState(macVibrancyEnabled);
+    const [pendingVibrancy, setPendingVibrancy] = React.useState<boolean | null>(null);
     const [vibrancyRestarting, setVibrancyRestarting] = React.useState(false);
+
+    const handleVibrancyRestart = async () => {
+        if (pendingVibrancy === null || vibrancyRestarting) return;
+        setVibrancyRestarting(true);
+        try {
+            const result = await invokeDesktop<{ enabled: boolean; requiresRestart: boolean }>(
+                'desktop_set_vibrancy', { enabled: pendingVibrancy },
+            );
+            if (!result || result.enabled !== pendingVibrancy || !result.requiresRestart) {
+                throw new Error('Window transparency restart was not accepted');
+            }
+            setVibrancyChecked(result.enabled);
+            setPendingVibrancy(null);
+        } catch {
+            setVibrancyRestarting(false);
+            toast.error(t('settings.yuri.visual.vibrancy.failed'));
+        }
+    };
 
     // macOS-desktop-only dock badge that counts chats with unseen activity.
     // The tray sync (mac-only) pumps the count to the main process, so the
@@ -512,11 +529,6 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
             }
         };
     }, [shouldAnimateChatPreview]);
-
-    const handleExpandedEditorToolbarChange = React.useCallback((enabled: boolean) => {
-        setExpandedEditorToolbar(enabled);
-        void updateDesktopSettings({ expandedEditorToolbar: enabled });
-    }, [setExpandedEditorToolbar]);
 
     const handleCollapsibleUserMessagesChange = React.useCallback((enabled: boolean) => {
         setCollapsibleUserMessages(enabled);
@@ -620,7 +632,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
         ? (hasLocalizationSettings || shouldShow('sidebarBrand'))
         : (shouldShow('theme') || shouldShow('sidebarBrand') || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('mobileKeyboardMode') || shouldShow('timeFormat') || shouldShow('weekStart') || showIosNativeUiSetting);
     const hasLayoutSettings = shouldShow('fontSize') || shouldShow('codeFontSize') || shouldShow('terminalFontSize') || shouldShow('editorFontSize') || shouldShow('spacing') || shouldShow('inputBarOffset');
-    const hasNavigationSettings = (shouldShow('terminalQuickKeys') && !isMobile) || shouldShow('fileEditorKeymap') || shouldShow('expandedEditorToolbar');
+    const hasNavigationSettings = (shouldShow('terminalQuickKeys') && !isMobile) || shouldShow('fileEditorKeymap');
     const hasBehaviorSettings = shouldShow('questionAutoDelegate')
         || shouldShow('chatRenderMode')
         || shouldShow('messageTransport')
@@ -821,20 +833,24 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                     label={t('settings.yuri.visual.field.themeMode')}
                                 >
                                     <div
-                                        className="flex flex-nowrap items-center justify-end gap-1"
+                                        className="yuri-settings-switch"
+                                        style={{ gridTemplateColumns: 'auto auto auto' }}
                                         role="group"
                                         aria-label={t('settings.yuri.visual.field.themeMode')}
                                     >
                                         {THEME_MODE_OPTIONS.map((option) => (
                                             <Button
                                                 key={option.value}
-                                                variant="chip"
+                                                variant="ghost"
                                                 size="xs"
                                                 aria-pressed={themeMode === option.value}
-                                                className="yuri-mobile-settings-chip shrink-0 !font-normal"
+                                                className="yuri-settings-switch-option"
                                                 onClick={() => setThemeMode(option.value)}
                                             >
-                                                {tUnsafe(option.labelKey)}
+                                                {themeMode === option.value && (
+                                                    <span aria-hidden className="yuri-segmented-selected-pill yuri-settings-switch-pill" />
+                                                )}
+                                                <span className="relative">{tUnsafe(option.labelKey)}</span>
                                             </Button>
                                         ))}
                                     </div>
@@ -886,85 +902,26 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                 </ResponsiveSettingsRow>
 
                                 {macVibrancySupported && (
-                                    <div data-settings-item="appearance.window-transparency" className="yuri-settings-group-row flex flex-col gap-1.5">
-                                        <div
-                                            className="group flex cursor-pointer items-start gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={vibrancyChecked}
-                                            onClick={() => { if (!vibrancyRestarting) setVibrancyChecked(!vibrancyChecked); }}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    if (!vibrancyRestarting) setVibrancyChecked(!vibrancyChecked);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={vibrancyChecked}
-                                                onChange={setVibrancyChecked}
-                                                disabled={vibrancyRestarting}
-                                                ariaLabel={t('settings.yuri.visual.field.macVibrancy')}
-                                            />
-                                            <div className="flex min-w-0 flex-col">
-                                                <span className="typography-ui-label text-foreground">
-                                                    {t('settings.yuri.visual.field.macVibrancy')}
-                                                </span>
-                                                <span className="typography-meta text-muted-foreground">
-                                                    {t('settings.yuri.visual.field.macVibrancyHint')}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        {vibrancyChecked !== macVibrancyEnabled && (
-                                            <div className="pl-6">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    disabled={vibrancyRestarting}
-                                                    onClick={() => {
-                                                        setVibrancyRestarting(true);
-                                                        void invokeDesktop('desktop_set_vibrancy', { enabled: vibrancyChecked });
-                                                    }}
-                                                >
-                                                    {vibrancyRestarting
-                                                        ? t('settings.yuri.visual.actions.restarting')
-                                                        : t('settings.yuri.visual.actions.saveAndRestart')}
-                                                </Button>
-                                            </div>
-                                        )}
-                                    </div>
+                                    <SettingsToggleRow
+                                        itemId="appearance.window-transparency"
+                                        checked={vibrancyChecked}
+                                        onChange={setPendingVibrancy}
+                                        disabled={vibrancyRestarting}
+                                        label={t('settings.yuri.visual.field.macVibrancy')}
+                                        description={t('settings.yuri.visual.field.macVibrancyHint')}
+                                        ariaLabel={t('settings.yuri.visual.field.macVibrancy')}
+                                    />
                                 )}
 
                                 {dockBadgeSupported && (
-                                    <div data-settings-item="appearance.dock-badge" className="yuri-settings-group-row flex flex-col gap-1.5">
-                                        <div
-                                            className="group flex cursor-pointer items-start gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={dockBadgeEnabled}
-                                            onClick={() => setDockBadgeEnabled(!dockBadgeEnabled)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    setDockBadgeEnabled(!dockBadgeEnabled);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={dockBadgeEnabled}
-                                                onChange={setDockBadgeEnabled}
-                                                ariaLabel={t('settings.yuri.visual.field.dockBadge')}
-                                            />
-                                            <div className="flex min-w-0 flex-col">
-                                                <span className="typography-ui-label text-foreground">
-                                                    {t('settings.yuri.visual.field.dockBadge')}
-                                                </span>
-                                                <span className="typography-meta text-muted-foreground">
-                                                    {t('settings.yuri.visual.field.dockBadgeHint')}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <SettingsToggleRow
+                                        itemId="appearance.dock-badge"
+                                        checked={dockBadgeEnabled}
+                                        onChange={setDockBadgeEnabled}
+                                        label={t('settings.yuri.visual.field.dockBadge')}
+                                        description={t('settings.yuri.visual.field.dockBadgeHint')}
+                                        ariaLabel={t('settings.yuri.visual.field.dockBadge')}
+                                    />
                                 )}
                             </ResponsiveSettingsGroup>
                         )}
@@ -1516,19 +1473,6 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                     </div>
                                 </ResponsiveSettingsRow>
                             )}
-                            {shouldShow('expandedEditorToolbar') && (
-                                <ResponsiveSettingsRow
-                                    isMobile={isMobile}
-                                    itemId="appearance.expanded-editor-toolbar"
-                                    label={t('settings.yuri.visual.field.expandedEditorToolbar')}
-                                >
-                                    <SettingsSwitch
-                                        checked={expandedEditorToolbar}
-                                        onChange={handleExpandedEditorToolbarChange}
-                                        ariaLabel={t('settings.yuri.visual.field.expandedEditorToolbarAria')}
-                                    />
-                                </ResponsiveSettingsRow>
-                            )}
                             {shouldShow('terminalQuickKeys') && !isMobile && !isDesktopShell() && (
                                 <ResponsiveSettingsRow
                                     isMobile={isMobile}
@@ -1741,50 +1685,22 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                             label={<span data-settings-item="chat.session-assistance">{t('settings.yuri.visual.section.sessionAssistance')}</span>}
                                         >
                                             {shouldShow('sessionAssist') && (
-                                                <div
-                                                    data-settings-item="chat.session-title-refresh"
-                                                    className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-pressed={sessionTitleRefreshEnabled}
-                                                    onClick={() => setSessionTitleRefreshEnabled(!sessionTitleRefreshEnabled)}
-                                                    onKeyDown={(event) => {
-                                                        if (event.key === ' ' || event.key === 'Enter') {
-                                                            event.preventDefault();
-                                                            setSessionTitleRefreshEnabled(!sessionTitleRefreshEnabled);
-                                                        }
-                                                    }}
-                                                >
-                                                    <SettingsSwitch
-                                                        checked={sessionTitleRefreshEnabled}
-                                                        onChange={setSessionTitleRefreshEnabled}
-                                                        ariaLabel={t('settings.yuri.visual.field.sessionTitleRefreshAria')}
-                                                    />
-                                                    <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.sessionTitleRefresh')}</span>
-                                                </div>
+                                                <SettingsToggleRow
+                                                    itemId="chat.session-title-refresh"
+                                                    checked={sessionTitleRefreshEnabled}
+                                                    onChange={setSessionTitleRefreshEnabled}
+                                                    label={t('settings.yuri.visual.field.sessionTitleRefresh')}
+                                                    ariaLabel={t('settings.yuri.visual.field.sessionTitleRefreshAria')}
+                                                />
                                             )}
                                             {shouldShow('subagentReadOnlyBanner') && (
-                                                <div
-                                                    data-settings-item="chat.subagent-read-only-banner"
-                                                    className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-pressed={allowPromptingSubagentSessions}
-                                                    onClick={() => setAllowPromptingSubagentSessions(!allowPromptingSubagentSessions)}
-                                                    onKeyDown={(event) => {
-                                                        if (event.key === ' ' || event.key === 'Enter') {
-                                                            event.preventDefault();
-                                                            setAllowPromptingSubagentSessions(!allowPromptingSubagentSessions);
-                                                        }
-                                                    }}
-                                                >
-                                                    <SettingsSwitch
-                                                        checked={allowPromptingSubagentSessions}
-                                                        onChange={setAllowPromptingSubagentSessions}
-                                                        ariaLabel={t('settings.yuri.visual.field.allowPromptingSubagentSessionsAria')}
-                                                    />
-                                                    <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.allowPromptingSubagentSessions')}</span>
-                                                </div>
+                                                <SettingsToggleRow
+                                                    itemId="chat.subagent-read-only-banner"
+                                                    checked={allowPromptingSubagentSessions}
+                                                    onChange={setAllowPromptingSubagentSessions}
+                                                    label={t('settings.yuri.visual.field.allowPromptingSubagentSessions')}
+                                                    ariaLabel={t('settings.yuri.visual.field.allowPromptingSubagentSessionsAria')}
+                                                />
                                             )}
                                             {shouldShow('questionAutoDelegate') && (
                                                 <QuestionAutoDelegateSetting />
@@ -1807,151 +1723,71 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 ariaLabel={t('settings.yuri.visual.field.showReasoningTracesAria')}
                                             />
                                             {showReasoningTraces && (
-                                                <div
-                                                    className="yuri-settings-group-row group flex cursor-pointer items-center gap-2"
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-pressed={collapsibleThinkingBlocks}
-                                                    onClick={() => setCollapsibleThinkingBlocks(!collapsibleThinkingBlocks)}
-                                                    onKeyDown={(event) => {
-                                                        if (event.key === ' ' || event.key === 'Enter') {
-                                                            event.preventDefault();
-                                                            setCollapsibleThinkingBlocks(!collapsibleThinkingBlocks);
-                                                        }
-                                                    }}
-                                                >
-                                                    <SettingsSwitch
-                                                        checked={collapsibleThinkingBlocks}
-                                                        onChange={setCollapsibleThinkingBlocks}
-                                                        ariaLabel={t('settings.yuri.visual.field.collapsibleThinkingBlocksAria')}
-                                                    />
-                                                    <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.collapsibleThinkingBlocks')}</span>
-                                                </div>
+                                                <SettingsToggleRow
+                                                    checked={collapsibleThinkingBlocks}
+                                                    onChange={setCollapsibleThinkingBlocks}
+                                                    label={t('settings.yuri.visual.field.collapsibleThinkingBlocks')}
+                                                    ariaLabel={t('settings.yuri.visual.field.collapsibleThinkingBlocksAria')}
+                                                />
                                             )}
                                         </>
                                     )}
 
                                     {shouldShow('collapsibleUserMessages') && (
-                                        <div
-                                            data-settings-item="chat.collapsible-user-messages"
-                                            className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={collapsibleUserMessages}
-                                            onClick={() => handleCollapsibleUserMessagesChange(!collapsibleUserMessages)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    handleCollapsibleUserMessagesChange(!collapsibleUserMessages);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={collapsibleUserMessages}
-                                                onChange={handleCollapsibleUserMessagesChange}
-                                                ariaLabel={t('settings.yuri.visual.field.collapsibleUserMessagesAria')}
-                                            />
-                                            <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.collapsibleUserMessages')}</span>
-                                        </div>
+                                        <SettingsToggleRow
+                                            itemId="chat.collapsible-user-messages"
+                                            checked={collapsibleUserMessages}
+                                            onChange={handleCollapsibleUserMessagesChange}
+                                            label={t('settings.yuri.visual.field.collapsibleUserMessages')}
+                                            ariaLabel={t('settings.yuri.visual.field.collapsibleUserMessagesAria')}
+                                        />
                                     )}
 
                                     {shouldShow('splitAssistantMessageActions') && (
-                                        <div
-                                            data-settings-item="chat.inline-assistant-actions"
-                                            className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={showSplitAssistantMessageActions}
-                                            onClick={() => handleShowSplitAssistantMessageActionsChange(!showSplitAssistantMessageActions)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    handleShowSplitAssistantMessageActionsChange(!showSplitAssistantMessageActions);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={showSplitAssistantMessageActions}
-                                                onChange={handleShowSplitAssistantMessageActionsChange}
-                                                ariaLabel={t('settings.yuri.visual.field.showSplitAssistantMessageActionsAria')}
-                                            />
-                                            <div className="flex min-w-0 items-center gap-1.5">
-                                                <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.showSplitAssistantMessageActions')}</span>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Icon name="information" className="h-3.5 w-3.5 cursor-help text-muted-foreground/60" />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent sideOffset={8} className="max-w-xs">
-                                                        {t('settings.yuri.visual.field.showSplitAssistantMessageActionsTooltip')}
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                            </div>
-                                        </div>
+                                        <SettingsToggleRow
+                                            itemId="chat.inline-assistant-actions"
+                                            checked={showSplitAssistantMessageActions}
+                                            onChange={handleShowSplitAssistantMessageActionsChange}
+                                            ariaLabel={t('settings.yuri.visual.field.showSplitAssistantMessageActionsAria')}
+                                            label={(
+                                                <span className="flex min-w-0 items-center gap-1.5">
+                                                    <span>{t('settings.yuri.visual.field.showSplitAssistantMessageActions')}</span>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Icon name="information" className="h-3.5 w-3.5 cursor-help text-muted-foreground/60" />
+                                                        </TooltipTrigger>
+                                                        <TooltipContent sideOffset={8} className="max-w-xs">
+                                                            {t('settings.yuri.visual.field.showSplitAssistantMessageActionsTooltip')}
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </span>
+                                            )}
+                                        />
                                     )}
 
                                     {shouldShow('showAssistantTps') && (
-                                        <div
-                                            data-settings-item="chat.assistant-tps"
-                                            className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={showAssistantTps}
-                                            onClick={() => handleShowAssistantTpsChange(!showAssistantTps)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    handleShowAssistantTpsChange(!showAssistantTps);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={showAssistantTps}
-                                                onChange={handleShowAssistantTpsChange}
-                                                ariaLabel={t('settings.yuri.visual.field.showAssistantTpsAria')}
-                                            />
-                                            <div className="flex min-w-0 items-center gap-1.5">
-                                                <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.showAssistantTps')}</span>
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Icon name="information" className="h-3.5 w-3.5 cursor-help text-muted-foreground/60" />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent sideOffset={8} className="max-w-xs">
-                                                        {t('settings.yuri.visual.field.showAssistantTpsTooltip')}
-                                                    </TooltipContent>
-                                                </Tooltip>
-                                            </div>
-                                        </div>
+                                        <SettingsToggleRow
+                                            itemId="chat.assistant-tps"
+                                            checked={showAssistantTps}
+                                            onChange={handleShowAssistantTpsChange}
+                                            ariaLabel={t('settings.yuri.visual.field.showAssistantTpsAria')}
+                                            label={(
+                                                <span className="flex min-w-0 items-center gap-1.5">
+                                                    <span>{t('settings.yuri.visual.field.showAssistantTps')}</span>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Icon name="information" className="h-3.5 w-3.5 cursor-help text-muted-foreground/60" />
+                                                        </TooltipTrigger>
+                                                        <TooltipContent sideOffset={8} className="max-w-xs">
+                                                            {t('settings.yuri.visual.field.showAssistantTpsTooltip')}
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </span>
+                                            )}
+                                        />
                                     )}
 
                                         </ResponsiveSettingsGroup>
-                                    )}
-
-                                    {shouldShow('showSubagentTaskDetails') && (
-                                        <div
-                                            data-settings-item="chat.subagent-task-details"
-                                            className="group flex cursor-pointer items-start gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={showSubagentTaskDetails}
-                                            onClick={() => handleShowSubagentTaskDetailsChange(!showSubagentTaskDetails)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    handleShowSubagentTaskDetailsChange(!showSubagentTaskDetails);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={showSubagentTaskDetails}
-                                                onChange={handleShowSubagentTaskDetailsChange}
-                                                ariaLabel={t('settings.yuri.visual.field.showSubagentTaskDetailsAria')}
-                                                className="mt-0.5"
-                                            />
-                                            <span className="min-w-0 flex flex-col gap-0.5">
-                                                <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.showSubagentTaskDetails')}</span>
-                                                <span className="typography-meta text-muted-foreground">{t('settings.yuri.visual.field.showSubagentTaskDetailsHint')}</span>
-                                            </span>
-                                        </div>
                                     )}
 
                                     {shouldShow('showSubagentTaskDetails') && (
@@ -1997,51 +1833,23 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                     )}
 
                                     {shouldShow('persistDraft') && (
-                                        <div
-                                            data-settings-item="chat.persist-drafts"
-                                            className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={persistChatDraft}
-                                            onClick={() => setPersistChatDraft(!persistChatDraft)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    setPersistChatDraft(!persistChatDraft);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={persistChatDraft}
-                                                onChange={setPersistChatDraft}
-                                                ariaLabel={t('settings.yuri.visual.field.persistDraftMessagesAria')}
-                                            />
-                                            <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.persistDraftMessages')}</span>
-                                        </div>
+                                        <SettingsToggleRow
+                                            itemId="chat.persist-drafts"
+                                            checked={persistChatDraft}
+                                            onChange={setPersistChatDraft}
+                                            label={t('settings.yuri.visual.field.persistDraftMessages')}
+                                            ariaLabel={t('settings.yuri.visual.field.persistDraftMessagesAria')}
+                                        />
                                     )}
 
                                     {!isMobile && shouldShow('inputSpellcheck') && (
-                                        <div
-                                            data-settings-item="chat.spellcheck"
-                                            className="group flex cursor-pointer items-center gap-2 py-0.5"
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-pressed={inputSpellcheckEnabled}
-                                            onClick={() => handleInputSpellcheckChange(!inputSpellcheckEnabled)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === ' ' || event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    handleInputSpellcheckChange(!inputSpellcheckEnabled);
-                                                }
-                                            }}
-                                        >
-                                            <SettingsSwitch
-                                                checked={inputSpellcheckEnabled}
-                                                onChange={handleInputSpellcheckChange}
-                                                ariaLabel={t('settings.yuri.visual.field.enableSpellcheckInTextInputsAria')}
-                                            />
-                                            <span className="typography-ui-label text-foreground">{t('settings.yuri.visual.field.enableSpellcheckInTextInputs')}</span>
-                                        </div>
+                                        <SettingsToggleRow
+                                            itemId="chat.spellcheck"
+                                            checked={inputSpellcheckEnabled}
+                                            onChange={handleInputSpellcheckChange}
+                                            label={t('settings.yuri.visual.field.enableSpellcheckInTextInputs')}
+                                            ariaLabel={t('settings.yuri.visual.field.enableSpellcheckInTextInputsAria')}
+                                        />
                                     )}
                                         </ResponsiveSettingsGroup>
                                     )}
@@ -2092,6 +1900,39 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                 )}
 
             </div>
+            <Dialog
+                open={pendingVibrancy !== null}
+                onOpenChange={(open) => {
+                    if (!open && !vibrancyRestarting) setPendingVibrancy(null);
+                }}
+            >
+                <DialogContent showCloseButton={!vibrancyRestarting}>
+                    <DialogHeader>
+                        <DialogTitle>{t('settings.yuri.visual.field.macVibrancy')}</DialogTitle>
+                        <DialogDescription>{t('settings.yuri.visual.vibrancy.confirmDescription')}</DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={vibrancyRestarting}
+                            onClick={() => setPendingVibrancy(null)}
+                        >
+                            {t('settings.common.actions.cancel')}
+                        </Button>
+                        <Button
+                            type="button"
+                            disabled={vibrancyRestarting}
+                            aria-busy={vibrancyRestarting || undefined}
+                            onClick={() => void handleVibrancyRestart()}
+                        >
+                            {vibrancyRestarting
+                                ? t('settings.yuri.visual.actions.restarting')
+                                : t('settings.yuri.visual.vibrancy.confirmRestart')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
             <Dialog
                 open={clearTranscriptCacheDialogOpen}
                 onOpenChange={(open) => {

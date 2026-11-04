@@ -35,7 +35,11 @@ vi.mock('@/components/ui', () => ({ toast: { success: state.success, error: stat
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
 vi.mock('@/components/ui/ScrollableOverlay', () => ({ ScrollableOverlay: Box }));
 vi.mock('@/components/sections/shared/SettingsActionHeader', () => ({ SettingsActionHeader: Box }));
-vi.mock('@/components/sections/shared/SettingsGroup', () => ({ SettingsGroup: Box, SettingsRow: Box }));
+vi.mock('@/components/sections/shared/SettingsGroup', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/sections/shared/SettingsGroup')>(),
+  SettingsGroup: Box,
+  SettingsRow: Box,
+}));
 vi.mock('@/components/ui/dialog', () => ({ Dialog: () => null, DialogContent: Box, DialogDescription: Box, DialogFooter: Box, DialogHeader: Box, DialogTitle: Box }));
 vi.mock('@/components/ui/collapsible', () => ({ Collapsible: Box, CollapsibleContent: Box, CollapsibleTrigger: Box }));
 vi.mock('@/components/ui/select', () => ({ Select: Box, SelectContent: () => null, SelectItem: Box, SelectTrigger: Box }));

@@ -587,9 +587,6 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
   if (typeof settings.promptNavigatorEnabled === 'boolean' && settings.promptNavigatorEnabled !== store.promptNavigatorEnabled) {
     store.setPromptNavigatorEnabled(settings.promptNavigatorEnabled);
   }
-  if (typeof settings.expandedEditorToolbar === 'boolean' && settings.expandedEditorToolbar !== store.expandedEditorToolbar) {
-    store.setExpandedEditorToolbar(settings.expandedEditorToolbar);
-  }
   if (
     typeof settings.showSplitAssistantMessageActions === 'boolean'
     && settings.showSplitAssistantMessageActions !== store.showSplitAssistantMessageActions

@@ -1,5 +1,6 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { normalizePath as normalize } from '@/lib/pathNormalization';
+import { refreshGuiBundles } from '@/queries/guiPluginQueries';
 
 type Domain = 'providers' | 'agents' | 'commands' | 'skills' | 'mcp' | 'plugins';
 const domainsByEvent: Record<string, readonly Domain[]> = {
@@ -33,7 +34,7 @@ function catalogScope(key: QueryKey): { domain: Domain; directory: string | null
  * Inactive queries only become stale. Never enumerate projects or touch sessions.
  */
 export function createConfigLiveRefresh(deps: {
-  client: Pick<QueryClient, 'invalidateQueries'>;
+  client: Pick<QueryClient, 'invalidateQueries' | 'getQueryState' | 'cancelQueries' | 'refetchQueries'>;
   identity: () => { transport: string; generation: number };
   refreshProjections: (directory: string | undefined, domains: ReadonlySet<Domain>) => Promise<unknown>;
   onError: (error: unknown) => void;
@@ -71,9 +72,8 @@ export function createConfigLiveRefresh(deps: {
       await deps.client.invalidateQueries({
         predicate: (query) => {
           if (query.queryKey[0] !== identity.transport) return false;
-          // A stream reconnect is not a GUI code change; retain already validated bundles.
-          if (!pluginChanged && query.queryKey[1] === 'plugins' && query.queryKey[2] === 'gui'
-            && query.queryKey[4] === 'bundle' && query.state.data !== undefined) return false;
+          // Inventory owns plugin lifetime; bundles refresh only after it settles.
+          if (query.queryKey[1] === 'plugins' && query.queryKey[2] === 'gui' && query.queryKey[4] === 'bundle') return false;
           const scope = catalogScope(query.queryKey);
           if (!scope) return false;
           return [...batch].some(([directory, domains]) => domains.has(scope.domain)
@@ -81,6 +81,10 @@ export function createConfigLiveRefresh(deps: {
         },
         refetchType: 'active',
       });
+      if (!current(identity)) return;
+      if ([...batch.values()].some((domains) => domains.has('plugins'))) {
+        await refreshGuiBundles(deps.client, identity.transport, pluginChanged, () => current(identity));
+      }
       if (!current(identity)) return;
       await Promise.all([...batch].map(([directory, domains]) => deps.refreshProjections(directory, domains)));
     } catch (error) {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { SettingsActionHeader } from '@/components/sections/shared/SettingsActionHeader';
 import { Button } from '@/components/ui/button';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
+import { SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui';
 import {
@@ -407,21 +407,13 @@ export const GitIdentityEditorDialog: React.FC<GitIdentityEditorDialogProps> = (
                   )}
 
                   <div className="border-t border-border/40 pt-3 space-y-3">
-                    <div className="flex items-start gap-2">
-                      <SettingsSwitch
-                        checked={signCommits}
-                        onChange={setSignCommits}
-                        ariaLabel={t('settings.gitIdentities.editor.field.signCommits')}
-                      />
-                      <div className="min-w-0">
-                        <div className="typography-ui-label text-foreground">
-                          {t('settings.gitIdentities.editor.field.signCommits')}
-                        </div>
-                        <div className="typography-micro text-muted-foreground/70">
-                          {t('settings.gitIdentities.editor.section.commitSigning')}
-                        </div>
-                      </div>
-                    </div>
+                    <SettingsToggleRow
+                      checked={signCommits}
+                      onChange={setSignCommits}
+                      label={t('settings.gitIdentities.editor.field.signCommits')}
+                      description={t('settings.gitIdentities.editor.section.commitSigning')}
+                      ariaLabel={t('settings.gitIdentities.editor.field.signCommits')}
+                    />
 
                     <div>
                       <div className="flex items-center gap-1.5 mb-1.5">

@@ -605,9 +605,6 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.promptNavigatorEnabled === 'boolean') {
       result.promptNavigatorEnabled = candidate.promptNavigatorEnabled;
     }
-    if (typeof candidate.expandedEditorToolbar === 'boolean') {
-      result.expandedEditorToolbar = candidate.expandedEditorToolbar;
-    }
     if (typeof candidate.showSplitAssistantMessageActions === 'boolean') {
       result.showSplitAssistantMessageActions = candidate.showSplitAssistantMessageActions;
     }

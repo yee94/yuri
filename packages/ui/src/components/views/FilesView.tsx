@@ -1054,7 +1054,6 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const fileEditorKeymap = useUIStore((state) => state.fileEditorKeymap);
   const settingsDefaultFileViewerPreview = useConfigStore((state) => state.settingsDefaultFileViewerPreview);
   const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
-  const settingsExpandedEditorToolbar = useUIStore((state) => state.expandedEditorToolbar);
 
   // Global mouseup to end drag selection
   React.useEffect(() => {
@@ -3396,17 +3395,11 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
   const renderFloatingFileControls = ({
     exitFullscreenOnly = false,
-    layout = 'floating',
     previewToggle,
-  }: { exitFullscreenOnly?: boolean; layout?: 'floating' | 'docked'; previewToggle?: React.ReactNode } = {}) => {
+  }: { exitFullscreenOnly?: boolean; previewToggle?: React.ReactNode } = {}) => {
     if (!selectedFile) {
       return null;
     }
-
-    const docked = layout === 'docked';
-    const wrapperCls = docked
-      ? 'pointer-events-auto flex flex-wrap items-center gap-1'
-      : 'pointer-events-auto flex items-center gap-1 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-1 shadow-sm';
 
     const withTooltip = (label: React.ReactNode, trigger: React.ReactElement) => (
       <Tooltip>
@@ -3420,7 +3413,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     );
 
     return (
-      <div className={wrapperCls}>
+      <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-1 shadow-sm">
       {canEdit && isEditingFile && (
           <>
             {isSaving ? (
@@ -3959,30 +3952,13 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
         ) : null}
 
 
-        {/* Row 2: Docked editor toolbar (expanded). Desktop-only opt-in. */}
-        {settingsExpandedEditorToolbar && !isMobile && selectedFile ? (
-          <div className="flex min-w-0 items-center gap-3 border-t border-border/40 bg-[var(--surface-subtle)] px-3 py-1">
-            {displaySelectedPath ? (
-              <span
-                className="min-w-0 flex-1 truncate typography-meta text-muted-foreground"
-                title={displaySelectedPath}
-              >
-                {displaySelectedPath}
-              </span>
-            ) : null}
-            <div className={guiPreview ? 'ml-auto min-w-0 shrink-0' : 'ml-auto min-w-0 shrink-0 overflow-x-auto'}>
-              {guiPreview ? guiToggle : renderFloatingFileControls({ layout: 'docked', previewToggle: guiToggle })}
-            </div>
-          </div>
-        ) : null}
-
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {guiPreview && !(settingsExpandedEditorToolbar && !isMobile) ? (
+        {guiPreview ? (
           <div className="absolute right-6 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{guiToggle}</div>
         ) : null}
-        {selectedFile && !guiPreview && !isSearchOpen && !(settingsExpandedEditorToolbar && !isMobile) && (
+        {selectedFile && !guiPreview && !isSearchOpen && (
           <div
             ref={floatingToolbarRef}
             className="absolute right-3 top-3 z-30"

@@ -17,7 +17,7 @@ export class NativeGuiSession {
   constructor(private bridge: NativeGuiBridge, readonly activation: NativeGuiActivation) {
     this.stop = bridge.subscribe((event) => {
       if (event.lease !== activation.lease || this.controller.signal.aborted) return;
-      if (event.type === 'ended') { this.dispose(); return; }
+      if (event.type === 'ended') { this.close(false); return; }
       for (const listener of this.listeners) listener(event);
     });
   }
@@ -51,7 +51,7 @@ export class NativeGuiSession {
       const pending = this.request('call', { ipc: token.id, method: name, input, request });
       const result = await new Promise<unknown>((resolve, reject) => {
         const abort = () => {
-          void requestNativeGui(this.bridge, 'cancel', { lease: this.activation.lease, request }).catch(() => {});
+          if (this.active) void requestNativeGui(this.bridge, 'cancel', { lease: this.activation.lease, request }).catch(() => {});
           reject(new NativeGuiError('GUI_PLUGIN_ABORTED'));
         };
         signal.addEventListener('abort', abort, { once: true });
@@ -108,8 +108,12 @@ export class NativeGuiSession {
   }
 
   dispose(): void {
+    this.close(true);
+  }
+
+  private close(release: boolean): void {
     if (this.controller.signal.aborted) return;
     this.controller.abort(); this.stop(); this.listeners.clear(); this.tokens.clear();
-    void requestNativeGui(this.bridge, 'release', { lease: this.activation.lease }).catch(() => {});
+    if (release) void requestNativeGui(this.bridge, 'release', { lease: this.activation.lease }).catch(() => {});
   }
 }

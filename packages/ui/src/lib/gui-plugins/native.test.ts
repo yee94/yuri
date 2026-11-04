@@ -70,4 +70,20 @@ it('decodes events only for its lease and revokes live clients when main withdra
   expect(f.session.active).toBe(false);
   expect(api.live()).toEqual({ status: 'inactive', reason: 'disabled' });
   await expect(api.value.add(1)).rejects.toThrow();
+  f.session.dispose();
+  expect(f.request.mock.calls.some(([action]) => action === 'release')).toBe(false);
+});
+
+it('ends pending calls locally when main already revoked their lease without duplicate cancel or release', async () => {
+  const f = fixture();
+  const api = f.session.token(token);
+  await vi.waitFor(() => expect(api.live().status).toBe('active'));
+  f.request.mockClear();
+  f.request.mockImplementationOnce(() => new Promise(() => {}));
+  const pending = expect(api.value.ping()).rejects.toThrow('aborted');
+  f.emit({ type: 'ended', ipc: '', sequence: 2, lease: 'lease' });
+  await pending;
+  f.session.dispose();
+  expect(f.request.mock.calls.map(([action]) => action)).toEqual(['call']);
+  expect(f.stop).toHaveBeenCalledOnce();
 });

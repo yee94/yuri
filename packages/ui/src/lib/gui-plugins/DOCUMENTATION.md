@@ -148,6 +148,10 @@ try {
 
 原生 acquire 的读取/求值失败保留已有实例；main setup 失败清理已注册的资源并向插件管理器报错。异步结果经过 document/lease 与 runtime transport 检查，旧实例不能覆盖新实例。main cleanup 支持异步且等待最多 3 秒；插件直接创建的 BrowserWindow、Node 资源仍需用 `ctx.onCleanup` 或返回 cleanup 管理。
 
+卸载可以发生在 inventory 与 bundle 两次读取之间。inventory 确认插件不再 active，或 bundle 接口对当前插件明确返回 `PluginNotFoundError` 时，main 撤销该插件旧实例及 leases，acquire 正常返回 `null`（没有可激活的实例），不记录原生操作失败。窗口收到 `null` 后刷新 inventory，由权威列表卸载对应 GUI。其他读取/网络/求值失败仍保留上次实例。自动加载、刷新和卸载期间的错误保持静默，诊断保留在 Provider inventory/error 与插件设置中，不发送全局 toast；插件主动调用 `ctx.toast` 的能力不变。
+
+原生会话区分窗口主动释放与 main 的 `ended` 撤销通知：前者只发送一次 `release`，后者只终止本地调用、订阅和 token，不向已经失效的 lease 再发 `release/cancel`。单次调用的用户取消仍发送 `cancel`；整条 lease 结束时由 main 的释放流程取消其全部调用。
+
 PDF/长图现在另有两个独立的容器 GSAPI，使用官方 `Contract.define` / `ctx.use` 获取 `yuri.exportPDF` 与 `yuri.exportLongImage`，不增加 `ctx` 字段，不合并为 `format` 参数。两个能力分别探测和激活；pending/未支持/失败时不展示对应动作。`yuri` 及其子 namespace 为宿主保留，普通插件不能覆盖；错误 token kind 也不能绕过保留契约。
 
 这两个能力属于**当前客户端设备**：新版 Electron、iOS、Android 可以在连接本地、远端或 Relay 时使用。它们只接收有界的静态导出快照，经过容器渲染与系统保存，不执行插件 main、不接收宿主文件路径，且不恢复 window-only 文档的其他原生权限。普通浏览器、hosted mobile、VS Code 与缺少原生实现的旧壳明确不支持。完整输入、进度、取消和平台契约见 [`../view-export/DOCUMENTATION.md`](../view-export/DOCUMENTATION.md)。插件原有标准 main/IPC 仍按前述严格权限规则工作。
@@ -249,6 +253,8 @@ inventory、host、bundle 失败由 Provider 的 `LoadErrors` 使用现有 toast
 `loading` 覆盖 inventory pending、偏好未解析，以及已请求后的 host/bundle 首次获取与同步安装等待，失败结束该阶段等待。已有 bundle 的后台读取不再因 `isFetching` 进入加载态；window-only 同 revision 的 active 插件在安装/绘制调度之前直接复用，不重复 setup、render 或丢失面板状态。failed 实例仍可通过显式刷新重试，Electron native acquire/lease 检查保持原有行为。全局错误通过 `error` 暴露，bundle 错误保留在 `inventory[].error`，setup/render 失败由 `snapshot.plugins` 表达。各插件独立安装和失败；入口应在 host/snapshot 就绪变化时尝试链接，不以全部插件的 `loading` 结束作为成功插件可用的门槛。
 
 Inventory 和 bundle 都由 TanStack Query 持有，键为 `[transport, 'plugins', 'gui', null, ...]`，复用既有 `plugin.updated`/配置更新/重连失效管线，无另起轮询。同 transport 的普通重连只重新读取 inventory，并重试尚无成功数据的 bundle，不让已有成功 bundle 失效；`plugin.updated`、`config.updated` 和手动刷新仍校验代码，事件与重连合批或在请求中迟到也不能丢失真正的更新。后台期间若代码变化但未收到更新事件，已有实例保留至下次实际更新事件、手动刷新或重入/切换 transport，不把连接恢复本身当作代码变化。加载 bundle 失败保留上次实例；成功空列表或服务端明确 failed 撤销对应实例。bundle revision 变化清理并替换，保持标签；相同 revision 的 active 实例不重启，failed 实例可手动刷新重试。GUI 开关先写入实例作用域存储，成功后才更新界面。
+
+事件和手动刷新都先完成 inventory，再由 `refreshGuiBundles` 取消已移除插件的在途请求，只重取仍 active 的 GUI bundle。inventory 失败保留现有实例，不将旧列表当作新生命周期依据。bundle 请求若在此之后遇到当前插件的 `PluginNotFoundError`，再读一次 inventory；确认移除后通过 Query cancellation 结束，不缓存为加载错误。其他插件继续运行，重新安装由新的 inventory/bundle 激活。
 
 ### 持久代码与校验
 

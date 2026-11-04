@@ -11,7 +11,6 @@ import { useDirectorySync } from '@/sync/sync-context';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { opencodeClient } from '@/lib/opencode/client';
 import { cn } from '@/lib/utils';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { ModelSelector } from './ModelSelector';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
@@ -25,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Icon } from '@/components/icon/Icon';
-import { SettingsField, SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
+import { SettingsField, SettingsGroup, SettingsRow, SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 import { buildAgentSaveConfig, catalogModelSelection, formatAgentDisplayName, readStoredSystem, splitModelSelection, type AgentEditorSnapshot } from './agentSaveConfig';
 import { displayPermissionRulesLastMatch, toPermissionRuleset } from '@/sync/permission-rules';
 import { SavedPermissionsSection } from './SavedPermissionsSection';
@@ -684,14 +683,12 @@ export const AgentsPage: React.FC = () => {
             <p className="typography-meta text-muted-foreground">
               {t('settings.agents.page.legacy.dropped', { fields: droppedKeys.join(', ') })}
             </p>
-            <div className="flex items-center gap-2 typography-meta text-foreground">
-              <SettingsSwitch
-                checked={confirmDrop}
-                onChange={setConfirmDrop}
-                ariaLabel={t('settings.agents.page.legacy.confirmDrop')}
-              />
-              {t('settings.agents.page.legacy.confirmDrop')}
-            </div>
+            <SettingsToggleRow
+              checked={confirmDrop}
+              onChange={setConfirmDrop}
+              label={t('settings.agents.page.legacy.confirmDrop')}
+              ariaLabel={t('settings.agents.page.legacy.confirmDrop')}
+            />
           </div>
         ) : null}
 

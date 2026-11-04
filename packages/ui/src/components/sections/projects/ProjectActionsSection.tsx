@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
+import { SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 import {
   Collapsible,
   CollapsibleContent,
@@ -341,38 +341,16 @@ export const ProjectActionsSection: React.FC<ProjectActionsSectionProps> = ({ pr
                     </div>
 
                     <div className="py-1">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="typography-ui-label text-foreground">{t('settings.projects.actions.field.autoOpenUrl')}</span>
-                        <div
-                          className="group flex cursor-pointer items-center gap-2"
-                          role="button"
-                          tabIndex={0}
-                          aria-pressed={action.autoOpenUrl === true}
-                          onClick={() => updateAction(action.id, (current) => ({
-                            ...current,
-                            ...(current.autoOpenUrl === true ? { autoOpenUrl: undefined } : { autoOpenUrl: true }),
-                          }))}
-                          onKeyDown={(event) => {
-                            if (event.key === ' ' || event.key === 'Enter') {
-                              event.preventDefault();
-                              updateAction(action.id, (current) => ({
-                                ...current,
-                                ...(current.autoOpenUrl === true ? { autoOpenUrl: undefined } : { autoOpenUrl: true }),
-                              }));
-                            }
-                          }}
-                        >
-                          <SettingsSwitch
-                            checked={action.autoOpenUrl === true}
-                            onChange={(checked) => updateAction(action.id, (current) => ({
-                              ...current,
-                              ...(checked ? { autoOpenUrl: true } : { autoOpenUrl: undefined }),
-                            }))}
-                            ariaLabel={t('settings.projects.actions.field.autoOpenUrlForAria', { title })}
-                          />
-                          <span className="typography-ui-label font-normal text-foreground/80">{t('settings.projects.actions.field.autoOpenUrlDescription')}</span>
-                        </div>
-                      </div>
+                      <SettingsToggleRow
+                        checked={action.autoOpenUrl === true}
+                        onChange={(checked) => updateAction(action.id, (current) => ({
+                          ...current,
+                          ...(checked ? { autoOpenUrl: true } : { autoOpenUrl: undefined }),
+                        }))}
+                        label={t('settings.projects.actions.field.autoOpenUrl')}
+                        description={t('settings.projects.actions.field.autoOpenUrlDescription')}
+                        ariaLabel={t('settings.projects.actions.field.autoOpenUrlForAria', { title })}
+                      />
 
                       {action.autoOpenUrl === true ? (
                         <div className="mt-1">

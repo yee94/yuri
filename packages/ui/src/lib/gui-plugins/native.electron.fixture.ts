@@ -45,6 +45,8 @@ if (activation.capabilities?.dockIcon) {
 }
 host.dispose();
 if (host.appearanceCatalog.getSnapshot().themes.length || document.head.querySelector('[data-yuri-plugin-style]')) throw new Error('Appearance cleanup failed');
+const removed = await requestNativeGui(bridge, 'acquire', { id: 'removed-fixture', revision: '1' });
+if (removed !== null) throw new Error('Removed plugin did not complete activation as inactive');
 // Policy failures must keep their code through the actual preload/contextBridge.
 try {
   await requestNativeGui(bridge, 'call', { lease: 'foreign', ipc: 'pdf-fixture.export', method: 'pdf', request: 'denied' });

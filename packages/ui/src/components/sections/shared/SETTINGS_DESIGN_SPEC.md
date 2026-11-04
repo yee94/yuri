@@ -185,6 +185,12 @@ not change the spacing before or after their group.
   keyboard navigation and the single tab stop; choosing the current value is
   a no-op. Its events stay inside the group so legacy clickable rows cannot
   perform a second write. Mobile retains the shared Button touch minimum.
+- Standalone Boolean settings apply from the switch; do not add a second save
+  action below the row. When applying requires an app restart (window transparency),
+  selecting a new value opens a restart confirmation while keeping the current
+  value selected. Cancel/dismiss performs no write; confirmation persists and
+  restarts once, with controls disabled while pending. A failed write preserves
+  the current value and leaves confirmation available for retry.
 - Mutually exclusive list: shared `Radio` rows.
 - Short option set: shared `Button variant="chip" size="xs"` with
   `aria-pressed`.

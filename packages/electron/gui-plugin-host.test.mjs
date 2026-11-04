@@ -162,9 +162,28 @@ describe('trusted native GUI plugin host', () => {
       const a = await f.host.handle(f.first, 'acquire', { id: 'test', revision: 'r1', code: 'throw 1', options: { hacked: true } });
       expect(a.bundle.options).toEqual({});
       f.client.plugin.list.mockResolvedValueOnce({ data: [] });
-      await expect(f.acquire()).rejects.toMatchObject({ code: 'GUI_PLUGIN_UNAVAILABLE' });
+      expect(await f.acquire()).toBeNull();
       expect(f.native.stopped).toBe(1);
       await expect(f.call(a.lease, 'add', 1)).rejects.toMatchObject({ code: 'GUI_PLUGIN_LEASE_EXPIRED' });
+    } finally { await f.host.dispose(); }
+  });
+
+  it('completes removal during acquisition without an error, revokes the old instance and permits reinstall', async () => {
+    const f = fixture();
+    try {
+      const original = await f.acquire();
+      f.client.plugin.gui.mockRejectedValueOnce(Object.assign(new Error('Plugin removed'), {
+        _tag: 'PluginNotFoundError', pluginID: 'test',
+      }));
+      const result = await f.host.dispatch(f.first, 'acquire', { id: 'test', revision: 'r1' });
+      expect(result).toEqual({ ok: true, value: null });
+      expect(f.report).not.toHaveBeenCalled();
+      expect(f.native.stopped).toBe(1);
+      await expect(f.call(original.lease, 'add', 1)).rejects.toMatchObject({ code: 'GUI_PLUGIN_LEASE_EXPIRED' });
+      const installedAgain = await f.acquire();
+      expect(installedAgain.lease).not.toBe(original.lease);
+      expect(await f.call(installedAgain.lease, 'add', 1)).toBe(1);
+      expect(f.native.started).toBe(2);
     } finally { await f.host.dispose(); }
   });
 

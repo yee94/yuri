@@ -10,7 +10,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 import { ThemeSystemContext } from '@/contexts/theme-system-context';
 import { getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { guiBundleOptions, guiInventoryOptions } from '@/queries/guiPluginQueries';
+import { guiBundleOptions, guiInventoryOptions, refreshGuiBundles } from '@/queries/guiPluginQueries';
 import { guiPreferencesKey, readDisabledPlugins, writePluginEnabled } from './preferences';
 import { GuiFileIconsContext, GuiPluginsContext, getEmptySnapshot, type GuiPluginsContextValue } from './react';
 import { getDesktopGuiPluginBridge, getDesktopGuiPluginWindowBridge } from '@/lib/desktop';
@@ -26,30 +26,12 @@ type BundleState = { loading: boolean; error: string | null };
 
 const Surface = React.lazy(() => import('@/components/gui-plugins/GuiPluginSurface').then((module) => ({ default: module.GuiPluginSurface })));
 
-function SurfaceFailure() {
-  const { t } = useI18n();
-  React.useEffect(() => { toast.error(t('guiPlugins.failed')); }, [t]);
-  return null;
-}
-
-function LoadErrors({ error, inventory }: Pick<GuiPluginsContextValue, 'error' | 'inventory'>) {
-  const { t } = useI18n();
-  const reported = React.useRef(new Set<string>());
-  React.useEffect(() => {
-    const errors = [error, ...inventory.map((plugin) => plugin.error ? `${plugin.id}: ${plugin.error}` : null)].filter((value): value is string => Boolean(value));
-    for (const detail of errors) {
-      if (!reported.current.has(detail)) toast.error(t('guiPlugins.failed'), { description: detail });
-    }
-    reported.current = new Set(errors);
-  }, [error, inventory, t]);
-  return null;
-}
-
 /** One observer per enabled plugin; failed refreshes leave its last working bundle alive. */
 function Activation({ host, id, transport, report, schedule }: {
   host: GuiPluginHost; id: string; transport: string; report(host: GuiPluginHost, id: string, state: BundleState | null): void;
   schedule: ReturnType<typeof createGuiInstallQueue>;
 }) {
+  const queryClient = useQueryClient();
   const query = useQuery(guiBundleOptions(transport, id));
   const [activationState, setActivationState] = React.useState({ loading: false, error: null as string | null });
   React.useEffect(() => {
@@ -85,7 +67,13 @@ function Activation({ host, id, transport, report, schedule }: {
     void import('./native').then(async ({ NativeGuiSession }) => {
       if (cancelled) return;
       if (!bridge) { await installWindowOnly(); return; }
-      const activation = await requestNativeGui(bridge, 'acquire', { id, revision: query.data!.revision }) as NativeGuiActivation;
+      const activation = await requestNativeGui(bridge, 'acquire', { id, revision: query.data!.revision }) as NativeGuiActivation | null;
+      if (activation === null) {
+        if (cancelled || getRuntimeTransportIdentity() !== transport) return;
+        setActivationState({ loading: false, error: null });
+        await queryClient.invalidateQueries({ queryKey: guiInventoryOptions(transport).queryKey, exact: true });
+        return;
+      }
       const native = new NativeGuiSession(bridge, activation);
       if (cancelled || getRuntimeTransportIdentity() !== transport) { native.dispose(); return; }
       await install(activation.bundle, native);
@@ -98,7 +86,7 @@ function Activation({ host, id, transport, report, schedule }: {
       if (!cancelled) setActivationState({ loading: false, error: message(cause) });
     });
     return () => { cancelled = true; controller.abort(); };
-  }, [host, id, transport, query.data, query.dataUpdatedAt, schedule]);
+  }, [host, id, transport, query.data, query.dataUpdatedAt, queryClient, schedule]);
   React.useEffect(() => {
     report(host, id, { loading: activationState.loading || query.isPending, error: activationState.error ?? message(query.error) });
   }, [host, id, activationState, query.error, query.isPending, report]);
@@ -254,7 +242,9 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
   const refresh = useEvent(() => {
     readPreferences();
     if (requested && loadError) { setHostError(null); setHostAttempt((attempt) => attempt + 1); }
-    void queryClient.invalidateQueries({ queryKey: requested ? [transport, 'plugins', 'gui'] : guiInventoryOptions(transport).queryKey });
+    void queryClient.invalidateQueries({ queryKey: guiInventoryOptions(transport).queryKey, exact: true }).then(() => {
+      if (requested) return refreshGuiBundles(queryClient, transport, true, () => getRuntimeTransportIdentity() === transport);
+    });
   });
   const activationPending = requested && hasEnabled && !loadError && (!host || inventory.some((plugin) =>
     plugin.enabled && activeIds.has(plugin.id) && (bundles?.host !== host || (bundles.states[plugin.id]?.loading ?? true))));
@@ -270,8 +260,7 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     {children}
     {host && inventory.filter((plugin) => plugin.enabled && activeIds.has(plugin.id)).map((plugin) =>
       <Activation key={plugin.id} host={host} id={plugin.id} transport={transport} report={report} schedule={installQueue.run} />)}
-    {painted && <LoadErrors key={transport} error={value.error} inventory={inventory} />}
-    {host && <ErrorBoundary key={`surface:${transport}`} fallback={<SurfaceFailure />}><React.Suspense fallback={null}><Surface /></React.Suspense></ErrorBoundary>}
+    {host && <ErrorBoundary key={`surface:${transport}`} fallback={<></>}><React.Suspense fallback={null}><Surface /></React.Suspense></ErrorBoundary>}
     </GuiAppearanceProvider>
     </GuiFileIconsContext.Provider>
   </GuiPluginsContext.Provider>;

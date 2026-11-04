@@ -15,11 +15,11 @@ it('keeps scope and preview mounted, coalesces pending selections and applies on
     toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
     buildDefaultSyncSelections: () => ({ fileGroups: [true], singleFiles: [], directories: [], agentsRoot: true, providerCredentials: false }),
     Icon: () => null,
-    SettingsSwitch: ({ checked, onChange, ariaLabel, disabled }: { checked: boolean; onChange: (value: boolean) => void; ariaLabel: string; disabled: boolean }) =>
+    SettingsToggleRow: ({ checked, onChange, ariaLabel, disabled }: { checked: boolean; onChange: (value: boolean) => void; ariaLabel: string; disabled: boolean }) =>
       <input type="checkbox" aria-label={ariaLabel} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />,
     Button: ({ children, onClick, disabled }: React.ComponentProps<'button'>) => <button disabled={disabled} onClick={onClick}>{children}</button>,
   };
-  for (const name of ['Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter', 'ScrollableOverlay']) {
+  for (const name of ['Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter', 'ScrollableOverlay', 'SettingsGroup']) {
     scope[name] = ({ children }: React.PropsWithChildren) => <div>{children}</div>;
   }
   const plan = { files: [{ path: 'opencode.json', bytes: 10 }], directories: [], deletes: [], agentsRoot: null,

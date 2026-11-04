@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
+import { SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
@@ -417,22 +417,13 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
               <Icon name="add" className="h-3.5 w-3.5" />
               {t('settings.yuri.worktrees.setup.addCommand')}
             </Button>
-            <div
-              data-settings-item="projects.worktree.setup.wait"
-              className="flex items-center gap-2 py-1"
-            >
-              <SettingsSwitch
-                checked={waitForSetupCommands}
-                onChange={handleWaitForSetupCommandsChange}
-                ariaLabel={t('settings.yuri.worktrees.setup.waitForCommandsAria')}
-              />
-              <span className={cn(
-                'typography-ui-label font-normal',
-                waitForSetupCommands ? 'text-foreground' : 'text-foreground/60'
-              )}>
-                {t('settings.yuri.worktrees.setup.waitForCommands')}
-              </span>
-            </div>
+            <SettingsToggleRow
+              itemId="projects.worktree.setup.wait"
+              checked={waitForSetupCommands}
+              onChange={handleWaitForSetupCommandsChange}
+              label={t('settings.yuri.worktrees.setup.waitForCommands')}
+              ariaLabel={t('settings.yuri.worktrees.setup.waitForCommandsAria')}
+            />
           </div>
         )}
       </ProjectSettingsSubsection>

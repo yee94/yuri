@@ -190,28 +190,44 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-test.each([false, true])('plugin controls reserve the scrollbar inset only when floating (docked=%s)', async (docked) => {
+test.each([false, true])('plugin controls stay floating even with a legacy toolbar preference (%s)', async (expandedEditorToolbar) => {
   harness.pluginPreview = true;
   harness.files.readFile.mockResolvedValue({ content: 'preview content' });
-  useUIStore.setState({ expandedEditorToolbar: docked });
+  const initialState = useUIStore.getState();
+  const legacyState = { ...initialState, expandedEditorToolbar };
+  useUIStore.setState(legacyState);
   await open('/repo/report.preview');
   await act(async () => reactRoot.render(<FilePanel />));
   const controls = host.querySelector('[aria-label="plugin-source"]')!;
   expect(controls).not.toBeNull();
   expect(controls.closest('[data-testid="plugin-preview"]')).toBeNull();
   const floating = controls.closest('[data-gui-preview-controls]');
-  if (docked) expect(floating).toBeNull();
-  else {
-    expect(floating?.classList.contains('right-6')).toBe(true);
-    expect(floating?.classList.contains('top-3')).toBe(true);
-  }
-  await act(async () => useUIStore.setState({ expandedEditorToolbar: false }));
+  expect(floating?.classList.contains('right-6')).toBe(true);
+  expect(floating?.classList.contains('top-3')).toBe(true);
+  expect(useUIStore.persist.getOptions().partialize!(useUIStore.getState())).not.toHaveProperty('expandedEditorToolbar');
+  await act(async () => useUIStore.setState(initialState, true));
 });
 
-test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview controls use global selection tokens without local overrides', async (toolbar) => {
+test.each(['click', 'hover'] as const)('editor controls start collapsed, expand on %s and collapse on leaving', async (action) => {
+  harness.files.readFile.mockResolvedValue({ content: 'file content' });
+  await open('/repo/A.ts');
+  await act(async () => reactRoot.render(<FilePanel />));
+  const trigger = host.querySelector<HTMLButtonElement>('[aria-label="filesView.editor.showControlsAria"]')!;
+  expect(trigger).not.toBeNull();
+  expect(host.querySelector('[title="filesView.editor.findInFile"]')).toBeNull();
+  const floating = trigger.closest('.absolute')!;
+  expect(floating.classList.contains('right-3')).toBe(true);
+  if (action === 'click') await act(async () => trigger.click());
+  else await act(async () => trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
+  expect(host.querySelector('[title="filesView.editor.findInFile"]')).not.toBeNull();
+  await act(async () => floating.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body })));
+  expect(host.querySelector('[aria-label="filesView.editor.showControlsAria"]')).not.toBeNull();
+  expect(host.querySelector('[title="filesView.editor.findInFile"]')).toBeNull();
+});
+
+test.each(['collapsed', 'expanded'] as const)('Markdown %s preview controls use global selection tokens without local overrides', async (toolbar) => {
   window.localStorage.setItem('yuri:files:md-viewer-mode', 'preview');
   harness.files.readFile.mockResolvedValue({ content: '# Report' });
-  useUIStore.setState({ expandedEditorToolbar: toolbar === 'docked' });
   await open('/repo/report.md');
   await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
   if (toolbar === 'expanded') await clickButton('filesView.editor.showControlsAria');
@@ -224,7 +240,6 @@ test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview con
   await act(async () => toggle.click());
   expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(false);
   expect(toggle.getAttribute('aria-label')).toBe('filesView.editor.switchToPreviewMode');
-  await act(async () => useUIStore.setState({ expandedEditorToolbar: false }));
 });
 
 describe('binary file fallback', () => {

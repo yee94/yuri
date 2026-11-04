@@ -64,13 +64,6 @@ export const UsageCard: React.FC<UsageCardProps> = ({
     <div className="py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1 flex items-center gap-2">
-          {showToggle && (
-            <SettingsSwitch
-              checked={toggleEnabled}
-              onChange={(checked) => onToggle?.(checked)}
-              ariaLabel={t('settings.usage.page.options.showInHeaderAria')}
-            />
-          )}
           <div className="min-w-0 flex flex-col">
             <span className="typography-ui-label text-foreground truncate">{windowLabel}</span>
             {subtitle && (
@@ -78,8 +71,15 @@ export const UsageCard: React.FC<UsageCardProps> = ({
             )}
           </div>
         </div>
-        <div className="typography-ui-label text-foreground tabular-nums flex items-center justify-end">
+        <div className="typography-ui-label text-foreground tabular-nums flex items-center justify-end gap-2">
           {percentLabel === '-' ? '' : percentLabel}
+          {showToggle && (
+            <SettingsSwitch
+              checked={toggleEnabled}
+              onChange={(checked) => onToggle?.(checked)}
+              ariaLabel={t('settings.usage.page.options.showInHeaderAria')}
+            />
+          )}
         </div>
       </div>
 

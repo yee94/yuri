@@ -3,6 +3,12 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+## File editor toolbar
+
+File controls use the compact floating toolbar in the editor's upper-right corner,
+expanded on hover or click. There is no docked-toolbar setting; historical saved
+values are ignored. GUI preview controls retain their floating scrollbar inset.
+
 ## Diff context loading
 
 The working-tree/staged diff toolbar's full-file switch loads both complete file
@@ -226,6 +232,10 @@ welcome page places it in a safe-area-aware top-left header; the portrait remain
 the central decorative mark. `assets/brand/yuri/build_wordmark.py` regenerates the
 master artwork and synchronizes this bundled SVG. The welcome's connection/history
 actions retain their existing shared sheet and modal behavior.
+Saved-device connection failures in mobile history appear only as a solid error
+icon to the left of the overflow menu, without inline error details or retry copy.
+Tapping the icon retries that device immediately through the shared connection
+controller and replaces the error affordance with the row's connecting state.
 
 ## Desktop conversation width
 
