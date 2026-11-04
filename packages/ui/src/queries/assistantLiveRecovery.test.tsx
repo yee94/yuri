@@ -37,6 +37,7 @@ const hoisted = vi.hoisted(() => {
   const httpState = {
     contactFetches: 0,
     snapshotFetches: 0,
+    snapshotTransports: [] as string[],
     contactBodies: [] as unknown[],
     snapshotBodies: [] as unknown[],
     failNextContact: false,
@@ -126,6 +127,7 @@ vi.mock('@/lib/runtime-fetch', () => ({
     )
     if (url.includes('/assistants/snapshot')) {
       hoisted.httpState.snapshotFetches += 1
+      hoisted.httpState.snapshotTransports.push(hoisted.transport)
       if (hoisted.httpState.gateSnapshot) {
         return await new Promise<Response>((resolve, reject) => {
           hoisted.httpState.pendingSnapshot.push({ resolve, reject, path: url })
@@ -355,6 +357,7 @@ describe('assistant foreground live recovery', () => {
     tipListeners.clear()
     httpState.contactFetches = 0
     httpState.snapshotFetches = 0
+    httpState.snapshotTransports = []
     httpState.contactBodies = []
     httpState.snapshotBodies = []
     httpState.failNextContact = false
@@ -632,6 +635,66 @@ describe('assistant foreground live recovery', () => {
     })
     await waitUntil(host, (p) => p.texts.includes('server already replied'), 'after end tip')
     expect(httpState.contactFetches).toBeGreaterThan(before)
+  })
+
+  test.each(['cold', 'warm'])('channel work starting during a %s snapshot GET is recovered before the idle poll', async (cache) => {
+    if (cache === 'warm') testQueryClient.setQueryData([hoisted.transport, 'assistants', 'snapshot'], snapshotPage(2))
+    httpState.gateSnapshot = true
+    const host = await mountProbe(false)
+    expect(httpState.pendingSnapshot).toHaveLength(1)
+    const turnID = 'channel:feishu:external-turn'
+    httpState.defaultSnapshot = snapshotPage(4, {
+      working: true,
+      activeContactTurn: { turnID, messageID: turnID, status: 'running', admittedAt: 10 },
+    })
+    await act(async () => {
+      emitTip({ type: 'contact-turn-start', assistantID, turnID, occurredAt: 10 })
+      for (let index = 0; index < 50; index++) emitTip({ type: 'assistants-changed', revision: 4, occurredAt: 10 })
+    })
+    httpState.gateSnapshot = false
+    await act(async () => {
+      httpState.pendingSnapshot.shift()!.resolve(new Response(JSON.stringify(snapshotPage(2))))
+    })
+    await waitUntil(host, (p) => p.working && p.activeTurn === turnID, 'channel working survives initial GET race')
+    expect(httpState.snapshotFetches).toBe(2)
+  })
+
+  test.each(['runtime-switch', 'unmount'])('snapshot trailing refresh is fenced by %s', async (boundary) => {
+    httpState.gateSnapshot = true
+    await mountProbe(false)
+    await act(async () => emitTip({ type: 'assistants-changed', revision: 4, occurredAt: 10 }))
+    if (boundary === 'runtime-switch') {
+      hoisted.setTransport('other-runtime')
+      hoisted.setRuntimeGeneration(2)
+      httpState.defaultSnapshot = snapshotPage(20)
+    } else {
+      const entry = mounted.pop()!
+      await act(async () => entry.root.unmount())
+      entry.host.remove()
+    }
+    httpState.gateSnapshot = false
+    await act(async () => {
+      httpState.pendingSnapshot.shift()!.resolve(new Response(JSON.stringify(snapshotPage(2))))
+    })
+    await flush()
+    expect(httpState.snapshotTransports.filter((transport) => transport === 'live-recovery-transport')).toHaveLength(1)
+    if (boundary === 'runtime-switch') expect(testQueryClient.getQueryData<ReturnType<typeof snapshotPage>>(['live-recovery-transport', 'assistants', 'snapshot'])?.revision).toBe(2)
+  })
+
+  test('channel completion during a snapshot GET clears work without waiting for the busy poll', async () => {
+    const turnID = 'weixin:external-turn'
+    const busy = snapshotPage(4, { working: true, activeContactTurn: { turnID, messageID: turnID, status: 'running', admittedAt: 10 } })
+    testQueryClient.setQueryData([hoisted.transport, 'assistants', 'snapshot'], busy)
+    httpState.gateSnapshot = true
+    const host = await mountProbe(false)
+    httpState.defaultSnapshot = snapshotPage(5)
+    await act(async () => emitTip({ type: 'contact-turn-end', assistantID, turnID, status: 'complete', occurredAt: 20 }))
+    httpState.gateSnapshot = false
+    await act(async () => {
+      httpState.pendingSnapshot.shift()!.resolve(new Response(JSON.stringify(busy)))
+    })
+    await waitUntil(host, (p) => !p.working && p.revision === '5', 'channel completion survives GET race')
+    expect(httpState.snapshotFetches).toBe(2)
   })
 
   test('hidden focusManager stops interval polls; focus restore refetches', async () => {

@@ -26,6 +26,22 @@ const toolCall = (name, args, id) => toolBatch([[name, args, id]])
 const notifyCall = (text, id) => ['notify_user', { text }, id]
 
 describe('createContactStreamFn', () => {
+  it('explains Markdown image delivery in the model prompt and publishes the image reply unchanged', async () => {
+    const image = '![Photo](https://example.com/photo.png)';
+    const result = await runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '找张图片发我',
+      createChatCompletion: async ({ body }) => {
+        const prompt = body.messages.find((message) => message.role === 'system').content;
+        expect(prompt).toContain('![description](source)');
+        expect(prompt).toContain('absolute Host file path');
+        expect(prompt).toContain('source channel');
+        expect(prompt).toContain('outside code fences and inline code');
+        expect(prompt).toContain('deliver the rendered image itself');
+        return { text: image };
+      },
+    });
+    expect(result.bubbles).toEqual([image]);
+  });
+
   it.each(['success', 'returned-error', 'thrown-error'])('preserves the %s tool outcome through the real Agent without exposing internal details', async (outcome) => {
     const execute = vi.fn(async () => {
       if (outcome === 'thrown-error') throw new Error('Operation failed.');

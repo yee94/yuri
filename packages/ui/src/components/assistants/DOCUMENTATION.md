@@ -577,6 +577,13 @@ Desktop sidebar rows and mobile catalog cards share `getAssistantMessagePreview`
 
 Preview freshness follows the existing snapshot revision/events, foreground reconcile, and focus/reconnect query path. List rows add zero history requests, transcript-cache reads, or message subscriptions. Creation, selection, avatars, working dots, and context/long-press edit/delete ownership remain unchanged.
 
+Snapshot event refreshes share one serial drain per transport across observers.
+When a tip arrives during an existing GET (including the first uncached read),
+the drain awaits that flight and performs a trailing authoritative GET; a stale
+idle response cannot consume a channel-originated working update. Bursts coalesce,
+failed reads preserve prior state, and unmount/runtime changes fence trailing work.
+All four external channels reuse the same live contact-turn authority as Yuri IM.
+
 ## Shared unread and read visibility
 
 Desktop and mobile mark-all-read use the shared double-check icon action in the catalog header, immediately before the add button. Desktop uses a ghost icon button; mobile uses the shared glass icon button. The translated action remains available through its accessible label and title, not visible text or a separate row. When unread reaches zero the compact button is disabled and hidden with `visibility: hidden`, retaining its horizontal space so read updates do not shift the header or list.

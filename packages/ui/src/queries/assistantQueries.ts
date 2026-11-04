@@ -125,14 +125,37 @@ const retainAssistantSnapshotEvents = (transport: string) => {
   if (existing) {
     existing.count += 1;
   } else {
-    const dispose = subscribeYuriEvents((event) => {
-      if (getRuntimeTransportIdentity() !== transport) return;
+    const generation = getRuntimeGeneration();
+    let disposed = false;
+    let refreshing = false;
+    let dirty = false;
+    const current = () => !disposed && getRuntimeTransportIdentity() === transport && getRuntimeGeneration() === generation;
+    const refresh = async () => {
+      dirty = true;
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        do {
+          dirty = false;
+          const query = queryClient.getQueryCache().find({ queryKey: key.snapshot(transport), exact: true });
+          // An already-started GET can predate this tip. Share it, then read again.
+          // In particular, invalidation cannot cancel a first fetch without data.
+          if (query?.state.fetchStatus === 'fetching') dirty = true;
+          await queryClient.invalidateQueries({ queryKey: key.snapshot(transport), exact: true }, { cancelRefetch: false });
+        } while (dirty && current());
+      } finally {
+        refreshing = false;
+      }
+    };
+    const unsubscribe = subscribeYuriEvents((event) => {
+      if (!current()) return;
       const snapshot = queryClient.getQueryData<AssistantSnapshot>(key.snapshot(transport));
       if (event.type === 'event-stream-ready' || event.type === 'contact-turn-start' || event.type === 'contact-turn-end'
         || (event.type === 'assistants-changed' && (!snapshot || event.revision > snapshot.revision))) {
-        void queryClient.invalidateQueries({ queryKey: key.snapshot(transport), exact: true });
+        void refresh();
       }
     });
+    const dispose = () => { disposed = true; unsubscribe(); };
     snapshotSubscriptions.set(transport, { count: 1, dispose });
   }
   return () => {

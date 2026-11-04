@@ -16,6 +16,9 @@ describe('real contact output → all native image channels', () => {
     await fs.writeFile(imagePath, png);
     let enterprise;
     let weixin;
+    let releaseTurn;
+    let turnStarted = false;
+    const blockedTurn = new Promise((resolve) => { releaseTurn = resolve; });
     const service = createAssistantsService({ dbPath: path.join(directory, 'assistants.sqlite'), dataDir: directory,
       buildOpenCodeUrl: () => 'http://127.0.0.1:1', getOpenCodeAuthHeaders: () => ({}), getAllowedRoots: () => [directory],
       clientFactory: () => ({ message: { list: async () => ({ data: [], cursor: {} }) } }),
@@ -24,6 +27,10 @@ describe('real contact output → all native image channels', () => {
       syncScheduledTaskProject: async () => {},
       createChatCompletion: async () => ({ choices: [] }),
       runContactTurn: async ({ userText, tools, onBubbleDelta }) => {
+        if (userText === 'draw') {
+          turnStarted = true;
+          await blockedTurn;
+        }
         if (userText === 'draw again') {
           const scheduled = await tools.find((tool) => tool.name === 'schedule_task').execute('schedule', {
             name: 'Draw daily', prompt: 'Draw an image', time: '18:00', timezone: 'UTC',
@@ -84,7 +91,14 @@ describe('real contact output → all native image channels', () => {
       if (source === 'weixin') incoming.push({ message_id: 'in', from_user_id: 'owner', message_type: 1,
         context_token: 'test-context', item_list: [{ type: 1, text_item: { text: 'draw' } }] });
       else await connections.get(source).onMessage({ id: 'in', senderID: 'owner', chatType: 'private', text: 'draw' });
+      await vi.waitFor(() => expect(turnStarted).toBe(true));
+      expect(service.snapshot().assistants.find(({ id }) => id === bot.id)).toMatchObject({
+        working: true,
+        activeContactTurn: { status: 'running', turnID: expect.stringMatching(/^(weixin:|channel:)/) },
+      });
+      releaseTurn();
       await vi.waitFor(() => expect(sends[source]).toHaveBeenCalledOnce());
+      expect(service.snapshot().assistants.find(({ id }) => id === bot.id).working).toBe(false);
       expect(sends[source].mock.calls[0][0].image.buffer).toEqual(png);
       for (const [provider, send] of Object.entries(sends)) if (provider !== source) expect(send).not.toHaveBeenCalled();
       await service.send(bot.id, { messageID: 'app-turn', parts: [{ type: 'text', text: 'draw again' }] });
@@ -109,6 +123,6 @@ describe('real contact output → all native image channels', () => {
       });
       for (const send of Object.values(sends)) expect(send.mock.calls.at(-1)[0].image.buffer).toEqual(png);
       expect(api.sendText).not.toHaveBeenCalled();
-    } finally { await enterprise?.close(); await weixin?.close(); service.close(); await fs.rm(directory, { recursive: true, force: true }); }
+    } finally { releaseTurn(); await enterprise?.close(); await weixin?.close(); service.close(); await fs.rm(directory, { recursive: true, force: true }); }
   });
 });

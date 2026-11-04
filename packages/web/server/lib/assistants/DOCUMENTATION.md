@@ -27,6 +27,13 @@ Bot permissions, durable receipts, output and lifecycle, not a second Chat bot e
 See `channels/DOCUMENTATION.md` for enterprise configuration and SDK integration.
 
 Published image output is shared by all four channels through `channel-output.js`.
+The contact prompt teaches `![description](source)` in public replies as the image
+delivery interface: a real public HTTPS image URL or absolute Host file path,
+with angle brackets for paths containing spaces. No image-send tool is required;
+image Markdown belongs directly in the reply body, outside code fences or inline
+code, so it renders rather than displaying a syntax example. Reading an image by
+itself does not publish it. Existing source/size restrictions
+and source-channel routing still apply.
 It extracts actual Markdown images (including reference images) and image file
 parts, not ordinary links, code examples or tool traces, preserving prose/image
 order. `service.prepareChannelImage()` snapshots bytes into the existing private
