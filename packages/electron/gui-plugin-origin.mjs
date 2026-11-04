@@ -8,6 +8,6 @@ export function isGuiPluginUiUrl(raw, origins) {
       try { return new URL(origin).origin === url.origin; } catch { return false; }
     }))) return false;
     return ['/', '/index.html', '/mini-chat.html', '/mobile.html', '/connect', '/new'].includes(url.pathname)
-      || /^\/(session|settings|assistant|schedule)(\/|$)/.test(url.pathname);
+      || /^\/(session|settings|assistant|schedule|plugins)(\/|$)/.test(url.pathname);
   } catch { return false; }
 }

@@ -140,11 +140,13 @@ it('reads a new scope during render, rebinds subscriptions, and invalidates same
   const first = setup()
   let history!: string[]
   let projected!: string
+  const renders: Array<{ dir: string; id: string; text: string | undefined }> = []
   const selectFirst = vi.fn((data: TranscriptData) => data.messageOrder[0] ?? 'empty')
   const selectLast = vi.fn((data: TranscriptData) => data.messageOrder.at(-1) ?? 'empty')
   function Probe({ id = sessionID, dir = directory, last = false, enabled = true }) {
     history = useUserMessageHistory(id, dir)
     projected = useTranscriptProjection(id, dir, stores.get(dir)!, last ? selectLast : selectFirst, Object.is, { enabled })
+    renders.push({ dir, id, text: history[0] })
     return <span>{history[0]}|{projected}</span>
   }
   await act(async () => root.render(<Probe />))
@@ -156,7 +158,10 @@ it('reads a new scope during render, rebinds subscriptions, and invalidates same
   await act(async () => root.render(<Probe last />))
   expect(projected).toBe('msg_0299')
   await act(async () => { setup('/other', 'ses_other', 2) })
+  renders.length = 0
   await act(async () => root.render(<Probe dir="/other" id="ses_other" />))
+  expect(renders.length).toBeGreaterThan(0)
+  expect(renders.every(render => render.dir === '/other' && render.id === 'ses_other' && render.text === 'text 0')).toBe(true)
   expect(host.textContent).toBe('text 0|msg_0000')
   await act(async () => runtime.bindTranscriptRepositoryInstance(first.repository))
   expect(history).toEqual([])

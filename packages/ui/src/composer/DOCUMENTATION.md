@@ -71,8 +71,8 @@ Session title materialization accepts a `get`-only lookup and resolves titles on
 for actual references at restore time; typing never constructs a global title map.
 Mobile Agent/Model controls share stable catalog references and `useEvent` adapters
 at the production JSX boundary. Unsupported platforms never mount
-`NativeIosComposerBridge` or evaluate its labels/Hooks. The bridge retains native
-chrome in the layout phase and the process-owned overlay across text/draft updates,
+`NativeIosComposerBridge` or evaluate its labels/Hooks. The bridge sets the native
+DOM chrome class in the layout phase and retains the process-owned overlay across text/draft updates,
 then releases it on unmount. Browser edits leave sizing exclusively to the autosize
 layout owner; their deferred DOM correction runs only for an actual text/caret
 correction. `ChatInput.hooks.test.tsx` counts 50 edits at these call sites;

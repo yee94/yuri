@@ -949,7 +949,7 @@ Modules:
   `subscribeTranscriptScopes` + `readTranscriptCompletionSignature` /
   `readTranscriptMessages`.
 - Message and materialization selectors reuse a single immutable repository
-  snapshot keyed by selector, scope, enabled/resolved state and binding revision.
+  snapshot keyed by selector/equality policy, scope, enabled/resolved state and binding revision.
   Parent edits and no-op notifications do not rescan the transcript. User-input
   history also reuses its projection until transcript identity or the current
   session's revert boundary changes; unrelated directory fields do not notify it.

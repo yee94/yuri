@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-test('real Electron: GUI IPC, PDF, appearance and Dock cleanup with HMR and bundled UI', { timeout: 120000 }, async () => {
+test('real Electron: plugin-page GUI IPC, PDF, appearance and Dock cleanup with HMR and bundled UI', { timeout: 120000 }, async () => {
   const work = await mkdtemp(join(process.env.YURI_TEST_EVIDENCE_DIR || tmpdir(), 'gui-plugin-pdf-'));
   let devServer;
   try {
@@ -24,7 +24,7 @@ test('real Electron: GUI IPC, PDF, appearance and Dock cleanup with HMR and bund
       server: { host: '127.0.0.1', port: 0 },
       plugins: [{ name: 'gui-plugin-evidence-page', configureServer(server) {
         server.middlewares.use((request, response, next) => {
-          if (request.url !== '/') return next();
+          if (request.url !== '/plugins/pdf-fixture/board') return next();
           response.setHeader('Content-Type', 'text/html');
           response.end('<html><body><script type="module" src="/@vite/client"></script><script type="module" src="/src/lib/gui-plugins/native.electron.fixture.ts"></script></body></html>');
         });

@@ -63,6 +63,8 @@ Cache limits are 256 MiB / 128 entries, 32 MiB per image and 512 KiB per IPC wri
 
 Image-cache, virtual-asset and preview-gateway IPC authorize the current application main frame independently of GUI plugin `window-only` restriction and the selected local/remote/Relay runtime. These presentation bridges accept opaque keys/IDs and bounded bytes, not local file paths or credentials; cache lease ownership, byte limits and preview gateway ownership remain enforced. Remote documents, same-origin preview/API documents, subframes and stale frames are rejected. Loading a window-only GUI bundle must not break images or front-end file/report previews. It still revokes native plugin execution/IPC and privileged filesystem, Shell and settings access. This gate fix is installer-owned; UI/backend OTA alone cannot change it.
 
+Application document checks include `/plugins/<pluginId>/<pageId>` in both HMR and packaged UI. Opening or reloading an independent plugin page must retain GUI activation, window-only fallback and presentation IPC eligibility under the existing origin, frame and runtime checks. Route admission is installer-owned, so updating only a plugin or UI/backend OTA cannot repair an older shell's route allowlist.
+
 `scripts/image-cache-evidence.test.mjs` builds the production shared image Hook and runs it in real Electron with the native protocol/IPC/disk implementation. It compares one-use native streaming with cached loads for four 5 MiB PNGs, simultaneous previews and ten remounts, counting downloads/bytes and measuring decode-ready latency. Set `YURI_TEST_EVIDENCE_DIR` to retain `result.json`. This is a controlled-network image lifecycle benchmark, not whole-transcript navigation or phone performance evidence.
 
 ## Shutdown Lifecycle

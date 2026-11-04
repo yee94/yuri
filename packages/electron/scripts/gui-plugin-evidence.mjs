@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createGuiPluginMainHost } from '../gui-plugin-host.mjs';
+import { isGuiPluginUiUrl } from '../gui-plugin-origin.mjs';
 import { createPluginDockIcons } from '../plugin-dock-icons.mjs';
 
 const directory = process.env.YURI_TEST_EVIDENCE_DIR;
@@ -76,11 +77,11 @@ try {
       gui: async () => ({ data: { code: source, revision: '1', options: {} } }),
     } }),
     authorize: (event) => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
-      && window.webContents.getURL().startsWith(`${origin}/`),
+      && isGuiPluginUiUrl(window.webContents.getURL(), [origin]),
     send: (contents, payload) => contents.send('yuri:gui-plugin:event', payload),
   });
   ipcMain.handle('yuri:gui-plugin', (event, action, input) => host.dispatch(event, action, input));
-  await window.loadURL(`${origin}/`);
+  await window.loadURL(`${origin}/plugins/pdf-fixture/board`);
   const result = await window.webContents.executeJavaScript(`new Promise((resolve,reject)=>{
     const until=Date.now()+20000;
     const timer=setInterval(()=>{

@@ -35,7 +35,8 @@ function fixture(url = 'yuri-ui://app/session/test') {
 }
 
 describe('application presentation IPC in window-only documents', () => {
-  it.each(['yuri-ui://app/session/test', 'http://localhost:5173/session/test'])(
+  it.each(['yuri-ui://app/session/test', 'http://localhost:5173/session/test',
+    'yuri-ui://app/plugins/example/board', 'http://localhost:5173/plugins/example/board'])(
     'keeps image and preview bridges usable after real plugin restriction: %s', async (url) => {
       const f = fixture(url);
       try {
