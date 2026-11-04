@@ -65,7 +65,7 @@ test.skipIf(!resolveChrome())('navigation follows compact pill geometry and uses
                     expect(result.iconColor).toBe('rgb(255, 255, 255)');
                     expect(result.halo).not.toBe('none');
                     expect(result.animation).toBe('yuri-speech-follow-glow');
-                    const diameter = 30 - 6 * progress;
+                    const diameter = 30;
                     for (const size of result.sizes) {
                         expect(size.width).toBeCloseTo(diameter, 1);
                         expect(size.height).toBeCloseTo(diameter, 1);

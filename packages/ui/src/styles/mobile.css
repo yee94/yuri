@@ -4073,9 +4073,7 @@ button.yuri-mobile-schedule-assistant::before {
 }
 
 .yuri-transcript-scroll-controls {
-  --yuri-transcript-control-size: calc(
-    1.875rem - 0.375rem * var(--yuri-transcript-controls-swap, 0)
-  );
+  --yuri-transcript-control-size: 1.875rem;
 }
 
 .yuri-transcript-scroll-controls-row {

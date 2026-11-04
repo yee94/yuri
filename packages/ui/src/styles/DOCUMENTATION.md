@@ -76,8 +76,8 @@ the measured compact pill top and 80% width, with an 8px vertical gap and 0.625r
 ResizeObserver measurement, not per-frame React state or transcript padding.
 Native iOS keeps the native inset because its web pill is hidden.
 Both navigation circles use a 1.875rem diameter (30px at the default scale)
-on desktop and expanded mobile; resting compact mobile uses 1.5rem
-(24px). Icons and the inter-button gap scale with
+on desktop and in both expanded and resting compact mobile states.
+Icons and the inter-button gap scale with
 the circle. Only this cluster opts out of the global 36px touch minimum.
 
 The first-prompt establishing draft joins the main chat and hydrating overlay-foot contract. The idle draft keeps the in-flow Composer contract.
