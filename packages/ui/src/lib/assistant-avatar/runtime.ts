@@ -71,12 +71,14 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let settleDeadline = 0;
   let appeared = false;
   let nextAppearanceBlinkIn: number | null = null;
+  let remainingAppearanceBlinks = 0;
   let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean; animateIdle?: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
   const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer && !state.animateIdle;
   const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
 
   const reset = () => {
     nextAppearanceBlinkIn = null;
+    remainingAppearanceBlinks = 0;
     if (!stop) return;
     stop(); stop = null; player = null; shared = null; settling = false;
     renderer.still();
@@ -106,7 +108,8 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         nextAppearanceBlinkIn -= dt;
         if (nextAppearanceBlinkIn <= 0) {
           live.blink();
-          nextAppearanceBlinkIn = null;
+          remainingAppearanceBlinks--;
+          nextAppearanceBlinkIn = remainingAppearanceBlinks > 0 ? 0.55 : null;
         }
       }
       const sample = live.advance(dt, source?.read(timestamp));
@@ -160,8 +163,16 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
       if (next.blinkOnMount && !appeared) {
         appeared = true;
         start();
-        player?.blink();
-        nextAppearanceBlinkIn = next.blinkOnMount === 2 ? 0.55 : null;
+        remainingAppearanceBlinks = next.blinkOnMount === 2 ? 2 : 1;
+        if (state.animateIdle) {
+          // Keep the native .35s rest-to-idle bridge visible with open eyes.
+          // An immediate blink hides the turn and makes reopening look like a reset.
+          nextAppearanceBlinkIn = 0.4;
+        } else {
+          player?.blink();
+          remainingAppearanceBlinks--;
+          nextAppearanceBlinkIn = remainingAppearanceBlinks > 0 ? 0.55 : null;
+        }
       }
     },
     hover() {

@@ -207,7 +207,9 @@ Inactive tabs, covered pages and an open task editor unmount the shortcut observ
 and live avatar. The saved avatar uses the existing motion/visibility runtime in
 `idle` with `animateIdle` for the seven-second greeting and a one-shot double blink.
 Capsule entrance, hold and exit retain the same renderer and ordinary idle player;
-this greeting never enters the working state. After the capsule returns, the
+the default up-right rest face enters ordinary idle through its native pose bridge
+with open eyes, and only then plays the double blink. It never hides the initial
+turn behind a blink or enters the working state. After the capsule returns, the
 existing springs ease it to rest and release frame work, respecting reduced motion
 and saved animation-off preferences. The capsule sizes to its copy rather than a
 fixed track, keeping only the explicit avatar gap and trailing padding.

@@ -39,7 +39,11 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   no timer, recurring idle blink or per-frame React updates are introduced.
   `animateIdle: true` explicitly opts into the reference ordinary idle clips without
   pointer following or shape cycling. It starts from the settled static pose and
-  lets the existing springs enter the clip. Turning it off eases the same player
+  lets the existing springs enter the clip. Its first appearance blink waits
+  0.4 seconds so the native .35-second up-right-to-idle bridge stays visible with
+  open eyes; blinking across the turn would make reopening look like a reset.
+  Both greeting blinks use the existing frame countdown and cancel on interruption.
+  Turning it off eases the same player
   back to rest before releasing frame work. Schedule enables it only during its
   seven-second greeting; other idle callers retain their quiet default.
 - `hover()`: trigger the bounded existing shrink/rebound; eligible idle faces

@@ -43,6 +43,34 @@ test.skipIf(!resolveChrome())('real Schedule avatar keeps ordinary idle motion t
   try {
     const page = await openPageSession(browser, { width: 390, height: 844, standalone: false });
     await page.navigateFile(file);
+    const entrance = await page.evaluate<{ resets: number; replacements: number; activeChanges: string[]; frames: Array<{ time: number; active: string; x: number; fit: string | null }> }>(`(async () => {
+      scheduleFixture.restart();
+      const hint = document.querySelector('.yuri-mobile-schedule-assistant');
+      const svg = hint.querySelector('svg');
+      const fit = svg.lastElementChild;
+      const face = hint.querySelector('[data-avatar-active]');
+      const activeChanges = [];
+      let resets = 0, replacements = 0;
+      const observer = new MutationObserver(records => {
+        for (const record of records) {
+          if (record.type === 'attributes' && record.target === fit && record.attributeName === 'transform' && !fit.hasAttribute('transform')) resets++;
+          if (record.type === 'attributes' && record.attributeName === 'data-avatar-active') activeChanges.push(face.dataset.avatarActive);
+        }
+        if (hint.querySelector('svg') !== svg) replacements++;
+      });
+      observer.observe(hint, { attributes: true, childList: true, subtree: true });
+      const start = performance.now(), frames = [];
+      while (performance.now() - start < 1800) {
+        await new Promise(requestAnimationFrame);
+        frames.push({ time: Math.round(performance.now() - start), active: face.dataset.avatarActive,
+          x: face.getBoundingClientRect().x, fit: fit.getAttribute('transform') });
+      }
+      observer.disconnect();
+      return { resets, replacements, activeChanges, frames };
+    })()`);
+    writeFileSync(join(work, 'schedule-entrance.json'), JSON.stringify(entrance, null, 2));
+    expect(entrance.resets, 'Entrance travel must not restore the static pose between live frames').toBe(0);
+    expect(entrance.replacements).toBe(0);
     const sample = await page.evaluate<{ poses: number; motion: string; rightGap: number; copyGap: number; sameSvg: boolean }>(`(async () => {
       const hint = document.querySelector('.yuri-mobile-schedule-assistant');
       hint.getAnimations({subtree:true}).forEach(animation => { animation.pause(); animation.currentTime = 3000; });

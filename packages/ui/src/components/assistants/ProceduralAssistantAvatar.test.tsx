@@ -155,6 +155,49 @@ test('a double-blink greeting keeps the same idle player and head pose, then rel
   expect(frames.size).toBe(0);
 });
 
+test.each(['round', 'star', 'flower'] as const)('animated %s idle keeps the up-right initial pose and shows its native turn before blinking', async shape => {
+  const start = performance.now();
+  vi.spyOn(performance, 'now').mockReturnValue(start);
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('schedule'), shape, color: 'blue' });
+  const recipe = resolveAssistantAvatar(seed);
+  const reference = avatarEngine.mountAssistantAvatarRenderer(document, 'up-right-reference', recipe);
+  const original = avatarEngine.createAssistantAvatarPlayer;
+  const blink = vi.fn();
+  let blinking = false;
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args);
+    return { ...player,
+      blink: () => { blink(); player.blink(); },
+      advance: (...advanceArgs) => {
+        const sample = player.advance(...advanceArgs);
+        blinking = sample.blinking;
+        return sample;
+      },
+    };
+  });
+  const paths = (svg: Element) => [...svg.querySelectorAll('path')].map(path => path.getAttribute('d'));
+  await act(async () => root.render(<ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} animateIdle blinkOnMount={2} />));
+  expect(frames.size).toBe(0);
+  expect(paths(host.querySelector('svg')!)).toEqual(paths(reference.svg));
+  const svg = host.querySelector('svg');
+  await intersect(true);
+  expect(paths(svg!)).toEqual(paths(reference.svg));
+  expect(blink).not.toHaveBeenCalled();
+  const turning = new Set<string>();
+  for (let i = 1; i <= 40; i++) {
+    frame(start + i * 34);
+    expect(host.querySelector('svg')).toBe(svg);
+    if (i <= 10) {
+      expect(blinking, 'The head turn must remain visible, not disappear behind an entrance blink').toBe(false);
+      turning.add(paths(svg!).join(''));
+    }
+  }
+  expect(turning.size).toBeGreaterThan(5);
+  expect(blink).toHaveBeenCalledTimes(2);
+  expect(create).toHaveBeenCalledOnce();
+  expect(create.mock.calls[0][2]).toBe('idle');
+});
+
 test('opted-in ordinary idle moves beyond the greeting blinks and eases back on the same renderer', async () => {
   let now = performance.now();
   vi.spyOn(performance, 'now').mockImplementation(() => now);
@@ -238,6 +281,42 @@ test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('a pending second gre
   }
   expect(blink).toHaveBeenCalledOnce();
   expect(frames.size).toBe(0);
+});
+
+test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('the delayed first greeting blink is cancelled without replay when %s', async reason => {
+  const original = avatarEngine.createAssistantAvatarPlayer;
+  const blink = vi.fn();
+  vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args);
+    return { ...player, blink: () => { blink(); player.blink(); } };
+  });
+  await act(async () => root.render(<ProceduralAssistantAvatar seed="interrupt-idle-entrance" size={40} motion="idle" followPointer={false} animateIdle blinkOnMount={2} />));
+  await intersect(true);
+  const start = performance.now();
+  frame(start + 68);
+  expect(blink).not.toHaveBeenCalled();
+  if (reason === 'offscreen') await intersect(false);
+  if (reason === 'hidden') {
+    visible = 'hidden';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: true });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  if (reason === 'unmounted') await act(async () => root.render(null));
+  expect(frames.size).toBe(0);
+  if (reason === 'offscreen') await intersect(true);
+  if (reason === 'hidden') {
+    visible = 'visible';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: false });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  for (let i = 1; i <= 40; i++) frame(performance.now() + i * 34);
+  expect(blink).not.toHaveBeenCalled();
 });
 
 test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('interrupting a first-appearance blink releases frame work when %s', async (reason) => {
