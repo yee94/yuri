@@ -16,7 +16,7 @@ let bundled;
 let bundleDirectory;
 beforeAll(async () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
-  execFileSync(process.execPath, [path.resolve(directory, '../../../scripts/build-llm-bridge.mjs')], {
+  execFileSync('bun', ['run', 'build:llm-bridge'], {
     cwd: path.resolve(directory, '../../..'), stdio: 'pipe',
   });
   bundleDirectory = await mkdtemp(path.join(os.tmpdir(), 'yuri-bridge-test-'));
