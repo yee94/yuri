@@ -250,6 +250,8 @@ gh workflow run release.yml --repo yee94/yuri --ref main \
 
 恢复入口校验原 Release run、tag commit、桌面双架构 Linux/macOS/Windows、Android、npm 的成功记录；稳定版还要求 IPA 已成功上传，iOS 仅允许旧的外测送审步骤失败。任何构建、签名或上传失败都不能绕过。复用原始 build number 和现有安装包，跳过重新构建及 npm/IPA 上传，继续原 commit 的 Relay 镜像、资产完整性校验、正式 Release 和同版本 OTA。正常发布与恢复共用同一套 finalize 步骤，清理过期 Android 版本化资产并校验恰好 13 个产物。旧运行保留真实失败记录，新恢复运行必须通过；不移动原 tag。
 
+同一入口也可恢复 GitHub Release 已公开、但 `finalize-release` 的 `Deploy update service to Vercel` 失败的运行：必须有原运行发布 Release 成功的步骤记录，且唯一失败步骤为该部署。无需撤回 Release、移动 tag 或重复上传 IPA。修复 workflow 后从 `main` 传入原 `resume_run_id`；直接 rerun 旧运行不会加载新的 workflow。稳定版 finalize job 显式安装 Bun 1.3.14，供 Vercel 按 `bun.lock` 打包 Node Functions 时使用，即使更新服务自身没有包依赖也不能省略。
+
 CI 每次关联新构建后保留外测组最近三个构建，并通过 App Store Connect API 移除更旧的组关联。Apple 的 TestFlight App Review 采用滚动 24 小时提交额度；额度耗尽时构建保持在外测组并记录为 `deferred-submission-limit`，GitHub Release 继续完成，后续构建在额度恢复后重新提交。同一版本 train 已有构建在审时记录为 `deferred-train-in-review`，同样不挡住 GitHub Release。
 
 手动运行 `release.yml` 时，提供版本号；该 workflow 会执行桌面端和 Android 发布。`dry_run=true` 会保留 Draft Release，用于验证构建和产物：

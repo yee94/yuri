@@ -7,8 +7,19 @@ export function validateRecovery({ run, jobs, release, tagSha, repository, versi
     || run.status !== 'completed' || !['push', 'workflow_dispatch'].includes(run.event)) {
     throw new Error('Recovery requires a completed Release run from this repository.');
   }
-  if (run.head_sha !== tagSha || release.tag_name !== `v${version}` || !release.draft) {
-    throw new Error('Recovery requires the existing draft and its original tagged source commit.');
+  if (run.head_sha !== tagSha || release.tag_name !== `v${version}`) {
+    throw new Error('Recovery requires the original tagged source commit.');
+  }
+  if (release.draft !== true) {
+    const finalize = jobs.filter(job => job.name === 'finalize-release');
+    const steps = finalize[0]?.steps ?? [];
+    const failed = steps.filter(step => step.conclusion === 'failure');
+    if (release.draft !== false || run.conclusion !== 'failure' || finalize.length !== 1
+      || finalize[0].conclusion !== 'failure'
+      || !steps.some(step => step.name === 'Publish release' && step.conclusion === 'success')
+      || failed.length !== 1 || failed[0].name !== 'Deploy update service to Vercel') {
+      throw new Error('Recovery requires an existing draft or a verified post-publication deployment failure.');
+    }
   }
   const requiredJobs = [
     ['create-release', 1],

@@ -63,6 +63,15 @@ test('stable release service deployment preserves live OTA before replacing stat
   assert.match(ota, /git show FETCH_HEAD:deploy\/update-service\/release-manifest\.json > deploy\/update-service\/release-manifest\.json/);
 });
 
+test('stable release installs pinned Bun before Vercel bundles Node functions', async () => {
+  const workflow = parseYaml(await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8'));
+  const steps = workflow.jobs['finalize-release'].steps;
+  const deployIndex = steps.findIndex(step => step.name === 'Deploy update service to Vercel');
+  const bunIndex = steps.findIndex(step => step.uses?.startsWith('oven-sh/setup-bun@'));
+  assert.ok(bunIndex >= 0 && bunIndex < deployIndex, 'Vercel function bundling requires Bun on PATH');
+  assert.equal(steps[bunIndex].with['bun-version'], '1.3.14');
+});
+
 test('publishing and rollout retain both majors, channels and referenced bundles', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ota-major-'));
   const channels = new Map();

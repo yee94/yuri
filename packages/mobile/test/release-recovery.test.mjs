@@ -54,3 +54,37 @@ test('rejects unrelated runs and already-published releases', () => {
   input.release.draft = false;
   expect(() => validateRecovery(input)).toThrow('existing draft');
 });
+
+function publishedDeploymentFailure() {
+  const input = fixture();
+  input.run.conclusion = 'failure';
+  input.release.draft = false;
+  const ios = input.jobs.at(-1);
+  ios.conclusion = 'success';
+  ios.steps = [{ name: 'Upload to TestFlight', conclusion: 'success' }];
+  input.jobs.push({
+    name: 'finalize-release', conclusion: 'failure',
+    steps: [
+      { name: 'Publish release', conclusion: 'success' },
+      { name: 'Deploy update service to Vercel', conclusion: 'failure' },
+    ],
+  });
+  return input;
+}
+
+test('resumes a published release only after its update-service deployment failed', () => {
+  expect(validateRecovery(publishedDeploymentFailure())).toEqual({
+    source_sha: 'original-sha', build_number: '5', release_id: '42',
+  });
+});
+
+test.each(['run succeeded', 'publication failed', 'deployment succeeded', 'unrelated failure', 'duplicate finalize'])('rejects published recovery when %s', reason => {
+  const input = publishedDeploymentFailure();
+  const finalize = input.jobs.at(-1);
+  if (reason === 'run succeeded') input.run.conclusion = 'success';
+  if (reason === 'publication failed') finalize.steps[0].conclusion = 'failure';
+  if (reason === 'deployment succeeded') finalize.steps[1].conclusion = 'success';
+  if (reason === 'unrelated failure') finalize.steps[1].name = 'Verify complete release asset inventory';
+  if (reason === 'duplicate finalize') input.jobs.push(structuredClone(finalize));
+  expect(() => validateRecovery(input)).toThrow();
+});
