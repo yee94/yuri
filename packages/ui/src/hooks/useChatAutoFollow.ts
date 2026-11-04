@@ -559,12 +559,13 @@ export const useChatAutoFollow = ({
         const rect = speech.range.getBoundingClientRect?.();
         if (!rect || !rect.height) return;
         const viewport = container.getBoundingClientRect();
-        const inset = Math.min(96, container.clientHeight * 0.2);
-        // Desktop's viewport excludes chrome; mobile still reserves its overlay edges.
-        const visibleInset = isMobileRef.current ? inset : 0;
-        if (rect.top >= viewport.top + visibleInset && rect.bottom <= viewport.bottom - visibleInset) return;
+        const inset = geometry.clientHeight * 0.2;
+        // Oversized passages follow their leading readable portion, not an unreachable full range.
+        const trackedHeight = Math.min(rect.height, geometry.clientHeight - inset * 2);
+        if (rect.top >= viewport.top + inset && rect.top + trackedHeight <= viewport.bottom - inset) return;
+        const landingInset = (geometry.clientHeight - trackedHeight) / 2;
         const nextTop = Math.min(geometry.scrollHeight - geometry.clientHeight,
-            Math.max(0, geometry.scrollTop + rect.top - viewport.top - inset));
+            Math.max(0, geometry.scrollTop + rect.top - viewport.top - landingInset));
         if (Math.abs(nextTop - geometry.scrollTop) <= 1) return;
         releaseAutoFollow();
         container.scrollTo({ top: nextTop, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });

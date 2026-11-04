@@ -33,7 +33,7 @@ test.each(['no-overflow', 'visible-bottom-edge', 'visible-top-edge', 'clamped-no
         vi.spyOn(document, 'createRange').mockImplementation(() => {
             const range = makeRange();
             range.getBoundingClientRect = () => new DOMRect(0,
-                scenario === 'visible-top-edge' ? 10 : scenario.endsWith('clamped-noop') || scenario === 'subpixel-noop' ? 350 : 260,
+                scenario === 'visible-top-edge' ? 60 : scenario.endsWith('clamped-noop') || scenario === 'subpixel-noop' ? 350 : 220,
                 200, scenario === 'unmeasured-range' ? 0 : 20);
             return range;
         });
@@ -104,9 +104,9 @@ test.each([
         await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); playback.update('第一段。', 0); });
         getSpeechTracking()!.range!.getBoundingClientRect = () => new DOMRect(0, 900 - top, 300, 40);
         await act(async () => resumeSpeechFollowing());
-        expect(top).toBe(840);
+        expect(top).toBe(770);
         expect(behaviors).toEqual([reducedMotion ? 'instant' : 'smooth']);
-        expect(getSpeechTracking()!.range!.getBoundingClientRect().top).toBe(60);
+        expect(getSpeechTracking()!.range!.getBoundingClientRect().top).toBe(130);
         expect(api.state).toBe('released');
         await act(async () => {
             scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
@@ -122,6 +122,58 @@ test.each([
         expect(getSpeechTracking()?.following).toBe(true);
         expect(top).toBe(1000); // Already fully visible: do not move the reader unnecessarily.
         expect(writes).toBe(count);
+    } finally {
+        await act(async () => { playback?.stop(); root.unmount(); });
+        host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+    }
+});
+
+test.each([false, true].flatMap((isMobile) => [300, 1000].flatMap((height) =>
+    ['top-edge', 'bottom-edge', 'above-safe-zone', 'below-safe-zone', 'tall-passage'].map((position) => ({ isMobile, height, position })),
+)))('speech uses the middle 60% before reaching screen edges (mobile=$isMobile, height=$height, position=$position)', async ({ isMobile, height, position }) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    let api!: UseChatAutoFollowResult;
+    let playback: ReturnType<typeof trackSpeech> | undefined;
+    let top = 1000;
+    const viewportTop = 80;
+    const passageHeight = position === 'tall-passage' ? height * 0.8 : 20;
+    const passageTop = position === 'bottom-edge' ? height * 0.8 - passageHeight
+        : position === 'below-safe-zone' ? height * 0.8 - passageHeight + 1
+        : height * 0.2 - (position === 'above-safe-zone' ? 1 : 0);
+    const contentTop = top + passageTop;
+    const scrollTo = vi.fn((options?: ScrollToOptions | number) => {
+        if (typeof options === 'object') top = options.top ?? top;
+    });
+    const makeRange = document.createRange.bind(document);
+    vi.spyOn(document, 'createRange').mockImplementation(() => {
+        const range = makeRange();
+        range.getBoundingClientRect = () => new DOMRect(0, viewportTop + contentTop - top, 200, passageHeight);
+        return range;
+    });
+    function Harness() {
+        api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 10, sessionIsWorking: false, isMobile });
+        return React.createElement('div', { ref: api.scrollRef }, React.createElement('p', { 'data-speech-content': true }, '当前段落。'));
+    }
+    try {
+        await act(async () => root.render(React.createElement(Harness)));
+        const scroller = api.scrollRef.current!;
+        Object.defineProperties(scroller, {
+            scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = value; } },
+            clientHeight: { configurable: true, value: height }, scrollHeight: { configurable: true, value: 6000 },
+        });
+        scroller.getBoundingClientRect = () => new DOMRect(0, viewportTop, 500, height);
+        scroller.scrollTo = scrollTo;
+        await act(async () => { playback = trackSpeech(scroller.firstElementChild as HTMLElement); playback.update('当前段落。', 0); });
+        const shouldMove = position === 'above-safe-zone' || position === 'below-safe-zone';
+        expect(scrollTo).toHaveBeenCalledTimes(shouldMove ? 1 : 0);
+        if (shouldMove) {
+            expect(contentTop - top + passageHeight / 2).toBeCloseTo(height / 2);
+        } else expect(top).toBe(1000);
+        for (let index = 0; index < 50; index++) await act(async () => resumeSpeechFollowing());
+        expect(scrollTo).toHaveBeenCalledTimes(shouldMove ? 1 : 0);
     } finally {
         await act(async () => { playback?.stop(); root.unmount(); });
         host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();

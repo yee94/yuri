@@ -322,12 +322,15 @@ away does not unmount its playback owner.
 `useChatAutoFollow` remains the scroll owner: speech releases bottom pinning and
 requests a visibility adjustment only at passage start or explicit resume, and
 only when the passage needs a real, reachable viewport movement. No overflow,
-an unmeasured range, a visible passage or a clamped/subpixel no-op must not write
+an unmeasured range, a passage inside the reading safe zone or a clamped/subpixel no-op must not write
 scroll or release bottom-follow ownership. Movement uses native smooth scrolling
-(instant under reduced motion), landing with 20% viewport / at most 96px of top
-breathing room. Desktop visibility uses the actual viewport edges, not that landing
-margin; mobile keeps its overlay
-edge reservation. Starting/stopping a short visible reply therefore preserves
+(instant under reduced motion). Desktop and mobile reserve 20% of the scroll
+viewport above and below: crossing either safe-zone edge triggers movement before
+the passage leaves the screen, landing centered in that viewport. There is no
+fixed-pixel cap on these margins. Passages taller than the middle 60% align their
+leading readable portion within the safe zone rather than repeatedly chasing an
+unreachable full-range fit. Scroll extents still clamp the reachable destination.
+Starting/stopping a short reply that needs no reachable adjustment preserves
 the bottom pin without a transient navigation button or reveal change. Wheel,
 directional touch, navigation keys and scrollbar dragging release speech following
 without stopping audio. Following never writes during a held touch. The bottom-right
