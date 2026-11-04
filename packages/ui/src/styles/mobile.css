@@ -501,6 +501,10 @@
   box-shadow: var(--yuri-popup-shadow);
 }
 
+:root.desktop-runtime[data-yuri-vibrancy] .yuri-session-context-menu {
+  --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+}
+
 .yuri-popup-surface .yuri-popup-separator {
   height: var(--yuri-popup-divider-width);
   background: var(--yuri-popup-divider);

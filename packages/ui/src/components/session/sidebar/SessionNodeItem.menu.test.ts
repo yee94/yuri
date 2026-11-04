@@ -25,6 +25,7 @@ describe('SessionNodeItem session menu', () => {
   test('context menus keep the shared popup material unobscured', () => {
     const menu = source.slice(source.indexOf('const contextMenuContent = ('), source.indexOf('<React.Fragment key={session.id}>'));
     expect(menu).toContain('dropdownMenuPopupClass');
+    expect(menu.match(/yuri-session-context-menu/g)).toHaveLength(2);
     expect(menu).not.toContain('backgroundColor:');
   })
 

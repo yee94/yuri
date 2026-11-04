@@ -46,6 +46,8 @@ test.skipIf(!resolveChrome())('popup glass has a readable theme fill, real menu 
       </section>
       <button id="sheet-model-header" class="model-picker-section-header [background:linear-gradient(var(--surface-elevated),var(--surface-elevated)),linear-gradient(var(--surface-background),var(--surface-background))]" style="position:absolute;left:500px;top:500px">Favorites</button>
       <input id="sheet-model-search" class="model-picker-search bg-[var(--surface-elevated)]" style="position:absolute;left:500px;top:550px">
+      <section id="session-context" class="${dropdownMenuPopupClass} yuri-session-context-menu" style="position:absolute;left:80px;top:640px">Session menu</section>
+      <section id="session-submenu" class="${dropdownMenuPopupClass} yuri-session-context-menu" style="position:absolute;left:300px;top:640px">Move to folder</section>
       <script>window.inspectGlass=()=>{
         const style=id=>getComputedStyle(document.getElementById(id));
         const popup=style('changes'),picker=style('picker'),list=style('list');
@@ -83,6 +85,26 @@ test.skipIf(!resolveChrome())('popup glass has a readable theme fill, real menu 
       expect(normal.dividerAlpha).toBeCloseTo(normal.foregroundAlpha * (dark ? 0.08 : 0.06), 0);
       expect(normal.sameDivider).toBe(true);
       expect(normal.dividerWidth).toBe('0.5px');
+      const inspectSessionMenus = () => page.evaluate<Array<{ alpha: number; blur: string }>>(`['session-context','session-submenu'].map(id=>{
+        const style=getComputedStyle(document.getElementById(id));
+        const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+        ctx.fillStyle=style.backgroundColor;ctx.fillRect(0,0,1,1);
+        return {alpha:ctx.getImageData(0,0,1,1).data[3],blur:style.backdropFilter};
+      })`);
+      expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([128, 128]);
+      await page.evaluate(`document.documentElement.setAttribute('data-yuri-vibrancy','')`);
+      expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([128, 128]);
+      await page.evaluate(`document.documentElement.classList.add('desktop-runtime')`);
+      const vibrantSessionMenus = await inspectSessionMenus();
+      expect(vibrantSessionMenus.map(menu => menu.alpha)).toEqual([235, 235]);
+      expect(vibrantSessionMenus.every(menu => menu.blur.includes('blur(20px)'))).toBe(true);
+      expect((await page.evaluate<{ menuFill: string }>('window.inspectGlass()')).menuFill).toBe(normal.menuFill);
+      await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
+      expect(await inspectSessionMenus()).toEqual([{ alpha: 255, blur: 'none' }, { alpha: 255, blur: 'none' }]);
+      await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }] });
+      await page.evaluate(`document.documentElement.removeAttribute('data-yuri-vibrancy')`);
+      expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([128, 128]);
+      await page.evaluate(`document.documentElement.classList.remove('desktop-runtime')`);
       const menuClip = await page.evaluate<{ x: number; y: number; width: number; height: number; scale: number }>(`(()=>{const r=document.getElementById('menu').getBoundingClientRect();return {x:r.x+20,y:r.bottom-50,width:100,height:30,scale:1}})()`);
       const screenshotContrast = async () => {
         const capture = await page.send('Page.captureScreenshot', { format: 'png', clip: menuClip });

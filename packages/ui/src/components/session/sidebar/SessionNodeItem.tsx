@@ -1175,7 +1175,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           style={{
             color: 'var(--surface-elevated-foreground)',
           }}
-          className={cn(dropdownMenuPopupClass, 'min-w-[180px]')}
+          className={cn(dropdownMenuPopupClass, 'yuri-session-context-menu min-w-[180px]')}
         >
           {renderSessionMenuItems({
             Item: ({ className, ...itemProps }: React.ComponentProps<typeof ContextMenu.Item>) => (
@@ -1199,7 +1199,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                     style={{
                       color: 'var(--surface-elevated-foreground)',
                     }}
-                    className={cn(dropdownMenuPopupClass, className)}
+                    className={cn(dropdownMenuPopupClass, 'yuri-session-context-menu', className)}
                     {...popupProps}
                   >
                     {children}

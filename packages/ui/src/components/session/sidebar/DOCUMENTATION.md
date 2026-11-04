@@ -11,6 +11,12 @@ Session menus no longer offer opening a conversation in the side panel. The
 Electron Mini Chat Window action remains available; subtask and review panels
 retain their existing behavior independently of the sidebar menu.
 
+Session right-click menus and their portaled submenus use
+`yuri-session-context-menu`. With Electron window vibrancy active, this raises the
+shared popup fill to 92% of the theme elevated surface so underlying session titles
+cannot compete with menu labels. Other menus and non-vibrant runtimes retain the
+shared 50% fill; reduced-transparency mode remains opaque.
+
 Sidebar numeric shortcuts and global-search hints share `Kbd variant="hint"`.
 The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neutral
 6% foreground fill; consumers do not maintain their own shortcut color/size recipe.
