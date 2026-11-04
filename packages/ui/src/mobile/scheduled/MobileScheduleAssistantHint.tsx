@@ -39,6 +39,7 @@ function ScheduleAssistantButton({ assistant }: { assistant: NonNullable<ReturnT
             seed={assistant.seed}
             size={40}
             motion="idle"
+            animateIdle={visiting}
             followPointer={false}
             animationKey={assistant.id}
             blinkOnMount={2}

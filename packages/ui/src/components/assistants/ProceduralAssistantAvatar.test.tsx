@@ -155,15 +155,49 @@ test('a double-blink greeting keeps the same idle player and head pose, then rel
   expect(frames.size).toBe(0);
 });
 
+test('opted-in ordinary idle moves beyond the greeting blinks and eases back on the same renderer', async () => {
+  let now = performance.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('greeting'), shape: 'round' });
+  const render = (animateIdle: boolean, revision = 0) => root.render(<div data-revision={revision}>
+    <ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} animateIdle={animateIdle} blinkOnMount={2} />
+  </div>);
+  await act(async () => render(true));
+  const svg = host.querySelector('svg');
+  const pose = () => svg!.innerHTML;
+  const initial = pose();
+  await intersect(true);
+  const moving = new Set<string>();
+  for (let i = 0; i < 180; i++) {
+    now += 34; frame(now);
+    if (i > 40) moving.add(pose());
+  }
+  expect(moving.size).toBeGreaterThan(30);
+  expect(frames.size).toBe(1);
+  expect(create).toHaveBeenCalledOnce();
+  expect(create.mock.calls[0][2]).toBe('idle');
+  for (let i = 0; i < 50; i++) await act(async () => render(true, i));
+  expect(create).toHaveBeenCalledOnce();
+  const beforeExit = pose();
+  await act(async () => render(false));
+  expect(pose()).toBe(beforeExit);
+  expect(host.querySelector('svg')).toBe(svg);
+  for (let i = 0; i < 60; i++) { now += 34; frame(now); }
+  expect(frames.size).toBe(0);
+  expect(pose()).toBe(initial);
+  expect(create).toHaveBeenCalledOnce();
+});
+
 test.each([true, 2] as const)('first-appearance blink %s obeys reduced motion and the saved motion-off preference', async blinkOnMount => {
   reduced = true;
   const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
-  await act(async () => root.render(<ProceduralAssistantAvatar seed="reduced" size={40} motion="idle" followPointer={false} blinkOnMount={blinkOnMount} />));
+  await act(async () => root.render(<ProceduralAssistantAvatar seed="reduced" size={40} motion="idle" followPointer={false} animateIdle blinkOnMount={blinkOnMount} />));
   await intersect(true);
   expect(create).not.toHaveBeenCalled();
   expect(frames.size).toBe(0);
   const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('off'), animate: false });
-  await act(async () => root.render(<ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} blinkOnMount={blinkOnMount} />));
+  await act(async () => root.render(<ProceduralAssistantAvatar seed={seed} size={40} motion="idle" followPointer={false} animateIdle blinkOnMount={blinkOnMount} />));
   expect(host.querySelector('img')).not.toBeNull();
   expect(create).not.toHaveBeenCalled();
 });

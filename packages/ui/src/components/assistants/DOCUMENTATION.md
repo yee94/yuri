@@ -205,10 +205,12 @@ or copy calls the existing mobile `openAssistant` route, preserving Schedule as
 the Back destination. It opens no creation dialog and sends no automatic message.
 Inactive tabs, covered pages and an open task editor unmount the shortcut observer
 and live avatar. The saved avatar uses the existing motion/visibility runtime in
-`idle` with a one-shot double blink. Capsule entrance, hold and exit retain the
-same renderer/resting pose; this greeting never enters the working state. After
-the second blink it releases frame work and stays still, respecting reduced motion
-and saved animation-off preferences.
+`idle` with `animateIdle` for the seven-second greeting and a one-shot double blink.
+Capsule entrance, hold and exit retain the same renderer and ordinary idle player;
+this greeting never enters the working state. After the capsule returns, the
+existing springs ease it to rest and release frame work, respecting reduced motion
+and saved animation-off preferences. The capsule sizes to its copy rather than a
+fixed track, keeping only the explicit avatar gap and trailing padding.
 
 Creating a Bot forwards the current UI locale to the Host. The Host stores its
 single welcome message in the contact transcript and returns its preview in the

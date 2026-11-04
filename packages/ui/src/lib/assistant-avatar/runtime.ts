@@ -71,8 +71,8 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let settleDeadline = 0;
   let appeared = false;
   let nextAppearanceBlinkIn: number | null = null;
-  let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
-  const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer;
+  let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean; animateIdle?: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
+  const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer && !state.animateIdle;
   const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
 
   const reset = () => {
@@ -85,7 +85,9 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     if (player) return;
     const win = host.ownerDocument.defaultView;
     if (!win) return;
-    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, state.size < 48, { randomizeShape, eyeColor, resting: resting() });
+    const idleEntrance = Boolean(state.motion === 'idle' && state.animateIdle && !randomizeShape && !state.followPointer);
+    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, state.size < 48, { randomizeShape, eyeColor, resting: resting() || idleEntrance });
+    if (idleEntrance) live.setResting(false);
     player = live;
     shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe, state.size < 48) : null;
     const pointer = state.followPointer ? acquireAvatarPointer(win) : null;
@@ -128,7 +130,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   };
 
   return {
-    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean | 2 }) {
+    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean | 2; animateIdle?: boolean }) {
       if (disposed) return;
       const wasResting = resting();
       const wasSharing = sharing();

@@ -25,7 +25,7 @@ the assistant ID as `animationKey`, independently of its saved recipe seed.
 `runtime.ts` is the non-React seam. `mountAvatarAnimation(host, { id, seed,
 animationKey?, randomizeShape?, eyeColor? })` returns only:
 
-- `update({ active, motion, size, followPointer?, blinkOnMount? })`: update live state, preserving the player
+- `update({ active, motion, size, followPointer?, blinkOnMount?, animateIdle? })`: update live state, preserving the player
   during continuous non-idle work/size changes. `active` is the view's intersecting, foreground,
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
   `blinkOnMount: true` opts into one native blink on the first eligible update, consumed
@@ -37,6 +37,11 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   blink; interruption cancels it and visibility return does not replay the greeting.
   Idle cleanup waits for the pending second blink and bounded .4-second blink;
   no timer, recurring idle blink or per-frame React updates are introduced.
+  `animateIdle: true` explicitly opts into the reference ordinary idle clips without
+  pointer following or shape cycling. It starts from the settled static pose and
+  lets the existing springs enter the clip. Turning it off eases the same player
+  back to rest before releasing frame work. Schedule enables it only during its
+  seven-second greeting; other idle callers retain their quiet default.
 - `hover()`: trigger the bounded existing shrink/rebound; eligible idle faces
   lazily start a resting player only for the hover excursion.
 - `dispose()`: idempotently release subscriptions/pointer ownership and remove
@@ -45,7 +50,7 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
 The React leaf owns standard observer/media/document Hooks; the runtime owns all
 imperative resources and per-frame DOM work. Mount paints a still face once.
 Inactive instances allocate no player or frame subscription. Idle faces without
-pointer following hold the exact reference static pose (looking up-right), with
+pointer following or `animateIdle` hold the exact reference static pose (looking up-right), with
 no player, pointer lease or frame work outside an opted-in first-visible blink. Hover briefly animates that settled pose,
 then restores it and releases the player/clock. Returning from work to idle does
 the same cleanup. Mouse-capable list/header faces retain live gaze even when idle.

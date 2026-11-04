@@ -1397,8 +1397,7 @@ button.yuri-mobile-worktree-label-trigger:active,
 
 .yuri-mobile-schedule-assistant-anchor {
   --yuri-schedule-assistant-size: var(--yuri-mobile-collapsing-action-size, 2.5rem);
-  --yuri-schedule-assistant-width: calc(11.25rem * var(--dpt-n, 1));
-  --yuri-schedule-assistant-travel: calc(var(--yuri-schedule-assistant-width) - var(--yuri-schedule-assistant-size));
+  --yuri-schedule-assistant-travel: calc(100% - var(--yuri-schedule-assistant-size));
   position: relative;
   display: block;
   width: var(--yuri-schedule-assistant-size);
@@ -1411,9 +1410,10 @@ button.yuri-mobile-schedule-assistant {
   top: 0;
   right: 0;
   isolation: isolate;
-  width: var(--yuri-schedule-assistant-width);
+  width: max-content;
   height: var(--yuri-schedule-assistant-size);
   padding: 0;
+  overflow: clip;
   border-radius: 999px;
   corner-shape: round;
   background: transparent;
@@ -1442,14 +1442,17 @@ button.yuri-mobile-schedule-assistant::before {
   position: absolute;
   top: 0;
   left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
   transform: translateX(var(--yuri-schedule-assistant-travel));
 }
 
 .yuri-mobile-schedule-assistant-label {
-  position: absolute;
-  inset-block: 0;
-  right: 0.75rem;
-  left: calc(var(--yuri-schedule-assistant-size) + 0.5rem);
+  position: relative;
+  height: 100%;
+  padding-inline: calc(var(--yuri-schedule-assistant-size) + 0.5rem) 0.75rem;
   display: flex;
   align-items: center;
   overflow: hidden;

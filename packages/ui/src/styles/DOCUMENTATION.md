@@ -190,6 +190,10 @@ opacity. After a short entrance it moves left, reveals localized text for five
 seconds, then retracts right without changing header/spacer/content geometry.
 The copy uses smaller, vertically centered multiline text within the same fixed
 capsule height; English explicitly breaks into two complete lines without ellipsis.
+Width is intrinsic to those lines plus the 8px avatar gap and 12px end padding
+(at the default scale), not a fixed 180px track. The moving face owns a full-width
+transform wrapper with a start-aligned avatar; capsule overflow is clipped so the
+translated wrapper cannot introduce horizontal page overflow.
 The closed clip excludes the invisible text from hit testing. Reduced motion
 uses discrete states rather than travel. Shared avatar visibility/motion gates
 own live eye animation; no per-frame React state or new animation clock is added.
