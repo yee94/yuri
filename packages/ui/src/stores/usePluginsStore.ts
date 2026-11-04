@@ -55,7 +55,7 @@ export type PluginMutationResult = {
 };
 
 export type RegistryResult =
-  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string }
+  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string; description?: string; readme?: string }
   | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[]; icon?: string }
   | { kind: 'npm-missing-package'; spec: string; name: string; error: string }
   | { kind: 'npm-malformed'; spec: string; error: string }

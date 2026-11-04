@@ -22,7 +22,7 @@ html → body → #root → .main-content-safe-area
       header.header-safe-area
       [data-primary-chat-content]
         transcript [data-scrollbar="chat"] → .yuri-chat-scroll-content
-          .chat-message-column[data-message-id]
+          [data-message-id] → .chat-message-column → message content
         .chat-input-column → composer surface
     aside[data-context-panel] → [data-context-layout] → preview / file rail
 body → portalled dialogs / menus / tooltips
@@ -49,6 +49,49 @@ Settings and global plugin pages can replace the session view. Mobile uses page/
 | Logo | `[data-yuri-logo]` | May be built-in `svg` or plugin `img`. Replace artwork with `yuri.branding`, not an SVG-path CSS selector. Does not include the wordmark, agent avatars, provider logos or startup splash. |
 | Mobile / glass materials | `.yuri-mobile-composer-surface`, `.yuri-mobile-overlay-surface` | Additional glass, pseudo-element and keyboard/safe-area layers. The overlay class is also used on desktop. Inspect `::before` / `::after` as well as background; retain positioning and viewport insets. |
 
+### Chat paint layers
+
+`ChatWorkspace` exposes the outer boundaries. Inside `[data-primary-chat-content]`, the active `ChatContainerContent` has its own full-height `bg-background` root. It is separate from the transparent workspace boundary. The normal conversation branch contains:
+
+```text
+[data-primary-chat-content]                         transparent boundary
+  … session-host wrappers …
+  div.relative.flex.flex-col.h-full.bg-background    ChatContainerContent root
+    div.relative.min-h-0.flex-1                     ChatViewport allocation
+      div.absolute.inset-0                         viewport positioner
+        [data-scrollbar="chat"].chat-scroll         actual ScrollShadow viewport
+          .yuri-chat-scroll-content                 scroll content
+            … MessageList / turn / virtualizer wrappers …
+            [data-message-id]                      message root
+              .chat-message-column                 reading-width wrapper
+                [data-user-message-bubble="true"]  user bubble, nested in layout/animation wrappers
+    div.relative.z-10.bg-background                 composer foot (viewport sibling)
+      div[aria-hidden="true"]                      desktop edge-fade gradient
+      … .chat-input-column …
+        div:has(> [data-composer-content="true"])   composer card
+          [data-composer-content="true"]
+            … [data-composer-input-shell="true"] …
+              [data-composer-highlight="true"]     optional highlight layer
+              … textarea[data-chat-input="true"]
+            [data-chat-input-footer="true"]        stacked-layout footer
+```
+
+The class-only root, positioner, desktop composer foot and edge fade have **no dedicated data selector**. Their utility classes describe the current structure, not unique identifiers. The desktop fade is an absolute `bottom-full` element with a background-image gradient from `--surface-background` to transparent; it is not the scroll viewport's background color. Mobile composer feet use `.yuri-mobile-composer-foot`, optionally `.yuri-mobile-composer-foot--overlay`.
+
+| State / content | Actual selector or structure | Paint ownership |
+| --- | --- | --- |
+| Normal conversation | `[data-scrollbar="chat"]` inside the ChatContainer root | Viewport/content wrappers normally have no background fill; root and composer foot independently use `--background`. |
+| Session hydration | `.chat-scroll` inside the ChatContainer root; no `data-scrollbar="chat"` on this branch | Skeleton scroll viewport additionally has `bg-background`. |
+| Session loading placeholder | `[data-session-view-loading="true"]` | Own `bg-background`; no transcript viewport yet. |
+| Draft / empty conversation | `.yuri-draft-center` when compact draft layout is active; otherwise unnamed layout wrappers | Root and composer placement wrappers use `bg-background`; a transcript selector need not exist. |
+| User message | `[data-message-id] [data-user-message-bubble="true"]` | Inline `background-color: var(--chat-user-message-bg)`; inline radius `--radius-xl`, bottom-right `--radius-sm`. The message root and `.chat-message-column` are not the bubble. |
+| User shell output | `[data-shell-result="true"]` | Replaces the ordinary user-bubble branch; no user-bubble fill/radius from `ChatMessage`. |
+| Assistant message | `[data-message-id].yuri-message-hover-scope` → `.chat-message-column` → content | Ordinary assistant wrapper is transparent, not a symmetric user bubble. Code, tools and other cards own their materials. `--chat-assistant-message-bg` exists as a token but is not applied to this outer wrapper. |
+| Composer card | `.chat-input-column div:has(> [data-composer-content="true"])` | Own fill, border, shadow and inline radius; its parent foot is a separate painted layer. |
+| Composer send / stop glyph | `[data-composer-send]`, `[data-composer-stop]` contain the circular icon | Inner icon uses `bg-foreground text-background`: `--foreground` paints the disk, `--background` paints the glyph via `currentColor`. |
+
+Source owners: `ChatWorkspace.tsx`, `ChatContainer.tsx`, `ChatMessage.tsx`, `ChatPromptComposer.tsx`, `ChatComposerSurface.tsx`, and `components/icons/StopIcon.tsx` under `packages/ui/src` (layout/chat subdirectories as listed below).
+
 ## Token map and cascade
 
 Theme values are CSS colors, not HSL channel tuples: use `var(--background)`, not `hsl(var(--background))`.
@@ -67,6 +110,8 @@ Theme values are CSS colors, not HSL channel tuples: use `var(--background)`, no
 | `interactive.hover` / `selection` / `focusRing` | `--interactive-hover`, `--interactive-selection`, `--interactive-focus-ring` | Interaction fills and focus; `--ring` aliases focusRing |
 
 The generator writes semantic variables and aliases as **separate values**. Changing only `--surface-background` does not update `--background`. A `yuri.theme` contribution keeps them coordinated automatically. For CSS-only overrides, change the variables actually consumed by the target.
+
+Variables are shared by consumers, not exclusively by visual regions. `--background` also supplies inverse foregrounds (`text-background`), while `--surface-background` supplies composer fills and edge gradients. `--chat-user-message-bg` comes from `chat.userMessageBackground`, falling back to `surface.elevated`; `--chat-assistant-message-bg` comes from `chat.assistantMessageBackground`, falling back to `surface.muted`. An element's `background` property affects that element's paint; changing an inherited variable affects all descendant consumers, including text and nested cards.
 
 Base variables live in `style#opencode-theme-variables`; plugin styles in `style[data-yuri-plugin-style]` follow that block. Light variables use `:root:not(.dark)` (specificity 0,2,0); dark uses `:root` and `.dark`. Aliases such as `--background`, `--sidebar` and `--popover` are `!important`. Later position alone cannot beat specificity or importance. Neither `html:root` nor `html[data-theme="light"]` beats `:root:not(.dark)` at equal importance. Use `:root:root` for a mode-independent equal-specificity rule, or `:root[data-theme="light"]` / `:root[data-theme="dark"]` for a mode-specific one, with `!important` only for important declarations you intend to override.
 
@@ -141,7 +186,7 @@ This keeps transcript, input and column-aligned controls on the same width syste
 Distinguish three layers: **CSS paint**, **browser canvas**, **native window material**. `background: transparent` removes only that element's paint; descendants, ancestors, pseudo-elements, gradients and native material may still be visible. `opacity` affects text and controls too, so it is not a substitute for background alpha.
 
 - For a translucent block, change its material and preserve foreground/hover/focus contrast. Inspect all painted layers in the block before broadening the override.
-- For a transparent app canvas, coordinate `--surface-background` / `--background` and the shell wrappers; decide separately whether sidebar, composer, cards, popups and syntax surfaces should remain opaque. This is a scope decision, not a universal “set every surface to transparent” recipe.
+- Canvas wrappers, message bubbles, composer cards and popups are separate paint owners. Their shared color variables also serve foregrounds and gradients; the ownership table above identifies element backgrounds separately from those tokens.
 - Native macOS vibrancy uses `data-yuri-vibrancy`, `data-yuri-vibrancy-ready` and `.yuri-vibrancy-surface`. The sidebar paints `--sidebar` until ready, then `--sidebar-vibrancy-overlay`. Suppressed/native-browser-visible states and reduced-transparency preferences restore opacity. These are host state signals; CSS must not manufacture them to enable native behavior.
 - CSS `backdrop-filter` and native vibrancy are different layers. Removing CSS blur does not remove native blur. GUI appearance contracts expose Logo/Dock resources and CSS, not a general transparent-window/vibrancy control. A web preview cannot prove desktop see-through behavior.
 - Host CSS stops at iframe/native-webview boundaries; use the embedded content's own theming contract where available.

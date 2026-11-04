@@ -54,6 +54,10 @@ Question auto-delegation uses the Web-owned `pause-store` as well as the shared 
   - `/api/config/providers/sources` bridges the requested directory to Web's safe runtime metadata projection, including external credential methods without fetching raw credentials. Source read failures remain failures. Provider deletion with `scope=config` shares Web's all-physical-document cleanup without reload; partial writes remain retryable. The shared catalog projection also derives reasoning support from native capabilities/variants and retains image input modalities.
   - Plugin mutations persist native V2 `plugins` strings/`{ package, options }` objects. Legacy `plugin` tuples remain readable and migrate on mutation of their source document. Native arrays (including empty arrays) take precedence; saves remove the shadowed legacy key and preserve unrelated settings through the shared atomic writer.
   - Plugin registry responses include sanitized top-level package `icon` for npm latest metadata and local `path-ok` results, using Web's shared `plugin-icon.js` policy. Local built entry files resolve their nearest package manifest. Missing/invalid optional artwork does not change plugin path status; nested icon fields are not fallbacks. Settings → Plugins uses package artwork directly; GUI sidebar/titlebar entries use official named icons without a package-image override.
+    The registry bridge also forwards optional `details=true`, returning bounded
+    developer descriptions and README content with the same opt-in contract as
+    the Host. The Host-backed three-step setup tour is not mounted in standalone
+    VS Code, whose speech service and project ownership differ.
 
 OpenCode client/schema accept compatible 2.x updates and fresh CLI installs resolve latest stable 2.x; execution and
 startup compatibility require the **running service** to be 2.x at `2.0.20` or newer.

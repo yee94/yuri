@@ -20,6 +20,10 @@ The entry and appearance reference route existing-block CSS work there first.
 DOM hooks are version-sensitive implementation guidance, not new public APIs.
 When these owners change, update their map and recipes alongside the owning docs.
 
+The authoring workflow defaults to directly written `gui-experimental.cjs` with
+host-provided modules and inline assets. Local edits use the existing revision
+watcher; compilation is only an optional path for typed/JSX or bundled sources.
+
 ## Admission ownership
 
 - Shared-service sessions: the existing scheduled-task admission route installs

@@ -10,12 +10,12 @@ import { GuiPluginHost } from './host';
 
 const hosts: GuiPluginHost[] = [];
 afterEach(() => { hosts.splice(0).forEach((host) => host.dispose()); document.body.replaceChildren(); localStorage.clear(); });
-async function example(name: string) {
+async function example(name: string, language: 'ts' | 'js' = 'ts') {
     const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../web/server/lib/gui-customization/skill/references', `${name}.md`);
     const markdown = await fs.readFile(file, 'utf8');
-    const source = markdown.match(/```ts\n([\s\S]*?)\n```/)?.[1];
+    const source = markdown.match(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```'))?.[1];
     if (!source) throw new Error('Missing reference example');
-    return ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    return language === 'js' ? source : ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 }
 function fixture() {
     const openPage = vi.fn(() => true);
@@ -24,6 +24,18 @@ function fixture() {
     hosts.push(host);
     return { host, openPage, files };
 }
+it('loads the shipped direct-CJS example without transpilation and cleans its contributions', async () => {
+    const { host } = fixture();
+    host.install('skin', { code: await example('workflow', 'js'), options: {}, revision: '1' });
+    expect(host.getSnapshot().plugins[0].status).toBe('active');
+    expect(host.appearanceCatalog.getSnapshot().themes[0].metadata.name).toBe('Studio Dark');
+    expect(host.appearanceCatalog.getSnapshot().branding[0].logo?.dark).toMatch(/^data:image\/svg\+xml/);
+    expect(document.querySelector('style[data-yuri-plugin-style="skin"]')?.textContent).toContain('[data-yuri-logo]');
+    host.uninstall('skin');
+    expect(host.appearanceCatalog.getSnapshot().themes).toHaveLength(0);
+    expect(host.appearanceCatalog.getSnapshot().branding).toHaveLength(0);
+    expect(document.querySelector('style[data-yuri-plugin-style="skin"]')).toBeNull();
+});
 it('runs the shipped global-page reference through the real plugin context and titlebar', async () => {
     const { host, openPage } = fixture();
     host.install('studio', { code: await example('global-pages'), options: { message: 'Own config reached the page' }, revision: '1' });

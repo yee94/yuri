@@ -17,6 +17,8 @@ const NPM_REGISTRY_BASE = 'https://registry.npmjs.org';
  * @property {string[]} versions
  * @property {Record<string, string>} distTags
  * @property {string} [icon] sanitized top-level package.json `icon` of the latest release
+ * @property {string} [description] developer-provided latest package description
+ * @property {string} [readme] developer-provided README, bounded to 128 KiB characters
  *
  * @typedef {Object} NpmLookupError
  * @property {false} ok
@@ -104,7 +106,7 @@ function lookupViaNpmCli(name, cwd) {
   return new Promise((resolve) => {
     execFile(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
-      ['view', name, 'dist-tags', 'versions', 'icon', '--json'],
+      ['view', name, 'dist-tags', 'versions', 'icon', 'description', 'readme', '--json'],
       {
         cwd: cwd || undefined,
         timeout: NPM_CLI_TIMEOUT_MS,
@@ -129,7 +131,10 @@ function lookupViaNpmCli(name, cwd) {
             ? data.versions.filter((version) => typeof version === 'string')
             : typeof data?.versions === 'string' ? [data.versions] : [];
           const icon = sanitizePluginIcon(data?.icon);
-          resolve({ ok: true, latest: distTags.latest ?? null, versions, distTags, ...(icon ? { icon } : {}) });
+          resolve({ ok: true, latest: distTags.latest ?? null, versions, distTags, ...(icon ? { icon } : {}),
+            ...(typeof data.description === 'string' ? { description: data.description.slice(0, 4096) } : {}),
+            ...(typeof data.readme === 'string' ? { readme: data.readme.slice(0, 131072) } : {}),
+          });
         } catch {
           resolve(null);
         }
@@ -182,6 +187,8 @@ async function lookupNpmPackageOverHttp(name) {
         versions: parseVersions(data?.versions),
         distTags,
         ...(icon ? { icon } : {}),
+        ...(typeof data?.versions?.[latest]?.description === 'string' ? { description: data.versions[latest].description.slice(0, 4096) } : {}),
+        ...(typeof data.readme === 'string' ? { readme: data.readme.slice(0, 131072) } : {}),
       };
     }
 

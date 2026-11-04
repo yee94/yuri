@@ -52,7 +52,7 @@ export type PluginFile = {
 };
 
 export type PluginRegistryResult =
-  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string }
+  | { kind: 'npm-ok'; spec: string; name: string; currentVersion: string | null; latestVersion: string | null; versions: string[]; hasUpdate: boolean; icon?: string; description?: string; readme?: string }
   | { kind: 'npm-missing-version'; spec: string; name: string; currentVersion: string; latestVersion: string | null; versions: string[]; icon?: string }
   | { kind: 'npm-missing-package'; spec: string; name: string; error: string }
   | { kind: 'npm-malformed'; spec: string; error: string }
@@ -744,7 +744,7 @@ export const deletePluginDirFile = (id: string, workingDirectory?: string): void
 };
 
 type NpmLookupResult =
-  | { ok: true; latest: string | null; versions: string[]; icon?: string }
+  | { ok: true; latest: string | null; versions: string[]; icon?: string; description?: string; readme?: string }
   | { ok: false; status: number | 'network'; error: string };
 
 const npmInfoCache = new Map<string, { fetchedAt: number; payload: NpmLookupResult }>();
@@ -758,14 +758,17 @@ const lookupNpmPackage = async (name: string): Promise<NpmLookupResult> => {
       signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {
-      const data = await response.json() as { versions?: Record<string, { icon?: unknown }>; 'dist-tags'?: { latest?: unknown } };
+      const data = await response.json() as { versions?: Record<string, { icon?: unknown; description?: unknown }>; 'dist-tags'?: { latest?: unknown }; readme?: unknown };
       const latest = typeof data['dist-tags']?.latest === 'string' ? data['dist-tags'].latest : null;
       const icon = sanitizePluginIcon(latest ? data.versions?.[latest]?.icon : undefined);
+      const description = latest ? data.versions?.[latest]?.description : undefined;
       return {
         ok: true,
         latest,
         versions: isPlainObject(data.versions) ? Object.keys(data.versions) : [],
         ...(icon ? { icon } : {}),
+        ...(typeof description === 'string' ? { description: description.slice(0, 4096) } : {}),
+        ...(typeof data.readme === 'string' ? { readme: data.readme.slice(0, 131072) } : {}),
       };
     }
     if (response.status === 404) return { ok: false, status: 404, error: 'Package not found' };
@@ -799,7 +802,7 @@ const getNpmInfo = async (name: string, forceRefresh = false): Promise<NpmLookup
 
 export const queryPluginRegistry = async (
   specs: string[],
-  opts: { refresh?: boolean; workingDirectory?: string } = {},
+  opts: { refresh?: boolean; workingDirectory?: string; details?: boolean } = {},
 ): Promise<{ results: PluginRegistryResult[] }> => {
   const uniqueSpecs = Array.from(new Set(specs.filter((spec) => spec.length > 0)));
   if (uniqueSpecs.length > 100) {
@@ -884,6 +887,7 @@ export const queryPluginRegistry = async (
       versions: info.versions,
       hasUpdate: currentVersion !== null && isExactPluginSemver(currentVersion) && currentVersion !== info.latest,
       ...(info.icon ? { icon: info.icon } : {}),
+      ...(opts.details ? { description: info.description ?? '', readme: info.readme ?? '' } : {}),
     });
   }
   return { results };

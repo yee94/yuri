@@ -1,5 +1,10 @@
 # Provider connections
 
+The setup tour can pass `initialConnectionId` when opening the existing Provider
+editor. This seeds the add-connection form on its first render; validation waits
+for a successful native integration catalog before falling back to the chooser.
+Connected providers still use the ordinary selected-provider detail path.
+
 `ProvidersPage` preserves the shared Settings presentation. The runtime generation
 and selected directory key its content lifetime, including credential drafts.
 The provider sidebar has no project selector; it follows the application's current

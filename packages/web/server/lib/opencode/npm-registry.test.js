@@ -92,6 +92,27 @@ describe('npm registry client', () => {
     expect(result).toEqual({ ok: true, latest: null, versions: [], distTags: {} });
   });
 
+  test('exposes bounded developer description and README from HTTP and npm CLI without substituting content', async () => {
+    const description = 'Developer description';
+    const readme = '# Developer README\n\nInstallation and usage.';
+    fetchMock.mockImplementation(() => jsonResponse({
+      'dist-tags': { latest: '1.2.0' }, versions: { '1.2.0': { description } }, readme,
+    }));
+    expect(await npm.lookupNpmPackage('tour-plugin')).toMatchObject({ description, readme });
+    npm.npmCli.lookup = originalCliLookup;
+    execFileMock.mockImplementation((_command, _args, _options, callback) => callback(null, JSON.stringify({
+      'dist-tags': { latest: '1.2.0' }, versions: ['1.2.0'], description, readme,
+    }), ''));
+    expect(await npm.lookupNpmPackage('tour-plugin')).toMatchObject({ description, readme });
+    npm.npmCli.lookup = async () => null;
+    fetchMock.mockImplementation(() => jsonResponse({
+      'dist-tags': { latest: '1.2.0' }, versions: { '1.2.0': { description: 'x'.repeat(5000) } }, readme: 'y'.repeat(150000),
+    }));
+    const bounded = await npm.lookupNpmPackage('large-plugin');
+    expect(bounded.description).toHaveLength(4096);
+    expect(bounded.readme).toHaveLength(131072);
+  });
+
   test('404 returns package not found', async () => {
     fetchMock.mockImplementation(() => jsonResponse({}, 404));
 
@@ -228,7 +249,7 @@ describe('npm registry client', () => {
     const result = await npm.getNpmInfo('@scope/pkg', { cwd: '/proj' });
 
     expect(result.icon).toBe('https://cdn.example/a.png');
-    expect(execFileMock).toHaveBeenCalledWith(expect.any(String), ['view', '@scope/pkg', 'dist-tags', 'versions', 'icon', '--json'],
+    expect(execFileMock).toHaveBeenCalledWith(expect.any(String), ['view', '@scope/pkg', 'dist-tags', 'versions', 'icon', 'description', 'readme', '--json'],
       expect.objectContaining({ cwd: '/proj' }), expect.any(Function));
     expect(fetchMock).not.toHaveBeenCalled();
   });

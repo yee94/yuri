@@ -93,15 +93,19 @@ export const pluginRegistryQueryOptions = (
   specs: readonly string[],
   force = false,
   transport = getRuntimeTransportIdentity(),
+  details = false,
 ) => {
   const normalizedDirectory = normalizeDirectory(directory);
   const normalizedSpecs = normalizePluginRegistrySpecs(specs);
   return {
-    queryKey: pluginRegistryQueryKey(normalizedDirectory, normalizedSpecs, force, transport),
+    queryKey: details
+      ? [...pluginRegistryQueryKey(normalizedDirectory, normalizedSpecs, force, transport), 'details']
+      : pluginRegistryQueryKey(normalizedDirectory, normalizedSpecs, force, transport),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Record<string, RegistryResult>> => {
       const results: Record<string, RegistryResult> = {};
       for (const chunk of chunkSpecs(normalizedSpecs)) {
-        const response = await runtimeFetch(buildRegistryUrl(chunk, force, normalizedDirectory), {
+        const url = buildRegistryUrl(chunk, force, normalizedDirectory);
+        const response = await runtimeFetch(details ? `${url}&details=true` : url, {
           headers: buildDirectoryHeaders(normalizedDirectory),
           signal,
         });

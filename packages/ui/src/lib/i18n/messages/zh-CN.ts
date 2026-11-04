@@ -1,7 +1,9 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './zh-CN.settings';
+import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...tourMessages['zh-CN'],
   'settings.switch.off': '关闭',
   'settings.switch.on': '开启',
   'miniChat.actions.failed': '窗口操作失败，请重试。',

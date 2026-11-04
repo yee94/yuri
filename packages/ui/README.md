@@ -76,6 +76,15 @@ The full-text index startup screen keeps the same transparent 120 × 120 CSS-pix
 
 ## Add-project directory picker
 
+Fresh desktop/web workspaces show the three-step setup tour (models, plugins,
+voice) instead of automatically opening Add Project. The decision waits for
+settings hydration and a successful authoritative project snapshot. Existing
+workspaces are not re-onboarded when their last project is removed. Progress and
+postponement are saved per connected instance; the command palette's **Open setup
+tour** resumes it. Hosted/native mobile supports explicit reopening; standalone
+VS Code, embedded chat and Mini Chat do not mount the tour. See
+`src/components/onboarding/DOCUMENTATION.md` for configuration and failure semantics.
+
 `DirectoryExplorerDialog` shares the desktop global-search translucent overlay
 material. Its directory list is a transparent scrolling region, never a nested
 card with its own fill, border or shadow. Header, path field, directory content

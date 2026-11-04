@@ -4,7 +4,7 @@ import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import type { DesktopSettings } from '@/lib/desktop';
 import { withConfigQueryDeadline } from './configQueryDeadline';
 
-const projectOrderQueryOptions = (transport = getRuntimeTransportIdentity()) => ({
+export const projectOrderQueryOptions = (transport = getRuntimeTransportIdentity()) => ({
   queryKey: [transport, 'settings', 'project-order'] as const,
   queryFn: ({ signal }: { signal: AbortSignal }) => withConfigQueryDeadline(signal, async (signal) => {
     if (getRuntimeTransportIdentity() !== transport) throw new Error('Project order runtime changed');

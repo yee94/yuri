@@ -1,6 +1,6 @@
 # Appearance contracts
 
-Use `Plugin`, `Registry`, and `Style` from `@opencode/plugin/gui`. The package build/install instructions are in [workflow](workflow.md).
+Use `Plugin`, `Registry`, and `Style` from `@opencode/plugin/gui`. Start with the [direct-CJS package](workflow.md); the TypeScript below documents shapes, not a compilation requirement.
 
 ## Activation and priority
 
@@ -43,9 +43,9 @@ The host owns a collision-free theme ID `gui:` + `JSON.stringify([pluginId, id])
 
 ## CSS: official `Style`
 
-```ts
-import css from './skin.css?inline'
-ctx.add(Style, css)
+```js
+const { Style } = require('@opencode/plugin/gui')
+ctx.add(Style, `[data-yuri-logo] { border-radius: 12%; }`)
 ```
 
 CSS is active immediately while the plugin is enabled. Declarative resource priority does not reorder style elements; normal cascade rules still apply. For existing blocks, read [UI structure and styles](ui-surfaces.md): it maps material owners, selectors, theme aliases, specificity, scoped recipes and native transparency boundaries. It also explains why changing a semantic variable alone may leave its generated alias unchanged.
@@ -69,7 +69,7 @@ ctx.add(Branding, {
 At least one of `logo` / `dockIcon` is required. `svg` / `png` are the dark/default resource; the `light*` resource is optional. Logo and Dock are resolved independently, so a Logo-only plugin does not suppress another plugin's Dock icon. Branding does not rename the app or replace its wordmark text.
 
 - Logos: inline complete SVG text with SVG namespace; maximum 16 KiB UTF-8 each. Static geometry, groups, gradients, defs, clipPath, mask and local `#id` references are allowed. Scripts, event handlers, embedded HTML, stylesheets, inline style, external references, DTD and processing instructions are rejected. Resources render as images, never injected SVG markup.
-- Dock: inline `data:image/png;base64,...`, at most 2 MiB of URL text, valid PNG, dimensions 1–1024 per side. Import with `?inline` as text only when it really yields a PNG data URL, or generate the data URL at build time. No filesystem path or remote image URL. Requires trusted local macOS Electron; no plugin `main` needed. Preview builds or older shells may reject the capability. Other runtimes still support the logo.
+- Dock: inline `data:image/png;base64,...`, at most 2 MiB of URL text, valid PNG, dimensions 1–1024 per side. Encode the chosen image once and embed the data URL in the CJS file. No filesystem path or remote image URL. Requires trusted local macOS Electron; no plugin `main` needed. Preview builds or older shells may reject the capability. Other runtimes still support the logo.
 - Maximum 8 branding entries/plugin, 64/window; combined serialized appearance contributions 8 MiB/plugin, 16 MiB/window. IDs/titles are nonempty strings up to 128 characters; IDs are unique within each registry/plugin.
 - Unregister, disable, reload, failure and runtime switch withdraw resources. If several local windows apply a Dock icon, the newest active window update wins; closing/releasing it restores the previous window's icon or Yuri default. System appearance changes cannot overwrite an active plugin icon.
 - Invalid appearance contributions or a failed Dock application fail the owning plugin and clean its contributions; unrelated plugins remain active. Diagnostics appear in plugin settings. These contracts do not grant a JS sandbox.

@@ -50,7 +50,7 @@ function SpeechIdSelect({ value, onChange, options, label, allowCustom = true, d
     </div>;
 }
 
-export function VolcengineSpeechSettings({ mode, form }: { mode: 'tts' | 'asr'; form: ReturnType<typeof useSpeechSettingsForm> }) {
+export function VolcengineSpeechSettings({ mode, form, showCredentials = true }: { mode: 'tts' | 'asr'; form: ReturnType<typeof useSpeechSettingsForm>; showCredentials?: boolean }) {
     const { t } = useI18n();
     const active = useRef(true);
     useEffect(() => {
@@ -82,12 +82,12 @@ export function VolcengineSpeechSettings({ mode, form }: { mode: 'tts' | 'asr'; 
 
     return (
         <>
-            <SettingsRow itemId={`voice.volcengine-${mode}-key`} label={t('settings.voice.page.field.apiKey')} description={<>
+            {showCredentials && <SettingsRow itemId={`voice.volcengine-${mode}-key`} label={t('settings.voice.page.field.apiKey')} description={<>
                 {t('settings.voice.volcengine.keyHelp')}{' '}
                 <a href="https://console.volcengine.com/speech/new" target="_blank" rel="noreferrer" className="text-primary underline">{t('settings.voice.volcengine.openLink')}</a>
             </>}>
                 <Input type="password" autoComplete="off" disabled={saving} placeholder={settings.configured && draft.apiKey === undefined ? '••••••••' : 'API Key'} value={draft.apiKey ?? ''} onChange={(event) => edit({ apiKey: event.target.value })} aria-label={t('settings.voice.page.field.apiKey')} />
-            </SettingsRow>
+            </SettingsRow>}
             {mode === 'tts' && <>
             <SettingsRow itemId="voice.volcengine-resource" label={t('settings.voice.volcengine.resource')}>
                 <SpeechIdSelect value={resourceId} disabled={saving} onChange={(resourceId) => edit({ resourceId })} options={VOLCENGINE_TTS_RESOURCES} label={t('settings.voice.volcengine.resource')} />
@@ -107,7 +107,7 @@ export function VolcengineSpeechSettings({ mode, form }: { mode: 'tts' | 'asr'; 
                     description: t(option.value.endsWith('.duration') ? 'settings.voice.volcengine.durationHelp' : 'settings.voice.volcengine.concurrentHelp'),
                 }))} label={t('settings.voice.volcengine.asrResource')} allowCustom={false} />
             </SettingsRow>
-            <SettingsRow itemId="voice.volcengine-asr-context" className="yuri-settings-split-row-stacked" label={t('settings.voice.volcengine.asrContext')} description={t('settings.voice.volcengine.asrContextHelp')}>
+            <SettingsRow itemId="voice.volcengine-asr-context" className="yuri-settings-split-row-stacked" controlClassName="!w-full !max-w-none" label={t('settings.voice.volcengine.asrContext')} description={t('settings.voice.volcengine.asrContextHelp')}>
                 <Textarea rows={5} maxLength={2000} disabled={saving} value={settings.asrContext} onChange={(event) => edit({ asrContext: event.target.value })} aria-label={t('settings.voice.volcengine.asrContext')} />
             </SettingsRow>
             <SettingsRow itemId="voice.volcengine-asr-test" label={t('settings.voice.volcengine.asrTest')} description={t('settings.voice.volcengine.testHelp')}>

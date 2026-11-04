@@ -17,12 +17,16 @@ Use a standard OpenCode GUI plugin to change the running Yuri UI without modifyi
    - Custom file suffixes, parsers, inline/mobile previews and file icons: [file previews](references/file-previews.md).
    - Preview toolbar placement, PDF/PNG/HTML export and iframe snapshot boundaries: [preview actions and exports](references/preview-exports.md).
    - Panels, commands, settings, files, RPC, lifecycle, runtime support: [GUI API](references/gui-api.md).
-   - Every implementation: [package, build, install, verification and rollback](references/workflow.md).
-3. Build only the requested capabilities in a user-approved plugin directory. Use declarative registries for appearance, window APIs for GUI behavior, and a server or native part only when the required capability needs it. Keep dependencies aligned with the supported SDK contract and emit the GUI as one prebuilt CommonJS file.
-4. Build and inspect the actual artifact. Preserve unrelated global OpenCode configuration. Install only when asked, using the plugin package's global config entry; project-only configuration does not provide window GUI inventory.
+   - Every implementation: [direct-CJS package, installation, updates and rollback](references/workflow.md); compilation is an optional branch.
+3. Default to `package.json` plus a directly authored `gui-experimental.cjs`, using host-provided modules and inline CSS/assets. This needs no dependency install or compilation. Implement only the requested capabilities; use the optional build branch when TS/TSX or dependency bundling is actually needed.
+4. Syntax-check the exported CJS file and install within the requested scope, preserving unrelated global OpenCode configuration. A local CJS edit reloads through the existing watcher; project-only configuration does not provide window GUI inventory.
 5. Verify each requested capability in the target client, including its failure and cleanup behavior; use the matching reference's verification criteria. Finish with the plugin directory, changed settings, verified behavior, known limits, and how to undo it.
 
 References distinguish host contracts from illustrative templates and case studies. Choose rendering, authentication and file formats for the current requirement; case-study protocols and dependencies belong to those integrations.
+
+## Source fallback
+
+If the references and target UI leave the relevant selector, style owner or extension behavior unclear, inspect the implementation at https://github.com/yee94/yuri. Prefer the tag matching the installed Yuri version; use `main` for development builds. Start from the source-owner paths in [UI structure and styles](references/ui-surfaces.md) or the matching capability reference, and read the owning component/style/host module to resolve the specific uncertainty. Repository source is a lookup fallback; customization still goes in the plugin.
 
 ## Boundaries
 

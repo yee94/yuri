@@ -700,7 +700,7 @@ export async function handleConfigBridgeMessage(
     }
 
     case 'api:config/plugins': {
-      const { method, target, pluginId, body, directory, specs, refresh } = (payload || {}) as {
+      const { method, target, pluginId, body, directory, specs, refresh, details } = (payload || {}) as {
         method?: string;
         target?: 'list' | 'registry' | 'entry' | 'file';
         pluginId?: string;
@@ -708,6 +708,7 @@ export async function handleConfigBridgeMessage(
         directory?: string;
         specs?: string[];
         refresh?: boolean;
+        details?: boolean;
       };
       const normalizedMethod = typeof method === 'string' && method.trim() ? method.trim().toUpperCase() : 'GET';
       const workingDirectory = resolveWorkingDirectory(ctx, directory);
@@ -727,6 +728,7 @@ export async function handleConfigBridgeMessage(
       if (target === 'registry' && normalizedMethod === 'GET') {
         const data = await queryPluginRegistry(Array.isArray(specs) ? specs : [], {
           refresh: refresh === true,
+          details: details === true,
           workingDirectory,
         });
         return { id, type, success: true, data };

@@ -44,8 +44,8 @@ const editKey = async (mode: 'tts' | 'asr', value: string) => {
         keyInput(mode).dispatchEvent(new Event('input', { bubbles: true }));
     });
 };
-const mount = async () => {
-    await act(async () => root.render(<QueryClientProvider client={queryClient}><VoiceSettings /></QueryClientProvider>));
+const mount = async (mode?: 'asr' | 'tts') => {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><VoiceSettings section={mode} /></QueryClientProvider>));
     await flush();
 };
 
@@ -69,6 +69,16 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); queryClient.clear(); onlineManager.setOnline(true); vi.restoreAllMocks(); localStorage.clear(); });
 
 describe('Host-backed speech settings', () => {
+    it.each(['asr', 'tts'] as const)('opens only the requested tour %s editor without changing saved providers', async (mode) => {
+        await mount(mode);
+        expect(section(mode)).not.toBeNull();
+        expect(section(mode === 'asr' ? 'tts' : 'asr')).toBeNull();
+        expect(writes).toHaveLength(0);
+        await editKey(mode, 'fixture-key');
+        await act(async () => button(mode).click());
+        await flush();
+        expect(writes.at(-1)).toEqual({ apiKey: 'fixture-key' });
+    });
     it('edits and clears recognition context through the Host save flow, retaining drafts on failure', async () => {
         await mount();
         const input = section('asr').querySelector('textarea')!;

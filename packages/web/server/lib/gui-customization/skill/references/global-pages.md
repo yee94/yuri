@@ -4,7 +4,7 @@ Yuri provides a global **main-content placement**, not a new renderer. `yuri.pag
 
 ## Complete window entry
 
-Use the package and Vite config from [workflow](workflow.md), replacing `src/gui.tsx` with:
+This typed example shows the page contract. For the default direct-CJS package in [workflow](workflow.md), replace imports/exports with `require`/`module.exports` and omit type annotations; it uses no JSX. Retain TypeScript through the optional build branch only when needed.
 
 ```ts
 import { Command, Contract, Plugin, Registry, TitlebarItem, usePlugin, type IconName, type TitlebarItem as TitlebarContribution } from '@opencode/plugin/gui'

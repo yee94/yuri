@@ -1,6 +1,8 @@
 import { settingsDict } from './en.settings';
+import { tourMessages } from './tour';
 
 export const dict = {
+  ...tourMessages.en,
   'settings.switch.off': 'Off',
   'settings.switch.on': 'On',
   'remoteDesktop.title': 'Remote desktop',

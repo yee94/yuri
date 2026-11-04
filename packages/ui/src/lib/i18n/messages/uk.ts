@@ -1,7 +1,9 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './uk.settings';
+import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...tourMessages.uk,
   'settings.switch.off': 'Вимк.',
   'settings.switch.on': 'Увімк.',
   'miniChat.actions.failed': 'Не вдалося виконати дію з вікном. Спробуйте ще раз.',

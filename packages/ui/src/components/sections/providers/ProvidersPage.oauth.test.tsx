@@ -69,8 +69,8 @@ async function deleteProvider() {
   expect(confirm).toBeTruthy();
   await act(async () => confirm.click());
 }
-async function mount(withSidebar = false) {
-  await act(async () => root.render(<QueryClientProvider client={cache}>{withSidebar && <ProvidersSidebar />}<ProvidersPage /></QueryClientProvider>));
+async function mount(withSidebar = false, initialConnectionId?: string) {
+  await act(async () => root.render(<QueryClientProvider client={cache}>{withSidebar && <ProvidersSidebar />}<ProvidersPage initialConnectionId={initialConnectionId} /></QueryClientProvider>));
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 }
 async function start() {
@@ -78,6 +78,19 @@ async function start() {
   await click('settings.providers.page.actions.reconnect');
   await click('settings.providers.page.actions.connect');
 }
+
+it('opens a tour provider choice directly and preserves it while the integration catalog loads', async () => {
+  state.selected = '__add_provider__';
+  let resolve!: (value: unknown) => void;
+  state.integrations.mockImplementation(() => new Promise((done) => { resolve = done; }));
+  await mount(false, 'anthropic');
+  expect(host.querySelector('[data-settings-item="providers.auth"]')).not.toBeNull();
+  expect(host.querySelector('[data-custom-provider-form]')).toBeNull();
+  await act(async () => { resolve({ data: [{ id: 'anthropic', name: 'Anthropic', connections: [], methods: [{ id: 'key', type: 'key', label: 'API Key' }] }] }); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(host.querySelector('[data-settings-item="providers.auth"]')?.textContent).toContain('Anthropic');
+  expect(host.querySelector('[data-custom-provider-form]')).toBeNull();
+});
 async function fill(selector: string, value: string) {
   if (selector === 'input[type="password"]' && !host.querySelector(selector)) await click('settings.providers.page.auth.apiKeyLabel');
   const input = host.querySelector<HTMLInputElement>(selector)!;

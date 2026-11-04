@@ -12,6 +12,7 @@ import { HelpDialog } from '../ui/HelpDialog';
 import { OpenCodeStatusDialog } from '../ui/OpenCodeStatusDialog';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
 import { SessionDialogs } from '@/components/session/SessionDialogs';
+import { SetupTourHost } from '@/components/onboarding/SetupTourHost';
 import { ScheduledTasksWorkspace } from '@/components/session/ScheduledTasksDialog';
 import { GuiPluginPage } from '@/components/gui-plugins/GuiPluginPage';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
@@ -373,6 +374,7 @@ export const MainLayout: React.FC = () => {
                 <HelpDialog />
                 <OpenCodeStatusDialog />
                 <SessionDialogs />
+                <SetupTourHost />
 
                 {isMobile ? (
                 <DrawerProvider value={{

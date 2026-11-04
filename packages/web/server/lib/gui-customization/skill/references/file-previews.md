@@ -4,7 +4,7 @@ A file parser/viewer uses official `LinkHandler` + `Panel` + `PanelTab.file`, op
 
 ## Complete JSON-format viewer
 
-This working entry recognizes `.report.json`, parses JSON into formatted text, retains its DOM on background updates, and localizes errors. Use the package/build config in [workflow](workflow.md). A real visual report renderer replaces only the parsing/rendering part.
+This typed entry recognizes `.report.json`, parses JSON into formatted text, retains its DOM on background updates, and localizes errors. For the default direct-CJS package in [workflow](workflow.md), use `require`/`module.exports` and omit type annotations; the example uses no JSX. The optional build branch supports retaining TypeScript. A visual report renderer replaces the parsing/rendering part.
 
 ```ts
 import { bindPlugin, createKeyed, LinkHandler, Panel, Plugin, usePlugin, type PanelProps, type PanelTab } from '@opencode/plugin/gui'

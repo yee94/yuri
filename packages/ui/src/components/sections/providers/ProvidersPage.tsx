@@ -178,13 +178,13 @@ export const buildAuthMethodsFromIntegrations = (
   return { methodsByProvider, integrationIdByProvider };
 };
 
-export const ProvidersPage: React.FC = () => {
+export const ProvidersPage: React.FC<{ initialConnectionId?: string }> = ({ initialConnectionId }) => {
   const generation = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
   const directory = useDirectoryStore((state) => state.currentDirectory);
-  return <ProvidersPageContent key={`${generation}:${directory}`} />;
+  return <ProvidersPageContent key={`${generation}:${directory}:${initialConnectionId ?? ''}`} initialConnectionId={initialConnectionId} />;
 };
 
-const ProvidersPageContent: React.FC = () => {
+const ProvidersPageContent: React.FC<{ initialConnectionId?: string }> = ({ initialConnectionId }) => {
   const { t } = useI18n();
   const providers = useConfigStore((state) => state.providers);
   const selectedProviderId = useConfigStore((state) => state.selectedProviderId);
@@ -209,14 +209,14 @@ const ProvidersPageContent: React.FC = () => {
   const [modelQuery, setModelQuery] = React.useState('');
   const [editingModel, setEditingModel] = React.useState<{ providerId: string; model: CustomProviderModelDraft; inputModalities: readonly string[] } | null>(null);
   const [removedModel, setRemovedModel] = React.useState<{ providerId: string; modelId: string } | null>(null);
-  const [showProviderChoices, setShowProviderChoices] = React.useState(selectedProviderId === ADD_PROVIDER_ID);
+  const [showProviderChoices, setShowProviderChoices] = React.useState(!initialConnectionId && selectedProviderId === ADD_PROVIDER_ID);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [pendingOAuth, setPendingOAuth] = React.useState<{ providerId: string; methodIndex: number; methodID: string; attemptID: string; mode: 'auto' | 'code' } | null>(null);
   const [oauthCodes, setOauthCodes] = React.useState<Record<string, string>>({});
   const [oauthDetails, setOauthDetails] = React.useState<Record<string, { url?: string; instructions?: string; userCode?: string; mode: 'auto' | 'code' }>>({});
   const availableLoading = connectionQuery.isPending;
   const availableError = connectionQuery.isError ? t('settings.providers.page.state.unableToLoadProviderList') : null;
-  const [candidateProviderId, setCandidateProviderId] = React.useState(CUSTOM_PROVIDER_ID);
+  const [candidateProviderId, setCandidateProviderId] = React.useState(initialConnectionId ?? CUSTOM_PROVIDER_ID);
   const [providerSearchQuery, setProviderSearchQuery] = React.useState('');
   const [showAuthPanel, setShowAuthPanel] = React.useState(false);
   const isAddMode = selectedProviderId === ADD_PROVIDER_ID || selectedProviderId === CUSTOM_PROVIDER_ID;
@@ -279,10 +279,11 @@ const ProvidersPageContent: React.FC = () => {
       return;
     }
 
-    if (candidateProviderId !== CUSTOM_PROVIDER_ID && !unconnectedProviders.some((provider) => provider.id === candidateProviderId)) {
+    if (connectionQuery.isSuccess && candidateProviderId !== CUSTOM_PROVIDER_ID && !unconnectedProviders.some((provider) => provider.id === candidateProviderId)) {
       setCandidateProviderId(CUSTOM_PROVIDER_ID);
+      setShowProviderChoices(true);
     }
-  }, [selectedProviderId, candidateProviderId, unconnectedProviders]);
+  }, [selectedProviderId, candidateProviderId, unconnectedProviders, connectionQuery.isSuccess]);
 
   React.useEffect(() => {
     setModelQuery('');
@@ -291,14 +292,14 @@ const ProvidersPageContent: React.FC = () => {
     setRemovedModel(null);
     setDeleteOpen(false);
     if (selectedProviderId === ADD_PROVIDER_ID || selectedProviderId === CUSTOM_PROVIDER_ID) {
-      setCandidateProviderId(CUSTOM_PROVIDER_ID);
-      setShowProviderChoices(selectedProviderId === ADD_PROVIDER_ID);
+      setCandidateProviderId(initialConnectionId ?? CUSTOM_PROVIDER_ID);
+      setShowProviderChoices(!initialConnectionId && selectedProviderId === ADD_PROVIDER_ID);
       setShowAuthPanel(true);
       return;
     }
 
     setShowAuthPanel(false);
-  }, [selectedProviderId]);
+  }, [selectedProviderId, initialConnectionId]);
 
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const selectedSources = selectedProviderId ? sourceQuery.data?.[selectedProviderId] : undefined;

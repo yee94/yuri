@@ -6,6 +6,19 @@ import { queryPluginRegistry } from './opencodeConfig';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
+test('README and description are only serialized when the registry caller requests details', async () => {
+  const readme = '# Developer guide';
+  const description = 'Developer description';
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { description } }, readme,
+  })));
+  const ordinary = (await queryPluginRegistry(['tour-package'], { refresh: true })).results[0];
+  expect(ordinary).not.toHaveProperty('readme');
+  expect(ordinary).not.toHaveProperty('description');
+  const detail = (await queryPluginRegistry(['tour-package'], { details: true })).results[0];
+  expect(detail).toMatchObject({ description, readme });
+});
+
 test('registry serializes top-level icons for local package directories and built entries', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-vscode-plugin-icon-'));
   try {

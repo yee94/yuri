@@ -1,0 +1,90 @@
+.yuri-setup-tour[data-slot="dialog-content"] {
+  width: min(980px, calc(100vw - 32px));
+  max-width: 980px;
+  height: auto;
+  min-height: min(640px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  gap: 18px;
+  padding: 26px 28px 20px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.yuri-tour-watermark {
+  position: absolute;
+  top: -60px;
+  right: -90px;
+  width: min(440px, 55%);
+  aspect-ratio: 1;
+  z-index: -1;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.12;
+  color: var(--surface-foreground);
+  mask-image: linear-gradient(225deg, black 10%, transparent 76%);
+  -webkit-mask-image: linear-gradient(225deg, black 10%, transparent 76%);
+}
+.yuri-tour-watermark > [data-yuri-logo] { width: 100%; height: 100%; }
+.yuri-tour-watermark svg path { fill: currentColor; }
+.yuri-tour-title[data-slot="dialog-title"] { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; column-gap: 0.2em; row-gap: 0.15em; font-size: 24px; line-height: 1.4; text-align: left; }
+.yuri-setup-tour > [data-slot="dialog-header"] { margin-bottom: 16px; }
+.yuri-tour-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 24px; flex: 1; min-height: 0; }
+.yuri-tour-progress { display: flex; flex-direction: column; gap: 24px; align-items: stretch; }
+.yuri-tour-progress > button { position: relative; justify-content: flex-start; min-width: 0; gap: 14px; padding-inline: 8px; color: var(--surface-muted-foreground); }
+.yuri-tour-progress > button[aria-current="step"] { color: var(--surface-foreground); }
+.yuri-tour-progress > button::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: -6px; height: 1px; background: var(--interactive-border); }
+.yuri-tour-progress > button[aria-current="step"]::after { background: var(--surface-foreground); }
+.yuri-tour-number { font-size: 32px; font-weight: 300; line-height: 1; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; flex-shrink: 0; opacity: 0.6; }
+.yuri-tour-progress > button[aria-current="step"] .yuri-tour-number { opacity: 1; }
+.yuri-tour-content { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.yuri-tour-provider-content { overflow: hidden; scrollbar-gutter: auto; }
+.yuri-tour-provider-content .yuri-settings-section-stack.mx-auto {
+  max-width: none;
+  padding: 0;
+}
+.yuri-tour-plugins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.yuri-tour-magpie { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 18px; border: 1px solid var(--interactive-border); border-radius: 10px; }
+.yuri-tour-recommended { border-radius: 6px; padding: 2px 6px; background: var(--interactive-selection); color: var(--interactive-selection-foreground); font-size: 11px; }
+.yuri-tour-provider-heading { display: flex; justify-content: space-between; align-items: center; margin: 24px 0 12px; }
+.yuri-tour-provider-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.yuri-tour-provider-choice { justify-content: flex-start; border: 1px solid var(--interactive-border); white-space: normal; text-align: left; }
+.yuri-tour-plugin { border: 1px solid var(--interactive-border); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.yuri-tour-select-card { position: relative; isolation: isolate; }
+.yuri-tour-select-card > :not(.yuri-tour-card-toggle) { pointer-events: none; }
+.yuri-tour-select-card .yuri-tour-card-link { position: relative; z-index: 1; pointer-events: auto; }
+.yuri-tour-card-toggle { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; border-radius: inherit; padding: 0; }
+.yuri-tour-card-toggle:hover,
+.yuri-tour-card-toggle:active { background: transparent; box-shadow: none; }
+.yuri-tour-select-card:has(.yuri-tour-card-toggle:hover) { border-color: var(--interactive-selection-foreground); }
+.yuri-tour-card-selected { border-color: var(--interactive-selection-foreground); box-shadow: inset 0 0 0 1px var(--interactive-selection-foreground); background: color-mix(in srgb, var(--interactive-selection) 35%, var(--surface-background)); }
+.yuri-tour-card-check { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--interactive-border); border-radius: 50%; color: var(--interactive-selection-foreground); }
+.yuri-tour-card-selected .yuri-tour-card-check { border-color: var(--interactive-selection-foreground); background: var(--interactive-selection); }
+.yuri-tour-note { margin: 14px 0; font-size: 12px; line-height: 1.8; color: var(--surface-muted-foreground); }
+.yuri-tour-feedback { margin-top: 12px; font-size: 12px; line-height: 1.7; color: var(--surface-muted-foreground); overflow-wrap: anywhere; }
+.yuri-tour-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
+.yuri-tour-voice-intro { padding: 8px 0 28px; }
+.yuri-tour-voice-intro h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.35; font-weight: 500; letter-spacing: -0.03em; }
+.yuri-tour-voice-intro p { margin-top: 12px; max-width: 54ch; color: var(--surface-muted-foreground); font-size: 13px; line-height: 1.8; }
+.yuri-tour-voice-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.yuri-tour-voice-capabilities > section { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding-block: 20px; border-top: 1px solid var(--interactive-border); }
+.yuri-tour-voice-icon { width: 32px; height: 32px; margin-bottom: 8px; color: var(--surface-foreground); }
+.yuri-tour-voice-capabilities h3 { font-size: 18px; font-weight: 500; }
+.yuri-tour-voice-capabilities p { font-size: 13px; line-height: 1.7; color: var(--surface-muted-foreground); }
+.yuri-tour-voice-services { display: flex; flex-wrap: wrap; gap: 8px 14px; flex: 1; margin: 4px 0 12px; color: var(--surface-muted-foreground); font-size: 11px; }
+.yuri-tour-voice-services > span { display: inline-flex; align-items: center; gap: 6px; }
+.yuri-tour-voice-services svg { width: 14px; height: 14px; }
+.yuri-tour-voice-recommendation { display: flex; align-items: center; gap: 16px; margin-top: 16px; padding: 18px; background: var(--surface-muted); border-radius: 10px; }
+.yuri-tour-voice-recommendation > div { flex: 1; min-width: 0; }
+.yuri-tour-voice-recommendation h3 { font-size: 13px; font-weight: 500; }
+.yuri-tour-voice-recommendation p { margin-top: 6px; color: var(--surface-muted-foreground); font-size: 12px; line-height: 1.7; }
+@media (max-width: 600px) {
+  .yuri-tour-voice-capabilities { grid-template-columns: 1fr; gap: 8px; }
+  .yuri-tour-voice-recommendation { flex-wrap: wrap; }
+  .yuri-setup-tour[data-slot="dialog-content"] { padding: 22px 18px 18px; gap: 16px; }
+  .yuri-tour-plugins { grid-template-columns: 1fr; }
+  .yuri-tour-provider-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .yuri-tour-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px; }
+  .yuri-tour-progress { flex-direction: row; gap: 8px; }
+  .yuri-tour-progress > button { flex: 1; }
+  .yuri-tour-progress > button { padding-inline: 4px; gap: 6px; font-size: 11px; }
+  .yuri-tour-number { font-size: 24px; }
+}

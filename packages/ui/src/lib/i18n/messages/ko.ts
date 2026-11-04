@@ -1,7 +1,9 @@
 import type { I18nKey } from './en';
 import { settingsDict } from './ko.settings';
+import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...tourMessages.ko,
   'settings.switch.off': '끄기',
   'settings.switch.on': '켜기',
   'miniChat.actions.failed': '창 작업을 완료하지 못했습니다. 다시 시도해 주세요.',

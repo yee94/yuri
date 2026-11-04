@@ -1022,6 +1022,7 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
         method,
         target: 'registry',
         specs,
+        details: url.searchParams.get('details') === 'true',
         refresh: url.searchParams.get('refresh') === 'true',
         directory,
       });

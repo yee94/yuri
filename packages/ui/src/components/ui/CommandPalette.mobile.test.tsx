@@ -63,6 +63,7 @@ vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeTransportIdentity: () => 'test',
   getRuntimeGeneration: () => 1,
   getRuntimeKey: () => 'test',
+  subscribeRuntimeEndpointChanged: () => () => {},
 }));
 vi.mock('@/components/chat/hooks/useChatTurnNavigation', () => ({ focusChatMessage: vi.fn() }));
 

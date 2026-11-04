@@ -47,7 +47,8 @@ import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { sessionTitleSearchQueryOptions } from '@/queries/sessionTitleSearchQueries';
 import { sessionContentSearchQueryOptions, type SessionContentSearchHit } from '@/queries/sessionContentSearchQueries';
 import { focusChatMessage } from '@/components/chat/hooks/useChatTurnNavigation';
-import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getRuntimeGeneration, getRuntimeTransportIdentity, getRuntimeKey } from '@/lib/runtime-switch';
+import { useSetupTourStore } from '@/stores/useSetupTourStore';
 import { consumeMatchingPress, markMatchingPress } from './matchingPress';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
 
@@ -297,6 +298,17 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
         onSelect: run(() => setSettingsDialogOpen(true)),
       },
     ];
+    if (!isVSCodeRuntime()) {
+      list.push({
+        id: 'setup-tour',
+        title: t('tour.open'),
+        searchText: t('tour.open'),
+        onSelect: run(() => {
+          setSettingsDialogOpen(false);
+          useSetupTourStore.getState().open(getRuntimeKey());
+        }),
+      });
+    }
     if (canUseElectronDesktopIPC()) {
       list.splice(1, 0, {
         id: 'new-mini-chat',

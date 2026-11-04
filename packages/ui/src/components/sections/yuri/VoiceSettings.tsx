@@ -393,23 +393,23 @@ const OPENAI_VOICE_OPTIONS = [
     { value: 'cedar', label: 'Cedar' },
 ];
 
-export const VoiceSettings: React.FC = () => {
+export const VoiceSettings: React.FC<{ section?: 'asr' | 'tts' }> = ({ section }) => {
     const generation = useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
-    return <VoiceSettingsHost key={generation} />;
+    return <VoiceSettingsHost key={`${generation}:${section ?? 'all'}`} section={section} />;
 };
 
-function VoiceSettingsHost() {
+function VoiceSettingsHost({ section }: { section?: 'asr' | 'tts' }) {
     const { t } = useI18n();
     const query = useSpeechSettingsQuery();
     return <>
         {query.isError && <SettingsRow label={t('settings.voice.volcengine.loadFailed')}>
             <Button variant="outline" size="sm" onClick={() => void query.refetch()}>{t('settings.voice.volcengine.retry')}</Button>
         </SettingsRow>}
-        <VoiceSettingsContent settings={query.data ?? speechDefaults} />
+        <VoiceSettingsContent settings={query.data ?? speechDefaults} section={section} />
     </>;
 }
 
-const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
+const VoiceSettingsContent = ({ settings, section }: { settings: SpeechSettings; section?: 'asr' | 'tts' }) => {
     const { t } = useI18n();
     const { isMobile } = useDeviceInfo();
     const tts = useSpeechSettingsForm(settings);
@@ -759,14 +759,14 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
 
     return (
         <div className="yuri-settings-section-stack">
-            <div className="space-y-1">
+            {!section && <div className="space-y-1">
                 <h2 className="typography-ui-header font-semibold text-foreground">
                     {t('settings.page.voice.title')}
                 </h2>
-            </div>
+            </div>}
 
             {/* Playback (read messages aloud) */}
-            <div data-settings-item="voice.playback">
+            {section !== 'asr' && <div data-settings-item="voice.playback">
                 <SettingsGroup label={t('settings.voice.page.section.playbackAndSummary')} actions={<Button size="sm" disabled={tts.saving} aria-busy={tts.saving} onClick={() => { if (!tts.saving) void tts.save(); }}>{t('settings.voice.volcengine.save')}</Button>}>
 
                     <SettingsRow label={t('settings.voice.page.field.messageReadAloudButton')}>
@@ -810,8 +810,8 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
                                             })[voiceProvider]}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="browser">{t('settings.voice.page.provider.browser')}</SelectItem>
                                             <SelectItem value="volcengine">{t('settings.voice.volcengine.providerOption')}</SelectItem>
+                                            <SelectItem value="browser">{t('settings.voice.page.provider.browser')}</SelectItem>
                                             <SelectItem value="local">{t('settings.voice.page.provider.local')}</SelectItem>
                                             <SelectItem value="openai">OpenAI</SelectItem>
                                             <SelectItem value="openai-compatible">{t('settings.voice.page.provider.custom')}</SelectItem>
@@ -1095,10 +1095,10 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
                         </>
                     )}
                 </SettingsGroup>
-            </div>
+            </div>}
 
             {/* Speech Recognition */}
-            <div data-settings-item="voice.speech-recognition">
+            {section !== 'tts' && <div data-settings-item="voice.speech-recognition">
                     <SettingsGroup label={t('settings.voice.page.section.speechRecognition')} actions={<Button size="sm" disabled={asr.saving} aria-busy={asr.saving} onClick={() => { if (!asr.saving) void asr.save(); }}>{t('settings.voice.volcengine.save')}</Button>}>
                         <SettingsRow label={t('settings.voice.page.field.enableVoiceInput')}>
                             <SettingsSwitch checked={dictationEnabled} onChange={setDictationEnabled} ariaLabel={t('settings.voice.page.field.enableVoiceInputAria')} />
@@ -1134,8 +1134,8 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
                                         })[sttProvider]}</SelectValue>
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="local">{t('settings.voice.page.provider.local')}</SelectItem>
                                         <SelectItem value="volcengine">{t('settings.voice.volcengine.providerOption')}</SelectItem>
+                                        <SelectItem value="local">{t('settings.voice.page.provider.local')}</SelectItem>
                                         <SelectItem value="openai-compatible">{t('settings.voice.page.provider.server')}</SelectItem>
                                     </SelectContent>
                                 </Select>
@@ -1228,7 +1228,7 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
 
                         </>)}
                     </SettingsGroup>
-            </div>
+            </div>}
 
 
         </div>

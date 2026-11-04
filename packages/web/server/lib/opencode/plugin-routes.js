@@ -214,6 +214,7 @@ export const registerPluginRoutes = (app, dependencies) => {
           versions: info.versions,
           hasUpdate: currentVersion !== null && isExactSemver(currentVersion) && currentVersion !== info.latest,
           ...(info.icon ? { icon: info.icon } : {}),
+          ...(req.query.details === 'true' ? { description: info.description ?? '', readme: info.readme ?? '' } : {}),
         });
       }
 

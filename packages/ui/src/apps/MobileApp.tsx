@@ -2,6 +2,7 @@ import '@/lib/brand-storage-bootstrap';
 import React from 'react';
 import { ContentIndexOnboarding } from '@/components/onboarding/ContentIndexOnboarding';
 import { MobileAutoReadProvider, MobileAutoReadMenuItem } from '@/mobile/chat/MobileAutoRead';
+import { SetupTourHost } from '@/components/onboarding/SetupTourHost';
 import { useEvent } from '@reactuses/core';
 import { useStartupCatalogRecovery } from '@/hooks/useStartupCatalogRecovery';
 import { toast } from 'sonner';
@@ -4004,6 +4005,7 @@ export function MobileApp({ apis }: MobileAppProps) {
               <Toaster position="top-center" offset="calc(var(--yuri-safe-area-top, 0px) + 16px)" />
               {isInitialized ? <ConfigUpdateOverlay /> : null}
               {isInitialized ? <ContentIndexOnboarding /> : null}
+              {isInitialized ? <SetupTourHost autoStart={false} /> : null}
             </div>
           </TooltipProvider>
           </GuiPluginsProvider>

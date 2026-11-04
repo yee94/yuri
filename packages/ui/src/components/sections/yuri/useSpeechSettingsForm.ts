@@ -6,9 +6,9 @@ import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime
 import { saveSpeechSettings } from '@/queries/speechSettingsQueries';
 import type { SpeechSettings, SpeechSettingsPatch } from '@/lib/voice/speechSettings';
 
-export function useSpeechSettingsForm(settings: SpeechSettings) {
+export function useSpeechSettingsForm(settings: SpeechSettings, initialDraft: SpeechSettingsPatch = {}) {
     const { t } = useI18n();
-    const [draft, setDraft] = useState<SpeechSettingsPatch>({});
+    const [draft, setDraft] = useState<SpeechSettingsPatch>(() => initialDraft);
     const active = useRef(true);
     useEffect(() => {
         active.current = true;

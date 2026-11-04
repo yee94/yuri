@@ -1,6 +1,8 @@
 import { settingsDict } from './fr.settings';
+import { tourMessages } from './tour';
 
 export const dict = {
+  ...tourMessages.fr,
   'settings.switch.off': 'Désact.',
   'settings.switch.on': 'Activé',
   'miniChat.actions.failed': 'Impossible d’effectuer cette action sur la fenêtre. Veuillez réessayer.',
