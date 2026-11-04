@@ -38,7 +38,7 @@ app.whenReady().then(async () => {
       send: (contents, event) => contents.send('yuri:gui-plugin:event', event),
     });
     ipcMain.handle('yuri:gui-plugin', (event, method, input) => guiHost.dispatch(event, method, input));
-    await owner.loadURL(`${origin}/`);
+    await owner.loadURL(`${origin}/plugins/export-fixture/report`);
     const invoke = (method, input) => owner.webContents.executeJavaScript(`window.__YURI_DESKTOP__.viewExport.request(${JSON.stringify(method)}, ${JSON.stringify(input)})`);
     const caps = await invoke('capabilities');
     assert.equal(caps.value.exportPDF, true);

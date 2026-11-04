@@ -1,5 +1,7 @@
 import { registerPwaManifestRoute } from './pwa-manifest-routes.js';
 
+const PLUGIN_PAGE_ROUTE = /^\/plugins\/[^/]+\/[^/]+\/?$/;
+
 export const createStaticRoutesRuntime = (dependencies) => {
   const {
     fs,
@@ -49,20 +51,20 @@ export const createStaticRoutesRuntime = (dependencies) => {
 
       // `root` limits send's dotfile check to `index.html`; an absolute path
       // would 404 whenever the install lives under a dot directory (~/.bun, ~/.local).
-      app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
+      app.get([PLUGIN_PAGE_ROUTE, /^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/], (_req, res) => {
         res.sendFile('index.html', { root: distPath });
       });
       return;
     }
 
     console.warn(`Warning: ${distPath} not found, static files will not be served`);
-    app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
+    app.get([PLUGIN_PAGE_ROUTE, /^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/], (_req, res) => {
       res.status(404).send('Static files not found. Please build the application first.');
     });
   };
 
   const registerApiOnlyFallbackRoutes = (app) => {
-    app.get(/^(?!\/api|\/auth|\/health|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
+    app.get([PLUGIN_PAGE_ROUTE, /^(?!\/api|\/auth|\/health|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/], (req, res) => {
       const command = 'yuri connect-url --help';
       res.status(200).format({
         html: () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,13 +25,15 @@ describe('static routes runtime', () => {
     const app = express();
     createRuntime().registerApiOnlyFallbackRoutes(app);
 
-    const response = await request(app).get('/sessions/abc').set('Accept', 'text/html');
+    for (const route of ['/sessions/abc', '/plugins/example/report.json', '/plugins/example.js/board']) {
+      const response = await request(app).get(route).set('Accept', 'text/html');
 
-    expect(response.status).toBe(200);
-    expect(response.text).toContain('Yuri is running in headless mode');
-    expect(response.text).toContain('Open it from the Yuri desktop or mobile app');
-    expect(response.text).toContain('yuri connect-url --help');
-    expect(response.text).toContain('Copy command');
+      expect(response.status, route).toBe(200);
+      expect(response.text).toContain('Yuri is running in headless mode');
+      expect(response.text).toContain('Open it from the Yuri desktop or mobile app');
+      expect(response.text).toContain('yuri connect-url --help');
+      expect(response.text).toContain('Copy command');
+    }
   });
 
   it('returns API-only info JSON for JSON clients', async () => {
@@ -66,6 +68,8 @@ describe('static routes runtime', () => {
     const distPath = path.join(root, '.bun', 'install', 'dist');
     fs.mkdirSync(distPath, { recursive: true });
     fs.writeFileSync(path.join(distPath, 'index.html'), '<!doctype html><title>Yuri</title>');
+    fs.mkdirSync(path.join(distPath, 'assets'));
+    fs.writeFileSync(path.join(distPath, 'assets', 'app.js'), 'globalThis.fixture = true;');
     try {
       const app = express();
       createStaticRoutesRuntime({
@@ -82,10 +86,19 @@ describe('static routes runtime', () => {
         normalizePwaOrientation: (value) => value,
       }).registerStaticRoutes(app);
 
-      const response = await request(app).get('/session/ses_abc');
+      for (const route of ['/session/ses_abc', '/plugins/example/board', '/plugins/example/report.json',
+        '/plugins/example.js/board', '/plugins/%40example%2Fplugin.js/chart.png/', '/plugins/example/chart.css?view=compact']) {
+        const response = await request(app).get(route);
 
-      expect(response.status).toBe(200);
-      expect(response.text).toContain('<title>Yuri</title>');
+        expect(response.status, route).toBe(200);
+        expect(response.text).toContain('<title>Yuri</title>');
+      }
+      const asset = await request(app).get('/assets/app.js');
+      expect(asset.status).toBe(200);
+      expect(asset.text).toBe('globalThis.fixture = true;');
+      for (const route of ['/assets/missing.js', '/api/plugin', '/plugins/example/board/missing.js']) {
+        expect((await request(app).get(route)).status, route).toBe(404);
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

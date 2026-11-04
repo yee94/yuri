@@ -59,6 +59,15 @@ describe('desktop window session persistence', () => {
     expect(f.read()[1].hostId).toBe('remote');
   });
 
+  it('restores independent plugin page identities without query or hash state', async () => {
+    const f = fixture();
+    const main = f.addWindow(1, 'remote', '/plugins/%40example%2Fplugin.js/report.json?view=private#detail');
+    await f.save(main);
+    expect(f.read()[0]).toMatchObject({ hostId: 'remote', route: '/plugins/%40example%2Fplugin.js/report.json' });
+    expect(JSON.stringify(f.root)).not.toContain('private');
+    expect(JSON.stringify(f.root)).not.toContain('detail');
+  });
+
   it('retains legacy single-window geometry when there is no saved window session', () => {
     const f = fixture();
     f.root.desktopWindowState = { width: 1000, height: 750 };

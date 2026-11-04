@@ -58,6 +58,7 @@ encoding, not removed V1 endpoints.
 - `packages/web/server/lib/opencode/shutdown-runtime.js`: graceful shutdown orchestration runtime for watcher/session/terminal/process/server teardown.
 - `packages/web/server/lib/opencode/server-startup-runtime.js`: server listen/startup flow and process/signal handler orchestration runtime.
 - `packages/web/server/lib/opencode/static-routes-runtime.js`: static asset/SPA fallback route registration and manifest route wiring. The SPA fallback sends `index.html` relative to `root`, so deep links keep working when the install lives under a dot directory.
+  - Canonical `/plugins/<pluginId>/<pageId>` routes are application documents even when either encoded identity contains an asset-like suffix such as `.js`, `.json` or `.png`. Static files still resolve first; missing assets outside that exact two-identity route retain 404 responses. API-only mode uses its existing headless response for the same plugin routes.
   - The API-only dark fallback and both server/client PWA manifest defaults use the Cursor surface (`#1a1a1a`) and primary (`#4c9df3`).
 - `packages/web/server/lib/opencode/feature-routes-runtime.js`: feature route composition runtime for dynamic import-backed config/skill/provider route registration.
 - `packages/web/server/lib/conversations/`: combined create-session-and-prompt orchestration (Yuri-owned, registered before generic proxy).

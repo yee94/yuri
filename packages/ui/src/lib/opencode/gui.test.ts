@@ -225,7 +225,9 @@ afterEach(() => {
 describe('GUI SDK boundary', () => {
   it.each([
     ['https://app.example/session/test', 'https://host.example'],
+    ['https://app.example/plugins/example/board', 'https://host.example'],
     ['yuri-ui://app/index.html', 'http://127.0.0.1:43123'],
+    ['yuri-ui://app/plugins/example/board', 'http://127.0.0.1:43123'],
     ['capacitor://localhost/index.html', 'https://relay-runtime.example'],
   ])('routes GUI bundles over relay from %s with runtime %s', async (href, apiBaseUrl) => {
     vi.stubGlobal('window', Object.assign(new EventTarget(), { location: new URL(href) }));
