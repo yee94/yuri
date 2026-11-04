@@ -62,8 +62,10 @@ function main() {
   const api = path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8' }));
   const run = api(`repos/${repository}/actions/runs/${runId}`);
   const pages = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${repository}/actions/runs/${runId}/jobs?per_page=100`], { encoding: 'utf8' }));
-  const releases = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`], { encoding: 'utf8' })).flat();
-  const matches = releases.filter(release => release.tag_name === `v${version}`);
+  const matches = execFileSync('gh', [
+    'api', '--paginate', `repos/${repository}/releases?per_page=100`,
+    '--jq', `.[] | select(.tag_name == ${JSON.stringify(`v${version}`)}) | {id, tag_name, draft} | @json`,
+  ], { encoding: 'utf8' }).split('\n').filter(Boolean).map(line => JSON.parse(line));
   if (matches.length !== 1) throw new Error('Expected exactly one existing release for recovery.');
   const release = matches[0];
   const tagSha = api(`repos/${repository}/commits/v${version}`).sha;
