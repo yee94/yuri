@@ -1,17 +1,24 @@
 # Built-in Yuri customization skill
 
-`session-skill.js` stages the shipped `skill/SKILL.md` and its six references in
+`session-skill.js` stages the shipped `skill/SKILL.md` and its references in
 an application-owned, content-fingerprinted `session-skills` directory. Only a
 short discovery pointer enters `session.instructions.entry` under
 `yuri.customization`. Agents load the skill and matching references on demand;
 no global OpenCode config, installed user skills, project files or old sessions
 are modified.
 
-References are organized by capability: window APIs, appearance, global pages,
+References are organized by capability: window APIs, appearance, UI surfaces, global pages,
 file parsing/previews, preview actions/exports, and package workflow. Host contracts
 and verification criteria are separate from illustrative templates and case
 studies. Runmark and Eficy remain integration references; their service protocols,
 renderers and compatibility choices are not requirements for unrelated plugins.
+
+`references/ui-surfaces.md` is the shipped structural/style map for plugin authors
+without a source checkout. It covers shell, sidebar, header, transcript, composer,
+preview, Settings, overlays, tokens/cascade and native transparency boundaries.
+The entry and appearance reference route existing-block CSS work there first.
+DOM hooks are version-sensitive implementation guidance, not new public APIs.
+When these owners change, update their map and recipes alongside the owning docs.
 
 ## Admission ownership
 

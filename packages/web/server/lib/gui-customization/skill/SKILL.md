@@ -11,6 +11,7 @@ Use a standard OpenCode GUI plugin to change the running Yuri UI without modifyi
 
 1. Identify the requested change and target client: Web, Electron, VS Code, hosted mobile, or Capacitor. Separate visual changes from backend behavior. Inspect the user's existing plugin/config before changing it. An explanation request does not authorize installation.
 2. Choose the extension point by the requested capability and read its reference:
+   - Existing UI blocks, backgrounds/transparency, selectors, spacing and built-in style tokens: [UI structure and styles](references/ui-surfaces.md). Start here for CSS changes before inspecting application bundles.
    - Themes, CSS, logos, Dock icons: [appearance](references/appearance.md).
    - Global main-content tabs and titlebar entries: [global pages](references/global-pages.md).
    - Custom file suffixes, parsers, inline/mobile previews and file icons: [file previews](references/file-previews.md).

@@ -48,7 +48,7 @@ import css from './skin.css?inline'
 ctx.add(Style, css)
 ```
 
-CSS is active immediately while the plugin is enabled. Host base theme variables stay before plugin styles, including after theme switches. Ordinary CSS specificity and source order still apply; the declarative resource priority above does not reorder style elements. Base light tokens include `:root:not(.dark)` (two class-level selectors), so a plain `:root` override has lower specificity; use `html[data-theme="light"]` / `html[data-theme="dark"]` or matching specificity. Tailwind aliases such as `--background` / `--primary` are important declarations and require an important override if you deliberately bypass a registered theme. Common semantic tokens: `--surface-background`, `--surface-foreground`, `--surface-muted-foreground`, `--primary-base`, `--interactive-selection`, and `--font-mono`. Inspect actual current DOM/tokens before targeting a specific layout; generated Tailwind classes are not a stable plugin API. `[data-yuri-logo]` identifies the shared application logo. CSS does not cross iframe or native-window boundaries.
+CSS is active immediately while the plugin is enabled. Declarative resource priority does not reorder style elements; normal cascade rules still apply. For existing blocks, read [UI structure and styles](ui-surfaces.md): it maps material owners, selectors, theme aliases, specificity, scoped recipes and native transparency boundaries. It also explains why changing a semantic variable alone may leave its generated alias unchanged.
 
 ## Branding: `yuri.branding`
 

@@ -23,7 +23,7 @@ describe('built-in customization instructions', () => {
     expect(entry.value.length).toBeLessThan(1500);
     const file = JSON.parse(entry.value.match(/read (".*?") before/)[1]);
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
-    for (const name of ['appearance', 'gui-api', 'workflow', 'global-pages', 'file-previews', 'preview-exports']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
+    for (const name of ['appearance', 'ui-surfaces', 'gui-api', 'workflow', 'global-pages', 'file-previews', 'preview-exports']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
     expect(await fs.readFile(path.join(path.dirname(file), 'references', 'appearance.md'), 'utf8')).toContain('yuri.branding');
     expect(put.mock.calls[1][0].value).toBe(entry.value);
   });

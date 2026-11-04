@@ -2,7 +2,7 @@ import { readFile, mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-const files = ['SKILL.md', 'references/appearance.md', 'references/gui-api.md', 'references/workflow.md', 'references/global-pages.md', 'references/file-previews.md', 'references/preview-exports.md'];
+const files = ['SKILL.md', 'references/appearance.md', 'references/ui-surfaces.md', 'references/gui-api.md', 'references/workflow.md', 'references/global-pages.md', 'references/file-previews.md', 'references/preview-exports.md'];
 
 /** Stage immutable, shipped instructions; never edit the user's global skills/config. */
 export function createCustomizationSkillInstaller({ yuriDataDir }) {
@@ -26,7 +26,7 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
   return async (client, sessionID) => {
     const file = await prepare();
     await client.session.instructions.entry.put({ sessionID, key: 'yuri.customization',
-      value: `Yuri customization: for appearance (themes, CSS/layout, Logo, macOS Dock), global pages/tabs, custom file parsing/previews, preview exports, or GUI panels/commands/settings, read ${JSON.stringify(file)} before choosing a plugin API. Use its capability references for supported contracts and runtime limits, and its workflow for building, installation and rollback. Install or apply changes only when requested.`,
+      value: `Yuri customization: for appearance (themes, CSS/layout, Logo, macOS Dock), global pages/tabs, custom file parsing/previews, preview exports, or GUI panels/commands/settings, read ${JSON.stringify(file)} before choosing a plugin API. Its UI structure/style reference maps built-in blocks, selectors, tokens and transparency layers; capability references cover contracts and runtime limits. Use its workflow for building, installation and rollback. Install or apply changes only when requested.`,
     });
   };
 }
