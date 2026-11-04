@@ -2,8 +2,8 @@ import { Cause, Context, Effect, Stream } from 'effect';
 import { createHash } from 'node:crypto';
 import { HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { AIClient, LLM, LLMRequest, LanguageModel, HttpOptions, Message, Media } from '@opencode/ai/effect';
-import { ModelResolver } from '@opencode/core/model-resolver';
-import { PluginHooks } from '@opencode/core/plugin/hooks';
+import { Service as ModelResolverService } from '@opencode/core/model-resolver';
+import { Service as PluginHooksService } from '@opencode/core/plugin/hooks';
 import { LlmBridge, LLM_BRIDGE_VERSION } from './bridge-contract.js';
 
 const sensitiveBodyKeys = ['messages', 'input', 'system', 'instructions', 'tools', 'tool_choice'];
@@ -38,8 +38,8 @@ const toMessage = (message) => {
 
 // RPC effects run in the external service's Location context. Never build a parallel runtime.
 const hostRuntime = Effect.context().pipe(Effect.flatMap(context => {
-  const resolver = Context.getOption(context, ModelResolver.Service);
-  const hooks = Context.getOption(context, PluginHooks.Service);
+  const resolver = Context.getOption(context, ModelResolverService);
+  const hooks = Context.getOption(context, PluginHooksService);
   return resolver._tag === 'Some' && typeof resolver.value.resolve === 'function'
     && hooks._tag === 'Some' && typeof hooks.value.trigger === 'function'
     ? Effect.succeed({ resolver: resolver.value, hooks: hooks.value })

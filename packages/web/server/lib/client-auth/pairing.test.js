@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { createClientPairingRuntime } from './pairing.js';
+import { createRemoteClientAuthRuntime } from './remote-clients.js';
 
 const makeRuntime = async (options = {}) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-pairing-test-'));
@@ -35,6 +36,46 @@ const makeRuntime = async (options = {}) => {
 };
 
 describe('client auth pairing runtime', () => {
+  it('keeps the same device paired through different relays independently across restart', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-pairing-relays-test-'));
+    const authOptions = { fsPromises: fs, path, crypto, storePath: path.join(dir, 'clients.json') };
+    const clients = createRemoteClientAuthRuntime(authOptions);
+    const pairingOptions = {
+      fsPromises: fs, path, crypto, storePath: path.join(dir, 'pairing.json'), remoteClientAuthRuntime: clients,
+    };
+    const pair = async (relayUrl, label) => {
+      const { pairing } = await createClientPairingRuntime(pairingOptions).createPairingSession({
+        label, usesRelay: Boolean(relayUrl), relayUrl,
+      });
+      return createClientPairingRuntime(pairingOptions).redeemPairingSession({
+        pairingId: pairing.id, secret: pairing.secret, clientKind: 'mobile', dedupeKey: 'same-device',
+      });
+    };
+    try {
+      const first = await pair('wss://relay-one.example/ws', 'Phone via first relay');
+      const second = await pair('wss://relay-two.example/ws', 'Phone via second relay');
+      const reopened = createRemoteClientAuthRuntime(authOptions);
+      expect((await reopened.listClients()).map((client) => client.id)).toEqual([first.client.id, second.client.id]);
+      expect((await reopened.authenticateBearerToken(first.token))?.ok).toBe(true);
+      expect((await reopened.authenticateBearerToken(second.token))?.ok).toBe(true);
+
+      const replacement = await pair('wss://relay-one.example/ws', 'Phone via first relay again');
+      expect(await reopened.authenticateBearerToken(first.token)).toBe(null);
+      expect((await reopened.authenticateBearerToken(second.token))?.ok).toBe(true);
+      expect((await reopened.authenticateBearerToken(replacement.token))?.ok).toBe(true);
+      expect(await reopened.listClients()).toHaveLength(2);
+
+      const direct = await pair(null, 'Phone via LAN');
+      expect(await reopened.listClients()).toHaveLength(3);
+      await reopened.revokeClient(second.client.id);
+      expect(await reopened.authenticateBearerToken(second.token)).toBe(null);
+      expect((await reopened.authenticateBearerToken(replacement.token))?.ok).toBe(true);
+      expect((await reopened.authenticateBearerToken(direct.token))?.ok).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('redeems a pairing session once and propagates client metadata', async () => {
     const { runtime, remoteClientAuthRuntime } = await makeRuntime();
     const created = await runtime.createPairingSession({ allowedClientKinds: ['mobile'] });

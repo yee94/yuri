@@ -138,6 +138,7 @@ export const createClientPairingRuntime = ({
           allowedClientKinds: normalizeAllowedClientKinds(session.allowedClientKinds),
           createdByClientId: normalizeOptionalString(session.createdByClientId),
           usesRelay: session.usesRelay === true,
+          relayUrl: session.usesRelay === true ? normalizeOptionalString(session.relayUrl) : null,
         }))
         .filter((session) => session.secretHash.length > 0)
       : [],
@@ -176,7 +177,7 @@ export const createClientPairingRuntime = ({
     });
   };
 
-  const createPairingSession = async ({ label, allowedClientKinds, createdByClientId, usesRelay } = {}) => {
+  const createPairingSession = async ({ label, allowedClientKinds, createdByClientId, usesRelay, relayUrl } = {}) => {
     return withStoreMutation(async () => {
       const store = await readStore();
       sweepExpiredSessionsFromStore(store);
@@ -194,6 +195,7 @@ export const createClientPairingRuntime = ({
         allowedClientKinds: normalizeAllowedClientKinds(allowedClientKinds),
         createdByClientId: normalizeOptionalString(createdByClientId),
         usesRelay: usesRelay === true,
+        relayUrl: usesRelay === true ? normalizeOptionalString(relayUrl) : null,
       };
       store.sessions.push(session);
       await writeStore(store);
@@ -279,6 +281,7 @@ export const createClientPairingRuntime = ({
         deviceModel,
         appVersion,
         usesRelay: session.usesRelay === true,
+        relayUrl: session.relayUrl,
       });
       session.usedAt = nowIso();
       session.clientId = result.client?.id || null;

@@ -911,12 +911,13 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
         includeDirect: req.body?.includeDirect !== false,
         relayUrl: requestedRelayUrl,
       });
-      const usesRelay = candidates.some((candidate) => candidate.type === 'relay');
+      const relayCandidate = candidates.find((candidate) => candidate.type === 'relay');
       const result = await clientPairingRuntime.createPairingSession({
         label: req.body?.label,
         allowedClientKinds: req.body?.allowedClientKinds,
         createdByClientId: clientIdFromAuthContext(authContext),
-        usesRelay,
+        usesRelay: Boolean(relayCandidate),
+        relayUrl: relayCandidate?.relayUrl ?? null,
       });
       void reconcileRelay();
       res.setHeader('Cache-Control', 'no-store');

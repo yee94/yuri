@@ -441,7 +441,7 @@ an isolated DOM subtree and instance-unique definition IDs; React owns only the 
 SVG styles must preserve rect fills inside `defs`: the white mask
 background is functional geometry, not an icon background to clear. This applies
 to desktop list buttons and mobile contact cards as well as plain headers.
-List/header faces follow the mouse, including while idle, when the reactive
+List/header faces follow the mouse while idle, when the reactive
 `(any-hover: hover) and (any-pointer: fine)` capability query matches. Without
 that capability they hold the reference static up-right idle pose. Transcript,
 processing, empty and error faces explicitly disable pointer following on every
@@ -456,13 +456,14 @@ hidden-document, reduced-motion and unmounted faces release it and paint a stabl
 rest pose. Visibility resumes create a bounded player without replaying background
 time. Working wrappers and the legacy `animated` prop select the source `working`
 state (Working_A–F, looking around), not the three-dot `thinking` morph. Explicit
-idle/thinking/happy states remain available independently. Display sizes below
+idle/thinking/happy states remain available independently. Working uses the same
+compact clip/geometry mode at every display size. Other states below
 48px select the source compact clips;
 resizing updates that mode on the same state machine, not the viewBox or eye size.
 The saved motion-off switch bypasses live observers altogether. At rest,
 all static faces share the existing 128-entry / 1 MiB artwork LRU.
 
-For pointer-enabled list/header faces and ambient navigation, mouse gaze follows the pointer
+For idle pointer-enabled list/header faces and ambient navigation, mouse gaze follows the pointer
 anywhere in the avatar's owning window, using
 the source width-based/upwards-y mapping. `pointerTracker.ts` owns one shared
 pointer sample and one listener per event type (pointermove, window leave, blur)
@@ -473,11 +474,13 @@ face releasing it removes all listeners and discards the sample. Transcript,
 touch-only, standalone historical, picker, native-PNG and saved motion-off faces
 never acquire it.
 
-Working transcript/processing faces share the same window-scoped timeline for
-their assistant ID, saved recipe and compact mode. New messages and returning
-visible rows immediately join the current pose rather than starting a separate
-clip. Timeline evaluation runs once per shared paint; SVG rendering and hover
-remain instance-local. Pointer-following list/header faces stay independent.
+Working list/header/transcript/processing faces share the same window-scoped
+timeline for their assistant ID and saved recipe, regardless of slot size or
+pointer capability. New messages and returning visible rows immediately join the
+current pose before paint rather than starting a separate clip. Timeline evaluation
+runs once per shared paint; SVG rendering remains instance-local. Working disables
+local mouse gaze, hover and first-appearance blinks to keep every normalized frame
+identical. First appearance during work consumes the greeting without deferring it.
 The last eligible consumer releases its timeline, with no background replay.
 
 The shared clock measures all active face rectangles before any SVG writes,
@@ -487,7 +490,7 @@ interleaving. At twenty visible faces the upper bound is twenty rectangle reads
 per paint (600/second at 30Hz), regardless of pointer-event frequency. Unchanged
 gaze vectors do not call the runtime again.
 
-Mouse hover triggers one .65-second whole-avatar shrink/rebound (down to 82%,
+Outside working, mouse hover triggers one .65-second whole-avatar shrink/rebound (down to 82%,
 then up to 104% where containment permits), with a smooth-envelope sway of the
 complete head quaternion composed after the ongoing runtime pose. Scale is
 applied to the complete SVG scene after fitting so the fit cannot cancel the
@@ -542,7 +545,8 @@ or current header. There is no uploaded/custom-image field in the current contra
 
 Live contact faces opt into one first-visible blink per mounted identity/recipe.
 The runtime consumes it once, so ordinary renders and visibility return cannot
-loop it. The native blink is composed locally over shared working head motion;
+loop it. First appearance during working consumes the blink without playing it,
+so eyes stay on the same shared frame;
 idle pointer-disabled faces release their player/clock after the bounded blink
 (at most .4 seconds of animation time). Hover and subsequent work remain available.
 Offscreen/hidden/reduced-motion faces do not play it, and saved motion-off faces

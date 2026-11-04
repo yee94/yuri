@@ -288,7 +288,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
               <AssistantContactStatus assistantID={assistant.id} serverWorking={Boolean(assistant.working || assistant.activeContactTurn)} lastContactAt={assistant.latestMessagePreview?.createdAt} />
             </div>
             {canOpenAssistantMiniChat() ? (
-              <Button type="button" variant="ghost" size="icon" onClick={() => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); }} aria-label={t('sessions.sidebar.session.menu.openMiniChatWindow')} title={t('sessions.sidebar.session.menu.openMiniChatWindow')}>
+              <Button type="button" variant="ghost" size="icon" className="text-muted-foreground/65" onClick={() => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); }} aria-label={t('sessions.sidebar.session.menu.openMiniChatWindow')} title={t('sessions.sidebar.session.menu.openMiniChatWindow')}>
                 <Icon name="external-link" className="size-4" />
               </Button>
             ) : null}

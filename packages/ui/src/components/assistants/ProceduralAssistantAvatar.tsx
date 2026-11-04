@@ -28,7 +28,7 @@ function LiveFace({ seed, motion, size, hoverTarget, randomizeShape = false, eye
     return () => { mounted.dispose(); animation.current = null; };
   }, [id, seed, randomizeShape, eyeColor, animationKey]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     animation.current?.update({ active, motion, size, followPointer: pointerGaze, blinkOnMount, animateIdle });
   }, [active, motion, size, seed, randomizeShape, eyeColor, animationKey, pointerGaze, blinkOnMount, animateIdle]);
 

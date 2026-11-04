@@ -16,7 +16,7 @@ optional row hover target. Inactive contact surfaces omit live motion. The
 navigation facade opts into ambient shape cycling. No persisted
 recipe or visual geometry changes as a result of this runtime extraction.
 
-List/header faces default to `followPointer`; the React leaf enables gaze only
+List/header faces default to `followPointer` while idle; the React leaf enables gaze only
 when `(any-hover: hover) and (any-pointer: fine)` matches, updating on capability
 changes rather than using viewport width. Transcript/processing/empty/error faces
 pass `followPointer={false}` on every device. `AssistantWorkingAvatar` supplies
@@ -30,8 +30,8 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
   `blinkOnMount: true` opts into one native blink on the first eligible update, consumed
   for this renderer's lifetime. It does not replay on foreground/intersection return.
-  The player composes local blink eyes over shared working frames without resetting
-  the shared head timeline. `blinkOnMount: 2` plays two native blinks on the same
+  First appearance during working consumes the greeting without a local blink,
+  joining the shared eyes immediately. `blinkOnMount: 2` plays two native blinks on the same
   resting player, with a short open-eye gap, without entering working/thinking or
   replacing the renderer. The existing frame subscription owns the bounded second
   blink; interruption cancels it and visibility return does not replay the greeting.
@@ -46,12 +46,13 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   Turning it off eases the same player
   back to rest before releasing frame work. Schedule enables it only during its
   seven-second greeting; other idle callers retain their quiet default.
-- `hover()`: trigger the bounded existing shrink/rebound; eligible idle faces
+- `hover()`: trigger the bounded existing shrink/rebound outside working; eligible idle faces
   lazily start a resting player only for the hover excursion.
 - `dispose()`: idempotently release subscriptions/pointer ownership and remove
   only this instance's SVG. Updates after disposal are ignored.
 
-The React leaf owns standard observer/media/document Hooks; the runtime owns all
+The React leaf owns standard observer/media/document Hooks and updates eligible
+animation state in a layout effect before paint; the runtime owns all
 imperative resources and per-frame DOM work. Mount paints a still face once.
 Inactive instances allocate no player or frame subscription. Idle faces without
 pointer following or `animateIdle` hold the exact reference static pose (looking up-right), with
@@ -88,14 +89,19 @@ containment and the source body's spring interpolation are unchanged. This is a
 shared scheduler and ownership simplification, not a claim that SVG morphing has
 become GPU/compositor-only animation.
 
-Working faces without pointer following share a window-scoped timeline keyed by
-`[animationKey, seed, compact]`. It advances once per shared frame timestamp;
-newly mounted or returning visible faces immediately paint its current pose.
-Each instance still renders its own SVG and composes hover locally. List/header
-faces with mouse gaze retain independent timelines so gaze cannot affect chat
-poses. Last consumer release removes the timeline; if all consumers go inactive,
+All working contact faces share a window-scoped timeline keyed by
+`[animationKey, seed]`, including list, header and transcript slots of different
+sizes. A common compact clip/geometry mode keeps normalized frames identical;
+resizing never restarts or splits the timeline. It advances once per shared frame
+timestamp; newly mounted or returning visible faces immediately paint its current
+pose. Working ignores pointer gaze, local hover and appearance blinks so an
+individual instance cannot diverge. Idle retains its existing gaze/hover policy.
+Resuming work during an idle hover clears the local interaction and immediately
+repaints the current shared frame before the next browser paint.
+Each instance still renders its own SVG. Last consumer release removes the
+timeline; if all consumers go inactive,
 resume starts a fresh bounded timeline instead of replaying background time.
-Different assistant IDs, recipes and compact modes never share mutable state.
+Different assistant IDs and recipes never share mutable state.
 
 ## Independent performance gate
 
@@ -129,7 +135,8 @@ The same browser test verifies twenty active production faces, zero React commit
 per animation frame, zero SVG writes for fifty unrelated parent updates, one
 shared pointer listener, zero reads/writes/commits during a thousand pointer
 events, desktop idle gaze, zero ongoing writes/listeners for twenty idle transcript
-or touch-only faces, late-mounted working synchronization, and zero ongoing
+or touch-only faces, sixty frame-identical working samples across late mounts,
+mixed slot sizes, mouse gaze requests and hover, and zero ongoing
 writes/listeners under reduced motion. Unit tests guard 30Hz cadence,
 read-before-write, visibility/identity/hover lifecycle, one timeline advance per
 shared paint and last-consumer cleanup.

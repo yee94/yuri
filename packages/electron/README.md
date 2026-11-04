@@ -102,6 +102,8 @@ Remote desktop defaults **off**, including for existing remembered devices. Enab
 
 The 15-second startup deadline covers permission checks, screen enumeration, capture loading and input-helper readiness. Abort/timeout releases the capture slot immediately, including a hung native call; late results are fenced from new sessions. A screen-source mismatch, helper probe failure or capture timeout remains retryable instead of being mislabeled as missing permission. The client reconnects transient failures and resumes on foreground; an explicit local disable stays terminal. Native failures log only stage/code and permission flags. The native startup changes require an updated installer; shared UI/backend OTA cannot replace the installed adapter.
 
+After authorization, each pending/active capture owns a `prevent-display-sleep` blocker. If macOS screen enumeration returns no sources, the adapter invokes `/usr/bin/caffeinate -u -t 1` once to wake the display without unlocking, then allows up to two seconds for source discovery to recover within the existing startup deadline. A populated list missing the primary display still fails rather than selecting another screen. Wake/discovery cancellation, startup failure, disconnect and shutdown release the blocker and cancel the wake child/timer; a healthy awake display never invokes the wake command. `prevent-app-suspension` alone does not keep the display capturable, and `prevent-display-sleep` alone cannot wake an already sleeping display.
+
 `remote-desktop-capture.mjs` owns the isolated media lifecycle; `remote-desktop-quality.mjs` owns session-local encoder quality selection and exact JPEG duplicate detection. WebRTC starts with conservative encoder ceilings, steps down on sustained congestion and recovers slowly with measured headroom. A negotiated `view` message switches zoomed views to source-resolution priority (up to 2560×1440) at lower frame ceilings, retaining the current bitrate tier; Fit restores normal adaptation. Normal encoder tiers are normalized against their 1080p reference so a larger captured source does not raise the default 720p output or weak-network tiers. The backend must opt in when starting the adapter before the capture renderer advertises `ready.zoomQuality`, so an updated shell with an older OTA backend cannot accidentally advertise an unsupported wire command. JPEG keeps its existing decode-ACK gate but sends only changed encoded frames; a main-process send rejection clears duplicate history for retry. Zoom raises JPEG output to at most 2560×1440 at no more than 4 fps, retaining the 512 KiB cap. No UI setting or dependency is added. Media tuning uses no persistent cache or desktop-content logging. The owning remote-desktop documentation lists the profiles and feedback contract.
 
 `scripts/build-remote-desktop.mjs` builds and ad-hoc signs the Swift input helper as a universal macOS executable during desktop dev startup and main bundling. The macOS installer includes it in `Resources/remote-desktop`, explicitly re-signs it with the installer identity, and packages the isolated capture HTML/preload and capture/quality modules beside the main bundle. These modules are installer-owned and shell-fingerprinted, not UI OTA assets. Native capture/input and signed helper permissions require a new installer and physical-device verification; the synthetic Chromium evidence test is not a real-desktop test. Its staged-asset run uses a synthetic 1440p canvas, real Chromium encoding, controlled stats feedback and a local receiver; it checks downshift/recovery, zoom/Fit resolution changes in WebRTC and JPEG, idle JPEG suppression, small changes, dropped-frame retry and ACK backpressure, not actual WAN latency.
@@ -165,6 +167,16 @@ That runs, in order:
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
 5. `package.mjs` to run `electron-builder`.
+
+Desktop installers keep UI assets only in `Resources/web-dist`; the web
+dependency's `dist`/`public` and development files are excluded from ASAR. The
+builtin backend remains in `app.asar/node_modules/@yuriai/web/server`, so the
+installer also excludes the OTA-only `web-dist/desktop-backend` copy and its
+metadata. OTA archives still contain their own backend and metadata, built by
+`scripts/desktop-ota-assets.mjs`. SQLite runtime JS and native bindings remain
+packaged; its C sources and intermediate object tree do not. The LLM bridge is
+prebundled with tsdown; OpenCode core/AI and their build-only dependency graph
+are not installed into the desktop production dependency tree.
 
 Build output goes to `packages/electron/dist`.
 

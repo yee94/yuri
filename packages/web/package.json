@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/web",
-  "version": "0.2.29-beta.9",
+  "version": "0.2.29-beta.10",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
@@ -16,7 +16,7 @@
     "dev:server": "bun run build:llm-bridge && node ../../scripts/ensure-node-better-sqlite3.mjs && cross-env NODE_ENV=development node server/index.js --port ${YURI_PORT:-3001}",
     "dev:server:watch": "bun run build:llm-bridge && nodemon --exitcrash --watch server --ext js --exec \"node ../../scripts/ensure-node-better-sqlite3.mjs && cross-env NODE_ENV=development node server/index.js --port ${YURI_PORT:-3001}\"",
     "build": "bun run build:llm-bridge && vite build",
-    "build:llm-bridge": "bun scripts/build-llm-bridge.mjs",
+    "build:llm-bridge": "node scripts/build-llm-bridge.mjs",
     "prepack": "bun run build:llm-bridge",
     "build:watch": "vite build --watch",
     "type-check": "tsc --noEmit",
@@ -31,9 +31,7 @@
     "@larksuite/channel": "0.7.1",
     "@larksuite/vercel-chat-adapter": "0.3.0",
     "@octokit/rest": "^22.0.1",
-    "@opencode/ai": "2.2.1",
     "@opencode/client": "^2.0.23",
-    "@opencode/core": "2.2.1",
     "@opencode/schema": "^2.0.23",
     "@simplewebauthn/server": "13.3.1",
     "adm-zip": "^0.5.16",
@@ -60,6 +58,8 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@opencode/ai": "2.2.1",
+    "@opencode/core": "2.2.1",
     "@base-ui/react": "^1.4.0",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-go": "^6.0.1",
@@ -108,6 +108,7 @@
     "supertest": "^7.2.2",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.20.6",
+    "tsdown": "0.23.5",
     "tw-animate-css": "^1.3.8",
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.39.1",

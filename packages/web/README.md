@@ -17,7 +17,9 @@ authentication, transport, and other failures still reject. Readiness uses
 
 Assistant and Summary AI inference uses the external OpenCode service through a
 built-in RPC plugin staged in an isolated temporary Location, never by editing
-global OpenCode config. `bun run build:llm-bridge` builds the self-contained plugin;
+global OpenCode config. `bun run build:llm-bridge` uses tsdown to prebundle only the
+inference SDK and host service tags; OpenCode core/AI stay build-only dependencies.
+The output is a self-contained plugin;
 web build/prepack/development API scripts run it. See
 `server/lib/llm/DOCUMENTATION.md` for supported authentication/protocol adapters and
 the shared-filesystem requirement for external services.

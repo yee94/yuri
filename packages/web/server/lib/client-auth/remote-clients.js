@@ -87,6 +87,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
           clientKind: normalizeOptionalString(client.clientKind),
           dedupeKey: normalizeOptionalString(client.dedupeKey),
           usesRelay: client.usesRelay === true,
+          relayUrl: client.usesRelay === true ? normalizeOptionalString(client.relayUrl) : null,
           lastTransport: client.lastTransport === 'relay' || client.lastTransport === 'direct' ? client.lastTransport : null,
           ...normalizeMetadata(client),
         }))
@@ -164,6 +165,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
     deviceModel,
     appVersion,
     usesRelay,
+    relayUrl,
   } = {}) => {
     return withStoreMutation(async () => {
       const store = await readStore();
@@ -186,16 +188,18 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
         deviceModel: normalizeOptionalString(deviceModel),
         appVersion: normalizeOptionalString(appVersion),
         usesRelay: usesRelay === true,
+        relayUrl: usesRelay === true ? normalizeOptionalString(relayUrl) : null,
       };
       if (normalizedDedupeKey) {
-        store.clients = store.clients.filter((entry) => entry.dedupeKey !== normalizedDedupeKey);
+        const sameConnection = (entry) => entry.usesRelay === client.usesRelay && entry.relayUrl === client.relayUrl;
+        store.clients = store.clients.filter((entry) => !(sameConnection(entry) && entry.dedupeKey === normalizedDedupeKey));
         // Migrate pre-clientKind desktop tokens: a deduped, kind-tagged mint
         // supersedes legacy records with the same label that carry neither a
         // kind nor a dedupe key — those tokens can no longer pass the
         // desktop-local client-create gate and would otherwise linger forever.
         if (client.clientKind) {
           store.clients = store.clients.filter((entry) =>
-            !(entry.label === client.label && !entry.clientKind && !entry.dedupeKey));
+            !(sameConnection(entry) && entry.label === client.label && !entry.clientKind && !entry.dedupeKey));
         }
       }
       store.clients.push(client);

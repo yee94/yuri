@@ -17,16 +17,17 @@ the historical heading belongs to earlier attempts, not to this engine.
   remain round with only pigment variation. Legacy eye/expression preferences
   remain round-trippable but cannot randomize eye dimensions or angles.
 - Busy wrappers use the source working clips for left/right observation, not the
-  three-dot thinking morph. Mouse-capable list/header faces retain pointer gaze
-  even while idle. Without a mouse, and always in transcript/processing faces,
+   three-dot thinking morph. Mouse-capable list/header faces retain pointer gaze
+   while idle. Without a mouse, and always in transcript/processing faces,
   idle holds the reference up-right static pose with zero frame/gaze work. Hover
   briefly animates that settled pose and releases its player on completion;
   navigation retains ambient shape cycling.
   Continuous non-idle changes preserve the source state machine and springs.
-  Working chat faces share a window/assistant/recipe/compact-mode timeline so
-  newly mounted messages immediately join the current pose. Hover stays local;
-  last-consumer release removes shared state. Mouse-following list/header faces
-  remain independent so their gaze does not change transcript poses.
+   All working list/header/chat faces share a window/assistant/recipe timeline and
+   compact clip/geometry mode across sizes, so newly mounted messages immediately
+   join the current pose. Local gaze, hover and appearance blinks are suppressed
+   during working; last-consumer release removes shared state. The browser gate
+   checks sixty frames across mixed sizes and late mounts with mouse interaction.
 - Rest faces share pure static SVG/native PNG rendering, reference static settle,
   and fixed per-shape artboards at 94% longest-axis occupancy. Live excursions
   uniformly fit the entire scene to the slot, never individual eyes.

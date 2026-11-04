@@ -80,7 +80,15 @@ on its own filesystem. No automatic remote installation or global config edit
 is performed. Web, Electron, hosted mobile and Capacitor clients use the Host's
 same bridge. VS Code's extension-owned runtime does not gain a local Host.
 
-`build:llm-bridge` generates `bridge-plugin.bundle.js` with the inference SDK and service tags, not a driver registry.
+`build:llm-bridge` uses tsdown under Node to generate `bridge-plugin.bundle.js`
+with the inference SDK and service tags, not a driver registry. OpenCode core/AI
+are build-only dependencies. The build reads the installed core's two service
+keys and emits lookup-only Effect tags, excluding the host's service layers,
+database and tool implementations. The plugin still gets the actual resolver
+and hooks from the external service's Context. The output is one self-contained
+ESM file because staging copies a single plugin file; no external chunks or
+Yuri node_modules are required. The provider regression suite runs against both
+source and the isolated prebundle, including a Bun import outside the workspace.
 It is ignored in source control and included in the web package's `server`
 files. Web build, prepack and development API scripts build it. At runtime the
 Host copies its bytes into the temporary directory, including when the Host

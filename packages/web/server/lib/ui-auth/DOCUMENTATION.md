@@ -7,6 +7,8 @@ Trusted-device access has one durable credential model: a remote client bearer t
 
 Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. It stores short-lived one-time pairing sessions with hashed secrets, exposes create/cancel/redeem routes under `/api/client-auth/pairing/*`, and redeems a valid pairing secret into the same remote client token used by password/passkey trusted-device flows.
 
+Client deduplication is scoped by device `dedupeKey`, `usesRelay`, and the pairing's canonical `relayUrl`. The create route records the actual advertised Relay candidate (including a default or environment-selected endpoint), and redemption uses this stored scope even when it arrives over LAN. Re-pairing through the same Relay replaces that connection's credential; another Relay or direct-only pairing retains an independent client record, label, credential, and revocation. The endpoint is internal persistence metadata, not a client-supplied redemption override. Legacy records without `relayUrl` remain readable with an unknown Relay scope; new endpoint-specific pairings preserve them rather than guessing which connection to overwrite. No stored credential conversion is needed.
+
 ## Entrypoints and structure
 
 Remote desktop uses the exact `/api/remote-desktop/ws` scoped URL-token path, mirrored in the Relay tunnel allowlist. Its own upgrade gate additionally rejects password-less owner cookies and checks origin even when password auth is disabled; see `../remote-desktop/DOCUMENTATION.md`.

@@ -26,7 +26,7 @@ const recipeFor = (index: number) => ({ ...resolveAssistantAvatar('performance')
 const frames = async (count: number) => { for (let i = 0; i < count; i++) await new Promise(requestAnimationFrame); };
 const render = (count: number, draft: number, motion: 'idle' | 'working' = 'working', followPointer = true, synchronized = false) => flushSync(() => root.render(<div data-draft={draft} style={{ display: 'flex', gap: 4 }}>
   {Array.from({ length: count }, (_, i) => <React.Profiler key={i} id={`face-${i}`} onRender={() => { commits++; }}>
-    <ProceduralAssistantAvatar seed={encodeAssistantAvatar(recipeFor(synchronized ? 0 : i))} size={44} motion={motion} followPointer={followPointer} animationKey={synchronized ? 'shared-bot' : `bot-${i}`} />
+    <ProceduralAssistantAvatar seed={encodeAssistantAvatar(recipeFor(synchronized ? 0 : i))} size={synchronized ? [64, 40, 28][i % 3] : 44} motion={motion} followPointer={followPointer && (!synchronized || i % 3 !== 2)} animationKey={synchronized ? 'shared-bot' : `bot-${i}`} blinkOnMount={synchronized} />
   </React.Profiler>)}
 </div>));
 
@@ -71,16 +71,24 @@ Object.assign(window, { avatarPerformance: {
   async mount(count: number, draft = 0, motion: 'idle' | 'working' = 'working', followPointer = true) {
     render(count, draft, motion, followPointer);
     await frames(3);
+    if (motion === 'idle' && (!followPointer || !matchMedia('(any-hover: hover) and (any-pointer: fine)').matches)) {
+      // Measure quiet idle after the existing bounded gaze-to-rest transition.
+      const deadline = performance.now() + 2000;
+      let previous: number;
+      do { previous = writes; await frames(4); } while (writes !== previous && performance.now() < deadline);
+    }
   },
   async synchronized() {
-    render(1, 0, 'working', false, true);
+    render(1, 0, 'working', true, true);
     await frames(20);
-    render(20, 0, 'working', false, true);
+    render(20, 0, 'working', true, true);
     await frames(3);
     const samples: boolean[] = [];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 60; i++) {
       await frames(1);
-      const poses = [...host.querySelectorAll('svg')].map((svg) => [...svg.querySelectorAll('path')].map((path) => path.getAttribute('d')).join('|'));
+      host.querySelector('[data-avatar-motion]')!.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+      window.dispatchEvent(new PointerEvent('pointermove', { pointerType: 'mouse', clientX: i * 10, clientY: 100 }));
+      const poses = [...host.querySelectorAll('svg')].map((svg) => [...svg.querySelectorAll('path, g')].map((node) => `${node.getAttribute('d')}|${node.getAttribute('transform')}`).join('|'));
       samples.push(poses.length === 20 && poses.every((pose) => pose === poses[0]));
     }
     return samples;

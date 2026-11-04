@@ -66,7 +66,7 @@ export function createNotifyUserTool() {
   return {
     name: NOTIFY_USER_TOOL_NAME,
     label: 'Notify user',
-    description: 'Send the user a short progress message while you keep working; batch it with your next tool call. Use only when it tells them something they do not already know: a direction they may want to correct, a finding that matters, a blocker, or that the work will take a while. Never use it to announce the next step or repeat the plan. The final answer is your plain reply, not this tool.',
+    description: 'Send a brief progress message only when new information needs user attention before the final answer: a decision or blocker, a consequential change of direction, or an unexpected delay that changes expectations. Default to working quietly; if the information can wait, include it in the final answer instead. Check earlier public messages to avoid repetition and combine related updates. Batch with your next tool call. The final answer is your plain reply, not this tool.',
     parameters: typeboxObject({ text: typeboxString('Short message in the user language.') }),
     execute: async (_toolCallId, params) => {
       const text = typeof params?.text === 'string' ? params.text.trim() : '';

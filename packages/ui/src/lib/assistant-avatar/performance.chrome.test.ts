@@ -53,7 +53,7 @@ test('standalone avatar CPU budgets and production lifecycle', async () => {
       const { listeners } = await page.send('DOMDebugger.getEventListeners', { objectId: (result as { objectId: string }).objectId });
       return (listeners as Array<{ type: string }>).filter((listener) => listener.type === 'pointermove').length;
     };
-    expect(await pointerListeners()).toBe(1);
+    expect(await pointerListeners()).toBe(0);
     expect(await page.evaluate('avatarPerformance.pointerBurst()')).toEqual({ reads: 0, writes: 0, commits: 0 });
     expect(await page.evaluate('document.querySelectorAll("[data-avatar-active=true]").length')).toBe(20);
     expect(await page.evaluate('[...document.querySelectorAll("[data-procedural-avatar] svg")].every(svg=>svg.getBoundingClientRect().width===44 && svg.getBoundingClientRect().height===44)')).toBe(true);
@@ -71,7 +71,7 @@ test('standalone avatar CPU budgets and production lifecycle', async () => {
     expect(await pointerListeners()).toBe(0);
     expect(await page.evaluate('avatarPerformance.pointerBurst()')).toEqual({ reads: 0, writes: 0, commits: 0 });
     expect(await page.evaluate('avatarPerformance.steady()')).toEqual({ commits: 0, writes: 0, active: 20 });
-    expect(await page.evaluate('avatarPerformance.synchronized()')).toEqual(Array(20).fill(true));
+    expect(await page.evaluate('avatarPerformance.synchronized()')).toEqual(Array(60).fill(true));
     expect(await pointerListeners()).toBe(0);
     const synchronized = await page.evaluate<{ commits: number; writes: number; active: number }>('avatarPerformance.steady()');
     expect(synchronized.commits).toBe(0);

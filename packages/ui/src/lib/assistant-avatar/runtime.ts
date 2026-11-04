@@ -12,13 +12,13 @@ type WorkingTimeline = {
 };
 const workingTimelines = new WeakMap<Window, Map<string, WorkingTimeline>>();
 
-function acquireWorkingTimeline(win: Window, identity: string, seed: string, recipe: AssistantAvatarRecipe, compact: boolean) {
+function acquireWorkingTimeline(win: Window, identity: string, seed: string, recipe: AssistantAvatarRecipe) {
   let timelines = workingTimelines.get(win);
   if (!timelines) { timelines = new Map(); workingTimelines.set(win, timelines); }
-  const key = JSON.stringify([identity, seed, compact]);
+  const key = JSON.stringify([identity, seed]);
   let shared = timelines.get(key);
   if (!shared) {
-    const timeline = createAssistantAvatarTimeline(recipe, seed, 'working', compact);
+    const timeline = createAssistantAvatarTimeline(recipe, seed, 'working', true);
     shared = { users: 0, active: 0, timeline, frame: timeline.advance(0), timestamp: performance.now() };
     timelines.set(key, shared);
   }
@@ -74,7 +74,9 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let remainingAppearanceBlinks = 0;
   let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean; animateIdle?: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
   const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer && !state.animateIdle;
-  const sharing = () => state.motion === 'working' && !randomizeShape && !state.followPointer;
+  const sharing = () => state.motion === 'working' && !randomizeShape;
+  // Work uses one clip/geometry mode so slot size cannot change the shared pose.
+  const compact = () => sharing() || state.size < 48;
 
   const reset = () => {
     nextAppearanceBlinkIn = null;
@@ -88,10 +90,10 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     const win = host.ownerDocument.defaultView;
     if (!win) return;
     const idleEntrance = Boolean(state.motion === 'idle' && state.animateIdle && !randomizeShape && !state.followPointer);
-    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, state.size < 48, { randomizeShape, eyeColor, resting: resting() || idleEntrance });
+    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, compact(), { randomizeShape, eyeColor, resting: resting() || idleEntrance });
     if (idleEntrance) live.setResting(false);
     player = live;
-    shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe, state.size < 48) : null;
+    shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe) : null;
     const pointer = state.followPointer ? acquireAvatarPointer(win) : null;
     if (shared) renderer.paint(live.advance(0, shared.read()));
     const source = shared;
@@ -138,7 +140,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
       const wasResting = resting();
       const wasSharing = sharing();
       const previous = state;
-      state = { ...next, active: next.active && recipe.animate, followPointer: next.followPointer ?? false };
+      state = { ...next, active: next.active && recipe.animate, followPointer: Boolean(next.followPointer && (next.motion !== 'working' || randomizeShape)) };
       // Leaving live work: ease from the current pose to the static pose, then release.
       if (state.active && player && !wasResting && resting()) {
         settling = true;
@@ -146,22 +148,29 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         if (shared) shared.rest(); else player.setResting(true);
         return;
       }
-      if (settling && sharing() && shared) {
+      if (state.active && settling && sharing() && shared) {
         settling = false;
+        nextAppearanceBlinkIn = null;
+        remainingAppearanceBlinks = 0;
         shared.resume();
-        player?.setMotion(state.motion);
+        if (player) {
+          player.clearInteractions();
+          player.setCompact(compact());
+          player.setMotion(state.motion);
+          renderer.paint(player.advance(0, shared.read()));
+        }
         return;
       }
       if (!state.active || wasResting !== resting() || wasSharing !== sharing()
-        || previous.followPointer !== state.followPointer
-        || (wasSharing && (previous.size < 48) !== (state.size < 48))) reset();
+        || previous.followPointer !== state.followPointer) reset();
       if (!state.active) return;
       if (player) {
-        player.setCompact(state.size < 48);
+        player.setCompact(compact());
         player.setMotion(state.motion);
       } else if (!resting()) start();
       if (next.blinkOnMount && !appeared) {
         appeared = true;
+        if (sharing()) return;
         start();
         remainingAppearanceBlinks = next.blinkOnMount === 2 ? 2 : 1;
         if (state.animateIdle) {
@@ -176,7 +185,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
       }
     },
     hover() {
-      if (disposed || !state.active) return;
+      if (disposed || !state.active || sharing()) return;
       start();
       player?.hover();
     },

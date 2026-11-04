@@ -777,6 +777,7 @@ describe('core-routes', () => {
       allowedClientKinds: ['mobile'],
       createdByClientId: null,
       usesRelay: false,
+      relayUrl: null,
     });
   });
 
@@ -802,7 +803,7 @@ describe('core-routes', () => {
       hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'aaa', y: 'bbb' },
       priority: 30,
     };
-    const { app } = createPairingRouteApp({ getRelayPairingCandidate: vi.fn(async () => relayCandidate) });
+    const { app, dependencies } = createPairingRouteApp({ getRelayPairingCandidate: vi.fn(async () => relayCandidate) });
 
     const response = await request(app)
       .post('/api/client-auth/pairing/sessions')
@@ -814,6 +815,10 @@ describe('core-routes', () => {
       { type: 'lan', url: 'http://runtime.example', priority: 10 },
       relayCandidate,
     ]);
+    expect(dependencies.clientPairingRuntime.createPairingSession).toHaveBeenCalledWith(expect.objectContaining({
+      usesRelay: true,
+      relayUrl: relayCandidate.relayUrl,
+    }));
   });
 
   it('passes a custom Relay endpoint into relay-only pairing and returns that endpoint in the candidate', async () => {
@@ -824,7 +829,7 @@ describe('core-routes', () => {
       hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'aaa', y: 'bbb' },
       priority: 30,
     }));
-    const { app } = createPairingRouteApp({ getRelayPairingCandidate });
+    const { app, dependencies } = createPairingRouteApp({ getRelayPairingCandidate });
 
     const response = await request(app)
       .post('/api/client-auth/pairing/sessions')
@@ -843,6 +848,10 @@ describe('core-routes', () => {
     expect(response.body.server.candidates).toEqual([
       expect.objectContaining({ type: 'relay', relayUrl: 'wss://relay.example/custom' }),
     ]);
+    expect(dependencies.clientPairingRuntime.createPairingSession).toHaveBeenCalledWith(expect.objectContaining({
+      usesRelay: true,
+      relayUrl: 'wss://relay.example/custom',
+    }));
   });
 
   it('rejects an invalid custom Relay endpoint before creating a pairing session', async () => {
@@ -961,6 +970,7 @@ describe('core-routes', () => {
       allowedClientKinds: undefined,
       createdByClientId: 'remote-desktop-1',
       usesRelay: true,
+      relayUrl: 'wss://relay.example/ws',
     });
     expect(response.body.server.candidates).toEqual([
       { type: 'lan', url: 'http://runtime.example', priority: 10 },

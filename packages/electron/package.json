@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/electron",
-  "version": "0.2.29-beta.9",
+  "version": "0.2.29-beta.10",
   "private": true,
   "description": "Electron desktop runtime for Yuri",
   "author": "Yuri",
@@ -59,12 +59,23 @@
       "remote-desktop-preload.cjs",
       "remote-desktop.html",
       "remote-desktop-capture.mjs",
-      "remote-desktop-quality.mjs"
+      "remote-desktop-quality.mjs",
+      "!node_modules/@yuriai/web/{dist,public,src,e2e,scripts}{,/**/*}",
+      "!node_modules/@yuriai/web/*.{html,ts}",
+      "!node_modules/@yuriai/web/server/**/*.{test,spec}.*",
+      "!node_modules/@yuriai/web/server/lib/llm/bridge-plugin.js",
+      "!node_modules/better-sqlite3/{src,deps}{,/**/*}",
+      "!node_modules/better-sqlite3/build/Release/obj{,/**/*}"
     ],
     "extraResources": [
       {
         "from": "resources/web-dist",
-        "to": "web-dist"
+        "to": "web-dist",
+        "filter": [
+          "**/*",
+          "!desktop-backend{,/**/*}",
+          "!desktop-ota.json"
+        ]
       },
       {
         "from": "resources/icons/icon.ico",

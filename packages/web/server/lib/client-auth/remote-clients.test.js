@@ -153,6 +153,48 @@ describe('remote client auth runtime', () => {
     }
   });
 
+  it('preserves legacy relay credentials whose endpoint is unknown', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const legacy = await runtime.createClient({ label: 'Phone', clientKind: 'mobile', dedupeKey: 'phone', usesRelay: true });
+      const untagged = await runtime.createClient({ label: 'Phone', usesRelay: true });
+      const storePath = path.join(dir, 'remote-clients.json');
+      const store = JSON.parse(await fs.readFile(storePath, 'utf8'));
+      for (const client of store.clients) delete client.relayUrl;
+      await fs.writeFile(storePath, JSON.stringify(store));
+
+      const relay = await runtime.createClient({
+        label: 'Phone', clientKind: 'mobile', dedupeKey: 'phone', usesRelay: true, relayUrl: 'wss://relay.example/ws',
+      });
+      const direct = await runtime.createClient({ label: 'Phone', clientKind: 'mobile', dedupeKey: 'phone' });
+      expect(await runtime.listClients()).toHaveLength(4);
+      for (const connection of [legacy, untagged, relay, direct]) {
+        expect((await runtime.authenticateBearerToken(connection.token))?.ok).toBe(true);
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps every connection credential when a scoped replacement write fails', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const input = { label: 'Phone', clientKind: 'mobile', dedupeKey: 'phone', usesRelay: true };
+      const first = await runtime.createClient({ ...input, relayUrl: 'wss://relay-one.example/ws' });
+      const second = await runtime.createClient({ ...input, relayUrl: 'wss://relay-two.example/ws' });
+      const failing = createRemoteClientAuthRuntime({
+        fsPromises: { ...fs, writeFile: async () => { throw new Error('Write failed'); } },
+        path, crypto, storePath: path.join(dir, 'remote-clients.json'),
+      });
+      await expect(failing.createClient({ ...input, relayUrl: 'wss://relay-one.example/ws' })).rejects.toThrow('Write failed');
+      expect((await runtime.listClients()).map((client) => client.id)).toEqual([first.client.id, second.client.id]);
+      expect((await runtime.authenticateBearerToken(first.token))?.ok).toBe(true);
+      expect((await runtime.authenticateBearerToken(second.token))?.ok).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not resurrect revoked clients after concurrent auth traffic', async () => {
     const { dir, runtime } = await createRuntime();
     try {

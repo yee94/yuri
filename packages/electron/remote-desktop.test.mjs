@@ -5,6 +5,7 @@ import { createRemoteDesktopAdapter as createAdapter } from './remote-desktop.mj
 const mock = vi.hoisted(() => ({
   consent: vi.fn(), accessibility: vi.fn(), sources: vi.fn(), windows: [], spawn: vi.fn(),
   ipc: null, screens: null, power: null, partition: null, exists: vi.fn(), exec: vi.fn(), media: vi.fn(), open: vi.fn(), load: vi.fn(), helperAutoReady: true,
+  blocker: { start: vi.fn(), stop: vi.fn() },
 }));
 vi.mock('node:fs', () => ({ default: { existsSync: mock.exists } }));
 vi.mock('node:child_process', () => ({ spawn: mock.spawn, execFile: mock.exec }));
@@ -35,7 +36,7 @@ vi.mock('electron', async () => {
   return {
     app: { isPackaged: false, getAppPath: () => '/fixture/app' }, BrowserWindow: Window,
     desktopCapturer: { getSources: mock.sources }, dialog: { showMessageBox: mock.consent }, ipcMain: mock.ipc,
-    screen: mock.screens, powerMonitor: mock.power, session: { fromPartition: () => mock.partition },
+    screen: mock.screens, powerMonitor: mock.power, powerSaveBlocker: mock.blocker, session: { fromPartition: () => mock.partition },
     systemPreferences: { isTrustedAccessibilityClient: mock.accessibility, getMediaAccessStatus: mock.media },
     shell: { openExternal: mock.open },
   };
@@ -50,6 +51,8 @@ beforeEach(() => {
   mock.open.mockReset().mockResolvedValue();
   mock.load.mockReset().mockResolvedValue();
   mock.helperAutoReady = true;
+  mock.blocker.start.mockReset().mockReturnValue(0);
+  mock.blocker.stop.mockReset();
   mock.sources.mockReset().mockResolvedValue([{ id: 'screen:primary', display_id: '123' }]);
   mock.spawn.mockReset().mockImplementation(() => {
     const child = new EventEmitter(); child.stdin = new EventEmitter(); child.stdout = new EventEmitter();
@@ -142,6 +145,114 @@ nativeTest('never falls back to a different screen if primary-display identity d
   mock.sources.mockResolvedValue([{ id: 'screen:other', display_id: '999' }]);
   await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: new AbortController().signal })).rejects.toMatchObject({ code: 'display_unavailable' });
   expect(mock.spawn).not.toHaveBeenCalled(); expect(mock.windows.every(win => win.destroyed)).toBe(true);
+});
+
+nativeTest('wakes a sleeping display after authorization and keeps it awake only for the capture lifetime', async () => {
+  let awake = false;
+  mock.sources.mockImplementation(async () => awake ? [{ id: 'screen:primary', display_id: '123' }] : []);
+  mock.exec.mockImplementation((file, _args, _options, done) => {
+    if (file === '/usr/bin/caffeinate') { awake = true; done(null, '', ''); }
+    else done(null, 'granted\n', '');
+  });
+  const desktop = await createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn() });
+  expect(mock.exec).toHaveBeenCalledWith('/usr/bin/caffeinate', ['-u', '-t', '1'],
+    expect.objectContaining({ timeout: 3000, windowsHide: true, signal: expect.any(AbortSignal) }), expect.any(Function));
+  expect(mock.sources).toHaveBeenCalledTimes(2);
+  expect(mock.blocker.start).toHaveBeenCalledWith('prevent-display-sleep');
+  expect(mock.blocker.stop).not.toHaveBeenCalled();
+  expect(mock.spawn.mock.calls[0][1]).toEqual(['123']);
+  expect(mock.spawn.mock.results[0].value.stdin.write).not.toHaveBeenCalled();
+  desktop.close(); desktop.close();
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+});
+
+nativeTest('waits for display enumeration to recover after waking without failing the connection', async () => {
+  vi.useFakeTimers();
+  mock.sources.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  const pending = createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn() });
+  await vi.advanceTimersByTimeAsync(500);
+  const desktop = await pending;
+  expect(mock.exec.mock.calls.filter(([file]) => file === '/usr/bin/caffeinate')).toHaveLength(1);
+  expect(mock.sources).toHaveBeenCalledTimes(4);
+  desktop.close();
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+});
+
+nativeTest('does not wake or change the target when enumerated sources belong to another display', async () => {
+  mock.sources.mockResolvedValue([{ id: 'screen:other', display_id: '999' }]);
+  await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn() })).rejects.toMatchObject({ code: 'display_unavailable' });
+  expect(mock.exec.mock.calls.some(([file]) => file === '/usr/bin/caffeinate')).toBe(false);
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+});
+
+nativeTest('bounds empty screen recovery and releases display power on failure', async () => {
+  vi.useFakeTimers();
+  mock.sources.mockResolvedValue([]);
+  const pending = expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn() }))
+    .rejects.toMatchObject({ code: 'display_unavailable' });
+  await vi.advanceTimersByTimeAsync(4000);
+  await pending;
+  expect(mock.exec.mock.calls.filter(([file]) => file === '/usr/bin/caffeinate')).toHaveLength(1);
+  expect(mock.sources.mock.calls.length).toBeLessThanOrEqual(10);
+  expect(mock.spawn).not.toHaveBeenCalled();
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+nativeTest('a failed display wake releases power and stays retryable without requesting permission', async () => {
+  mock.sources.mockResolvedValue([]);
+  mock.exec.mockImplementation((file, _args, _options, done) => {
+    if (file === '/usr/bin/caffeinate') done(new Error('wake failed'));
+    else done(null, 'granted\n', '');
+  });
+  await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn() }))
+    .rejects.toMatchObject({ code: 'display_unavailable' });
+  expect(mock.sources).toHaveBeenCalledTimes(1);
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+  expect(mock.spawn).not.toHaveBeenCalled();
+  expect(mock.open).not.toHaveBeenCalled();
+});
+
+nativeTest('cancels display rediscovery and its power assertion when disabled during wake recovery', async () => {
+  vi.useFakeTimers();
+  mock.sources.mockResolvedValue([]);
+  const adapter = createRemoteDesktopAdapter();
+  const pending = expect(adapter.start({ send: vi.fn(), onEnded: vi.fn() }))
+    .rejects.toMatchObject({ code: 'permission_denied' });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(mock.sources).toHaveBeenCalledTimes(2);
+  await adapter.setEnabled(false);
+  await pending;
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(mock.sources).toHaveBeenCalledTimes(2);
+  expect(mock.blocker.stop).toHaveBeenCalledExactlyOnceWith(0);
+  expect(mock.spawn).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+nativeTest('aborting display wake cancels its process and cannot affect the next capture', async () => {
+  mock.sources.mockResolvedValueOnce([]);
+  let wakeOptions, finishWake;
+  mock.exec.mockImplementation((file, _args, options, done) => {
+    if (file === '/usr/bin/caffeinate') { wakeOptions = options; finishWake = done; }
+    else done(null, 'granted\n', '');
+  });
+  const adapter = createRemoteDesktopAdapter();
+  const controller = new AbortController();
+  const pending = adapter.start({ send: vi.fn(), onEnded: vi.fn(), signal: controller.signal });
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'permission_denied' });
+  await vi.waitFor(() => expect(wakeOptions).toBeDefined());
+  controller.abort();
+  await rejected;
+  expect(wakeOptions.signal.aborted).toBe(true);
+  expect(mock.blocker.stop).toHaveBeenCalledTimes(1);
+  const next = await adapter.start({ send: vi.fn(), onEnded: vi.fn() });
+  finishWake(null, '', '');
+  await Promise.resolve();
+  expect(mock.windows).toHaveLength(1);
+  expect(mock.windows[0].destroyed).toBe(false);
+  expect(mock.blocker.stop).toHaveBeenCalledTimes(1);
+  next.close();
 });
 
 nativeTest('bounds hung screen discovery, frees startup on abort, and ignores its late completion', async () => {
@@ -318,6 +429,7 @@ nativeTest('revoked screen or helper permissions fail closed without opening aut
   expect(mock.sources).not.toHaveBeenCalled(); expect(mock.spawn).not.toHaveBeenCalled();
   expect(mock.windows).toHaveLength(0); expect(mock.consent).not.toHaveBeenCalled();
   expect(mock.exec.mock.calls.every(call => call[1][0] === '--check-accessibility')).toBe(true);
+  expect(mock.blocker.start).not.toHaveBeenCalled();
 });
 
 nativeTest('disconnect during permission checking never starts capture after the check completes', async () => {

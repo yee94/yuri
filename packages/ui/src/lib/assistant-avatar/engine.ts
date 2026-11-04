@@ -160,6 +160,7 @@ export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed:
     setGaze: timeline.setGaze,
     blink: () => { if (blinkTime === null) { timeline.blink(); blinkTime = 0; } },
     hover: () => { hoverTime ??= 0; },
+    clearInteractions: () => { hoverTime = null; blinkTime = null; },
     advance(dt: number, sharedFrame?: Frame) {
       const frame = sharedFrame ? { ...sharedFrame } : timeline.advance(dt);
       if (blinkTime !== null) {

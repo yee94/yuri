@@ -1,15 +1,35 @@
 import http from 'node:http';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
 import { ModelResolver } from '@opencode/core/model-resolver';
 import { PluginHooks } from '@opencode/core/plugin/hooks';
 import * as compatible from '@opencode/ai/providers/openai-compatible';
-import bridge, { generateBridgeResponse } from './bridge-plugin.js';
+import sourceBridge, { generateBridgeResponse as sourceGenerate } from './bridge-plugin.js';
 
 const servers = [];
+let bundled;
+let bundleDirectory;
+beforeAll(async () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  execFileSync(process.execPath, [path.resolve(directory, '../../../scripts/build-llm-bridge.mjs')], {
+    cwd: path.resolve(directory, '../../..'), stdio: 'pipe',
+  });
+  bundleDirectory = await mkdtemp(path.join(os.tmpdir(), 'yuri-bridge-test-'));
+  const target = path.join(bundleDirectory, 'bridge.mjs');
+  await copyFile(path.join(directory, 'bridge-plugin.bundle.js'), target);
+  // The plugin must also load in the external Bun service without Yuri's node_modules.
+  execFileSync('bun', ['-e', `await import(${JSON.stringify(pathToFileURL(target).href)})`], { cwd: bundleDirectory, stdio: 'pipe' });
+  bundled = await import(/* @vite-ignore */ pathToFileURL(target).href);
+});
+afterAll(async () => { if (bundleDirectory) await rm(bundleDirectory, { recursive: true, force: true }); });
 afterEach(async () => { for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } });
 
-async function fixture(reply) {
+async function createFixture(reply, generateBridgeResponse) {
   const requests = [];
   const headers = [];
   const server = http.createServer(async (req, res) => {
@@ -39,7 +59,14 @@ async function fixture(reply) {
   return { input, requests, headers, model, credential, resolve, trigger, run, runEffect };
 }
 
-describe('external runtime provider bridge', () => {
+describe.each(['source', 'prebundled'])('external runtime provider bridge (%s)', (mode) => {
+  let bridge;
+  let generateBridgeResponse;
+  beforeAll(() => {
+    bridge = mode === 'source' ? sourceBridge : bundled.default;
+    generateBridgeResponse = mode === 'source' ? sourceGenerate : bundled.generateBridgeResponse;
+  });
+  const fixture = reply => createFixture(reply, generateBridgeResponse);
   it('sends only caller context and returns measured usage through the host resolver', async () => {
     const { input, requests, resolve, trigger, run } = await fixture({ role: 'assistant', content: 'summary' });
     expect(await run(input)).toMatchObject({ text: 'summary', toolCalls: [], usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 80 } });

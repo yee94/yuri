@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor, screen, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor, powerSaveBlocker, screen, session, shell, systemPreferences } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,7 +66,8 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
       if (process.platform !== 'darwin') throw failure('unsupported');
       if (!enabled()) throw failure('disabled');
       if (!fs.existsSync(helper())) throw failure('helper_unavailable');
-      let win, child, disposed = false, started = false;
+      let win, child, displayBlocker, discoveryTimer, disposed = false, started = false;
+      const wakeAbort = new AbortController();
       let stage = 'permissions', permissions;
       let rejectStopped, resolveReady;
       const stopped = new Promise((_resolve, reject) => { rejectStopped = reject; });
@@ -81,6 +82,9 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         rejectStopped(failure('permission_denied'));
         owners.delete(end);
         clearTimeout(readyTimer);
+        clearTimeout(discoveryTimer);
+        wakeAbort.abort();
+        if (displayBlocker !== undefined) powerSaveBlocker.stop(displayBlocker);
         for (const cleanup of cleanups) cleanup();
         partition.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
         partition.setPermissionCheckHandler(() => false);
@@ -110,9 +114,29 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         if (disposed) throw failure('permission_denied');
         if (!enabled()) throw failure('disabled');
         if (!permissions.ready) throw failure('permission_required');
+        displayBlocker = powerSaveBlocker.start('prevent-display-sleep');
         stage = 'screen-discovery';
-        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+        let sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
         if (disposed) throw failure('permission_denied');
+        if (sources.length === 0) {
+          stage = 'display-wake';
+          // A display-sleep blocker cannot wake an already sleeping display; macOS returns no capture sources until it wakes.
+          await new Promise((resolve, reject) => {
+            execFile('/usr/bin/caffeinate', ['-u', '-t', '1'],
+              { timeout: 3000, windowsHide: true, signal: wakeAbort.signal }, error => {
+                if (error) reject(failure('display_unavailable')); else resolve();
+              });
+          });
+          if (disposed) throw failure('permission_denied');
+          stage = 'screen-discovery';
+          for (let attempt = 0; attempt < 9; attempt++) {
+            if (attempt) await new Promise(resolve => { discoveryTimer = setTimeout(resolve, 250); });
+            if (disposed) throw failure('permission_denied');
+            sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+            if (disposed) throw failure('permission_denied');
+            if (sources.length) break;
+          }
+        }
         const display = screen.getPrimaryDisplay();
         const source = sources.find(item => item.display_id === String(display.id));
         if (!source) throw failure('display_unavailable');

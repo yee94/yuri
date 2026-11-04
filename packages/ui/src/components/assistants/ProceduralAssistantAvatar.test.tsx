@@ -341,7 +341,46 @@ test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('interrupting a first
   }
 });
 
-test('first-appearance blink composes over shared work without restarting other faces', () => {
+test.each(['round', 'star', 'flower'] as const)('working %s list, header and transcript faces stay frame-identical across sizes and late mounts', async shape => {
+  mouseAvailable = true;
+  let now = performance.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('synchronized'), shape });
+  const render = (count: number, working = true, firstSize = 64) => root.render(<>{[firstSize, 40, 28].slice(0, count).map((size, index) =>
+    <div key={index} data-face={index}><LiveAssistantWorkingAvatar name="synchronized" avatarSeed={seed} size={size} working={working} followPointer={index !== 2} /></div>,
+  )}</>);
+  const pose = (index: number) => [...host.querySelectorAll(`[data-face="${index}"] svg path, [data-face="${index}"] svg g`)].map(node => [node.getAttribute('d'), node.getAttribute('transform')]);
+  await act(async () => render(2));
+  await intersect(true);
+  for (let i = 0; i < 20; i++) { now += 34; frame(now); }
+  await act(async () => render(3));
+  await intersect(true);
+  expect(pose(2)).toEqual(pose(0));
+  host.querySelector('[data-face="0"] [data-avatar-motion]')!.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+  window.dispatchEvent(Object.assign(new Event('pointermove'), { pointerType: 'mouse', clientX: 200, clientY: 100 }));
+  for (let i = 0; i < 60; i++) {
+    now += 34; frame(now);
+    expect(pose(1)).toEqual(pose(0));
+    expect(pose(2)).toEqual(pose(0));
+  }
+  const current = pose(0);
+  await act(async () => render(3, true, 32));
+  expect(pose(0)).toEqual(current);
+  await intersect(false);
+  expect(frames.size).toBe(0);
+  await intersect(true);
+  now += 34; frame(now);
+  expect(pose(1)).toEqual(pose(0));
+  expect(pose(2)).toEqual(pose(0));
+  await act(async () => render(3, false));
+  host.querySelector('[data-face="2"] [data-avatar-motion]')!.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+  now += 34; frame(now);
+  await act(async () => render(3));
+  expect(pose(1)).toEqual(pose(0));
+  expect(pose(2)).toEqual(pose(0));
+});
+
+test('first appearance during work joins the shared eyes without a local blink', () => {
   const mount = (id: string, blinkOnMount: boolean) => {
     const node = document.createElement('span');
     host.append(node);
@@ -355,7 +394,7 @@ test('first-appearance blink composes over shared work without restarting other 
   const second = mount('second', true);
   try {
     frame(start + 11 * 34);
-    expect(second.pose()).not.toEqual(first.pose());
+    expect(second.pose()).toEqual(first.pose());
     for (let i = 12; i <= 45; i++) frame(start + i * 34);
     expect(second.pose()).toEqual(first.pose());
     expect(frames.size).toBe(1);
@@ -398,7 +437,7 @@ test('list and header idle faces follow an available mouse while transcript idle
   expect(frames.size).toBe(1);
 });
 
-test('late-mounted working transcript faces join the same pose and keep hover local', async () => {
+test('late-mounted working transcript faces join the same pose even during hover', async () => {
   const render = (count: number, first = true) => root.render(<>{Array.from({ length: count }, (_, i) => first || i !== 0
     ? <div key={i} data-face={i}><AssistantWorkingAvatar name="shared-bot" avatarSeed="shared-face" size={i === 0 ? 44 : 32} working followPointer={false} showWorkingDot={false} /></div>
     : null)}</>);
@@ -414,7 +453,7 @@ test('late-mounted working transcript faces join the same pose and keep hover lo
   for (let i = 21; i <= 40; i++) { frame(start + i * 34); expect(pose(1)).toEqual(pose(0)); }
   host.querySelector('[data-face="0"] [data-avatar-motion]')!.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
   frame(start + 41 * 34);
-  expect(pose(0)).not.toEqual(pose(1));
+  expect(pose(0)).toEqual(pose(1));
   for (let i = 42; i <= 65; i++) frame(start + i * 34);
   expect(pose(0)).toEqual(pose(1));
   await act(async () => render(2, false));
@@ -458,7 +497,7 @@ test('working timelines advance once per shared paint, isolate identities and re
     expect(create).toHaveBeenCalledTimes(1);
     expect(first.pose()).toEqual(second.pose());
     faces.push(mount('other-identity', 'bot-b'), mount('other-recipe', 'bot-a', 'other-face'), mount('other-mode', 'bot-a', 'same-face', 64));
-    expect(create).toHaveBeenCalledTimes(4);
+    expect(create).toHaveBeenCalledTimes(3);
     advances.forEach((advance) => advance.mockClear());
     frame(start + 31 * 34);
     advances.forEach((advance) => expect(advance).toHaveBeenCalledTimes(1));
@@ -466,7 +505,7 @@ test('working timelines advance once per shared paint, isolate identities and re
     first.dispose();
     second.update(false);
     second.update(true);
-    expect(create).toHaveBeenCalledTimes(5);
+    expect(create).toHaveBeenCalledTimes(3);
     faces.forEach((face) => face.dispose());
     expect(frames.size).toBe(0);
   } finally {
@@ -676,16 +715,16 @@ test('twenty visible production avatars share one clock and unique SVG definitio
   expect(host.querySelectorAll('svg')).toHaveLength(20);
   const ids = [...host.querySelectorAll('[id]')].map((node) => node.id);
   expect(new Set(ids).size).toBe(ids.length);
-  expect(add.mock.calls.filter(([type]) => String(type) === 'pointermove')).toHaveLength(1);
+  expect(add.mock.calls.filter(([type]) => String(type) === 'pointermove')).toHaveLength(0);
   const reads = [...host.querySelectorAll('[data-avatar-motion]')].map((node) => vi.spyOn(node, 'getBoundingClientRect'));
   for (let i = 0; i < 500; i++) window.dispatchEvent(Object.assign(new Event('pointermove'), { pointerType: 'mouse', clientX: i, clientY: i }));
   reads.forEach((read) => expect(read).not.toHaveBeenCalled());
   frame(performance.now() + 34);
-  reads.forEach((read) => expect(read).toHaveBeenCalledTimes(1));
+  reads.forEach((read) => expect(read).not.toHaveBeenCalled());
   expect(frames.size).toBe(1);
   await act(async () => root.render(null));
   expect(frames.size).toBe(0);
-  expect(remove.mock.calls.filter(([type]) => String(type) === 'pointermove')).toHaveLength(1);
+  expect(remove.mock.calls.filter(([type]) => String(type) === 'pointermove')).toHaveLength(0);
 });
 
 test('Strict Mode and identity changes remove imperative renderers rather than stacking SVGs', async () => {
@@ -769,14 +808,14 @@ test('contact-row hover targets text and whitespace without retriggering on avat
   expect(players).toHaveBeenCalledTimes(2);
   expect(add.mock.calls.filter(([type]) => type === 'pointerenter')).toHaveLength(0);
   expect(remove.mock.calls.filter(([type]) => type === 'pointerenter')).toHaveLength(0);
-  enter(row); expect(hover).toHaveBeenCalledTimes(2);
+  enter(row); expect(hover).toHaveBeenCalledTimes(1);
   await intersect(false);
   expect(remove.mock.calls.filter(([type]) => type === 'pointerenter')).toHaveLength(1);
-  enter(row); expect(hover).toHaveBeenCalledTimes(2);
+  enter(row); expect(hover).toHaveBeenCalledTimes(1);
   await intersect(true);
   Object.assign(media, { matches: true });
   await act(async () => media.dispatchEvent(new Event('change')));
-  enter(row); expect(hover).toHaveBeenCalledTimes(2);
+  enter(row); expect(hover).toHaveBeenCalledTimes(1);
 });
 
 test('changing the row hover target moves one listener and unmount removes it without restarting the player', async () => {
