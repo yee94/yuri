@@ -21,11 +21,11 @@ export const TranscriptScrollControls = React.memo(function TranscriptScrollCont
     });
     const measureCompactAnchor = useEvent(() => {
         const controls = controlsRef.current;
-        const motion = composer?.querySelector<HTMLElement>('.yuri-mobile-composer-motion-viewport');
+        const stack = composer?.querySelector<HTMLElement>('.yuri-mobile-composer-stack');
         const pill = composer?.querySelector<HTMLElement>('.yuri-mobile-composer-compact-layer');
-        if (!controls || !motion || !pill || !pill.offsetHeight) return;
+        if (!controls || !stack || !pill || !pill.offsetHeight) return;
         const foot = controls.parentElement!;
-        const inset = foot.getBoundingClientRect().bottom - motion.getBoundingClientRect().bottom
+        const inset = foot.getBoundingClientRect().bottom - stack.getBoundingClientRect().bottom
             + (Number.parseFloat(getComputedStyle(pill).bottom) || 0) + pill.offsetHeight;
         const value = `${inset}px`;
         if (controls.style.getPropertyValue('--yuri-transcript-compact-inset') !== value) {

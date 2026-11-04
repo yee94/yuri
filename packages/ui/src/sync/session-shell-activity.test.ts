@@ -61,6 +61,9 @@ test('native shell events keep an idle session and its ancestors active and coun
   expect(reader.read()).toBe(activeSet);
   expect(reader.readBackgroundCount('parent')).toBe(3);
   expect(reader.readBackgroundCount('child')).toBe(1);
+  const scope = { childSessionIDs: new Set(['child']), shellIDs: new Set(['sh_one', 'sh_two']) };
+  expect(reader.readBackgroundCount('parent', scope)).toBe(3);
+  expect(reader.readBackgroundCount('parent', { childSessionIDs: new Set(), shellIDs: new Set(['sh_unrelated']) })).toBe(0);
   store.setState({ session_status: { parent: { type: 'idle' }, child: { type: 'idle' } } });
   expect(reader.readBackgroundCount('parent')).toBe(2);
   dispatch(children, 'shell.exited', { id: 'sh_one', status: 'timeout' });

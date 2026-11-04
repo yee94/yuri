@@ -32,7 +32,7 @@ import {
 } from "./event-reducer"
 import { useGlobalSyncStore } from "./global-sync-store"
 import { ChildStoreManager, type DirectoryStore } from "./child-store"
-import { getSessionActivityReader } from './session-activity'
+import { getSessionActivityReader, type BackgroundTaskScope } from './session-activity'
 import {
   aggregateLiveSessions,
   aggregateLiveSessionStatuses,
@@ -235,10 +235,10 @@ export function useSessionActivity(sessionID: string): boolean {
   return React.useSyncExternalStore(reader.subscribe, read, read)
 }
 
-export function useBackgroundTaskCount(sessionID: string): number {
+export function useBackgroundTaskCount(sessionID: string, scope: BackgroundTaskScope): number {
   const { childStores } = useSyncSystem()
   const reader = getSessionActivityReader(childStores)
-  const read = React.useMemo(() => () => reader.readBackgroundCount(sessionID), [reader, sessionID])
+  const read = React.useMemo(() => () => reader.readBackgroundCount(sessionID, scope), [reader, sessionID, scope])
   return React.useSyncExternalStore(reader.subscribe, read, read)
 }
 

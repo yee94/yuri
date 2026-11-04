@@ -309,6 +309,80 @@ beforeEach(() => {
 });
 
 describe('history failure feedback with production toast store', () => {
+    test.each([false, true])('mobile loading remains busy after the response until the held page is displayed (virtual=%s)', async (virtualized) => {
+        runtimeSurface.mobileProbe = true;
+        let finishLoad!: () => void;
+        const load = vi.fn(() => new Promise<void>((resolve) => { finishLoad = resolve; }));
+        const handle = await mountController({
+            isMobile: true, isPinned: false, loadMoreMessages: load,
+            geometry: { scrollHeight: 1200, clientHeight: 400, scrollTop: 100 },
+        });
+        await handle.setState({ messageListApi: {
+            isHistoryVirtualized: () => virtualized,
+            captureViewportAnchor: () => null,
+            cancelViewportAnchorHold: () => {},
+        } as unknown as MessageListHandle });
+        const initial = handle.state.messages;
+        const container = handle.scrollRef.current!;
+        container.dispatchEvent(new Event('touchstart'));
+        let flight!: Promise<void>;
+        await act(async () => { flight = handle.api!.loadEarlier({ userInitiated: true, singlePage: true }); });
+        await handle.setState({ messages: [message('older'), ...initial] });
+        await act(async () => finishLoad());
+        await waitMs(350);
+
+        expect(handle.api!.renderedMessages).toBe(initial);
+        expect(handle.api!.isLoadingOlder, 'fetched history is still waiting for display').toBe(true);
+        expect(load).toHaveBeenCalledTimes(1);
+
+        container.dispatchEvent(new Event('touchend'));
+        await waitMs(100);
+        await act(async () => { await flight; });
+        await waitMs(0);
+        expect(handle.api!.renderedMessages).toBe(handle.state.messages);
+        expect(handle.api!.isLoadingOlder).toBe(false);
+        expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([false, true])('loading remains busy beyond the held-page render deadline (mobile=%s)', async (isMobile) => {
+        runtimeSurface.mobileProbe = isMobile;
+        let finishLoad!: () => void;
+        const load = vi.fn(() => new Promise<void>((resolve) => { finishLoad = resolve; }));
+        const handle = await mountController({
+            isMobile, isPinned: false, loadMoreMessages: load,
+            geometry: { scrollHeight: 1200, clientHeight: 400, scrollTop: 100 },
+        });
+        const initial = handle.state.messages;
+        const container = handle.scrollRef.current!;
+        vi.useFakeTimers();
+        try {
+            const keepHolding = () => container.dispatchEvent(isMobile
+                ? new Event('touchstart')
+                : new WheelEvent('wheel', { deltaY: -120 }));
+            keepHolding();
+            let flight!: Promise<void>;
+            await act(async () => { flight = handle.api!.loadEarlier({ userInitiated: true, singlePage: true }); });
+            await handle.setState({ messages: [message('older'), ...initial] });
+            await act(async () => finishLoad());
+            for (let tick = 0; tick < 26; tick++) {
+                if (!isMobile) keepHolding();
+                await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+            }
+            expect(handle.api!.renderedMessages).toBe(initial);
+            expect(handle.api!.isLoadingOlder).toBe(true);
+            await act(async () => handle.api!.handleHistoryUpwardIntent());
+            expect(load).toHaveBeenCalledTimes(1);
+
+            if (isMobile) container.dispatchEvent(new Event('touchend'));
+            await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+            await act(async () => { await flight; });
+            expect(handle.api!.renderedMessages).toBe(handle.state.messages);
+            expect(handle.api!.isLoadingOlder).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('desktop pagination retains its snapshot through held display, samples user movement and does not fetch another page', async () => {
         let finishLoad!: () => void;
         const load = vi.fn(() => new Promise<void>((resolve) => { finishLoad = resolve; }));

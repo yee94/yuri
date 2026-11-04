@@ -1,6 +1,7 @@
 import type { Message, Part } from '@/lib/opencode/v2-types';
 import type { SessionCompactionPart } from '@/sync/session-projection-api';
 import type { TurnActivityGroup, TurnActivityRecord, TurnChangedFile, TurnDiffStats, TurnGroupingContext } from '../lib/turns/types';
+import { collectBackgroundWorkScope } from './parts/sessionBackgroundModel';
 
 type MessageRecord = {
   info: Message;
@@ -349,6 +350,14 @@ export const areRelevantTurnGroupingContextsEqual = (
 
   if (!areRelevantActivityPartsEqual(left.activityParts, right.activityParts, messageId)) {
     return false;
+  }
+
+  if ((left.isLastAssistantInTurn || right.isLastAssistantInTurn) && left.activityParts !== right.activityParts) {
+    const before = collectBackgroundWorkScope((left.activityParts ?? []).map(activity => activity.part));
+    const after = collectBackgroundWorkScope((right.activityParts ?? []).map(activity => activity.part));
+    if (before.childSessionIDs.size !== after.childSessionIDs.size || before.shellIDs.size !== after.shellIDs.size
+      || [...before.childSessionIDs].some(id => !after.childSessionIDs.has(id))
+      || [...before.shellIDs].some(id => !after.shellIDs.has(id))) return false;
   }
 
   if (!areRelevantActivitySegmentsEqual(left.activityGroupSegments, right.activityGroupSegments, messageId)) {

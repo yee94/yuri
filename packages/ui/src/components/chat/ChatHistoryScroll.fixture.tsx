@@ -57,8 +57,12 @@ function ScrollControlsFixture() {
             <div className="yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay">
                 <TranscriptScrollControls active scrollRef={auto.scrollRef} showScrollToBottom={auto.showScrollButton} onScrollToBottom={resume} />
                 <form className="yuri-mobile-composer"><div className="chat-input-column">
-                    <div className="yuri-mobile-composer-motion-viewport" style={{ height: 144 }}>
-                        <div className="yuri-mobile-composer-expanded-layer"><textarea data-chat-input="true" aria-label="Message" /></div>
+                    <div className="yuri-mobile-composer-stack">
+                        <div className="yuri-mobile-composer-expanded-layer">
+                            <div className="yuri-mobile-composer-motion-viewport" style={{ height: 144 }}>
+                                <textarea data-chat-input="true" aria-label="Message" />
+                            </div>
+                        </div>
                         <div className="yuri-mobile-composer-compact-layer">Tap to type</div>
                     </div>
                 </div></form>
@@ -121,6 +125,7 @@ export default function Fixture() {
             anchorTop: node ? node.getBoundingClientRect().top - el.getBoundingClientRect().top : null,
             anchorBottom: node ? node.getBoundingClientRect().bottom - el.getBoundingClientRect().top : null,
             loads: loads.current, pinned: auto.isPinned,
+            loading: timeline.isLoadingOlder,
             displayedMessages: el.querySelectorAll('[data-message-id]').length,
             viewportHeight: el.clientHeight,
         };

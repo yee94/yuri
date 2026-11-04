@@ -10,7 +10,7 @@ import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSessio
 
 const here = dirname(fileURLToPath(import.meta.url));
 const exec = promisify(execFile);
-type Sample = { run: string | null; prepared: boolean; top: number; max: number; anchorTop: number | null; anchorOffset: number | null; anchorBottom: number | null; fingerDelta: number; loads: number; pinned: boolean; viewportHeight: number; displayedMessages: number };
+type Sample = { run: string | null; prepared: boolean; top: number; max: number; anchorTop: number | null; anchorOffset: number | null; anchorBottom: number | null; fingerDelta: number; loads: number; pinned: boolean; loading: boolean; viewportHeight: number; displayedMessages: number };
 const workDirs: string[] = [];
 
 afterAll(() => {
@@ -82,7 +82,7 @@ window.addEventListener('error',e=>{
                         child.dispatchEvent(new TouchEvent(type, {bubbles:true, touches:type === 'touchend' ? [] : [point], changedTouches:[point]}));
                     };
                     touch('touchstart',400); touch('touchmove',430);
-                    scroll.scrollTop -= 30;
+                    scroll.scrollTop -= ${run === 0 ? 300 : 30};
                     scroll.dispatchEvent(new Event('scroll'));
                     touch('touchend',430);
                 })()`);
@@ -98,7 +98,15 @@ window.addEventListener('error',e=>{
                 await new Promise((resolve) => setTimeout(resolve, 50));
                 expect(released.phase).toBe('rest');
                 expect(released.rest).toBe('compact');
-                expect(await page.evaluate(`!!document.querySelector('.yuri-transcript-scroll-controls button')?.getClientRects().length`)).toBe(true);
+                const controlGeometry = await page.evaluate<{ gap: number; hit: boolean }>(`(() => {
+                    const button=document.querySelector('.yuri-transcript-scroll-controls button');
+                    const pill=document.querySelector('.yuri-mobile-composer-compact-layer');
+                    const rect=button.getBoundingClientRect();
+                    return {gap:pill.getBoundingClientRect().top-rect.bottom,
+                        hit:document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)?.closest('button')===button};
+                })()`);
+                expect(controlGeometry.gap, 'the first measurement must ignore the exiting expanded layer transform').toBeCloseTo(8, 0);
+                expect(controlGeometry.hit, 'the button must be on screen and tappable, not just have a layout box').toBe(true);
                 await page.evaluate(`document.querySelector('.yuri-transcript-scroll-controls button').click()`);
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 const resumed = await page.evaluate<{ gap: number; phase: string; rest: string; header: string; opacity: string; pointer: string; focused: boolean; button: boolean }>(`(() => {
@@ -265,11 +273,16 @@ window.addEventListener('error',e=>{
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
         const before = await page.evaluate<Sample>('window.historyScrollFixture.sample()');
+        if (scenario === 'normal') {
+            expect(before.loads).toBe(1);
+            expect(before.loading, 'loading must cover the fetched page held behind the touch gesture').toBe(true);
+        }
         if (!fastEntry && !desktop) await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         await new Promise((resolve) => setTimeout(resolve, 2500));
         const after = await page.evaluate<Sample>('window.historyScrollFixture.sample()');
         console.info('[history-scroll positions]', { before, after });
         expect(after.loads).toBe(1);
+        expect(after.loading).toBe(false);
         expect(after.max - prepared.max, 'the fetched history must actually be rendered').toBeGreaterThan(partialTurn ? 100 : desktop ? 500 : 2000);
         if (partialTurn) {
             expect(await page.evaluate('document.querySelector(\'[data-message-id="partial-final"]\') === window.retainedAnswer')).toBe(true);

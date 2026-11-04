@@ -5,6 +5,11 @@ import { useGlobalSessionStatusStore } from './global-session-status';
 import { aggregateLiveSessionStatuses } from './live-aggregate';
 import { getSessionShellActivity } from './session-shell-activity';
 
+export type BackgroundTaskScope = {
+  childSessionIDs: ReadonlySet<string>;
+  shellIDs: ReadonlySet<string>;
+};
+
 export function collectRunningSessionIds(
   liveStatuses: Record<string, { type: string }>,
   fallbackStatusById: ReadonlyMap<string, unknown>,
@@ -23,6 +28,7 @@ export function collectRunningSessionIds(
 function createSessionActivityReader(children: ChildStoreManager) {
   let snapshot: ReadonlySet<string> = new Set();
   let backgroundCounts = new Map<string, number>();
+  let workBySession = new Map<string, Set<string>>();
   let dirty = true;
   let structureDirty = true;
   let statusDirty = true;
@@ -53,28 +59,43 @@ function createSessionActivityReader(children: ChildStoreManager) {
     }
     const next = new Set<string>();
     const nextCounts = new Map<string, number>();
+    const nextWork = new Map<string, Set<string>>();
+    const addWork = (sessionID: string, workID: string) => {
+      let work = nextWork.get(sessionID);
+      if (!work) { work = new Set(); nextWork.set(sessionID, work); }
+      work.add(workID);
+    };
     for (const id of active) {
       const visited = new Set<string>();
       let ancestor: string | undefined = id;
       while (ancestor && !visited.has(ancestor)) {
         visited.add(ancestor);
         next.add(ancestor);
+        addWork(ancestor, `session:${id}`);
         if (ancestor !== id) nextCounts.set(ancestor, (nextCounts.get(ancestor) ?? 0) + 1);
         ancestor = sessions.get(ancestor)?.parentID;
       }
     }
-    for (const { sessionID } of shells.read().values()) {
+    for (const [shellID, { sessionID }] of shells.read()) {
       const visited = new Set<string>();
       let ancestor: string | undefined = sessionID;
       while (ancestor && !visited.has(ancestor)) {
         visited.add(ancestor);
         next.add(ancestor);
+        addWork(ancestor, `shell:${shellID}`);
         nextCounts.set(ancestor, (nextCounts.get(ancestor) ?? 0) + 1);
         ancestor = sessions.get(ancestor)?.parentID;
       }
     }
     if (nextCounts.size !== backgroundCounts.size
       || [...nextCounts].some(([id, count]) => backgroundCounts.get(id) !== count)) backgroundCounts = nextCounts;
+    let workChanged = nextWork.size !== workBySession.size;
+    for (const [id, work] of nextWork) {
+      const previous = workBySession.get(id);
+      if (previous?.size === work.size && [...work].every(key => previous.has(key))) nextWork.set(id, previous);
+      else workChanged = true;
+    }
+    if (workChanged) workBySession = nextWork;
     if (next.size !== snapshot.size || [...next].some((id) => !snapshot.has(id))) snapshot = next;
     return snapshot;
   };
@@ -83,7 +104,8 @@ function createSessionActivityReader(children: ChildStoreManager) {
     dirty = true;
     const before = snapshot;
     const countsBefore = backgroundCounts;
-    if (read() !== before || backgroundCounts !== countsBefore) for (const listener of listeners) listener();
+    const workBefore = workBySession;
+    if (read() !== before || backgroundCounts !== countsBefore || workBySession !== workBefore) for (const listener of listeners) listener();
   };
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
@@ -116,8 +138,20 @@ function createSessionActivityReader(children: ChildStoreManager) {
       }
     };
   };
-  const readBackgroundCount = (sessionID: string) => {
+  const readBackgroundCount = (sessionID: string, scope?: BackgroundTaskScope) => {
     read();
+    if (scope) {
+      const owned = workBySession.get(sessionID);
+      if (!owned) return 0;
+      const matching = new Set<string>();
+      for (const id of scope.shellIDs) if (owned.has(`shell:${id}`)) matching.add(`shell:${id}`);
+      for (const id of scope.childSessionIDs) {
+        if (id === sessionID) continue;
+        for (const key of workBySession.get(id) ?? []) if (owned.has(key)) matching.add(key);
+      }
+      matching.delete(`session:${sessionID}`);
+      return matching.size;
+    }
     return backgroundCounts.get(sessionID) ?? 0;
   };
   return { read, readBackgroundCount, subscribe };

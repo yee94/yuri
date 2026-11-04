@@ -157,9 +157,14 @@ it('measures the compact pill anchor when controls first appear and only rewrite
         }}>
             <TranscriptScrollControls {...props} />
             <form className="yuri-mobile-composer">
-                <div className="yuri-mobile-composer-motion-viewport" ref={(element) => {
+                <div className="yuri-mobile-composer-stack" ref={(element) => {
                     if (element) element.getBoundingClientRect = () => new DOMRect(12, 700, 378, 158);
                 }}>
+                    <div className="yuri-mobile-composer-expanded-layer" style={{ transform: 'translateY(174px)' }}>
+                        <div className="yuri-mobile-composer-motion-viewport" ref={(element) => {
+                            if (element) element.getBoundingClientRect = () => new DOMRect(12, 874, 378, 158);
+                        }} />
+                    </div>
                     <div className="yuri-mobile-composer-compact-layer" style={{ bottom: 4 }} ref={(element) => {
                         if (element) Object.defineProperty(element, 'offsetHeight', { configurable: true, value: 44 });
                     }} />
@@ -172,7 +177,6 @@ it('measures the compact pill anchor when controls first appear and only rewrite
     await act(async () => root.render(<Fixture />));
     const observer = observers.find((entry) => entry.observe.mock.calls[0]?.[0] === host.querySelector('form'))!;
     expect(observer).toBeDefined();
-    await act(async () => observer.notify());
     const controls = host.querySelector<HTMLElement>('.yuri-transcript-scroll-controls')!;
     expect(controls.style.getPropertyValue('--yuri-transcript-compact-inset')).toBe('64px');
     const writes = vi.spyOn(controls.style, 'setProperty');

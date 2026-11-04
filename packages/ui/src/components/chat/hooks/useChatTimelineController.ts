@@ -128,7 +128,7 @@ const MOBILE_TURN_MODEL_CACHE_MAX = 4
 const MOBILE_TURN_MODEL_CACHE_MAX_MESSAGES = 30
 const HISTORY_RENDER_WAIT_TIMEOUT_MS = 250
 const DESKTOP_PREPEND_QUIET_MS = 800
-const DESKTOP_PREPEND_RENDER_WAIT_MAX_MS = 10_000
+const HISTORY_PREPEND_RENDER_WAIT_MAX_MS = 10_000
 /**
  * Pause after a stalled or failed older-history load before the next scroll
  * gesture may try again. Bounds a wheel burst at the top to one request per
@@ -605,8 +605,8 @@ export const useChatTimelineController = ({
     const messagesRef = React.useRef(messages);
     const historyMetaRef = React.useRef<SessionHistoryMeta | null>(historyMeta);
     const pendingRenderResolversRef = React.useRef<Array<() => void>>([]);
-    const desktopPrependHeldRef = React.useRef(false);
-    const pendingDesktopSnapshotReleaseRef = React.useRef<(() => void) | null>(null);
+    const historyPrependHeldRef = React.useRef(false);
+    const pendingHistoryReleaseRef = React.useRef<(() => void) | null>(null);
     const pendingScrollRequestRef = React.useRef<PendingScrollRequest | null>(null);
     const scrollPinRef = React.useRef<{ turnId: string; expiresAt: number } | null>(null);
     const historyInteractionRef = React.useRef(false);
@@ -713,7 +713,7 @@ export const useChatTimelineController = ({
         resolvers.forEach((resolve) => resolve());
     });
 
-    const waitForNextRenderCommitOrTimeout = useEvent((preserveDesktopPrepend = false): Promise<void> => {
+    const waitForNextRenderCommitOrTimeout = useEvent((preserveHistoryPrepend = false): Promise<void> => {
         return new Promise<void>((resolve) => {
             if (typeof window === 'undefined') {
                 resolve();
@@ -722,7 +722,7 @@ export const useChatTimelineController = ({
 
             let settled = false;
             const scope = historyScopeRef.current;
-            const deadline = Date.now() + DESKTOP_PREPEND_RENDER_WAIT_MAX_MS;
+            const deadline = Date.now() + HISTORY_PREPEND_RENDER_WAIT_MAX_MS;
             const finish = () => {
                 if (settled) return;
                 settled = true;
@@ -731,8 +731,8 @@ export const useChatTimelineController = ({
                 resolve();
             };
             const onTimeout = () => {
-                if (preserveDesktopPrepend && scope === historyScopeRef.current
-                    && desktopPrependHeldRef.current && Date.now() < deadline) {
+                if (preserveHistoryPrepend && scope === historyScopeRef.current
+                    && historyPrependHeldRef.current && Date.now() < deadline) {
                     timer = window.setTimeout(onTimeout, deadline - Date.now());
                     return;
                 }
@@ -813,8 +813,8 @@ export const useChatTimelineController = ({
     });
 
     // Keep the displayed snapshot while a prepend arrives during input. Mobile
-    // tail staging covers partial turns outside StaticHistoryList; desktop
-    // stages both engines through the same owner until wheel/scroll is quiet.
+    // staging also covers virtualized history so its request cannot finish
+    // while StaticHistoryList is still waiting for the same gesture to end.
     const desktopMotionRef = React.useRef({ scope: historyScope, at: -Infinity });
     const noteDesktopMotion = () => {
         if (!isMobile && !isMobileSurfaceRuntime()) desktopMotionRef.current = { scope: historyScope, at: Date.now() };
@@ -833,10 +833,10 @@ export const useChatTimelineController = ({
         && displayedHistory.messages !== messages
         && hasInsertedBeforeKnownOldest(displayedHistory.messages[0]?.info?.id ?? null, messages[0]?.info?.id ?? null, messages)
         && (mobilePrepend
-            ? !messageListRef.current?.isHistoryVirtualized() && isHistoryGestureActive(scrollRef.current)
+            ? isHistoryGestureActive(scrollRef.current)
             : !isMobile && displayedHistory.messages.at(-1) === messages.at(-1) && isDesktopPrependActive());
     const renderedMessages = holdHistoryPrepend ? displayedHistory.messages : messages;
-    desktopPrependHeldRef.current = holdHistoryPrepend && !isMobile && !mobilePrepend;
+    historyPrependHeldRef.current = holdHistoryPrepend;
     if (displayedHistory.scope !== historyScope || displayedHistory.messages !== renderedMessages) {
         // Adopt before child layout effects can synchronously measure and emit
         // scroll. Those programmatic events must never reinstate the old page.
@@ -920,9 +920,9 @@ export const useChatTimelineController = ({
                 top: container.scrollTop,
                 anchor: captureViewportAnchor(),
             };
-            // Keep desktop request ownership through adoption so its cleanup
+            // Keep request ownership through adoption so its cleanup
             // can retire this exact snapshot after the compensated commit.
-            prePrependScrollRef.current = mobilePrepend ? refreshed : Object.assign(snap, refreshed);
+            prePrependScrollRef.current = Object.assign(snap, refreshed);
         }
         checkHistoryGesture();
     }), holdHistoryPrepend ? 50 : null);
@@ -944,7 +944,7 @@ export const useChatTimelineController = ({
 
     useIsomorphicLayoutEffect(() => {
         stopKeeper();
-        pendingDesktopSnapshotReleaseRef.current = null;
+        pendingHistoryReleaseRef.current = null;
         resolvePendingRenderWaiters();
         prePrependScrollRef.current = null;
         prependTrackingRef.current = null;
@@ -1122,9 +1122,9 @@ export const useChatTimelineController = ({
     }, [renderedMessages, goToBottom]);
 
     useIsomorphicLayoutEffect(() => {
-        if (desktopPrependHeldRef.current) return;
-        const release = pendingDesktopSnapshotReleaseRef.current;
-        pendingDesktopSnapshotReleaseRef.current = null;
+        if (historyPrependHeldRef.current) return;
+        const release = pendingHistoryReleaseRef.current;
+        pendingHistoryReleaseRef.current = null;
         release?.();
     }, [renderedMessages]);
 
@@ -1215,7 +1215,7 @@ export const useChatTimelineController = ({
         userInitiated?: boolean;
         singlePage?: boolean;
     }): Promise<boolean> => {
-        if (!sessionIdRef.current || isLoadingOlderRef.current || desktopPrependHeldRef.current) {
+        if (!sessionIdRef.current || isLoadingOlderRef.current || historyPrependHeldRef.current) {
             return false;
         }
         if (!historySignalsRef.current.hasMoreAboveTurns) {
@@ -1236,6 +1236,12 @@ export const useChatTimelineController = ({
             ? getTranscriptRepository()?.getPagination(transcriptScope(scope.directory, targetSessionId)).cursor ?? null
             : null;
         const errorToastId = historyErrorToastId;
+        const finishLoading = () => {
+            if (!isCurrent()) return;
+            isLoadingOlderRef.current = false;
+            setIsLoadingOlder(false);
+            settleHistoryInteraction();
+        };
         let armedSnapshot: PrePrependSnapshot | null = null;
         let armedKeeper: HistoryViewportAnchorKeeper | null = null;
         let historyViewportPreservationActive = Boolean(input.userInitiated);
@@ -1244,8 +1250,8 @@ export const useChatTimelineController = ({
         }
         const releaseSnapshot = () => {
             if (!isCurrent()) return;
-            if (desktopPrependHeldRef.current) {
-                pendingDesktopSnapshotReleaseRef.current = releaseSnapshot;
+            if (historyPrependHeldRef.current) {
+                pendingHistoryReleaseRef.current = releaseSnapshot;
                 return;
             }
             armedKeeper?.settle();
@@ -1357,10 +1363,10 @@ export const useChatTimelineController = ({
 
                 await waitForNextRenderCommitOrTimeout(true);
                 if (!isCurrent()) return false;
-                // A bounded wait may end while continuous desktop input still
+                // A bounded wait may end while continuous input still
                 // holds the page. It is already fetched: do not interpret its
                 // unchanged displayed height as permission to fetch more.
-                if (desktopPrependHeldRef.current) return true;
+                if (historyPrependHeldRef.current) return true;
 
                 const readPageDecision = (): HistoryPageDecision => {
                     const afterMessages = messagesRef.current;
@@ -1441,22 +1447,28 @@ export const useChatTimelineController = ({
             throw error;
         } finally {
             if (isCurrent()) {
-                isLoadingOlderRef.current = false;
-                setIsLoadingOlder(false);
-                settleHistoryInteraction();
                 // Desktop loading status is overlay (no layout push). Keep the
                 // snapshot + DOM keeper armed until the next commit settles so
                 // materialization/hydration mutations still correct before paint;
                 // then release so ordinary commits stay free of a stale read position.
-                if (desktopPrependHeldRef.current) releaseSnapshot();
-                else void waitForNextRenderCommitOrTimeout(true).then(releaseSnapshot);
+                if (historyPrependHeldRef.current) {
+                    // The wait ceiling bounds the request chain, not display
+                    // readiness. Keep its busy state and guard until adoption.
+                    pendingHistoryReleaseRef.current = () => {
+                        finishLoading();
+                        releaseSnapshot();
+                    };
+                } else {
+                    finishLoading();
+                    void waitForNextRenderCommitOrTimeout(true).then(releaseSnapshot);
+                }
             }
         }
     });
 
     // Explicit load-earlier (mobile button / desktop scroll / timeline dialog) is
-    // mutation-owned. Button spinner tracks mutation.isPending only — never
-    // background materialize/prefetch historyLoading, which can stick true on
+    // mutation-owned, with loading retained through held-page adoption — never
+    // driven by background materialize/prefetch historyLoading, which can stick true on
     // Relay and painted a permanent spinner with no real load-more flight.
     const { t } = useI18n();
     const loadEarlierMutation = useMutation({
@@ -1570,7 +1582,7 @@ export const useChatTimelineController = ({
         }
     });
 
-    // UI busy: mutation and synchronous fetch state for explicit history loads.
+    // UI busy: explicit history mutation, fetch and held-page display state.
     // Never OR historyLoading — that is a background gate, not button flight.
     const isLoadingOlderUi = (
         loadEarlierMutation.isPending

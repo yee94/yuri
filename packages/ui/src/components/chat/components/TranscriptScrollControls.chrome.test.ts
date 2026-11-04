@@ -29,7 +29,8 @@ test.skipIf(!resolveChrome())('navigation follows compact pill geometry and uses
             body{margin:0;background:var(--surface-background)}.fixture{position:relative;height:700px}.yuri-mobile-composer{padding-bottom:16px}
             </style></head><body>${sprite}<section class="fixture yuri-chat-composer-swap-scope" data-yuri-composer-swap-phase="rest">
             <div class="yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay">${controls}
-            <form class="yuri-mobile-composer"><div class="chat-input-column"><div class="yuri-mobile-composer-motion-viewport" style="height:144px">
+            <form class="yuri-mobile-composer"><div class="chat-input-column"><div class="yuri-mobile-composer-stack">
+            <div class="yuri-mobile-composer-expanded-layer"><div class="yuri-mobile-composer-motion-viewport" style="height:144px"></div></div>
             <div class="yuri-mobile-composer-compact-layer"></div></div></div></form></div></section>
             <script>const controls=document.querySelector('.yuri-transcript-scroll-controls');controls.style.setProperty('--yuri-transcript-compact-inset','60px');
             const active=controls.querySelector('button').cloneNode(true);active.classList.add('yuri-speech-follow-active');active.querySelector('use').setAttribute('href','#yuri-target');controls.querySelector('button').parentElement.append(active);</script></body></html>`);

@@ -265,6 +265,18 @@ export const readBackgroundWorkIdentity = (part: unknown): {
     };
 };
 
+/** Tool records establish ownership only; live session/shell inventory owns running state. */
+export const collectBackgroundWorkScope = (parts: readonly unknown[]) => {
+    const childSessionIDs = new Set<string>();
+    const shellIDs = new Set<string>();
+    for (const part of parts) {
+        const identity = readBackgroundWorkIdentity(part);
+        if (!identity?.id) continue;
+        (identity.type === 'subagent' ? childSessionIDs : shellIDs).add(identity.id);
+    }
+    return { childSessionIDs, shellIDs };
+};
+
 export type ResolveBackgroundToolActivityInput = {
     part: unknown;
     completions?: BackgroundCompletionIndex;

@@ -157,6 +157,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 - `sessionBackgroundModel.ts`
   - Pure projection of blocking vs already-background work from parent transcript tools.
+  - `collectBackgroundWorkScope` extracts shell/child-session identities from one turn's tools for footer ownership filtering. It does not decide running state; the footer intersects those IDs with the shared live inventory, never historical running hints or the entire session's count.
   - Blocking = backgroundable tool (`subagent` / `task` / `shell` / `bash` …) with
     `state.status` still running/pending/started.
   - `hasSettledBackgroundRunningHint` = tool settled (`completed`) while metadata still says

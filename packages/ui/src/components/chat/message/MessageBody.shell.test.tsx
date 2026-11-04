@@ -9,8 +9,10 @@ import { normalizeSessionProjectionMessage } from '@/sync/session-projection-api
 import { useUIStore } from '@/stores/useUIStore';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { projectTurnActivity } from '../lib/turns/projectTurnActivity';
-import type { ChatMessageEntry } from '../lib/turns/types';
+import type { ChatMessageEntry, TurnActivityRecord } from '../lib/turns/types';
 import { AutoReadPlaybackContext } from '@/mobile/chat/auto-read-context';
+import { ChildStoreManager } from '@/sync/child-store';
+import { getSessionShellActivity } from '@/sync/session-shell-activity';
 
 const mocks = vi.hoisted(() => ({ copy: vi.fn(async (_text: string) => ({ ok: true })), speak: vi.fn(), canResume: vi.fn(() => false), autoRead: vi.fn() }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: mocks.speak, stop: () => {}, canResume: mocks.canResume }) }));
@@ -46,6 +48,36 @@ describe('user shell results', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+  });
+  test.each([false, true])('an unrelated latest turn never inherits another turn\'s background count (mobile=%s)', async (isMobile) => {
+    const children = new ChildStoreManager();
+    const activity = getSessionShellActivity(children);
+    activity.event('/workspace', { type: 'shell.created', properties: {
+      info: { id: 'sh_other_turn', status: 'running', metadata: { sessionID: 'session' } },
+    } });
+    const context = (globalThis as unknown as {
+      __yuri_sync_context__: React.Context<{ childStores: ChildStoreManager } | null>;
+    }).__yuri_sync_context__;
+    const text = { id: 'answer', type: 'text', text: 'This reply started no background work.' } as Part;
+    const work = (shellID: string): TurnActivityRecord => ({
+      id: 'shell-call', kind: 'tool', turnId: 'turn', messageId: 'earlier-step', partIndex: 0,
+      part: { id: 'shell-call', type: 'tool', sessionID: 'session', messageID: 'earlier-step', callID: 'call', tool: 'shell',
+        state: { status: 'completed', input: {}, metadata: { shellID, status: 'running' } } },
+    });
+    const render = (shellID: string, latest: boolean) => root.render(<context.Provider value={{ childStores: children }}><MessageBody
+      sessionId="session" messageId="unrelated-answer" parts={[text]}
+      isUser={false} isMessageCompleted messageFinish="stop" isMobile={isMobile}
+      copiedCode={null} onCopyCode={() => {}} expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+      streamPhase="completed" allowAnimation={false} hasTextContent
+      turnGroupingContext={{ turnId: 'unrelated-turn', isFirstAssistantInTurn: true, isLastAssistantInTurn: true,
+        isLatestTurn: latest, hasTools: false, hasReasoning: false, isWorking: false, isTurnSettled: true, activityParts: [work(shellID)] }}
+    /></context.Provider>);
+    await act(async () => render('sh_finished', true));
+    expect(container.querySelector('[data-background-activity]')).toBeNull();
+    await act(async () => render('sh_other_turn', false));
+    expect(container.querySelector('[data-background-activity]')).not.toBeNull();
+    await act(async () => activity.event('/workspace', { type: 'shell.exited', properties: { id: 'sh_other_turn', status: 'exited' } }));
+    expect(container.querySelector('[data-background-activity]')).toBeNull();
   });
   test.each([true, false])('offers anchored resume/restart only for interrupted playback (mobile=%s)', async (isMobile) => {
     const previousConfig = useConfigStore.getState();

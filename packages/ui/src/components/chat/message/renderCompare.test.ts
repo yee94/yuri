@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import type { Message } from '@/lib/opencode/v2-types';
 import type { TurnGroupingContext } from '../lib/turns/types';
 import { areRenderRelevantMessagesEqual, areRelevantTurnGroupingContextsEqual } from './renderCompare';
@@ -76,6 +76,22 @@ describe('areRelevantTurnGroupingContextsEqual', () => {
       'assistant-last',
       false,
     )).toBe(false);
+  });
+
+  test('the footer observes background identities from preceding steps in the same turn', () => {
+    const before = createContext({ isLastAssistantInTurn: true, activityParts: [{
+      id: 'tool', turnId: 'turn-1', messageId: 'preceding-step', partIndex: 0, kind: 'tool',
+      part: { id: 'tool', type: 'tool', sessionID: 'session', messageID: 'preceding-step', callID: 'call', tool: 'shell',
+        state: { status: 'completed', input: {}, metadata: {} } },
+    }] });
+    const original = before.activityParts![0];
+    const after = { ...before, activityParts: [{ ...original, part: {
+      ...original.part, state: { status: 'completed', input: {}, metadata: { shellID: 'sh_live' } },
+    } }] } as TurnGroupingContext;
+    expect(areRelevantTurnGroupingContextsEqual(before, after, 'assistant-last', false)).toBe(false);
+    expect(areRelevantTurnGroupingContextsEqual(after, {
+      ...after, activityParts: after.activityParts?.map(activity => ({ ...activity })),
+    }, 'assistant-last', false)).toBe(true);
   });
 });
 

@@ -1485,7 +1485,7 @@ const AssistantMessageBody = React.memo(({
         && !hideCompactionBody
         && (hasTextContent || Boolean(errorMessage) || isMessageCompleted);
     const hasAuthoritativeChangesMarker = turnGroupingContext?.diffStats?.hasDiffs === true;
-    const showBackgroundActivity = turnGroupingContext?.isLatestTurn && sessionId && sessionSurface.active && !isMiniChatSurface;
+    const showBackgroundActivity = Boolean(turnGroupingContext?.activityParts?.length) && sessionId && sessionSurface.active && !isMiniChatSurface;
     const shouldShowChangesPreview = !isMiniChatSurface
         && isLastAssistantInTurn
         && hasConfirmedStopFinish
@@ -2077,7 +2077,7 @@ const AssistantMessageBody = React.memo(({
                     <AssistantMessageFooter messageId={messageId} isMobile={isMobile}
                         actions={<>{messageActionButtons}{finalTurnActionButtons}</>}
                         tps={assistantTpsText} duration={turnDurationText} timestamp={footerTimestamp}
-                        activity={showBackgroundActivity && sessionId ? <BackgroundActivityHint sessionId={sessionId} /> : null}
+                        activity={showBackgroundActivity && sessionId ? <BackgroundActivityHint sessionId={sessionId} activityParts={turnGroupingContext?.activityParts} /> : null}
                         trailing={!isMiniChatSurface && isLastAssistantInTurn && hasStopFinish && !hasAuthoritativeChangesMarker
                             ? <TurnChangedFilesDropdown activityParts={turnGroupingContext?.activityParts} /> : null}
                     />
