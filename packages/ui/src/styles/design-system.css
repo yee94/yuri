@@ -158,6 +158,11 @@
     --sidebar-stuck-bg: var(--sidebar); /* Desktop sidebar sticky header background (match sidebar) */
   }
 
+  :root:not(.dark) .yuri-preview-controls {
+    --interactive-selection: color-mix(in srgb, var(--surface-foreground) 7%, var(--background));
+    --interactive-selection-foreground: var(--surface-foreground);
+  }
+
   * {
     border-color: hsl(var(--border));
   }

@@ -31,7 +31,20 @@ until persisted splash colors or the resolved runtime theme are available.
 Cursor Dark's primary text, elevated text, quotes and tool-title base use opaque
 `#DEDEDE` instead of translucent gray-white. Secondary text, reasoning, tool
 descriptions, accent headings, links, syntax and status colors keep their existing
-palettes; other themes remain unchanged.
+palettes.
+
+Carbonfox Light's primary text, elevated text, Markdown headings, chat messages
+and tool-title base use `#212121`, the RGB inverse of Cursor Dark's `#DEDEDE`.
+Secondary text, syntax, links and status colors keep their existing palettes.
+All themes now share a primary-text brightness floor: `#212121` in light mode and
+`#DEDEDE` in dark mode. `lib/theme/baseTextColors.ts` lifts darker hex colors by
+sRGB relative luminance, accounting for text alpha over its surface; brighter
+colors retain their palette. This covers surface/elevated text, chat messages,
+tool-title bases, bold/italic text and neutral/base-colored Markdown headings.
+Secondary text, colored accent headings, code, links and status colors remain
+theme-owned. Non-hex custom CSS colors are preserved. Theme resolution and CSS
+generation apply the same rule, including custom, embedded and VS Code themes,
+so direct color consumers and saved splash colors agree with CSS tokens.
 
 ## Startup logo geometry
 
@@ -156,6 +169,10 @@ shows an update dot, and confirms an exact version/channel/plan before remote
 update/restart. OTA, native installer and CLI package updates remain Host-owned;
 beta-to-stable rollback is explicitly disclosed. Runtime-scoped Query state keeps
 progress across reconnects and rejects stale mutations after a Host switch.
+About labels the two Yuri versions as Yuri Client and Yuri Service. When the
+desktop shell is connected to its local service, that service row is read-only
+and its update search entry is hidden; the client updater owns local updates.
+Remote desktop connections, web and mobile retain the service update control.
 
 Desktop host-picker actions keep their popup visible during SSH preparation and
 show the polled SSH phase inline. Switch, connect and new-window actions share a

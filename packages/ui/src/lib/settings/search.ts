@@ -231,6 +231,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     titleKey: 'settings.yuri.about.hostUpdate.title',
     descriptionKey: 'settings.yuri.about.hostUpdate.description',
     keywords: ['remote', 'host', 'relay', 'beta', 'ota', 'version'],
+    isAvailable: (ctx) => !ctx.isDesktopLocalOrigin,
   },
   {
     id: 'about.feedback',

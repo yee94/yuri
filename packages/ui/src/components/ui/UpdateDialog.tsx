@@ -111,7 +111,6 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     switch (id) {
       case 'download':
         onDownload();
-        if (runtimeType === 'desktop') onOpenChange(false);
         break;
       case 'restart': onRestart(); break;
       case 'later': useUpdateStore.getState().dismiss(); onOpenChange(false); break;

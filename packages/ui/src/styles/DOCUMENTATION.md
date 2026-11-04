@@ -2,6 +2,14 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
+## Preview control selection
+
+`design-system.css` owns the `yuri-preview-controls` selection-token scope shared
+by the ContextPanel header and Markdown preview toggles (collapsed, expanded and
+docked toolbars). Light mode uses the header's neutral 7% foreground/background
+mix and ordinary foreground; dark mode retains the theme's selection tokens.
+The scope stays on controls, not preview content or editor text selections.
+
 ## Android native scrollbars
 
 On `html.yuri-capacitor-app.yuri-platform-android`, `mobile.css` hides native

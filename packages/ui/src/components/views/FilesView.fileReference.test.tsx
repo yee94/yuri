@@ -188,6 +188,25 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview controls share the header selection-token scope', async (toolbar) => {
+  window.localStorage.setItem('yuri:files:md-viewer-mode', 'preview');
+  harness.files.readFile.mockResolvedValue({ content: '# Report' });
+  useUIStore.setState({ expandedEditorToolbar: toolbar === 'docked' });
+  await open('/repo/report.md');
+  await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+  if (toolbar === 'expanded') await clickButton('filesView.editor.showControlsAria');
+
+  const header = host.querySelector('[data-context-panel] header')!;
+  const toggle = host.querySelector<HTMLButtonElement>('[aria-label="filesView.editor.switchToEditMode"]')!;
+  expect(header.classList.contains('yuri-preview-controls')).toBe(true);
+  expect(toggle.classList.contains('yuri-preview-controls')).toBe(true);
+  expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(true);
+  await act(async () => toggle.click());
+  expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(false);
+  expect(toggle.getAttribute('aria-label')).toBe('filesView.editor.switchToPreviewMode');
+  await act(async () => useUIStore.setState({ expandedEditorToolbar: false }));
+});
+
 describe('binary file fallback', () => {
   test.each(['/repo/installer.dmg', '/repo/data.unknown', '/repo/binary.md'])('does not read or edit authoritative binary %s', async (path) => {
     harness.files.statFile.mockImplementation(async (requested: string) => ({ path: requested, isFile: true, size: 9_000_000, isBinary: true }));
@@ -739,7 +758,7 @@ describe('file reference failure lifecycle', () => {
     const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs).toHaveLength(2);
     expect(tablist.closest('header')?.classList.contains('app-region-drag')).toBe(true);
-    expect(tablist.closest('header')?.classList.contains('[--interactive-selection:color-mix(in_srgb,var(--surface-foreground)_7%,var(--background))]')).toBe(true);
+    expect(tablist.closest('header')?.classList.contains('yuri-preview-controls')).toBe(true);
     expect(host.querySelector('[data-context-preview-content]')?.className).not.toContain('--interactive-selection');
     expect(host.querySelector('[data-context-file-path]')).toBeNull();
     expect(tabs[1].getAttribute('title')).toContain('second.md');

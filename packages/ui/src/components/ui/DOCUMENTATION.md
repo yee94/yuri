@@ -11,6 +11,8 @@ does not render a second channel selector or keep its own channel preference.
 
 `UpdateDialog` preserves the existing client-updater props and lifecycle for
 About, Sidebar and mobile OTA notices, adapting them to the shared model.
+Starting a client download keeps the dialog open so progress, errors and the
+restart action remain visible; users can still dismiss it explicitly.
 `update/hostUpdateDialogModel.ts` converts the Host DTO to that same model;
 `HostVersionUpdate` retains runtime-scoped Query state and exact-plan mutation
 orchestration. Remote updates never dismiss or mutate the local client updater.

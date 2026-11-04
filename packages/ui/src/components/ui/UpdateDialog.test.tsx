@@ -36,15 +36,21 @@ async function click(label: string) {
   await act(async () => { button?.click(); });
 }
 
-it('preserves desktop download-and-dismiss behavior in the shared renderer', async () => {
+it('keeps the desktop dialog open through download progress and restart readiness', async () => {
   await render();
   expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('2.0.0');
   expect(document.body.textContent).toContain('2.0.1');
   expect(document.body.querySelector('[data-markdown]')?.textContent).toContain('[@contributor](https://github.com/contributor)');
   await click(en['updateDialog.actions.downloadUpdate']);
   expect(onDownload).toHaveBeenCalledOnce();
-  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(onOpenChange).not.toHaveBeenCalled();
   expect(onRestart).not.toHaveBeenCalled();
+  await render({ downloading: true, progress: { downloaded: 32, total: 100 } });
+  expect(document.body.querySelector('[role="dialog"] [role="status"]')?.textContent).toContain('32%');
+  await render({ downloaded: true });
+  await click(en['updateDialog.actions.restartToUpdate']);
+  expect(onRestart).toHaveBeenCalledOnce();
+  expect(onOpenChange).not.toHaveBeenCalled();
 });
 
 it('preserves mobile OTA apply, reused-bundle notice, later and restart actions', async () => {

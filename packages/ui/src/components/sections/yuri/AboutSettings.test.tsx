@@ -6,8 +6,9 @@ import { dict as en } from '@/lib/i18n/messages/en';
 import { dict as zh } from '@/lib/i18n/messages/zh-CN';
 import { AboutSettings } from './AboutSettings';
 import type { RuntimeEndpointChangedDetail } from '@/lib/runtime-switch';
+import { buildSettingsSearchResults } from '@/lib/settings/search';
 
-const fixture = vi.hoisted(() => ({ locale: 'en', transport: 'host-a', generation: 1, mobile: false, native: false, nativeConfig: vi.fn(), fetch: vi.fn(), listeners: new Set<(detail: RuntimeEndpointChangedDetail) => void>() }));
+const fixture = vi.hoisted(() => ({ locale: 'en', transport: 'host-a', generation: 1, mobile: false, native: false, desktop: true, local: false, nativeConfig: vi.fn(), fetch: vi.fn(), listeners: new Set<(detail: RuntimeEndpointChangedDetail) => void>() }));
 vi.mock('@/lib/i18n', () => ({ getCurrentIntlLocale: () => 'en-US', useI18n: () => ({ t: (key: keyof typeof en, params?: Record<string, string>) => {
   let text: string = (fixture.locale === 'en' ? en : zh)[key] ?? key;
   for (const [name, value] of Object.entries(params ?? {})) text = text.replace(`{${name}}`, value);
@@ -28,7 +29,7 @@ vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (state: unknown) =>
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: fixture.mobile }) }));
 vi.mock('@/lib/platform', () => ({ isCapacitorApp: () => fixture.native }));
 vi.mock('@/lib/mobile-updates/native-config', () => ({ readNativeUpdateConfig: () => fixture.nativeConfig() }));
-vi.mock('@/lib/desktop', () => ({ isElectronShell: () => !fixture.native, getDesktopAppVersion: async () => '2.0.7-beta.1', isVSCodeRuntime: () => false, isWebRuntime: () => true, isDesktopShell: () => !fixture.native }));
+vi.mock('@/lib/desktop', () => ({ isElectronShell: () => fixture.desktop && !fixture.native, isDesktopLocalOriginActive: () => fixture.desktop && !fixture.native && fixture.local, getDesktopAppVersion: async () => '2.0.7-beta.1', isVSCodeRuntime: () => false, isWebRuntime: () => true, isDesktopShell: () => fixture.desktop && !fixture.native }));
 vi.mock('@/components/ui/UpdateDialog', () => ({ UpdateDialog: () => null }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({ SimpleMarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div> }));
 vi.mock('@/lib/mobileAppVersion', () => ({ getMobileClientVersion: async () => '2.0.0', getMobileClientBuildNumber: async () => null, formatMobileClientVersionLabel: (version: string) => version }));
@@ -40,6 +41,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fixture.locale = 'en'; fixture.transport = 'host-a'; fixture.generation = 1; fixture.mobile = false; fixture.fetch.mockReset();
   fixture.native = false;
+  fixture.desktop = true; fixture.local = false;
   fixture.nativeConfig.mockReset().mockResolvedValue({ channel: 'stable', shellApiVersion: 3 });
   fixture.fetch.mockImplementation(async (path: string) => path.startsWith('/api/system/update') ? new Response('', { status: 501 }) : Response.json(path.includes('system/info')
     ? { yuriVersion: 'host-version' }
@@ -58,6 +60,39 @@ it('exposes desktop update, feedback, beta and diagnostic controls in the shared
   }
   expect(host.querySelector('[data-settings-item="about.feedback"]')?.getAttribute('href')).toContain('/issues/new');
   expect(host.querySelector('[data-settings-item="about.export-diagnostics"]')).toBeNull();
+  expect(host.textContent).toContain('Yuri Client');
+  expect(host.textContent).toContain('Yuri Service');
+});
+it('shows only the service version locally and restores its updater after switching to a remote host', async () => {
+  fixture.local = true;
+  await render(); await render();
+  expect(host.textContent).toContain('host-version');
+  expect(host.querySelector('[data-settings-item="about.host-update"]')).toBeNull();
+  expect(host.querySelector('[data-settings-item="about.check-updates"]')).not.toBeNull();
+  expect(fixture.fetch.mock.calls.filter(([path]) => path.startsWith('/api/system/update'))).toHaveLength(0);
+  await act(async () => {
+    fixture.local = false; fixture.transport = 'host-b'; fixture.generation++;
+    fixture.listeners.forEach((notify) => notify({ apiBaseUrl: 'http://127.0.0.1:4097', previousApiBaseUrl: 'http://127.0.0.1:4096', runtimeKey: fixture.transport, previousRuntimeKey: 'host-a', transportIdentityChanged: true }));
+  });
+  await render(); await render();
+  expect(host.querySelector('[data-settings-item="about.host-update"]')).not.toBeNull();
+  expect(fixture.fetch.mock.calls.some(([path]) => path.startsWith('/api/system/update'))).toBe(true);
+  fixture.local = true;
+  await render();
+  expect(host.querySelector('[data-settings-item="about.host-update"]')).toBeNull();
+});
+it.each(['web', 'mobile'])('retains the service update control on %s', async (platform) => {
+  fixture.desktop = false;
+  fixture.mobile = platform === 'mobile'; fixture.native = fixture.mobile;
+  await render(); await render();
+  expect(host.querySelector('[data-settings-item="about.host-update"]')).not.toBeNull();
+});
+it.each([true, false])('matches service update search availability to local desktop state: %s', (local) => {
+  const results = buildSettingsSearchResults({
+    query: 'host', visiblePageSlugs: ['about'], t: (key) => en[key], getPageTitle: () => 'About',
+    runtimeCtx: { isWeb: false, isDesktop: true, isVSCode: false, isMobile: false, isDesktopLocalOrigin: local, isMac: true, isWindows: false },
+  });
+  expect(results.some((item) => item.id === 'about.host-update')).toBe(!local);
 });
 it.each(['stable', 'beta'])('uses the installed native %s channel in About', async (channel) => {
   fixture.native = true;

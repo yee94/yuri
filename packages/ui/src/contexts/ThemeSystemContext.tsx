@@ -11,6 +11,7 @@ import type { DesktopSettings } from '@/lib/desktop';
 import { isDesktopLocalOriginActive, isDesktopShell as detectDesktopShell, isVSCodeRuntime } from '@/lib/desktop';
 import { setDesktopWindowTheme } from '@/lib/desktopNative';
 import { CSSVariableGenerator } from '@/lib/theme/cssGenerator';
+import { withBaseTextFloor } from '@/lib/theme/baseTextColors';
 import { updateDesktopSettings } from '@/lib/persistence';
 import {
   isRuntimeScopedStorageEventKey,
@@ -200,7 +201,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       const id = theme.metadata.id;
       if (seen.has(id)) return;
       seen.add(id);
-      merged.push(theme);
+      merged.push(withBaseTextFloor(theme));
     };
 
     if (isVSCode && vscodeTheme) {
@@ -242,7 +243,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
 
   const currentTheme = useMemo(() => {
     if (isVSCode && vscodeTheme) {
-      return vscodeTheme;
+      return getThemeByIdFromAvailable(vscodeTheme.metadata.id) ?? withBaseTextFloor(vscodeTheme);
     }
     if (preferences.themeMode === 'light') {
       return ensureThemeById(preferences.lightThemeId, 'light');
@@ -253,7 +254,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     return systemPrefersDark
       ? ensureThemeById(preferences.darkThemeId, 'dark')
       : ensureThemeById(preferences.lightThemeId, 'light');
-  }, [ensureThemeById, isVSCode, preferences, systemPrefersDark, vscodeTheme]);
+  }, [ensureThemeById, getThemeByIdFromAvailable, isVSCode, preferences, systemPrefersDark, vscodeTheme]);
 
   const reloadCustomThemes = useEvent(async () => {
     if (typeof window === 'undefined' || isVSCode) {

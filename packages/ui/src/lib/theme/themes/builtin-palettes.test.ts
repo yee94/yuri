@@ -108,6 +108,32 @@ describe('built-in Cursor and Osaka Jade palettes', () => {
     expect(getDefaultTheme(false).colors.surface.foreground).not.toBe('#FFFFFF');
   });
 
+  test('uses dark gray for Carbonfox Light primary text without changing secondary or semantic colors', () => {
+    const theme = getDefaultTheme(false);
+    const css = new CSSVariableGenerator().generate(theme);
+
+    expect(isValidTheme(theme)).toBe(true);
+    for (const token of ['foreground', 'card-foreground', 'popover-foreground', 'sidebar-accent-foreground']) {
+      expect(css).toContain(`--${token}: #212121 !important;`);
+    }
+    for (const token of [
+      'surface-foreground', 'surface-elevated-foreground',
+      'chat-user-message', 'chat-assistant-message',
+      'markdown-heading1', 'markdown-heading2', 'markdown-heading3', 'markdown-heading4', 'markdown-bold',
+    ]) {
+      expect(css).toContain(`--${token}: #212121;`);
+    }
+    expect(css).toContain('--tools-title: color-mix(in srgb, #212121 50%, #868585);');
+    expect(css).toContain('--muted-foreground: #868585 !important;');
+    expect(theme.colors.markdown?.blockquote).toBe('#525252');
+    expect(theme.colors.markdown?.link).toBe('#0072C3');
+    expect(theme.colors.markdown?.inlineCode).toBe('#198038');
+    expect(theme.colors.chat?.timestamp).toBe('#525252');
+    expect(theme.colors.tools?.description).toBe('#525252');
+    expect(theme.colors.syntax.base.foreground).toBe('#161616');
+    expect(theme.colors.status.error).toBe('#DA1E28');
+  });
+
   test('keeps previously registered themes and does not enable other commented palettes', () => {
     const ids = new Set(themes.map((theme) => theme.metadata.id));
 

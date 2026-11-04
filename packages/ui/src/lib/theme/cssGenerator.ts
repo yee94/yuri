@@ -1,6 +1,7 @@
 import type { Theme } from '@/types/theme';
 import { SEMANTIC_TYPOGRAPHY, VSCODE_TYPOGRAPHY } from '@/lib/typography';
 import { isVSCodeRuntime } from '@/lib/desktop';
+import { withBaseTextFloor } from './baseTextColors';
 
 const hexToRgb = (value: string | undefined | null): string | null => {
   if (!value || typeof value !== 'string') {
@@ -41,6 +42,7 @@ export class CSSVariableGenerator {
   }
 
   generate(theme: Theme): string {
+    theme = withBaseTextFloor(theme);
     const cssVars: string[] = [];
 
     cssVars.push(...this.generateTailwindVariables(theme));

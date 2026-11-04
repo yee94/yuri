@@ -23,7 +23,7 @@ import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndp
 import { formatMobileClientVersionLabel, getMobileClientVersion, getMobileClientBuildNumber } from '@/lib/mobileAppVersion';
 import { isCapacitorApp } from '@/lib/platform';
 import { readNativeUpdateConfig } from '@/lib/mobile-updates/native-config';
-import { isElectronShell, getDesktopAppVersion } from '@/lib/desktop';
+import { isElectronShell, isDesktopLocalOriginActive, getDesktopAppVersion } from '@/lib/desktop';
 import {
   exportAndDownloadClientDiagnostics,
   isTranscriptDiagnosticsEnabled,
@@ -259,9 +259,15 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
             <span className="typography-ui-label font-mono text-foreground text-right">{currentVersionLabel}</span>
           </SettingsRow>
           <SettingsRow label={t('settings.yuri.about.field.instanceYuriVersion')}>
-            <HostVersionUpdate key={`${transport}:${generation}`} transport={transport} generation={generation} itemId="about.host-update"
-              channel={betaUpdatesEnabled ? 'beta' : 'stable'}
-              version={yuriVersion || t('settings.yuri.about.state.unknown')} />
+            {isDesktopLocalOriginActive() ? (
+              <span className="typography-ui-label font-mono text-foreground text-right">
+                {yuriVersion || t('settings.yuri.about.state.unknown')}
+              </span>
+            ) : (
+              <HostVersionUpdate key={`${transport}:${generation}`} transport={transport} generation={generation} itemId="about.host-update"
+                channel={betaUpdatesEnabled ? 'beta' : 'stable'}
+                version={yuriVersion || t('settings.yuri.about.state.unknown')} />
+            )}
           </SettingsRow>
           <SettingsRow label={t('settings.yuri.about.field.instanceOpenCodeVersion')} description={managementGuidance}>
             <span className="typography-ui-label font-mono text-foreground text-right">

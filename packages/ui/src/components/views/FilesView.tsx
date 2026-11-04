@@ -3577,7 +3577,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
               size="sm"
               onClick={() => saveMdViewMode(getMdViewMode() === 'preview' ? 'edit' : 'preview')}
               className={cn(
-                'size-6 p-0 transition-colors hover:bg-[var(--interactive-hover)] focus-visible:bg-[var(--interactive-hover)] active:bg-[var(--interactive-hover)]',
+                'yuri-preview-controls size-6 p-0 transition-colors hover:bg-[var(--interactive-hover)] focus-visible:bg-[var(--interactive-hover)] active:bg-[var(--interactive-hover)]',
                 getMdViewMode() === 'preview'
                   ? 'bg-[var(--interactive-selection)] text-[var(--interactive-selection-foreground)] hover:bg-[var(--interactive-selection)] focus-visible:bg-[var(--interactive-selection)] active:bg-[var(--interactive-selection)]'
                   : 'text-muted-foreground opacity-65 hover:opacity-100'
@@ -4005,7 +4005,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                           size="sm"
                           onClick={() => saveMdViewMode(getMdViewMode() === 'preview' ? 'edit' : 'preview')}
                           className={cn(
-                            'size-8 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-0 shadow-sm transition-colors',
+                            'yuri-preview-controls size-8 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-0 shadow-sm transition-colors',
                             getMdViewMode() === 'preview'
                               ? 'bg-[var(--interactive-selection)] text-[var(--interactive-selection-foreground)] hover:bg-[var(--interactive-selection)]'
                               : 'text-muted-foreground hover:text-foreground'
