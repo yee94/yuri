@@ -12,7 +12,7 @@ before changing a Settings page.
 - Omit redundant headings when the field label already names a standalone
   setting.
 - Keep controls compact and let the shared row own card chrome and dividers.
-- Place checkbox/radio state before its label.
+- Place Boolean switches in the right value column; radio state precedes its label.
 - Dim inactive option labels subtly; do not use transform jumps.
 
 ## Typography

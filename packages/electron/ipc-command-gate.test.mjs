@@ -17,6 +17,10 @@ test('does not allow remote pages to prepare SSH hosts', () => {
   assert.equal(isRemoteIpcCommandAllowed('desktop_host_prepare'), false);
 });
 
+test('remote pages cannot rewrite the remembered native window instance', () => {
+  assert.equal(isRemoteIpcCommandAllowed('desktop_window_runtime_set', { runtimeKey: 'local' }), false);
+});
+
 test('remote pages cannot read, enable or request native remote-desktop permissions', () => {
   for (const command of ['desktop_remote_desktop_status', 'desktop_remote_desktop_enable', 'desktop_remote_desktop_permission']) {
     assert.equal(isRemoteIpcCommandAllowed(command, { enabled: true, permission: 'screen' }), false);

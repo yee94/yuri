@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './zh-CN.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': '关闭',
+  'settings.switch.on': '开启',
   'miniChat.actions.failed': '窗口操作失败，请重试。',
   'remoteDesktop.title': '远程桌面',
   'remoteDesktop.drag': 'Drag · 拖动画布',

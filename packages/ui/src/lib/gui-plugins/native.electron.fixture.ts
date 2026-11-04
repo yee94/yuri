@@ -5,6 +5,8 @@ import type { NativeGuiActivation, NativeGuiBridge } from './native-types';
 import type { FilesAPI } from '@/lib/api/types';
 import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
 import { NativeGuiError, requestNativeGui } from './native-errors';
+import { CSSVariableGenerator } from '@/lib/theme/cssGenerator';
+import { getDefaultTheme } from '@/lib/theme/themes';
 
 const bridge = (window as unknown as { __YURI_DESKTOP__: { guiPlugins: NativeGuiBridge } }).__YURI_DESKTOP__.guiPlugins;
 const activation = await requestNativeGui(bridge, 'acquire', { id: 'pdf-fixture', revision: '1' }) as NativeGuiActivation;
@@ -22,7 +24,27 @@ await host.runTitlebarItem(titlebar.key);
 if (!document.documentElement.dataset.pdf) throw new Error('Titlebar native IPC did not complete');
 const status = host.getSnapshot().plugins[0];
 if (status.error) throw new Error(status.error);
+const catalog = host.appearanceCatalog.getSnapshot();
+if (catalog.themes[0]?.metadata.name !== 'Ink' || !catalog.branding[0]?.logo?.dark.startsWith('data:image/svg+xml,')) throw new Error('Appearance catalog missing');
+const generator = new CSSVariableGenerator();
+for (const dark of [true, false]) {
+  generator.apply(getDefaultTheme(dark));
+  const background = getComputedStyle(document.documentElement).getPropertyValue('--surface-background').trim();
+  if (background !== 'rgb(12, 34, 56)') throw new Error(`Plugin CSS precedence lost (${dark ? 'dark' : 'light'}: ${background})`);
+}
+if (activation.capabilities?.dockIcon) {
+  const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+  const context = canvas.getContext('2d')!; context.fillStyle = '#123456'; context.fillRect(0, 0, 64, 64);
+  await host.setDockIcon('pdf-fixture', canvas.toDataURL('image/png'));
+  try {
+    await host.setDockIcon('pdf-fixture', 'file:///not-an-icon.png');
+    throw new Error('Invalid Dock image accepted');
+  } catch (error) {
+    if (!(error instanceof NativeGuiError) || error.code !== 'GUI_PLUGIN_INVALID_INPUT') throw error;
+  }
+}
 host.dispose();
+if (host.appearanceCatalog.getSnapshot().themes.length || document.head.querySelector('[data-yuri-plugin-style]')) throw new Error('Appearance cleanup failed');
 // Policy failures must keep their code through the actual preload/contextBridge.
 try {
   await requestNativeGui(bridge, 'call', { lease: 'foreign', ipc: 'pdf-fixture.export', method: 'pdf', request: 'denied' });

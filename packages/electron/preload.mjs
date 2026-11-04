@@ -146,6 +146,15 @@ ipcRenderer.on('yuri:boot-outcome', (_event, outcome) => {
   }
 });
 
+window.addEventListener('yuri:runtime-endpoint-changed', (event) => {
+  const detail = event.detail;
+  if (!detail || typeof detail.runtimeKey !== 'string') return;
+  void ipcRenderer.invoke('yuri:invoke', 'desktop_window_runtime_set', {
+    runtimeKey: detail.runtimeKey,
+    apiBaseUrl: detail.apiBaseUrl,
+  }).catch(() => {});
+});
+
 const addListener = (event, handler) => {
   const listeners = eventListeners.get(event) || new Set();
   listeners.add(handler);

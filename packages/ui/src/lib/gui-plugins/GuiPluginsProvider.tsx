@@ -18,6 +18,7 @@ import type { NativeGuiActivation } from './native-types';
 import { NativeGuiError, requestNativeGui } from './native-errors';
 import { afterGuiPaint, createGuiInstallQueue } from './scheduling';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { GuiAppearanceProvider } from './GuiAppearanceProvider';
 const noop = () => {};
 const noopSubscribe = () => noop;
 const message = (error: unknown): string | null => error ? error instanceof Error ? error.message : String(error) : null;
@@ -230,6 +231,9 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     host?.setSession(sessionID && directory ? { id: sessionID, directory } : undefined);
   }, [host, sessionID, directory]);
   React.useLayoutEffect(() => {
+    host?.appearanceCatalog.setOrder((inventoryQuery.data ?? []).flatMap((plugin) => plugin.id ? [plugin.id] : []));
+  }, [host, inventoryQuery.data]);
+  React.useLayoutEffect(() => {
     if (narrow && useUIStore.getState().activeMainTab === 'plugin') useUIStore.getState().closeGuiPage();
     host?.setAppearance({ locale, mode, narrow });
   }, [host, locale, mode, narrow]);
@@ -262,11 +266,13 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
   };
   return <GuiPluginsContext.Provider value={value}>
     <GuiFileIconsContext.Provider value={host?.fileIcons ?? null}>
+    <GuiAppearanceProvider host={host}>
     {children}
     {host && inventory.filter((plugin) => plugin.enabled && activeIds.has(plugin.id)).map((plugin) =>
       <Activation key={plugin.id} host={host} id={plugin.id} transport={transport} report={report} schedule={installQueue.run} />)}
     {painted && <LoadErrors key={transport} error={value.error} inventory={inventory} />}
     {host && <ErrorBoundary key={`surface:${transport}`} fallback={<SurfaceFailure />}><React.Suspense fallback={null}><Surface /></React.Suspense></ErrorBoundary>}
+    </GuiAppearanceProvider>
     </GuiFileIconsContext.Provider>
   </GuiPluginsContext.Provider>;
 }

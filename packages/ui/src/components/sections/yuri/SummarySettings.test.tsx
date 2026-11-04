@@ -15,15 +15,6 @@ vi.mock('@/components/ui', () => ({ toast: { success: mocks.success, error: mock
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: mocks.fetch }));
 vi.mock('@/lib/persistence', () => ({ updateDesktopSettings: mocks.updateDesktopSettings }));
 vi.mock('@/contexts/runtimeAPIRegistry', () => ({ getRegisteredRuntimeAPIs: () => null }));
-vi.mock('@/contexts/useThemeSystem', () => ({
-  useThemeSystem: () => ({ currentTheme: {} }),
-}));
-vi.mock('@/components/ui/CodeMirrorEditor', () => ({
-  CodeMirrorEditor: () => null,
-}));
-vi.mock('@/lib/codemirror/flexokiTheme', () => ({
-  createFlexokiCodeMirrorTheme: () => [],
-}));
 vi.mock('@/components/sections/agents/ModelSelector', () => ({
   ModelSelector: (props: { modelId: string } & Record<string, unknown>) => {
     mocks.modelSelectorProps.push(props);
@@ -50,17 +41,15 @@ const flush = async () => {
   });
 };
 
-const modelInput = () => host.querySelector<HTMLInputElement>('input[placeholder="gpt-4.1-mini"]');
-const customRadio = () => host.querySelector<HTMLElement>('[aria-label="Custom OpenAI-compatible API"]');
-const providerRadio = () => host.querySelector<HTMLElement>('[aria-label="OpenCode provider"]');
+const saveButton = () => Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'Save prompts')!;
 
 beforeEach(async () => {
   settings = {
-    summaryModelMode: 'custom',
+    summaryModelMode: 'provider',
     summaryProviderID: 'openai',
     summaryModelID: 'gpt-5.4-mini',
-    summaryCustomBaseURL: 'https://api.example.test/v1',
-    hasSummaryCustomAPIToken: true,
+    summaryCommitPrompt: 'Commit subject\nKeep technical terms.',
+    summarySessionTitlePrompt: 'Session title\nKeep the subject.',
   };
   mocks.fetch.mockReset();
   mocks.success.mockReset();
@@ -69,7 +58,6 @@ beforeEach(async () => {
   mocks.modelSelectorProps.length = 0;
   mocks.fetch.mockImplementation(async (path: string) => {
     if (path === '/api/config/settings') return Response.json(settings);
-    if (path === '/api/small-model/custom-models') return Response.json({ models: [] });
     return Response.json({});
   });
   host = document.createElement('div');
@@ -88,20 +76,83 @@ afterEach(async () => {
   host.remove();
 });
 
-test('custom mode model ID stays editable and is not snapped back to a callable provider model', async () => {
-  const input = modelInput();
-  expect(input).toBeTruthy();
-  expect(input?.value).toBe('gpt-5.4-mini');
+test('shows only the model picker and no page title', () => {
+  expect(host.querySelector('[data-testid="provider-model"]')?.textContent).toBe('gpt-5.4-mini');
+  expect(host.querySelector('h2')).toBeNull();
+  expect(host.textContent).not.toContain('Model source');
+  expect(host.querySelector('input[type="password"]')).toBeNull();
+});
 
+test('prompt editors use the shared resizable textarea and load existing multiline values', () => {
+  const commit = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Commit prompt"]')!;
+  const title = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Session title prompt"]')!;
+  expect(commit.value).toBe(settings.summaryCommitPrompt);
+  expect(title.value).toBe(settings.summarySessionTitlePrompt);
+  expect(host.querySelector('.cm-editor')).toBeNull();
+  for (const input of [commit, title]) {
+    expect(input.dataset.slot).toBe('textarea-input');
+    const surface = input.closest('[data-slot="textarea"]')!;
+    expect(surface.querySelector('[role="separator"]')).not.toBeNull();
+    expect(surface.classList.contains('h-64')).toBe(true);
+    expect(input.classList.contains('font-mono')).toBe(true);
+    const copy = input.closest('.yuri-settings-group-row')!.querySelector('.yuri-settings-split-row-copy')!;
+    expect(copy.querySelector('.typography-meta')).toBeNull();
+    expect(copy.textContent).toBe(input.getAttribute('aria-label'));
+  }
+});
+
+test('editing both prompt textareas saves their exact multiline content', async () => {
+  const drafts = {
+    summaryCommitPrompt: '  Commit prompt\n\nPreserve spacing.  ',
+    summarySessionTitlePrompt: '会话标题\nKeep filenames exact.\n',
+  };
+  const commit = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Commit prompt"]')!;
+  const title = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Session title prompt"]')!;
   await act(async () => {
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    nativeInputValueSetter?.call(input, 'my-custom-model');
-    input?.dispatchEvent(new Event('input', { bubbles: true }));
-    input?.dispatchEvent(new Event('change', { bubbles: true }));
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    for (const [input, value] of [[commit, drafts.summaryCommitPrompt], [title, drafts.summarySessionTitlePrompt]] as const) {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  expect(mocks.updateDesktopSettings).not.toHaveBeenCalled();
+  await act(async () => saveButton().click());
+  expect(mocks.updateDesktopSettings).toHaveBeenCalledWith(expect.objectContaining(drafts));
+  expect(commit.value).toBe(drafts.summaryCommitPrompt);
+  expect(title.value).toBe(drafts.summarySessionTitlePrompt);
+});
+
+test('saving prompts only writes the prompt fields and disables the button until edited', async () => {
+  expect(saveButton().disabled).toBe(true);
+  const commit = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Commit prompt"]')!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    setter.call(commit, 'Updated commit prompt');
+    commit.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(saveButton().disabled).toBe(false);
+  await act(async () => saveButton().click());
+  expect(mocks.updateDesktopSettings).toHaveBeenCalledWith({
+    summaryCommitPrompt: 'Updated commit prompt',
+    summarySessionTitlePrompt: settings.summarySessionTitlePrompt,
+  });
+  expect(saveButton().disabled).toBe(true);
+});
+
+test('selecting a model applies immediately without a save action', async () => {
+  await act(async () => {
+    const change = mocks.modelSelectorProps.at(-1)?.onChange as (provider: string, model: string) => void;
+    change('draft-provider', 'draft-model');
   });
   await flush();
 
-  expect(modelInput()?.value).toBe('my-custom-model');
+  expect(mocks.updateDesktopSettings).toHaveBeenCalledWith({
+    summaryModelMode: 'provider',
+    summaryProviderID: 'draft-provider',
+    summaryModelID: 'draft-model',
+  });
+  expect(host.querySelector('[data-testid="provider-model"]')?.textContent).toBe('draft-model');
+  expect(saveButton().disabled).toBe(true);
 });
 
 test('an unsaved provider model stays empty so the server follows the OpenCode default model', async () => {
@@ -137,37 +188,12 @@ test('provider picker uses the shared chat model catalog without a custom provid
   expect(props?.allowedModelIdsByProvider).toBeUndefined();
 });
 
-test('switching modes round-trips without losing custom or provider configuration', async () => {
-  const input = modelInput();
-  expect(input?.value).toBe('gpt-5.4-mini');
-
-  await act(async () => {
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    nativeInputValueSetter?.call(input, 'kept-custom-model');
-    input?.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await flush();
-
-  await act(async () => {
-    providerRadio()?.click();
-  });
-  await flush();
-  expect(host.querySelector('[data-testid="provider-model"]')?.textContent).toBe('gpt-5.4-mini');
-  expect(modelInput()).toBeNull();
-
-  await act(async () => {
-    customRadio()?.click();
-  });
-  await flush();
-  expect(modelInput()?.value).toBe('kept-custom-model');
-});
-
 test('tests the current provider draft without saving and prevents duplicate pending requests', async () => {
-  await act(async () => providerRadio()?.click());
   await act(async () => {
     const change = mocks.modelSelectorProps.at(-1)?.onChange as (provider: string, model: string) => void;
     change('draft-provider', 'draft-model');
   });
+  const savesBeforeTest = mocks.updateDesktopSettings.mock.calls.length;
   let complete!: (response: Response) => void;
   mocks.fetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { complete = resolve; }));
   const button = host.querySelector<HTMLButtonElement>('[data-settings-item="summary-ai.test-connection"]')!;
@@ -177,14 +203,13 @@ test('tests the current provider draft without saving and prevents duplicate pen
   const call = mocks.fetch.mock.calls.at(-1)!;
   expect(call[0]).toBe('/api/small-model/test');
   expect(JSON.parse(call[1].body)).toEqual({ mode: 'provider', providerID: 'draft-provider', modelID: 'draft-model' });
-  expect(mocks.updateDesktopSettings).not.toHaveBeenCalled();
+  expect(mocks.updateDesktopSettings).toHaveBeenCalledTimes(savesBeforeTest);
   await act(async () => complete(Response.json({ ok: true })));
   expect(mocks.success).toHaveBeenCalledWith('Model connection succeeded');
   expect(button.disabled).toBe(false);
 });
 
 test('provider failures remain failures and re-enable retry', async () => {
-  await act(async () => providerRadio()?.click());
   mocks.fetch.mockResolvedValueOnce(Response.json({ ok: false, code: 'no_provider', message: 'No connected provider for example/model' }, { status: 400 }));
   const button = host.querySelector<HTMLButtonElement>('[data-settings-item="summary-ai.test-connection"]')!;
   await act(async () => button.click());
@@ -194,12 +219,4 @@ test('provider failures remain failures and re-enable retry', async () => {
   mocks.fetch.mockResolvedValueOnce(Response.json({ ok: true }));
   await act(async () => button.click());
   expect(host.querySelector('[role="alert"]')).toBeNull();
-});
-
-test('custom mode retains its probe payload at the shared footer button', async () => {
-  mocks.fetch.mockResolvedValueOnce(Response.json({ ok: true }));
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-settings-item="summary-ai.test-connection"]')!.click());
-  const call = mocks.fetch.mock.calls.at(-1)!;
-  expect(JSON.parse(call[1].body)).toEqual({ baseURL: 'https://api.example.test/v1', modelID: 'gpt-5.4-mini' });
-  expect(mocks.success).toHaveBeenCalled();
 });

@@ -21,7 +21,6 @@ services:
       #   YURI_UI_PASSWORD="$(openssl rand -base64 24)" docker compose up -d
       YURI_UI_PASSWORD: ${YURI_UI_PASSWORD:?Set YURI_UI_PASSWORD before exposing Yuri through Docker}
     # YURI_HOST: 0.0.0.0  # Bind address (default in Docker entrypoint: 0.0.0.0)
-    # OH_MY_OPENCODE: true # enable oh-my-opencode
     # OPENCODE_HOST: http://172.17.0.1:4096 # Connect to external OpenCode server
     # OPENCODE_SKIP_START: true # skip start opencode
     # YURI_OPENCODE_HOSTNAME: 0.0.0.0 # Bind OpenCode to all interfaces

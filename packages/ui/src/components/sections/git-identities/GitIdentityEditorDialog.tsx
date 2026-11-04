@@ -1,7 +1,7 @@
 import React from 'react';
 import { SettingsActionHeader } from '@/components/sections/shared/SettingsActionHeader';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui';
 import {
@@ -408,7 +408,7 @@ export const GitIdentityEditorDialog: React.FC<GitIdentityEditorDialogProps> = (
 
                   <div className="border-t border-border/40 pt-3 space-y-3">
                     <div className="flex items-start gap-2">
-                      <Checkbox
+                      <SettingsSwitch
                         checked={signCommits}
                         onChange={setSignCommits}
                         ariaLabel={t('settings.gitIdentities.editor.field.signCommits')}

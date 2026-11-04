@@ -17,7 +17,7 @@ import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControl
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
-import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stores/useUIStore';
+import { getContextPanelState, useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stores/useUIStore';
 import { useInlineCommentDraftStore } from '@/stores/useInlineCommentDraftStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
@@ -2205,11 +2205,7 @@ export const ContextPanel: React.FC<{
   const effectiveDirectory = directoryOverride?.trim() || fallbackDirectory;
   const directoryKey = React.useMemo(() => normalizeDirectoryKey(effectiveDirectory), [effectiveDirectory]);
 
-  React.useEffect(() => {
-    useUIStore.getState().initializeWorkspacePanels(directoryKey);
-  }, [directoryKey]);
-
-  const panelState = useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined));
+  const panelState = useUIStore((state) => getContextPanelState(state, directoryKey));
   const contextToolDiff = useUIStore((state) => (directoryKey ? state.contextToolDiffByDirectory[directoryKey] : undefined));
   const closeContextPanel = useUIStore((state) => state.closeContextPanel);
   const closeContextPanelTab = useUIStore((state) => state.closeContextPanelTab);
@@ -2219,7 +2215,6 @@ export const ContextPanel: React.FC<{
   const setActiveContextPanelTab = useUIStore((state) => state.setActiveContextPanelTab);
   const reorderContextPanelTabs = useUIStore((state) => state.reorderContextPanelTabs);
   const isFileTreeOpen = useUIStore((state) => state.isRightSidebarOpen);
-  const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
   const setSelectedFilePath = useFilesViewTabsStore((state) => state.setSelectedPath);
@@ -2235,12 +2230,6 @@ export const ContextPanel: React.FC<{
   const previewBodyRef = React.useRef<HTMLDivElement>(null);
   const compactRef = React.useRef(true);
   const [isCompact, setIsCompact] = React.useState(true);
-  // Only confirmed tab navigation replaces this object; blocked opens keep the rail focused.
-  const [railAnchor, setRailAnchor] = React.useState<typeof activeTab | undefined>(activeTab);
-  const focusRail = useEvent(() => setRailAnchor(activeTab));
-  React.useLayoutEffect(() => {
-    focusRail();
-  }, [directoryKey, isOpen, isFileTreeOpen, rightSidebarTab, focusRail]);
   useResizeObserver(previewBodyRef, ([entry]) => {
     if (!entry || entry.contentRect.width <= 0) return;
     const compact = entry.contentRect.width < PREVIEW_SPLIT_MIN_WIDTH;
@@ -2248,7 +2237,7 @@ export const ContextPanel: React.FC<{
     compactRef.current = compact;
     setIsCompact(compact);
   });
-  const railVisible = isOpen && isFileTreeOpen && (!isCompact || railAnchor === activeTab);
+  const railVisible = isOpen && (!activeTab || (isFileTreeOpen && (!isCompact || panelState?.activeView !== 'preview')));
   const previewVisible = isOpen && (!isCompact || !railVisible);
   const width = clampWidth(panelState?.width ?? CONTEXT_PANEL_DEFAULT_WIDTH);
   const chatSessionIDs = React.useMemo(() => {
@@ -2907,9 +2896,6 @@ export const ContextPanel: React.FC<{
             return;
           }
           setActiveContextPanelTab(directoryKey, tabID);
-          if (useUIStore.getState().contextPanelByDirectory[directoryKey]?.activeTabId === tabID) {
-            setRailAnchor(undefined);
-          }
         }}
         onClose={(tabID) => {
           closePanelTab(tabID);
@@ -2925,7 +2911,7 @@ export const ContextPanel: React.FC<{
         className="app-region-no-drag h-6"
       />
       <div className="app-region-no-drag flex shrink-0 items-center gap-1 pl-1.5">
-        {isOpen ? <RightSidebarToolbar railVisible={railVisible} onSelect={focusRail} /> : null}
+        {isOpen ? <RightSidebarToolbar railVisible={railVisible} /> : null}
         <Button
           type="button"
           variant="ghost"
@@ -3144,7 +3130,7 @@ export const ContextPanel: React.FC<{
       </div>
       </div>
       <RightSidebar isOpen={railVisible} className={cn('!min-w-0 shrink-0 bg-transparent [--layout-chrome-divider-width:1px] [--layout-chrome-divider:color-mix(in_srgb,var(--surface-foreground)_8%,var(--background))]', isCompact && '!transition-none', isCompact && railVisible ? '!w-full !max-w-full !border-l-0 [&>[role=separator]]:hidden' : '!max-w-[50%]')}>
-        {railVisible ? <ErrorBoundary><RightSidebarTabs /></ErrorBoundary> : null}
+        {railVisible ? <ErrorBoundary><RightSidebarTabs isActive={railVisible} /></ErrorBoundary> : null}
       </RightSidebar>
       </div>
       </WorkspaceSurface>

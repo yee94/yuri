@@ -6,7 +6,7 @@ Load `theme-system` for button/icon/color contracts and `locale-ui-patterns` for
 
 - Short chip-like option set: shared `Button variant="chip" size="xs"` with `aria-pressed`.
 - Explicit mutually exclusive list: shared `Radio`.
-- Boolean value: shared `Checkbox`, not paired show/hide buttons.
+- Boolean value: shared `SettingsToggleRow` / `SettingsSwitch` with localized Off / On segments.
 - Numeric value: shared `NumberInput`.
 - Text/path value: shared `Input` plus shared actions.
 
@@ -35,7 +35,7 @@ Do not couple unrelated toggles beneath a synthetic heading.
 </SettingsGroup>
 ```
 
-## Checkbox Row
+## Boolean Row
 
 ```tsx
 <SettingsGroup label={t(sectionKey)}>
@@ -49,7 +49,9 @@ Do not couple unrelated toggles beneath a synthetic heading.
 ```
 
 `SettingsToggleRow` owns row click and keyboard behavior and prevents a nested
-checkbox click from toggling twice.
+segmented switch from toggling twice. `SettingsSwitch` reuses the existing
+segmented selection material; see `SETTINGS_DESIGN_SPEC.md` for its keyboard,
+disabled, and theme contract.
 
 ## Optional Numeric Override
 

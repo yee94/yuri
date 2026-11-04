@@ -92,7 +92,12 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   useEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); mobileBackNavigationCoordinator.requestBrowserBack(); }
   }, () => document);
-  const handleState = useEvent((next: typeof state, code?: string) => { setState(next); setError(code); });
+  const handleState = useEvent((next: typeof state, code?: string) => {
+    if (next === 'closed' || next === 'connecting') {
+      moves.current.clear(); activePointers.current.clear(); gestures.cancel();
+    }
+    setState(next); setError(code);
+  });
   const handleSize = useEvent((width: number, height: number) => {
     if (width <= 0 || height <= 0 || (geometry.current.remoteWidth === width && geometry.current.remoteHeight === height)) return;
     const previous = geometry.current;
@@ -110,7 +115,6 @@ function RemoteDesktopPanelImpl({ onClose, instanceName }: { onClose: () => void
   });
   // Android can start native panning on transformed layers despite touch-action.
   useNativeTouchPanLock(viewportRef);
-  useEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') stop(); }, () => document);
   React.useEffect(() => {
     if (!capability.data?.supported || !capability.data.enabled || !videoRef.current || !imageRef.current) return;
     const active = connectRemoteDesktop({ ...scope, video: videoRef.current, image: imageRef.current, onSize: handleSize, onState: handleState });

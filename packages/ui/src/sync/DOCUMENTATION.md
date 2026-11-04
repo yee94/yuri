@@ -948,6 +948,17 @@ Modules:
   inactive scopes. Multi-scope readers use
   `subscribeTranscriptScopes` + `readTranscriptCompletionSignature` /
   `readTranscriptMessages`.
+- Message and materialization selectors reuse a single immutable repository
+  snapshot keyed by selector, scope, enabled/resolved state and binding revision.
+  Parent edits and no-op notifications do not rescan the transcript. User-input
+  history also reuses its projection until transcript identity or the current
+  session's revert boundary changes; unrelated directory fields do not notify it.
+  These caches live with the mounted reader and retain only its last source/result.
+  Render-time snapshots and scope-dependent subscription factories use `useMemo`,
+  not event-time callbacks: a scope switch reads the new data during render and
+  reattaches the subscription after commit. `transcript-repository-observers.hooks.test.tsx`
+  exercises 300 messages, 50 edits/notifications/stream updates, revert, empty success,
+  selector changes, disabled readers, scope/binding replacement and cleanup.
 - `useSessionMessageRecords(..., { enabled })` freeze/resume: when
   `enabled === false` (phone predecessor underlay, hidden retained views),
   the hook holds a **scope-stamped** painted list
@@ -2008,7 +2019,7 @@ Rules:
 3. Scope-sensitive session actions use `getAuthoritativeDirectoryForSession()`, which resolves worktree metadata, session attachments, sync metadata, and global session metadata.
 4. `session-ui-store.ts` should delegate to `session-actions.ts` for these mutations instead of duplicating SDK calls.
 5. `setCurrentSession()` announces a monotonic session-switch intent before directory resolution or store publication. Delayed visual/transition callbacks must validate that intent and silently discard stale work. Optional `skipMessageFetch` skips the same-tick transcript fetch for callers that own the subsequent load (fork).
-6. On a real session id change, `setCurrentSession()` also calls `useUIStore.syncWorkspacePanelsForSessionSwitch()` so right-side workspace panels (context/subagent chat, file preview, git changes sidebar) hide when leaving a session and restore when returning. The initial selection before any session snapshot exists preserves the startup layout, including the zero-settings Git Changes rail. `openNewSessionDraft()` must call the same helper when clearing a real session for Welcome/draft, because it does not go through `setCurrentSession()`. Tab content remains directory-cached; only open/active visibility is session-scoped.
+6. On a real session id change, `setCurrentSession()` also calls `useUIStore.syncWorkspacePanelsForSessionSwitch()` so right-side workspace panels (context/subagent chat, file preview, git changes sidebar) follow the session. Complete tab lists, order, active selection, preview geometry and exact tool diffs restore from bounded runtime/session snapshots; the directory map is only the live projection. Unknown sessions start empty and closed rather than inheriting another session's tabs. The initial selection before any session snapshot exists preserves the persisted startup layout, including the zero-settings Git Changes rail. `openNewSessionDraft()` must call the same helper when clearing a real session for Welcome/draft, because it does not go through `setCurrentSession()`.
 7. Edit staging restores the composer from the visible user-message snapshot captured at click time. Primary send interrupts a busy turn, waits for idle, and commits the native V2 history boundary with `files:false` before admitting the optimistic replacement. Pre-commit failures retain the draft; confirmed commit removes the old tail in conversation order. A replacement-send failure keeps the draft for ordinary retry. Leaving the session disarms `stagedMessageEdit`.
 8. Sidebar previous/next navigation follows the rendered sidebar order. `SessionSidebar` publishes pinned rows plus logically visible project rows to `session-navigation.ts`; keyboard and native-menu actions share that registry and update the explicit session Focus before committing current-session authority. Adjacent navigation concatenates those rings (pinned first) and wraps across both sections, never falling through to hidden project rows.
 9. Global Mod+1…9 navigation is session-row based, not project based. `SessionSidebar` combines the currently revealed pinned rows with logically visible project rows, caps the visual order at nine, and publishes it through `sidebar-numbered-navigation.ts`. The numbered activation preserves the selected row's exact Pinned/Project Focus identity.

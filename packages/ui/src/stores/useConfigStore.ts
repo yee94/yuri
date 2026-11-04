@@ -38,6 +38,7 @@ const FALLBACK_MODEL_ID = "big-pickle";
 // form is open. It is intentionally not a real provider id and must not be
 // persisted as a stable provider selection.
 const ADD_PROVIDER_SENTINEL = "__add_provider__";
+const CUSTOM_PROVIDER_SENTINEL = "__custom_provider__";
 const GIT_UTILITY_PROVIDER_ID = "zen";
 const GIT_UTILITY_PREFERRED_MODEL_ID = "big-pickle";
 
@@ -107,11 +108,11 @@ type GitModelSelection = { providerId: string; modelId: string };
 type ProviderModelSelection = { providerId: string; modelId: string; variant?: string } | null;
 
 const sanitizePersistedSelectedProviderId = (providerId: string | undefined): string => (
-    providerId === ADD_PROVIDER_SENTINEL ? "" : (providerId ?? "")
+    providerId === ADD_PROVIDER_SENTINEL || providerId === CUSTOM_PROVIDER_SENTINEL ? "" : (providerId ?? "")
 );
 
 const preserveAddProviderSelection = (currentSelectedProviderId: string | undefined, nextProviderId: string): string => (
-    currentSelectedProviderId === ADD_PROVIDER_SENTINEL ? ADD_PROVIDER_SENTINEL : nextProviderId
+    currentSelectedProviderId === ADD_PROVIDER_SENTINEL || currentSelectedProviderId === CUSTOM_PROVIDER_SENTINEL ? currentSelectedProviderId : nextProviderId
 );
 
 const normalizeOptionalString = (value: unknown): string | undefined => {
@@ -1222,7 +1223,7 @@ export const useConfigStore = create<ConfigStore>()(
                                     : baseSnapshot.selectedProviderId;
                                 // Preserve the add-provider sentinel so a background refresh does not
                                 // navigate the user out of the in-progress add-provider form (issue #1765).
-                                const selectedProviderId = currentSelectedProviderId === ADD_PROVIDER_SENTINEL
+                                const selectedProviderId = currentSelectedProviderId === ADD_PROVIDER_SENTINEL || currentSelectedProviderId === CUSTOM_PROVIDER_SENTINEL
                                     || processedProviders.some((provider) => provider.id === currentSelectedProviderId)
                                     ? currentSelectedProviderId
                                     : (resolvedModel?.providerId ?? processedProviders[0]?.id ?? "");

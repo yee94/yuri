@@ -6,7 +6,7 @@ import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel, calcul
 import { UsageProgressBar } from './UsageProgressBar';
 import { PaceIndicator } from './PaceIndicator';
 import { useQuotaStore } from '@/stores/useQuotaStore';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { useUIStore } from '@/stores/useUIStore';
 
 interface UsageCardProps {
@@ -26,7 +26,7 @@ export const UsageCard: React.FC<UsageCardProps> = ({
   toggleEnabled = false,
   onToggle,
 }) => {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const [now, setNow] = React.useState(Date.now);
   useInterval(() => setNow(Date.now()), window.disablePace && window.resetAt ? 30000 : null);
   const minutes = window.resetAt ? Math.max(0, Math.ceil((window.resetAt - now) / 60000)) : null;
@@ -65,10 +65,10 @@ export const UsageCard: React.FC<UsageCardProps> = ({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1 flex items-center gap-2">
           {showToggle && (
-            <Checkbox
+            <SettingsSwitch
               checked={toggleEnabled}
               onChange={(checked) => onToggle?.(checked)}
-              ariaLabel="Show in dropdown"
+              ariaLabel={t('settings.usage.page.options.showInHeaderAria')}
             />
           )}
           <div className="min-w-0 flex flex-col">

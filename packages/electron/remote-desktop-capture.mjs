@@ -6,7 +6,7 @@ const canvas = document.querySelector('canvas');
 const quality = createVideoQualityController();
 const frames = createJpegFrameFilter();
 let peer, stream, sender, appliedQuality, fallback = false, waiting = false, capturing = false, timer, adaptiveTimer;
-let disposed = false, adapting = false, starting = false;
+let disposed = false, adapting = false, starting = false, mediaReady = false;
 let applying = false, zoomed = false, viewRevision = 0, lastFrameAt = -Infinity;
 let pendingIce = [];
 const report = () => { if (!disposed) bridge.send({ type: 'failure' }); };
@@ -86,6 +86,7 @@ bridge.onMessage(async message => {
       const track = stream.getVideoTracks()[0];
       track.contentHint = 'detail';
       track.onended = report;
+      mediaReady = true;
       bridge.send({ type: 'ready', width: video.videoWidth, height: video.videoHeight, zoomQuality: message.zoomQuality === true });
       peer = new RTCPeerConnection({ iceServers: message.iceServers });
       peer.onicecandidate = event => { if (event.candidate && !disposed && !fallback) bridge.send({ type: 'ice', candidate: event.candidate.toJSON() }); };
@@ -121,7 +122,7 @@ bridge.onMessage(async message => {
       if (message.dropped) frames.clear();
       waiting = false;
     }
-  } catch { if (!disposed) { if (stream) bridge.send({ type: 'rtc-failed' }); else report(); } }
+  } catch { if (!disposed) { if (mediaReady) bridge.send({ type: 'rtc-failed' }); else report(); } }
 });
 window.addEventListener('unload', () => {
   disposed = true;

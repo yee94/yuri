@@ -1,6 +1,8 @@
 import { settingsDict } from './fr.settings';
 
 export const dict = {
+  'settings.switch.off': 'Désact.',
+  'settings.switch.on': 'Activé',
   'miniChat.actions.failed': 'Impossible d’effectuer cette action sur la fenêtre. Veuillez réessayer.',
   'remoteDesktop.title': 'Bureau à distance',
   'remoteDesktop.drag': 'Drag · Déplacer le canevas',

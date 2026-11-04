@@ -1,6 +1,8 @@
 import { settingsDict } from './en.settings';
 
 export const dict = {
+  'settings.switch.off': 'Off',
+  'settings.switch.on': 'On',
   'remoteDesktop.title': 'Remote desktop',
   'remoteDesktop.drag': 'Drag · Pan canvas',
   'remoteDesktop.cursor': 'Cursor · Control computer',

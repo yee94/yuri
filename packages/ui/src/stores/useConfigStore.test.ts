@@ -546,7 +546,7 @@ describe('useConfigStore provider persistence', () => {
     expect(state.currentVariant).toBe('fast');
   });
 
-  test('provider reload preserves the add-provider sentinel selection', async () => {
+  test.each(['__add_provider__', '__custom_provider__'])('provider reload preserves %s selection', async (sentinel) => {
     // The user has opened the "Add provider" form, which sets selectedProviderId
     // to the sentinel. A background provider refresh must not navigate them away
     // (and discard their unsaved input) just because the sentinel is not a real
@@ -555,22 +555,22 @@ describe('useConfigStore provider persistence', () => {
       activeDirectoryKey: DIRECTORY,
       currentProviderId: 'live',
       currentModelId: 'live-model',
-      selectedProviderId: '__add_provider__',
+      selectedProviderId: sentinel,
       directoryScoped: {},
     });
 
     liveProviderId = 'live';
     await useConfigStore.getState().loadProviders({ source: 'test:add-provider' });
 
-    expect(useConfigStore.getState().selectedProviderId).toBe('__add_provider__');
+    expect(useConfigStore.getState().selectedProviderId).toBe(sentinel);
   });
 
-  test('add-provider sentinel is not persisted as a stable provider selection', async () => {
+  test.each(['__add_provider__', '__custom_provider__'])('%s is not persisted as a stable provider selection', async (sentinel) => {
     useConfigStore.setState({
       activeDirectoryKey: DIRECTORY,
       currentProviderId: 'live',
       currentModelId: 'live-model',
-      selectedProviderId: '__add_provider__',
+      selectedProviderId: sentinel,
       directoryScoped: {
         [DIRECTORY]: {
           providers: [provider('live')],
@@ -578,7 +578,7 @@ describe('useConfigStore provider persistence', () => {
           currentProviderId: 'live',
           currentModelId: 'live-model',
           currentAgentName: undefined,
-          selectedProviderId: '__add_provider__',
+          selectedProviderId: sentinel,
           agentModelSelections: {},
           defaultProviders: { default: 'live' },
         },

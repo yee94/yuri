@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import {
   getDesktopKeepAwake,
   getDesktopLaunchAtLogin,
@@ -245,7 +245,7 @@ export const DesktopNetworkSettings: React.FC = () => {
               </div>
             </div>
             <div className="yuri-settings-split-row-control">
-              <Checkbox
+              <SettingsSwitch
                 checked={launchAtLoginEnabled}
                 onChange={handleLaunchAtLoginToggle}
                 ariaLabel={t('settings.yuri.desktopNetwork.field.launchAtLoginAria')}
@@ -276,7 +276,7 @@ export const DesktopNetworkSettings: React.FC = () => {
               </div>
             </div>
             <div className="yuri-settings-split-row-control">
-              <Checkbox
+              <SettingsSwitch
                 checked={minimizeToTrayEnabled}
                 onChange={handleMinimizeToTrayToggle}
                 ariaLabel={t('settings.yuri.desktopNetwork.field.minimizeToTrayAria')}
@@ -307,7 +307,7 @@ export const DesktopNetworkSettings: React.FC = () => {
               </div>
             </div>
             <div className="yuri-settings-split-row-control">
-              <Checkbox
+              <SettingsSwitch
                 checked={keepAwakeEnabled}
                 onChange={handleKeepAwakeToggle}
                 ariaLabel={t('settings.yuri.desktopNetwork.field.keepAwakeAria')}

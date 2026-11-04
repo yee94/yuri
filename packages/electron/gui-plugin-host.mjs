@@ -43,13 +43,17 @@ function abortable(promise, signal) {
 }
 
 /** App-scoped main instances; document-scoped leases prevent stale/foreign IPC. */
-export function createGuiPluginMainHost({ getClient, windows, app, authorize, authorizeWindow = authorize, send, requireNative, report = () => {} }) {
+export function createGuiPluginMainHost({ getClient, windows, app, authorize, authorizeWindow = authorize, send, requireNative, dockIcons, report = () => {} }) {
   const instances = new Map();
   const leases = new Map();
   const owners = new Map();
   const queues = new Map();
   const providers = new Map();
   const restricted = new Map();
+  const clearDockIcon = (lease) => {
+    try { dockIcons?.remove(lease); }
+    catch { report('GUI Dock icon cleanup failed'); }
+  };
   let sequence = 0;
   let disposed = false;
   const os = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux';
@@ -89,6 +93,7 @@ export function createGuiPluginMainHost({ getClient, windows, app, authorize, au
     for (const lease of [...leases.values()]) if (lease.instance === instance) {
       try { send(lease.owner.window.webContents, { lease: lease.id, type: 'ended', ipc: '', sequence: ++sequence }); } catch { /* Window already closed. */ }
       lease.controller.abort();
+      clearDockIcon(lease.id);
       leases.delete(lease.id);
     }
     // Withdraw before awaiting user cleanup: no old IPC may run during teardown.
@@ -99,6 +104,7 @@ export function createGuiPluginMainHost({ getClient, windows, app, authorize, au
   const release = async (lease) => {
     leases.delete(lease.id);
     lease.controller.abort();
+    clearDockIcon(lease.id);
     await enqueue(lease.instance.id, async () => {
       if (![...leases.values()].some((other) => other.instance === lease.instance)) await stop(lease.instance);
     });
@@ -280,12 +286,19 @@ export function createGuiPluginMainHost({ getClient, windows, app, authorize, au
           }
           const id = randomUUID();
           leases.set(id, { id, instance, owner, controller: new AbortController(), watches: new Set(), calls: new Map() });
-          return { lease: id, bundle, os, app: { version: app.getVersion(), packaged: app.isPackaged } };
+          return { lease: id, bundle, os, capabilities: { dockIcon: os === 'macos' && Boolean(dockIcons) }, app: { version: app.getVersion(), packaged: app.isPackaged } };
         });
       }
       const lease = leases.get(input.lease);
       if (!lease || lease.owner !== owner) throw failure('GUI_PLUGIN_LEASE_EXPIRED');
       if (action === 'release') { await release(lease); return; }
+      if (action === 'dock-icon') {
+        assertOwner(owner);
+        if (!dockIcons || os !== 'macos') throw failure('GUI_PLUGIN_UNSUPPORTED');
+        try { dockIcons.set(lease.id, input.image); }
+        catch { throw failure('GUI_PLUGIN_INVALID_INPUT'); }
+        return;
+      }
       if (action === 'cancel') { lease.calls.get(input.request)?.abort(); return; }
       if (!text(input.ipc)) throw failure('GUI_PLUGIN_INVALID_REQUEST');
       if (action === 'watch') { lease.watches.add(input.ipc); return snapshot(input.ipc, owner); }

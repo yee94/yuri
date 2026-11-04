@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, test } from 'vitest';
-import { useUIStore } from './useUIStore';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { getContextPanelState, useUIStore } from './useUIStore';
+
+const runtime = vi.hoisted(() => ({ key: 'runtime-a' }));
+vi.mock('@/lib/runtime-switch', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/runtime-switch')>(),
+  getRuntimeKey: () => runtime.key,
+}));
 
 beforeEach(() => {
+  runtime.key = 'runtime-a';
   useUIStore.setState({
     contextPanelByDirectory: {},
     contextToolDiffByDirectory: {},
@@ -17,39 +24,179 @@ beforeEach(() => {
 });
 
 describe('useUIStore context panel tabs', () => {
-  test.each(['before', 'after'])('opens Git Changes with no saved settings when initial session selection happens %s panel initialization', (selectionOrder) => {
+  test('commits compact rail/preview navigation synchronously with each action', () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.ts');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ activeView: 'preview' });
+    store.setRightSidebarOpen(true);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ activeView: 'rail' });
+    const tabId = useUIStore.getState().contextPanelByDirectory['/repo'].activeTabId!;
+    store.setActiveContextPanelTab('/repo', tabId);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ activeView: 'preview' });
+    store.setRightSidebarTab('files');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ activeView: 'rail' });
+    store.closeContextPanel('/repo');
+    store.openContextPanel('/repo');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ activeView: 'rail' });
+  });
+
+  test.each(['toggleContextPanel', 'closeContextPanel', 'closeActiveContextPanelTab'] as const)('%s closes the initial derived panel before any layout write', (action) => {
+    useUIStore.setState({ isRightSidebarOpen: true });
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.isOpen).toBe(true);
+    useUIStore.getState()[action]('/repo');
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.isOpen).toBe(false);
+  });
+
+  test('retains compact focus across sessions but excludes it from persisted layout', async () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'a', nextSessionId: 'b', previousDirectory: '/repo', nextDirectory: '/repo' });
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'b', nextSessionId: 'a', previousDirectory: '/repo', nextDirectory: '/repo' });
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.activeView).toBe('preview');
+    const options = useUIStore.persist.getOptions();
+    const saved = options.partialize!(useUIStore.getState());
+    expect(saved).not.toHaveProperty('contextPanelByDirectory./repo.activeView');
+    const restored = await options.migrate!(saved, options.version!) as Partial<ReturnType<typeof useUIStore.getState>>;
+    useUIStore.setState(restored);
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.activeView).toBeUndefined();
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.tabs[0].targetPath).toBe('/repo/a.ts');
+  });
+
+  test('isolates opened tabs between sessions in the same project and restores each selection', () => {
+    const store = useUIStore.getState();
+    const switchSession = (previousSessionId: string, nextSessionId: string) => store.syncWorkspacePanelsForSessionSwitch({
+      previousSessionId, nextSessionId, previousDirectory: '/repo', nextDirectory: '/repo',
+    });
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.openContextPanelTab('/repo', { mode: 'chat', dedupeKey: 'session:child-a' });
+    const panelA = useUIStore.getState().contextPanelByDirectory['/repo'];
+    switchSession('a', 'b');
+    store.openContextFile('/repo', '/repo/b.ts');
+    const panelB = useUIStore.getState().contextPanelByDirectory['/repo'];
+    expect(panelB.tabs.map((tab) => tab.targetPath)).toEqual(['/repo/b.ts']);
+    switchSession('b', 'a');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ tabs: panelA.tabs, activeTabId: panelA.activeTabId });
+    store.closeActiveContextPanelTab('/repo');
+    switchSession('a', 'b');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ tabs: panelB.tabs, activeTabId: panelB.activeTabId });
+  });
+
+  test('restores closed tabs, their order and geometry without inheriting another session edits', () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.openContextFile('/repo', '/repo/b.ts');
+    const [a, b] = useUIStore.getState().contextPanelByDirectory['/repo'].tabs;
+    store.reorderContextPanelTabs('/repo', b.id, a.id);
+    store.setActiveContextPanelTab('/repo', a.id);
+    store.setContextPanelWidth('/repo', 720);
+    store.toggleContextPanelExpanded('/repo');
+    store.closeContextPanel('/repo');
+    const expected = useUIStore.getState().contextPanelByDirectory['/repo'];
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'a', nextSessionId: 'b', previousDirectory: '/repo/', nextDirectory: '/repo' });
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.setContextPanelWidth('/repo', 400);
+    store.closeActiveContextPanelTab('/repo');
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'b', nextSessionId: 'a', previousDirectory: '/repo', nextDirectory: '/repo/' });
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toBe(expected);
+    store.openContextPanel('/repo');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].tabs.map((tab) => tab.id)).toEqual([b.id, a.id]);
+  });
+
+  test('isolates exact tool diffs and clears pending file navigation on session switches', () => {
+    const store = useUIStore.getState();
+    const switchSession = (previousSessionId: string, nextSessionId: string) => store.syncWorkspacePanelsForSessionSwitch({
+      previousSessionId, nextSessionId, previousDirectory: '/repo', nextDirectory: '/repo',
+    });
+    store.openContextToolDiff('/repo', 'a.ts', [{ path: 'a.ts', patch: 'patch-a' }], 3, 'turn-a');
+    const diffA = useUIStore.getState().contextToolDiffByDirectory['/repo'];
+    switchSession('a', 'b');
+    expect(useUIStore.getState().contextToolDiffByDirectory['/repo']).toBeUndefined();
+    store.openContextToolDiff('/repo', 'a.ts', [{ path: 'a.ts', patch: 'patch-b' }], 9, 'turn-b');
+    const diffB = useUIStore.getState().contextToolDiffByDirectory['/repo'];
+    store.openContextFileAtLine('/repo', '/repo/b.ts', 7);
+    switchSession('b', 'a');
+    expect(useUIStore.getState().contextToolDiffByDirectory['/repo']).toBe(diffA);
+    expect(useUIStore.getState()).toMatchObject({ pendingFileFocusPath: null, pendingFileViewerMode: null, pendingFileNavigation: null });
+    switchSession('a', 'b');
+    expect(useUIStore.getState().contextToolDiffByDirectory['/repo']).toBe(diffB);
+    const saved = useUIStore.persist.getOptions().partialize!(useUIStore.getState());
+    expect(saved).not.toHaveProperty('sessionWorkspacePanelById');
+    expect(saved).not.toHaveProperty('contextToolDiffByDirectory');
+    store.prepareForRuntimeSwitch();
+    switchSession('b', 'a');
+    expect(useUIStore.getState().contextToolDiffByDirectory['/repo']).toBeUndefined();
+  });
+
+  test('keeps session snapshots isolated between runtimes with matching session ids and paths', () => {
+    const store = useUIStore.getState();
+    const switchSession = (previousSessionId: string | null, nextSessionId: string | null) => store.syncWorkspacePanelsForSessionSwitch({
+      previousSessionId, nextSessionId, previousDirectory: '/repo', nextDirectory: '/repo',
+    });
+    store.openContextFile('/repo', '/repo/runtime-a.ts');
+    switchSession('a', null);
+    runtime.key = 'runtime-b';
+    switchSession(null, 'a');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].tabs).toEqual([]);
+    store.openContextFile('/repo', '/repo/runtime-b.ts');
+    switchSession('a', null);
+    runtime.key = 'runtime-a';
+    switchSession(null, 'a');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].tabs.map((tab) => tab.targetPath)).toEqual(['/repo/runtime-a.ts']);
+  });
+
+  test('restores session tabs even when their directory projection was evicted and bounds snapshots', () => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'a', nextSessionId: 'b', previousDirectory: '/repo', nextDirectory: '/other' });
+    useUIStore.setState({ contextPanelByDirectory: {} });
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'b', nextSessionId: 'a', previousDirectory: '/other', nextDirectory: '/repo' });
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].tabs.map((tab) => tab.targetPath)).toEqual(['/repo/a.ts']);
+    for (let index = 0; index < 60; index++) {
+      store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: `session-${index}`, nextSessionId: `session-${index + 1}`, previousDirectory: '/repo', nextDirectory: '/repo' });
+    }
+    expect(Object.keys(useUIStore.getState().sessionWorkspacePanelById)).toHaveLength(40);
+    const unchanged = useUIStore.getState();
+    for (let index = 0; index < 50; index++) {
+      store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'session-60', nextSessionId: 'session-60', previousDirectory: '/repo', nextDirectory: '/repo' });
+    }
+    expect(useUIStore.getState()).toBe(unchanged);
+  });
+
+  test('derives the initial Git rail synchronously without writing layout during reads', () => {
     const initial = useUIStore.getInitialState();
     useUIStore.setState({
       isRightSidebarOpen: initial.isRightSidebarOpen,
       rightSidebarTab: initial.rightSidebarTab,
     });
     const store = useUIStore.getState();
-    const select = () => store.syncWorkspacePanelsForSessionSwitch({
+    const initialPanel = getContextPanelState(store, '/repo/');
+    expect(initialPanel).toMatchObject({ isOpen: true, tabs: [], activeTabId: null });
+    store.syncWorkspacePanelsForSessionSwitch({
       previousSessionId: null,
       nextSessionId: 'first-session',
       nextDirectory: '/repo',
     });
-    if (selectionOrder === 'before') select();
-    store.initializeWorkspacePanels('/repo/');
-    if (selectionOrder === 'after') select();
     expect(useUIStore.getState()).toMatchObject({
       isRightSidebarOpen: true,
       rightSidebarTab: 'git',
-      contextPanelByDirectory: { '/repo': { isOpen: true, tabs: [], activeTabId: null } },
+      contextPanelByDirectory: {},
     });
     const unchanged = useUIStore.getState();
-    store.initializeWorkspacePanels('/repo');
-    store.initializeWorkspacePanels('/other');
+    for (let index = 0; index < 50; index++) expect(getContextPanelState(unchanged, '/repo')).toBe(initialPanel);
     expect(useUIStore.getState()).toBe(unchanged);
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'first-session', previousDirectory: '/repo', nextSessionId: 'other-session', nextDirectory: '/repo' });
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.isOpen).not.toBe(true);
+    store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: 'other-session', previousDirectory: '/repo', nextSessionId: 'first-session', nextDirectory: '/repo' });
+    expect(getContextPanelState(useUIStore.getState(), '/repo')).toBe(initialPanel);
   });
 
   test('does not open the preview without a directory or with a saved closed rail', () => {
     const store = useUIStore.getState();
     store.setRightSidebarOpen(true);
-    store.initializeWorkspacePanels('');
+    expect(getContextPanelState(useUIStore.getState(), '')).toBeUndefined();
     expect(useUIStore.getState().contextPanelByDirectory).toEqual({});
     store.setRightSidebarOpen(false);
-    store.initializeWorkspacePanels('/repo');
+    expect(getContextPanelState(useUIStore.getState(), '/repo')).toBeUndefined();
     store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: null, nextSessionId: 'first-session', nextDirectory: '/repo' });
     expect(useUIStore.getState().contextPanelByDirectory).toEqual({});
     expect(useUIStore.getState().isRightSidebarOpen).toBe(false);
@@ -65,7 +212,7 @@ describe('useUIStore context panel tabs', () => {
     const restored = await options.migrate!(saved, options.version!);
     useUIStore.setState(restored as Partial<ReturnType<typeof useUIStore.getState>>);
     const unchanged = useUIStore.getState();
-    store.initializeWorkspacePanels('/repo');
+    expect(getContextPanelState(useUIStore.getState(), '/repo')?.isOpen).toBe(isOpen);
     store.syncWorkspacePanelsForSessionSwitch({ previousSessionId: null, nextSessionId: 'first-session', nextDirectory: '/repo' });
     expect(useUIStore.getState()).toBe(unchanged);
     expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(isOpen);
@@ -384,8 +531,8 @@ describe('useUIStore context panel tabs', () => {
 
     expect(useUIStore.getState().contextPanelByDirectory[directory]?.isOpen).toBe(false);
     expect(useUIStore.getState().isRightSidebarOpen).toBe(false);
-    // Tabs stay cached so restore can reopen them.
-    expect(useUIStore.getState().contextPanelByDirectory[directory]?.tabs.length).toBeGreaterThan(0);
+    // Tabs stay in the session snapshot, never in the next session's live panel.
+    expect(useUIStore.getState().contextPanelByDirectory[directory]?.tabs).toEqual([]);
 
     store.syncWorkspacePanelsForSessionSwitch({
       previousSessionId: 'ses_b',
@@ -444,8 +591,7 @@ describe('useUIStore context panel tabs', () => {
 
     expect(useUIStore.getState().contextPanelByDirectory[directory]?.isOpen).toBe(false);
     expect(useUIStore.getState().isRightSidebarOpen).toBe(false);
-    expect(useUIStore.getState().sessionWorkspacePanelById.ses_a?.isRightSidebarOpen).toBe(true);
-    expect(useUIStore.getState().sessionWorkspacePanelById.ses_a?.rightSidebarTab).toBe('files');
+    expect(useUIStore.getState().contextPanelByDirectory[directory]?.tabs).toEqual([]);
 
     store.syncWorkspacePanelsForSessionSwitch({
       previousSessionId: null,

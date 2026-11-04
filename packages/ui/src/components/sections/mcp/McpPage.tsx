@@ -1,7 +1,7 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui';
@@ -1494,7 +1494,7 @@ export const McpPage: React.FC = () => {
                 }
               }}
             >
-              <Checkbox
+              <SettingsSwitch
                 checked={enabled}
                 onChange={setEnabled}
                 ariaLabel={t('settings.mcp.page.server.enableAria')}
@@ -1648,7 +1648,7 @@ export const McpPage: React.FC = () => {
                           }
                         }}
                       >
-                        <Checkbox checked={oauthEnabled} onChange={setOauthEnabled} ariaLabel={t('settings.mcp.page.advanced.oauthAutoDetectionAria')} />
+                        <SettingsSwitch checked={oauthEnabled} onChange={setOauthEnabled} ariaLabel={t('settings.mcp.page.advanced.oauthAutoDetectionAria')} />
                         <span className="typography-ui-label text-foreground">{t('settings.mcp.page.advanced.oauthAutoDetection')}</span>
                       </div>
 

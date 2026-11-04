@@ -98,7 +98,7 @@ it.each(['stable', 'beta'])('uses the installed native %s channel in About', asy
   fixture.native = true;
   fixture.nativeConfig.mockResolvedValue({ channel, shellApiVersion: 3 });
   await render(); await render();
-  const toggle = host.querySelector('[data-settings-item="about.beta-updates"] [role="checkbox"]');
+  const toggle = host.querySelectorAll('[data-settings-item="about.beta-updates"] button[role="radio"]')[1];
   expect(toggle?.getAttribute('aria-checked')).toBe(String(channel === 'beta'));
   expect(fixture.nativeConfig).toHaveBeenCalledTimes(1);
   const updateChecks = fixture.fetch.mock.calls.filter(([path]) => path.startsWith('/api/system/update'));

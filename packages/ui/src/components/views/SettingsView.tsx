@@ -621,8 +621,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     settingsSlug,
   ]);
 
-  const openPage = React.useCallback(
-    (slug: SettingsPageSlug) => {
+  const openPage = useEvent(
+    (slug: SettingsPageSlug, preserveSelection = false) => {
+      if (slug === "providers" && !preserveSelection) {
+        useConfigStore.getState().setSelectedProvider(ADD_PROVIDER_SETTINGS_ID);
+      }
       setSettingsPage(slug);
       autoNavSlugRef.current = slug;
       if (!isMobile) {
@@ -635,7 +638,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       setMobileStage(def.kind === "split" ? "page-sidebar" : "page-content");
     },
-    [isMobile, setSettingsPage],
   );
 
   const activePageMeta = React.useMemo(() => {
@@ -898,7 +900,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     (result: SettingsSearchResult) => {
       const targetId = prepareSettingsSearchTarget(result);
       setPendingSearchItemId(targetId);
-      openPage(result.page);
+      openPage(result.page, true);
       if (isMobile) {
         setMobileStage("page-content");
       }
@@ -1639,7 +1641,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       return (
         <div className={mobileDetailStageClassName}>
-          <MobileFloatingSurface className="yuri-mobile-settings-detail-card">
+          <MobileFloatingSurface className="yuri-settings-sidebar yuri-mobile-settings-detail-card">
             <ErrorBoundary>
               {renderPageSidebar(settingsSlug, {
                 onItemSelect: handleMobilePageSidebarItemSelect,
@@ -1676,7 +1678,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="yuri-settings-entity-split flex h-full min-h-0 overflow-hidden">
           <div
             className={cn(
-              "yuri-settings-entity-list min-h-0 border-r-[0.5px] border-border/40",
+              "yuri-settings-sidebar yuri-settings-entity-list min-h-0 border-r-[0.5px] border-border/40",
               runtimeCtx.isVSCode ? "bg-background" : "bg-sidebar",
             )}
           >

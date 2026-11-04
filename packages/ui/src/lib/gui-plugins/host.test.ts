@@ -18,6 +18,47 @@ const bundle = (setup: string, revision = '1', declarations = ''): PluginGuiBund
 afterEach(() => { for (const item of hosts.splice(0)) item.dispose(); localStorage.clear(); document.body.replaceChildren(); });
 
 describe('GUI plugin host with the actual official Solid SDK', () => {
+    it('allows React development prop inspection without touching private capability proxies', () => {
+        const value = host();
+        value.install('inspection', bundle(''));
+        // React's development performance metadata probes object props, then enumerates three levels.
+        const inspect = (object: unknown, depth = 0): void => {
+            if (!object || typeof object !== 'object') return;
+            Reflect.get(object, '$$typeof');
+            Object.prototype.toString.call(object);
+            if (depth >= 3) return;
+            for (const key in object) {
+                if (Object.hasOwn(object, key) && !key.startsWith('_')) inspect(Reflect.get(object, key), depth + 1);
+            }
+        };
+        expect(() => inspect(value)).not.toThrow();
+        value.setSession({ id: 'a', directory: '/a' });
+        expect(() => inspect(value)).not.toThrow();
+        expect(value.getSnapshot().plugins[0].status).toBe('active');
+        value.install('unsupported-screen', bundle('ctx.screen.current().missingCapability'));
+        expect(value.getSnapshot().plugins.find((plugin) => plugin.id === 'unsupported-screen')).toMatchObject({
+            status: 'failed', errorCode: 'GUI_PLUGIN_UNSUPPORTED', error: expect.stringContaining('screen.missingCapability'),
+        });
+    });
+
+    it('registers appearance through the real SDK, ignores unrelated session updates and cleans failed providers', () => {
+        const value = host();
+        value.install('skin', bundle(`
+            const Theme = G.Registry.define('yuri.theme');
+            ctx.add(Theme,{id:'ink',title:'Ink',variant:'dark',colors:{primary:{base:'#123456'}}});
+            ctx.add(G.Registry.define('yuri.branding'),{id:'logo',title:'Logo',logo:{svg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>'}});
+        `));
+        expect(value.getSnapshot().plugins[0].status).toBe('active');
+        const appearance = value.appearanceCatalog.getSnapshot();
+        expect(appearance.themes).toHaveLength(1); expect(appearance.branding).toHaveLength(1);
+        const notify = vi.fn(); value.appearanceCatalog.subscribe(notify);
+        for (let i = 0; i < 50; i++) value.setSession({ id: `s${i}`, directory: '/work' });
+        expect(value.appearanceCatalog.getSnapshot()).toBe(appearance); expect(notify).not.toHaveBeenCalled();
+        value.install('bad-skin', bundle(`ctx.add(G.Registry.define('yuri.theme'),{id:'bad',title:'Bad',variant:'wrong'});`));
+        expect(value.getSnapshot().plugins.find((entry) => entry.id === 'bad-skin')?.status).toBe('failed');
+        expect(value.appearanceCatalog.getSnapshot()).toBe(appearance);
+        value.uninstall('skin'); expect(value.appearanceCatalog.getSnapshot().themes).toEqual([]);
+    });
     it('mounts global pages through the shared Solid owner with own options, independent of sessions', () => {
         const open = vi.fn(() => true);
         const value = host(undefined, open);

@@ -282,7 +282,7 @@ const collectComposerCanonicalCandidates = (text: string): ComposerCanonicalCand
 };
 
 /** Restores a persisted document while preserving valid sidecars and materializing disjoint canonical tokens. */
-export const materializeComposerDocument = (document: ComposerDocument, sessionTitles: ReadonlyMap<string, string>): ComposerDocument => {
+export const materializeComposerDocument = (document: ComposerDocument, sessionTitles: ComposerReferenceMaterializationContext['sessionTitles']): ComposerDocument => {
     const current = validateComposerDocument(document.text, document.references).document;
     const candidates = collectComposerCanonicalCandidates(current.text);
     if (candidates === null) return current;

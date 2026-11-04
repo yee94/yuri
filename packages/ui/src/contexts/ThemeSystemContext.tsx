@@ -173,6 +173,11 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
   const [themeServerSyncArmed, setThemeServerSyncArmed] = useState(false);
   const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => getInitialSystemPreference());
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
+  const [pluginThemes, setPluginThemes] = useState<Theme[]>([]);
+  const registerPluginThemes = useEvent((next: Theme[]) => {
+    setPluginThemes(next);
+    return () => { setPluginThemes((current) => current === next ? [] : current); };
+  });
   const [embeddedBootstrapTheme] = useState<Theme | null>(() => readEmbeddedCurrentTheme());
   const [embeddedSyncedTheme, setEmbeddedSyncedTheme] = useState<Theme | null>(null);
   const [customThemesLoading, setCustomThemesLoading] = useState(false);
@@ -241,7 +246,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     [availableThemes, getThemeByIdFromAvailable],
   );
 
-  const currentTheme = useMemo(() => {
+  const preferredTheme = useMemo(() => {
     if (isVSCode && vscodeTheme) {
       return getThemeByIdFromAvailable(vscodeTheme.metadata.id) ?? withBaseTextFloor(vscodeTheme);
     }
@@ -255,6 +260,12 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       ? ensureThemeById(preferences.darkThemeId, 'dark')
       : ensureThemeById(preferences.lightThemeId, 'light');
   }, [ensureThemeById, getThemeByIdFromAvailable, isVSCode, preferences, systemPrefersDark, vscodeTheme]);
+
+  const currentTheme = useMemo(() => {
+    if (isVSCode || receivesParentThemeSync) return preferredTheme;
+    const pluginTheme = pluginThemes.find((theme) => theme.metadata.variant === preferredTheme.metadata.variant);
+    return pluginTheme ? withBaseTextFloor(pluginTheme) : preferredTheme;
+  }, [isVSCode, receivesParentThemeSync, pluginThemes, preferredTheme]);
 
   const reloadCustomThemes = useEvent(async () => {
     if (typeof window === 'undefined' || isVSCode) {
@@ -406,10 +417,10 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     writeRuntimeScopedItem('lightThemeId', preferences.lightThemeId);
     writeRuntimeScopedItem('darkThemeId', preferences.darkThemeId);
     writeRuntimeScopedItem('useSystemTheme', String(preferences.themeMode === 'system'));
-    writeRuntimeScopedItem('selectedThemeId', currentTheme.metadata.id);
+    writeRuntimeScopedItem('selectedThemeId', preferredTheme.metadata.id);
     writeRuntimeScopedItem(
       'selectedThemeVariant',
-      currentTheme.metadata.variant === 'light' ? 'light' : 'dark',
+      preferredTheme.metadata.variant === 'light' ? 'light' : 'dark',
     );
 
     // Splash screen (packages/web/index.html) runs before the theme CSS vars load.
@@ -433,7 +444,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       localStorage.setItem('splashBgDark', darkTheme.colors.surface.background);
       localStorage.setItem('splashFgDark', darkTheme.colors.surface.foreground);
     }
-  }, [preferences, currentTheme, ensureThemeById, isLocalDesktopOrigin, receivesParentThemeSync]);
+  }, [preferences, preferredTheme, ensureThemeById, isLocalDesktopOrigin, receivesParentThemeSync]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -589,8 +600,8 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     const darkTheme = ensureThemeById(preferences.darkThemeId, 'dark');
 
     void updateDesktopSettings({
-      themeId: currentTheme.metadata.id,
-      themeVariant: currentTheme.metadata.variant === 'light' ? 'light' : 'dark',
+      themeId: preferredTheme.metadata.id,
+      themeVariant: preferredTheme.metadata.variant === 'light' ? 'light' : 'dark',
       useSystemTheme: preferences.themeMode === 'system',
       lightThemeId: preferences.lightThemeId,
       darkThemeId: preferences.darkThemeId,
@@ -599,7 +610,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       splashBgDark: darkTheme.colors.surface.background,
       splashFgDark: darkTheme.colors.surface.foreground,
     });
-  }, [currentTheme.metadata.id, currentTheme.metadata.variant, ensureThemeById, preferences.themeMode, preferences.lightThemeId, preferences.darkThemeId, receivesParentThemeSync, themeServerSyncArmed]);
+  }, [preferredTheme.metadata.id, preferredTheme.metadata.variant, ensureThemeById, preferences.themeMode, preferences.lightThemeId, preferences.darkThemeId, receivesParentThemeSync, themeServerSyncArmed]);
 
   useEffect(() => {
     if (receivesParentThemeSync || !isDesktopShell) {
@@ -808,6 +819,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
   const value = useMemo<ThemeContextValue>(() => ({
     currentTheme,
     availableThemes,
+    registerPluginThemes,
     setTheme,
     customThemesLoading,
     reloadCustomThemes,
@@ -821,6 +833,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     setDarkThemePreference,
   }), [
     availableThemes,
+    registerPluginThemes,
     currentTheme,
     customThemesLoading,
     preferences.darkThemeId,

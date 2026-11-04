@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from './SettingsSwitch';
 import { cn } from '@/lib/utils';
 import { SettingsActionHeader } from './SettingsActionHeader';
 
@@ -119,6 +119,7 @@ export type SettingsRowProps = {
   label?: ReactNode;
   children: ReactNode;
   description?: ReactNode;
+  footer?: ReactNode;
   itemId?: string;
   className?: string;
   copyClassName?: string;
@@ -130,6 +131,7 @@ export function SettingsRow({
   label,
   children,
   description,
+  footer,
   itemId,
   className,
   copyClassName,
@@ -154,6 +156,7 @@ export function SettingsRow({
       >
         {children}
       </div>
+      {footer ? <div data-slot="settings-row-footer" className="col-span-full min-w-0">{footer}</div> : null}
     </div>
   );
 }
@@ -219,7 +222,7 @@ export function SettingsToggleRow({
         ) : null}
       </div>
       <div data-settings-value="" className="yuri-settings-split-row-control">
-        <Checkbox
+        <SettingsSwitch
           checked={checked}
           onChange={onChange}
           disabled={disabled}

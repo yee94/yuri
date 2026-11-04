@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/web",
-  "version": "0.2.29-beta.3",
+  "version": "0.2.29-beta.4",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
@@ -119,6 +119,7 @@
   "files": [
     "dist",
     "server",
+    "shared",
     "bin",
     "public",
     "package.json",

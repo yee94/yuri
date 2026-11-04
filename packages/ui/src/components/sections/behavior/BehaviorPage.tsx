@@ -5,7 +5,7 @@ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { toast } from '@/components/ui';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import {
   Select,
   SelectContent,
@@ -360,6 +360,14 @@ export const BehaviorPage: React.FC = () => {
 
         <SettingsGroup
           itemId="behavior.response-style"
+          actions={(
+            <SettingsSwitch
+              checked={responseStyleEnabled}
+              onChange={setResponseStyleEnabled}
+              disabled={!responseStyleReady}
+              ariaLabel={t('settings.behavior.page.responseStyle.enableAria')}
+            />
+          )}
           label={(
             <div className="flex items-center gap-1.5">
               <span>{t('settings.behavior.page.section.responseStyle')}</span>
@@ -374,13 +382,7 @@ export const BehaviorPage: React.FC = () => {
             </div>
           )}
         >
-          <SettingsRow label={t('settings.behavior.page.responseStyle.enable')}>
-            <Checkbox
-              checked={responseStyleEnabled}
-              onChange={setResponseStyleEnabled}
-              disabled={!responseStyleReady}
-              ariaLabel={t('settings.behavior.page.responseStyle.enableAria')}
-            />
+          <SettingsRow label={t('settings.behavior.page.responseStyle.preset')}>
             <Select<ResponseStyleValue>
               value={responseStylePreset}
               onValueChange={(value) => setResponseStylePreset(value)}

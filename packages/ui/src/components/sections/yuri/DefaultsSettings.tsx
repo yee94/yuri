@@ -2,7 +2,7 @@ import React from 'react';
 import { ModelSelector } from '@/components/sections/agents/ModelSelector';
 import { AgentSelector } from '@/components/sections/commands/AgentSelector';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -297,7 +297,7 @@ export const DefaultsSettings: React.FC = () => {
           </div>
         </div>
         <div className="yuri-settings-split-row-control">
-          <Checkbox checked={showDeletionDialog} onChange={setShowDeletionDialog} ariaLabel={t('settings.yuri.defaults.field.showDeletionDialogAria')} />
+          <SettingsSwitch checked={showDeletionDialog} onChange={setShowDeletionDialog} ariaLabel={t('settings.yuri.defaults.field.showDeletionDialogAria')} />
         </div>
       </div>
     </SettingsGroup>

@@ -1,5 +1,10 @@
 # UI Stores
 
+Provider Settings uses two transient selections: `__add_provider__` for the
+provider grid and `__custom_provider__` for a new custom draft. Catalog refresh and
+directory snapshot reconciliation preserve both in memory; persistence strips both
+from root and directory selections so a fresh launch never restores an empty draft.
+
 The session sidebar no longer reads or refreshes `useGitHubPrStatusStore`; its
 PR-only visual-summary selector/cache has been removed. Retained explicit GitHub
 workflows own any PR demand, not session-tree lifecycle or persisted PR entries.
@@ -76,9 +81,20 @@ Its toggle never changes preview visibility. Session snapshots retain both flags
 
 With no saved workspace-panel state, the desktop workspace opens its empty preview
 and Files/Git rail on Git Changes when the first directory becomes available.
-`initializeWorkspacePanels` materializes that initial directory only when the rail
-is open and no directory panel has been saved; existing closed panels and rail tab
-selections remain authoritative. Mobile keeps its drawers closed on startup.
+`getContextPanelState` derives a stable initial empty panel when the rail is open
+and no directory panel has been saved; rendering does not write to the store or
+wait for an Effect. The first user action materializes the layout. Header controls,
+workspace snapshots and work-status exclusion use the same selector, so closing
+or leaving the derived panel works before any prior layout write. Existing closed
+panels and rail tab selections remain authoritative. Mobile keeps its drawers closed on startup.
+
+Compact preview focus is the panel's transient `activeView`, updated synchronously
+by open/select actions: opening the panel or selecting the rail focuses `rail`,
+while confirmed tab/file navigation focuses `preview`. Blocked navigation leaves
+focus unchanged. Session snapshots retain it; persisted layout omits it and starts
+on the rail. Empty panels always reveal the rail. Unavailable saved rail tabs are
+resolved during render by both the toolbar and content without overwriting the
+saved choice. No panel-open, focus-restoration or fallback-selection Effect is used.
 The desktop preview keeps `py-1.5` outer vertical padding in both split and expanded
 mode; its internal header subtracts the combined 0.75rem inset (including the
 shared `--padding-scale` density multiplier) from
@@ -353,7 +369,7 @@ windows do not inherit the local theme.
 
 `useModelPickerSectionsStore` persists model-picker section collapse choices for the empty-search view. `ModelPickerList` starts active-search results expanded, keeps collapse choices component-local during that search, and clears them when the search ends.
 
-`useUIStore` keeps context-panel tab *content* directory-scoped (`contextPanelByDirectory`), but the *open* state of the right workspace (context panel for subagent/file preview/diff, plus right sidebar git/files) is session-correlated. `syncWorkspacePanelsForSessionSwitch()` captures the previous session snapshot into in-memory `sessionWorkspacePanelById` and restores the next session (or closes panels when there is no snapshot). The initial selection, before any session snapshot exists, preserves the startup workspace layout instead of closing it. Callers that leave a real session must invoke it: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
+`useUIStore` scopes the complete right workspace to the primary session: context-panel tabs, their order and active selection, open/expanded state, preview width, exact tool diff, and the right sidebar git/files selection. `contextPanelByDirectory` is the live directory-addressed projection consumed by existing panel actions and views, not a shared tab catalog. `syncWorkspacePanelsForSessionSwitch()` captures immutable panel references in `sessionWorkspacePanelById` (keyed by runtime plus session, bounded to 40 snapshots) and replaces the projection with the next session's complete snapshot. A session without a snapshot gets an empty closed panel; leaving a directory also clears its live tabs so Welcome/draft cannot reopen them. Pending file-navigation intents are cleared at the same boundary. Snapshots remain in-memory; persisted directory layout still provides startup continuity, and the initial selection before any snapshot exists preserves that layout. Callers that leave a real session must invoke the boundary: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
 
 Exact tool patches selected from `edit`, `multiedit`, `write`, and `apply_patch` rows live in the transient `contextToolDiffByDirectory` map. Edit-style and write-style rows retain one file, while an `apply_patch` row retains every renderable file from that invocation. The persisted tab keeps only its target path, turn message, and focus line; regular diff navigation, scope changes, tab close, and runtime switches clear the transient patches.
 

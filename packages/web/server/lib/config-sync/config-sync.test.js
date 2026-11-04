@@ -38,6 +38,28 @@ afterEach(async () => {
 });
 
 describe('config-sync contract', () => {
+  it('excludes plugin-specific configuration and state from sync and deletion plans', async () => {
+    const home = await makeTempDir();
+    const configDir = path.join(home, '.config', 'opencode');
+    await fsp.mkdir(path.join(configDir, '.oh-my-opencode-slim'), { recursive: true });
+    await fsp.writeFile(path.join(configDir, 'opencode.jsonc'), '{}');
+    for (const target of ['oh-my-opencode', 'oh-my-opencode-slim', 'oh-my-openagent']) {
+      for (const extension of ['json', 'jsonc']) {
+        await fsp.writeFile(path.join(configDir, `${target}.${extension}`), '{}');
+      }
+    }
+    await fsp.writeFile(path.join(configDir, '.oh-my-opencode-slim', 'state.json'), '{}');
+    for (const direction of [SYNC_DIRECTION_PUSH, SYNC_DIRECTION_PULL]) {
+      const plan = planOpenCodeConfigSync(home, { direction, includeProviderCredentials: false });
+      expect(plan.files.map((entry) => entry.path)).toEqual(['opencode.jsonc']);
+      expect(plan.directories).toEqual([]);
+      expect(plan.deletes.every((entry) => !entry.includes('oh-my-'))).toBe(true);
+    }
+    expect(buildDefaultSyncSelections().fileGroups).toHaveLength(1);
+    expect(buildDefaultSyncSelections().directories).toHaveLength(6);
+    expect(buildRemoteSyncInventoryScript()).not.toContain('oh-my-');
+  });
+
   it('requires direction on plans and accepts push/pull', () => {
     expect(assertPlanDirection({ direction: SYNC_DIRECTION_PUSH })).toBe('push');
     expect(assertPlanDirection({ direction: SYNC_DIRECTION_PULL })).toBe('pull');

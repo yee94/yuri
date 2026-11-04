@@ -87,6 +87,7 @@ import {
   hasTailAssistantMissingSettledCompletion,
   isTranscriptSseEventType,
   type TranscriptScope,
+  type TranscriptData,
 } from "./transcript-repository"
 import { listTranscriptEventBroadcastScopes } from "./transcript-event-broadcast"
 import { queryClient } from "@/lib/queryRuntime"
@@ -4515,32 +4516,48 @@ export function useUserMessageHistory(sessionID: string, directory?: string): st
   const snapshotRef = useRef<UserMessageHistorySnapshot>(EMPTY_USER_MESSAGE_HISTORY_SNAPSHOT)
 
   // Ticket 09 batch 1B: transcript from repository; session.revert from catalog.
-  const getSnapshot = useCallback(() => {
-    void getTranscriptRepositoryBindingRevision()
-    if (!sessionID) {
-      snapshotRef.current = EMPTY_USER_MESSAGE_HISTORY_SNAPSHOT
-      return EMPTY_USER_MESSAGE_HISTORY_SNAPSHOT.history
+  const getSnapshot = useMemo(() => {
+    let previousData: TranscriptData | undefined
+    let previousSessions: State['session'] | undefined
+    let revertMessageID: string | undefined
+    let previousRevertMessageID: string | undefined
+    let previousBindingRevision: number | undefined
+    return () => {
+      const bindingRevision = getTranscriptRepositoryBindingRevision()
+      if (!sessionID) {
+        snapshotRef.current = EMPTY_USER_MESSAGE_HISTORY_SNAPSHOT
+        return EMPTY_USER_MESSAGE_HISTORY_SNAPSHOT.history
+      }
+      const repository = getTranscriptRepository()
+        ?? resolveTranscriptRepositoryForStore(targetDirectory, store)
+      const data = repository.getTranscript(transcriptScope(targetDirectory, sessionID))
+      const state = store.getState()
+      if (previousSessions !== state.session) {
+        previousSessions = state.session
+        const session = state.session.find((candidate) => candidate.id === sessionID)
+        revertMessageID = (session as { revert?: { messageID?: string } } | undefined)?.revert?.messageID
+      }
+      if (previousData === data && previousRevertMessageID === revertMessageID && previousBindingRevision === bindingRevision) {
+        return snapshotRef.current.history
+      }
+      const next = buildUserMessageHistorySnapshotFromSource(
+        {
+          sessionID,
+          messages: messagesFromTranscriptData(data),
+          parts: data.partsByMessageID,
+          revertMessageID,
+        },
+        snapshotRef.current,
+      )
+      snapshotRef.current = next
+      previousData = data
+      previousRevertMessageID = revertMessageID
+      previousBindingRevision = bindingRevision
+      return next.history
     }
-    const repository = getTranscriptRepository()
-      ?? resolveTranscriptRepositoryForStore(targetDirectory, store)
-    const data = repository.getTranscript(transcriptScope(targetDirectory, sessionID))
-    const state = store.getState()
-    const session = state.session.find((candidate) => candidate.id === sessionID)
-    const revertMessageID = (session as { revert?: { messageID?: string } } | undefined)?.revert?.messageID
-    const next = buildUserMessageHistorySnapshotFromSource(
-      {
-        sessionID,
-        messages: messagesFromTranscriptData(data),
-        parts: data.partsByMessageID,
-        revertMessageID,
-      },
-      snapshotRef.current,
-    )
-    snapshotRef.current = next
-    return next.history
   }, [sessionID, store, targetDirectory])
 
-  const subscribe = useCallback((notify: () => void) => {
+  const subscribe = useMemo(() => (notify: () => void) => {
     if (!sessionID) return () => undefined
     let repoUnsub = (() => {
       const repository = getTranscriptRepository()
@@ -4558,8 +4575,8 @@ export function useUserMessageHistory(sessionID: string, directory?: string): st
       })
       notify()
     })
-    const unsubStore = store.subscribe(() => {
-      notify()
+    const unsubStore = store.subscribe((state, previous) => {
+      if (state.session !== previous.session) notify()
     })
     return () => {
       unsubBinding()

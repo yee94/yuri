@@ -22,7 +22,8 @@ const fixture = vi.hoisted(() => ({
     paintedWidths: [] as (string | null)[],
 }));
 
-vi.mock('@/stores/useUIStore', () => ({
+vi.mock('@/stores/useUIStore', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/stores/useUIStore')>(),
     normalizeContextPanelDirectoryKey: (directory: string) => directory,
     useUIStore: (selector: (state: typeof fixture.ui) => unknown) => selector(fixture.ui),
 }));

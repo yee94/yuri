@@ -42,9 +42,9 @@ describe('built-in session skill with authenticated Host', () => {
           if (failCleanup) throw new Error('Unavailable');
           sessions.delete(sessionID); entries.delete(sessionID);
         }),
-        instructions: { entry: { put: vi.fn(async ({ sessionID, value }) => {
+        instructions: { entry: { put: vi.fn(async ({ sessionID, key, value }) => {
           if (failInstructions) throw new Error('Instructions unavailable');
-          entries.set(sessionID, value);
+          entries.set(key === 'yuri.customization' ? `${sessionID}:customization` : sessionID, value);
         }) } },
       },
     };
@@ -115,6 +115,8 @@ describe('built-in session skill with authenticated Host', () => {
       expect(entries.get(session.id)).not.toContain(password);
       expect(entries.get(session.id)).not.toContain(auth.Authorization);
       expect(entries.get(session.id)).not.toContain('IANA');
+      expect(entries.get(`${session.id}:customization`)).toContain('yuri-customization');
+      expect(entries.get(`${session.id}:customization`)).not.toContain(password);
       const described = await run((await commands(session)).describe);
       expect(described.code).toBe(0);
       expect(described.value.project.id).toBe(project);

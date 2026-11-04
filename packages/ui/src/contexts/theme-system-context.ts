@@ -5,6 +5,7 @@ import type { Theme, ThemeMode } from '@/types/theme';
 export interface ThemeContextValue {
   currentTheme: Theme;
   availableThemes: Theme[];
+  registerPluginThemes?: (themes: Theme[]) => () => void;
   setTheme: (themeId: string) => void;
   customThemesLoading: boolean;
   reloadCustomThemes: () => Promise<void>;

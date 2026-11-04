@@ -1,6 +1,6 @@
 import React from 'react';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { UsageCard } from './UsageCard';
 import { QUOTA_PROVIDERS } from '@/lib/quota';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
@@ -200,7 +200,7 @@ export const UsagePage: React.FC = () => {
               </div>
             </div>
             <div data-settings-value="" className="yuri-settings-split-row-control">
-              <Checkbox
+              <SettingsSwitch
                 checked={showInDropdown}
                 onChange={handleDropdownToggle}
                 ariaLabel={t('settings.usage.page.options.showInHeaderAria')}

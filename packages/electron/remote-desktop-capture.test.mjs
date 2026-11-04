@@ -24,8 +24,17 @@ async function captureFixture(width = 1920, height = 1080) {
   vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: async () => stream } });
   vi.stubGlobal('RTCPeerConnection', class { constructor() { return peer; } });
   await import('./remote-desktop-capture.mjs');
-  return { command, unload, frame, send, peer, sender, canvas, track, setEncoded: bytes => { encoded = bytes; } };
+  return { command, unload, frame, send, peer, sender, canvas, track, video, setEncoded: bytes => { encoded = bytes; } };
 }
+
+it('a media playback startup failure restarts capture instead of selecting an unusable JPEG fallback', async () => {
+  const fixture = await captureFixture();
+  fixture.video.play.mockRejectedValueOnce(new Error('capture interrupted'));
+  await fixture.command({ type: 'start', sourceId: 'synthetic' });
+  expect(fixture.send).toHaveBeenCalledWith({ type: 'failure' });
+  expect(fixture.send).not.toHaveBeenCalledWith({ type: 'rtc-failed' });
+  fixture.unload();
+});
 
 it('preserves sender transaction/encoding identity, retries rejected tuning without failing video and stops on fallback', async () => {
   const fixture = await captureFixture();

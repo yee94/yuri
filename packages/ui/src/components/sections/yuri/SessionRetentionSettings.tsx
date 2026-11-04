@@ -3,7 +3,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { toast } from '@/components/ui';
 import { NumberInput } from '@/components/ui/number-input';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Icon } from "@/components/icon/Icon";
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionAutoCleanup } from '@/hooks/useSessionAutoCleanup';
@@ -96,7 +96,7 @@ export const SessionRetentionSettings: React.FC = () => {
             </div>
           </div>
           <div className="yuri-settings-split-row-control">
-            <Checkbox
+            <SettingsSwitch
               checked={autoDeleteEnabled}
               onChange={setAutoDeleteEnabled}
               ariaLabel={t('settings.yuri.sessionRetention.field.enableAutoCleanupAria')}

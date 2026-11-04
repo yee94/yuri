@@ -43,7 +43,8 @@ vi.mock('@/sync/sync-context', () => ({
   useSessionLatestTodos: () => fixture.todowrite,
 }));
 vi.mock('@/stores/useTodosPersistStore', () => ({ useTodosPersistStore: (selector: (state: unknown) => unknown) => selector({ sessions: fixture.persistedTodos }) }));
-vi.mock('@/stores/useUIStore', () => ({
+vi.mock('@/stores/useUIStore', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/stores/useUIStore')>(),
   normalizeContextPanelDirectoryKey: (directory: string) => directory,
   useUIStore: (selector: (state: unknown) => unknown) => selector(fixture.ui),
 }));

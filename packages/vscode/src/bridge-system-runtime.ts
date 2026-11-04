@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { removeProviderConfig, getProviderSources } from './opencodeConfig';
+import { removeProviderConfiguration } from '../../web/server/lib/opencode/providers.js';
 import { getProviderAuth, removeProviderAuth } from './opencodeAuth';
 import { fetchQuotaForProvider, listConfiguredQuotaProviders } from './quotaProviders';
 import { fetchMagpieQuotas } from '../../web/server/lib/quota/magpie.js';
@@ -449,7 +450,10 @@ export async function handleSystemBridgeMessage(
         : ctx?.manager?.getWorkingDirectory();
       try {
         let removed = false;
-        if (normalizedScope === 'auth') {
+        if (normalizedScope === 'config') {
+          removed = removeProviderConfiguration(providerId, workingDirectory);
+          return { id, type, success: true, data: { success: true, removed, requiresReload: false } };
+        } else if (normalizedScope === 'auth') {
           removed = await removeProviderAuth(providerId);
         } else if (normalizedScope === 'user' || normalizedScope === 'project' || normalizedScope === 'custom') {
           removed = removeProviderConfig(providerId, workingDirectory, normalizedScope);

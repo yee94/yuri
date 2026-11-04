@@ -140,12 +140,14 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       return (
         <ScrollableOverlay
           as="textarea"
+          data-slot="textarea"
+          aria-invalid={hasError || undefined}
           ref={ref as React.Ref<HTMLTextAreaElement>}
           disableHorizontal
           fillContainer={fillContainer}
           useScrollShadow={useScrollShadow}
           scrollShadowSize={scrollShadowSize}
-          outerClassName={outerClassName}
+          outerClassName={cn("yuri-textarea-simple", outerClassName)}
           scrollbarClassName={scrollbarClassName}
           className={cn(
             "block w-full appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
@@ -167,6 +169,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     return (
       <div
         ref={wrapperRef}
+        data-slot="textarea"
+        data-invalid={hasError || undefined}
         onPointerDown={focusInnerTextarea}
         style={effectiveResizedHeight !== null ? { height: `${effectiveResizedHeight}px` } : undefined}
         className={cn(
@@ -193,6 +197,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         <div className="flex h-full min-h-0 flex-1 flex-col gap-2">
           <textarea
               ref={ref}
+              data-slot="textarea-input"
+              aria-invalid={hasError || undefined}
               className={cn(
                 "block w-full flex-1 min-h-0 appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
                 "min-h-[82px] pl-3 pr-2.5 pt-2.5 md:typography-ui-label",

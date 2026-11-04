@@ -14,4 +14,5 @@ export type NativeGuiActivation = {
   bundle: PluginGuiOutput['data'];
   os: 'macos' | 'windows' | 'linux';
   app: { version: string; packaged: boolean };
+  capabilities?: { dockIcon: boolean };
 };

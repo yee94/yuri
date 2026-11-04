@@ -1,4 +1,5 @@
 import { isElectronShell } from '@/lib/desktop';
+import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import {
   desktopHostProbe,
   desktopHostsGet,
@@ -8,7 +9,7 @@ import {
 } from '@/lib/desktopHosts';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopHostSwitch';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { getRuntimeGeneration, getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 
 // Let the post-switch bootstrap traffic settle before the background refresh.
 const CANDIDATE_REFRESH_DELAY_MS = 5_000;
@@ -161,8 +162,8 @@ export const scheduleDesktopHostCandidateRefresh = (hostId: string): void => {
  * transport selection to the renderer: here we probe the direct address first
  * (cheap, preferred on the home network) and fall back to the E2EE tunnel via
  * switchRuntimeEndpoint({ relay }) — the multi-transport model mobile uses.
- * Direct-only hosts never reach this path (the shell injects their
- * apiBaseUrl/token as window globals before render).
+ * Direct-only hosts keep the shell-injected endpoint and adopt their stable
+ * saved Host key before render; they do not open a Relay tunnel.
  *
  * Safe to call unconditionally; it is a no-op outside the Electron shell and when
  * the default host is local or already active.
@@ -176,13 +177,24 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
   if (!config || !canRestore()) return;
   // An explicit target (a "new window for host X") wins over the default-host
   // relaunch logic.
-  const hostId = targetHostId || (config.defaultHostId !== 'local' ? config.defaultHostId : null);
+  const boot = getInjectedBootOutcome();
+  const windowHostId = boot?.target === 'remote' ? boot.hostId : boot?.target === 'local' ? 'local' : null;
+  const hostId = targetHostId || windowHostId || (config.defaultHostId !== 'local' ? config.defaultHostId : null);
   if (!hostId) return;
   const host = config.hosts.find((entry) => entry.id === hostId);
-  if (!host?.relay) return;
+  if (!host) return;
   // Must match runtimeKeyForHost() in DesktopHostSwitcher so switch/resolve agree.
   const runtimeKey = runtimeKeyForDesktopHost(host);
   if (getRuntimeKey() === runtimeKey) return;
+
+  if (!host.relay) {
+    const directUrl = normalizeHostUrl(getDesktopHostApiUrl(host));
+    if (directUrl && normalizeHostUrl(getRuntimeApiBaseUrl()) === directUrl
+      && (!boot || boot.status === 'ok')) {
+      switchRuntimeEndpoint({ apiBaseUrl: directUrl, clientToken: host.clientToken || null, requestHeaders: host.requestHeaders || null, runtimeKey });
+    }
+    return;
+  }
 
   const switchToDirect = (url: string) => {
     switchRuntimeEndpoint({

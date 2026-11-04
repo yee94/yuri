@@ -195,7 +195,8 @@ const sidebarBaseRgb = hexToRgb(theme.colors.surface.muted);
       existing.remove();
     }
 
-    document.head.appendChild(style);
+    // Plugin overrides remain after base tokens, including after a theme switch.
+    document.head.insertBefore(style, document.head.querySelector('[data-yuri-plugin-style]'));
 
     document.documentElement.setAttribute('data-theme', theme.metadata.variant);
 

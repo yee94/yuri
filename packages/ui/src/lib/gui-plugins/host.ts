@@ -20,6 +20,7 @@ import { saveGuiFile } from './save';
 import { createPreviewActions, PREVIEW_ACTIONS_CONTRACT, PreviewActionsContext } from './preview-actions';
 import type { toast } from 'sonner';
 import { GUI_PAGE_REGISTRY, GUI_PAGES_CONTRACT, guiPageKey, validateGuiPage, type GuiPage, type GuiPagesAPI } from './pages';
+import { GuiPluginAppearance, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY } from './appearance';
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
@@ -47,6 +48,7 @@ type Instance = {
     context?: Gui.SetupContext<Gui.Plugin.Definition>; owner?: Owner; root?: Owner; dispose?: () => void;
     cleanups: Set<() => void>; contributions: Set<Contribution>;
     iconChanges: ReturnType<typeof createSignal<number>>; iconError?: string;
+    appearanceChanges: ReturnType<typeof createSignal<number>>;
     commands: CommandView[]; panels: PanelEntry[]; settings: Gui.SettingsPage[]; menus: Gui.SessionPanelMenuItem[];
     titlebarItems: (TitlebarView & { run?: Gui.TitlebarItem['run'] })[];
     pages: GuiPage[];
@@ -83,6 +85,7 @@ function guardCleanups(owner: Owner | undefined, report: (error: unknown) => voi
 
 export class GuiPluginHost {
     readonly fileIcons = new GuiPluginFileIcons();
+    readonly appearanceCatalog = new GuiPluginAppearance();
     private instances = new Map<string, Instance>();
     private listeners = new Set<() => void>();
     private panelMounts = new Set<() => void>();
@@ -98,7 +101,7 @@ export class GuiPluginHost {
     private ended = false;
     private contracts = new Map<string, { live: ReturnType<typeof createSignal<Gui.Live<unknown>>>; generation: number; provider?: Instance }>();
     private snapshot: GuiPluginSnapshot = Object.freeze({ plugins: Object.freeze([]), commands: Object.freeze([]), titlebarItems: Object.freeze([]), panels: Object.freeze([]), pages: Object.freeze([]), settings: Object.freeze([]), menuItems: Object.freeze([]), activePanel: null });
-    private screen: Gui.SessionScreen;
+    #screen: Gui.SessionScreen;
     private viewExports: GuiViewExports;
 
     constructor(private options: Options) {
@@ -106,7 +109,7 @@ export class GuiPluginHost {
         this.appearance = createSignal<Appearance>({ locale: options.locale, mode: options.mode, narrow: options.narrow });
         this.storage = new GuiPluginStorage(options.storage, options.transport);
         const currentFile = () => { this.session[0](); return this.files?.api ?? unsupported('screen.file without a session'); };
-        this.screen = partial<Gui.SessionScreen>('screen', {
+        this.#screen = partial<Gui.SessionScreen>('screen', {
             get file() { return currentFile(); },
         });
     }
@@ -152,7 +155,7 @@ export class GuiPluginHost {
         const previous = this.instances.get(id);
         if (this.ended || (previous?.status === 'active' && previous.revision === bundle.revision && previous.native?.active !== false)) { native?.dispose(); return; }
         if (previous) { this.instances.delete(id); this.release(previous); }
-        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menus: [] };
+        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), appearanceChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menus: [] };
         this.instances.set(id, instance);
         try {
             if (id === 'yuri' || id.startsWith('yuri.')) throw new Error('The yuri namespace is reserved to the host');
@@ -192,6 +195,14 @@ export class GuiPluginHost {
                     }
                 }));
                 if (!instance.controller.signal.aborted) runWithOwner(instance.owner!, () => createRenderEffect(() => {
+                    instance.appearanceChanges[0]();
+                    if (instance.controller.signal.aborted) return;
+                    try {
+                        const inputs = (registry: string) => [...instance.contributions].filter((entry) => entry.registry === registry).map((entry) => entry.read()).filter((value) => value !== undefined);
+                        this.appearanceCatalog.replace(instance.id, inputs(GUI_THEME_REGISTRY), inputs(GUI_BRANDING_REGISTRY), instance.native?.activation.capabilities?.dockIcon === true);
+                    } catch (error) { untrack(() => this.fail(instance, error)); }
+                }));
+                if (!instance.controller.signal.aborted) runWithOwner(instance.owner!, () => createRenderEffect(() => {
                     this.changes[0](); this.session[0](); this.appearance[0]();
                     try { this.derive(instance); } catch (error) { untrack(() => this.fail(instance, error)); }
                     untrack(() => this.publish());
@@ -210,6 +221,7 @@ export class GuiPluginHost {
         try { instance.dispose?.(); } catch (error) { instance.error ??= String(error); }
         instance.contributions.clear(); instance.commands = []; instance.titlebarItems = []; instance.panels = []; instance.pages = []; instance.settings = []; instance.menus = [];
         this.fileIcons.remove(instance.id);
+        this.appearanceCatalog.remove(instance.id);
         for (const entry of this.contracts.values()) if (entry.provider === instance) {
             entry.provider = undefined;
             entry.live[1]({ status: 'inactive', reason: instance.status === 'failed' ? 'failed' : 'disabled' });
@@ -237,7 +249,18 @@ export class GuiPluginHost {
         this.ended = true;
         batch(() => { for (const id of [...this.instances.keys()]) this.uninstall(id); });
         this.viewExports.dispose();
-        this.files?.dispose(); this.fileIcons.dispose(); this.storage.dispose(); this.layouts.clear(); this.fileViews.clear(); this.contracts.clear(); this.listeners.clear();
+        this.files?.dispose(); this.fileIcons.dispose(); this.appearanceCatalog.dispose(); this.storage.dispose(); this.layouts.clear(); this.fileViews.clear(); this.contracts.clear(); this.listeners.clear();
+    }
+
+    async setDockIcon(pluginId: string, image: string | null): Promise<void> {
+        const instance = this.instances.get(pluginId);
+        const native = instance?.native;
+        if (!native?.active || !native.activation.capabilities?.dockIcon) return unsupported('Dock icon');
+        try { await native.setDockIcon(image); }
+        catch (error) {
+            if (image !== null && instance) this.fail(instance, error);
+            throw error;
+        }
     }
 
     private own(instance: Instance, cleanup: () => void): () => void {
@@ -343,6 +366,7 @@ export class GuiPluginHost {
                     } else read = createMemo(evaluate);
                     if (registry.id === 'style') {
                         const style = document.createElement('style');
+                        style.dataset.yuriPluginStyle = instance.id;
                         document.head.append(style);
                         onCleanup(() => style.remove());
                         createRenderEffect(() => { const value = read(); style.textContent = value === undefined ? '' : String(value); });
@@ -351,9 +375,11 @@ export class GuiPluginHost {
                 }, getOwner() ?? instance.owner);
                 instance.contributions.add(contribution);
                 const iconsChanged = () => { if (registry.id === GUI_FILE_ICON_REGISTRY) instance.iconChanges[1]((value) => value + 1); };
+                const appearanceChanged = () => { if (registry.id === GUI_THEME_REGISTRY || registry.id === GUI_BRANDING_REGISTRY) instance.appearanceChanges[1]((value) => value + 1); };
                 untrack(iconsChanged);
+                untrack(appearanceChanged);
                 untrack(() => this.changed());
-                return this.own(instance, () => { guardCleanups(contributionOwner, (error) => { instance.error ??= String(error); }); dispose(); instance.contributions.delete(contribution); untrack(iconsChanged); untrack(() => this.changed()); });
+                return this.own(instance, () => { guardCleanups(contributionOwner, (error) => { instance.error ??= String(error); }); dispose(); instance.contributions.delete(contribution); untrack(iconsChanged); untrack(appearanceChanged); untrack(() => this.changed()); });
             },
             list: <T>(registry: Gui.Registry<T>) => this.list(registry),
             provide: (token, value) => {
@@ -380,7 +406,7 @@ export class GuiPluginHost {
                 return new Proxy({ state: () => undefined }, { get: (target, key) => key === 'state' ? target.state : key === 'on' ? () => { throw new NativeGuiError('GUI_PLUGIN_UNSUPPORTED'); } : () => Promise.reject(new NativeGuiError('GUI_PLUGIN_UNSUPPORTED')) }) as Gui.IpcClient<S>;
             },
             sessions: { current: this.session[0], list: () => { const session = this.session[0](); return session ? [session] : []; } },
-            screen: { current: () => this.session[0]() ? this.screen : undefined }, layout,
+            screen: { current: () => this.session[0]() ? this.#screen : undefined }, layout,
             appearance: { mode: () => this.appearance[0]().mode, font: () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace' },
             locale: { locale: () => this.appearance[0]().locale, direction: () => /^(ar|fa|he|ur)(-|$)/i.test(this.appearance[0]().locale) ? 'rtl' : 'ltr' },
             system: {
@@ -413,7 +439,7 @@ export class GuiPluginHost {
         const pages: GuiPage[] = [];
         const session = this.session[0]();
         for (const contribution of instance.contributions) {
-            if (contribution.registry === GUI_FILE_ICON_REGISTRY) continue;
+            if ([GUI_FILE_ICON_REGISTRY, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY].includes(contribution.registry)) continue;
             const value = contribution.read(); if (value === undefined) continue;
             if (contribution.registry === GUI_PAGE_REGISTRY) {
                 const page = validateGuiPage(value);
@@ -429,7 +455,7 @@ export class GuiPluginHost {
                 const panel = value as Gui.Panel;
                 const prefix = `${instance.id}:`;
                 const open = this.layout(session).open.filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length));
-                for (const tab of panel.list({ session, screen: this.screen, open })) panels.push({ plugin: instance, panel, tab });
+                for (const tab of panel.list({ session, screen: this.#screen, open })) panels.push({ plugin: instance, panel, tab });
             } else if (contribution.registry === Gui.SettingsPage.id) {
                 const page = value as Gui.SettingsPage;
                 if (page.page || page.section) unsupported('SettingsPage host sections');
@@ -582,7 +608,7 @@ export class GuiPluginHost {
         if (!layout.open.includes(key)) return;
         if (entry?.tab.pinned || entry?.tab.closable === false) return;
         const current = this.session[0]();
-        const props = entry && current ? { tab: entry.tab, session: current, screen: this.screen } : undefined;
+        const props = entry && current ? { tab: entry.tab, session: current, screen: this.#screen } : undefined;
         layout.open = layout.open.filter((item) => item !== key);
         if (layout.active === key) layout.active = layout.open.at(-1) ?? null;
         this.changed(true);
@@ -602,7 +628,7 @@ export class GuiPluginHost {
         }, undefined, { equals: samePanelTab }) : undefined;
         const currentTab = selected ? () => selected().tab : readTab;
         const currentSession = () => this.session[0]() ?? unsupported('panel without session');
-        return { get tab() { return currentTab(); }, get session() { return currentSession(); }, screen: this.screen };
+        return { get tab() { return currentTab(); }, get session() { return currentSession(); }, screen: this.#screen };
     }
     mountPanel(key: string, element: HTMLElement, actions?: HTMLElement): () => void {
         const entry = this.panel(key);

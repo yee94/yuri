@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -58,6 +58,7 @@ import {
 import { createImageDiskCache } from './image-disk-cache.mjs';
 import { createPreviewLoopbackGateway } from './preview-loopback-gateway.mjs';
 import { createGuiPluginMainHost } from './gui-plugin-host.mjs';
+import { createPluginDockIcons } from './plugin-dock-icons.mjs';
 import { isGuiPluginUiUrl } from './gui-plugin-origin.mjs';
 import { createViewExportHost, isViewExportSender } from './view-export.mjs';
 
@@ -493,7 +494,10 @@ const quitConfirmationMessage = () => {
   return `Yuri detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
 };
 
-const shutdownBackgroundServices = () => shutdownInProcessServer();
+const shutdownBackgroundServices = async () => {
+  await windowStateWrite;
+  await shutdownInProcessServer();
+};
 
 const shutdownSshSessions = async () => {
   if (state.sshShutdownPromise) {
@@ -531,6 +535,8 @@ const prepareForQuit = ({ installingUpdate = false } = {}) => {
     } catch {
     }
   }
+
+  windowSessionFrozen = true;
 
   setDesktopKeepAwakeActive(false);
 
@@ -903,9 +909,45 @@ const writeDesktopHostsConfig = async (config) => {
 };
 
 const readWindowState = () => {
-  const stateValue = readSettingsRoot().desktopWindowState;
+  const stateValue = readWindowStates()[0] || readSettingsRoot().desktopWindowState;
   return stateValue && typeof stateValue === 'object' ? stateValue : null;
 };
+
+const readWindowStates = () => {
+  const entries = readSettingsRoot().desktopWindowStates;
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((entry) => entry && typeof entry.hostId === 'string' && entry.hostId
+    && Number.isFinite(entry.width) && Number.isFinite(entry.height)
+    && entry.width > 0 && entry.height > 0).map((entry) => ({
+    hostId: entry.hostId,
+    route: desktopWindowRoute(entry.route),
+    x: entry.x, y: entry.y, width: entry.width, height: entry.height,
+    maximized: entry.maximized === true, fullscreen: entry.fullscreen === true,
+  }));
+};
+
+const desktopWindowRoute = (value) => {
+  if (typeof value !== 'string') return '/index.html';
+  try {
+    const route = new URL(value, 'https://window.invalid').pathname;
+    return /^\/(session|new|assistant|schedule|settings|plugins)(\/|$)/.test(route) ? route : '/index.html';
+  } catch {
+    return '/index.html';
+  }
+};
+
+const desktopWindowHostId = (browserWindow) => {
+  if (browserWindow.__yuriHostId) return browserWindow.__yuriHostId;
+  const runtime = browserWindow.__yuriRuntimeConfig || {};
+  if (runtime.relayHostId) return runtime.relayHostId;
+  const apiBaseUrl = runtime.apiBaseUrl;
+  if (!apiBaseUrl || isLocalRuntimeUrl(apiBaseUrl)) return 'local';
+  return readDesktopHostsConfig().hosts.find((host) => normalizeHostUrl(host.apiUrl || host.url) === normalizeHostUrl(apiBaseUrl))?.id || null;
+};
+
+let restoringWindowSession = false;
+let windowSessionFrozen = false;
+let windowStateWrite = Promise.resolve();
 
 const clampWindowBoundsToVisibleWorkArea = (bounds) => {
   const width = Math.max(MIN_RESTORE_WINDOW_WIDTH, Math.round(Number(bounds?.width) || 0));
@@ -938,20 +980,29 @@ const clampWindowBoundsToVisibleWorkArea = (bounds) => {
 
 const writeWindowState = async (browserWindow) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
-  if (!state.mainWindow || browserWindow.id !== state.mainWindow.id) return;
-
-  const bounds = browserWindow.getBounds();
-  await mutateSettingsRoot((root) => {
-    if (!browserWindow || browserWindow.isDestroyed()) return root;
-    root.desktopWindowState = {
-      x: bounds.x,
-      y: bounds.y,
-      width: Math.max(bounds.width, MIN_WINDOW_WIDTH),
-      height: Math.max(bounds.height, MIN_WINDOW_HEIGHT),
-      maximized: browserWindow.isMaximized(),
-      fullscreen: browserWindow.isFullScreen(),
-    };
+  if (restoringWindowSession || windowSessionFrozen) return;
+  if (state.bootOutcome?.status === 'not-configured') return;
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed()
+    && typeof window.__yuriLabel === 'string' && window.__yuriLabel.startsWith('main'));
+  if (state.mainWindow) windows.sort((a, b) => Number(b.id === state.mainWindow.id) - Number(a.id === state.mainWindow.id));
+  const entries = windows.flatMap((window) => {
+    const hostId = desktopWindowHostId(window);
+    if (!hostId) return [];
+    const bounds = window.getNormalBounds();
+    return [{
+      hostId, route: desktopWindowRoute(window.webContents.getURL() || window.__yuriRestoreRoute),
+      x: bounds.x, y: bounds.y,
+      width: Math.max(bounds.width, MIN_WINDOW_WIDTH), height: Math.max(bounds.height, MIN_WINDOW_HEIGHT),
+      maximized: window.isMaximized(), fullscreen: window.isFullScreen(),
+    }];
   });
+  if (entries.length === 0) return;
+  windowStateWrite = mutateSettingsRoot((root) => {
+    root.desktopWindowStates = entries;
+    const { hostId: _hostId, route: _route, ...geometry } = entries[0];
+    root.desktopWindowState = geometry;
+  });
+  await windowStateWrite;
 };
 
 const debounceWindowStatePersist = (browserWindow, immediate = false) => {
@@ -969,7 +1020,7 @@ const debounceWindowStatePersist = (browserWindow, immediate = false) => {
   const persist = async () => {
     if (state.windowGeometryRevisions.get(key) !== revision) return;
     state.windowGeometryTimers.delete(key);
-    await writeWindowState(browserWindow);
+    await writeWindowState(browserWindow).catch((error) => log.warn('[electron] failed to save window session', error));
   };
 
   if (immediate) {
@@ -1805,6 +1856,11 @@ const syncWindowInitScriptsFromState = () => {
 
   for (const browserWindow of BrowserWindow.getAllWindows()) {
     if (!browserWindow || browserWindow.isDestroyed()) continue;
+    if (browserWindow.__yuriHostId && browserWindow.__yuriBootOutcome?.status !== 'not-configured') {
+      const runtime = browserWindow.__yuriRuntimeConfig || {};
+      browserWindow.__yuriInitScript = buildInitScript(localOrigin, browserWindow.__yuriBootOutcome, runtime.apiBaseUrl, runtime.clientToken, runtime.requestHeaders);
+      continue;
+    }
     if (browserWindow.__yuriMiniChat === true) {
       const runtimeConfig = browserWindow.__yuriRuntimeConfig || {};
       browserWindow.__yuriInitScript = buildInitScript(
@@ -1822,7 +1878,7 @@ const syncWindowInitScriptsFromState = () => {
 
 /** Resolve the init script that should run for a given window on navigation. */
 const resolveWindowInitScript = (browserWindow) => {
-  if (browserWindow?.__yuriMiniChat === true) {
+  if (browserWindow?.__yuriMiniChat === true || browserWindow?.__yuriHostId) {
     return browserWindow.__yuriInitScript || state.initScript;
   }
   // Prefer process-level state so reloads after desktop_hosts_set (first-launch
@@ -2654,8 +2710,10 @@ const readThemeSource = () => {
 };
 
 let currentDockIconPath;
+let pluginDockIcon;
 const syncMacDockIcon = () => {
   if (process.platform !== 'darwin' || !app.dock || isPreviewDesktop) return;
+  if (pluginDockIcon) return;
   const variant = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
   const iconPath = path.join(resourceRoot(), 'icons', 'source', `yuri-icon-${variant}-1024.png`);
   if (iconPath === currentDockIconPath) return;
@@ -2684,12 +2742,17 @@ const canUseTitleBarOverlay = (browserWindow) => (
   !browserWindow.isDestroyed()
 );
 
-const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }) => {
-  const saved = restoreGeometry ? readWindowState() : null;
+const createBrowserWindow = ({ label, restoreGeometry, savedState, url, runtimeConfig = {} }) => {
+  const saved = savedState || (restoreGeometry ? readWindowState() : null);
   const useSaved = saved && typeof saved.width === 'number' && typeof saved.height === 'number';
   const restoredBounds = useSaved ? clampWindowBoundsToVisibleWorkArea(saved) : null;
   const desktopLocalOrigin = state.localOrigin || state.sidecarUrl || '';
   const rendererRuntimeConfig = buildRendererRuntimeConfig(url, runtimeConfig);
+  const windowHostId = runtimeConfig.hostId || runtimeConfig.relayHostId
+    || (runtimeConfig.apiBaseUrl ? desktopWindowHostId({ __yuriRuntimeConfig: runtimeConfig }) : null);
+  const windowBootOutcome = runtimeConfig.bootOutcome || (windowHostId
+    ? computeBootOutcome({ envTargetUrl: null, probe: null, config: { ...readDesktopHostsConfig(), defaultHostId: windowHostId }, localAvailable: true })
+    : state.bootOutcome);
   const desktopApiBaseUrl = rendererRuntimeConfig.apiBaseUrl;
   const desktopClientToken = rendererRuntimeConfig.clientToken;
   const desktopRequestHeaders = rendererRuntimeConfig.requestHeaders || {};
@@ -2736,7 +2799,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
         `--yuri-macos-major=${desktopMacosMajor}`,
         `--yuri-packaged=${app.isPackaged ? '1' : '0'}`,
         `--yuri-mac-vibrancy=${useVibrancy ? '1' : '0'}`,
-        `--yuri-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
+        `--yuri-boot-outcome=${JSON.stringify(windowBootOutcome || null)}`,
         `--yuri-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
       ],
       preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
@@ -2754,9 +2817,12 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   const browserWindow = new BrowserWindow(options);
   browserWindow.__yuriLabel = label || nextWindowLabel();
+  browserWindow.__yuriHostId = windowHostId;
+  browserWindow.__yuriRestoreRoute = saved?.route;
   trackMacWindowVibrancy(browserWindow, useVibrancy);
   browserWindow.__yuriRuntimeConfig = { apiBaseUrl: desktopApiBaseUrl, clientToken: desktopClientToken, requestHeaders: desktopRequestHeaders, relayHostId: rendererRuntimeConfig.relayHostId };
-  browserWindow.__yuriInitScript = buildInitScript(desktopLocalOrigin, state.bootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
+  browserWindow.__yuriBootOutcome = windowBootOutcome;
+  browserWindow.__yuriInitScript = buildInitScript(desktopLocalOrigin, browserWindow.__yuriBootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
   browserWindow.__yuriTitleBarOverlayEnabled = titleBarOverlayEnabled;
 
   browserWindow.webContents.on('console-message', (_event, ...args) => {
@@ -2777,6 +2843,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   if (useSaved && saved.maximized) {
     browserWindow.maximize();
   }
+  if (useSaved && saved.fullscreen) browserWindow.setFullScreen(true);
 
   browserWindow.on('focus', () => {
     state.focusedWindowIds.add(browserWindow.id);
@@ -2831,6 +2898,8 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     emitToWindow(browserWindow, 'yuri:window-maximized-changed', { maximized: false });
     debounceWindowStatePersist(browserWindow, false);
   });
+  browserWindow.on('enter-full-screen', () => debounceWindowStatePersist(browserWindow, false));
+  browserWindow.on('leave-full-screen', () => debounceWindowStatePersist(browserWindow, false));
   browserWindow.on('move', () => {
     debounceWindowStatePersist(browserWindow, false);
   });
@@ -2871,6 +2940,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
       // single-main-window broadcasts keep working after the original closes.
       resolveMainWindowTarget();
     }
+    if (!state.quitRequested && state.mainWindow) debounceWindowStatePersist(state.mainWindow, true);
     if (BrowserWindow.getAllWindows().length === 0) {
       if (process.platform !== 'darwin') {
         if (state.installingUpdate) {
@@ -2961,6 +3031,10 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     // Navigation/reload resets Chromium zoom — re-apply the session factor.
     applyWebviewZoomFactor(browserWindow.webContents, state.webviewZoomFactor);
     schedulePendingDeepLinkFlush();
+    debounceWindowStatePersist(browserWindow, false);
+  });
+  browserWindow.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+    if (isMainFrame) debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.webContents.on('render-process-gone', (_event, details) => {
     log.error('[refresh-debug] render-process-gone', {
@@ -3008,6 +3082,7 @@ const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig =
     apiBaseUrl: state.apiBaseUrl || '',
     clientToken: state.clientToken || '',
     requestHeaders: state.requestHeaders || {},
+    relayHostId: runtimeConfig.relayHostId,
   });
   state.initScript = buildInitScript(
     localOrigin,
@@ -3022,6 +3097,8 @@ const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig =
     guiPluginHost.invalidateWindow(mainWindow.webContents);
     viewExportHost.invalidateOwner(mainWindow.webContents);
     mainWindow.__yuriRuntimeConfig = rendererRuntimeConfig;
+    mainWindow.__yuriHostId = runtimeConfig.hostId || mainWindow.__yuriHostId;
+    mainWindow.__yuriBootOutcome = bootOutcome;
     mainWindow.__yuriInitScript = state.initScript;
     await navigateWindow(mainWindow, url, { allowAbort: true });
     mainWindow.show();
@@ -3330,6 +3407,43 @@ const resolveMiniChatRuntimeConfig = (browserWindow, args = {}) => {
   };
 };
 
+const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, localOrigin }) => {
+  let config = readDesktopHostsConfig();
+  let host = config.hosts.find((entry) => entry.id === hostId);
+  let probe = null;
+  if (host && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
+    try {
+      await sshManager.connect(hostId);
+      config = readDesktopHostsConfig();
+      host = config.hosts.find((entry) => entry.id === hostId);
+    } catch {
+      probe = { status: 'unreachable' };
+    }
+  }
+  const relayHostId = host?.relay && !probe ? host.id : '';
+  const apiBaseUrl = host && !relayHostId ? (host.apiUrl || host.url) : localUrl;
+  const clientToken = host && !relayHostId ? (host.clientToken || '') : readDesktopLocalClientToken();
+  const requestHeaders = host && !relayHostId ? sanitizeRuntimeRequestHeaders(host.requestHeaders || {}) : {};
+  if (host && !relayHostId && !probe) {
+    probe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
+    if (probe.status === 'unreachable') probe = await probeHostWithTimeout(apiBaseUrl, 10_000, clientToken, requestHeaders);
+  }
+  const initialUrl = host && !relayHostId && probe?.status !== 'unreachable' && !shouldUsePackagedUi()
+    ? host.url : localUiUrl;
+  return {
+    initialUrl, localOrigin, localUiUrl, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId,
+    bootOutcome: computeBootOutcome({ envTargetUrl: null, probe, config: { ...config, defaultHostId: hostId }, localAvailable: Boolean(localUrl) }),
+  };
+};
+
+const restoreAdditionalDesktopWindows = async (entries, local) => {
+  for (const entry of entries) {
+    const target = await resolveDesktopStartupTarget(entry.hostId, local);
+    const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(entry.route) : entry.route, target.initialUrl).toString();
+    createBrowserWindow({ label: nextWindowLabel(), savedState: entry, url, runtimeConfig: target });
+  }
+};
+
 const resolveInitialUrl = async () => {
   const hmrApiPort = process.env.YURI_HMR_API_PORT || '3901';
   const hmrUiPort = process.env.YURI_HMR_UI_PORT || '5173';
@@ -3362,19 +3476,15 @@ const resolveInitialUrl = async () => {
 
   const envTarget = normalizeHostUrl(process.env.YURI_SERVER_URL || '');
   const config = readDesktopHostsConfig();
+  if (!envTarget) {
+    const hostId = readWindowStates()[0]?.hostId || config.defaultHostId;
+    return resolveDesktopStartupTarget(hostId, { localUrl, localUiUrl, localOrigin });
+  }
   if (envTarget) {
     apiBaseUrl = envTarget;
     clientToken = '';
     requestHeaders = {};
     initialUrl = shouldUsePackagedUi() ? localUiUrl : envTarget;
-  } else if (config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID) {
-    const host = config.hosts.find((entry) => entry.id === config.defaultHostId);
-    if (host?.url) {
-      apiBaseUrl = host.apiUrl || host.url;
-      clientToken = host.clientToken || '';
-      requestHeaders = sanitizeRuntimeRequestHeaders(host.requestHeaders || {});
-      initialUrl = shouldUsePackagedUi() ? localUiUrl : host.url;
-    }
   }
 
   if (apiBaseUrl && apiBaseUrl !== localUrl) {
@@ -4446,6 +4556,33 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { apps: cachedApps, hasCache, isCacheStale };
     }
 
+    case 'desktop_window_runtime_set': {
+      const runtimeKey = typeof args.runtimeKey === 'string' ? args.runtimeKey : '';
+      const hostId = runtimeKey === 'local' ? LOCAL_HOST_ID : runtimeKey.startsWith('host:') ? runtimeKey.slice(5) : '';
+      const config = readDesktopHostsConfig();
+      const host = config.hosts.find((entry) => entry.id === hostId);
+      if (!hostId || (hostId !== LOCAL_HOST_ID && !host)) throw new Error('Unknown window host');
+      const apiBaseUrl = normalizeHostUrl(args.apiBaseUrl || '');
+      const local = hostId === LOCAL_HOST_ID;
+      const relay = !local && host.relay && (isLocalRuntimeUrl(apiBaseUrl) || sameOrigin(apiBaseUrl, state.localUiOrigin));
+      if (local ? apiBaseUrl && !isLocalRuntimeUrl(apiBaseUrl) : !relay && apiBaseUrl !== normalizeHostUrl(host.apiUrl || host.url)) {
+        throw new Error('Window endpoint does not match saved host');
+      }
+      guiPluginHost.invalidateWindow(browserWindow.webContents);
+      browserWindow.__yuriHostId = hostId;
+      browserWindow.__yuriRuntimeConfig = {
+        apiBaseUrl: local ? (state.sidecarUrl || state.localOrigin) : apiBaseUrl,
+        clientToken: local ? readDesktopLocalClientToken() : (host.clientToken || ''),
+        requestHeaders: sanitizeRuntimeRequestHeaders(local ? {} : host.requestHeaders || {}),
+        relayHostId: relay ? hostId : '',
+      };
+      browserWindow.__yuriBootOutcome = computeBootOutcome({ envTargetUrl: null, probe: null, config: { ...config, defaultHostId: hostId }, localAvailable: true });
+      const runtime = browserWindow.__yuriRuntimeConfig;
+      browserWindow.__yuriInitScript = buildInitScript(state.localOrigin, browserWindow.__yuriBootOutcome, runtime.apiBaseUrl, runtime.clientToken, runtime.requestHeaders);
+      await writeWindowState(browserWindow);
+      return null;
+    }
+
     case 'desktop_hosts_get':
       return {
         ...readDesktopHostsConfig(),
@@ -5403,6 +5540,14 @@ const guiPluginHost = createGuiPluginMainHost({
   },
   windows: BrowserWindow,
   app,
+  dockIcons: process.platform === 'darwin' && !isPreviewDesktop ? createPluginDockIcons({
+    decode: (source) => nativeImage.createFromDataURL(source),
+    apply: (image) => {
+      if (image) app.dock.setIcon(image);
+      pluginDockIcon = image;
+      if (!image) { currentDockIconPath = undefined; syncMacDockIcon(); }
+    },
+  }) : undefined,
   authorizeWindow: isGuiPluginWindow,
   authorize: (event) => {
     if (!isGuiPluginWindow(event) || !isLocalSender(event.sender)) return false;
@@ -5423,6 +5568,9 @@ const viewExportHost = createViewExportHost({
 ipcMain.handle('yuri:view-export', (event, method, input) => viewExportHost.dispatch(event, method, input));
 
 ipcMain.handle('yuri:invoke', async (event, command, args) => {
+  if (command === 'desktop_window_runtime_set' && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
+    throw new Error('Window runtime updates require the main desktop frame');
+  }
   if (typeof command === 'string' && command.startsWith('desktop_remote_desktop_')
     && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
     throw new Error('Remote desktop setup requires the main desktop frame');
@@ -6008,6 +6156,8 @@ app.whenReady().then(async () => {
     return;
   }
 
+  const savedWindows = process.env.YURI_SERVER_URL ? [] : readWindowStates();
+  restoringWindowSession = true;
   state.mainWindow = createBrowserWindow({
     label: 'main',
     restoreGeometry: true,
@@ -6017,7 +6167,8 @@ app.whenReady().then(async () => {
   const initial = extractInitialDeepLinks();
   if (initial.length > 0) handleDeepLinks(initial);
 
-  const { initialUrl, localOrigin, bootOutcome, apiBaseUrl, clientToken, requestHeaders } = await resolveInitialUrl();
+  const initialTarget = await resolveInitialUrl();
+  const { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId } = initialTarget;
   if (desktopOta?.state.trial) {
     desktopOtaReadyTimer = setTimeout(() => {
       if (!desktopOta.state.trial || state.quitRequested) return;
@@ -6030,7 +6181,14 @@ app.whenReady().then(async () => {
     }, 60_000);
     desktopOtaReadyTimer.unref();
   }
-  await activateMainWindow(initialUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  const mainRoute = savedWindows[0]?.route;
+  const mainUrl = mainRoute ? new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(mainRoute) : mainRoute, initialUrl).toString() : initialUrl;
+  await activateMainWindow(mainUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId });
+  if (!process.env.YURI_SERVER_URL) {
+    await restoreAdditionalDesktopWindows(savedWindows.slice(1), { localUrl: state.sidecarUrl, localUiUrl, localOrigin });
+  }
+  restoringWindowSession = false;
+  await writeWindowState(state.mainWindow);
   initialStartupComplete = true;
   schedulePendingDeepLinkFlush();
 

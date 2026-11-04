@@ -27,9 +27,10 @@ vi.mock('@/lib/desktop', async (importOriginal) => ({
   openDesktopPath: harness.openDesktopPath,
 }));
 vi.mock('@/components/gui-plugins/GuiFileLinkBridge', () => ({
-  GuiFileLinkBridge: ({ children }: { children: (view: { preview: React.ReactNode; toggle: React.ReactNode }) => React.ReactNode }) => children({
+  GuiFileLinkBridge: ({ children }: { children: (view: { preview: React.ReactNode; toggle: React.ReactNode; controls: React.ReactNode }) => React.ReactNode }) => children({
     preview: harness.pluginPreview ? <div data-testid="plugin-preview">Plugin preview<input defaultValue="initial" /><iframe title="plugin-document" /></div> : null,
     toggle: null,
+    controls: harness.pluginPreview ? <button aria-label="plugin-source">Source</button> : null,
   }),
 }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: vi.fn(async () => new Response('{}')) }));
@@ -59,7 +60,8 @@ vi.mock('@/contexts/useThemeSystem', async () => {
 vi.mock('@/lib/shiki/appThemeRegistry', () => ({ ensurePierreThemeRegistered: harness.noop, getResolvedShikiTheme: () => 'light' }));
 vi.mock('@/lib/codemirror/shikiHighlight', () => ({ shikiHighlightExtension: () => [] }));
 vi.mock('@/lib/codemirror/languageByExtension', () => ({ languageByExtension: () => [], loadLanguageByExtension: async () => [] }));
-vi.mock('@/stores/useGitStore', () => ({ useGitStatus: () => null }));
+vi.mock('@/stores/useGitStore', () => ({ useGitStatus: () => null, useGitStore: (selector: (state: unknown) => unknown) => selector({ ensureStatus: harness.noop }) }));
+vi.mock('@/components/views/GitView', () => ({ GitView: ({ isActive }: { isActive: boolean }) => <div data-testid="git-view" data-active={isActive} /> }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: harness.noop, stop: harness.noop }) }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({
   SimpleMarkdownRenderer: ({ content }: { content: string }) => <article data-testid="markdown-preview">{content}</article>,
@@ -186,6 +188,24 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+test.each([false, true])('plugin controls reserve the scrollbar inset only when floating (docked=%s)', async (docked) => {
+  harness.pluginPreview = true;
+  harness.files.readFile.mockResolvedValue({ content: 'preview content' });
+  useUIStore.setState({ expandedEditorToolbar: docked });
+  await open('/repo/report.preview');
+  await act(async () => reactRoot.render(<FilePanel />));
+  const controls = host.querySelector('[aria-label="plugin-source"]')!;
+  expect(controls).not.toBeNull();
+  expect(controls.closest('[data-testid="plugin-preview"]')).toBeNull();
+  const floating = controls.closest('[data-gui-preview-controls]');
+  if (docked) expect(floating).toBeNull();
+  else {
+    expect(floating?.classList.contains('right-6')).toBe(true);
+    expect(floating?.classList.contains('top-3')).toBe(true);
+  }
+  await act(async () => useUIStore.setState({ expandedEditorToolbar: false }));
 });
 
 test.each(['collapsed', 'expanded', 'docked'] as const)('Markdown %s preview controls use global selection tokens without local overrides', async (toolbar) => {
@@ -676,7 +696,11 @@ describe('file reference failure lifecycle', () => {
       rightSidebarTab: initial.rightSidebarTab,
       sessionWorkspacePanelById: {},
     });
-    await act(async () => reactRoot.render(<ChatWorkspace>Chat</ChatWorkspace>));
+    const commits: boolean[] = [];
+    const recordCommit = () => commits.push(host.querySelector<HTMLElement>('[data-context-panel]')?.inert === false
+      && host.querySelector('[data-testid="sidebar-explorer"]') !== null);
+    await act(async () => reactRoot.render(<React.Profiler id="workspace" onRender={recordCommit}><ChatWorkspace>Chat</ChatWorkspace></React.Profiler>));
+    expect(commits[0]).toBe(true);
     const panel = host.querySelector<HTMLElement>('[data-context-panel]')!;
     expect(panel.inert).toBe(false);
     expect(panel.classList.contains('py-1.5')).toBe(true);
@@ -693,6 +717,41 @@ describe('file reference failure lifecycle', () => {
     await act(async () => reactRoot.render(<ChatWorkspace>Chat</ChatWorkspace>));
     expect(host.querySelector<HTMLElement>('[data-context-panel]')?.inert).toBe(true);
     expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+  });
+
+  test.each(['git', 'files'] as const)('empty previews always reveal the remembered %s rail, including restored closed-rail state', async (tab) => {
+    await act(async () => {
+      useUIStore.getState().setRightSidebarTab(tab);
+      useUIStore.getState().openContextPanel('/repo');
+      reactRoot.render(<ContextPanel directory="/repo" />);
+    });
+    const label = tab === 'git' ? 'layout.rightSidebar.git' : 'contextPanel.actions.toggleFileTree';
+    expect(useUIStore.getState().rightSidebarTab).toBe(tab);
+    await act(async () => useUIStore.getState().setRightSidebarOpen(false));
+    for (const width of [720, 360]) {
+      await resizePreview(width);
+      expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
+      expect(host.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-pressed')).toBe('true');
+    }
+    expect(harness.files.readFile).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { preferred: 'git', main: 'git', selected: 'contextPanel.actions.toggleFileTree', gitActive: false },
+    { preferred: 'browser', main: 'chat', selected: 'layout.rightSidebar.git', gitActive: true },
+  ] as const)('resolves unavailable $preferred rail on the first commit without mutating the saved choice', async ({ preferred, main, selected, gitActive }) => {
+    const { RightSidebarTabs, RightSidebarToolbar } = await vi.importActual<typeof import('@/components/layout/RightSidebarTabs')>('@/components/layout/RightSidebarTabs');
+    useUIStore.setState({ rightSidebarTab: preferred, activeMainTab: main });
+    const initial = useUIStore.getState();
+    const commits: boolean[] = [];
+    const recordCommit = () => commits.push(host.querySelector(`[aria-label="${selected}"]`)?.getAttribute('aria-pressed') === 'true'
+      && host.querySelector('[data-testid="git-view"]')?.getAttribute('data-active') === String(gitActive));
+    await act(async () => reactRoot.render(<React.Profiler id="rail" onRender={recordCommit}>
+      <RightSidebarToolbar railVisible />
+      <RightSidebarTabs isActive />
+    </React.Profiler>));
+    expect(commits[0]).toBe(true);
+    expect(useUIStore.getState()).toBe(initial);
   });
 
   test('opens an empty preview without file reads, nests the file tree and closes both together', async () => {
@@ -735,7 +794,7 @@ describe('file reference failure lifecycle', () => {
     expect(panel.inert).toBe(false);
     expect(panel.textContent).toContain('contextPanel.empty.selectFile');
     await clickButton('contextPanel.actions.toggleFileTree');
-    expect(host.querySelector('[data-testid="sidebar-explorer"]')).toBeNull();
+    expect(host.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
     expect(panel.inert).toBe(false);
   });
 

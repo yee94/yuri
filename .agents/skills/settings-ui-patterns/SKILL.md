@@ -20,7 +20,7 @@ When examples conflict, shared component/theme and localization contracts win. S
 - Use one section label outside one grouped material card. Do not recreate the
   contract with local headings, margins, padding, borders, or shadows.
 - Keep controls compact and align stable values in the shared right column.
-- Put checkbox/radio state before labels.
+- Put Boolean switches in the right value column; radio state precedes labels.
 - Use subtle, stable selected-state styling without layout shifts.
 - Preserve responsive wrapping/stacking and long-text behavior.
 - Treat
@@ -43,7 +43,7 @@ Load every matching reference before editing.
 |---|---|
 | Short selectable options | `Button variant="chip" size="xs"` + `aria-pressed` |
 | Mutually exclusive mode list | `Radio` rows |
-| Boolean | `Checkbox` |
+| Boolean | `SettingsToggleRow` / `SettingsSwitch` |
 | Numeric value/override | `NumberInput` |
 | Text/path | `Input` with shared adjacent actions |
 | Icon-only action | `Button size="icon"` + sprite `Icon` + localized `aria-label` |

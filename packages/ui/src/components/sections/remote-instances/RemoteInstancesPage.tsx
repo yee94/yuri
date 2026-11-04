@@ -31,7 +31,7 @@ import {
 import { useDesktopSshStore } from '@/stores/useDesktopSshStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { toast } from '@/components/ui';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Radio } from '@/components/ui/radio';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from '@/components/icon/icons';
@@ -508,8 +508,6 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
           ) : null}
           {([
             { key: 'config', label: 'config.json / opencode.json(c)', index: 0, kind: 'fileGroups' as const },
-            { key: 'oh-slim', label: 'oh-my-opencode-slim.json(c)', index: 1, kind: 'fileGroups' as const },
-            { key: 'oh-agent', label: 'oh-my-openagent.json(c)', index: 2, kind: 'fileGroups' as const },
             { key: 'agents-md', label: 'AGENTS.md', index: 0, kind: 'singleFiles' as const },
             { key: 'cursor-models', label: 'cursor-models.json', index: 1, kind: 'singleFiles' as const },
             { key: 'agents', label: 'agents/', index: 0, kind: 'directories' as const },
@@ -521,8 +519,8 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
           )).map((item) => {
             const checked = selections[item.kind][item.index] !== false;
             return (
-              <label key={item.key} className="flex items-center gap-2 typography-meta">
-                <Checkbox
+              <div key={item.key} className="flex items-center gap-2 typography-meta">
+                <SettingsSwitch
                   checked={checked}
                   disabled={isApplying || !scopeReady || !preview}
                   ariaLabel={item.label}
@@ -536,11 +534,11 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
                   }}
                 />
                 <span className="font-mono">{item.label}</span>
-              </label>
+              </div>
             );
           })}
-          <label className="flex items-center gap-2 typography-meta">
-            <Checkbox
+          <div className="flex items-center gap-2 typography-meta">
+            <SettingsSwitch
               checked={selections.agentsRoot}
               disabled={isApplying || !scopeReady || !preview}
               ariaLabel={t('settings.remoteInstances.page.sync.section.agentsRoot')}
@@ -552,9 +550,9 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
               }}
             />
             {t('settings.remoteInstances.page.sync.section.agentsRoot')}
-          </label>
-          <label className="flex items-center gap-2 typography-meta">
-            <Checkbox
+          </div>
+          <div className="flex items-center gap-2 typography-meta">
+            <SettingsSwitch
               checked={selections.providerCredentials}
               disabled={isApplying || !scopeReady || !preview}
               ariaLabel={t('settings.remoteInstances.page.sync.section.providerCredentials')}
@@ -568,11 +566,11 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
             <span className="min-w-0" title={t('settings.remoteInstances.page.sync.hint.providerCredentials')}>
               <span className="truncate">{t('settings.remoteInstances.page.sync.section.providerCredentials')}</span>
             </span>
-          </label>
+          </div>
 
           {preview?.plan.magpieAvailable ? (
-            <label className="flex items-center gap-2 typography-meta">
-              <Checkbox
+            <div className="flex items-center gap-2 typography-meta">
+              <SettingsSwitch
                 checked={selections.magpie === true}
                 disabled={isApplying}
                 ariaLabel={t('settings.remoteInstances.page.sync.section.magpie')}
@@ -585,7 +583,7 @@ const SyncConfigDialog: React.FC<SyncConfigDialogProps> = ({
               <span className="min-w-0" title={t('settings.remoteInstances.page.sync.hint.magpie')}>
                 <span className="truncate">{t('settings.remoteInstances.page.sync.section.magpie')}</span>
               </span>
-            </label>
+            </div>
           ) : null}
         </div>
 
@@ -2789,16 +2787,16 @@ export const RemoteInstancesPage: React.FC = () => {
                     })}
                   </div>
                   {addDeviceTransport === 'lan' ? (
-                    <label className="flex w-fit cursor-pointer items-center gap-2 pt-1">
-                      <Checkbox checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')} />
+                    <div className="flex items-center gap-2 pt-1">
+                      <SettingsSwitch checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')} />
                       <span className="typography-meta text-muted-foreground">{t('settings.remoteInstances.clientAuth.addDevice.fallback.relay')}</span>
-                    </label>
+                    </div>
                   ) : null}
                   {addDeviceTransport === 'relay' && transportOptions?.lanUrl ? (
-                    <label className="flex w-fit cursor-pointer items-center gap-2 pt-1">
-                      <Checkbox checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')} />
+                    <div className="flex items-center gap-2 pt-1">
+                      <SettingsSwitch checked={addDeviceFallback} onChange={setAddDeviceFallback} ariaLabel={t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')} />
                       <span className="typography-meta text-muted-foreground">{t('settings.remoteInstances.clientAuth.addDevice.fallback.preferLocal')}</span>
-                    </label>
+                    </div>
                   ) : null}
                   <Collapsible open={addDeviceAdvancedOpen} onOpenChange={setAddDeviceAdvancedOpen} className="pt-3">
                     <CollapsibleTrigger className="px-0 hover:bg-transparent">
@@ -3463,7 +3461,7 @@ export const RemoteInstancesPage: React.FC = () => {
                     </CollapsibleTrigger>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Checkbox checked={forward.enabled} onChange={(checked) => updateForward((item) => ({ ...item, enabled: checked }))} ariaLabel={t('settings.remoteInstances.page.actions.enableForwardAria')} />
+                    <SettingsSwitch checked={forward.enabled} onChange={(checked) => updateForward((item) => ({ ...item, enabled: checked }))} ariaLabel={t('settings.remoteInstances.page.actions.enableForwardAria')} />
                     <Button
                       type="button"
                       variant="destructive"

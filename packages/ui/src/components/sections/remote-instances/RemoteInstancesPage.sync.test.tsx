@@ -15,7 +15,7 @@ it('keeps scope and preview mounted, coalesces pending selections and applies on
     toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
     buildDefaultSyncSelections: () => ({ fileGroups: [true], singleFiles: [], directories: [], agentsRoot: true, providerCredentials: false }),
     Icon: () => null,
-    Checkbox: ({ checked, onChange, ariaLabel, disabled }: { checked: boolean; onChange: (value: boolean) => void; ariaLabel: string; disabled: boolean }) =>
+    SettingsSwitch: ({ checked, onChange, ariaLabel, disabled }: { checked: boolean; onChange: (value: boolean) => void; ariaLabel: string; disabled: boolean }) =>
       <input type="checkbox" aria-label={ariaLabel} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />,
     Button: ({ children, onClick, disabled }: React.ComponentProps<'button'>) => <button disabled={disabled} onClick={onClick}>{children}</button>,
   };

@@ -1,15 +1,16 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, protocol } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createGuiPluginMainHost } from '../gui-plugin-host.mjs';
+import { createPluginDockIcons } from '../plugin-dock-icons.mjs';
 
 const directory = process.env.YURI_TEST_EVIDENCE_DIR;
 const mode = process.env.YURI_GUI_TEST_MODE;
 app.setPath('userData', path.join(directory, `profile-${mode}`));
 protocol.registerSchemesAsPrivileged([{ scheme: 'yuri-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const source = `
-  const {Plugin,Ipc,Command,TitlebarItem}=require('@opencode/plugin/gui');
+  const {Plugin,Ipc,Command,TitlebarItem,Registry,Style}=require('@opencode/plugin/gui');
   const {Schema}=require('effect');
   const {BrowserWindow}=require('electron');
   const Export=Ipc.define({id:'pdf-fixture.export',methods:{pdf:{input:Schema.String,output:Schema.String}}});
@@ -23,6 +24,9 @@ const source = `
        };
        ctx.add(Command,{id:'export',title:'Export',run});
        ctx.add(TitlebarItem,{id:'export',label:'Export',icon:'globe',run});
+       ctx.add(Registry.define('yuri.theme'),{id:'ink',title:'Ink',variant:'dark',colors:{primary:{base:'#123456'}}});
+       ctx.add(Registry.define('yuri.branding'),{id:'logo',title:'Logo',logo:{svg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>'}});
+       ctx.add(Style, ':root,:root:not(.dark){--surface-background:rgb(12, 34, 56)}');
     },
     main(ctx){
       const live=new Set();
@@ -41,6 +45,8 @@ const source = `
   });
 `;
 let host;
+let dockUpdates = 0;
+let dockRestores = 0;
 app.whenReady().then(async () => {
 try {
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><script>window.process={env:{NODE_ENV:"production"}}</script><script type="module" src="/fixture.js"></script></body></html>';
@@ -58,6 +64,13 @@ try {
   window.webContents.on('console-message', (event) => console.error(event.message));
   host = createGuiPluginMainHost({
     app, windows: BrowserWindow,
+    dockIcons: process.platform === 'darwin' ? createPluginDockIcons({
+      decode: (source) => nativeImage.createFromDataURL(source),
+      apply: (image) => {
+        if (image) { app.dock.setIcon(image); dockUpdates++; }
+        else dockRestores++;
+      },
+    }) : undefined,
     getClient: () => ({ plugin: {
       list: async () => ({ data: [{ id: 'pdf-fixture', features: { gui: true }, state: { status: 'active' } }] }),
       gui: async () => ({ data: { code: source, revision: '1', options: {} } }),
@@ -77,6 +90,7 @@ try {
   })`);
   const pdf = Buffer.from(result, 'base64');
   if (pdf.subarray(0, 5).toString() !== '%PDF-' || pdf.length < 1000) throw new Error('Invalid PDF output');
+  if (process.platform === 'darwin' && (dockUpdates !== 1 || dockRestores !== 1)) throw new Error('Dock lease update/cleanup was not confirmed');
   await writeFile(path.join(directory, `${mode}.pdf`), pdf);
   await host.dispose();
   window.destroy();

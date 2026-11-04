@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
@@ -417,11 +417,11 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
               <Icon name="add" className="h-3.5 w-3.5" />
               {t('settings.yuri.worktrees.setup.addCommand')}
             </Button>
-            <label
+            <div
               data-settings-item="projects.worktree.setup.wait"
-              className="flex cursor-pointer items-center gap-2 py-1"
+              className="flex items-center gap-2 py-1"
             >
-              <Checkbox
+              <SettingsSwitch
                 checked={waitForSetupCommands}
                 onChange={handleWaitForSetupCommandsChange}
                 ariaLabel={t('settings.yuri.worktrees.setup.waitForCommandsAria')}
@@ -432,7 +432,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
               )}>
                 {t('settings.yuri.worktrees.setup.waitForCommands')}
               </span>
-            </label>
+            </div>
           </div>
         )}
       </ProjectSettingsSubsection>

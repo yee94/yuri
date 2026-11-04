@@ -1,6 +1,7 @@
 import React from 'react';
 import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { useI18n } from '@/lib/i18n';
+import { GuiAppearanceContext } from '@/lib/gui-plugins/appearance-context';
 
 interface YuriLogoProps {
   className?: string;
@@ -14,13 +15,15 @@ export const YuriLogo: React.FC<YuriLogoProps> = ({
 }) => {
   const { t } = useI18n();
   const theme = useOptionalThemeSystem();
+  const appearance = React.useContext(GuiAppearanceContext);
   const isDark = theme
     ? theme.currentTheme.metadata.variant !== 'light'
     : typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (appearance?.logo) return <img src={appearance.logo} width={width} height={height} className={className} alt={t('yuriLogo.aria.logo')} data-yuri-logo />;
   return (
     <svg width={width} height={height} viewBox="0 0 100 100"
       xmlns="http://www.w3.org/2000/svg" className={className}
-      role="img" aria-label={t('yuriLogo.aria.logo')}>
+      role="img" aria-label={t('yuriLogo.aria.logo')} data-yuri-logo>
       {isAnimated ? <style>{`@keyframes yuri-logo-breathe{50%{opacity:.65}}.yuri-logo-breathe{animation:yuri-logo-breathe 1.8s ease-in-out infinite}@media(prefers-reduced-motion:reduce){.yuri-logo-breathe{animation:none}}`}</style> : null}
       <path fill={isDark ? 'white' : 'black'} fillRule="evenodd"
         className={isAnimated ? 'yuri-logo-breathe' : undefined}

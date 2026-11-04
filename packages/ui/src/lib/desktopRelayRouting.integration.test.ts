@@ -121,6 +121,32 @@ describe.each(['packaged', 'HMR'])('remote-computer worktree routing in %s UI', 
   beforeEach(() => {
     if (mode === 'HMR') Object.assign(window.location, { origin: 'http://localhost:5180', href: 'http://localhost:5180/' });
   });
+  it('restores this window remote instance instead of the configured local default', async () => {
+    defaultHostId = 'local';
+    Object.assign(window, { __YURI_DESKTOP_BOOT_OUTCOME__: { target: 'remote', status: 'ok', hostId: host.id, url: host.url } });
+    await restoreDesktopRelayRuntime();
+    await expectRemoteWorktreeCatalog();
+  });
+
+  it('keeps a restored local window local when another instance is the default', async () => {
+    Object.assign(window, { __YURI_DESKTOP_BOOT_OUTCOME__: { target: 'local', status: 'ok' } });
+    await restoreDesktopRelayRuntime();
+    expect(getRuntimeKey()).toBe('local');
+    expect(getActiveRelayTunnel()).toBeNull();
+    expect(mocks.createTunnel).not.toHaveBeenCalled();
+  });
+
+  it('restores the stable saved Host key for a direct-only window', async () => {
+    const directHost = { ...host, relay: undefined, url: 'http://remote.example:3000', apiUrl: 'http://remote.example:3000' };
+    defaultHostId = 'local';
+    invoke.mockImplementation(async (command) => command === 'desktop_hosts_get' ? { hosts: [directHost], defaultHostId } : undefined);
+    Object.assign(window, { __YURI_DESKTOP_BOOT_OUTCOME__: { target: 'remote', status: 'ok', hostId: host.id, url: directHost.url } });
+    switchRuntimeEndpoint({ apiBaseUrl: directHost.url, runtimeKey: `url:${directHost.url}` });
+    await restoreDesktopRelayRuntime();
+    expect(getRuntimeKey()).toBe(`host:${host.id}`);
+    expect(getActiveRelayTunnel()).toBeNull();
+    expect(mocks.createTunnel).not.toHaveBeenCalled();
+  });
   it.each(['restore', 'new-window', 'switch', 'refresh'].flatMap((entrypoint) => [
     { entrypoint, identity: undefined }, { entrypoint, identity: 'local-computer-identity' },
   ]))('$entrypoint keeps Agent and Provider reads on Relay with local identity $identity', async ({ entrypoint, identity }) => {

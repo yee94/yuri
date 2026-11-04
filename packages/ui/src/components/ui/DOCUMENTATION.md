@@ -67,6 +67,64 @@ with `mobileIcon`, matching search/back controls. `yuri-mobile-inverse-action`
 only swaps the tint to translucent `surface.foreground` and the icon to
 `surface.background`; reflection, blur and shadows retain the shared recipe.
 
+# Settings form controls
+
+Inside `yuri-settings-workspace`, `styles/settings.css` owns the material of
+Input, Select, NumberInput, Textarea, and `yuri-settings-inline-value` pickers.
+Filled detail fields default to no border; hover/open/focus adds no outline or
+ring/shadow. Both mouse and keyboard focus use the shared solid interaction
+background. Rules apply
+outside SettingsRow too, including model-filter/search toolbars and scoped
+dialogs. Disabled state remains inactive; invalid fields keep one semantic inset
+error indicator. Numeric inputs/steppers and compound textarea content never add
+a second decoration. Non-Settings consumers retain their primitive defaults.
+Sidebar collection surfaces use `yuri-settings-sidebar` to give all their input
+controls, including search/filter and project pickers, a faint stable
+`--form-surface-border` edge via `--yuri-settings-control-border`. Standalone
+project pickers can opt in via `yuri-settings-sidebar-picker`. Neither scope adds
+a focus ring/outline or changes the borderless detail-form default.
+
+`Input` also accepts an explicit `bordered` option: `true` keeps a faint
+`--form-surface-border` edge, `false` hides it, and omission shows a faint border
+for empty Settings text inputs, otherwise inheriting the owning surface's default.
+Empty state uses native `:placeholder-shown`, which follows the live input value
+rather than the initial `value` attribute. An invisible single-space placeholder
+is supplied when no visible placeholder is provided; existing placeholder copy
+is preserved. `:empty` is unsuitable because inputs are always childless.
+Explicit values override the empty/sidebar/detail default without
+changing control geometry, hover/focus fill, or validation feedback. Outside
+Settings, omitted values preserve the primitive's original recipe; explicit
+values select a real thin border or transparent reserved border instead of a
+neutral ring. Provider and custom-provider model filters use `<Input bordered>`.
+
+`Input endAdornment={...}` places a trailing icon/action inside the field. Only
+adorned inputs add a transparent `data-slot="input-wrapper"`; the native input
+keeps its ref, value, validation, and border ownership. The shared geometry
+reserves trailing text space for the inset action, including compact Settings
+rows. Settings hover/focus on the action highlights the same input surface,
+without adding a second border or ring. Callers own action labels, type, disabled
+state, and event handlers. Provider API-key fields use the shared slot for their
+show/hide buttons; save actions remain outside the input.
+In Settings, wrapper widths follow the same value-column cap as plain Inputs and
+Selects. Trailing text padding cannot be overridden by compact-row padding;
+the action's hit area fits the fixed control height independently of UI density.
+Keyboard focus on the action uses the same field fill, without its own ring.
+
+## Multi-line inputs
+
+`Textarea` exposes its material owner as `data-slot="textarea"`: the compound
+wrapper in normal/embedded mode, or the native textarea in simple mode. Compound
+content uses `data-slot="textarea-input"`; `hasError` marks the surface and adds
+`aria-invalid` to its input. Explicit input attributes remain caller-owned.
+Simple mode marks its scroll wrapper with `yuri-textarea-simple`.
+`styles/settings.css` scopes the shared Settings background, solid hover/focus,
+and radius to Settings workspaces. Textarea-only cards and rows omit outer
+padding, leaving text/footer insets with the primitive. Focus keeps the interaction
+background after hover ends without a ring, outline, or shadow; invalid inputs
+retain their stable error indicator.
+Other consumers retain the existing primitive material; scrolling, resizing,
+sizing, and ref ownership are unchanged.
+
 # File editor navigation
 
 The shared CodeMirror editor keeps find/replace keybindings but excludes the
@@ -437,10 +495,16 @@ that specification rather than defining feature-local typography or spacing.
 Settings detail pages compose the same grammar through `components/sections/shared/SettingsGroup.tsx`. `SettingsGroup` owns an optional section label and one grouped card; `SettingsField` is the required primitive for a standalone setting, keeping its label and short helper text inside that card. Helper text known to wrap uses `descriptionPlacement="outside"` so the standard smaller gray description sits below the card instead of compressing the label/control columns. `SettingsRow` owns the responsive label/value grid, control alignment, long-text containment, and `data-settings-item` anchor. The components and their `styles/settings.css` layout tokens are shared by desktop and narrow/mobile Settings surfaces. Feature pages must not recreate separate desktop and mobile column markup or depend on DOM-shape selectors for new Settings groups.
 
 Full-row Boolean settings use `SettingsToggleRow`. It owns the standard
-label/value alignment with the checkbox in the right column, the standard row
+label/value alignment with the segmented switch in the right column, the standard row
 typography, and pointer/keyboard activation while preventing the nested
-checkbox from toggling twice. A bare `Checkbox` remains appropriate when it is
+switch from toggling twice. A bare `SettingsSwitch` remains appropriate when it is
 only the right-column control of a true label/value `SettingsRow`.
+
+`components/sections/shared/SettingsSwitch.tsx` owns the localized Off / On
+Boolean choice, using Base UI RadioGroup and shared Buttons. Its muted track and
+`yuri-segmented-selected-pill` reuse existing theme materials; disabled state,
+arrow navigation and explicit-value activation are shared across runtimes.
+The general-purpose `Checkbox` outside Settings retains its existing appearance.
 
 `SettingsRow` marks its right column with `data-settings-value`. Editable Settings controls expose semantic `data-slot` values. Select, Input, and NumberInput consume the global `--form-*` design tokens for height, radius, font size, line-height, and helper text inside that value column; they render as right-aligned inline values by default, with a transparent reserved border that becomes visible on hover/focus without moving content. Custom value pickers that do not expose one of those slots add `yuri-settings-inline-value` to their trigger. Page code must not assign a separate visual border, alignment, or geometry contract. Rows are direct children of the grouped card so the card can draw one consistent divider after every non-final row, including conditionally rendered rows. Settings page and section stacks use one `--yuri-settings-section-stack-gap`; wrappers must not add page-specific top margins, padding gaps, or divider gaps between sibling groups.
 

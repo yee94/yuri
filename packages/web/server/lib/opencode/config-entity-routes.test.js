@@ -312,6 +312,7 @@ describe('provider catalog route', () => {
     const response = await request(app).get('/api/config/catalog/providers').expect(200);
     expect(response.body.providers[0].models['gpt-5.4'].variants).toEqual({ low: {}, high: {} });
     expect(response.body.providers[0].models['gpt-5.4'].capabilities).toEqual({
+      reasoning: true,
       toolcall: true,
       input: { text: true, image: true },
       output: { text: true },
@@ -518,21 +519,16 @@ describe('global raw configuration routes', () => {
     }
   });
 
-  it('reads and validates the configured OpenCode and oh-my-opencode files', async () => {
+  it('reads and validates the configured OpenCode file', async () => {
     const app = express();
     app.use(express.json());
     const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-global-config-'));
     await fs.writeFile(path.join(configDirectory, 'opencode.jsonc'), `{
   "$schema": "https://opencode.ai/config.json",
   "model": "imate/deepseek-v4-pro",
-  "plugin": ["oh-my-opencode-slim"],
+  "plugins": ["example-plugin"],
   // Existing comments must round-trip unchanged.
 }`, 'utf8');
-    await fs.writeFile(path.join(configDirectory, 'oh-my-opencode-slim.json'), JSON.stringify({
-      scoringEngineVersion: 'v2',
-      disabled_agents: ['observer'],
-      agents: { fixer: { model: ['openai/gpt-5.6-terra'] } },
-    }, null, 2), 'utf8');
 
     registerConfigEntityRoutes(app, createDependencies(vi.fn(), configDirectory));
 
@@ -542,9 +538,6 @@ describe('global raw configuration routes', () => {
       fileName: 'opencode.jsonc',
       content: expect.stringContaining('// Existing comments must round-trip unchanged.'),
     });
-
-    const slim = await request(app).get('/api/config/global/oh-my-opencode-slim').expect(200);
-    expect(slim.body.content).toContain('"disabled_agents"');
 
     const invalid = await request(app)
       .put('/api/config/global/opencode')
@@ -557,18 +550,23 @@ describe('global raw configuration routes', () => {
       .send({ content: '{\n  "model": "imate/deepseek-v4-pro",\n  // preserved JSONC syntax\n}' })
       .expect(200);
     expect(saved.body.content).toContain('// preserved JSONC syntax');
+    expect(saved.body).toMatchObject({ requiresManualRestart: false, application: 'watch' });
     expect(await fs.readFile(path.join(configDirectory, 'opencode.jsonc'), 'utf8')).toBe(saved.body.content);
 
     await fs.rm(configDirectory, { recursive: true, force: true });
   });
 
-  it('discovers only existing targets and edits the winning global JSONC document', async () => {
+  it('ignores plugin-specific targets and edits the winning global JSONC document', async () => {
     const app = express();
     app.use(express.json());
     const configDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-global-config-'));
     await fs.writeFile(path.join(configDirectory, 'opencode.json'), '{ "model": "json-model" }', 'utf8');
     await fs.writeFile(path.join(configDirectory, 'opencode.jsonc'), '{ "model": "jsonc-model" }', 'utf8');
-    await fs.writeFile(path.join(configDirectory, 'oh-my-openagent.jsonc'), '{\n  // JSONC configuration\n}', 'utf8');
+    const pluginTargets = ['oh-my-opencode', 'oh-my-opencode-slim', 'oh-my-openagent'];
+    const pluginContent = '{\n  // JSONC configuration\n}';
+    for (const target of pluginTargets) {
+      await fs.writeFile(path.join(configDirectory, `${target}.jsonc`), pluginContent, 'utf8');
+    }
 
     registerConfigEntityRoutes(app, createDependencies(vi.fn(), configDirectory));
 
@@ -576,9 +574,14 @@ describe('global raw configuration routes', () => {
     expect(available.body).toEqual({
       targets: [
         { target: 'opencode', fileName: 'opencode.jsonc' },
-        { target: 'oh-my-openagent', fileName: 'oh-my-openagent.jsonc' },
       ],
     });
+
+    for (const target of pluginTargets) {
+      await request(app).get(`/api/config/global/${target}`).expect(404);
+      await request(app).put(`/api/config/global/${target}`).send({ content: '{}' }).expect(404);
+      expect(await fs.readFile(path.join(configDirectory, `${target}.jsonc`), 'utf8')).toBe(pluginContent);
+    }
 
     const openCode = await request(app).get('/api/config/global/opencode').expect(200);
     expect(openCode.body).toMatchObject({ fileName: 'opencode.jsonc', content: '{ "model": "jsonc-model" }' });

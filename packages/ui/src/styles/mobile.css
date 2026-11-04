@@ -1400,7 +1400,7 @@ button.yuri-mobile-worktree-label-trigger:active,
 }
 
 .yuri-mobile-schedule-assistant-anchor {
-  --yuri-schedule-assistant-size: var(--yuri-mobile-collapsing-action-size, 2.5rem);
+  --yuri-schedule-assistant-size: calc(40px * var(--dpt-n, 1));
   --yuri-schedule-assistant-travel: calc(100% - var(--yuri-schedule-assistant-size));
   position: relative;
   display: block;

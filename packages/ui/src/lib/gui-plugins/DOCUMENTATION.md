@@ -6,6 +6,7 @@
 
 - `bundle.ts` 提供允许的共享模块并求值标准 CJS。SDK、Solid、Solid store/web 与 Effect 使用宿主同一实例，不能把它们重新打进插件。
 - `host.ts` 负责插件 owner/context、注册表、Contract、生命周期、窗口贡献、会话与布局桥接；`GuiPluginsProvider.tsx` 管理加载与启停，`react.ts` 提供轻量 React context，`components/gui-plugins` 负责界面和 Solid 容器。
+- 能力代理属于宿主内部实现，`screen` 使用运行时私有字段，不进入宿主对象的属性枚举。React 开发模式的性能元数据会递归检查组件 props；不能让这类检查读取能力代理并抛出 `screen.$$typeof`，否则会中断整个 React 提交、表现为 URL/Store 已变但界面不更新。插件通过官方 context/PanelProps 访问 screen 的方式不变，真正访问未支持能力仍明确报错。
 - React inventory 保留官方 `source`，插件设置按来源关联 GUI 能力，不按 GUI id 猜 npm 包名。commands/menuItems 与 panels/settings 一样携带显式 `pluginId`，以便详情只展示当前插件自己的贡献；停用后仍保留来源与 GUI 标识。
 - `files.ts` 负责会话工作区文件读取与变更观察；`storage.ts` 和 `preferences.ts` 负责插件持久状态及 GUI 启用偏好。
 - `file-icons.ts` 负责窗口级文件扩展名图标索引、SVG 资源校验和独立订阅，不依赖 host snapshot。
@@ -22,6 +23,45 @@ GUI 的 client/schema 使用固定 2.2.0 npm alias，与应用现有会话 SDK �
 Provider 的会话目录来自 `useCurrentSessionEntity(sessionID)` 的匹配会话元数据（live 优先、global active 补充），不读取全局目录选择。冷加载或切换到尚未解析的会话时传入空 session，等待现有同步管线补齐身份；不复用上个会话目录，也不新增独立 lookup。全局项目选择变化不得重绑定当前 host session，真实会话目录迁移则更新文件作用域。
 
 ## 首批兼容范围
+
+### 插件外观资源
+
+`appearance.ts` 通过官方自定义 Registry 消费 `yuri.theme` 和 `yuri.branding`，
+不增加官方 SDK 字段，也不执行原生插件 main 来应用外观。
+`GuiAppearanceProvider` 独立订阅 host-scoped catalog，将主题注册到现有
+ThemeSystem，将自动生效的图片供 `YuriLogo` 使用。启用即应用，不提供额外的外观选择设置。
+
+- `yuri.theme`：`{ id, title, variant: 'light' | 'dark', colors?, config? }`；
+  colors/config 深合并到该明暗模式的默认主题，通过现有校验及基础文字亮度规则。
+  宿主主题 ID 为 `gui:` + `JSON.stringify([pluginId, id])`，不能覆盖内置 ID。
+  按当前亮/暗模式覆盖基础主题，不进入主题选择器，也不覆盖持久化的基础主题偏好；
+  VS Code 仍跟随编辑器主题，嵌入视图仍跟随父窗口主题。
+- `yuri.branding`：`{ id, title, logo?: { svg, lightSvg? }, dockIcon?: { png, lightPng? } }`；
+  至少有一项资源，默认/暗色使用 svg/png，亮色可单独提供。Logo 沿用文件图标的
+  静态 SVG 校验，以 img data URL 呈现；不替换应用名称、wordmark 或 JS 启动前画面。
+  Dock 仅接受 PNG data URL，最多 2 MiB，原生边界验证有效 PNG 与 1–1024 像素边长。
+- 资源计数：每插件 16 主题、8 品牌，窗口 128 主题、64 品牌；主题序列化上限
+  64 KiB，全部外观序列化上限每插件 8 MiB/窗口 16 MiB。SVG 每张 16 KiB。
+  id/title 非空且不超过 128 字符，同注册表/插件内 id 唯一。
+- 每类资源（主题按明暗分开、Logo、Dock）分别取最后一个符合条件的贡献：
+  服务 global inventory 靠后的插件优先，同插件内靠后的注册优先，不依赖 bundle 到达顺序。
+  catalog 按优先级从高到低发布；独立 host 未提供 inventory 顺序时沿用注册顺序。
+  插件停用、失败、替换或切服务撤销资源，回退前一插件，再回退用户基础主题/默认品牌。
+  不再读写 Logo/Dock 选择偏好，旧键保留但不参与解析。
+  外观非法贡献失败只归所属插件。catalog 不订阅 session/layout/stream snapshot；
+  无变化不发布，50 次无关会话更新不重新解析/发布外观。
+- Dock 使用原有受信 native lease 的窄 `dock-icon` 操作，仅当前 shell 明确返回
+  `capabilities.dockIcon` 时自动应用资源。本机 macOS Electron 支持；旧壳、预览版、
+  Web、VS Code、hosted/Capacitor mobile、远端/Relay 不取得本机 Dock 权限。
+  PNG 不是代码或文件路径，不开放新 Node 权限。应用失败归属对应插件并撤销其资源；
+  租约释放在主进程兜底恢复图标。没有新增错误弹窗或独立外观设置。
+- 官方 `Style` 注入加 `data-yuri-plugin-style` 标记；CSSVariableGenerator 每次
+  将基础主题变量插在这些覆盖样式之前，不让切主题反转优先级。CSS 的 selector
+  specificity/important 规则仍生效；GUI 不是 CSS/JS 沙箱。
+
+完整作者参考随内置 skill 发布在
+`packages/web/server/lib/gui-customization/skill/`，包括外观、Runmark 全局页、
+Eficy 特殊后缀预览和导出示例。这里不内置示例插件产物。
 
 ### Yuri 全局主内容页面
 

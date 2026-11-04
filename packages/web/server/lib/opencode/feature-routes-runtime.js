@@ -16,6 +16,7 @@ import { registerProjectIconRoutes } from './project-icon-routes.js';
 import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
 import { registerScheduledTaskToolRoute } from '../scheduled-tasks/managed-tool-route.js';
 import { registerScheduledTaskSessionSkill } from '../scheduled-tasks/session-skill.js';
+import { registerCustomizationSessionSkill } from '../gui-customization/session-skill.js';
 import { registerConversationRoutes } from '../conversations/routes.js';
 import { registerSessionTurnPageRoutes } from '../session-turn-pages/routes.js';
 import { registerAssistantRoutes } from '../assistants/routes.js';
@@ -246,6 +247,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
       readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
       scheduledTaskRouter,
+    });
+    registerCustomizationSessionSkill(app, {
+      express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
     });
     app.use(scheduledTaskRouter);
 

@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './pt-BR.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': 'Deslig.',
+  'settings.switch.on': 'Ligado',
   'miniChat.actions.failed': 'Não foi possível concluir a ação da janela. Tente novamente.',
   'chat.messageBody.tts.follow': 'Acompanhar leitura',
   'chat.messageBody.tts.failed': 'A leitura foi interrompida. Pressione reproduzir para continuar do trecho atual.',

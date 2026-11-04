@@ -11,7 +11,7 @@ import { useDirectorySync } from '@/sync/sync-context';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { opencodeClient } from '@/lib/opencode/client';
 import { cn } from '@/lib/utils';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { ModelSelector } from './ModelSelector';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
@@ -684,14 +684,14 @@ export const AgentsPage: React.FC = () => {
             <p className="typography-meta text-muted-foreground">
               {t('settings.agents.page.legacy.dropped', { fields: droppedKeys.join(', ') })}
             </p>
-            <label className="flex items-center gap-2 typography-meta text-foreground">
-              <Checkbox
+            <div className="flex items-center gap-2 typography-meta text-foreground">
+              <SettingsSwitch
                 checked={confirmDrop}
                 onChange={setConfirmDrop}
                 ariaLabel={t('settings.agents.page.legacy.confirmDrop')}
               />
               {t('settings.agents.page.legacy.confirmDrop')}
-            </label>
+            </div>
           </div>
         ) : null}
 

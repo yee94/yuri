@@ -1,6 +1,8 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { EditorView } from '@codemirror/view';
+import { foldCode, foldedRanges, unfoldAll } from '@codemirror/language';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,16 +18,22 @@ import { PluginsPage } from './PluginsPage';
 import { PluginsSidebar } from './PluginsSidebar';
 import { GuiPluginsContext, getEmptySnapshot, type GuiPluginsContextValue } from '@/lib/gui-plugins/react';
 import { usePluginUpdates } from './usePluginUpdates';
+import { AddPluginDialog } from './AddPluginDialog';
 
-const gateway = vi.hoisted(() => ({ update: vi.fn(), list: vi.fn(), reload: vi.fn(), updateEntry: vi.fn(), deleteEntry: vi.fn(), deleteFile: vi.fn(), fetch: vi.fn() }));
+const gateway = vi.hoisted(() => ({ update: vi.fn(), list: vi.fn(), reload: vi.fn(), updateEntry: vi.fn(), createEntry: vi.fn(), deleteEntry: vi.fn(), deleteFile: vi.fn(), fetch: vi.fn(), dark: true }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: gateway.fetch }));
 vi.mock('@/lib/i18n', async () => {
   const { dict } = await import('@/lib/i18n/messages/zh-CN');
-  return { useI18n: () => ({ t: (key: keyof typeof dict, params?: Record<string, string | number>) => {
+  const t = (key: keyof typeof dict, params?: Record<string, string | number>) => {
     let value = dict[key];
     for (const [name, replacement] of Object.entries(params ?? {})) value = value.replaceAll(`{${name}}`, String(replacement));
     return value;
-  } }) };
+  };
+  return { useI18n: () => ({ t }) };
+});
+vi.mock('@/contexts/useThemeSystem', async () => {
+  const { getDefaultTheme } = await import('@/lib/theme/themes');
+  return { useThemeSystem: () => ({ currentTheme: getDefaultTheme(gateway.dark) }) };
 });
 vi.mock('@/components/ui', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/stores/useAgentsStore', () => ({ reloadOpenCodeLocations: gateway.reload }));
@@ -57,10 +65,12 @@ let guiContext: GuiPluginsContextValue;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  gateway.dark = true;
   queryClient.clear();
   gateway.list.mockResolvedValue(inventory);
   gateway.reload.mockResolvedValue(undefined);
   gateway.updateEntry.mockResolvedValue({ ok: true });
+  gateway.createEntry.mockResolvedValue({ ok: true });
   gateway.deleteEntry.mockResolvedValue({ ok: true });
   gateway.deleteFile.mockResolvedValue({ ok: true });
   guiContext = {
@@ -75,7 +85,7 @@ beforeEach(() => {
   const previous = usePluginsStore.getState();
   restore = () => usePluginsStore.setState(previous);
   useProjectsStore.setState({ projects: [{ id: 'plugins', path: directory, name: 'plugins' }], activeProjectId: 'plugins' } as never);
-  usePluginsStore.setState({ entries, files: [], selectedId: selected.id, draft: null, loadPlugins: async () => true, updateEntry: gateway.updateEntry, deleteEntry: gateway.deleteEntry, deleteFile: gateway.deleteFile });
+  usePluginsStore.setState({ entries, files: [], selectedId: selected.id, draft: null, loadPlugins: async () => true, updateEntry: gateway.updateEntry, createEntry: gateway.createEntry, deleteEntry: gateway.deleteEntry, deleteFile: gateway.deleteFile });
   queryClient.setQueryData(pluginsListQueryOptions(directory).queryKey, { entries, files: [] });
   queryClient.setQueryData(pluginRegistryQueryOptions(directory, entries.map((entry) => entry.spec)).queryKey, registry);
   queryClient.setQueryData(pluginRegistryQueryOptions(directory, [selected.spec]).queryKey, registry);
@@ -113,6 +123,15 @@ async function mount() {
 
 async function flush() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+function optionsView(container: ParentNode = host) {
+  return EditorView.findFromDOM(container.querySelector<HTMLElement>('[data-settings-item="plugins.options"] .cm-editor')!)!;
+}
+
+async function editOptions(value: string, container: ParentNode = host) {
+  const view = optionsView(container);
+  await act(async () => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } }));
 }
 
 test.each(['current', 'empty', 'stale'] as const)('a real pinned update retains detail with a %s legacy store projection', async (projection) => {
@@ -195,14 +214,14 @@ test('a live config refresh during a pending update never replaces the mounted f
   });
   await mount();
   const input = host.querySelector<HTMLInputElement>('[data-plugin-editor] input')!;
-  const options = host.querySelector('[data-plugin-editor] textarea');
+  const options = host.querySelector('[data-plugin-editor] .cm-editor');
   await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-plugin-editor] button')].find((button) => button.textContent === '更新')!.click());
   await flush();
   await act(async () => queryClient.setQueryData(pluginsListQueryOptions(directory).queryKey, { entries: nextEntries, files: [] }));
   await flush();
   expect(host.querySelector('[data-plugin-skeleton="detail"]')).toBeNull();
   expect(host.querySelector('[data-plugin-editor] input')).toBe(input);
-  expect(host.querySelector('[data-plugin-editor] textarea')).toBe(options);
+  expect(host.querySelector('[data-plugin-editor] .cm-editor')).toBe(options);
   expect(input.disabled).toBe(true);
   expect(host.textContent).toContain('正在更新');
   expect(host.querySelectorAll('[data-plugin-sidebar] [data-plugin-busy]')).toHaveLength(1);
@@ -313,29 +332,77 @@ test('GUI status and switch belong only to the selected provider, independent of
   expect(host.querySelectorAll('.yuri-plugin-gui-tag')).toHaveLength(1);
 });
 
-test('JSON options use the shared textarea and keep object validation and saving', async () => {
+test('JSON options use the shared folding editor and keep object validation, saving, and empty defaults', async () => {
   await mount();
-  const options = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="选项（JSON）"]')!;
-  expect(options).not.toBeNull();
-  expect(host.querySelector('.cm-editor')).toBeNull();
-  expect(options.placeholder).toBe('插件的自定义配置（JSON 对象），字段请参考插件文档；留空使用默认配置。');
-  expect(options.closest('.yuri-settings-group-card')?.classList.contains('contents')).toBe(true);
-  expect(options.closest('[class~="group/textarea"]')?.classList.contains('rounded-none')).toBe(false);
-  const edit = async (value: string) => {
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(options, value);
-      options.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  };
+  const view = optionsView();
+  const options = view.contentDOM;
+  expect(options.getAttribute('aria-label')).toBe('选项（JSON）');
+  expect(host.querySelector('.cm-placeholder')?.textContent).toBe('插件的自定义配置（JSON 对象），字段请参考插件文档；留空使用默认配置。');
   const save = [...host.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '保存')!;
-  await edit('[]');
-  expect(options.getAttribute('aria-invalid')).toBe('true');
   expect(save.disabled).toBe(true);
-  await edit('{"enabled":true}');
+  for (const invalid of ['[]', 'null', '{', '"text"', '1']) {
+    await editOptions(invalid);
+    expect(options.getAttribute('aria-invalid')).toBe('true');
+    expect(save.disabled).toBe(true);
+  }
+  const content = '{\n  "settings": {\n    "enabled": true\n  },\n  "items": [\n    "example"\n  ]\n}';
+  await editOptions(content);
   expect(options.getAttribute('aria-invalid')).toBe('false');
   expect(save.disabled).toBe(false);
+  expect(host.querySelector('.cm-foldGutter [title="折叠代码"]')).not.toBeNull();
+  for (const field of ['settings', 'items']) {
+    await act(async () => {
+      view.dispatch({ selection: { anchor: content.indexOf(`"${field}"`) } });
+      expect(foldCode(view)).toBe(true);
+    });
+    expect(foldedRanges(view.state).size).toBe(1);
+    expect(usePluginsStore.getState().draft?.optionsJson).toBe(content);
+    expect(save.disabled).toBe(false);
+    await act(async () => { unfoldAll(view); });
+  }
   await act(async () => save.click());
-  expect(gateway.updateEntry).toHaveBeenCalledWith(selected.id, { spec: selected.spec, options: { enabled: true } });
+  expect(gateway.updateEntry).toHaveBeenCalledWith(selected.id, { spec: selected.spec, options: { settings: { enabled: true }, items: ['example'] } });
+  await editOptions(' ');
+  await act(async () => save.click());
+  expect(gateway.updateEntry).toHaveBeenLastCalledWith(selected.id, { spec: selected.spec, options: undefined });
+});
+
+test.each(['npm', 'path'])('adding a %s plugin uses the same JSON editor and locks it during submission', async (tab) => {
+  const onOpenChange = vi.fn();
+  await act(async () => root.render(<AddPluginDialog open onOpenChange={onOpenChange} />));
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+  if (tab === 'path') {
+    await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '从本地路径')!.click());
+  }
+  const input = dialog.querySelector<HTMLInputElement>('#plugin-spec')!;
+  const spec = tab === 'npm' ? 'example-plugin' : '/workspace/example-plugin';
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, spec);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const submit = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === '添加')!;
+  const view = optionsView(dialog);
+  expect(view.contentDOM.id).toBe('plugin-options');
+  expect(view.contentDOM.getAttribute('aria-label')).toBe('选项（JSON）');
+  await editOptions('[]', dialog);
+  expect(submit.disabled).toBe(true);
+  expect(view.contentDOM.getAttribute('aria-invalid')).toBe('true');
+  const content = '{\n  "enabled": true\n}';
+  await editOptions(content, dialog);
+  const marker = dialog.querySelector<HTMLElement>('.cm-foldGutter [title="折叠代码"]')!;
+  await act(async () => marker.click());
+  expect(foldedRanges(view.state).size).toBe(1);
+  expect(submit.disabled).toBe(false);
+  let complete!: () => void;
+  gateway.createEntry.mockImplementationOnce(() => new Promise((resolve) => { complete = () => resolve({ ok: true }); }));
+  await act(async () => submit.click());
+  expect(gateway.createEntry).toHaveBeenCalledWith({ spec, scope: 'user', options: { enabled: true } });
+  expect(view.state.doc.toString()).toBe(content);
+  expect(view.state.readOnly).toBe(true);
+  expect(view.contentDOM.getAttribute('contenteditable')).toBe('false');
+  expect(submit.disabled).toBe(true);
+  await act(async () => complete());
+  expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
 test('only a cold inventory uses skeletons; a background refresh preserves the form', async () => {
@@ -362,7 +429,7 @@ test('a pinned registry update keeps the editor mounted and shares loading with 
   gateway.updateEntry.mockImplementationOnce(() => new Promise((resolve) => { complete = () => resolve({ ok: true }); }));
   await mount();
   const editor = host.querySelector('[data-plugin-editor]')!;
-  const options = editor.querySelector('textarea');
+  const options = editor.querySelector('.cm-editor');
   expect(options).not.toBeNull();
   const input = editor.querySelector('input');
   const button = [...editor.querySelectorAll('button')].find((item) => item.textContent === '更新')!;
@@ -372,8 +439,9 @@ test('a pinned registry update keeps the editor mounted and shares loading with 
   expect(gateway.update).not.toHaveBeenCalled();
   expect(editor.textContent).toContain('正在更新至 0.2.12');
   expect(host.querySelectorAll('[data-plugin-sidebar] [data-plugin-busy]')).toHaveLength(1);
-  expect(editor.querySelector('textarea')).toBe(options);
-  expect(options?.disabled).toBe(true);
+  expect(editor.querySelector('.cm-editor')).toBe(options);
+  expect(optionsView().state.readOnly).toBe(true);
+  expect(optionsView().contentDOM.getAttribute('contenteditable')).toBe('false');
   expect(editor.querySelector('input')).toBe(input);
   expect(input?.disabled).toBe(true);
   expect(editor.querySelector('[data-settings-item="plugins.options"]')?.hasAttribute('inert')).toBe(true);
@@ -381,7 +449,7 @@ test('a pinned registry update keeps the editor mounted and shares loading with 
   await act(async () => complete());
   await flush();
   expect(input?.disabled).toBe(false);
-  expect(options?.disabled).toBe(false);
+  expect(optionsView().state.readOnly).toBe(false);
 });
 
 test('reload marks every row without replacing the selected editor', async () => {
@@ -435,6 +503,10 @@ test('a confirmed spec rewrite cannot drop the pending state before reload compl
 });
 
 test.skipIf(!resolveChrome())('measures and captures the rendered production editor with production CSS', async () => {
+  const options = { enabled: true, settings: { endpoint: 'https://api.example.test', retries: 3 }, items: ['example'] };
+  queryClient.setQueryData(pluginsListQueryOptions(directory).queryKey, {
+    entries: entries.map((entry) => entry.id === selected.id ? { ...entry, options } : entry), files: [],
+  });
   await mount();
   const here = dirname(fileURLToPath(import.meta.url));
   const uiSrc = join(here, '../../..');
@@ -446,9 +518,12 @@ test.skipIf(!resolveChrome())('measures and captures the rendered production edi
   try {
     const page = await openPageSession(session, { width: 1040, height: 620, standalone: false });
     const render = async (name: string, dark: boolean, width: number) => {
+      gateway.dark = dark;
+      await mount();
       const vars = new CSSVariableGenerator().generate(getDefaultTheme(dark));
       const sprite = document.getElementById('yuri-icon-sprite-v2')?.outerHTML ?? '';
-      writeFileSync(fixture, `<!doctype html><html class="${width < 700 ? 'mobile-pointer' : ''}" data-theme="${dark ? 'dark' : 'light'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\n${localCss}\n:root{${vars}}</style></head><body>${sprite}${host.innerHTML}</body></html>`);
+      const editorCss = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules].map((rule) => rule.cssText)).join('\n');
+      writeFileSync(fixture, `<!doctype html><html class="${width < 700 ? 'mobile-pointer' : ''}" data-theme="${dark ? 'dark' : 'light'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}\n${localCss}\n${editorCss}\n:root{${vars}}</style></head><body>${sprite}${host.innerHTML}</body></html>`);
       await page.send('Emulation.setDeviceMetricsOverride', { width, height: 620, deviceScaleFactor: 1, mobile: false });
       await page.navigateFile(fixture);
       const borders = await page.evaluate<{ outer: string; expectedOuter: string; divider: string | null; expectedDivider: string }>(`(() => {
@@ -483,13 +558,14 @@ test.skipIf(!resolveChrome())('measures and captures the rendered production edi
       }
       if (name === 'plugins-gui-focused') {
         const focusGeometry = await page.evaluate<{ radius: number; cardDisplay: string }>(`(() => {
-          const textarea = document.querySelector('[data-settings-item="plugins.options"] textarea');
-          textarea.focus();
-          return { radius: parseFloat(getComputedStyle(textarea.closest('[class~="group/textarea"]')).borderTopLeftRadius),
-            cardDisplay: getComputedStyle(textarea.closest('.yuri-settings-group-card')).display };
+          const content = document.querySelector('[data-settings-item="plugins.options"] .cm-content');
+          content.focus();
+          const card = content.closest('.yuri-settings-group-card');
+          return { radius: parseFloat(getComputedStyle(card).borderTopLeftRadius),
+            cardDisplay: getComputedStyle(card).display };
         })()`);
         expect(focusGeometry.radius).toBeGreaterThan(0);
-        expect(focusGeometry.cardDisplay).toBe('contents');
+        expect(focusGeometry.cardDisplay).not.toBe('contents');
       }
       if (width < 700) await page.evaluate(`document.querySelector('[data-plugin-sidebar]').remove()`);
       if (!host.querySelector('[data-plugin-editor] h2')) {
@@ -522,6 +598,13 @@ test.skipIf(!resolveChrome())('measures and captures the rendered production edi
       await page.screenshotPng(join(evidence, `${name}.png`));
     };
     await render('plugins-dark', true, 1040);
+    await act(async () => {
+      const view = optionsView();
+      view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf('"settings"') } });
+      expect(foldCode(view)).toBe(true);
+    });
+    await render('plugins-folded', true, 1040);
+    expect(foldedRanges(optionsView().state).size).toBe(1);
     await render('plugins-light', false, 1040);
     await render('plugins-mobile', true, 350);
     let finishUpdate!: () => void;

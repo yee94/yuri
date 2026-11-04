@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor, screen, session, shell, systemPreferences } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,13 +14,13 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
   const stop = () => { for (const end of [...owners]) end(); };
   const helperAccessibility = async (prompt = false) => {
     if (!fs.existsSync(helper())) return false;
-    try {
-      return await new Promise(resolve => {
-        execFile(helper(), [prompt ? '--request-accessibility' : '--check-accessibility'],
-          { timeout: 3000, maxBuffer: 1024, windowsHide: true },
-          (error, stdout) => resolve(!error && stdout.trim() === 'granted'));
-      });
-    } catch { return false; }
+    return new Promise((resolve, reject) => {
+      execFile(helper(), [prompt ? '--request-accessibility' : '--check-accessibility'],
+        { timeout: 3000, maxBuffer: 1024, windowsHide: true }, (error, stdout) => {
+          if (error || !['granted', 'denied'].includes(stdout.trim())) { reject(failure('helper_check_failed')); return; }
+          resolve(stdout.trim() === 'granted');
+        });
+    });
   };
   const getStatus = async () => {
     const supported = process.platform === 'darwin';
@@ -66,13 +66,19 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
       if (process.platform !== 'darwin') throw failure('unsupported');
       if (!enabled()) throw failure('disabled');
       if (!fs.existsSync(helper())) throw failure('helper_unavailable');
-      let win, child, disposed = false;
-      let readyTimer;
+      let win, child, disposed = false, started = false;
+      let stage = 'permissions', permissions;
+      let rejectStopped, resolveReady;
+      const stopped = new Promise((_resolve, reject) => { rejectStopped = reject; });
+      const ready = new Promise(resolve => { resolveReady = resolve; });
+      void stopped.catch(() => {});
+      const readyTimer = setTimeout(() => rejectStopped(failure('capture_timeout')), 15000);
       const partition = session.fromPartition('remote-desktop-capture');
       const cleanups = [];
       const close = () => {
         if (disposed) return;
         disposed = true;
+        rejectStopped(failure('permission_denied'));
         owners.delete(end);
         clearTimeout(readyTimer);
         for (const cleanup of cleanups) cleanup();
@@ -81,25 +87,40 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         if (child) { child.stdin.end(); const current = child; setTimeout(() => { if (current.exitCode === null) current.kill(); }, 1000).unref(); }
         if (win && !win.isDestroyed()) win.destroy();
       };
-      const end = () => { close(); onEnded(); };
+      const end = (code = 'desktop_ended') => {
+        if (disposed) return;
+        rejectStopped(failure(code === 'desktop_ended' ? 'permission_denied' : code));
+        close();
+        if (started || code === 'desktop_ended') {
+          if (code !== 'desktop_ended') console.warn('[remote-desktop]', { stage, code });
+          onEnded();
+        }
+      };
       owners.add(end);
       signal?.addEventListener('abort', close, { once: true });
       cleanups.push(() => signal?.removeEventListener('abort', close));
-      try {
+      for (const event of ['suspend', 'resume', 'lock-screen', 'unlock-screen']) {
+        const changed = () => end(`host_${event}`);
+        powerMonitor.on(event, changed);
+        cleanups.push(() => powerMonitor.off(event, changed));
+      }
+      const initialize = async () => {
         if (signal?.aborted) throw failure('permission_denied');
-        const permissions = await getStatus();
+        permissions = await getStatus();
         if (disposed) throw failure('permission_denied');
         if (!enabled()) throw failure('disabled');
         if (!permissions.ready) throw failure('permission_required');
+        stage = 'screen-discovery';
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+        if (disposed) throw failure('permission_denied');
         const display = screen.getPrimaryDisplay();
-        const displayChanged = () => { if (!disposed) onEnded(); };
+        const source = sources.find(item => item.display_id === String(display.id));
+        if (!source) throw failure('display_unavailable');
+        const displayChanged = () => end('display_changed');
         screen.on('display-removed', displayChanged);
         screen.on('display-metrics-changed', displayChanged);
         cleanups.push(() => { screen.off('display-removed', displayChanged); screen.off('display-metrics-changed', displayChanged); });
-        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
-        if (disposed) throw failure('permission_denied');
-        const source = sources.find(item => item.display_id === String(display.id));
-        if (!source) throw failure('permission_required');
+        stage = 'capture-start';
         // A separate session prevents runtime pages/plugins inheriting capture permissions.
         partition.setPermissionRequestHandler((contents, permission, callback) => callback(contents === win?.webContents && ['media', 'display-capture'].includes(permission)));
         partition.setPermissionCheckHandler((contents, permission) => contents === win?.webContents && ['media', 'display-capture'].includes(permission));
@@ -109,19 +130,27 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         } });
         win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         win.webContents.on('will-navigate', event => event.preventDefault());
-        win.webContents.on('render-process-gone', onEnded);
+        win.webContents.on('render-process-gone', () => end('capture_failed'));
         child = spawn(helper(), [String(display.id)], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
-        child.on('error', onEnded);
-        child.on('exit', () => { if (!disposed) onEnded(); });
-        child.stdin.on('error', () => { if (!disposed) onEnded(); });
+        child.on('error', () => end('helper_failed'));
+        child.on('exit', () => end('helper_failed'));
+        child.stdin.on('error', () => end('helper_failed'));
         let helperReady = false;
         let helperOutput = '';
+        let captureReady;
+        const finishReady = () => {
+          if (disposed || !helperReady || !captureReady) return;
+          send(captureReady);
+          captureReady = undefined;
+          resolveReady();
+        };
         child.stdout.on('data', bytes => {
+          if (disposed || helperReady) return;
           helperOutput += bytes.toString();
-          if (helperOutput.length > 256) { if (!disposed) onEnded(); return; }
+          if (helperOutput.length > 256) { end('helper_failed'); return; }
           if (!helperOutput.includes('\n')) return;
-          if (helperOutput.trim() === 'ready') helperReady = true;
-          else if (!disposed) onEnded();
+          if (helperOutput.trim() === 'ready') { helperReady = true; finishReady(); }
+          else end(helperOutput.trim() === 'permission_required' ? 'permission_required' : 'helper_failed');
         });
         const validSender = event => !disposed && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame;
         const listen = (channel, callback) => {
@@ -137,16 +166,14 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
           if (!Array.isArray(parsed) || parsed.length > 8) throw failure('desktop_failed');
           iceServers = parsed;
         }
-        let resolveReady, rejectReady;
-        const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-        void ready.catch(() => {});
-        cleanups.push(() => rejectReady(failure('desktop_ended')));
-        readyTimer = setTimeout(() => rejectReady(failure('permission_required')), 15000);
         listen('yuri:capture:loaded', () => sendCommand({ type: 'start', sourceId: source.id, iceServers, zoomQuality }));
         listen('yuri:capture:message', message => {
-          if (message?.type === 'failure') { rejectReady(failure('permission_required')); onEnded(); return; }
-          if (message?.type === 'ready') { clearTimeout(readyTimer); resolveReady(); }
-          if (['ready', 'offer', 'ice', 'transport', 'rtc-failed'].includes(message?.type)) send(message.type === 'offer' ? { ...message, iceServers } : message);
+          if (message?.type === 'failure') {
+            end(systemPreferences.getMediaAccessStatus('screen') === 'granted' ? 'capture_failed' : 'permission_required');
+            return;
+          }
+          if (message?.type === 'ready') { captureReady = message; finishReady(); return; }
+          if (['offer', 'ice', 'transport', 'rtc-failed'].includes(message?.type)) send(message.type === 'offer' ? { ...message, iceServers } : message);
         });
         listen('yuri:capture:frame', bytes => {
           if (bytes instanceof ArrayBuffer && bytes.byteLength <= 512 * 1024 && !send(Buffer.from(bytes))) sendCommand({ type: 'ack', dropped: true });
@@ -154,18 +181,30 @@ export function createRemoteDesktopAdapter({ approvalsStore } = {}) {
         await win.loadFile(path.join(app.getAppPath(), 'remote-desktop.html'));
         await ready;
         if (disposed) throw failure('permission_denied');
+        clearTimeout(readyTimer);
+        started = true;
+        stage = 'streaming';
         return {
           async handle(message) {
             if (disposed) return;
             if (message.type === 'view' && !zoomQuality) return;
             if (['answer', 'ice', 'fallback', 'ack', 'view'].includes(message.type)) { sendCommand(message); return; }
-            if (!helperReady) throw failure('permission_required');
             if (child.stdin.writableLength > 32768) throw failure('desktop_failed');
             child.stdin.write(`${JSON.stringify(message)}\n`);
           },
           close,
         };
-      } catch (error) { close(); throw error; }
+      };
+      try { return await Promise.race([initialize(), stopped]); }
+      catch (error) {
+        close();
+        if (error.code !== 'permission_denied') console.warn('[remote-desktop]', {
+          stage, code: error.code || 'desktop_failed', screenRecording: permissions?.screenRecording,
+          accessibility: permissions?.accessibility, appAccessibility: systemPreferences.isTrustedAccessibilityClient(false),
+          helperAvailable: permissions?.helperAvailable,
+        });
+        throw error;
+      }
     },
     stop,
   };

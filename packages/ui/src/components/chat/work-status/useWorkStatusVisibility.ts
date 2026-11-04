@@ -1,5 +1,5 @@
 import { useMediaQuery } from '@reactuses/core';
-import { normalizeContextPanelDirectoryKey, useUIStore } from '@/stores/useUIStore';
+import { getContextPanelState, normalizeContextPanelDirectoryKey, useUIStore } from '@/stores/useUIStore';
 
 /** Fixed card width. It is not a docked pane, so it has no resizer. */
 export const WORK_STATUS_PANEL_WIDTH = 196;
@@ -36,13 +36,13 @@ export const useWorkStatusVisibility = ({ isMobile, isVSCode, directory }: Optio
 
   const directoryKey = directory ? normalizeContextPanelDirectoryKey(directory) : '';
   const contextPanelOpen = useUIStore((state) => {
-    const panel = directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined;
+    const panel = getContextPanelState(state, directoryKey);
     if (!panel?.isOpen) return false;
     const activeTab = panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[panel.tabs.length - 1] ?? null;
     return activeTab?.mode !== 'chat';
   });
   const panelEnabled = useUIStore((state) => state.workStatusPanelEnabled);
-  const rightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen && Boolean(state.contextPanelByDirectory[directoryKey]?.isOpen));
+  const rightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen && Boolean(getContextPanelState(state, directoryKey)?.isOpen));
   // The right sidebar already occupies this edge. Keep the column off while it
   // is open so the two do not stack; the preference itself stays put.
   const layoutAllows = !isMobile && !isVSCode && !contextPanelOpen && !rightSidebarOpen;

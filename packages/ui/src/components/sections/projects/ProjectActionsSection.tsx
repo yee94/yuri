@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import {
   Collapsible,
   CollapsibleContent,
@@ -362,7 +362,7 @@ export const ProjectActionsSection: React.FC<ProjectActionsSectionProps> = ({ pr
                             }
                           }}
                         >
-                          <Checkbox
+                          <SettingsSwitch
                             checked={action.autoOpenUrl === true}
                             onChange={(checked) => updateAction(action.id, (current) => ({
                               ...current,

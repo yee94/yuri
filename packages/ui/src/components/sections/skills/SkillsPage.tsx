@@ -616,7 +616,6 @@ const SkillsInstalledPage: React.FC = () => {
                 />
               </div>
             )}
-            cardClassName="p-3"
           >
             <div
               className={cn(

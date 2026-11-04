@@ -71,6 +71,29 @@ test.skipIf(!resolveChrome())('real Schedule avatar keeps ordinary idle motion t
     writeFileSync(join(work, 'schedule-entrance.json'), JSON.stringify(entrance, null, 2));
     expect(entrance.resets, 'Entrance travel must not restore the static pose between live frames').toBe(0);
     expect(entrance.replacements).toBe(0);
+    const containment = await page.evaluate<Array<{ scale: number; time: number; top: number; bottom: number; left: number; right: number }>>(`(() => {
+      const hint = document.querySelector('.yuri-mobile-schedule-assistant');
+      const avatar = hint.querySelector('[data-procedural-avatar]');
+      const animations = hint.getAnimations({ subtree: true });
+      animations.forEach(animation => animation.pause());
+      const samples = [];
+      for (const scale of [1, 10 / 9 * 1.05]) {
+        document.documentElement.style.setProperty('--dpt-n', String(scale));
+        for (const time of [0, 750, 1200, 3000, 6600, 7000]) {
+          animations.forEach(animation => { animation.currentTime = time; });
+          const capsule = hint.getBoundingClientRect(), face = avatar.getBoundingClientRect();
+          samples.push({ scale, time, top: face.top - capsule.top, bottom: capsule.bottom - face.bottom,
+            left: face.left - capsule.left, right: capsule.right - face.right });
+        }
+      }
+      document.documentElement.style.setProperty('--dpt-n', '1');
+      return samples;
+    })()`);
+    for (const sample of containment) {
+      for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
+        expect(sample[edge], `Avatar ${edge} must stay inside the capsule at scale ${sample.scale}, time ${sample.time}ms`).toBeGreaterThanOrEqual(-0.1);
+      }
+    }
     const sample = await page.evaluate<{ poses: number; motion: string; rightGap: number; copyGap: number; sameSvg: boolean }>(`(async () => {
       const hint = document.querySelector('.yuri-mobile-schedule-assistant');
       hint.getAnimations({subtree:true}).forEach(animation => { animation.pause(); animation.currentTime = 3000; });

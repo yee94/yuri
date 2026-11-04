@@ -1,5 +1,5 @@
 import React from 'react';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Radio } from '@/components/ui/radio';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -171,7 +171,7 @@ export const GitSettings: React.FC = () => {
             }
           }}
         >
-          <Checkbox
+          <SettingsSwitch
             checked={settingsGitmojiEnabled}
             onChange={(checked) => {
               void handleGitmojiChange(checked);
@@ -195,7 +195,7 @@ export const GitSettings: React.FC = () => {
             }
           }}
         >
-          <Checkbox
+          <SettingsSwitch
             checked={showGitignored}
             onChange={setFilesViewShowGitignored}
             ariaLabel={t('settings.yuri.git.showGitignoredAria')}

@@ -27,6 +27,10 @@ export class NativeGuiSession {
     return requestNativeGui(this.bridge, action, { ...input, lease: this.activation.lease });
   }
 
+  async setDockIcon(image: string | null): Promise<void> {
+    await this.request('dock-icon', { image });
+  }
+
   token<S extends Gui.IpcSpec>(token: Gui.Ipc<S>): { value: Gui.IpcClient<S>; live: Accessor<Gui.Live<Gui.IpcClient<S>>> } {
     const existing = this.tokens.get(token.id);
     if (existing) return existing as { value: Gui.IpcClient<S>; live: Accessor<Gui.Live<Gui.IpcClient<S>>> };

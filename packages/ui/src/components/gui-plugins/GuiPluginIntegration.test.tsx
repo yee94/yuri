@@ -273,6 +273,52 @@ describe('foreign DOM ownership', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
+  test('floating preview controls leave a content inset before the native scrollbar', async ({ skip }) => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } = await import('@/components/ui/chromeCdpHarness');
+    if (!resolveChrome()) { skip(); return; }
+    fixture.methods.mountPanel.mockImplementation((_key, node, actions) => {
+      const content = document.createElement('div');
+      content.style.height = '2000px';
+      node.append(content);
+      const action = document.createElement('button');
+      action.textContent = 'export';
+      actions!.append(action);
+      return () => { content.remove(); action.remove(); };
+    });
+    updateSnapshot({ panels: [{ key: 'demo:a', pluginId: 'demo', title: 'Preview', inline: true, active: true, file: '/workspace/a.preview' }] });
+    await render(<GuiFileLinkBridge path="/workspace/a.preview"><pre>source</pre></GuiFileLinkBridge>);
+    const css = await compileProductionCssAsync(join(dirname(fileURLToPath(import.meta.url)), '../..'));
+    const work = mkdtempSync(join(evidenceRoot(), 'preview-controls-'));
+    const browser = await openChromeSession({ width: 800, height: 600, hideScrollbars: false });
+    try {
+      const file = join(work, 'index.html');
+      writeFileSync(file, `<!doctype html><html class="desktop-runtime"><head><style>${css}</style></head><body><div id="root"><section style="width:360px;height:480px;display:flex">${container.innerHTML}</section></div></body></html>`);
+      const page = await openPageSession(browser, { width: 800, height: 600, standalone: false });
+      await page.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });
+      await page.navigateFile(file);
+      for (const width of [300, 360, 720]) {
+        const geometry = await page.evaluate<{ gap: number; top: number; scrollbar: number }>(`(() => {
+          document.querySelector('section').style.width = '${width}px';
+          const scroller = document.querySelector('[data-gui-plugin-mount]');
+          const controls = document.querySelector('[data-gui-preview-controls]');
+          const rect = controls.getBoundingClientRect();
+          const scrollRect = scroller.getBoundingClientRect();
+          return { gap: scrollRect.left + scroller.clientWidth - rect.right,
+            top: rect.top - scrollRect.top, scrollbar: scroller.offsetWidth - scroller.clientWidth };
+        })()`);
+        expect(geometry.scrollbar, `native scrollbar at ${width}px`).toBeGreaterThan(0);
+        expect(geometry.gap, `controls inset before scrollbar at ${width}px`).toBeGreaterThanOrEqual(12);
+        expect(geometry.top).toBeGreaterThanOrEqual(12);
+      }
+    } finally {
+      await browser.close();
+      rmSync(work, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test('deferred mounting cancels stale owners and unmounted work, including strict effect replay', async () => {
     const view = (revision: string) => <React.StrictMode><GuiPluginMount host={fixture.host} kind="panel" contributionKey="a" revision={revision} fallback={<div role="status">Preparing</div>} /></React.StrictMode>;
     await act(async () => root.render(view('one')));

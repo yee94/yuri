@@ -18,7 +18,7 @@ import {
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 
 import { DiffIcon } from '@/components/icons/DiffIcon';
-import { useUIStore, type ContextPanelMode, type MainTab } from '@/stores/useUIStore';
+import { getContextPanelState, useUIStore, type ContextPanelMode, type MainTab } from '@/stores/useUIStore';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useCurrentSessionEntity, useSessionContextUsage, useSessionMessagesResolved } from '@/sync/sync-context';
@@ -997,7 +997,7 @@ export const Header: React.FC<HeaderProps> = ({
   const contextActionDirectory = React.useMemo(() => {
     return normalize(effectiveDirectory || openDirectory || activeProject?.path || '');
   }, [activeProject?.path, effectiveDirectory, openDirectory]);
-  const currentContextPanel = useUIStore((state) => state.contextPanelByDirectory[contextActionDirectory]);
+  const currentContextPanel = useUIStore((state) => getContextPanelState(state, contextActionDirectory));
   const isPreviewPanelOpen = Boolean(currentContextPanel?.isOpen);
   const handleTogglePreviewPanel = useEvent(() => toggleContextPanel(contextActionDirectory));
 

@@ -32,7 +32,8 @@ This applies to every plugin rather than a hardcoded file extension. Mobile file
 detail retains edge-to-edge layout across preview/source switching.
 Host source/preview controls and plugin `yuri.previewActions` contributions share
 one control group outside the capture viewport. Desktop FilesView and the default
-inline bridge float that group at the original top-right position; the opt-in
+inline bridge float that group at the top right with a 24px trailing inset,
+leaving at least 12px before the occupying native scrollbar; the opt-in
 docked toolbar keeps the same group. MobileFilesSurface uses its header or
 `MobileSheetHeaderActions`. Standalone mobile panels use the sheet title row;
 desktop dialogs float actions above their panel content.

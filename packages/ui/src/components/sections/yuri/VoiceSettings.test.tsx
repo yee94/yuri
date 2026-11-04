@@ -25,7 +25,6 @@ vi.mock('@/components/ui/select', () => ({
     Select: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     SelectContent: () => null, SelectItem: () => null, SelectTrigger: () => null, SelectValue: () => null,
 }));
-vi.mock('@/components/ui/checkbox', () => ({ Checkbox: ({ checked, onChange, ariaLabel }: { checked: boolean; onChange: (value: boolean) => void; ariaLabel: string }) => <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} aria-label={ariaLabel} /> }));
 
 import { queryClient } from '@/lib/queryRuntime';
 import { speechDefaults, speechSecretFields } from '@/lib/voice/speechSettings';
@@ -101,7 +100,7 @@ describe('Host-backed speech settings', () => {
         expect(button('tts').disabled).toBe(false);
         expect(runtime.fetch).toHaveBeenCalledWith('/api/voice/settings', expect.anything());
         await act(async () => complete(Response.json(saved))); await flush();
-        expect((section('tts').querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+        expect(section('tts').querySelectorAll('button[role="radio"]')[1]?.getAttribute('aria-checked')).toBe('true');
     });
     it('loads both enabled sections from the Host and ignores obsolete local values', async () => {
         localStorage.setItem('showMessageTTSButtons', 'false');
@@ -110,8 +109,8 @@ describe('Host-backed speech settings', () => {
         const storageRead = vi.spyOn(Storage.prototype, 'getItem');
         const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
         await mount();
-        expect((section('tts').querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
-        expect((section('asr').querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+        expect(section('tts').querySelectorAll('button[role="radio"]')[1]?.getAttribute('aria-checked')).toBe('true');
+        expect(section('asr').querySelectorAll('button[role="radio"]')[1]?.getAttribute('aria-checked')).toBe('true');
         expect(keyInput('tts').value).toBe('');
         expect(storageRead).not.toHaveBeenCalledWith('showMessageTTSButtons');
         expect(storageRead).not.toHaveBeenCalledWith('volcengine-speech');
@@ -121,8 +120,8 @@ describe('Host-backed speech settings', () => {
     it('saves only its section while retaining edits in the other section', async () => {
         await mount();
         await act(async () => {
-            (section('tts').querySelector('input[type="checkbox"]') as HTMLInputElement).click();
-            (section('asr').querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+            section('tts').querySelector<HTMLButtonElement>('button[role="radio"]')!.click();
+            section('asr').querySelector<HTMLButtonElement>('button[role="radio"]')!.click();
         });
         expect(writes).toHaveLength(0);
         await act(async () => button('tts').click()); await flush();

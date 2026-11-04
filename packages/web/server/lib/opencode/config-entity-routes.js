@@ -112,8 +112,6 @@ const loadProviderCatalogUpstream = async (client, location, wait) => {
 const MAX_GLOBAL_CONFIG_SIZE = 2 * 1024 * 1024;
 const GLOBAL_CONFIG_FILES = {
   opencode: ['opencode.jsonc', 'opencode.json'],
-  'oh-my-opencode-slim': ['oh-my-opencode-slim.json', 'oh-my-opencode-slim.jsonc'],
-  'oh-my-openagent': ['oh-my-openagent.json', 'oh-my-openagent.jsonc'],
 };
 
 const truncateDescription = (value, maximum = 160) => {
@@ -313,8 +311,8 @@ export const registerConfigEntityRoutes = (app, dependencies) => {
         target: req.params.target,
         fileName: target.fileName,
         content,
-        requiresManualRestart: req.params.target !== 'opencode',
-        application: req.params.target === 'opencode' ? 'watch' : 'manual',
+        requiresManualRestart: false,
+        application: 'watch',
       });
     } catch (error) {
       console.error('Failed to write global configuration:', error);

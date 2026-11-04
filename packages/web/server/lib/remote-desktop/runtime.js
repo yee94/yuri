@@ -70,12 +70,13 @@ export function attachRemoteDesktop({ app, server, adapter, uiAuthController, is
     });
     const start = (async () => {
       try {
-        session = await adapter.start({ send, onEnded: () => fail('desktop_ended'), signal: abort.signal, zoomQuality: true,
+        session = await adapter.start({ send, onEnded: () => fail(adapter.enabled === false ? 'disabled' : 'desktop_ended'), signal: abort.signal, zoomQuality: true,
           client: auth.type === 'client' ? { id: auth.clientId ?? auth.client?.id, label: auth.client?.label ?? '' } : null });
         if (closed) { session.close(); occupied = false; }
       } catch (error) {
         occupied = false;
-        fail(['disabled', 'permission_required', 'permission_denied', 'unsupported', 'helper_unavailable'].includes(error.code) ? error.code : 'desktop_failed');
+        fail(['disabled', 'permission_required', 'permission_denied', 'unsupported', 'helper_unavailable',
+          'capture_timeout', 'capture_failed', 'display_unavailable', 'helper_check_failed', 'helper_failed'].includes(error.code) ? error.code : 'desktop_failed');
       }
     })();
     void start;

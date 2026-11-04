@@ -182,6 +182,20 @@ describe('projectProviderCatalog', () => {
     });
   });
 
+  it('projects V2 image input and explicit reasoning controls instead of obsolete attachment flags', () => {
+    const catalog = safeCatalog();
+    catalog.providers[0].models = {
+      vision: { id: 'vision', name: 'Vision', capabilities: { tools: true, input: ['text', 'image'], output: ['text'], reasoning: { supported: true } } },
+      reasoner: { id: 'reasoner', name: 'Reasoner', capabilities: { tools: true, input: ['text'], output: ['text'] }, variants: [{ id: 'high', settings: { reasoningEffort: 'high', apiKey: 'never-project' } }] },
+      text: { id: 'text', name: 'Text', capabilities: { input: ['text', 'pdf'], output: ['text'], attachment: true, reasoning: { supported: false } }, variants: [{ id: 'large', settings: { maxTokens: 8000 } }] },
+    };
+    const result = projectProviderCatalog(catalog);
+    expect(result.value.providers[0].models.vision.capabilities).toMatchObject({ input: { image: true }, reasoning: true });
+    expect(result.value.providers[0].models.reasoner.capabilities).toMatchObject({ reasoning: true });
+    expect(result.value.providers[0].models.text.capabilities).toMatchObject({ reasoning: false });
+    expect(JSON.stringify(result)).not.toContain('never-project');
+  });
+
   it('bounds provider, model, and variant dictionaries while retaining their valid prefixes', () => {
     const model = (id) => ({ id, name: id });
     const providers = Array.from({ length: 201 }, (_, index) => ({
@@ -243,6 +257,7 @@ describe('projectProviderCatalog', () => {
       name: 'GPT 5',
       capabilities: {
         toolcall: true,
+        reasoning: true,
         input: { text: true, image: true },
         output: { text: true },
       },

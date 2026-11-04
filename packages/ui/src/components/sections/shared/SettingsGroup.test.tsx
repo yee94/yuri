@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SettingsActionHeader } from './SettingsActionHeader';
+
+vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 
 import {
   SettingsField,
@@ -10,6 +12,17 @@ import {
 } from './SettingsGroup';
 
 describe('SettingsGroup', () => {
+  test('places optional row footers below both label and value without changing ordinary rows', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(<SettingsRow label="Address" footer={<p>Request preview</p>}><input /></SettingsRow>);
+    const footer = container.querySelector('[data-slot="settings-row-footer"]')!;
+    expect(footer.parentElement).toBe(container.querySelector('.yuri-settings-split-row'));
+    expect(footer.classList.contains('col-span-full')).toBe(true);
+    expect(footer.previousElementSibling?.hasAttribute('data-settings-value')).toBe(true);
+    expect(footer.textContent).toBe('Request preview');
+    expect(renderToStaticMarkup(<SettingsRow label="Name"><input /></SettingsRow>)).not.toContain('settings-row-footer');
+  });
+
   test('renders one shared grouped card with responsive split rows', () => {
     const markup = renderToStaticMarkup(
       <SettingsGroup
@@ -145,8 +158,8 @@ describe('SettingsGroup', () => {
     expect(markup).toContain('aria-pressed="true"');
 
     const labelIndex = markup.indexOf('Enable notifications');
-    const checkboxIndex = markup.indexOf('role="checkbox"');
+    const switchIndex = markup.indexOf('role="radiogroup"');
     expect(labelIndex).toBeGreaterThan(-1);
-    expect(checkboxIndex).toBeGreaterThan(labelIndex);
+    expect(switchIndex).toBeGreaterThan(labelIndex);
   });
 });

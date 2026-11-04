@@ -20,8 +20,24 @@ describe('provider brand logos', () => {
     });
 
     it('does not infer a brand from the gateway identity', () => {
-        expect(renderToStaticMarkup(<Logo id="magpie:cursor:unknown" />)).toContain('fallback');
-        expect(renderToStaticMarkup(<Logo id="magpie:gateway:%invalid" />)).toContain('fallback');
+        const magpie = renderToStaticMarkup(<Logo id="magpie" />);
+        expect(magpie).not.toContain('fallback');
+        expect(renderToStaticMarkup(<Logo id="magpie:cursor:unknown" />)).toBe(magpie);
+        expect(renderToStaticMarkup(<Logo id="magpie:gateway:%invalid" />)).toBe(magpie);
+    });
+
+    it.each([
+        ['magpie-workbuddy', 'workbuddy'], ['magpie-codex', 'openai'], ['magpie-cursor', 'cursor'],
+        ['magpie/group/workbuddy', 'workbuddy'], ['MAGPIE-GROUP', 'magpie'], ['magpie-auto', 'magpie'],
+        ['remote-magpie', 'magpie'],
+    ])('prefers a specific brand before Magpie for %s', (provider, asset) => {
+        const html = renderToStaticMarkup(<Logo id={provider} />);
+        expect(html).toBe(renderToStaticMarkup(<Logo id={asset} />));
+        expect(html).not.toContain('fallback');
+    });
+
+    it('keeps the generic fallback for unrelated unknown providers', () => {
+        expect(renderToStaticMarkup(<Logo id="unknown-provider" />)).toContain('fallback');
     });
 
     it('keeps existing provider aliases', () => {

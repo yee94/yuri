@@ -1,16 +1,16 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { createRemoteDesktopAdapter as createAdapter } from './remote-desktop.mjs';
 
 const mock = vi.hoisted(() => ({
   consent: vi.fn(), accessibility: vi.fn(), sources: vi.fn(), windows: [], spawn: vi.fn(),
-  ipc: null, screens: null, partition: null, exists: vi.fn(), exec: vi.fn(), media: vi.fn(), open: vi.fn(),
+  ipc: null, screens: null, power: null, partition: null, exists: vi.fn(), exec: vi.fn(), media: vi.fn(), open: vi.fn(), load: vi.fn(), helperAutoReady: true,
 }));
 vi.mock('node:fs', () => ({ default: { existsSync: mock.exists } }));
 vi.mock('node:child_process', () => ({ spawn: mock.spawn, execFile: mock.exec }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
-  mock.ipc = new EventEmitter(); mock.screens = new EventEmitter();
+  mock.ipc = new EventEmitter(); mock.screens = new EventEmitter(); mock.power = new EventEmitter();
   mock.screens.getPrimaryDisplay = () => ({ id: 123, workArea: { x: 0, y: 0, width: 1600, height: 900 } });
   mock.partition = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
   class Window extends EventEmitter {
@@ -24,6 +24,7 @@ vi.mock('electron', async () => {
     async loadURL() {}
     showInactive() {}
     async loadFile() {
+      await mock.load();
       const event = { sender: this.webContents, senderFrame: this.webContents.mainFrame };
       mock.ipc.emit('yuri:capture:loaded', event);
       mock.ipc.emit('yuri:capture:message', event, { type: 'ready', width: 1600, height: 900 });
@@ -34,27 +35,31 @@ vi.mock('electron', async () => {
   return {
     app: { isPackaged: false, getAppPath: () => '/fixture/app' }, BrowserWindow: Window,
     desktopCapturer: { getSources: mock.sources }, dialog: { showMessageBox: mock.consent }, ipcMain: mock.ipc,
-    screen: mock.screens, session: { fromPartition: () => mock.partition },
+    screen: mock.screens, powerMonitor: mock.power, session: { fromPartition: () => mock.partition },
     systemPreferences: { isTrustedAccessibilityClient: mock.accessibility, getMediaAccessStatus: mock.media },
     shell: { openExternal: mock.open },
   };
 });
 beforeEach(() => {
-  mock.windows.length = 0; mock.ipc.removeAllListeners(); mock.screens.removeAllListeners();
+  mock.windows.length = 0; mock.ipc.removeAllListeners(); mock.screens.removeAllListeners(); mock.power.removeAllListeners();
   mock.consent.mockReset().mockResolvedValue({ response: 1 });
   mock.accessibility.mockReset().mockReturnValue(true);
   mock.exists.mockReset().mockReturnValue(true);
   mock.media.mockReset().mockReturnValue('granted');
   mock.exec.mockReset().mockImplementation((_file, _args, _options, callback) => callback(null, 'granted\n', ''));
   mock.open.mockReset().mockResolvedValue();
+  mock.load.mockReset().mockResolvedValue();
+  mock.helperAutoReady = true;
   mock.sources.mockReset().mockResolvedValue([{ id: 'screen:primary', display_id: '123' }]);
   mock.spawn.mockReset().mockImplementation(() => {
     const child = new EventEmitter(); child.stdin = new EventEmitter(); child.stdout = new EventEmitter();
     child.stdin.write = vi.fn(); child.stdin.end = vi.fn(); child.stdin.writableLength = 0;
     child.exitCode = 0; child.kill = vi.fn();
+    if (mock.helperAutoReady) queueMicrotask(() => child.stdout.emit('data', Buffer.from('ready\n')));
     return child;
   });
 });
+afterEach(() => { vi.useRealTimers(); });
 const nativeTest = process.platform === 'darwin' ? it : it.skip;
 const storeFor = (root = { enabled: true }) => ({
   readRoot: () => structuredClone(root),
@@ -135,8 +140,104 @@ nativeTest('missing app accessibility permission never prompts or starts capture
 });
 nativeTest('never falls back to a different screen if primary-display identity does not match', async () => {
   mock.sources.mockResolvedValue([{ id: 'screen:other', display_id: '999' }]);
-  await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: new AbortController().signal })).rejects.toMatchObject({ code: 'permission_required' });
+  await expect(createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: new AbortController().signal })).rejects.toMatchObject({ code: 'display_unavailable' });
   expect(mock.spawn).not.toHaveBeenCalled(); expect(mock.windows.every(win => win.destroyed)).toBe(true);
+});
+
+nativeTest('bounds hung screen discovery, frees startup on abort, and ignores its late completion', async () => {
+  vi.useFakeTimers();
+  let finish;
+  mock.sources.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const adapter = createRemoteDesktopAdapter();
+  const first = adapter.start({ send: vi.fn(), onEnded: vi.fn() });
+  const rejected = expect(first).rejects.toMatchObject({ code: 'capture_timeout' });
+  await vi.advanceTimersByTimeAsync(15000);
+  await rejected;
+  const next = await adapter.start({ send: vi.fn(), onEnded: vi.fn() });
+  finish([{ id: 'screen:primary', display_id: '123' }]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(mock.windows).toHaveLength(1);
+  expect(mock.windows[0].destroyed).toBe(false);
+  next.close();
+  expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+});
+
+nativeTest('capture timeout with granted permissions is retryable and the next capture succeeds', async () => {
+  vi.useFakeTimers();
+  mock.load.mockImplementationOnce(() => new Promise(() => {}));
+  const adapter = createRemoteDesktopAdapter();
+  const ended = vi.fn();
+  const failed = expect(adapter.start({ send: vi.fn(), onEnded: ended })).rejects.toMatchObject({ code: 'capture_timeout' });
+  await vi.advanceTimersByTimeAsync(15000);
+  await failed;
+  expect(mock.windows[0].destroyed).toBe(true);
+  expect(ended).not.toHaveBeenCalled();
+  const next = await adapter.start({ send: vi.fn(), onEnded: ended });
+  expect(mock.windows).toHaveLength(2);
+  next.close();
+});
+
+nativeTest('helper execution failure remains retryable rather than becoming a denied grant', async () => {
+  const adapter = createRemoteDesktopAdapter();
+  mock.exec.mockImplementationOnce((_file, _args, _options, done) => done(new Error('timeout'), ''));
+  await expect(adapter.start({ send: vi.fn(), onEnded: vi.fn() })).rejects.toMatchObject({ code: 'helper_check_failed' });
+  const next = await adapter.start({ send: vi.fn(), onEnded: vi.fn() });
+  next.close();
+});
+
+nativeTest('a renderer startup failure preserves its retryable cause and releases capture before reconnect', async () => {
+  mock.load.mockImplementationOnce(async () => {
+    const win = mock.windows.at(-1);
+    mock.ipc.emit('yuri:capture:message', { sender: win.webContents, senderFrame: win.webContents.mainFrame }, { type: 'failure' });
+  });
+  const adapter = createRemoteDesktopAdapter();
+  const ended = vi.fn();
+  await expect(adapter.start({ send: vi.fn(), onEnded: ended })).rejects.toMatchObject({ code: 'capture_failed' });
+  expect(ended).not.toHaveBeenCalled();
+  expect(mock.windows[0].destroyed).toBe(true);
+  const next = await adapter.start({ send: vi.fn(), onEnded: ended });
+  next.close();
+});
+
+nativeTest('abort releases a hung discovery immediately, without waiting for source enumeration', async () => {
+  mock.sources.mockImplementation(() => new Promise(() => {}));
+  const controller = new AbortController();
+  const pending = createRemoteDesktopAdapter().start({ send: vi.fn(), onEnded: vi.fn(), signal: controller.signal });
+  const failed = expect(pending).rejects.toMatchObject({ code: 'permission_denied' });
+  await vi.waitFor(() => expect(mock.sources).toHaveBeenCalled());
+  controller.abort();
+  await failed;
+  expect(mock.windows).toHaveLength(0);
+});
+
+nativeTest.each(['suspend', 'resume', 'lock-screen', 'unlock-screen'])('recreates capture after %s rather than keeping stale media/input resources', async event => {
+  const adapter = createRemoteDesktopAdapter();
+  const ended = vi.fn();
+  await adapter.start({ send: vi.fn(), onEnded: ended });
+  mock.power.emit(event);
+  expect(ended).toHaveBeenCalledOnce();
+  expect(mock.windows[0].destroyed).toBe(true);
+  expect(mock.power.eventNames()).toHaveLength(0);
+  const next = await adapter.start({ send: vi.fn(), onEnded: ended });
+  expect(mock.windows[1].destroyed).toBe(false);
+  next.close();
+  expect(mock.power.eventNames()).toHaveLength(0);
+});
+
+nativeTest('waits for native input readiness before declaring a capture ready', async () => {
+  vi.useFakeTimers();
+  mock.helperAutoReady = false;
+  const send = vi.fn();
+  const pending = createRemoteDesktopAdapter().start({ send, onEnded: vi.fn() });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' }));
+  const child = mock.spawn.mock.results[0].value;
+  child.stdout.emit('data', Buffer.from('ready\n'));
+  const desktop = await pending;
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' }));
+  await desktop.handle({ type: 'key', key: 'Enter' });
+  expect(child.stdin.write).toHaveBeenCalled();
+  desktop.close();
 });
 nativeTest('only the owned capture frame can publish media; stop closes all resources and releases input', async () => {
   const send = vi.fn(() => true), ended = vi.fn();
@@ -145,7 +246,7 @@ nativeTest('only the owned capture frame can publish media; stop closes all reso
   const capture = mock.windows.at(-1);
   expect(capture.options.webPreferences).toMatchObject({ nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false });
   expect(mock.spawn.mock.calls[0][1]).toEqual(['123']);
-  const child = mock.spawn.mock.results[0].value; child.stdout.emit('data', Buffer.from('ready\n'));
+  const child = mock.spawn.mock.results[0].value;
   const owned = { sender: capture.webContents, senderFrame: capture.webContents.mainFrame };
   const untrusted = { sender: new EventEmitter(), senderFrame: {} };
   send.mockClear();

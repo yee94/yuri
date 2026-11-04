@@ -43,7 +43,7 @@ Every ordinary setting uses one of these structures:
   as a section heading.
 - `SettingsToggleRow` is the required Boolean pattern. It owns the label/value
   layout plus pointer and keyboard activation without double toggling the
-  nested checkbox.
+  nested segmented switch.
 - Rows must be direct children of the grouped card. A semantic `radiogroup`
   wrapper may contain standard rows when required for accessibility.
 - Pages and nested collections use `yuri-settings-page-content` or
@@ -119,11 +119,53 @@ not change the spacing before or after their group.
 - A long or wrapping description is smaller muted copy below the card.
 - Stable values occupy the right column and align to the right.
 - Select, Input, NumberInput, and custom `yuri-settings-inline-value` triggers
-  reserve a transparent border at rest. Hover, popup-open, and focus reveal the
-  border without changing geometry.
+  use the surface's border default. Hover, popup-open, and focus use a solid
+  `--interactive-hover` background without adding a focus-specific border,
+  outline, ring/shadow, or numeric stepper divider. Focus is communicated through
+  fill for both mouse and keyboard. Transparent border space preserves geometry.
+  The background persists after hover ends, including focus within compound
+  controls. This material is workspace-scoped, not SettingsRow-scoped: search,
+  model filtering, project pickers, and portaled Settings dialogs use it too.
+  Sidebar collection controls are the explicit exception: `yuri-settings-sidebar`
+  sets `--yuri-settings-control-border` to `--form-surface-border` for search,
+  filter, and project/context pickers on both desktop and mobile. Standalone
+  project pickers use `yuri-settings-sidebar-picker` for the same token. Their
+  faint edge stays unchanged in every state; hover/open/focus changes only the
+  background, never restoring a focus ring/outline. Detail-form inputs keep the
+  transparent border token.
+  `Input` callers may explicitly pass `bordered` or `bordered={false}` to override
+  that inherited default. An enabled border uses the same faint
+  `--form-surface-border` in every state, not a focus ring. The provider and
+   custom-provider model filters opt in; filled ordinary detail fields remain unchanged.
+  Without an explicit option, empty text inputs show the same faint border using
+  `:placeholder-shown`, not `:empty` or the initial HTML `value` attribute. Typing
+  restores the surface default; clearing restores the border even during focus.
+  Explicit `bordered={false}` stays borderless when empty, and `bordered` stays
+  bordered when filled. No additional focus outline/ring or layout shift is added.
+  Disabled fields retain their inactive material; validation remains visible via
+  a stable semantic error indicator instead of a neutral focus ring.
+- Multi-line `Textarea` editors use the same Settings background, interaction,
+  and radius tokens as compact controls. Hover and focus both add the interaction
+  background, but focus never adds a border, ring, outline, or shadow.
+  Textarea-only cards and rows have no outer padding; text and resize controls
+  keep their own content insets. Label/value rows keep their normal spacing.
+  Preserve left-aligned text, multiline height, scrolling, resize controls,
+  disabled state, and stable validation feedback independent of focus.
+  Summary's Commit Message and session-title prompts use this shared `Textarea`,
+  not CodeMirror: they are plain multiline text with wrapping and a resize handle,
+  without line-number gutters or code-editor search chrome. Existing prompt
+  content and explicit-save behavior remain unchanged.
 - The desktop value column, including adjacent reset actions, is capped by
   `--yuri-settings-desktop-value-max-width`. Mobile uses the same semantic row
   and keeps compact controls beside their labels through the shared responsive grid.
+  Controls do not extend beyond that column with negative trailing margins.
+  Grouped forms may use `cardClassName="yuri-settings-equal-controls"` to keep
+  related input/select/adorned-input edges equal on narrow cards too, instead of
+  allowing each row to size its value from content. `SettingsRow.footer` places
+  supporting content below both columns and spans their full available width,
+  retaining the row insets without widening or stacking the input itself.
+  Inner actions reserve text space and fit the control's fixed
+  height; focus is communicated by the field fill rather than another ring.
 - Complex collections and editors that cannot fit in a compact value column
   add `yuri-settings-split-row-stacked` to `SettingsRow`. On narrow/mobile
   surfaces the label occupies the first line and the complete control receives
@@ -132,9 +174,17 @@ not change the spacing before or after their group.
 
 ## Controls
 
-- Boolean row: shared `SettingsToggleRow`, with its checkbox in the
-  right-aligned value column. Use a bare shared `Checkbox` only when it is the
-  right-column control of a true label/value `SettingsRow`.
+- Boolean row: shared `SettingsToggleRow`, with its `SettingsSwitch` in the
+  right-aligned value column. Use a bare shared `SettingsSwitch` only when it is the
+  right-column control of a true label/value `SettingsRow`, or when one control
+  enables an entire section — then it belongs in the `SettingsGroup` `actions`
+  slot so the toggle sits on the section title row.
+- `SettingsSwitch` presents localized Off / On segments, in that order, with
+  equal widths. It reuses a 5% foreground tint over `surface.muted` and `yuri-segmented-selected-pill` for
+  a quiet track and raised selection in both themes. Base UI RadioGroup owns
+  keyboard navigation and the single tab stop; choosing the current value is
+  a no-op. Its events stay inside the group so legacy clickable rows cannot
+  perform a second write. Mobile retains the shared Button touch minimum.
 - Mutually exclusive list: shared `Radio` rows.
 - Short option set: shared `Button variant="chip" size="xs"` with
   `aria-pressed`.
@@ -142,10 +192,22 @@ not change the spacing before or after their group.
 - Text/path value: shared `Input`.
 - Icon action: shared `Button size="icon"` plus sprite `Icon`.
 
-Entity creation, credential entry, source editors, template editors, and
-search fields may keep visibly bordered inputs because editing is their primary
-task. Their surrounding section label, group spacing, typography, and helper
-placement still follow this specification.
+Entity creation, credential entry, search fields, and multi-line source/template
+editors using `Textarea` follow the same borderless Settings control recipe.
+Credential fields may keep full-width, left-aligned geometry, but must not add a
+separate border, focus outline/ring, or resting input plate.
+Their surrounding section label, group spacing, typography, and helper placement
+still follow this specification.
+
+`SettingsJsonEditor` is shared by Global Configuration, plugin options, and the
+add-plugin dialog. It enables native CodeMirror fold gutters for JSON/JSONC
+objects and arrays. Folding only changes the view, never the
+configuration text or dirty state; fold controls are localized and placeholders
+use the active theme's surface, foreground, and border colors.
+
+Global Configuration places its editor flush against the grouped card's sides
+and bottom, without card padding or a gap below the compact file/reload toolbar.
+The toolbar uses `py-1`; there is no description below the card.
 
 The Plugins source editor follows its approved compact entity mockup with shared input/card tokens,
 13px truncated package titles with 10px monospace version subtitles, and one
@@ -159,8 +221,11 @@ collection row. There is no second GUI inventory card or row action menu.
 Plugin detail header actions are ordered delete icon, reload, save. Delete
 replaces discard and opens a confirmation naming the selected config entry or
 local file; failure retains the editor and confirmation for retry.
-Plugin options (JSON) use the shared `Textarea`, not CodeMirror; object-only JSON
-validation and update/reload disabled states still apply.
+Plugin options (JSON) use `SettingsJsonEditor`, including when adding npm/path
+plugins. Object-only JSON validation, empty-as-default semantics, and
+update/reload/submission disabled states still apply. Accessible labels,
+validation state, and placeholders belong to the editable content element.
+Plugin source files remain on their existing separate editing surface.
 
 ## Responsive and platform rules
 
@@ -228,8 +293,8 @@ Do not introduce these inside a Settings detail page:
 - local `mb-8`, `space-y-6`, `space-y-8`, or `px-2 pb-2 pt-0` section recipes;
 - page-specific card borders, radii, shadows, input widths, or row dividers;
 - separate desktop/mobile copies of the same form row;
-- a permanently outlined stable value when an inline Settings value is
-  sufficient;
+- resting or hover borders and permanently filled input plates for ordinary
+  inline Settings values instead of the shared interaction-only solid background;
 - helper text inheriting the field-label font size.
 
 ## Review checklist
@@ -241,7 +306,7 @@ Do not introduce these inside a Settings detail page:
 4. Long descriptions live outside the card.
 5. Sibling cards use only the shared stack gap.
 6. Rows have one consistent border/divider treatment.
-7. Values are right-aligned and reveal borders without layout shift.
+7. Values are right-aligned and borderless, with solid interaction backgrounds and no layout shift.
 8. Search registry entries and `data-settings-item` anchors still agree.
 9. Desktop and mobile use the same component tree.
 10. Split pages traverse collection and editor as separate mobile levels, with

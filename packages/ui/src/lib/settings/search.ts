@@ -69,7 +69,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'global-config',
     titleKey: 'settings.globalConfig.title',
     descriptionKey: 'settings.globalConfig.description',
-    keywords: ['opencode.json', 'opencode.jsonc', 'oh-my-opencode-slim', 'oh-my-openagent', 'json', 'jsonc'],
+    keywords: ['opencode.json', 'opencode.jsonc', 'json', 'jsonc'],
   },
   {
     id: 'appearance.language',
@@ -420,7 +420,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'summary-ai',
     titleKey: 'settings.yuri.defaults.summary.title',
     descriptionKey: 'settings.yuri.defaults.summary.description',
-    keywords: ['summary', 'commit', 'session title', 'prompt', 'provider', 'custom api', 'base url', 'api token'],
+    keywords: ['summary', 'commit', 'session title', 'prompt', 'provider', 'model'],
   },
   {
     id: 'summary-ai.test-connection',
@@ -788,7 +788,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     id: 'providers.connect',
     page: 'providers',
     titleKey: 'settings.providers.page.connect.title',
-    keywords: ['add provider', 'connect provider', 'credentials'],
+    keywords: ['add provider', 'connect provider', 'credentials', 'custom', 'protocol', 'base url', 'openai', 'anthropic', 'gemini', 'sync models', 'add all models', '自定义', '协议', '同步模型', '添加全部模型'],
   },
   {
     id: 'providers.auth',

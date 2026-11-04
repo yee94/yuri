@@ -64,16 +64,16 @@ function useRightSidebarGitSync(
 
 export const RightSidebarToolbar: React.FC<{
   railVisible?: boolean;
-  onSelect?: () => void;
-}> = ({ railVisible, onSelect }) => {
+}> = ({ railVisible }) => {
   const { t } = useI18n();
   const isOpen = useUIStore((state) => state.isRightSidebarOpen);
-  const activeTab = useUIStore((state) => state.rightSidebarTab);
+  const preferredTab = useUIStore((state) => state.rightSidebarTab);
   const setOpen = useUIStore((state) => state.setRightSidebarOpen);
   const setTab = useUIStore((state) => state.setRightSidebarTab);
   const mainTab = useUIStore((state) => state.activeMainTab);
   const browserCatalog = useBrowserProviderCatalogQuery();
   const tabs = visibleRightSidebarTabs({ hideGit: mainTab === 'git', showBrowser: shouldShowBrowserProviderRail(browserCatalog.data) });
+  const activeTab = tabs.includes(preferredTab) ? preferredTab : tabs[0] ?? 'files';
   return (
     <div role="group" aria-label={t('header.actions.toggleRightSidebarAria')} className="inline-flex items-center overflow-hidden rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-muted)]/50 divide-x divide-[var(--interactive-border)]">
       {tabs.map((tab) => {
@@ -82,7 +82,7 @@ export const RightSidebarToolbar: React.FC<{
         return <Button key={tab} type="button" variant="ghost" size="icon"
           className={cn('size-7 !rounded-none focus-visible:z-10 focus-visible:ring-inset', selected && 'bg-interactive-selection text-interactive-selection-foreground')}
           aria-pressed={selected} aria-label={label} title={label}
-          onClick={() => { onSelect?.(); setTab(tab); setOpen(!selected); }}>
+          onClick={() => { setTab(tab); setOpen(!selected); }}>
           <Icon name={tab === 'git' ? 'git-branch' : tab === 'files' ? 'list-unordered' : 'global'} className="size-4" />
         </Button>;
       })}
@@ -90,17 +90,13 @@ export const RightSidebarToolbar: React.FC<{
   );
 };
 
-export const RightSidebarTabs: React.FC = () => {
-  const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
-  const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
-  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
+export const RightSidebarTabs: React.FC<{ isActive: boolean }> = ({ isActive }) => {
+  const preferredTab = useUIStore((state) => state.rightSidebarTab);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const directory = useEffectiveDirectory();
   const browserCatalog = useBrowserProviderCatalogQuery();
   const selectedProvider = browserCatalog.data?.providers.find((provider) => provider.id === browserCatalog.data?.selectedId) ?? null;
   const showBrowser = shouldShowBrowserProviderRail(browserCatalog.data);
-
-  useRightSidebarGitSync(directory, isRightSidebarOpen, rightSidebarTab, activeMainTab);
 
   // When the main view already hosts a right-tab equivalent (e.g. main tab
   // 'git' renders GitView in the secondary slot), the right sidebar's
@@ -112,16 +108,11 @@ export const RightSidebarTabs: React.FC = () => {
     [hideGit, showBrowser],
   );
 
-  // Persisted right sidebar tab can be stale across main-tab switches (e.g.
-  // user opened main 'git' while right tab was 'git'). Snap away from a tab
-  // that is not currently visible so an absent provider never looks connected.
-  React.useEffect(() => {
-    if (!visibleTabs.includes(rightSidebarTab)) {
-      setRightSidebarTab(visibleTabs[0] ?? 'files');
-    }
-  }, [rightSidebarTab, setRightSidebarTab, visibleTabs]);
+  // Resolve unavailable saved choices before rendering without overwriting the preference.
+  const rightSidebarTab = visibleTabs.includes(preferredTab) ? preferredTab : visibleTabs[0] ?? 'files';
+  useRightSidebarGitSync(directory, isActive, rightSidebarTab, activeMainTab);
 
-  const isRightGitTabActive = isRightSidebarOpen && rightSidebarTab === 'git' && !hideGit;
+  const isRightGitTabActive = isActive && rightSidebarTab === 'git' && !hideGit;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-transparent">

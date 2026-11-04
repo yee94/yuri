@@ -24,7 +24,9 @@ without fetching those preloaded versions again.
 
 New preferences use Cursor Dark (`cursor-dark`) and Carbonfox Light
 (`carbonfox-light`), following the system appearance. Explicit saved selections
-remain authoritative. The web host fills missing theme preferences with the same
+remain the base preferences. Enabled GUI theme plugins can temporarily override
+the matching variant without changing those preferences or adding Settings choices;
+disabling them restores the base theme. The web host fills missing theme preferences with the same
 defaults; Web, Mini Chat and mobile cold-start backdrops use Cursor's dark surface
 until persisted splash colors or the resolved runtime theme are available.
 
@@ -185,6 +187,13 @@ picker open for retry. The services menu ignores dismissal and tab changes while
 an action is pending. Host-switch mutations from the picker opt into inline
 progress, while the global overlay still covers the actual endpoint transition.
 
+Desktop startup restores each window's boot Host before consulting the global
+default. Relay-capable Hosts retain direct-first, identity/authenticated fallback;
+direct-only Hosts keep the shell-selected endpoint and adopt the stable saved
+`host:<id>` runtime key so an SSH forward's changed port does not lose UI context.
+Local windows do not reconnect another window's default remote Host. Web, VS Code
+and mobile do not participate in this native window-restore flow.
+
 All runtime owners must agree on `__YURI_*`, `yuri:*`, `/api/yuri`, `Yuri*` native
 plugins, `yuri-ui` / `yuri-asset` schemes and `yuri_url_token` / `yuri_preview_token`
 query parameters. Product CSS/custom properties/data attributes now use `yuri-*`;
@@ -245,8 +254,10 @@ ring and a subtle local-background fill (2% foreground, 4% on hover), not a dark
 elevated plate; filtering, clear-to-refocus, and existing file actions stay available.
 The existing Files/Git/Browser rail is inside that preview; its visibility no
 longer closes or resurrects preview tabs. Hidden rails unmount their
-consumers. A first standalone open defaults to Git (Files if the main Git view is
-already active); subsequent opens preserve the chosen view. The preview has one
+consumers. An open preview with no selected tab always reveals the rail, including
+restored empty panels and compact layouts. It preserves the last chosen view and
+defaults to Git (Files if the main Git view is already active). Git refresh follows
+actual rail visibility, including this empty-state fallback. The preview has one
 inset rounded border. File paths remain in tab hover titles rather than a separate
 path header; content begins directly below the toolbar (except actionable notices).
 The entire preview surface (toolbar and content) raises the theme background's
@@ -263,8 +274,11 @@ that background to keep the boundary visible; single-view mode omits the divider
 It starts directly
 beneath its toolbar, without a second tab strip or
 top spacer. Below 400 CSS pixels of content width, the preview uses a single view:
-the rail fills the content area, and confirmed file/tab navigation switches to the
-preview. Failed validation or a blocked unsaved-file guard keeps the rail visible.
+the rail fills the content area, and confirmed file/tab navigation synchronously
+switches the panel's transient `activeView` to preview in the same store action.
+Failed validation or a blocked unsaved-file guard keeps the rail visible. Opening,
+focus restoration and unavailable-tab fallback do not wait for React Effects;
+the initial empty layout and valid rail selection are derived on the first render.
 Its toolbar buttons reopen the rail; widening restores both panes without changing
 the saved rail selection/width or unmounting the file preview. Resize events only
 update React layout state when crossing the threshold.
@@ -273,10 +287,15 @@ In light mode, the header's selected tabs and Git/Files segments use a local
 aligned with the theme's tint. Dark selection and editor text-selection tokens
 are unchanged. Header hover/press use the same neutral tint at 6%/10%, so a
 selected segment never flashes the theme's unrelated accent tint on interaction.
-Desktop Git rails use compact Changes/Commit titles, a two-line textarea with a
-48px minimum that grows with content, and shared xs actions. The textarea matches
+Desktop Git rails use compact Changes/Commit titles, a single-line textarea with a
+38px default/minimum height and a draggable top border, and shared xs actions.
+Dragging up enlarges the field; dragging down shrinks it. The focusable border also
+supports Arrow Up/Down and Home to reset. Pointer moves update only the field's
+height, without React renders or repeated layout measurements.
+Manual height survives editing and clearing; overflowing text scrolls instead of
+automatically enlarging the field. The textarea matches
 the file-search field's inset edge, theme-derived fill and hover/focus feedback.
-Its transitions exclude geometry so clearing a long message restores the minimum height.
+Its transitions exclude geometry so manual resizing stays immediate.
 Only the commit section adds a small bottom inset (`pb-1`); the outer scroll surface
 adds none. Mobile keeps the existing title, 38px field and touch sizing;
 staging/index-mutation guards, generation, gitmoji and commit/push remain unchanged.

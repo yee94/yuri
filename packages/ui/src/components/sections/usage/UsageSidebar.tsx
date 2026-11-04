@@ -1,7 +1,7 @@
 import React from 'react';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
@@ -102,7 +102,7 @@ export const UsageSidebar: React.FC<UsageSidebarProps> = ({ onItemSelect, childr
         </SettingsRow>
 
         <SettingsRow label={t('settings.usage.sidebar.field.autoRefresh')}>
-          <Checkbox
+          <SettingsSwitch
             checked={usageAutoRefresh}
             onChange={handleUsageAutoRefreshChange}
             ariaLabel={t('settings.usage.sidebar.actions.toggleAutoRefreshAria')}

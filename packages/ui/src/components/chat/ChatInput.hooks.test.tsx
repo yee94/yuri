@@ -16,7 +16,9 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import * as mobileNavigation from '@/mobile/useMobileNavigationStore';
 import { createChatInputControllerWiring } from './chatInputSurfaceWiring';
 import type { ChatInputSurface } from './chatInputSurface';
-import { serializeComposerDocument } from '@/composer/document';
+import { materializeComposerDocument, serializeComposerDocument } from '@/composer/document';
+import { useComposerTextareaAutosize } from './useComposerTextareaAutosize';
+import { resolveComposerVisibleAgents } from './chatComposerCatalog';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { getLocalChatCommand, preservesComposerResources } from './localCommandClassifier';
 import { stripLeadingSlashCommandSlot } from './typedSlashChipPromotion';
@@ -350,6 +352,138 @@ it('keeps model-control Hooks asleep through 50 draft edits and delivers the lat
     expect(evaluations).toBe(initialEvaluations + 1);
     await act(async () => root.render(<Surface providers={updated} active={false} onChange={() => { received = 52; }} />));
     expect(evaluations).toBe(initialEvaluations + 2);
+});
+
+it('looks up only referenced session titles and reads a renamed title on the next restore', async () => {
+    const readTitle = vi.fn((id: number) => `Title ${id}`);
+    const sessions = new Map(Array.from({ length: 300 }, (_, id) => [`ses_${id}`, { get title() { return readTitle(id); } }]));
+    const catalog = vi.fn(() => sessions);
+    let titles!: Parameters<typeof materializeComposerDocument>[1];
+    const Surface = surface(`
+        ${declarations.get('sessionTitles')}
+        capture(sessionTitles);
+        return null;
+    `, { getAllSyncSessionMap: catalog, capture: (value: typeof titles) => { titles = value; } });
+    for (let i = 0; i < 50; i++) await act(async () => root.render(<Surface />));
+    expect(catalog).not.toHaveBeenCalled();
+    expect(readTitle).not.toHaveBeenCalled();
+    const restored = materializeComposerDocument({ text: '@session:ses_299', references: [] }, titles);
+    expect(restored.text).toContain('Title 299');
+    expect(readTitle).toHaveBeenCalledExactlyOnceWith(299);
+    sessions.set('ses_299', { title: 'Renamed' });
+    expect(materializeComposerDocument({ text: '@session:ses_299', references: [] }, titles).text).toContain('Renamed');
+});
+
+it('isolates mobile controls at their production JSX boundary and keeps event callbacks fresh', async () => {
+    const evaluations = { agent: 0, model: 0 };
+    const subscriptions = vi.fn();
+    const cleanups = vi.fn();
+    let agent!: { onCycleAgent: () => void; agents: unknown[] };
+    let model!: { onOpenModel: () => void; provider: unknown };
+    const MemoMobileAgentButton = React.memo((props: typeof agent) => {
+        evaluations.agent++;
+        agent = props;
+        React.useEffect(() => { subscriptions(); return cleanups; }, []);
+        return null;
+    });
+    const MemoMobileModelButton = React.memo((props: typeof model) => {
+        evaluations.model++;
+        model = props;
+        React.useEffect(() => { subscriptions(); return cleanups; }, []);
+        return null;
+    });
+    const providerRead = vi.fn();
+    const providers = Array.from({ length: 300 }, (_, id) => ({ get id() { providerRead(); return String(id); } }));
+    const agents = [{ name: 'build' }];
+    const open = vi.fn();
+    const Surface = surface<{ cycle: () => void; catalog: unknown[] }>(`
+        const primarySelectionAgents = props.catalog;
+        const secondaryAgents = undefined;
+        const handleCycleAgent = props.cycle;
+        ${declarations.get('agents')}
+        ${declarations.get('handleMobileCycleAgent')}
+        ${declarations.get('handleOpenModelPanel')}
+        ${declarations.get('mobileSelectedProvider')}
+        ${declarations.get('mobileComposerControls')}
+        return mobileComposerControls;
+    `, {
+        MemoMobileAgentButton, MemoMobileModelButton, resolveComposerVisibleAgents,
+        surface: { kind: 'primary', selection: { value: { providerID: '299', modelID: 'model', agent: 'build' } } },
+        providers, isMobile: true, mobileAgentControlsDisabled: false,
+        markComposerActionGesture: vi.fn(), handleOpenMobilePanel: open, handleOpenAgentPanel: vi.fn(),
+    });
+    let received = -1;
+    await act(async () => root.render(<Surface catalog={agents} cycle={() => { received = 0; }} />));
+    providerRead.mockClear();
+    for (let i = 1; i <= 50; i++) await act(async () => root.render(<Surface catalog={agents} cycle={() => { received = i; }} />));
+    expect(evaluations).toEqual({ agent: 1, model: 1 });
+    expect(subscriptions).toHaveBeenCalledTimes(2);
+    expect(cleanups).not.toHaveBeenCalled();
+    expect(providerRead).not.toHaveBeenCalled();
+    agent.onCycleAgent();
+    model.onOpenModel();
+    expect(received).toBe(50);
+    expect(open).toHaveBeenCalledWith('model');
+    const replacement = [...agents, { name: 'plan' }];
+    await act(async () => root.render(<Surface catalog={replacement} cycle={() => { received = 51; }} />));
+    expect(agent.agents).toBe(replacement);
+    expect(evaluations).toEqual({ agent: 2, model: 1 });
+    await act(async () => root.render(null));
+    expect(cleanups).toHaveBeenCalledTimes(2);
+});
+
+it('does no native bridge or label work on 50 unsupported-platform edits', async () => {
+    const bridge = vi.fn(() => null);
+    const label = vi.fn();
+    const Surface = surface<{ message: string }>(`
+        const { message } = props;
+        ${declarations.get('nativeIosComposerActive')}
+        ${declarations.get('nativeIosComposerBridge')}
+        return nativeIosComposerBridge;
+    `, { nativeComposerOwnedInput: false, NativeIosComposerBridge: bridge, getModelDisplayName: label });
+    for (let i = 0; i < 50; i++) await act(async () => root.render(<Surface message={'x'.repeat(i)} />));
+    expect(bridge).not.toHaveBeenCalled();
+    expect(label).not.toHaveBeenCalled();
+});
+
+it('measures once per browser edit through the production commit callback and autosize owner', async () => {
+    const textarea = document.createElement('textarea');
+    const heights: string[] = [];
+    Object.defineProperty(textarea, 'scrollHeight', { get: () => { heights.push(textarea.style.height); return 48; } });
+    const textareaRef = { current: textarea };
+    const frames: FrameRequestCallback[] = [];
+    let commit!: (text: string, start: number, end: number) => void;
+    const Surface = surface(`
+        const [message, setMessage] = React.useState('');
+        const documentRef = React.useRef({ text: '' });
+        const applyBrowserEdit = (text, start, end) => {
+            documentRef.current = { text };
+            setMessage(text);
+            return { start, end, requiresTextCorrection: false };
+        };
+        const getDocument = () => documentRef.current;
+        const { resize: adjustTextareaHeight } = useComposerTextareaAutosize({ inputRef: textareaRef, message, expanded: false, isMobile: false, dictationHeight: null });
+        ${declarations.get('commitBrowserTextChange')}
+        capture(commitBrowserTextChange);
+        return null;
+    `, {
+        textareaRef, useComposerTextareaAutosize, inputMode: 'normal', knownSlashNames: new Set(),
+        nativeCompositionActiveRef: { current: false }, updateAutocompleteState: vi.fn(),
+        requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
+        shouldApplyComposerDomCorrection: (correct: boolean) => correct,
+        capture: (value: typeof commit) => { commit = value; },
+    });
+    await act(async () => root.render(<Surface />));
+    heights.length = 0;
+    for (let i = 1; i <= 50; i++) {
+        await act(async () => commit('x'.repeat(i), i, i));
+        await act(async () => { for (const callback of frames.splice(0)) callback(0); });
+    }
+    expect(heights).toHaveLength(50);
+    expect(heights).not.toContain('auto');
+    heights.length = 0;
+    await act(async () => commit('x', 1, 1));
+    expect(heights).toEqual(['auto']);
 });
 
 it('does not flash an inbox chip for a direct send already painted in the transcript', async () => {

@@ -72,6 +72,9 @@ const projectCapabilities = (source) => {
   const capabilities = createDictionary();
   const flags = projectBooleanFields(source, ['temperature', 'reasoning', 'attachment', 'toolcall']);
   if (flags) Object.assign(capabilities, flags);
+  if (isRecord(source.reasoning) && typeof source.reasoning.supported === 'boolean') {
+    capabilities.reasoning = source.reasoning.supported;
+  }
   // v2 names tool support `tools`. Keep an explicit catalog `toolcall` flag when both exist.
   if (!Object.hasOwn(capabilities, 'toolcall') && typeof source.tools === 'boolean') {
     capabilities.toolcall = source.tools;
@@ -137,6 +140,17 @@ function projectModel(source) {
   if (Object.hasOwn(source, 'capabilities')) {
     const capabilities = projectCapabilities(source.capabilities);
     if (capabilities) model.capabilities = capabilities;
+  }
+  if (model.capabilities?.reasoning === undefined) {
+    const variants = Array.isArray(source.variants) ? source.variants : isRecord(source.variants) ? Object.values(source.variants) : [];
+    const supportsReasoning = variants.some((variant) => {
+      if (!isRecord(variant?.settings)) return false;
+      const settings = variant.settings;
+      return (typeof settings.reasoningEffort === 'string' && ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort))
+        || settings.thinking?.type === 'enabled' || settings.thinking?.type === 'adaptive'
+        || (typeof settings.thinkingConfig?.thinkingBudget === 'number' && settings.thinkingConfig.thinkingBudget > 0);
+    });
+    if (supportsReasoning) model.capabilities = { ...model.capabilities, reasoning: true };
   }
   if (Object.hasOwn(source, 'cost')) {
     const cost = projectCost(source.cost);

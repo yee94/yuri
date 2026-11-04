@@ -45,7 +45,7 @@ export const SettingsSidebarLayout: React.FC<SettingsSidebarLayoutProps> = ({
   return (
     <div
       className={cn(
-        'yuri-settings-page-content h-full overflow-y-auto p-3',
+        'yuri-settings-sidebar yuri-settings-page-content h-full overflow-y-auto p-3',
         bgClass,
         className
       )}

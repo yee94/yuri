@@ -4,6 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { getGlobalConfigDirectory, writeConfigText } from '../../web/server/lib/opencode/config-files.js';
+import { createCustomProvider } from '../../web/server/lib/opencode/custom-provider.js';
+import { updateProviderModel } from '../../web/server/lib/opencode/provider-model-config.js';
+import { discoverCustomProviderModels } from '../../web/server/lib/opencode/custom-provider-models.js';
+import { readProviderSources } from '../../web/server/lib/opencode/provider-sources.js';
 import {
   createAgent,
   createCommand,
@@ -82,8 +86,6 @@ const MAX_BEHAVIOR_PROMPT_SIZE = 1024 * 1024;
 const MAX_GLOBAL_CONFIG_SIZE = 2 * 1024 * 1024;
 const GLOBAL_CONFIG_FILES: Record<string, string[]> = {
   opencode: ['opencode.jsonc', 'opencode.json'],
-  'oh-my-opencode-slim': ['oh-my-opencode-slim.json', 'oh-my-opencode-slim.jsonc'],
-  'oh-my-openagent': ['oh-my-openagent.json', 'oh-my-openagent.jsonc'],
 };
 
 const resolveGlobalConfigPath = (target: unknown) => {
@@ -204,6 +206,40 @@ export async function handleConfigBridgeMessage(
   const { id, type, payload } = message;
 
   switch (type) {
+    case 'api:config/providers/sources:get': {
+      const { directory } = (payload || {}) as { directory?: string };
+      try {
+        return { id, type, success: true, data: await readProviderSources(directory || ctx?.manager?.getWorkingDirectory()) };
+      } catch {
+        return { id, type, success: false, error: 'Unable to read provider sources' };
+      }
+    }
+    case 'api:config/providers/model:update': {
+      const request = payload as { directory?: string } | undefined;
+      try {
+        return { id, type, success: true, data: updateProviderModel(payload, request?.directory || ctx?.manager?.getWorkingDirectory()) };
+      } catch {
+        return { id, type, success: false, error: 'Unable to save provider model' };
+      }
+    }
+    case 'api:config/providers/custom:models': {
+      try {
+        return { id, type, success: true, data: await discoverCustomProviderModels(payload) };
+      } catch {
+        return { id, type, success: false, error: 'Unable to discover provider models' };
+      }
+    }
+
+    case 'api:config/providers/custom:create': {
+      const request = payload as { directory?: string } | undefined;
+      try {
+        const data = await createCustomProvider(payload, request?.directory || ctx?.manager?.getWorkingDirectory());
+        return { id, type, success: true, data };
+      } catch {
+        return { id, type, success: false, error: 'Unable to create custom provider' };
+      }
+    }
+
     case 'api:config/global:list': {
       const targets = (await Promise.all(Object.keys(GLOBAL_CONFIG_FILES).map((target) => findGlobalConfigPath(target))))
         .filter((target): target is NonNullable<typeof target> => target !== null)
@@ -234,7 +270,7 @@ export async function handleConfigBridgeMessage(
       const validationError = validateGlobalConfigContent(request.content);
       if (validationError) return { id, type, success: false, error: validationError };
       writeConfigText(request.content, target.filePath);
-      return { id, type, success: true, data: { fileName: target.fileName, content: request.content, requiresManualRestart: request.target !== 'opencode', application: request.target === 'opencode' ? 'watch' : 'manual' } };
+      return { id, type, success: true, data: { fileName: target.fileName, content: request.content, requiresManualRestart: false, application: 'watch' } };
     }
 
     case 'api:config/opencode-resolution:get': {

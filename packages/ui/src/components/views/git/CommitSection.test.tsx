@@ -24,6 +24,19 @@ const render = async (overrides: Partial<typeof props> = {}) => {
   await act(async () => root.render(<CommitSection {...props} />));
 };
 const button = (label: string) => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+const resizeHandle = () => host.querySelector<HTMLDivElement>('[role="separator"]')!;
+const pointer = (handle: HTMLDivElement, type: string, clientY: number, pointerId = 1, button = 0) => {
+  handle.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId, clientY, button, isPrimary: true }));
+};
+const prepareResize = () => {
+  const handle = resizeHandle();
+  handle.setPointerCapture = vi.fn();
+  handle.hasPointerCapture = vi.fn(() => true);
+  handle.releasePointerCapture = vi.fn();
+  const input = host.querySelector('textarea')!;
+  const measure = vi.spyOn(input, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, 300, parseFloat(input.style.height)));
+  return { handle, input, measure };
+};
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -58,16 +71,22 @@ afterEach(async () => {
 });
 
 describe('compact Git sidebar commit section', () => {
-  test('uses a small title, two-line textarea and shared xs actions with a small bottom inset', async () => {
+  test('uses a small title, single-line resizable textarea and shared xs actions with a small bottom inset', async () => {
+    fixture.contentHeight = 300;
     await render();
     expect(host.querySelector('h3')?.classList.contains('text-xs')).toBe(true);
     const input = host.querySelector('textarea')!;
-    expect(input.getAttribute('rows')).toBe('2');
-    expect(input.style.height).toBe('48px');
-    expect(input.style.minHeight).toBe('48px');
+    expect(input.getAttribute('rows')).toBe('1');
+    expect(input.style.height).toBe('38px');
+    expect(input.style.minHeight).toBe('38px');
+    expect(input.style.maxHeight).toBe('');
+    expect(input.style.overflowY).toBe('auto');
+    expect(input.classList.contains('resize-none')).toBe(true);
+    expect(resizeHandle().classList.contains('top-0')).toBe(true);
+    expect(resizeHandle().getAttribute('aria-label')).toBe('textarea.resizeHandleAria');
     expect(input.classList.contains('text-xs')).toBe(true);
     expect(input.classList.contains('focus:ring-1')).toBe(true);
-    expect(input.parentElement?.classList.contains('pb-1')).toBe(true);
+    expect(input.parentElement?.parentElement?.classList.contains('pb-1')).toBe(true);
     expect(button('gitView.commit.commitAria').classList.contains('h-6')).toBe(true);
     expect(button('gitView.commit.generateAria').classList.contains('bg-interactive-hover')).toBe(false);
   });
@@ -92,7 +111,95 @@ describe('compact Git sidebar commit section', () => {
     expect(textarea.classList.contains('transition')).toBe(false);
   });
 
-  test('retains multiline growth and the same focused input when editing', async () => {
+  test('preserves a manually resized desktop height while editing, clearing and toggling actions', async () => {
+    await render();
+    const { handle, input } = prepareResize();
+    input.focus();
+    await act(async () => {
+      pointer(handle, 'pointerdown', 300);
+      pointer(handle, 'pointermove', 78);
+      pointer(handle, 'pointerup', 78);
+    });
+    fixture.contentHeight = 300;
+    await render({ commitMessage: 'subject\n\nbody' });
+    expect(host.querySelector('textarea')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.style.height).toBe('260px');
+    await render({ commitMessage: '', stagedCount: 1, commitAction: 'commit' });
+    expect(input.style.height).toBe('260px');
+    await render({ commitAction: null });
+    expect(input.style.height).toBe('260px');
+  });
+
+  test('drags the top border in both directions with one layout read and no React commits over 50 moves', async () => {
+    const commit = vi.fn();
+    await act(async () => root.render(<React.Profiler id="commit" onRender={commit}><CommitSection {...props} /></React.Profiler>));
+    const { handle, input, measure } = prepareResize();
+    commit.mockClear();
+    await act(async () => {
+      pointer(handle, 'pointerdown', 300);
+      for (let i = 1; i <= 50; i++) pointer(handle, 'pointermove', 300 - i * 2);
+    });
+    expect(input.style.height).toBe('138px');
+    expect(handle.getAttribute('aria-valuenow')).toBe('138');
+    expect(measure).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    await act(async () => {
+      pointer(handle, 'pointermove', 250);
+    });
+    expect(input.style.height).toBe('88px');
+    await act(async () => {
+      pointer(handle, 'pointermove', 400);
+      pointer(handle, 'pointerup', 400);
+      pointer(handle, 'pointermove', 0);
+    });
+    expect(input.style.height).toBe('38px');
+    expect(handle.setPointerCapture).toHaveBeenCalledWith(1);
+    expect(handle.releasePointerCapture).toHaveBeenCalledWith(1);
+  });
+
+  test.each(['pointercancel', 'lostpointercapture'])('ends resizing on %s and ignores other pointers and secondary buttons', async (endEvent) => {
+    await render();
+    const { handle, input, measure } = prepareResize();
+    await act(async () => {
+      pointer(handle, 'pointerdown', 300, 1, 2);
+      pointer(handle, 'pointermove', 200);
+    });
+    expect(measure).not.toHaveBeenCalled();
+    await act(async () => {
+      pointer(handle, 'pointerdown', 300);
+      pointer(handle, 'pointermove', 200, 2);
+    });
+    expect(input.style.height).toBe('38px');
+    await act(async () => {
+      pointer(handle, 'pointermove', 200);
+      pointer(handle, endEvent, 200);
+      pointer(handle, 'pointermove', 100);
+    });
+    expect(input.style.height).toBe('138px');
+  });
+
+  test('supports keyboard resizing and disables the border during a commit', async () => {
+    await render();
+    const { handle, input, measure } = prepareResize();
+    const key = (key: string) => handle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key }));
+    await act(async () => { key('ArrowUp'); });
+    expect(input.style.height).toBe('48px');
+    await act(async () => { key('ArrowDown'); });
+    expect(input.style.height).toBe('38px');
+    await act(async () => { key('ArrowUp'); key('ArrowUp'); key('Home'); });
+    expect(input.style.height).toBe('38px');
+    await render({ commitAction: 'commit' });
+    expect(handle.tabIndex).toBe(-1);
+    expect(handle.getAttribute('aria-disabled')).toBe('true');
+    await act(async () => { key('ArrowUp'); pointer(handle, 'pointerdown', 300); pointer(handle, 'pointermove', 100); });
+    expect(input.style.height).toBe('38px');
+    expect(measure).not.toHaveBeenCalled();
+  });
+
+  test('retains mobile multiline growth and the same focused input when editing', async () => {
+    fixture.mobile = true;
+    props.compact = false;
     await render();
     const input = host.querySelector('textarea')!;
     input.focus();
@@ -107,7 +214,7 @@ describe('compact Git sidebar commit section', () => {
     expect(input.style.overflowY).toBe('auto');
     fixture.contentHeight = 0;
     await render({ commitMessage: '' });
-    expect(input.style.height).toBe('48px');
+    expect(input.style.height).toBe('38px');
     expect(input.style.overflowY).toBe('hidden');
   });
 
@@ -140,6 +247,8 @@ describe('compact Git sidebar commit section', () => {
     await render({ compact: false });
     expect(host.querySelector('h3')?.classList.contains('typography-ui-header')).toBe(true);
     expect(host.querySelector('textarea')!.style.height).toBe('38px');
+    expect(host.querySelector('textarea')!.classList.contains('resize-none')).toBe(true);
+    expect(resizeHandle()).toBeNull();
     expect(button('gitView.commit.commitAria').classList.contains('h-8')).toBe(true);
     expect(host.querySelector('textarea')!.parentElement?.classList.contains('pb-3')).toBe(true);
   });

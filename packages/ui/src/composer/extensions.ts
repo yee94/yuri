@@ -38,7 +38,7 @@ export const COMPOSER_REFERENCE_LIMITS = {
 
 export interface ComposerReferenceMaterializationContext {
     text: string;
-    sessionTitles: ReadonlyMap<string, string>;
+    sessionTitles: Pick<ReadonlyMap<string, string>, 'get'>;
 }
 
 export interface ComposerCanonicalCodec<K extends ComposerReferenceKind = ComposerReferenceKind> {

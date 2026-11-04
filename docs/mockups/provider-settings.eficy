@@ -1,0 +1,416 @@
+import { signal, computed, component, batch } from 'eficy';
+import { Button, Input, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.js';
+import 'https://cdn.jsdelivr.net/npm/@eficy/shadcn-ui@1.1.3/dist/index.css';
+import { Search, Plus, Minus, ChevronRight, ChevronLeft, ChevronDown, ArrowUpRight, Check, X, Eye, EyeOff, KeyRound, Globe, Layers, Folder, FileCode2, ShieldCheck, SlidersHorizontal, RefreshCw, Monitor, Smartphone, Sun, Moon, Wrench, Image, Brain, CircleAlert, Settings2, Code2, CircleHelp } from 'https://esm.sh/lucide-react@0.468.0?external=react';
+
+// Standalone interaction prototype. No host requests, real credentials, or storage.
+// Token snapshots: cursor-dark.json, carbonfox-light.json, settings.css,
+// design-system.css. Product integration must reuse Yuri's shared primitives.
+type Model = { id: string; name: string; context: number; output: number; tools: boolean; vision: boolean; reasoning?: boolean };
+type Service = { id: string; name: string; logo?: string; scope: '用户' | '项目'; custom: boolean; method: string; models: Model[]; configured: boolean; baseURL?: string; protocol?: number };
+const protocols = [
+  { name: 'OpenAI Chat Completions', short: 'Chat Completions', package: '@opencode/ai/providers/openai-compatible', version: 'v1', route: '/chat/completions' },
+  { name: 'OpenAI Responses', short: 'Responses', package: '@opencode/ai/providers/openai-compatible/responses', version: 'v1', route: '/responses' },
+  { name: 'Anthropic Messages', short: 'Messages', package: '@opencode/ai/providers/anthropic-compatible', version: 'v1', route: '/messages' },
+  { name: 'Google Gemini', short: 'Gemini', package: '@opencode/ai/providers/google', version: 'v1beta', route: '/models/{model}:streamGenerateContent?alt=sse' },
+];
+const examples: Model[] = [
+  { id: 'gpt-4.1', name: 'GPT-4.1', context: 1047576, output: 32768, tools: true, vision: true },
+  { id: 'o3', name: 'o3', context: 200000, output: 100000, tools: true, vision: true, reasoning: true },
+  { id: 'gpt-4.1-mini', name: 'GPT-4.1 mini', context: 1047576, output: 32768, tools: true, vision: true },
+  { id: 'gpt-4.1-nano', name: 'GPT-4.1 nano', context: 1047576, output: 32768, tools: true, vision: true },
+  { id: 'o4-mini', name: 'o4-mini', context: 200000, output: 100000, tools: true, vision: true, reasoning: true },
+];
+const services = signal<Service[]>([
+  { id: 'openai', name: 'OpenAI', logo: 'openai', scope: '用户', custom: false, method: 'API Key', configured: true, models: examples.slice(0, 3) },
+  { id: 'anthropic', name: 'Anthropic', logo: 'anthropic', scope: '用户', custom: false, method: '账号授权', configured: true, models: [
+    { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', context: 200000, output: 64000, tools: true, vision: true, reasoning: true },
+    { id: 'claude-opus-4', name: 'Claude Opus 4', context: 200000, output: 32000, tools: true, vision: true, reasoning: true },
+  ] },
+  { id: 'google', name: 'Google', logo: 'google', scope: '用户', custom: false, method: 'API Key', configured: false, models: [
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', context: 1048576, output: 65536, tools: true, vision: true, reasoning: true },
+  ] },
+  { id: 'team-gateway', name: '团队网关', scope: '项目', custom: true, method: 'API Key', configured: true, baseURL: 'https://gateway.example.com/v1', protocol: 0, models: [examples[0], examples[1]] },
+  { id: 'local-models', name: '本地模型', scope: '用户', custom: true, method: '无认证', configured: true, baseURL: 'http://localhost:11434/v1', protocol: 0, models: [{ id: 'local-model', name: '本地对话模型', context: 32768, output: 8192, tools: true, vision: false }] },
+]);
+const modelCatalogs: Record<string, Model[]> = { ...Object.fromEntries(services.value.map(service => [service.id, service.models.map(model => ({ ...model }))])), openai: examples };
+const selected = signal('openai');
+const screen = signal<'detail' | 'add' | 'custom' | 'authorize'>('detail');
+const theme = signal<'dark' | 'light'>('dark');
+const phone = signal(false);
+const mobileStage = signal<'collection' | 'editor'>('editor');
+const providerSearch = signal('');
+const modelSearch = signal('');
+const modelFilter = signal('全部');
+const modelDialog = signal<'manual' | null>(null);
+const dialogOwner = signal('__draft__');
+const advancedModelSettings = signal(false);
+const lastRemoval = signal<{ owner: string; model: Model; index: number } | null>(null);
+const authOpen = signal(false);
+const keyDraft = signal('');
+const showKey = signal(false);
+const disconnectOpen = signal(false);
+const message = signal('');
+const showNotes = signal(false);
+const brokenLogos = signal<string[]>([]);
+const customId = signal('');
+const draftName = signal('我的模型服务');
+const draftURL = signal('https://api.example.com');
+const draftProtocol = signal(0);
+const draftModels = signal<Model[]>([]);
+const formError = signal('');
+const showURLHelp = signal(false);
+const showConfig = signal(false);
+const simulateDiscoveryFailure = signal(false);
+const discoveryState = signal<{ owner: string; phase: 'idle' | 'loading' | 'ready' | 'error'; models: Model[] }>({ owner: 'openai', phase: 'ready', models: examples });
+let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
+let discoveryRevision = 0;
+const editingModel = signal<Model | null>(null);
+const originalModelId = signal('');
+const modelError = signal('');
+const loginProvider = signal('anthropic');
+const loginMethod = signal<'oauth' | 'key'>('oauth');
+const loginState = signal<'idle' | 'waiting' | 'complete' | 'error'>('idle');
+const active = computed(() => services.value.find(service => service.id === selected.value));
+const filteredServices = computed(() => services.value.filter(service => `${service.name} ${service.id}`.toLowerCase().includes(providerSearch.value.toLowerCase())));
+const endpoint = computed(() => {
+  const protocol = protocols[draftProtocol.value];
+  const value = draftURL.value.trim();
+  if (!value || value.includes('\\')) return null;
+  let base = value.replace(/\/+$/, '');
+  const exact = base.endsWith('#');
+  if (exact) base = base.slice(0, -1).replace(/\/+$/, '');
+  try {
+    const url = new URL(base);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    const inferred = !exact && !/\/v\d+(?:alpha|beta)?(?:\/|$)/i.test(url.pathname);
+    if (exact && !protocol.route.includes('{model}') && base.endsWith(protocol.route)) base = base.slice(0, -protocol.route.length);
+    else if (inferred) base += `/${protocol.version}`;
+    return { base, inferred, route: protocol.route.replace('{model}', draftModels.value[0]?.id || '{model}') };
+  } catch { return null; }
+});
+const jsonPreview = computed(() => JSON.stringify({ providers: { [customId.value || 'custom-example']: {
+  name: draftName.value, package: protocols[draftProtocol.value].package,
+  settings: { baseURL: endpoint.value?.base || '' },
+  models: Object.fromEntries(draftModels.value.map(model => [model.id, {
+    name: model.name,
+    capabilities: { tools: model.tools, input: model.vision ? ['text', 'image'] : ['text'], output: ['text'] },
+    ...(model.context || model.output ? { limit: { ...(model.context ? { context: model.context } : {}), ...(model.output ? { output: model.output } : {}) } } : {}),
+  }])),
+} } }, null, 2));
+
+function selectService(id: string) {
+  cancelDiscovery();
+  batch(() => { selected.value = id; screen.value = 'detail'; mobileStage.value = 'editor'; authOpen.value = false; disconnectOpen.value = false; modelSearch.value = ''; modelFilter.value = '全部'; modelDialog.value = null; editingModel.value = null; lastRemoval.value = null; keyDraft.value = ''; message.value = ''; });
+  discoveryState.value = { owner: id, phase: 'ready', models: catalogFor(id) };
+}
+function addService() {
+  customService();
+}
+function customService(service?: Service) {
+  batch(() => {
+    customId.value = service?.id || ''; draftName.value = service?.name || '我的模型服务';
+    draftURL.value = service?.baseURL || 'https://api.example.com'; draftProtocol.value = service?.protocol || 0;
+    draftModels.value = service ? service.models.map(model => ({ ...model })) : [];
+    formError.value = ''; showConfig.value = false;
+    modelSearch.value = ''; modelFilter.value = '全部'; modelDialog.value = null; lastRemoval.value = null;
+    editingModel.value = null; keyDraft.value = ''; message.value = ''; screen.value = 'custom'; mobileStage.value = 'editor';
+  });
+  discoverModels('__draft__', 600, true);
+}
+function saveCustom() {
+  if (!draftName.value.trim()) { formError.value = '为这个服务起一个名称。'; return; }
+  if (!endpoint.value) { formError.value = '请输入有效的 HTTP 或 HTTPS 地址，不含用户名、查询参数或反斜杠。'; return; }
+  if (!draftModels.value.length) { formError.value = '至少添加一个模型，也可以手动填写模型 ID。'; return; }
+  if (editingModel.value) { formError.value = '请先确认或取消正在编辑的模型。'; return; }
+  const id = customId.value || `custom-demo-${services.value.length}`;
+  const previous = services.value.find(service => service.id === id);
+  const service: Service = { id, name: draftName.value.trim(), scope: previous?.scope || '用户', custom: true, method: keyDraft.value || previous?.method === 'API Key' ? 'API Key' : '无认证', configured: true, baseURL: endpoint.value.base, protocol: draftProtocol.value, models: draftModels.value.map(model => ({ ...model })) };
+  services.value = previous ? services.value.map(item => item.id === id ? service : item) : [...services.value, service];
+  modelCatalogs[id] = catalogFor('__draft__').map(model => ({ ...model }));
+  keyDraft.value = ''; selectService(id); message.value = '已模拟保存。真实配置和凭据未发生变化。';
+}
+function modelsFor(owner: string) {
+  return owner === '__draft__' ? draftModels.value : services.value.find(service => service.id === owner)?.models || [];
+}
+function updateModels(owner: string, models: Model[]) {
+  if (owner === '__draft__') draftModels.value = models;
+  else services.value = services.value.map(service => service.id === owner ? { ...service, models } : service);
+}
+function modelLogo(model: Model) {
+  return /claude/i.test(model.id) ? 'anthropic' : /gemini/i.test(model.id) ? 'google' : /^(gpt-|o\d)/i.test(model.id) ? 'openai' : undefined;
+}
+function catalogFor(owner: string) {
+  if (owner === '__draft__') return draftProtocol.value === 2 ? modelCatalogs.anthropic : draftProtocol.value === 3 ? modelCatalogs.google : examples;
+  return modelCatalogs[owner] || examples;
+}
+function cancelDiscovery() {
+  discoveryRevision += 1;
+  if (discoveryTimer !== undefined) clearTimeout(discoveryTimer);
+  discoveryTimer = undefined;
+}
+function discoverModels(owner: string, delay = 400, clear = false) {
+  cancelDiscovery();
+  if (owner === '__draft__' && !endpoint.value) {
+    discoveryState.value = { owner, phase: 'idle', models: [] };
+    return;
+  }
+  const revision = discoveryRevision;
+  const previous = !clear && discoveryState.value.owner === owner ? discoveryState.value.models : [];
+  discoveryState.value = { owner, phase: 'loading', models: previous };
+  discoveryTimer = setTimeout(() => {
+    if (revision !== discoveryRevision || (owner === '__draft__' ? screen.value !== 'custom' : screen.value !== 'detail' || selected.value !== owner)) return;
+    discoveryTimer = undefined;
+    discoveryState.value = simulateDiscoveryFailure.value ? { owner, phase: 'error', models: previous } : { owner, phase: 'ready', models: catalogFor(owner).map(model => ({ ...model })) };
+  }, delay);
+}
+function discoveredModels(owner: string) {
+  return discoveryState.value.owner === owner ? discoveryState.value.models : [];
+}
+function addAllModels(owner: string) {
+  if (discoveryState.value.owner !== owner || discoveryState.value.phase !== 'ready') return;
+  const current = modelsFor(owner);
+  const ids = new Set(current.map(model => model.id));
+  const additions = discoveredModels(owner).filter(model => {
+    if (ids.has(model.id)) return false;
+    ids.add(model.id);
+    return true;
+  });
+  if (!additions.length) return;
+  updateModels(owner, [...current, ...additions.map(model => ({ ...model }))]);
+  if (lastRemoval.value?.owner === owner && ids.has(lastRemoval.value.model.id)) lastRemoval.value = null;
+}
+function addModel(owner: string, model: Model) {
+  if (modelsFor(owner).some(item => item.id === model.id)) return;
+  updateModels(owner, [...modelsFor(owner), { ...model }]);
+  if (lastRemoval.value?.owner === owner && lastRemoval.value.model.id === model.id) lastRemoval.value = null;
+}
+function removeModel(owner: string, model: Model) {
+  const current = modelsFor(owner);
+  const index = current.findIndex(item => item.id === model.id);
+  if (index < 0) return;
+  updateModels(owner, current.filter(item => item.id !== model.id));
+  lastRemoval.value = { owner, model: { ...model }, index };
+}
+function undoRemoval() {
+  const removal = lastRemoval.value;
+  if (!removal) return;
+  const models = [...modelsFor(removal.owner)];
+  if (!models.some(model => model.id === removal.model.id)) {
+    models.splice(Math.min(removal.index, models.length), 0, removal.model);
+    updateModels(removal.owner, models);
+  }
+  lastRemoval.value = null;
+}
+function editModel(owner: string, model?: Model) {
+  batch(() => {
+    dialogOwner.value = owner; editingModel.value = model ? { ...model } : { id: '', name: '', context: 0, output: 0, tools: true, vision: false };
+    originalModelId.value = model?.id || ''; modelError.value = ''; advancedModelSettings.value = false; modelDialog.value = 'manual';
+  });
+}
+function syncModels(owner: string) {
+  discoverModels(owner);
+}
+function closeModelDialog() {
+  batch(() => { modelDialog.value = null; editingModel.value = null; modelError.value = ''; });
+}
+function saveModel() {
+  const model = editingModel.value;
+  if (!model || !model.id.trim() || /[\s#]/.test(model.id)) { modelError.value = '模型 ID 不能为空，且不能包含空格或 #。'; return; }
+  const current = modelsFor(dialogOwner.value);
+  if (current.some(item => item.id === model.id.trim() && item.id !== originalModelId.value)) { modelError.value = '这个模型 ID 已经在列表中。'; return; }
+  if (!Number.isInteger(model.context) || !Number.isInteger(model.output) || model.context < 0 || model.output < 0 || (model.context > 0 && model.output > model.context)) { modelError.value = 'Token 上限须为正整数或留空，最大输出不能超过上下文。'; return; }
+  const next = { ...model, id: model.id.trim(), name: model.name.trim() || model.id.trim() };
+  updateModels(dialogOwner.value, originalModelId.value ? current.map(item => item.id === originalModelId.value ? next : item) : [...current, next]);
+  closeModelDialog();
+}
+function startLogin(id: string) {
+  cancelDiscovery();
+  batch(() => { loginProvider.value = id; loginMethod.value = ['anthropic', 'opencode'].includes(id) ? 'oauth' : 'key'; loginState.value = 'idle'; keyDraft.value = ''; screen.value = 'authorize'; mobileStage.value = 'editor'; message.value = ''; });
+}
+function finishLogin() {
+  const id = loginProvider.value;
+  const name = ({ openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', opencode: 'OpenCode' })[id] || id;
+  const method = loginMethod.value === 'oauth' ? '账号授权' : 'API Key';
+  services.value = services.value.some(service => service.id === id)
+    ? services.value.map(service => service.id === id ? { ...service, configured: true, method } : service)
+    : [...services.value, { id, name, logo: id, scope: '用户', custom: false, method, configured: true, models: examples.slice(0, 2) }];
+  keyDraft.value = ''; loginState.value = 'complete';
+}
+
+const Mark = component(({ id, large = false }: { id?: string; large?: boolean }) => <span className={`pv-mark ${large ? 'pv-mark-large' : ''}`}>
+  {id && !brokenLogos.value.includes(id) ? <img src={`https://models.dev/logos/${id}.svg`} alt="" onError={() => { brokenLogos.value = [...brokenLogos.value, id]; }} /> : <Layers size={large ? 23 : 17} strokeWidth={1.5} />}
+</span>);
+function Group({ title, action, description, children }) {
+  return <section className="pv-group"><div className="pv-group-heading"><h3>{title}</h3>{action}</div><div className="pv-card">{children}</div>{description && <p className="pv-helper pv-outside">{description}</p>}</section>;
+}
+function Row({ label, help, children, stacked = false }) {
+  return <div className={`pv-row ${stacked ? 'pv-stacked' : ''}`}><div className="pv-label">{label}{help && <p className="pv-helper">{help}</p>}</div><div className="pv-value">{children}</div></div>;
+}
+function SearchInput({ value, onChange, placeholder }) {
+  return <div className="pv-search"><Search size={15} /><Input aria-label={placeholder} placeholder={placeholder} value={value} onChange={onChange} /></div>;
+}
+function Capabilities({ model, full = false }) {
+  return <span className={`pv-capabilities ${full ? 'pv-capabilities-full' : ''}`}>
+    {model.tools && <span title="支持工具调用"><Wrench size={13} />{full && '工具调用'}</span>}
+    {model.vision && <span title="支持图片输入"><Image size={13} />{full && '图片输入'}</span>}
+    {model.reasoning && <span title="支持推理"><Brain size={13} />{full && '推理'}</span>}
+    {!model.tools && !model.vision && !model.reasoning && <span>文本</span>}
+  </span>;
+}
+
+const ModelManager = component(({ owner }: { owner: string }) => {
+  const models = modelsFor(owner);
+  const selectedIds = new Set(models.map(model => model.id));
+  const remaining = discoveredModels(owner).filter(model => !selectedIds.has(model.id));
+  const phase = discoveryState.value.owner === owner ? discoveryState.value.phase : 'idle';
+  const allRows = [...models, ...remaining];
+  const filtered = allRows.filter(model => `${model.name} ${model.id}`.toLowerCase().includes(modelSearch.value.toLowerCase())).filter(model => modelFilter.value === '全部' || (modelFilter.value === '工具调用' && model.tools) || (modelFilter.value === '图片输入' && model.vision) || (modelFilter.value === '推理' && model.reasoning));
+  const visible = filtered.slice(0, 100);
+  const removal = lastRemoval.value?.owner === owner ? lastRemoval.value : null;
+  return <section className="pv-managed-models">
+    <div className="pv-managed-heading"><h3>模型 <span className="pv-heading-counter">已添加 {models.length} 个</span></h3><div className="pv-model-toolbar-actions"><Button className="pv-button" size="sm" disabled={phase !== 'ready' || !remaining.length} title="添加完整同步结果，不受搜索或列表显示数量限制" onClick={() => addAllModels(owner)}>添加全部{remaining.length ? ` (${remaining.length})` : ''}</Button><div className="pv-joined-actions"><Button className="pv-button" size="sm" disabled={phase === 'loading' || (owner === '__draft__' && !endpoint.value)} aria-busy={phase === 'loading'} onClick={() => syncModels(owner)}><RefreshCw size={14} className={phase === 'loading' ? 'pv-discovery-spinner' : ''} />{phase === 'loading' ? '同步中' : '同步模型'}</Button><Button className="pv-button pv-add-model-button" size="sm" aria-label="手动添加模型" title="手动添加模型" onClick={() => editModel(owner)}><Plus size={17} /></Button></div></div></div>
+    <div className="pv-managed-toolbar"><SearchInput placeholder="搜索模型名称或 ID" value={modelSearch.value} onChange={event => { modelSearch.value = event.target.value; }} /><select aria-label="按模型能力筛选" value={modelFilter.value} onChange={event => { modelFilter.value = event.target.value; }}>{['全部', '工具调用', '图片输入', '推理'].map(filter => <option key={filter}>{filter}</option>)}</select></div>
+    {phase === 'error' && <p className="pv-model-discovery-error" role="alert"><CircleAlert size={14} />同步失败，已添加模型和上次结果均保留。</p>}
+    <div className="pv-card pv-flat-model-list">{visible.map(model => {
+      const added = selectedIds.has(model.id);
+      return <div className={`pv-managed-row ${added ? '' : 'pv-model-available'}`} key={model.id}><Mark id={modelLogo(model)} /><button type="button" className="pv-managed-name" title={`${model.name} (${model.id})`} disabled={!added && phase === 'loading'} onClick={() => { if (added) editModel(owner, model); else addModel(owner, model); }}>{model.name}</button><Capabilities model={model} /><div className="pv-model-actions">{added && <Button className="pv-icon" variant="ghost" size="icon" aria-label={`配置 ${model.name}`} title="模型设置" onClick={() => editModel(owner, model)}><Settings2 size={15} /></Button>}<Button className={`pv-icon ${added ? 'pv-minus-action' : 'pv-plus-action'}`} variant="ghost" size="icon" aria-label={`${added ? '移除' : '添加'} ${model.name}`} title={added ? '移除模型' : '添加模型'} disabled={!added && phase === 'loading'} onClick={() => { if (added) removeModel(owner, model); else addModel(owner, model); }}>{added ? <Minus size={17} /> : <Plus size={17} />}</Button></div></div>;
+    })}{!visible.length && <div className="pv-empty"><p>{phase === 'loading' ? '正在同步模型…' : modelSearch.value || modelFilter.value !== '全部' ? '没有符合条件的模型' : '暂无模型'}</p>{(modelSearch.value || modelFilter.value !== '全部') && <Button className="pv-quiet" variant="ghost" size="sm" onClick={() => { modelSearch.value = ''; modelFilter.value = '全部'; }}>清除筛选</Button>}</div>}</div>
+    {filtered.length > visible.length && <p className="pv-helper pv-list-limit">显示前 {visible.length} / {filtered.length} 个匹配模型</p>}
+    {removal && <div className="pv-model-undo" role="status"><span>已移除 {removal.model.name}</span><Button className="pv-quiet" variant="ghost" size="sm" onClick={undoRemoval}>撤销</Button></div>}
+  </section>;
+});
+
+const Collection = component(() => <aside className="pv-collection">
+  <div className="pv-collection-title"><h1>模型服务</h1><Button className="pv-icon" variant="ghost" size="icon" aria-label="添加模型服务" onClick={addService}><Plus size={17} /></Button></div>
+  <SearchInput placeholder="搜索服务" value={providerSearch.value} onChange={event => { providerSearch.value = event.target.value; }} />
+  <Button className="pv-add" variant="ghost" onClick={() => customService()}><span className="pv-add-symbol"><Plus size={16} /></span><span>自定义服务</span><ChevronRight size={14} /></Button>
+  {(['用户', '项目'] as const).map(scope => <div className="pv-collection-group" key={scope}><div className="pv-collection-label"><span>{scope === '用户' ? '用户配置' : '当前项目'}</span>{scope === '项目' && <Folder size={12} />}</div><div className="pv-service-list">{filteredServices.value.filter(service => service.scope === scope).map(service => <button key={service.id} type="button" className={`pv-service ${selected.value === service.id && screen.value === 'detail' ? 'is-selected' : ''}`} aria-current={selected.value === service.id && screen.value === 'detail' ? 'page' : undefined} onClick={() => selectService(service.id)}><Mark id={service.logo} /><span className="pv-service-name">{service.name}<span>{!service.configured ? '待连接' : service.custom ? protocols[service.protocol || 0].short : service.method}</span></span><span className="pv-count">{service.configured ? service.models.length : <CircleAlert size={13} className="pv-warning" />}</span></button>)}</div></div>)}
+  {!filteredServices.value.length && <p className="pv-empty">没有找到服务，试试其他名称。</p>}
+  <div className="pv-collection-footer"><Globe size={13} /><span>当前实例的配置</span><span>示例</span></div>
+</aside>);
+
+const Detail = component(() => {
+  const service = active.value;
+  if (!service) return <div className="pv-empty">选择或添加一个模型服务。</div>;
+  return <div className="pv-editor-inner">
+    <header className="pv-detail-header"><div className="pv-title-lockup"><Mark id={service.logo} large /><div><h2>{service.name}</h2><div className="pv-title-meta"><code>{service.id}</code><span className="pv-tag">{service.scope}配置</span></div></div></div>{service.custom && <Button className="pv-button" size="sm" onClick={() => customService(service)}><Settings2 size={14} />编辑配置</Button>}</header>
+    <Group title="连接" action={<span className={`pv-inline-status ${service.configured ? '' : 'pv-warning'}`}>{service.configured ? <Check size={12} /> : <CircleAlert size={12} />}{service.configured ? service.method === '无认证' ? '无需凭据' : '凭据已配置' : '尚未连接'}</span>}>
+      <Row label="认证方式"><span className="pv-inline">{service.method === '账号授权' ? <Globe size={14} /> : <KeyRound size={14} />}{service.method}<Button className="pv-quiet" variant="ghost" size="sm" onClick={() => { authOpen.value = !authOpen.value; keyDraft.value = ''; }}>{authOpen.value ? '收起' : service.configured ? '更新' : '连接'}<ChevronDown size={13} className={authOpen.value ? 'pv-rotate' : ''} /></Button></span></Row>
+      {authOpen.value && <div className="pv-auth-editor">{service.method === '账号授权' ? <><p className="pv-helper">重新授权不会删除模型配置。</p><Button className="pv-button" size="sm" onClick={() => startLogin(service.logo || 'anthropic')}>通过浏览器重新授权<ArrowUpRight size={14} /></Button></> : <><label htmlFor="update-key" className="pv-helper">新的 API Key · 仅演示，请勿输入真实密钥</label><div className="pv-inline"><Input id="update-key" type="password" autoComplete="off" placeholder="填写示例 Key" value={keyDraft.value} onChange={event => { keyDraft.value = event.target.value; }} /><Button className="pv-button" size="sm" disabled={!keyDraft.value.trim()} onClick={() => { services.value = services.value.map(item => item.id === service.id ? { ...item, configured: true, method: 'API Key' } : item); keyDraft.value = ''; authOpen.value = false; message.value = '已模拟更新凭据，没有发出网络请求。'; }}>保存凭据</Button></div></>}</div>}
+      {service.baseURL && <Row label="API 地址"><code className="pv-wrap">{service.baseURL}</code></Row>}
+      <Row label="配置来源"><span className="pv-inline pv-helper"><FileCode2 size={14} /><span>{service.scope === '项目' ? '项目配置' : service.custom ? '自定义配置' : '用户凭据'}</span><span className="pv-source-separator">/</span><span>{service.custom ? 'OpenCode 原生格式' : 'OpenCode 凭据管理'}</span></span></Row>
+    </Group>
+    <ModelManager owner={service.id} />
+    <div className="pv-detail-footer"><span className="pv-helper pv-inline"><ShieldCheck size={13} />凭据与服务配置分开管理</span><Button className="pv-danger-link" variant="ghost" size="sm" onClick={() => { disconnectOpen.value = !disconnectOpen.value; }}>断开连接</Button></div>
+    {disconnectOpen.value && <div className="pv-confirm"><div><p>断开 {service.name}？</p><span className="pv-helper">仅模拟移除凭据，保留服务与模型配置。</span></div><div className="pv-inline"><Button className="pv-quiet" variant="ghost" size="sm" onClick={() => { disconnectOpen.value = false; }}>取消</Button><Button className="pv-danger-button" size="sm" onClick={() => { services.value = services.value.map(item => item.id === service.id ? { ...item, configured: false } : item); disconnectOpen.value = false; message.value = '已模拟断开连接，模型配置仍然保留。'; }}>确认断开</Button></div></div>}
+  </div>;
+});
+
+const Add = component(() => <div className="pv-editor-inner">
+  <header className="pv-page-header"><h2>添加模型服务</h2></header>
+  <button className="pv-custom-choice" type="button" onClick={() => customService()}><span className="pv-choice-symbol"><SlidersHorizontal size={22} strokeWidth={1.5} /></span><span><strong>自定义服务</strong><p>中转网关、本地部署，或任意兼容 API</p><span className="pv-helper">OpenAI · Anthropic · Gemini</span></span><ChevronRight size={18} /></button>
+  <Group title="服务商"><div className="pv-provider-choices">{[
+    { id: 'openai', name: 'OpenAI', description: 'API Key' }, { id: 'anthropic', name: 'Anthropic', description: '账号授权 / API Key' },
+    { id: 'google', name: 'Google', description: 'API Key' }, { id: 'opencode', name: 'OpenCode', description: 'Console 账号授权' },
+  ].map(provider => <button className="pv-provider-choice" key={provider.id} type="button" onClick={() => startLogin(provider.id)}><Mark id={provider.id} /><span>{provider.name}<small>{provider.description}</small></span><ChevronRight size={14} /></button>)}</div></Group>
+</div>);
+
+const ModelDialog = component(() => {
+  const model = editingModel.value;
+  const patch = change => { if (editingModel.value) editingModel.value = { ...editingModel.value, ...change }; };
+  return <Dialog open={modelDialog.value !== null} onOpenChange={open => { if (!open) closeModelDialog(); }}>
+    <DialogContent className={`pv pv-model-dialog ${phone.value ? 'pv-phone-dialog' : ''}`} data-theme={theme.value}>
+      <DialogHeader className="pv-dialog-header"><DialogTitle>{originalModelId.value ? '编辑模型' : '添加模型'}</DialogTitle><DialogDescription className="pv-sr-only">模型名称、ID 与能力配置</DialogDescription></DialogHeader>
+      {model && <form className="pv-model-dialog-form" onSubmit={event => { event.preventDefault(); saveModel(); }}>
+        <div className="pv-card pv-model-basic-fields"><Row label={<label htmlFor="model-id">模型 ID <span className="pv-required">*</span></label>}><Input id="model-id" autoFocus value={model.id} placeholder="例如 gpt-4.1" onChange={event => patch({ id: event.target.value })} /></Row><Row label={<label htmlFor="model-name">模型名称</label>}><Input id="model-name" value={model.name} placeholder="默认使用模型 ID" onChange={event => patch({ name: event.target.value })} /></Row></div>
+        <button type="button" className="pv-more-settings" aria-expanded={advancedModelSettings.value} onClick={() => { advancedModelSettings.value = !advancedModelSettings.value; }}>更多设置<ChevronDown size={14} className={advancedModelSettings.value ? 'pv-rotate' : ''} /></button>
+        {advancedModelSettings.value && <div className="pv-card"><Row label={<label htmlFor="model-context">上下文上限</label>}><Input id="model-context" type="number" min="1" step="1" value={model.context || ''} placeholder="未指定" onChange={event => patch({ context: Number(event.target.value) })} /></Row><Row label={<label htmlFor="model-output">最大输出</label>}><Input id="model-output" type="number" min="1" step="1" max={model.context || undefined} value={model.output || ''} placeholder="未指定" onChange={event => patch({ output: Number(event.target.value) })} /></Row><Row label="输入与能力"><div className="pv-inline pv-capability-checkboxes"><label className="pv-checkbox"><input type="checkbox" checked={model.tools} onChange={event => patch({ tools: event.target.checked })} />工具调用</label><label className="pv-checkbox"><input type="checkbox" checked={model.vision} onChange={event => patch({ vision: event.target.checked })} />图片输入</label></div></Row></div>}
+        {modelError.value && <p className="pv-error" role="alert">{modelError.value}</p>}
+        <div className="pv-dialog-footer"><Button type="button" className="pv-button" size="sm" onClick={closeModelDialog}>取消</Button><Button type="submit" className="pv-button" size="sm">{originalModelId.value ? '保存更改' : '添加模型'}</Button></div>
+      </form>}
+    </DialogContent>
+  </Dialog>;
+});
+
+const Custom = component(() => <div className="pv-editor-inner">
+  {!customId.value && <Button className="pv-back-link pv-quiet" variant="ghost" size="sm" onClick={() => { cancelDiscovery(); keyDraft.value = ''; screen.value = 'add'; }}><ChevronLeft size={14} />其他服务商</Button>}
+  <header className="pv-page-header pv-action-header"><h2>{customId.value ? draftName.value || '自定义服务' : '自定义服务'}</h2><div className="pv-header-actions"><Button className="pv-button" size="sm" onClick={() => { cancelDiscovery(); if (customId.value) selectService(customId.value); else { keyDraft.value = ''; screen.value = 'add'; } }}>取消</Button><Button className="pv-button" size="sm" onClick={saveCustom}>{customId.value ? '保存更改' : '添加服务'}</Button></div></header>
+  {formError.value && <div className="pv-error-box" role="alert"><CircleAlert size={15} />{formError.value}</div>}
+  <Group title="连接配置">
+    <Row label={<label htmlFor="draft-name">服务名称</label>}><Input id="draft-name" value={draftName.value} onChange={event => { draftName.value = event.target.value; }} /></Row>
+    <Row label={<label htmlFor="draft-protocol">接口协议</label>}><select id="draft-protocol" value={draftProtocol.value} onChange={event => { draftProtocol.value = Number(event.target.value); discoverModels('__draft__', 600, true); }}>{protocols.map((protocol, index) => <option key={protocol.package} value={index}>{protocol.name}</option>)}</select></Row>
+    <div className="pv-row pv-address"><label htmlFor="draft-url">API 地址</label><Input id="draft-url" value={draftURL.value} placeholder="https://api.example.com" spellCheck={false} onChange={event => { draftURL.value = event.target.value; discoverModels('__draft__', 600, true); }} /><div className="pv-route-preview"><div><span className="pv-helper">实际请求地址</span><Button className="pv-quiet" variant="ghost" size="sm" aria-expanded={showURLHelp.value} onClick={() => { showURLHelp.value = !showURLHelp.value; }}><CircleHelp size={12} />补全规则</Button></div>{endpoint.value ? <code><span>POST</span> {endpoint.value.base}<b>{endpoint.value.route}</b></code> : <span className="pv-error">请输入有效的 API 地址。</span>}</div>{showURLHelp.value && <div className="pv-url-help"><p>缺少版本路径时自动补全 /v1，Gemini 使用 /v1beta。末尾 / 会被规范化。</p><p>以 # 结尾可关闭版本补全；完整接口地址以 # 结尾时，会提取基础地址。# 不写入配置。</p></div>}</div>
+    <Row label={<label htmlFor="draft-key">API Key</label>} help={customId.value ? '留空保留现有凭据' : '可选，本地服务可留空'} stacked><div className="pv-secret-input"><Input id="draft-key" autoComplete="off" type={showKey.value ? 'text' : 'password'} value={keyDraft.value} placeholder="仅演示，请勿输入真实密钥" onChange={event => { keyDraft.value = event.target.value; discoverModels('__draft__', 600, true); }} /><Button className="pv-icon" variant="ghost" size="icon" aria-label={showKey.value ? '隐藏示例密钥' : '显示示例密钥'} onClick={() => { showKey.value = !showKey.value; }}>{showKey.value ? <EyeOff size={15} /> : <Eye size={15} />}</Button></div></Row>
+  </Group>
+  <ModelManager owner="__draft__" />
+  <section className="pv-config-section"><button type="button" className="pv-config-trigger" aria-expanded={showConfig.value} onClick={() => { showConfig.value = !showConfig.value; }}><Code2 size={15} /><span>查看将写入的配置</span><span className="pv-helper">不包含密钥</span><ChevronDown size={14} className={showConfig.value ? 'pv-rotate' : ''} /></button>{showConfig.value && <pre className="pv-code">{jsonPreview.value}</pre>}</section>
+</div>);
+
+const Authorize = component(() => {
+  const id = loginProvider.value;
+  const name = ({ openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', opencode: 'OpenCode' })[id] || id;
+  const complete = loginState.value === 'complete';
+  const supportsOAuth = ['anthropic', 'opencode'].includes(id);
+  return <div className="pv-editor-inner">
+    <Button className="pv-back-link pv-quiet" variant="ghost" size="sm" onClick={() => { keyDraft.value = ''; loginState.value = 'idle'; screen.value = 'add'; }}><ChevronLeft size={14} />所有服务商</Button>
+    <header className="pv-detail-header"><div className="pv-title-lockup"><Mark id={id} large /><div><h2>连接 {name}</h2><p className="pv-helper">{complete ? '凭据已配置，可管理模型。' : '选择一种认证方式，连接后再管理模型。'}</p></div></div></header>
+    {!complete && supportsOAuth && <div className="pv-auth-options" aria-label="认证方式">{(['oauth', 'key'] as const).filter(method => id !== 'opencode' || method === 'oauth').map(method => <Button className="pv-chip" variant="ghost" key={method} aria-pressed={loginMethod.value === method} onClick={() => { loginMethod.value = method; loginState.value = 'idle'; keyDraft.value = ''; }}>{method === 'oauth' ? <Globe size={14} /> : <KeyRound size={14} />}{method === 'oauth' ? '账号授权' : 'API Key'}</Button>)}</div>}
+    <Group title={complete ? '连接结果' : loginMethod.value === 'oauth' ? '账号授权' : 'API Key'}>
+      {complete ? <div className="pv-auth-content"><span className="pv-success-icon"><Check size={23} /></span><h3>{name} 已连接</h3><p className="pv-helper">这是模拟结果，没有访问账号或保存真实凭据。</p><Button className="pv-button" onClick={() => selectService(id)}>管理模型<ChevronRight size={14} /></Button></div> : loginMethod.value === 'key' ? <div className="pv-auth-content pv-auth-left"><label htmlFor="login-key">API Key</label><Input id="login-key" type="password" autoComplete="off" value={keyDraft.value} placeholder="填写示例 Key，请勿输入真实密钥" onChange={event => { keyDraft.value = event.target.value; }} /><p className="pv-helper">真实实现中凭据由当前实例安全保存，不写入配置 JSON。</p><Button className="pv-button" disabled={!keyDraft.value.trim()} onClick={finishLogin}>模拟保存并连接</Button></div> : <div className="pv-auth-content"><Globe size={30} strokeWidth={1.25} className="pv-auth-globe" /><h3>{loginState.value === 'waiting' ? '等待浏览器完成授权' : loginState.value === 'error' ? '授权已过期' : `使用 ${name} 账号连接`}</h3><p className="pv-helper">{loginState.value === 'waiting' ? '完成后会自动返回连接结果，也可以取消本次授权。' : loginState.value === 'error' ? '没有更改原有连接。重新开始即可。' : '不需要复制 API Key，登录并允许访问即可。'}</p>{loginState.value === 'waiting' ? <><div className="pv-waiting"><span className="pv-pending-dot" />等待授权中<span className="pv-helper">原型演示</span></div><div className="pv-inline"><Button className="pv-quiet" variant="ghost" size="sm" onClick={() => { loginState.value = 'idle'; }}>取消授权</Button><Button className="pv-button" size="sm" onClick={finishLogin}>模拟授权完成</Button></div><Button className="pv-quiet pv-expire" variant="ghost" size="sm" onClick={() => { loginState.value = 'error'; }}>演示授权过期</Button></> : <Button className="pv-button" onClick={() => { loginState.value = 'waiting'; }}>模拟打开浏览器授权<ArrowUpRight size={14} /></Button>}</div>}
+    </Group>
+    <p className="pv-helper pv-inline"><ShieldCheck size={14} />原型不打开登录页，不读取或写入任何真实账号。</p>
+  </div>;
+});
+
+const Notes = component(() => showNotes.value ? <div className="pv-notes">
+  <div><strong>先把「连接」与「模型」分开</strong><p>凭据已配置不代表连通性已验证。只呈现已知状态，不用绿色对勾暗示网络健康。</p></div>
+  <div><strong>模型平铺，不按系列分组</strong><p>已添加项在前，能力标签、编辑齿轮、减号在右；待添加项用加号。不用对勾表示编辑，也不再提供显示/隐藏。</p></div>
+  <div><strong>添加全部使用完整同步结果</strong><p>不受搜索条件或 100 行展示上限限制，一次合并全部模型、按 ID 去重，并保留已编辑的名称与参数。编辑弹窗取消即丢弃本次修改。</p></div>
+  <div><strong>自定义入口可反复创建</strong><p>每次创建独立 Provider，列表和详情显示实际服务名称。同一协议、地址或名称也不互相覆盖。页面不另加项目选择器。</p></div>
+  <div><strong>输入地址，就能看到实际请求</strong><p>四种原生协议独立选择，版本补全和 # 规则可解释；配置预览永远不含密钥。</p></div>
+  <div><strong>沿用 Yuri 的视觉语法</strong><p>16px 分组圆角、52px 设置行、20px 组间距；主按钮中性实心，选中态与状态色各司其职。</p></div>
+  <p className="pv-note-caveat">已对照「Provider 自定义选项」对话补齐功能场景。数据、同步与授权均为模拟，不会发出配置或认证请求；Auth 视觉方向保留，图像生成等其他模型用途不在本次范围。</p>
+  <label className="pv-checkbox pv-helper"><input type="checkbox" checked={simulateDiscoveryFailure.value} onChange={event => { simulateDiscoveryFailure.value = event.target.checked; if (screen.value === 'custom') discoverModels('__draft__'); else if (screen.value === 'detail') discoverModels(selected.value); }} />演示同步失败</label>
+</div> : null);
+
+const App = component(() => <main className={`pv ${phone.value ? 'pv-phone' : ''}`} data-theme={theme.value}>
+  <style>{css}</style>
+  <div className="pv-review-bar"><div className="pv-review-title"><span className="pv-review-dot" /><span>Provider 设计预览</span><span className="pv-helper pv-demo-label">示例数据，不修改配置</span></div><div className="pv-review-controls"><Button className="pv-review-action" variant="ghost" size="sm" aria-pressed={showNotes.value} onClick={() => { showNotes.value = !showNotes.value; }}><CircleHelp size={14} /><span>设计说明</span></Button><span className="pv-toolbar-separator" /><Button className="pv-review-action" variant="ghost" size="icon" aria-label={theme.value === 'dark' ? '切换亮色' : '切换暗色'} onClick={() => { theme.value = theme.value === 'dark' ? 'light' : 'dark'; }}>{theme.value === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</Button><Button className="pv-review-action" variant="ghost" size="icon" aria-label={phone.value ? '切换桌面预览' : '切换手机预览'} aria-pressed={phone.value} onClick={() => { phone.value = !phone.value; }}>{phone.value ? <Monitor size={16} /> : <Smartphone size={16} />}</Button></div></div>
+  <div className="pv-scene-bar"><div className="pv-scene-tabs" aria-label="预览场景"><Button className="pv-scene" variant="ghost" size="sm" aria-pressed={screen.value === 'detail'} onClick={() => selectService(services.value[0].id)}>服务与模型</Button><Button className="pv-scene" variant="ghost" size="sm" aria-pressed={screen.value === 'custom' || screen.value === 'add'} onClick={() => customService()}>自定义接入</Button><Button className="pv-scene" variant="ghost" size="sm" aria-pressed={screen.value === 'authorize'} onClick={() => startLogin('anthropic')}>账号授权</Button></div><span className="pv-helper pv-theme-label">{theme.value === 'dark' ? 'Cursor Dark' : 'Carbonfox Light'} · Yuri tokens</span></div>
+  <Notes />
+  <div className="pv-frame" data-stage={mobileStage.value}><div className="pv-workspace-bar"><span className="pv-inline"><Settings2 size={14} />设置<ChevronRight size={12} /><span className="pv-workspace-current">模型服务</span></span><span>Provider</span></div><div className="pv-workspace"><Collection /><section className="pv-editor" aria-label="模型服务配置"><div className="pv-mobile-nav"><Button className="pv-quiet" variant="ghost" size="sm" onClick={() => { mobileStage.value = 'collection'; }}><ChevronLeft size={16} />模型服务</Button><span className="pv-helper">{screen.value === 'detail' ? active.value?.name : screen.value === 'custom' ? '自定义服务' : screen.value === 'add' ? '添加服务' : '连接服务'}</span></div>{message.value && <div className="pv-toast" role="status"><Check size={14} /><span>{message.value}</span><Button className="pv-icon" variant="ghost" size="icon" aria-label="关闭提示" onClick={() => { message.value = ''; }}><X size={13} /></Button></div>}{screen.value === 'detail' ? <Detail /> : screen.value === 'custom' ? <Custom /> : screen.value === 'add' ? <Add /> : <Authorize />}</section></div></div>
+  <ModelDialog />
+  <div className="pv-review-footer"><span>连接、凭据、模型，各自清楚。</span><span>可交互原型 · 不连接真实服务</span></div>
+</main>);
+
+const css = `
+*{box-sizing:border-box}html,body{margin:0}body{background:transparent}
+.pv{--surface-background:#1a1a1a;--surface-foreground:#DEDEDE;--surface-muted:#141414;--surface-muted-foreground:#848484;--surface-elevated:#141414;--interactive-border:#8484841f;--interactive-hover:#2A2A2A99;--interactive-active:#2d2d2d;--interactive-selection:#ffffff1d;--interactive-selection-foreground:#FFFFFF;--interactive-focus-ring:#4c9df399;--status-error:#BF616A;--status-error-background:#bf616a29;--status-warning:#EBCB8B;--status-success:#A3BE8C;--status-success-background:#a3be8c29;--primary-base:#4c9df3;color-scheme:dark}
+.pv[data-theme=light]{--surface-background:#FFFFFF;--surface-foreground:#212121;--surface-muted:#F4F4F4;--surface-muted-foreground:#868585;--surface-elevated:#f4f4f7;--interactive-border:#DCDCDC;--interactive-hover:#43424214;--interactive-active:#43424212;--interactive-selection:color-mix(in srgb,var(--surface-foreground) 7%,var(--surface-background));--interactive-selection-foreground:var(--surface-foreground);--interactive-focus-ring:#0F62FE40;--status-error:#DA1E28;--status-error-background:#DA1E2820;--status-warning:#F1C21B;--status-success:#198038;--status-success-background:#19803820;--primary-base:#0072C3;color-scheme:light}
+.pv{--form-surface-border:color-mix(in srgb,var(--surface-foreground) 8%,transparent);--form-row-divider:color-mix(in srgb,var(--surface-foreground) 6%,transparent);--yuri-settings-group-background:color-mix(in srgb,var(--surface-muted) 55%,var(--surface-elevated));--yuri-settings-group-radius:16px;--yuri-settings-row-min-height:52px;--yuri-settings-row-inset:14px;--yuri-settings-row-block-padding:11px;--yuri-settings-section-gap:8px;--yuri-settings-section-stack-gap:20px;--text-ui-header:.9375rem;--text-ui-label:.875rem;--form-control-height:2.25rem;--form-control-radius:.625rem;--form-helper-font-size:.75rem;--background:var(--surface-background);--foreground:var(--surface-foreground);--muted-foreground:var(--surface-muted-foreground);--primary:var(--surface-muted);--primary-foreground:var(--surface-foreground);--input:var(--form-surface-border);--ring:var(--interactive-focus-ring);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;line-height:1.5;min-height:100vh;background:var(--surface-background);color:var(--surface-foreground);padding:0 28px 22px;-webkit-font-smoothing:antialiased}
+.pv button,.pv input,.pv select{font-family:inherit;font-size:inherit}.pv button{cursor:pointer}.pv button:disabled{cursor:not-allowed;opacity:.45}.pv button:focus-visible,.pv input:focus-visible,.pv select:focus-visible{outline:2px solid var(--interactive-focus-ring);outline-offset:3px;box-shadow:none}.pv h1,.pv h2,.pv h3,.pv p{margin:0}.pv code,.pv pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.pv code{font-size:12px}.pv svg{flex-shrink:0}.pv input:not([type=checkbox]),.pv select{min-width:0;height:var(--form-control-height);border:1px solid var(--form-surface-border);border-radius:var(--form-control-radius);background:var(--surface-elevated);color:var(--surface-foreground);padding:6px 10px;box-shadow:none;line-height:20px;width:100%}.pv input::placeholder{color:var(--surface-muted-foreground);font-size:12px}.pv input:hover,.pv select:hover{border-color:color-mix(in srgb,var(--surface-foreground) 18%,transparent)}
+.pv .pv-button,.pv .pv-quiet,.pv .pv-chip,.pv .pv-icon,.pv .pv-review-action,.pv .pv-scene,.pv .pv-danger-button,.pv .pv-danger-link{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;white-space:nowrap;box-shadow:none;border:0;transition:background-color .12s,color .12s;border-radius:9px;font-size:12px;font-weight:500;height:32px;min-height:32px;padding:0 10px;text-decoration:none;letter-spacing:0;color:var(--surface-foreground);background:transparent}
+.pv .pv-button{background:var(--surface-muted)}.pv .pv-button:hover{background:color-mix(in srgb,var(--surface-foreground) 6%,var(--surface-muted))}.pv .pv-button:active{background:color-mix(in srgb,var(--surface-foreground) 12%,var(--surface-muted))}.pv .pv-quiet{font-weight:400;color:var(--surface-muted-foreground)}.pv .pv-quiet:hover,.pv .pv-chip:hover,.pv .pv-review-action:hover,.pv .pv-icon:hover,.pv .pv-scene:hover{background:var(--interactive-hover);color:var(--surface-foreground)}.pv .pv-icon{width:30px;height:30px;min-height:30px;padding:0;color:var(--surface-muted-foreground)}.pv .pv-chip[aria-pressed=true],.pv .pv-scene[aria-pressed=true],.pv .pv-review-action[aria-pressed=true]{background:var(--interactive-selection);color:var(--interactive-selection-foreground)}.pv .pv-danger-link{color:var(--status-error);font-weight:400}.pv .pv-danger-link:hover,.pv .pv-danger-button{color:var(--status-error);background:var(--status-error-background)}.pv .pv-danger-button:hover{background:color-mix(in srgb,var(--status-error) 22%,transparent)}
+.pv .pv-helper{font-size:var(--form-helper-font-size);line-height:17px;color:var(--surface-muted-foreground);font-weight:400}.pv-inline{display:inline-flex;align-items:center;gap:8px;min-width:0}.pv-wrap{overflow-wrap:anywhere}.pv-warning{color:var(--status-warning)}.pv-error{color:var(--status-error);font-size:12px;line-height:18px}.pv-rotate{transform:rotate(180deg)}.pv-open-chevron{transform:rotate(90deg)}
+.pv-review-bar{max-width:1232px;margin:auto;min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px}.pv-review-title{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500}.pv-review-dot{height:7px;width:7px;border-radius:50%;background:var(--surface-muted-foreground)}.pv-demo-label{margin-left:8px}.pv-review-controls{display:flex;align-items:center;gap:4px}.pv .pv-review-action{color:var(--surface-muted-foreground);height:30px;width:auto}.pv .pv-review-action:has(>svg:only-child){width:30px;padding:0}.pv-toolbar-separator{height:16px;width:1px;background:var(--form-surface-border);margin:0 5px}.pv-scene-bar{max-width:1232px;margin:0 auto 18px;display:flex;align-items:center;justify-content:space-between;gap:16px}.pv-scene-tabs{display:inline-flex;gap:4px}.pv .pv-scene{font-size:12px;font-weight:400;height:30px;min-height:30px}.pv-frame{max-width:1232px;margin:0 auto;border:1px solid var(--form-surface-border);border-radius:14px;overflow:hidden;background:var(--surface-background)}.pv-workspace-bar{display:flex;align-items:center;justify-content:space-between;height:45px;padding:0 18px;border-bottom:1px solid var(--form-row-divider);font-size:12px;color:var(--surface-muted-foreground)}.pv-workspace-current{color:var(--surface-foreground)}.pv-workspace{display:grid;grid-template-columns:238px minmax(0,1fr);min-height:730px}
+.pv-collection{padding:25px 14px 16px;border-right:1px solid var(--form-row-divider);display:flex;flex-direction:column;min-width:0}.pv-collection-title{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:0 7px;margin-bottom:19px}.pv-collection-title h1{font-size:15px;font-weight:600;line-height:25px}.pv-collection-title .pv-helper{font-size:11px}.pv-search{position:relative;min-width:0;width:100%;display:flex;align-items:center}.pv-search>svg{position:absolute;left:10px;z-index:1;color:var(--surface-muted-foreground);pointer-events:none}.pv .pv-search input{padding-left:33px;background:transparent;height:32px;font-size:12px}.pv .pv-add{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:6px 7px;margin:15px 0 3px;background:transparent;color:var(--surface-foreground);font-size:13px;border:0;box-shadow:none;border-radius:9px;font-weight:400;justify-content:flex-start}.pv .pv-add:hover{background:var(--interactive-hover)}.pv-add>svg:last-child{margin-left:auto;color:var(--surface-muted-foreground)}.pv-add-symbol{display:grid;place-items:center;width:28px;height:28px;border:1px dashed var(--form-surface-border);border-radius:8px}.pv-collection-group{margin-top:20px}.pv-collection-label{font-size:11px;color:var(--surface-muted-foreground);padding:0 8px 8px;display:flex;justify-content:space-between;align-items:center}.pv-service-list{display:flex;flex-direction:column;gap:3px}.pv-service{display:flex;align-items:center;gap:9px;width:100%;padding:9px 8px;min-height:56px;border:0;border-radius:10px;background:transparent;color:var(--surface-foreground);text-align:left}.pv-service:hover{background:var(--interactive-hover)}.pv-service.is-selected{background:var(--interactive-selection);color:var(--interactive-selection-foreground)}.pv-mark{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;color:var(--surface-foreground)}.pv-mark img{width:25px;height:25px;object-fit:contain}.pv[data-theme=dark] .pv-mark img{filter:invert(1)}.pv-mark-large{width:42px;height:42px}.pv-mark-large img{width:40px;height:40px}.pv-service-name{min-width:0;flex:1;font-size:13px;overflow-wrap:anywhere;line-height:19px}.pv-service-name>span{display:block;font-size:11px;color:var(--surface-muted-foreground);line-height:17px}.pv-count{font-size:11px;font-variant-numeric:tabular-nums;color:var(--surface-muted-foreground);min-width:17px;text-align:right}.pv-collection-footer{margin-top:auto;padding:45px 7px 0;display:flex;align-items:center;gap:7px;color:var(--surface-muted-foreground);font-size:11px}.pv-collection-footer>span:last-child{margin-left:auto;font-size:10px}
+.pv-editor{min-width:0;position:relative;padding:34px 38px 38px}.pv-editor-inner{width:100%;max-width:768px;margin:auto;display:flex;flex-direction:column;gap:var(--yuri-settings-section-stack-gap)}.pv-detail-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:8px;min-height:51px}.pv-title-lockup{display:flex;align-items:center;gap:11px;min-width:0}.pv h2{font-size:var(--text-ui-header);line-height:24px;font-weight:600;overflow-wrap:anywhere}.pv-title-meta{display:flex;align-items:center;gap:9px;margin-top:3px;color:var(--surface-muted-foreground)}.pv-title-meta code{font-size:11px}.pv-tag{font-size:10px;line-height:18px;padding:0 5px;border:1px solid var(--form-surface-border);border-radius:4px}.pv-group{display:flex;min-width:0;flex-direction:column;gap:var(--yuri-settings-section-gap)}.pv-group-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:20px;padding:0 8px}.pv-group-heading h3{font-size:13px;font-weight:400;color:var(--surface-muted-foreground);min-width:0}.pv-group-heading .pv-quiet,.pv-group-heading .pv-button{height:26px;min-height:26px;padding:0 7px;font-size:11px}.pv-heading-counter{font-size:11px;margin-left:7px;font-variant-numeric:tabular-nums;color:var(--surface-muted-foreground)}.pv-card{background:var(--yuri-settings-group-background);border:1px solid var(--form-surface-border);border-radius:var(--yuri-settings-group-radius);overflow:hidden;min-width:0}.pv-row{min-height:var(--yuri-settings-row-min-height);padding:var(--yuri-settings-row-block-padding) var(--yuri-settings-row-inset);display:grid;grid-template-columns:minmax(110px,1fr) minmax(0,auto);align-items:center;gap:12px}.pv-row+.pv-row{border-top:1px solid var(--form-row-divider)}.pv-label{font-size:var(--text-ui-label);line-height:22px;min-width:0}.pv-label .pv-helper{margin-top:2px}.pv-value{display:flex;align-items:center;justify-content:flex-end;min-width:0;max-width:360px;font-size:13px}.pv-value>input,.pv-value>select{width:250px;max-width:100%;font-size:13px}.pv-value>code{font-size:11px}.pv-inline-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--surface-muted-foreground)}.pv-inline-status.pv-warning{color:var(--status-warning)}.pv-source-separator{opacity:.45}.pv-outside{padding:0 8px}.pv-auth-editor{display:flex;flex-direction:column;align-items:flex-start;gap:9px;padding:0 14px 14px;border-bottom:1px solid var(--form-row-divider)}.pv-auth-editor>.pv-inline{width:100%}.pv-auth-editor input{flex:1}.pv-detail-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:-7px;padding:0 4px}.pv-detail-footer>.pv-helper{font-size:11px;gap:6px}.pv-confirm{border:1px solid var(--form-surface-border);border-radius:12px;padding:14px;display:flex;align-items:center;justify-content:space-between;gap:16px}.pv-confirm p{font-size:13px}.pv-toast{display:flex;align-items:center;gap:8px;max-width:768px;margin:0 auto 20px;background:var(--status-success-background);color:var(--status-success);padding:8px 10px;border-radius:9px;font-size:12px}.pv-toast>span{flex:1}.pv-toast .pv-icon{color:inherit}
+.pv-model-toolbar{padding:12px 14px 8px}.pv-model-toolbar .pv-search input{border-color:transparent;background:color-mix(in srgb,var(--surface-foreground) 3%,var(--surface-elevated))}.pv-filters{display:flex;align-items:center;gap:3px;margin-top:10px;flex-wrap:wrap}.pv .pv-filters .pv-chip{height:25px;min-height:25px;font-size:11px;padding:0 8px;font-weight:400}.pv-model-columns{display:grid;grid-template-columns:minmax(0,1fr) 85px 120px 30px;gap:10px;padding:7px 14px;font-size:10px;line-height:17px;color:var(--surface-muted-foreground)}.pv-model-columns>span:nth-child(3){text-align:right}.pv-model-columns>span:last-child{text-align:center}.pv-model-item{border-top:1px solid var(--form-row-divider)}.pv-model-row{display:grid;grid-template-columns:minmax(0,1fr) 85px 120px 30px;gap:10px;align-items:center;padding:10px 14px;min-height:64px}.pv-model-name{min-width:0;border:0;background:transparent;color:var(--surface-foreground);display:flex;align-items:center;gap:8px;text-align:left;padding:0;font-size:13px}.pv-model-name:hover>span:first-child{color:var(--interactive-selection-foreground)}.pv-model-name>span{min-width:0;overflow-wrap:anywhere;line-height:20px}.pv-model-name>svg{color:var(--surface-muted-foreground);opacity:0;transition:transform .12s,opacity .12s}.pv-model-name:hover>svg,.pv-model-name:focus-visible>svg,.pv-model-name[aria-expanded=true]>svg{opacity:1}.pv-model-name code{display:block;font-size:10px;line-height:16px;color:var(--surface-muted-foreground)}.pv-capabilities{display:flex;align-items:center;gap:8px;color:var(--surface-muted-foreground);font-size:11px}.pv-capabilities>span{display:inline-flex;align-items:center;gap:4px}.pv-capabilities-full{gap:16px;flex-wrap:wrap}.pv-token-count{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--surface-foreground)}.pv-token-count>span{color:var(--surface-muted-foreground)}.pv-model-hidden .pv-model-name,.pv-model-hidden .pv-capabilities,.pv-model-hidden .pv-token-count{opacity:.4}.pv-model-expanded{padding:0 14px 15px;display:flex;flex-direction:column;gap:9px}.pv-model-expanded .pv-helper{font-size:11px}.pv-empty{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;text-align:center;padding:28px 14px;color:var(--surface-muted-foreground);font-size:12px}
+.pv-page-header{margin-bottom:5px}.pv-page-header>.pv-helper{margin-top:5px}.pv-action-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.pv-action-header .pv-helper{margin-top:5px}.pv-header-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}.pv-custom-choice{display:flex;align-items:center;text-align:left;gap:16px;padding:22px;border:1px solid var(--form-surface-border);border-radius:var(--yuri-settings-group-radius);background:var(--yuri-settings-group-background);color:var(--surface-foreground);width:100%}.pv-custom-choice:hover{background:var(--interactive-hover)}.pv-choice-symbol{width:42px;display:grid;place-items:center;color:var(--surface-muted-foreground);flex-shrink:0}.pv-custom-choice>span:nth-child(2){flex:1;min-width:0}.pv-custom-choice strong{font-size:15px;font-weight:500}.pv-custom-choice p{font-size:12px;color:var(--surface-muted-foreground);margin:4px 0 8px}.pv-custom-choice .pv-helper{font-size:11px}.pv-custom-choice>svg{color:var(--surface-muted-foreground)}.pv-provider-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.pv-provider-choice{display:flex;align-items:center;gap:11px;background:transparent;border:0;padding:18px 16px;text-align:left;color:var(--surface-foreground);min-width:0}.pv-provider-choice:hover{background:var(--interactive-hover)}.pv-provider-choice:nth-child(odd){border-right:1px solid var(--form-row-divider)}.pv-provider-choice:nth-child(n+3){border-top:1px solid var(--form-row-divider)}.pv-provider-choice>span:nth-child(2){flex:1;min-width:0;font-size:13px}.pv-provider-choice small{display:block;font-size:11px;color:var(--surface-muted-foreground);margin-top:3px}.pv-provider-choice>svg{color:var(--surface-muted-foreground)}.pv-address{display:flex;flex-direction:column;align-items:stretch;gap:9px;font-size:14px}.pv-address input{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.pv-route-preview{display:flex;flex-direction:column;gap:4px;padding:0 2px}.pv-route-preview>div{display:flex;align-items:center;justify-content:space-between;gap:6px}.pv-route-preview .pv-quiet{font-size:10px;height:22px;min-height:22px;padding:0 3px}.pv-route-preview .pv-helper{font-size:10px}.pv-route-preview code{font-size:11px;line-height:19px;overflow-wrap:anywhere;color:var(--surface-muted-foreground)}.pv-route-preview code>span{font-size:10px;margin-right:5px}.pv-route-preview b{color:var(--surface-foreground);font-weight:500}.pv-url-help{display:flex;flex-direction:column;gap:7px;color:var(--surface-muted-foreground);font-size:11px;line-height:18px;padding:5px 2px}.pv-secret-input{display:flex;align-items:center;gap:4px;width:100%}.pv-secret-input input{flex:1}.pv-stacked .pv-value{width:360px;max-width:100%}
+.pv-draft-model{display:grid;grid-template-columns:18px minmax(0,1fr) 70px 58px 28px;align-items:center;gap:10px;padding:11px 14px;min-height:64px}.pv-draft-model+.pv-draft-model{border-top:1px solid var(--form-row-divider)}.pv-added-check{color:var(--surface-muted-foreground)}.pv-draft-model .pv-model-name{width:100%}.pv-draft-model .pv-capabilities{justify-content:flex-end}.pv-model-editor{padding:14px;border-top:1px solid var(--form-row-divider)}.pv-subheading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px}.pv-subheading .pv-helper{font-size:10px;margin-left:5px}.pv-model-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 16px;margin-top:10px}.pv-model-form-grid>label{display:flex;flex-direction:column;gap:7px;font-size:12px}.pv-model-form-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:15px}.pv-checkbox{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}.pv input[type=checkbox]{accent-color:var(--surface-foreground);height:14px;width:14px;margin:0;flex-shrink:0;cursor:pointer}.pv-model-editor .pv-error{margin-top:9px}.pv-discovery{padding:12px 14px 0;border-top:1px solid var(--form-row-divider)}.pv-discovery>.pv-search{margin:8px 0}.pv-discovery-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--form-row-divider);font-size:12px}.pv-discovery-row code{font-size:11px;overflow-wrap:anywhere}.pv-fetch-error{display:flex;align-items:center;gap:10px;border-top:1px solid var(--form-row-divider);padding:14px}.pv-fetch-error>svg{color:var(--status-error)}.pv-fetch-error>div{flex:1}.pv-fetch-error p{font-size:12px}.pv-fetch-error .pv-helper{font-size:11px}.pv-config-section{border-top:1px solid var(--form-row-divider);padding-top:10px}.pv-config-trigger{width:100%;display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:5px 3px;color:var(--surface-muted-foreground);font-size:12px;text-align:left}.pv-config-trigger:hover{color:var(--surface-foreground)}.pv-config-trigger>.pv-helper{margin-left:auto;font-size:10px}.pv-code{max-height:360px;overflow:auto;border:1px solid var(--form-surface-border);border-radius:12px;padding:15px;margin:12px 0 0;font-size:11px;line-height:19px;tab-size:2;color:var(--surface-muted-foreground);background:var(--surface-elevated);white-space:pre-wrap;overflow-wrap:anywhere}.pv-simulation-control{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:-5px}.pv-simulation-control .pv-helper{font-size:10px}.pv-error-box{padding:10px 12px;display:flex;align-items:center;gap:8px;background:var(--status-error-background);color:var(--status-error);font-size:12px;border-radius:10px}
+.pv .pv-back-link{align-self:flex-start;padding-left:0;margin-top:-10px}.pv-auth-options{display:flex;gap:6px;align-self:flex-start}.pv .pv-auth-options .pv-chip{padding:0 12px}.pv-auth-content{padding:34px 24px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}.pv-auth-content h3{font-size:15px;font-weight:500}.pv-auth-content>.pv-helper{max-width:340px}.pv-auth-globe{color:var(--surface-muted-foreground);margin:3px 0 4px}.pv-auth-left{align-items:flex-start;text-align:left;padding:22px}.pv-auth-left>label{font-size:13px}.pv-auth-left>.pv-helper{max-width:none}.pv-success-icon{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:var(--status-success-background);color:var(--status-success)}.pv-waiting{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12px}.pv-waiting>.pv-helper{font-size:10px;margin-left:5px}.pv-pending-dot{height:6px;width:6px;border-radius:50%;background:var(--status-warning)}.pv .pv-expire{font-size:10px;height:24px;min-height:24px}
+.pv-notes{max-width:1232px;margin:0 auto 18px;border:1px solid var(--form-surface-border);border-radius:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 24px;padding:22px}.pv-notes strong{font-size:12px;font-weight:500}.pv-notes p{margin-top:5px;max-width:470px;font-size:12px;line-height:20px;color:var(--surface-muted-foreground)}.pv-notes .pv-note-caveat{grid-column:1/-1;max-width:none;border-top:1px solid var(--form-row-divider);padding-top:13px;font-size:11px;color:var(--surface-muted-foreground)}.pv-review-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--surface-muted-foreground);max-width:1232px;margin:16px auto 0}.pv-mobile-nav{display:none}
+.pv-phone .pv-frame{max-width:390px}.pv-phone .pv-workspace-bar{display:none}.pv-phone .pv-workspace{display:block;min-height:740px}.pv-phone .pv-collection{display:none}.pv-phone .pv-editor{padding:0 16px 25px}.pv-phone .pv-mobile-nav{display:flex;align-items:center;justify-content:space-between;min-height:56px;margin:0 -6px 16px;gap:10px}.pv-phone .pv-mobile-nav>.pv-helper{font-size:11px}.pv-phone .pv-frame[data-stage=collection] .pv-collection{display:flex;min-height:740px;border:0;padding:24px 16px}.pv-phone .pv-frame[data-stage=collection] .pv-editor{display:none}.pv-phone .pv-detail-header{gap:8px;align-items:flex-start}.pv-phone .pv-mark-large{width:34px;height:34px}.pv-phone .pv-mark-large img{width:32px;height:32px}.pv-phone .pv-title-lockup{gap:8px}.pv-phone .pv-group-heading{padding:0 6px}.pv-phone .pv-group-heading h3{font-size:12px}.pv-phone .pv-row{grid-template-columns:minmax(82px,1fr) minmax(0,1.5fr);gap:9px}.pv-phone .pv-label{font-size:13px}.pv-phone .pv-row .pv-value>.pv-inline{flex-wrap:wrap;justify-content:flex-end;gap:4px}.pv-phone .pv-stacked{display:flex;align-items:stretch;flex-direction:column;gap:9px}.pv-phone .pv-stacked .pv-value{width:100%;max-width:none}.pv-phone .pv-source-separator{display:none}.pv-phone .pv-model-columns,.pv-phone .pv-model-row{grid-template-columns:minmax(0,1fr) 74px 36px;gap:7px}.pv-phone .pv-model-columns>span:nth-child(2),.pv-phone .pv-model-row>.pv-capabilities{display:none}.pv-phone .pv-token-count{font-size:10px}.pv-phone .pv-detail-footer{align-items:flex-start}.pv-phone .pv-detail-footer>.pv-helper{font-size:10px;max-width:170px}.pv-phone .pv-action-header{flex-wrap:wrap;align-items:center}.pv-phone .pv-action-header>div:first-child{width:100%}.pv-phone .pv-header-actions{margin-left:auto}.pv-phone .pv-confirm{flex-direction:column;align-items:flex-start}.pv-phone .pv-provider-choices{grid-template-columns:1fr}.pv-phone .pv-provider-choice{border-right:0}.pv-phone .pv-provider-choice+.pv-provider-choice{border-top:1px solid var(--form-row-divider)}.pv-phone .pv-custom-choice{padding:17px 14px;gap:9px}.pv-phone .pv-choice-symbol{width:30px}.pv-phone .pv-draft-model{grid-template-columns:15px minmax(0,1fr) 42px 36px;gap:7px}.pv-phone .pv-draft-model>.pv-capabilities{display:none}.pv-phone .pv-group-heading>.pv-inline{gap:0}.pv-phone .pv-group-heading .pv-button,.pv-phone .pv-group-heading .pv-quiet{padding:0 5px;font-size:10px}.pv-phone .pv-simulation-control{align-items:flex-start;flex-direction:column;gap:6px}.pv-phone .pv-model-form-footer{flex-wrap:wrap}.pv-phone .pv-auth-content{padding:26px 16px}.pv-phone .pv-value .pv-helper{font-size:10px}.pv-phone .pv-model-form-grid{gap:12px 9px}.pv-phone .pv-model-form-grid input{font-size:12px}.pv-phone .pv-model-form-footer>.pv-inline{gap:10px}.pv-phone .pv-icon,.pv-phone .pv-button,.pv-phone .pv-quiet,.pv-phone .pv-chip{min-height:36px}.pv-phone .pv-icon{width:36px}
+@media(min-width:1500px){.pv-workspace{min-height:760px}.pv-editor{padding-top:40px}}
+@media(max-width:900px){.pv{padding-inline:16px}.pv-demo-label{display:none}.pv-workspace{grid-template-columns:205px minmax(0,1fr)}.pv-editor{padding:28px 22px}.pv-model-row,.pv-model-columns{grid-template-columns:minmax(0,1fr) 60px 90px 28px;gap:7px}.pv-capabilities{gap:5px}.pv-model-row .pv-token-count{font-size:10px}.pv-row{grid-template-columns:minmax(90px,1fr) minmax(0,1.6fr)}.pv-stacked{display:flex;align-items:stretch;flex-direction:column;gap:9px}.pv-stacked .pv-value{max-width:none;width:100%}.pv-draft-model{grid-template-columns:16px minmax(0,1fr) 45px 28px;gap:7px}.pv-draft-model>.pv-capabilities{display:none}.pv-theme-label{font-size:10px}.pv .pv-group-heading .pv-button,.pv .pv-group-heading .pv-quiet{font-size:10px}}
+@media(max-width:680px){.pv{padding:0 10px 16px}.pv-review-bar{min-height:56px;gap:5px}.pv-review-title{font-size:12px;gap:7px}.pv-review-controls{gap:1px}.pv-review-action>span{display:none}.pv-toolbar-separator{display:none}.pv .pv-review-action{padding:0 6px;min-height:36px}.pv-scene-bar{margin-bottom:12px}.pv-theme-label{display:none}.pv-workspace-bar{display:none}.pv-workspace{display:block;min-height:660px}.pv-collection{display:none}.pv-editor{padding:0 14px 25px}.pv-mobile-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:56px;margin:0 -4px 16px}.pv-frame[data-stage=collection] .pv-collection{display:flex;border:0;min-height:660px;padding:24px 16px}.pv-frame[data-stage=collection] .pv-editor{display:none}.pv-row{grid-template-columns:minmax(80px,1fr) minmax(0,1.6fr);gap:9px}.pv-label{font-size:13px}.pv-row .pv-value>.pv-inline{justify-content:flex-end;flex-wrap:wrap;gap:4px}.pv-detail-header{align-items:flex-start;gap:8px}.pv-model-row,.pv-model-columns{grid-template-columns:minmax(0,1fr) 74px 36px;gap:7px}.pv-model-row>.pv-capabilities,.pv-model-columns>span:nth-child(2){display:none}.pv-action-header{flex-wrap:wrap}.pv-action-header>div:first-child{width:100%}.pv-header-actions{margin-left:auto}.pv-confirm{flex-wrap:wrap}.pv-simulation-control{flex-direction:column;align-items:flex-start;gap:7px}.pv-detail-footer>.pv-helper{font-size:10px}.pv-review-footer{font-size:10px;align-items:flex-start}.pv-review-footer>span:first-child{display:none}.pv-review-footer>span:last-child{margin-left:auto}.pv-notes{grid-template-columns:1fr;padding:16px;gap:15px}.pv-notes .pv-note-caveat{grid-column:1}.pv-source-separator{display:none}.pv-provider-choices{grid-template-columns:1fr}.pv-provider-choice{border-right:0!important}.pv-provider-choice+.pv-provider-choice{border-top:1px solid var(--form-row-divider)}.pv-model-form-footer{flex-wrap:wrap}.pv .pv-icon,.pv .pv-button,.pv .pv-quiet,.pv .pv-chip,.pv .pv-scene{min-height:36px}.pv .pv-icon{width:36px}.pv-draft-model{grid-template-columns:15px minmax(0,1fr) 42px 36px}}
+.pv-managed-models{display:flex;flex-direction:column;gap:12px;min-width:0}.pv-managed-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 5px}.pv-managed-heading h3{font-size:14px;font-weight:400}.pv-joined-actions{display:inline-flex;align-items:center;border-radius:10px;background:var(--surface-muted);overflow:hidden}.pv-joined-actions .pv-button{border-radius:0;height:32px;min-height:32px;font-weight:400}.pv-joined-actions .pv-add-model-button{width:34px;padding:0;border-left:1px solid var(--form-surface-border)}.pv-managed-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 4px}.pv-managed-toolbar>.pv-search{max-width:260px}.pv-managed-toolbar>select{width:112px;flex-shrink:0;height:32px;font-size:12px;padding:4px 8px;background:transparent;color:var(--surface-muted-foreground)}.pv-model-group-stack{display:flex;flex-direction:column;gap:var(--yuri-settings-section-stack-gap)}.pv-model-group-title{display:flex;align-items:center;gap:9px;width:100%;min-height:42px;border:0;background:transparent;color:var(--surface-foreground);padding:9px 14px;text-align:left;font-size:12px}.pv-model-group-title:hover{background:var(--interactive-hover)}.pv-model-group-title>svg{color:var(--surface-muted-foreground);transition:transform .12s}.pv-group-collapsed{transform:rotate(-90deg)}.pv-group-total{margin-left:auto;font-size:11px;color:var(--surface-muted-foreground);font-variant-numeric:tabular-nums}.pv-model-group-title[aria-expanded=true]{border-bottom:1px solid var(--form-row-divider)}.pv-managed-row{display:flex;align-items:center;gap:10px;min-height:var(--yuri-settings-row-min-height);padding:8px 14px}.pv-managed-row:last-child{padding-bottom:11px}.pv-managed-row>.pv-mark{width:26px;height:26px}.pv-managed-row .pv-mark img{width:25px;height:25px}.pv-managed-name{flex:1;min-width:0;padding:3px 0;text-align:left;font-size:13px;line-height:21px;border:0;background:transparent;color:var(--surface-foreground);overflow-wrap:anywhere}.pv-managed-name:hover{color:var(--interactive-selection-foreground);text-decoration:underline;text-decoration-color:var(--form-surface-border);text-underline-offset:4px}.pv-managed-row>.pv-capabilities{flex-shrink:0;gap:5px}.pv-managed-row>.pv-capabilities>span{padding:4px 7px;min-width:26px;justify-content:center;border-radius:999px;background:color-mix(in srgb,var(--surface-foreground) 4%,transparent)}.pv-model-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}.pv .pv-minus-action:hover{background:var(--status-error-background);color:var(--status-error)}.pv-model-membership-note{padding:0 5px;font-size:11px!important}.pv-model-undo{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 6px;font-size:12px;color:var(--surface-muted-foreground)}
+.pv.pv-model-dialog{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;gap:20px;width:min(600px,calc(100vw - 32px));max-width:600px;min-height:0;max-height:calc(100dvh - 48px);overflow-y:auto;margin:0;padding:24px;border-radius:var(--yuri-settings-group-radius);border:1px solid var(--form-surface-border);background:var(--surface-background);color:var(--surface-foreground);box-shadow:0 20px 65px color-mix(in srgb,var(--surface-background) 50%,transparent);z-index:60}.pv-model-dialog .pv-dialog-header{display:flex;flex-direction:column;gap:6px;text-align:left;padding-right:26px}.pv-model-dialog .pv-dialog-header h2{font-size:16px;line-height:24px;font-weight:600}.pv-model-dialog .pv-dialog-header .pv-helper{font-size:11px;line-height:18px}.pv-model-dialog-form{display:flex;flex-direction:column;gap:18px}.pv-model-dialog .pv-row{grid-template-columns:100px minmax(0,1fr);gap:12px}.pv-model-dialog .pv-label{font-size:13px}.pv-model-dialog .pv-value{width:100%;max-width:none}.pv-model-dialog .pv-value>input{width:100%}.pv-required{color:var(--status-error);font-size:12px;margin-left:3px}.pv-model-purpose{display:flex;justify-content:space-between;gap:12px;padding:0 5px;font-size:13px}.pv-purpose-value{display:flex;flex-direction:column;gap:2px;text-align:right}.pv-purpose-value>.pv-helper{font-size:11px}.pv-more-settings{display:inline-flex;align-items:center;align-self:flex-start;gap:7px;padding:3px 5px;border:0;background:transparent;color:var(--surface-muted-foreground);font-size:12px}.pv-more-settings:hover{color:var(--surface-foreground)}.pv-capability-checkboxes{justify-content:flex-end;flex-wrap:wrap}.pv-model-dialog .pv-checkbox{font-size:11px}.pv-dialog-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:4px}.pv-sync-content{display:flex;flex-direction:column;gap:15px;min-height:0}.pv-sync-toolbar{display:flex;align-items:center;gap:8px}.pv-sync-toolbar>.pv-search{flex:1}.pv-sync-toolbar .pv-quiet{font-size:11px}.pv-sync-scroll{max-height:390px;overflow-y:auto;scrollbar-gutter:stable}.pv-sync-group+.pv-sync-group{margin-top:16px}.pv-sync-group h4{font-size:11px;font-weight:400;margin:0;padding:0 7px 8px;color:var(--surface-muted-foreground);display:flex;justify-content:space-between;gap:10px}.pv-sync-group h4>span{font-variant-numeric:tabular-nums}.pv-sync-row{display:flex;align-items:center;gap:9px;min-height:57px;padding:6px}.pv-sync-row+.pv-sync-row{border-top:1px solid var(--form-row-divider)}.pv-sync-model-name{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:21px}.pv-sync-model-name>code{display:block;font-size:10px;line-height:16px;color:var(--surface-muted-foreground)}.pv-sync-row>.pv-capabilities{gap:5px}.pv-sync-added-label{font-size:10px;color:var(--surface-muted-foreground);min-width:30px;flex-shrink:0}.pv-sync-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px;border-top:1px solid var(--form-row-divider)}.pv-sync-status>.pv-helper{font-size:11px}.pv-sync-content .pv-dialog-footer{justify-content:space-between}.pv-sync-failure{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;padding:32px 15px}.pv-sync-failure>svg{color:var(--status-error)}.pv-sync-failure>strong{font-size:14px;font-weight:500}.pv-sync-failure>.pv-helper{max-width:340px}.pv.pv-phone-dialog{width:min(390px,calc(100vw - 24px));padding:20px}.pv-phone .pv-managed-row{gap:6px;padding-inline:10px}.pv-phone .pv-managed-name{font-size:12px}.pv-phone .pv-managed-row>.pv-capabilities{gap:3px}.pv-phone .pv-managed-row>.pv-capabilities>span{padding:4px;min-width:20px}.pv-phone .pv-model-actions{gap:0}.pv-phone .pv-managed-toolbar>select{width:96px}.pv-phone-dialog .pv-row{grid-template-columns:82px minmax(0,1fr);gap:8px}.pv-phone-dialog .pv-sync-row>.pv-capabilities{display:none}.pv-phone-dialog .pv-dialog-footer .pv-button,.pv-phone-dialog .pv-dialog-footer .pv-quiet,.pv-phone-dialog .pv-icon{min-height:36px}.pv-phone-dialog .pv-sync-toolbar{flex-wrap:wrap}.pv-phone-dialog .pv-sync-toolbar>.pv-search{flex-basis:100%}
+@media(max-width:680px){.pv-managed-row{gap:6px;padding-inline:10px}.pv-managed-name{font-size:12px}.pv-managed-row>.pv-capabilities{gap:3px}.pv-managed-row>.pv-capabilities>span{padding:4px;min-width:20px}.pv-model-actions{gap:0}.pv-managed-toolbar>select{width:96px}.pv.pv-model-dialog{padding:20px;width:calc(100vw - 24px);max-height:calc(100dvh - 32px)}.pv-model-dialog .pv-row{grid-template-columns:82px minmax(0,1fr);gap:8px}.pv-model-dialog .pv-sync-row>.pv-capabilities{display:none}.pv-sync-toolbar{flex-wrap:wrap}.pv-sync-toolbar>.pv-search{flex-basis:100%}.pv-dialog-footer .pv-button,.pv-dialog-footer .pv-quiet{min-height:36px}.pv-sync-scroll{max-height:42dvh}}
+.pv-model-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;flex-wrap:wrap}.pv .pv-model-toolbar-actions>.pv-button{font-size:11px;font-weight:400}.pv .pv-flat-model-list{max-height:420px;overflow-y:auto;scrollbar-gutter:stable}.pv-flat-model-list>.pv-managed-row+.pv-managed-row{border-top:1px solid var(--form-row-divider)}.pv-model-available .pv-managed-name{color:var(--surface-muted-foreground)}.pv-model-available .pv-model-actions{min-width:63px;justify-content:flex-end}.pv .pv-plus-action:hover{color:var(--surface-foreground);background:var(--interactive-hover)}.pv-model-discovery-error{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--status-error);padding:0 5px}.pv-list-limit{padding:0 5px;font-size:11px!important}.pv .pv-sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.pv-discovery-spinner{animation:pv-discover-spin 1s linear infinite}.pv-phone .pv-managed-heading{flex-wrap:wrap;gap:8px}.pv-phone .pv-model-toolbar-actions{margin-left:auto;gap:6px}.pv-phone .pv-model-available .pv-model-actions{min-width:72px}.pv-phone .pv-flat-model-list{max-height:380px}@keyframes pv-discover-spin{to{transform:rotate(360deg)}}
+@media(max-width:680px){.pv-managed-heading{flex-wrap:wrap;gap:8px}.pv-model-toolbar-actions{margin-left:auto;gap:6px}.pv-model-available .pv-model-actions{min-width:72px}.pv .pv-flat-model-list{max-height:380px}}
+@media(prefers-reduced-motion:reduce){.pv *{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+`;
+
+export default App;

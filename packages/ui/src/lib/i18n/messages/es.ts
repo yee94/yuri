@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './es.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': 'Desact.',
+  'settings.switch.on': 'Activ.',
   'miniChat.actions.failed': 'No se pudo completar la acción de la ventana. Inténtalo de nuevo.',
   'chat.messageBody.tts.follow': 'Seguir la lectura',
   'chat.messageBody.tts.failed': 'La lectura se interrumpió. Pulsa reproducir para continuar desde el pasaje actual.',

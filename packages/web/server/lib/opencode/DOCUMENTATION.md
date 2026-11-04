@@ -124,6 +124,71 @@ unrelated new SDK resources must not invalidate these host integration seams.
 - `listSkillSupportingFiles(skillDir)`, `readSkillSupportingFile(skillDir, relativePath)`, `writeSkillSupportingFile(skillDir, relativePath, content)`, `deleteSkillSupportingFile(skillDir, relativePath)`: Skill supporting file management.
 
 ## Public exports (routes.js)
+`GET /api/config/providers/sources` batches the running service's provider,
+configuration-document and integration-connection metadata through
+`provider-sources.js`. It returns only source paths/scopes, origin and credential
+existence/method (`api`, `oauth`, `external`). It never reads or serializes raw
+credentials, provider settings or headers. Missing/malformed authoritative reads
+fail with 502. File-backed, pathless-document and runtime-injected origins remain
+distinct; there is no authoritative provider-to-plugin mapping in the current API.
+
+`DELETE /api/provider/:id/auth?scope=config` removes both `provider[id]` and
+`providers[id]` from every physical document visible to the selected location,
+deduplicating paths. It uses the shared atomic JSONC writer, preserves unrelated
+configuration/comments, and requests no reload. These file mutations share the
+existing co-located config-file boundary. Across files the operation is not a
+transaction: failures may leave some files already updated; retry finishes the
+remaining occurrences. Credential deletion is a separate official API step owned
+by the UI mutation. Runtime/plugin registrations without independent configuration
+cannot be removed by this file operation (`removed: false`).
+
+Model capabilities project native image input modalities. Reasoning uses explicit
+boolean/`reasoning.supported` first, otherwise actual reasoning-enabled variant
+settings; variant payloads remain stripped from the response. Attachment support
+alone does not imply image input.
+
+Custom-provider endpoints are registered before the generic proxy:
+
+- `PUT /api/config/providers/model`: `provider-model-config.js` updates a saved
+  model's name, context/output limits, tools and image input. It writes the highest
+  physical provider source, or the normal custom/global target for runtime models.
+  The provider/model IDs stay fixed; credentials, routing, variants, other limits,
+  non-image modalities and unrelated config/comments are preserved. Cleared limits
+  remove only that document's overrides, allowing inherited defaults. Payloads are
+  validated before the atomic write; failed writes retain the original file. Only
+  IDs are returned. Web/Electron/mobile and the VS Code bridge use the same owner.
+
+- `POST /api/config/providers/custom`: `custom-provider.js` validates native V2
+  schema/package/URL/model fields and targets the explicit
+  `OPENCODE_CONFIG` file or highest-precedence global JSONC/JSON document. It never
+  copies a merged project snapshot. The existing atomic writer preserves unrelated
+  fields, JSONC comments and backups. Parse failures do not replace the original.
+  Keys are created through the trusted official OpenCode credential client; a failed
+  file write removes only the new credential. Failed cleanup is explicitly reported
+  as `PROVIDER_CLEANUP_FAILED`. Secret-bearing upstream errors are sanitized, and the
+  response contains only `{ providerId }`. OpenCode watches the file; no lifecycle
+  restart is needed. New clients omit `providerId`: the host derives it from the
+  normalized lowercase Provider Name, joins separators with hyphens, preserves
+  Unicode letters/numbers, and uses `custom-provider` for punctuation-only names.
+  Numeric suffixes avoid physical-config, runtime-provider, integration and in-flight
+  collisions. Reservation occurs before credential writes, including concurrent
+  same-name creates. Older clients' explicit `custom-*` IDs remain supported and
+  reject duplicates. Existing saved IDs are never renamed.
+- `POST /api/config/providers/custom/models`: `custom-provider-models.js` discovers
+  a draft inventory without persistence. OpenAI Chat/Responses use Bearer auth;
+  Anthropic uses `x-api-key`/`anthropic-version`; Gemini uses `x-goog-api-key`, never
+  a query-string key. Anthropic/Gemini pagination must complete, under a 15s total
+  deadline, 20-page/5,000-model bounds and 2 MiB per-page bound. Failed later pages
+  remain failures, not partial or empty success. Redirects are refused; explicit
+  HTTP(S) local endpoints are supported. Requests abort on client response closure.
+  Only IDs, names and supported supplied token limits leave the host.
+
+`packages/web/shared/custom-provider-protocol.js` holds browser-safe package metadata
+and Cherry-compatible address completion shared with the UI; `shared/` is included in
+the published Web package. It has no Node imports. VS Code invokes these same helpers;
+its already-dispatched discovery may finish within the deadline after a webview wait
+is cancelled, but obsolete results do not update the draft.
+
 - `registerOpenCodeRoutes(app, dependencies)`: Registers OpenCode-owned HTTP routes and internal module runtime:
   - `GET /api/config/settings`: returns the full formatted settings response. `?bootstrap=true` remains a safe bootstrap alias that returns schema version `1` and a bounded allowlist for bootstrap clients: default model/variant/agent, worktree/git/file-preview preferences, Zen model, message transport, STT settings, and response-style settings. The bootstrap projection omits credentials and accepts HTTP(S) STT URLs without URL credentials.
   - `GET /api/config/settings/bootstrap`: returns the schema version `1` bootstrap allowlist. UI clients use this dedicated endpoint so older hosts return HTTP 404; this prevents an older server that ignores the `bootstrap` query parameter from returning the full settings response.
@@ -273,6 +338,14 @@ auth for other routes. See `scheduled-tasks/DOCUMENTATION.md` for ownership,
 preflight, rollback and runtime coverage. The old managed-child bridge remains
 separate.
 
+The same shared-service admission also installs the short `yuri.customization`
+instruction. Managed local session creation installs it through the following
+customization admission route. It points at a shipped, content-fingerprinted skill
+with GUI API, theme/branding, global tab (Runmark), file parser/preview (Eficy),
+export and package workflow references. No global config or existing session is
+changed; external servers receive no unverified local-file pointer. See
+`../gui-customization/DOCUMENTATION.md` for runtime and rollback boundaries.
+
 ## Public exports (env-config.js)
 - `resolveOpenCodeEnvConfig(options?)`: resolves and validates OpenCode host/port/hostname environment configuration.
 - `OPENCODE_HOST` still requires an explicit port; HTTP `:80` and HTTPS `:443` retain their effective port even when URL normalization removes it. Host precedence, IPv6 and path/query/hash validation are unchanged.
@@ -402,7 +475,7 @@ Unrelated upstream failures are not retried.
   - Provider catalog responses include only provider `id`, `name`, and safe models. Safe models include `id`, `name`, fixed text/audio/image/video/pdf capability modalities, bounded cost/limit fields, `release_date`, and variant names with `{}` values. v2 `ModelInfo.variants` is an array of `{ id, settings?, headers?, body? }`; projection keeps ids in array order as empty-object keys and drops request payloads. v2 `capabilities.tools` maps to `toolcall`, and `input`/`output` modality name arrays map to boolean maps. v2 `cost` tier arrays keep the untiered base price. Identifiers are bounded to 512 characters, display names to 1024, release dates to 64, numeric values to absolute 1e9, and catalog collections to 200 providers, 500 models per provider, and 100 defaults or variants. Provider credentials/configuration and unallowlisted model fields stay server-side. Malformed catalog roots and SDK error envelopes return HTTP 502. `partial: true` is structural only: provider/model/default truncation, dropped providers/models/defaults, or truncated variant dictionaries. Soft allowlist stripping of optional metadata (unknown modalities, non-boolean capability flags, out-of-range cost/limit numbers, empty/null/invalid `release_date`, invalid variant ids) keeps valid models and must not set `partial: true`, or UI refresh retains a stale complete snapshot after OpenCode provider updates. The same input shapes are accepted by the VS Code projector and `packages/ui/src/lib/configCatalogParser.ts`.
   - Agents: `/api/config/agents/:name` and `/api/config/agents/:name/config`. A `native` create or update writes only the fields in that object into the selected user or project markdown file. `scope` chooses the file. `confirmDrop` removes fields the current format cannot represent; every other field already in the file stays unchanged.
   - Commands: batched metadata via `POST /api/config/commands/metadata`; `{ catalog: true }` returns the compact autocomplete catalog without templates, plus CRUD at `/api/config/commands/:name`
-  - Global raw configs: `GET /api/config/global` always offers OpenCode and discovers existing plugin targets; `GET/PUT /api/config/global/:target` reads and writes `opencode`, `oh-my-opencode-slim`, and `oh-my-openagent` JSON or JSONC files. Missing OpenCode configuration returns an editable schema template without writing to disk; the first save creates `opencode.jsonc` (or the explicit `OPENCODE_CONFIG` path). Existing JSON/JSONC precedence and comments are preserved.
+  - Global raw config: `GET /api/config/global` only offers OpenCode; `GET/PUT /api/config/global/opencode` reads and writes its JSON or JSONC file. Plugin-specific targets are not supported, even if their files exist. Missing OpenCode configuration returns an editable schema template without writing to disk; the first save creates `opencode.jsonc` (or the explicit `OPENCODE_CONFIG` path). Existing JSON/JSONC precedence and comments are preserved. The shared editor has no target tab bar; saves rely on OpenCode's config watcher rather than a manual restart dialog.
   - MCP servers: `/api/config/mcp` and `/api/config/mcp/:name`
 
 ### Catalog / Yuri-owned API change checklist

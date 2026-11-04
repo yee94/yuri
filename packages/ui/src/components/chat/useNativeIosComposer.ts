@@ -145,7 +145,7 @@ const noopAutocompleteDismiss = (): void => undefined;
  * File picking is presented natively on the + tap; this hook only receives
  * the resulting File objects.
  */
-export function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
+function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
   const nativeUiEnabled = useIosNativeUiEnabled();
   const available = nativeUiEnabled && args.enabled && canUseNativeIosComposer(args.isMobile);
   const lastStateRef = useRef<NativeIosComposerState | null>(null);
@@ -477,4 +477,9 @@ export function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
   ]);
 
   return available;
+}
+
+export function NativeIosComposerBridge(args: UseNativeIosComposerArgs): null {
+  useNativeIosComposer(args);
+  return null;
 }

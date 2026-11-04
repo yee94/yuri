@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
@@ -154,20 +154,20 @@ export const OpenCodeCliSettings: React.FC = () => {
           </div>
         </SettingsRow>
 
-        <label data-settings-item="sessions.opencode-update-notifications" className="yuri-settings-group-row yuri-settings-split-row cursor-pointer">
+        <div data-settings-item="sessions.opencode-update-notifications" className="yuri-settings-group-row yuri-settings-split-row">
           <div className="yuri-settings-split-row-copy">
             <span className="typography-ui-label text-foreground">
             {t('settings.yuri.opencodeCli.field.showUpdateNotifications')}
             </span>
           </div>
           <div className="yuri-settings-split-row-control">
-            <Checkbox
+            <SettingsSwitch
               checked={showOpenCodeUpdateNotifications}
               onChange={handleShowUpdateNotificationsChange}
               ariaLabel={t('settings.yuri.opencodeCli.field.showUpdateNotificationsAria')}
             />
           </div>
-        </label>
+        </div>
 
     </SettingsGroup>
   );

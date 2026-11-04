@@ -3980,7 +3980,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {guiPreview && !(settingsExpandedEditorToolbar && !isMobile) ? (
-          <div className="absolute right-3 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{guiToggle}</div>
+          <div className="absolute right-6 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{guiToggle}</div>
         ) : null}
         {selectedFile && !guiPreview && !isSearchOpen && !(settingsExpandedEditorToolbar && !isMobile) && (
           <div

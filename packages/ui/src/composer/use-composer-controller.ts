@@ -31,7 +31,7 @@ export type ComposerKeyBinding = {
   keyID: string | null
 }
 
-export const resolveComposerKeyBinding = (draftKey: DraftKey | null, sessionTitles: ReadonlyMap<string, string>, getDraft: (key: DraftKey) => DraftRecord | undefined): ComposerKeyBinding => {
+export const resolveComposerKeyBinding = (draftKey: DraftKey | null, sessionTitles: Parameters<typeof materializeComposerDocument>[1], getDraft: (key: DraftKey) => DraftRecord | undefined): ComposerKeyBinding => {
   const key = draftKey ? cloneKey(draftKey) : null
   const record = key ? getDraft(key) : undefined
   return {
@@ -97,7 +97,7 @@ export type ComposerSubmissionCapture = { key: DraftKey; keyID: string; revision
 
 export type UseComposerControllerOptions = {
   draftKey: DraftKey | null
-  sessionTitles: ReadonlyMap<string, string>
+  sessionTitles: Parameters<typeof materializeComposerDocument>[1]
   persistenceEnabled: boolean
   onResourcesChanged?: ComposerResourcesChangedPort
   store?: InputStoreApi

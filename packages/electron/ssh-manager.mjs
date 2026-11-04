@@ -2808,6 +2808,14 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
       return this.connecting.get(trimmed);
     }
 
+    const session = this.sessions.get(trimmed);
+    if (this.statuses.get(trimmed)?.phase === 'ready' && session
+      && !session.master?.signalCode && !session.mainForward?.signalCode
+      && (session.masterDetached || session.master?.exitCode === null)
+      && (session.mainForwardDetached || session.mainForward?.exitCode === null)) {
+      return;
+    }
+
     const instance = this.readInstances().instances.find((entry) => entry?.id === trimmed);
     if (!instance) {
       throw new Error('SSH instance not found');

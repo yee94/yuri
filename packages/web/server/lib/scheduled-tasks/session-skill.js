@@ -8,6 +8,7 @@ import { readSharedServiceRegistration, resolveSharedServiceRegistrationPath } f
 import { selectScheduledTaskProject } from './managed-tool-route.js';
 import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_KEY, SCHEDULED_TASK_SKILL_PATH } from './session-skill-contract.js';
 import { scheduledTaskSkillCommand } from './session-skill-client.mjs';
+import { createCustomizationSkillInstaller } from '../gui-customization/session-skill.js';
 
 const execFileAsync = promisify(execFile);
 const sourceClient = new URL('./session-skill-client.mjs', import.meta.url);
@@ -26,6 +27,7 @@ export const registerScheduledTaskSessionSkill = (app, {
   }),
   runClient = execFileAsync,
 }) => {
+  const installCustomization = createCustomizationSkillInstaller({ yuriDataDir });
   let resources;
   const prepareResources = () => {
     resources ??= (async () => {
@@ -84,6 +86,7 @@ export const registerScheduledTaskSessionSkill = (app, {
         key: SCHEDULED_TASK_SKILL_KEY,
         value: `Yuri built-in skill: scheduled tasks. When the user asks to create, find, edit, pause, resume or delete scheduled tasks (including other projects and global tasks), load the skill by running:\n${scheduledTaskSkillCommand(executable, script, encoded, 'describe')}\nThe result supplies the workflow and authenticated task-management commands. Prefer this session's tasks when the target is unspecified. Do not ask for credentials or project IDs.`,
       });
+      await installCustomization(client, created.id);
       return res.json({ data: created });
     } catch {
       let retainedSessionID = created?.id;

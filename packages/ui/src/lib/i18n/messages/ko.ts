@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './ko.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': '끄기',
+  'settings.switch.on': '켜기',
   'miniChat.actions.failed': '창 작업을 완료하지 못했습니다. 다시 시도해 주세요.',
   'remoteDesktop.title': '원격 데스크톱',
   'remoteDesktop.drag': 'Drag · 캔버스 이동',

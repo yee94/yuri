@@ -1,0 +1,112 @@
+.yuri-provider-choices {
+  container-type: inline-size;
+  max-height: min(30rem, 55dvh);
+  overflow-y: auto;
+}
+
+.yuri-provider-model-row {
+  container-type: inline-size;
+}
+
+.yuri-provider-auth-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.yuri-provider-auth-panel > p {
+  max-width: 28rem;
+}
+
+.yuri-provider-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.yuri-provider-identity-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.yuri-settings-group-card.yuri-provider-collection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.yuri-provider-collection-row {
+  border-radius: 0.625rem;
+  padding: 0.375rem 0.5rem;
+  min-height: 2.5rem;
+}
+
+@container (max-width: 24rem) {
+  .yuri-provider-model-detail {
+    display: none;
+  }
+  .yuri-provider-model-capability {
+    padding-inline: 0.25rem;
+  }
+}
+
+.yuri-provider-choice-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.yuri-provider-choice,
+.yuri-provider-custom-choice {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  padding: 1rem var(--yuri-settings-row-inset);
+}
+
+.yuri-provider-custom-choice {
+  padding: 1.375rem;
+}
+
+.yuri-provider-choice + .yuri-provider-choice {
+  border-top: 1px solid var(--yuri-settings-row-divider);
+}
+
+.yuri-provider-choice:hover,
+.yuri-provider-custom-choice:hover {
+  background: var(--interactive-hover);
+}
+
+.yuri-provider-choice:focus-visible,
+.yuri-provider-custom-choice:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: -2px;
+}
+
+@container (min-width: 28rem) {
+  .yuri-provider-choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .yuri-provider-choice:nth-child(2) {
+    border-top: 0;
+  }
+  .yuri-provider-choice:nth-child(odd) {
+    border-right: 1px solid var(--yuri-settings-row-divider);
+  }
+}

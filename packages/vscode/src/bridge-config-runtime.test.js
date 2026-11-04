@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-mock.module('vscode', () => ({
+const mock = vi.fn;
+
+vi.mock('vscode', () => ({
   workspace: {
     workspaceFolders: [],
     getConfiguration: () => ({ get: () => undefined }),
@@ -42,6 +44,7 @@ const deps = {
 };
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (originalOpencodeConfig === undefined) {
     delete process.env.OPENCODE_CONFIG;
   } else {
@@ -56,6 +59,33 @@ afterEach(() => {
 const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
 describe('VS Code config bridge plugin parity', () => {
+  test('only exposes OpenCode raw config and leaves plugin-specific files untouched', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-vscode-global-config-'));
+    tempRoots.push(root);
+    vi.stubEnv('OPENCODE_CONFIG', '');
+    vi.stubEnv('OPENCODE_CONFIG_DIR', root);
+    fs.writeFileSync(path.join(root, 'opencode.jsonc'), '{}');
+    const pluginTargets = ['oh-my-opencode', 'oh-my-opencode-slim', 'oh-my-openagent'];
+    for (const target of pluginTargets) fs.writeFileSync(path.join(root, `${target}.jsonc`), '{}');
+    const ctx = createCtx(root);
+    const listed = await handleConfigBridgeMessage({ id: 'list', type: 'api:config/global:list' }, ctx, deps);
+    expect(listed.data.targets).toEqual([{ target: 'opencode', fileName: 'opencode.jsonc' }]);
+    for (const target of pluginTargets) {
+      for (const action of ['get', 'save']) {
+        const response = await handleConfigBridgeMessage({
+          id: action, type: `api:config/global:${action}`, payload: { target, content: '{"changed":true}' },
+        }, ctx, deps);
+        expect(response).toMatchObject({ success: false, error: 'Unknown global configuration target' });
+      }
+      expect(fs.readFileSync(path.join(root, `${target}.jsonc`), 'utf8')).toBe('{}');
+    }
+    const saved = await handleConfigBridgeMessage({
+      id: 'save', type: 'api:config/global:save', payload: { target: 'opencode', content: '{"model":"example/model"}' },
+    }, ctx, deps);
+    expect(saved).toMatchObject({ success: true, data: { requiresManualRestart: false, application: 'watch' } });
+    expect(readJson(path.join(root, 'opencode.jsonc'))).toEqual({ model: 'example/model' });
+  });
+
   test('reads settings before projecting the bootstrap allowlist', async () => {
     const readSettings = mock(() => ({
       defaultModel: 'provider/model',

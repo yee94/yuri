@@ -34,8 +34,9 @@ function fixture(source = code()) {
   } };
   const send = vi.fn();
   const report = vi.fn();
+  const dockIcons = { set: vi.fn(), remove: vi.fn() };
   const host = createGuiPluginMainHost({
-    getClient: () => client, app, send, report, requireNative: () => native,
+    getClient: () => client, app, send, report, dockIcons, requireNative: () => native,
     windows: { fromWebContents: (contents) => allWindows.find((win) => win.webContents === contents), getAllWindows: () => allWindows },
     authorize: (event) => event.sender.local && event.senderFrame === event.sender.mainFrame,
   });
@@ -48,10 +49,25 @@ function fixture(source = code()) {
   const first = window(1);
   const acquire = (event = first, revision = 'r1') => host.handle(event, 'acquire', { id: 'test', revision });
   const call = (lease, method, input, event = first, request = crypto.randomUUID()) => host.handle(event, 'call', { lease, ipc: 'test.api', method, input, request });
-  return { host, native, client, send, report, first, window, acquire, call, replace: (source, revision) => { bundle = { code: source, revision, options: {} }; } };
+  return { host, native, client, send, report, dockIcons, first, window, acquire, call, replace: (source, revision) => { bundle = { code: source, revision, options: {} }; } };
 }
 
 describe('trusted native GUI plugin host', () => {
+  it('gates declarative Dock updates by live local leases and revokes them on window-only transition', async () => {
+    const f = fixture();
+    try {
+      const a = await f.acquire();
+      const response = await f.host.dispatch(f.first, 'dock-icon', { lease: a.lease, image: 'fixture' });
+      if (process.platform === 'darwin') {
+        expect(response.ok).toBe(true);
+        expect(f.dockIcons.set).toHaveBeenCalledWith(a.lease, 'fixture');
+      } else expect(response).toMatchObject({ ok: false, error: { code: 'GUI_PLUGIN_UNSUPPORTED' } });
+      f.dockIcons.remove.mockImplementationOnce(() => { throw new Error('OS unavailable'); });
+      await f.host.handle(f.first, 'window-only');
+      expect(f.dockIcons.remove).toHaveBeenCalledWith(a.lease);
+      expect(await f.host.dispatch(f.first, 'dock-icon', { lease: a.lease, image: 'fixture' })).toMatchObject({ ok: false, error: { code: 'GUI_PLUGIN_DOCUMENT_RESTRICTED' } });
+    } finally { await f.host.dispose(); }
+  });
   it('returns refusal envelopes and records stable codes, not request payloads', async () => {
     const f = fixture();
     try {

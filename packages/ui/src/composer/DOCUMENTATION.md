@@ -67,6 +67,17 @@ and Hooks. `ChatInput.hooks.test.tsx` executes the production catalog, adapter a
 JSX boundary for 50 edits with zero extra leaf evaluations, then checks callback
 freshness, catalog replacement and active-surface changes.
 
+Session title materialization accepts a `get`-only lookup and resolves titles only
+for actual references at restore time; typing never constructs a global title map.
+Mobile Agent/Model controls share stable catalog references and `useEvent` adapters
+at the production JSX boundary. Unsupported platforms never mount
+`NativeIosComposerBridge` or evaluate its labels/Hooks. The bridge retains native
+chrome in the layout phase and the process-owned overlay across text/draft updates,
+then releases it on unmount. Browser edits leave sizing exclusively to the autosize
+layout owner; their deferred DOM correction runs only for an actual text/caret
+correction. `ChatInput.hooks.test.tsx` counts 50 edits at these call sites;
+`NativeIosComposerBridge.test.tsx` covers layout, callback freshness and teardown.
+
 ## Document and delivery ownership
 
 `components/dictation/useHoldToTalkInput` shares only hold-to-talk state between Chat and Assistant inputs: the global dictation setting, runtime/capture availability, current hint and stable `onHintChange` callback. Callers supply surface availability and mount `HoldToTalkComposer` only while enabled, releasing capture when the global setting turns off. Disabled surfaces receive a null hint. Each input independently chooses its placeholder and localized copy; Assistant idle/disabled copy retains its contextual Assistant name. Gesture/audio behavior stays in the shared component; drafts and sends stay with each input owner.

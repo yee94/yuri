@@ -40,6 +40,10 @@ function image(source: unknown, previous: Map<string, Image>): Image {
     return result;
 }
 
+export function validateGuiSvg(source: unknown): string {
+    return image(source, new Map()).uri;
+}
+
 /** Window-owned, bounded icon index; subscriptions are independent of host snapshots. */
 export class GuiPluginFileIcons {
     private plugins = new Map<string, Icon[]>();

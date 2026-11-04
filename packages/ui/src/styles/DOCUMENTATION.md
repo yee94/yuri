@@ -41,7 +41,7 @@ still requires device validation.
 ## Compact Settings rows
 
 `settings.css` keeps ordinary Settings labels and values side by side, including
-cards at or below 32rem. Selects, numbers, short option groups, and checkboxes
+cards at or below 32rem. Selects, numbers, short option groups, and segmented switches
 use a content-sized right column capped at `min(60cqw, 20rem)`; long labels wrap.
 Only explicit `yuri-settings-split-row-stacked` editors and collections occupy a
 separate full-width line. The card container query must not stack all rows.
@@ -49,7 +49,61 @@ The minimum supported mobile viewport for this layout is 350px. Compact numeric
 controls shrink around adjacent units/reset actions while retaining touch targets.
 Text-only selected values use ellipsis; intrinsic sizing includes their padding
 so nested triggers do not clip the beginning of a value.
+Compact controls stay inside the value column without a negative trailing margin.
+`yuri-settings-equal-controls` on a grouped card opts related form fields into a
+shared fixed value track even below 32rem, rather than sizing each row from its
+content. Custom-provider name, protocol, URL and key use this track. URL request
+previews use `SettingsRow.footer` to span both columns below the input, while the
+input keeps its equal-width value track. The footer retains the row's card insets.
+Adorned Inputs participate in the same width rules as native inputs and Selects.
+Their native input still owns the material; trailing padding reserves one control
+height plus a gap, and the inner action fits that 36px field at every density.
+Hovering or keyboard-focusing the action highlights the field without an extra
+outline/ring; disabled input/action pairs remain inactive.
+Inputs, selects, numeric controls, inline value triggers, and shared `Textarea`
+surfaces consume `--yuri-settings-control-background` (transparent),
+and `--yuri-settings-control-interaction-background` (`--interactive-hover`).
+The workspace owns material independently of row geometry: the same rules cover
+row values, model-filter inputs, standalone search/toolbars, project pickers, and
+scoped Settings dialogs. Hover, popup-open, pointer focus, and keyboard focus never
+add a focus-specific border, outline, or ring/shadow. Hover/open/focus uses a solid
+background that persists after the pointer leaves, including focus inside compound
+controls. Numeric steppers and their inner inputs never add a second outline or
+divider. Transparent border space preserves compact-control geometry. Disabled
+fields do not gain hover/focus material; invalid controls retain one stable
+semantic inset error indicator. Channel credential fields retain their left
+alignment and full-width layout, not a separate bordered/filled material recipe.
+Sidebar collection surfaces use `yuri-settings-sidebar` on both desktop and mobile;
+the shared sidebar layout also supplies it. Within that scope, controls inherit
+`--yuri-settings-control-border: var(--form-surface-border)` instead of the detail
+form's transparent default. Sidebar search/filter fields and project/context
+pickers retain the same faint edge at rest, hover, open, and focus. A standalone
+project picker can opt into the same token via `yuri-settings-sidebar-picker`.
+Only the background changes with interaction; no focus ring or outline returns.
+Filled detail-form fields remain borderless by default. `Input bordered` opts a specific
+field into the same faint border; `bordered={false}` explicitly hides it, even in
+a sidebar. When the option is omitted, empty text inputs also receive the faint
+border through `:placeholder-shown`; entering a value restores the surface default
+and clearing restores the border, including while focused. The primitive supplies
+an invisible placeholder when needed so this works without a user-facing hint,
+React state, or a value-attribute heuristic. Explicit `true`/`false` always wins.
+Only the control-local border token changes, never a focus ring or outline.
+Both provider model-filter toolbars opt in explicitly.
+Multi-line editors retain their height, left-aligned content, scrolling, and
+resize handle. Textarea-only cards and rows have no outer padding; text and the
+resize footer keep their own content insets. Label/value rows retain their usual
+spacing. `Textarea` (`data-slot="textarea"`) shares the hover/focus background.
+Neither wrapper nor inner content paints a focus ring,
+outline, or shadow. Disabled editors do not gain hover material. Validation alone
+retains a stable inset error indicator via `hasError` or `aria-invalid`, unchanged
+by focus. Outside Settings the primitive's existing material is unchanged.
 See `components/sections/shared/SETTINGS_DESIGN_SPEC.md` for the form contract.
+
+Boolean `SettingsSwitch` controls use an intrinsic two-column muted track and
+the existing `yuri-segmented-selected-pill` material. Equal-width Off / On
+segments reserve their geometry in both states and accept the global 36px
+Button touch minimum. They retain a keyboard focus indicator independently
+of the borderless text/value-input recipe above.
 
 ## Voice color calibration
 
@@ -200,6 +254,9 @@ opacity. After a short entrance it moves left, reveals localized text for five
 seconds, then retracts right without changing header/spacer/content geometry.
 The copy uses smaller, vertically centered multiline text within the same fixed
 capsule height; English explicitly breaks into two complete lines without ellipsis.
+The capsule's size/travel token uses the avatar's `40px * --dpt-n` geometry,
+including native iOS scaling, so its clip never uses a smaller fixed-rem height.
+This remains absolute inside the zero-height anchor and does not resize the header.
 Width is intrinsic to those lines plus the 8px avatar gap and 12px end padding
 (at the default scale), not a fixed 180px track. The moving face owns a full-width
 transform wrapper with a start-aligned avatar; capsule overflow is clipped so the

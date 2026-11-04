@@ -873,6 +873,34 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     }
   }
 
+  if (pathname === '/api/config/providers/sources' && method === 'GET') {
+    try {
+      const data = await sendBridgeMessage('api:config/providers/sources:get', { directory: getRequestDirectoryHint(url, input, init) });
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch {
+      return new Response(JSON.stringify({ error: 'Unable to read provider sources' }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  if (pathname === '/api/config/providers/model' && method === 'PUT') {
+    try {
+      const data = await sendBridgeMessage('api:config/providers/model:update', await extractJsonBody(input, init, method));
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch {
+      return new Response(JSON.stringify({ error: 'Unable to save provider model' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  if ((pathname === '/api/config/providers/custom' || pathname === '/api/config/providers/custom/models') && method === 'POST') {
+    try {
+      const action = pathname.endsWith('/models') ? 'api:config/providers/custom:models' : 'api:config/providers/custom:create';
+      const data = await sendBridgeMessage(action, await extractJsonBody(input, init, method));
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch {
+      return new Response(JSON.stringify({ error: 'Unable to create custom provider' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
   if (pathname === '/api/config/global' && method === 'GET') {
     try {
       const data = await sendBridgeMessage('api:config/global:list');

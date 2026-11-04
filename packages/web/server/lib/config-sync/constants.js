@@ -3,8 +3,6 @@ export const OPENCODE_CONFIG_SYNC_ALLOWLIST = {
   // Mutually exclusive groups: first existing local file wins; other members are deleted on remote.
   fileGroups: [
     ['config.json', 'opencode.json', 'opencode.jsonc'],
-    ['oh-my-opencode-slim.json', 'oh-my-opencode-slim.jsonc'],
-    ['oh-my-openagent.json', 'oh-my-openagent.jsonc'],
   ],
   singleFiles: ['AGENTS.md', 'cursor-models.json'],
   directories: [
@@ -14,7 +12,6 @@ export const OPENCODE_CONFIG_SYNC_ALLOWLIST = {
     { path: 'snippet' },
     { path: 'snippets' },
     { path: 'plugins', excludeNames: ['node_modules'] },
-    { path: '.oh-my-opencode-slim' },
   ],
 };
 

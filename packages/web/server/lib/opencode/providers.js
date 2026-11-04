@@ -93,7 +93,35 @@ function removeProviderConfig(providerId, workingDirectory, scope = 'user') {
   return true;
 }
 
+/** Delete the provider from every physical document in the selected location. */
+function removeProviderConfiguration(providerId, workingDirectory) {
+  if (typeof providerId !== 'string' || !providerId.trim() || ['__proto__', 'constructor', 'prototype'].includes(providerId)) {
+    throw new Error('Provider ID is required');
+  }
+  const layers = readConfigLayers(workingDirectory);
+  let removed = false;
+  const seen = new Set();
+  for (const document of layers.documents) {
+    if (seen.has(document.path)) continue;
+    seen.add(document.path);
+    const config = document.config;
+    let changed = false;
+    for (const key of ['provider', 'providers']) {
+      if (!isPlainObject(config[key]) || !Object.hasOwn(config[key], providerId)) continue;
+      delete config[key][providerId];
+      if (!Object.keys(config[key]).length) delete config[key];
+      changed = true;
+    }
+    if (changed) {
+      writeConfig(config, document.path);
+      removed = true;
+    }
+  }
+  return removed;
+}
+
 export {
   getProviderSources,
   removeProviderConfig,
+  removeProviderConfiguration,
 };

@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './uk.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': 'Вимк.',
+  'settings.switch.on': 'Увімк.',
   'miniChat.actions.failed': 'Не вдалося виконати дію з вікном. Спробуйте ще раз.',
   'chat.messageBody.tts.follow': 'Стежити за читанням',
   'chat.messageBody.tts.failed': 'Читання перервано. Натисніть відтворення, щоб продовжити з поточного уривка.',

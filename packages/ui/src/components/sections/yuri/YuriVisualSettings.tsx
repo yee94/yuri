@@ -8,7 +8,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useMessageQueueStore } from '@/stores/messageQueueStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { NumberInput } from '@/components/ui/number-input';
 import { Radio } from '@/components/ui/radio';
 import { Input } from '@/components/ui/input';
@@ -900,7 +900,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={vibrancyChecked}
                                                 onChange={setVibrancyChecked}
                                                 disabled={vibrancyRestarting}
@@ -950,7 +950,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={dockBadgeEnabled}
                                                 onChange={setDockBadgeEnabled}
                                                 ariaLabel={t('settings.yuri.visual.field.dockBadge')}
@@ -1522,7 +1522,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                     itemId="appearance.expanded-editor-toolbar"
                                     label={t('settings.yuri.visual.field.expandedEditorToolbar')}
                                 >
-                                    <Checkbox
+                                    <SettingsSwitch
                                         checked={expandedEditorToolbar}
                                         onChange={handleExpandedEditorToolbarChange}
                                         ariaLabel={t('settings.yuri.visual.field.expandedEditorToolbarAria')}
@@ -1547,7 +1547,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                         </span>
                                     )}
                                 >
-                                    <Checkbox
+                                    <SettingsSwitch
                                         checked={showTerminalQuickKeysOnDesktop}
                                         onChange={setShowTerminalQuickKeysOnDesktop}
                                         ariaLabel={t('settings.yuri.visual.field.terminalQuickKeysAria')}
@@ -1724,7 +1724,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                         itemId="chat.session-goal"
                                         label={t('settings.yuri.visual.field.sessionGoal')}
                                     >
-                                        <Checkbox
+                                        <SettingsSwitch
                                             checked={sessionGoalEnabled}
                                             onChange={setSessionGoalEnabled}
                                             ariaLabel={t('settings.yuri.visual.field.sessionGoalAria')}
@@ -1755,7 +1755,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                         }
                                                     }}
                                                 >
-                                                    <Checkbox
+                                                    <SettingsSwitch
                                                         checked={sessionTitleRefreshEnabled}
                                                         onChange={setSessionTitleRefreshEnabled}
                                                         ariaLabel={t('settings.yuri.visual.field.sessionTitleRefreshAria')}
@@ -1778,7 +1778,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                         }
                                                     }}
                                                 >
-                                                    <Checkbox
+                                                    <SettingsSwitch
                                                         checked={allowPromptingSubagentSessions}
                                                         onChange={setAllowPromptingSubagentSessions}
                                                         ariaLabel={t('settings.yuri.visual.field.allowPromptingSubagentSessionsAria')}
@@ -1787,9 +1787,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 </div>
                                             )}
                                             {shouldShow('questionAutoDelegate') && (
-                                                <div data-settings-item="chat.question-auto-delegate" className="yuri-settings-group-row">
-                                                    <QuestionAutoDelegateSetting />
-                                                </div>
+                                                <QuestionAutoDelegateSetting />
                                             )}
                                         </ResponsiveSettingsGroup>
                                     )}
@@ -1822,7 +1820,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                         }
                                                     }}
                                                 >
-                                                    <Checkbox
+                                                    <SettingsSwitch
                                                         checked={collapsibleThinkingBlocks}
                                                         onChange={setCollapsibleThinkingBlocks}
                                                         ariaLabel={t('settings.yuri.visual.field.collapsibleThinkingBlocksAria')}
@@ -1848,7 +1846,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={collapsibleUserMessages}
                                                 onChange={handleCollapsibleUserMessagesChange}
                                                 ariaLabel={t('settings.yuri.visual.field.collapsibleUserMessagesAria')}
@@ -1872,7 +1870,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={showSplitAssistantMessageActions}
                                                 onChange={handleShowSplitAssistantMessageActionsChange}
                                                 ariaLabel={t('settings.yuri.visual.field.showSplitAssistantMessageActionsAria')}
@@ -1906,7 +1904,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={showAssistantTps}
                                                 onChange={handleShowAssistantTpsChange}
                                                 ariaLabel={t('settings.yuri.visual.field.showAssistantTpsAria')}
@@ -1943,7 +1941,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={showSubagentTaskDetails}
                                                 onChange={handleShowSubagentTaskDetailsChange}
                                                 ariaLabel={t('settings.yuri.visual.field.showSubagentTaskDetailsAria')}
@@ -2013,7 +2011,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={persistChatDraft}
                                                 onChange={setPersistChatDraft}
                                                 ariaLabel={t('settings.yuri.visual.field.persistDraftMessagesAria')}
@@ -2037,7 +2035,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                                 }
                                             }}
                                         >
-                                            <Checkbox
+                                            <SettingsSwitch
                                                 checked={inputSpellcheckEnabled}
                                                 onChange={handleInputSpellcheckChange}
                                                 ariaLabel={t('settings.yuri.visual.field.enableSpellcheckInTextInputsAria')}
@@ -2066,7 +2064,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                             label={t('settings.yuri.visual.field.sendAnonymousUsageReports')}
                             description={t('settings.yuri.visual.field.sendAnonymousUsageReportsHint')}
                         >
-                            <Checkbox
+                            <SettingsSwitch
                                 checked={reportUsage}
                                 onChange={handleReportUsageChange}
                                 ariaLabel={t('settings.yuri.visual.field.sendAnonymousUsageReportsAria')}

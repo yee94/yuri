@@ -28,13 +28,32 @@ Packaged UI and local backend resources may be replaced by a verified desktop OT
 
 Desktop instance switches revalidate the target's authentication before committing the runtime endpoint. Direct probes verify service compatibility and `/auth/session` with the saved client credential; Relay probes verify `/auth/session` over the pinned E2EE tunnel and hand that authenticated tunnel to the runtime. Cached connected badges remain display snapshots. A direct authentication failure triggers Relay fallback when available; failed authentication on every candidate preserves the current instance and reports authentication required.
 
-Saved SSH targets must complete the SSH manager's full connect/bootstrap pipeline before an instance switch or a new window (default host, saved host ID, or saved URL) proceeds, even when their badge is Ready or a Relay leg is available. Managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Main owns this preparation gate and returns the newly persisted endpoint and credentials. Preparation failure blocks navigation/window creation, concurrent connects share one attempt, and remote pages cannot trigger SSH preparation through window commands. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
+Saved SSH targets pass through the SSH manager before an instance switch or a new window (default host, saved host ID, or saved URL) proceeds. A ready in-memory session with live SSH processes is reused directly, without disconnecting, bootstrapping or checking/updating the installation again. A cached Ready badge without a session does not qualify. Disconnected targets complete the full connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Main owns this preparation gate and returns the newly persisted endpoint and credentials. Preparation failure blocks navigation/window creation, concurrent connects share one attempt, and remote pages cannot trigger SSH preparation through window commands. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
 
 Managed SSH bootstrap discovers registered daemons through `yuri status --json` and confirms each live runtime before choosing a retained `ssh-remote` Host. Within the remote user's CLI data scope it consolidates SSH-managed daemons, preserving manually launched web and desktop runtimes. A matching running version with valid in-memory/configured credentials is reused even without a preferred port. Missing credentials after desktop restart or a stale running version requires a verified stop and replacement on the same port; credentials are not persisted for reuse. Package upgrades drain managed daemons before replacing installation files. Shutdown uses `yuri stop --port ... --json`, whose registry/PID checks and signal fallback work with password-protected Hosts. Discovery or shutdown failure blocks replacement rather than adding another database writer. A failed install leaves the old daemon stopped and surfaces the error for retry. External SSH mode remains probe-only. These lifecycle fixes are installer-owned.
 
 For Relay-paired hosts, direct probes must first obtain an exact `/health.serverId` match without sending credentials. Missing identity, malformed JSON, redirects, failed health requests and mismatched computers cannot qualify as a usable direct transport; startup restore and background candidate refresh retain Relay instead. Explicit direct-only hosts keep their compatibility/authentication probe. This gate is installer-owned Electron main code, so a UI/backend OTA alone cannot update it.
 
 Renderer local-instance checks use the active Host/Relay identity before URL comparisons. A Relay virtual loopback origin never qualifies as the local machine. Remote windows do not inherit unscoped local storage through immutable preload URLs, and their transcript cache uses IndexedDB rather than the local-only HTTP/SQLite backend. Yuri filesystem and session-wrapper requests resolve route paths through the current runtime, alongside SDK calls, rather than retaining the startup HTTP origin.
+
+### Window session restore
+
+Main persists each primary window's saved Host ID, credential-free product route,
+normal bounds, maximized and fullscreen state in `desktopWindowStates`. Preload
+reports committed runtime changes; main accepts only the trusted main frame and
+validates the endpoint against the saved Host or its Relay transport. Credentials
+and arbitrary query/hash parameters are never copied into window state. The
+explicit default Host preference remains independent of the last window instance.
+
+Normal launches restore these windows instead of selecting the local/default Host.
+SSH targets reconnect before navigation; Relay selection remains renderer-owned
+and uses that window's boot target, never another window's default. An unavailable
+or deleted target retains its recovery state instead of silently becoming local.
+Startup/quit snapshots cannot overwrite the session with partially opened/closed
+windows, and shutdown waits for the final settings write. Legacy settings without
+`desktopWindowStates` retain single-window geometry/default-Host behavior. An
+explicit `YURI_SERVER_URL` still overrides instance restore. Mini Chat windows are
+not included. These main/preload changes require a new installer.
 
 ## Leased image disk cache
 
@@ -78,6 +97,8 @@ New links use `yuri://`. Packaged OS registration and runtime handlers also acce
 The native-only `remote-desktop-approvals.json` retains the enable preference; legacy `clients` approval entries are preserved but no longer consulted or written. Device authentication and pairing revocation remain owned by the server. Close the mobile remote view, turn off the local setting, or revoke device pairing to stop control. No app-owned always-on-top sharing UI or Stop/Forget IPC is created; macOS's own capture indicators and permission UI are not suppressed.
 
 Remote desktop defaults **off**, including for existing remembered devices. Enable it from the local desktop app's Settings → Remote instances → Remote desktop after completing Screen Recording, Accessibility (including the input helper), and helper-installation checks. Permission actions open fixed macOS Privacy panes; returning to Yuri or selecting Check permissions again refreshes the check. A newly granted permission may require an app restart. Setup/status/enable IPC is restricted to the trusted main desktop frame, never remote runtime pages. The native preference and WS upgrade gates both reject disabled access. Startup rechecks app/helper/system permissions without prompting. Turning off immediately cancels pending startup and stops active capture; if saving the off preference fails, this app run remains blocked and the UI reports the failure.
+
+The 15-second startup deadline covers permission checks, screen enumeration, capture loading and input-helper readiness. Abort/timeout releases the capture slot immediately, including a hung native call; late results are fenced from new sessions. A screen-source mismatch, helper probe failure or capture timeout remains retryable instead of being mislabeled as missing permission. The client reconnects transient failures and resumes on foreground; an explicit local disable stays terminal. Native failures log only stage/code and permission flags. The native startup changes require an updated installer; shared UI/backend OTA cannot replace the installed adapter.
 
 `remote-desktop-capture.mjs` owns the isolated media lifecycle; `remote-desktop-quality.mjs` owns session-local encoder quality selection and exact JPEG duplicate detection. WebRTC starts with conservative encoder ceilings, steps down on sustained congestion and recovers slowly with measured headroom. A negotiated `view` message switches zoomed views to source-resolution priority (up to 2560×1440) at lower frame ceilings, retaining the current bitrate tier; Fit restores normal adaptation. Normal encoder tiers are normalized against their 1080p reference so a larger captured source does not raise the default 720p output or weak-network tiers. The backend must opt in when starting the adapter before the capture renderer advertises `ready.zoomQuality`, so an updated shell with an older OTA backend cannot accidentally advertise an unsupported wire command. JPEG keeps its existing decode-ACK gate but sends only changed encoded frames; a main-process send rejection clears duplicate history for retry. Zoom raises JPEG output to at most 2560×1440 at no more than 4 fps, retaining the 512 KiB cap. No UI setting or dependency is added. Media tuning uses no persistent cache or desktop-content logging. The owning remote-desktop documentation lists the profiles and feedback contract.
 
@@ -360,6 +381,17 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 ## IPC Pattern
 
 ### Native GUI plugins
+
+Declarative appearance plugins can supply `yuri.branding` Dock PNGs without a
+`main` entry. The existing trusted local native lease advertises
+`capabilities.dockIcon`; its narrow `dock-icon` request accepts an inline PNG or
+null, never a path or executable code. `plugin-dock-icons.mjs` validates size,
+PNG header/dimensions before decoding, and valid pixels before committing.
+The newest active window selection owns the app-wide icon; lease release,
+navigation, disable and replacement restore the preceding selection or default.
+`syncMacDockIcon` leaves an active plugin icon intact on system appearance changes.
+Only runtime Dock artwork changes; signed app assets, Finder/Launchpad icons and
+update identity are unchanged. Preview builds do not advertise this capability.
 
 `gui-plugin-host.mjs` runs the standard OpenCode `./gui-experimental` bundle's
 `main` entry and typed IPC. It reads inventory/code/options itself through the

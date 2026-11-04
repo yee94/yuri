@@ -131,6 +131,11 @@ export function createFlexokiCodeMirrorTheme(
     '.cm-activeLine': {
       backgroundColor: theme.colors.surface.overlay,
     },
+    '.cm-foldPlaceholder': {
+      backgroundColor: theme.colors.surface.muted,
+      color: theme.colors.surface.foreground,
+      borderColor: theme.colors.interactive.border,
+    },
     /* ── Floating search: panels container ── */
     '.cm-panels': {
       backgroundColor: 'transparent',

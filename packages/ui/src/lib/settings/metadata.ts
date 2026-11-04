@@ -215,7 +215,7 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     title: 'Global Configuration',
     group: 'opencode',
     kind: 'single',
-    keywords: ['global', 'configuration', 'opencode.json', 'opencode.jsonc', 'oh-my-opencode', 'oh-my-openagent'],
+    keywords: ['global', 'configuration', 'opencode.json', 'opencode.jsonc'],
   },
   {
     slug: 'skills.installed',

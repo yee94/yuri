@@ -334,12 +334,12 @@ describe('core-routes', () => {
   it('should parse JSON bodies for global config routes', async () => {
     const app = express();
     registerCommonRequestMiddleware(app, { express });
-    app.put('/api/config/global/oh-my-opencode-slim', (req, res) => {
+    app.put('/api/config/global/opencode', (req, res) => {
       res.json({ body: req.body });
     });
 
     const response = await request(app)
-      .put('/api/config/global/oh-my-opencode-slim')
+      .put('/api/config/global/opencode')
       .send({ content: '{\n  "preset": "openai"\n}' })
       .expect(200);
 

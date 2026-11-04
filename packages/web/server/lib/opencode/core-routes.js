@@ -1195,6 +1195,8 @@ export const registerCommonRequestMiddleware = (app, dependencies) => {
       // Binary attachment uploads stream as the request body. Parsing JSON here
       // would buffer the entire payload and block the relay tunnel / corrupt bytes.
       next();
+    } else if (req.path.startsWith('/api/config/providers/')) {
+      express.json({ limit: '1mb' })(req, res, next);
     } else if (req.path.startsWith('/api/yuri/message-queue')) {
       express.json({ limit: req.method === 'POST' && req.path === '/api/yuri/message-queue/items' ? MESSAGE_QUEUE_ADMISSION_HTTP_MAX_BYTES : '1mb' })(req, res, next);
     } else if (

@@ -11,12 +11,88 @@ export type DesktopInput =
   | { type: 'key'; key: string }
   | { type: 'release' };
 
-export function connectRemoteDesktop(options: {
+type DesktopConnectionOptions = {
   transport: string; generation: number;
   video: HTMLVideoElement; image: HTMLImageElement;
   onSize: (width: number, height: number) => void;
   onState: (state: 'connecting' | 'webrtc' | 'tunnel' | 'closed', error?: string) => void;
-}) {
+};
+
+export function connectRemoteDesktop(options: DesktopConnectionOptions) {
+  let disposed = false, failures = 0, serial = 0, zoomed = false;
+  let attempt: ReturnType<typeof connectDesktopAttempt> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastError: string | undefined;
+  const inScope = () => options.transport === getRuntimeTransportIdentity() && options.generation === getRuntimeGeneration();
+  const hidden = () => document.visibilityState === 'hidden';
+  const discard = () => {
+    serial++;
+    const previous = attempt;
+    attempt = undefined;
+    clearTimeout(retryTimer); retryTimer = undefined;
+    previous?.close();
+  };
+  const close = (error?: string) => {
+    if (disposed) return;
+    disposed = true;
+    discard();
+    unsubscribe();
+    window.removeEventListener('online', recover);
+    window.removeEventListener('pageshow', pageShow);
+    window.removeEventListener('yuri:system-resume', resume);
+    document.removeEventListener('visibilitychange', visibility);
+    options.onState('closed', error);
+  };
+  const schedule = () => {
+    if (disposed || hidden()) return;
+    const delay = navigator.onLine === false || lastError === 'permission_required'
+      ? 60000 : Math.min(1000 * 2 ** Math.min(failures++, 5), 30000);
+    retryTimer = setTimeout(() => { retryTimer = undefined; run(); }, delay);
+  };
+  const run = () => {
+    if (disposed || attempt || hidden()) return;
+    if (!inScope()) { close('runtime_changed'); return; }
+    clearTimeout(retryTimer); retryTimer = undefined;
+    if (navigator.onLine === false) { schedule(); return; }
+    const expected = ++serial;
+    attempt = connectDesktopAttempt({ ...options, onState: (state, error) => {
+      if (disposed || expected !== serial) return;
+      if (state === 'closed') {
+        attempt = undefined;
+        lastError = error;
+        if (!error || ['runtime_changed', 'disabled', 'unsupported', 'helper_unavailable', 'authentication_required', 'permission_denied'].includes(error)) {
+          close(error); return;
+        }
+        options.onState(state, error);
+        schedule();
+        return;
+      }
+      if (state === 'webrtc' || state === 'tunnel') { failures = 0; lastError = undefined; }
+      options.onState(state, error);
+    } });
+    attempt.setZoomed(zoomed);
+  };
+  const recover = () => { if (!disposed && !hidden() && !attempt) run(); };
+  const resume = () => { if (!disposed) { discard(); recover(); } };
+  const pageShow = (event: PageTransitionEvent) => { if (event.persisted) resume(); };
+  const visibility = () => {
+    if (hidden()) { discard(); options.onState('connecting', undefined); }
+    else recover();
+  };
+  const unsubscribe = subscribeRuntimeEndpointChanged(() => close('runtime_changed'));
+  window.addEventListener('online', recover);
+  window.addEventListener('pageshow', pageShow);
+  window.addEventListener('yuri:system-resume', resume);
+  document.addEventListener('visibilitychange', visibility);
+  run();
+  return {
+    send: (message: DesktopInput) => { if (!disposed && inScope()) attempt?.send(message); },
+    close: () => close(),
+    setZoomed: (value: boolean) => { zoomed = value; attempt?.setZoomed(value); },
+  };
+}
+
+function connectDesktopAttempt(options: DesktopConnectionOptions) {
   let closed = false;
   let ws: RelayTunnelWebSocket | undefined;
   let peer: RTCPeerConnection | undefined;
@@ -39,7 +115,8 @@ export function connectRemoteDesktop(options: {
   const ice: RTCIceCandidateInit[] = [];
   const current = () => !closed && options.transport === getRuntimeTransportIdentity() && options.generation === getRuntimeGeneration();
   const send = (message: unknown) => {
-    if (current() && ws?.readyState === 1) ws.send(JSON.stringify(message));
+    if (!current() || ws?.readyState !== 1) return;
+    try { ws.send(JSON.stringify(message)); } catch { close('connection_failed'); }
   };
   const syncZoom = () => {
     if (!zoomQualitySupported || zoomed === reportedZoomed || !current() || ws?.readyState !== 1) return;
@@ -48,13 +125,18 @@ export function connectRemoteDesktop(options: {
   };
   const close = (error?: string) => {
     if (closed) return;
-    send({ type: 'release' });
+    const release = current() && ws?.readyState === 1;
     closed = true;
-    unsubscribe();
+    if (release) {
+      try { ws!.send(JSON.stringify({ type: 'release' })); } catch { /* A broken transport must not prevent resource cleanup and recovery. */ }
+    }
     clearInterval(heartbeat);
     clearTimeout(deadline);
     clearTimeout(fallbackTimer);
-    ws?.close();
+    if (ws) {
+      ws.onopen = null; ws.onmessage = null; ws.onerror = null; ws.onclose = null;
+      ws.close();
+    }
     peer?.close();
     const stream = options.video.srcObject;
     if (stream instanceof MediaStream) stream.getTracks().forEach(track => track.stop());
@@ -66,12 +148,12 @@ export function connectRemoteDesktop(options: {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     report('closed', error);
   };
-  const unsubscribe = subscribeRuntimeEndpointChanged(() => close('runtime_changed'));
   const switchToFallback = () => {
     if (!current() || fallback) return;
     fallback = true;
     peer?.close();
     clearTimeout(fallbackTimer);
+    fallbackTimer = setTimeout(() => close('connection_failed'), 15000);
     send({ type: 'fallback' });
   };
   const receive = async (data: string | ArrayBuffer) => {
@@ -84,6 +166,7 @@ export function connectRemoteDesktop(options: {
       options.image.onload = () => {
         if (!current()) return;
         clearTimeout(deadline);
+        clearTimeout(fallbackTimer);
         options.onSize(options.image.naturalWidth, options.image.naturalHeight);
         report('tunnel');
         send({ type: 'ack' });
@@ -122,8 +205,8 @@ export function connectRemoteDesktop(options: {
       for (const candidate of ice.splice(0)) await peer.addIceCandidate(candidate);
       await peer.setLocalDescription(await peer.createAnswer());
       if (!current() || fallback) return;
-      send({ type: 'answer', sdp: peer.localDescription?.sdp });
       fallbackTimer = setTimeout(switchToFallback, 7000);
+      send({ type: 'answer', sdp: peer.localDescription?.sdp });
     } else if (message.type === 'ice' && message.candidate && !fallback) {
       if (peer?.remoteDescription) await peer.addIceCandidate(message.candidate);
       else if (ice.length < 128) ice.push(message.candidate);
@@ -137,6 +220,7 @@ export function connectRemoteDesktop(options: {
       ws = openRuntimeWebSocket(getRuntimeUrlResolver().websocket('/api/remote-desktop/ws'));
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
+        if (!current()) return;
         lastMessage = Date.now();
         heartbeat = setInterval(() => {
           if (!current()) { close('runtime_changed'); return; }
@@ -145,11 +229,12 @@ export function connectRemoteDesktop(options: {
         }, 5000);
       };
       ws.onmessage = event => {
+        if (!current()) return;
         if (++queuedSignals > 128) { close('connection_failed'); return; }
         chain = chain.then(() => receive(event.data)).catch(switchToFallback).finally(() => { queuedSignals--; });
       };
       ws.onerror = () => close('connection_failed');
-      ws.onclose = () => close('connection_failed');
+      ws.onclose = event => close(event.code === 4001 ? 'authentication_required' : 'connection_failed');
     } catch { close('connection_failed'); }
   })();
   return { send: (message: DesktopInput) => send(message), close,

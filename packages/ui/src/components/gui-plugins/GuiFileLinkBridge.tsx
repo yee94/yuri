@@ -93,7 +93,7 @@ export function GuiFileLinkBridge({ path, base, active: surfaceActive = true, ch
       data-mobile-edge-to-edge-preview={content ? 'true' : undefined}>
       {feedback ? <span role="status" className="shrink-0 px-3 py-1 break-words typography-meta text-muted-foreground">{feedback}</span> : null}
       {typeof children === 'function' ? children({ preview: content, toggle, controls }) : <>
-        {controls ? <div className="absolute right-3 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{controls}</div> : null}
+        {controls ? <div className="absolute right-6 top-3 z-30 flex items-center gap-1" data-gui-preview-controls>{controls}</div> : null}
         {content ?? children}
       </>}
     </div>

@@ -17,6 +17,7 @@ import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/s
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { usePluginsStore, type PluginScope } from '@/stores/usePluginsStore';
+import { SettingsJsonEditor } from '@/components/sections/shared/SettingsJsonEditor';
 
 type TabKey = 'npm' | 'path' | 'file';
 
@@ -180,14 +181,15 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
                 <label htmlFor="plugin-options" className="typography-ui-label text-foreground">
                   {t('settings.plugins.page.field.options')}
                 </label>
-                <Textarea
+                <SettingsJsonEditor
                   id="plugin-options"
                   value={optionsJson}
-                  onChange={(e) => setOptionsJson(e.target.value)}
-                  rows={5}
-                  className="font-mono"
+                  onChange={setOptionsJson}
+                  className="h-44 rounded-[var(--radius-xl)] ring-1 ring-inset ring-border/60"
+                  ariaLabel={t('settings.plugins.page.field.options')}
+                  placeholder={t('settings.plugins.page.field.options.placeholder')}
                   hasError={optionsInvalid}
-                  disabled={submitting}
+                  readOnly={submitting}
                 />
                 {optionsInvalid && (
                   <p className="typography-meta text-[var(--status-error)]">

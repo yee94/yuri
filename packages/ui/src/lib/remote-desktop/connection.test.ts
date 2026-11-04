@@ -21,12 +21,14 @@ beforeEach(() => {
   mock.socket = { readyState: 1, onopen: null, onmessage: null, onerror: null, onclose: null, send: vi.fn(), close: vi.fn() };
   mock.open.mockReturnValue(mock.socket);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+const connections: ReturnType<typeof connectRemoteDesktop>[] = [];
+afterEach(() => { connections.splice(0).forEach(connection => connection.close()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function setup() {
   const state = vi.fn();
   const video = document.createElement('video');
   const image = document.createElement('img');
   const connection = connectRemoteDesktop({ transport: 'host-a', generation: 1, video, image, onSize: vi.fn(), onState: state });
+  connections.push(connection);
   return { connection, state, video, image };
 }
 it('waits for scoped auth, uses the runtime socket, and stops old-host input immediately on switching', async () => {
@@ -66,11 +68,109 @@ it('falls back once when WebRTC is unavailable, and only acknowledges decoded tu
   connection.close();
 });
 it('limits the initial connection wait and surfaces server permission errors without retry storms', async () => {
-  const { state } = setup(); await tick();
+  const { connection, state } = setup(); await tick();
   mock.socket!.onmessage!({ data: JSON.stringify({ type: 'error', code: 'permission_required' }) }); await tick();
   expect(state).toHaveBeenLastCalledWith('closed', 'permission_required');
+  await vi.advanceTimersByTimeAsync(59999);
+  expect(mock.open).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  connection.close();
+});
+
+it('reconnects after a Host restart with fresh scoped auth and never replays input or old socket callbacks', async () => {
+  const { connection, state } = setup(); await tick();
+  const old = mock.socket!;
+  const lateMessage = old.onmessage!;
+  connection.send({ type: 'text', text: 'one shot' });
+  old.onclose!({ code: 1006, reason: '' }); await tick();
+  const next = { ...old, send: vi.fn(), close: vi.fn() };
+  mock.open.mockReturnValue(next);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mock.auth).toHaveBeenCalledTimes(2);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  expect(next.send).not.toHaveBeenCalled();
+  next.onmessage!({ data: JSON.stringify({ type: 'ready', width: 1920, height: 1080 }) }); await tick();
+  lateMessage({ data: JSON.stringify({ type: 'error', code: 'permission_required' }) }); await tick();
+  expect(state).toHaveBeenLastCalledWith('connecting', undefined);
+  connection.send({ type: 'key', key: 'Enter' });
+  expect(next.send).toHaveBeenCalledWith('{"type":"key","key":"Enter"}');
+  connection.close();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+});
+
+it('backs off repeated startup failures, interrupts the wait on online, and cancels retry on runtime switch', async () => {
+  const { connection } = setup(); await tick();
+  mock.socket!.onerror!(); await tick();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  mock.socket!.onerror!(); await tick();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event('online')); await tick();
+  expect(mock.open).toHaveBeenCalledTimes(3);
+  mock.socket!.onerror!(); await tick();
+  mock.transport = 'host-b'; mock.generation++; mock.changed?.();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(mock.open).toHaveBeenCalledTimes(3);
+  connection.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('releases capture while hidden and reconnects once on foreground, without background retry traffic', async () => {
+  const { connection } = setup(); await tick();
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  document.dispatchEvent(new Event('visibilitychange'));
+  expect(mock.socket!.close).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(120000);
   expect(mock.open).toHaveBeenCalledTimes(1);
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  document.dispatchEvent(new Event('visibilitychange')); await tick();
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event('online')); await tick();
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  connection.close();
+});
+
+it('recovers after a broken send and a stalled compatibility stream, then stops retrying on a decoded frame', async () => {
+  vi.stubGlobal('RTCPeerConnection', undefined);
+  vi.stubGlobal('URL', class extends URL { static createObjectURL() { return 'blob:recovered-frame'; } static revokeObjectURL = vi.fn(); });
+  const { connection, image, state } = setup(); await tick();
+  vi.mocked(mock.socket!.send).mockImplementationOnce(() => { throw Error('transport closed'); });
+  expect(() => connection.send({ type: 'key', key: 'Enter' })).not.toThrow();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(mock.open).toHaveBeenCalledTimes(2);
+  mock.socket!.onmessage!({ data: JSON.stringify({ type: 'offer', sdp: 'test' }) }); await tick();
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(state).toHaveBeenLastCalledWith('closed', 'connection_failed');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(mock.open).toHaveBeenCalledTimes(3);
+  mock.socket!.onmessage!({ data: new ArrayBuffer(10) }); await tick();
+  image.dispatchEvent(new Event('load')); await tick();
+  expect(state).toHaveBeenLastCalledWith('tunnel', undefined);
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(mock.open).toHaveBeenCalledTimes(3);
+  connection.close();
+});
+
+it('does not leave a media timeout behind when requesting compatibility streaming fails', async () => {
+  vi.stubGlobal('RTCPeerConnection', undefined);
+  const { connection } = setup(); await tick();
+  vi.mocked(mock.socket!.send).mockImplementationOnce(() => { throw Error('transport closed'); });
+  mock.socket!.onmessage!({ data: JSON.stringify({ type: 'offer', sdp: 'test' }) }); await tick();
+  connection.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(['disabled', 'unsupported', 'helper_unavailable', 'authentication_required'])('does not reconnect a terminal %s rejection', async code => {
+  const { connection, state } = setup(); await tick();
+  mock.socket!.onmessage!({ data: JSON.stringify({ type: 'error', code }) }); await tick();
+  expect(state).toHaveBeenLastCalledWith('closed', code);
+  window.dispatchEvent(new Event('online'));
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(mock.open).toHaveBeenCalledTimes(1);
+  connection.close();
 });
 
 it('sends only zoom state transitions after advertised support, including a zoom that preceded readiness', async () => {

@@ -6,7 +6,7 @@ import { openNewSessionDraftForActiveLayout } from '@/mobile/useMobileNavigation
 import { isMobileOverlayFocusRestoreSuppressed } from '@/lib/mobileOverlayFocusRestore';
 import { canUseNativeMediaPick, pickNativeMediaFiles, NATIVE_MEDIA_PICK_LIMIT, usesAndroidAttachPickSheet } from '@/lib/native-media-pick';
 import { MobileAttachPickSheet } from './MobileAttachPickSheet';
-import { useNativeIosComposer } from './useNativeIosComposer';
+import { NativeIosComposerBridge } from './useNativeIosComposer';
 import { useIosNativeUiEnabled } from '@/lib/iosNativeUi';
 import { applyNativeComposerAccessoryVar, canUseNativeIosComposer, getNativeIosComposerPlugin, handoffNativeComposerSendToWeb, resolveComposerInsertCaret } from '@/lib/native-ios-composer';
 import { ComposerDictation } from '@/components/dictation/ComposerDictation';
@@ -247,7 +247,6 @@ const COMPOSER_TEXT_LAYOUT_CLASS = 'box-border w-full whitespace-pre-wrap break-
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
 const EMPTY_QUEUE: QueueItem[] = [];
 const EMPTY_INLINE_DRAFTS: InlineCommentDraft[] = [];
-const EMPTY_AGENTS: import('@/lib/opencode/v2-types').Agent[] = [];
 const EMPTY_PROVIDERS: Array<{ id: string; name?: string; models: Array<Record<string, unknown> & { id: string; name?: string }> }> = [];
 const FILE_MENTION_TOKEN = /^@[^\s]+$/;
 const shouldEnableComposerSlashDirectoryQueries = ({
@@ -1219,6 +1218,7 @@ const createComposerDraftKey = (transportIdentity: string, currentSessionId: str
 };
 
 const EMPTY_PRIMARY_ATTACHMENT_VIEWS: ReadonlyArray<AttachedFile> = [];
+const sessionTitles = { get: (id: string) => getAllSyncSessionMap().get(id)?.title || id };
 
 const ChatInputRuntime: React.FC<ChatInputProps> = ({
     onOpenSettings,
@@ -1932,14 +1932,13 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         primarySessionEntityVariant,
     ]);
 
-    const getVisibleAgents = useConfigStore((state) => state.getVisibleAgents);
-    const primaryAgents = surface.kind === 'primary' ? getVisibleAgents() : EMPTY_AGENTS;
     const primaryProviders = useConfigStore((state) => surface.kind === 'primary' ? state.providers : EMPTY_PROVIDERS);
     // Secondary catalogs may arrive raw from scoped queries; apply the same
     // visible-agent filter primary chat uses so title/summary never leak in.
-    const agents = surface.kind === 'secondary'
-        ? resolveComposerVisibleAgents(surface.selection.catalog?.agents)
-        : primaryAgents;
+    const secondaryAgents = surface.kind === 'secondary' ? surface.selection.catalog?.agents : undefined;
+    const agents = React.useMemo(() => surface.kind === 'secondary'
+        ? resolveComposerVisibleAgents(secondaryAgents)
+        : primarySelectionAgents, [surface.kind, secondaryAgents, primarySelectionAgents]);
     const providers = surface.kind === 'secondary' ? surface.selection.catalog?.providers ?? EMPTY_PROVIDERS : primaryProviders;
     const secondarySelectionUnavailable = surface.kind === 'secondary' && (
         !surface.selection.catalog?.ready || Boolean(surface.selection.catalog.error)
@@ -1964,7 +1963,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const isExpandedInput = useUIStore((state) => state.isExpandedInput);
     const setExpandedInput = useUIStore((state) => state.setExpandedInput);
     const setTimelineDialogOpen = useUIStore((state) => state.setTimelineDialogOpen);
-    const sessionTitles = new Map(Array.from(getAllSyncSessionMap(), ([id, session]) => [id, session.title || id]));
     const composer = useComposerController({ draftKey, sessionTitles, persistenceEnabled: persistChatDraft });
     const composerDocument = composer.document;
     const message = composerDocument.text;
@@ -5019,7 +5017,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             || caretStart !== selection.start
             || caretEnd !== selection.end
             || textToCommit !== nextText;
-        requestAnimationFrame(() => {
+        if (shouldCorrectTextarea) requestAnimationFrame(() => {
             const textarea = textareaRef.current;
             // Native dictation and IMEs own an active replacement range. Preserve
             // it when Composer accepted the browser value and caret unchanged.
@@ -5028,7 +5026,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 textarea.value = document.text;
                 textarea.setSelectionRange(selection.start, selection.end);
             }
-            adjustTextareaHeight();
         });
         updateAutocompleteState(document.text, selection.end, inputSource, insertedText);
         return { document, selection };
@@ -6415,12 +6412,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         || androidMediaPickSheetOpen
         || issuePickerOpen
         || prPickerOpen;
-    const nativeModelName = getModelDisplayName(
-        providers.find((provider) => provider.id === surface.selection.value.providerID),
-        surface.selection.value.modelID,
-        t('chat.modelControls.selectModel'),
-    );
-    const nativeModelVariant = surface.selection.value.variant?.trim();
     const handleNativeSuggestionRows = useEvent((payload: ComposerAutocompleteVisibleRows) => {
         setNativeSuggestionRows((previous) => commitComposerAutocompleteRows(previous, payload.rows));
         setNativeSuggestionHighlight((previous) => (
@@ -6446,14 +6437,19 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         setNativeSuggestionRows([]);
         setNativeSuggestionHighlight(0);
     });
-    const nativeIosComposerActive = useNativeIosComposer({
+    const nativeIosComposerActive = nativeComposerOwnedInput;
+    const nativeIosComposerBridge = nativeIosComposerActive ? React.createElement(NativeIosComposerBridge, {
         enabled: nativeComposerOwnedInput,
         isMobile,
         text: message,
         textPresetEpoch: composer.textPresetEpoch,
         placeholder: composerPlaceholder,
-        modelLabel: nativeModelName,
-        modelVariantLabel: nativeModelVariant ? formatEffortLabel(nativeModelVariant) : '',
+        modelLabel: getModelDisplayName(
+            providers.find((provider) => provider.id === surface.selection.value.providerID),
+            surface.selection.value.modelID,
+            t('chat.modelControls.selectModel'),
+        ),
+        modelVariantLabel: surface.selection.value.variant?.trim() ? formatEffortLabel(surface.selection.value.variant) : '',
         canSend,
         canAbort,
         attachmentCount: attachedFiles.length,
@@ -6544,7 +6540,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         onAutocompleteAccept: handleNativeAutocompleteAccept,
         onAutocompleteDismiss: handleNativeAutocompleteDismiss,
         chipHighlights: highlightedComposerContent,
-    });
+    }) : null;
     const nativeAccessoryRef = React.useRef<HTMLDivElement>(null);
     useResizeObserver(nativeIosComposerActive ? nativeAccessoryRef : null, () => {
         const height = nativeAccessoryRef.current?.getBoundingClientRect().height ?? 0;
@@ -6801,6 +6797,15 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         />
     );
 
+    const handleMobileCycleAgent = useEvent(() => {
+        markComposerActionGesture();
+        handleCycleAgent();
+    });
+    const handleOpenModelPanel = useEvent(() => handleOpenMobilePanel('model'));
+    const mobileSelectedProvider = React.useMemo(
+        () => isMobile ? providers.find((provider) => provider.id === surface.selection.value.providerID) : undefined,
+        [isMobile, providers, surface.selection.value.providerID],
+    );
     // gap-x-1.5 matches the send-button cluster so agent → model → send reads evenly.
     const mobileComposerControls = isMobile ? (
         <div
@@ -6809,19 +6814,16 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         >
             <MemoMobileAgentButton
                 onOpenAgentPanel={handleOpenAgentPanel}
-                onCycleAgent={() => {
-                    markComposerActionGesture();
-                    handleCycleAgent();
-                }}
+                onCycleAgent={handleMobileCycleAgent}
                 agentName={surface.selection.value.agent}
                 agents={agents}
                 disabled={mobileAgentControlsDisabled}
             />
             <MemoMobileModelButton
-                onOpenModel={() => handleOpenMobilePanel('model')}
+                onOpenModel={handleOpenModelPanel}
                 providerID={surface.selection.value.providerID}
                 modelID={surface.selection.value.modelID}
-                provider={providers.find((p) => p.id === surface.selection.value.providerID)}
+                provider={mobileSelectedProvider}
                 variant={surface.selection.value.variant}
             />
         </div>
@@ -7233,6 +7235,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     return (
         <>
+        {nativeIosComposerBridge}
         {surface.kind === 'primary' && currentSessionId ? <BtwComposerSurface scope={{ sessionId: currentSessionId, directory: currentDirectory }} active={surface.active} mobile={isMobile} /> : null}
         <form
             ref={composerFormRef}

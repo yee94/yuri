@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-test('real Electron: standard GUI main + preload IPC exports PDFs with HMR and bundled UI', { timeout: 120000 }, async () => {
+test('real Electron: GUI IPC, PDF, appearance and Dock cleanup with HMR and bundled UI', { timeout: 120000 }, async () => {
   const work = await mkdtemp(join(process.env.YURI_TEST_EVIDENCE_DIR || tmpdir(), 'gui-plugin-pdf-'));
   let devServer;
   try {

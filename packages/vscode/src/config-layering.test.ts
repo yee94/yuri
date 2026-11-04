@@ -26,6 +26,65 @@ afterEach(() => {
 });
 
 describe('VS Code physical config parity', () => {
+  it('updates saved models through the shared native writer', async () => {
+    const { handleConfigBridgeMessage } = await import('./bridge-config-runtime');
+    const response = await handleConfigBridgeMessage({ id: 'edit', type: 'api:config/providers/model:update', payload: {
+      providerId: 'openai', modelId: 'coder', name: 'Coder', tools: true, vision: false,
+      context: 32000, output: 4000, inputModalities: ['text'], directory,
+    } }, undefined, {} as Parameters<typeof handleConfigBridgeMessage>[2]);
+    expect(response).toMatchObject({ success: true, data: { providerId: 'openai', modelId: 'coder' } });
+    expect(readConfigFile(path.join(directory, 'opencode.jsonc'))).toMatchObject({ providers: { openai: { models: { coder: { name: 'Coder' } } } } });
+  });
+  it('bridges safe provider provenance from the active service and preserves failures', async () => {
+    const { handleConfigBridgeMessage } = await import('./bridge-config-runtime');
+    const { configureOpenCodeCredentials } = await import('../../web/server/lib/opencode/auth.js');
+    const client = {
+      provider: { list: vi.fn(async () => ({ data: [{ id: 'injected' }] })) },
+      integration: { list: vi.fn(async () => ({ data: [] })) },
+      credential: { create: vi.fn(), list: vi.fn(async () => []), update: vi.fn(), activate: vi.fn(), remove: vi.fn() },
+      config: { get: vi.fn(async () => []) },
+    };
+    configureOpenCodeCredentials(() => client);
+    try {
+      const message = { id: 'source', type: 'api:config/providers/sources:get', payload: { directory } };
+      const deps = {} as Parameters<typeof handleConfigBridgeMessage>[2];
+      const response = await handleConfigBridgeMessage(message, undefined, deps);
+      expect(response).toMatchObject({ success: true, data: { injected: { origin: 'runtime', auth: { exists: false }, files: [] } } });
+      expect(client.provider.list).toHaveBeenCalledWith({ location: { directory } }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      client.config.get.mockRejectedValue(new Error('secret-sentinel'));
+      expect(await handleConfigBridgeMessage(message, undefined, deps)).toEqual({ id: 'source', type: message.type, success: false, error: 'Unable to read provider sources' });
+    } finally { configureOpenCodeCredentials(null); }
+  });
+
+  it('creates native V2 custom providers through the shared host writer without putting keys in config or replies', async () => {
+    const { handleConfigBridgeMessage } = await import('./bridge-config-runtime');
+    const { configureOpenCodeCredentials } = await import('../../web/server/lib/opencode/auth.js');
+    const create = vi.fn().mockResolvedValue({ id: 'fixture-credential' });
+    configureOpenCodeCredentials(() => ({ credential: { create, list: vi.fn(), update: vi.fn(), activate: vi.fn(), remove: vi.fn() }, config: { get: vi.fn() } }));
+    try {
+      const response = await handleConfigBridgeMessage({ id: 'custom', type: 'api:config/providers/custom:create', payload: {
+        providerId: 'custom-fixture', apiKey: 'fixture-key',
+        config: { name: 'Custom', package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'https://api.example.com/v1' }, models: { coder: {} } },
+      } }, undefined, {} as Parameters<typeof handleConfigBridgeMessage>[2]);
+      expect(response).toEqual({ id: 'custom', type: 'api:config/providers/custom:create', success: true, data: { providerId: 'custom-fixture' } });
+      const saved = readConfigFile(path.join(directory, 'opencode.jsonc'));
+      expect(saved.providers).toEqual({ 'custom-fixture': { name: 'Custom', package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'https://api.example.com/v1' }, models: { coder: {} } } });
+      expect(JSON.stringify(saved)).not.toContain('fixture-key'); expect(JSON.stringify(response)).not.toContain('fixture-key');
+      expect(create).toHaveBeenCalledTimes(1);
+    } finally { configureOpenCodeCredentials(null); }
+  });
+
+  it('discovers models through the same host protocol adapter without persisting drafts', async () => {
+    const { handleConfigBridgeMessage } = await import('./bridge-config-runtime');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'coder' }] })));
+    const response = await handleConfigBridgeMessage({ id: 'models', type: 'api:config/providers/custom:models',
+      payload: { package: '@opencode/ai/providers/anthropic-compatible', baseURL: 'https://api.example.com/v1', apiKey: 'fixture-key' } },
+    undefined, {} as Parameters<typeof handleConfigBridgeMessage>[2]);
+    expect(response?.data).toEqual({ models: [{ id: 'coder', name: 'coder' }] });
+    expect(fetch.mock.calls[0][1]?.headers).toMatchObject({ 'x-api-key': 'fixture-key' });
+    expect(fs.existsSync(path.join(directory, 'opencode.jsonc'))).toBe(false);
+  });
+
   it('MCP updates and deletes the real source, while additions never copy other layers', () => {
     const json = path.join(directory, 'opencode.json');
     const jsonc = path.join(directory, 'opencode.jsonc');

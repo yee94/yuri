@@ -10,7 +10,7 @@
  * useSyncExternalStore wiring and reference-stable projections.
  */
 
-import React, { useCallback, useRef } from "react"
+import React, { useCallback, useMemo, useRef } from "react"
 import type { Message, Part } from '@/lib/opencode/v2-types'
 
 import type { StoreApi } from "zustand"
@@ -123,28 +123,41 @@ function useTranscriptSelector<T>(
   const isEqualRef = useRef(isEqual)
   isEqualRef.current = isEqual
   const valueRef = useRef<T | undefined>(undefined)
+  const sourceRef = useRef<{
+    data: TranscriptData
+    select: (data: TranscriptData) => T
+    isEqual: (a: T, b: T) => boolean
+    repository: TranscriptRepository | null
+    bindingRevision: number
+    directory: string
+    sessionID: string
+    enabled: boolean
+    resolved: boolean | undefined
+  } | null>(null)
   const enabled = options?.enabled !== false
 
-  const getSnapshot = useCallback(() => {
+  const getSnapshot = useMemo(() => () => {
     // Include binding revision so React re-reads after store→Query swap.
-    void getTranscriptRepositoryBindingRevision()
-    if (!sessionID || !enabled) {
-      const empty = selectRef.current(EMPTY_TRANSCRIPT_DATA)
-      if (valueRef.current === undefined || !isEqualRef.current(valueRef.current, empty)) {
-        valueRef.current = empty
-      }
-      return valueRef.current as T
-    }
-    const repository = resolveReaderRepository(directory, store)
-    const data = repository.getTranscript(transcriptScope(directory, sessionID))
-    const next = selectRef.current(data)
-    if (valueRef.current === undefined || !isEqualRef.current(valueRef.current, next)) {
+    const bindingRevision = getTranscriptRepositoryBindingRevision()
+    const repository = sessionID && enabled ? resolveReaderRepository(directory, store) : null
+    const data = repository?.getTranscript(transcriptScope(directory, sessionID)) ?? EMPTY_TRANSCRIPT_DATA
+    const resolved = repository?.hasSession?.(transcriptScope(directory, sessionID))
+    const select = selectRef.current
+    const isEqual = isEqualRef.current
+    const previous = sourceRef.current
+    if (previous?.data === data && previous.select === select && previous.isEqual === isEqual && previous.repository === repository
+      && previous.bindingRevision === bindingRevision && previous.directory === directory
+      && previous.sessionID === sessionID && previous.enabled === enabled
+      && previous.resolved === resolved) return valueRef.current as T
+    const next = select(data)
+    if (valueRef.current === undefined || !isEqual(valueRef.current, next)) {
       valueRef.current = next
     }
+    sourceRef.current = { data, select, isEqual, repository, bindingRevision, directory, sessionID, enabled, resolved }
     return valueRef.current as T
   }, [directory, enabled, sessionID, store])
 
-  const subscribe = useCallback((notify: () => void) => {
+  const subscribe = useMemo(() => (notify: () => void) => {
     if (!sessionID || !enabled) return () => undefined
     // Ticket 09 batch 1A: ensure stale inactive sessions when first observed.
     scheduleEnsureTranscriptOnObserve(directory, sessionID)
@@ -158,6 +171,7 @@ function useTranscriptSelector<T>(
     const unsubBinding = subscribeTranscriptRepositoryBinding(() => {
       repoUnsub()
       valueRef.current = undefined
+      sourceRef.current = null
       // Re-arm ensure after production Query bind so post-swap observe can load.
       resetObserveEnsureGate(directory, sessionID)
       scheduleEnsureTranscriptOnObserve(directory, sessionID)
@@ -254,6 +268,13 @@ export function materializationStatusFromTranscriptData(
   })
 }
 
+const materializationStatusEqual = (a: SessionMaterializationStatus, b: SessionMaterializationStatus): boolean => (
+  a.hasMessages === b.hasMessages
+  && a.renderable === b.renderable
+  && a.missingPartMessageIDs.length === b.missingPartMessageIDs.length
+  && a.missingPartMessageIDs.every((id, index) => id === b.missingPartMessageIDs[index])
+)
+
 /** Subscribe to session materialization status via TranscriptRepository. */
 export function useTranscriptMaterializationStatus(
   sessionID: string,
@@ -261,26 +282,18 @@ export function useTranscriptMaterializationStatus(
   store: StoreApi<DirectoryStore>,
   options?: { enabled?: boolean },
 ): SessionMaterializationStatus {
+  const select = useMemo(() => (data: TranscriptData) => {
+    if (!sessionID) return { hasMessages: false, renderable: false, missingPartMessageIDs: [] }
+    const repository = resolveReaderRepository(directory, store)
+    const resolved = repository.hasSession?.(transcriptScope(directory, sessionID))
+    return materializationStatusFromTranscriptData(data, { resolved: resolved === true ? true : undefined })
+  }, [directory, sessionID, store])
   return useTranscriptSelector(
     sessionID,
     directory,
     store,
-    (data) => {
-      if (!sessionID) {
-        return { hasMessages: false, renderable: false, missingPartMessageIDs: [] }
-      }
-      const repository = resolveReaderRepository(directory, store)
-      const resolved = repository.hasSession?.(transcriptScope(directory, sessionID))
-      return materializationStatusFromTranscriptData(data, {
-        resolved: resolved === true ? true : undefined,
-      })
-    },
-    (a, b) => (
-      a.hasMessages === b.hasMessages
-      && a.renderable === b.renderable
-      && a.missingPartMessageIDs.length === b.missingPartMessageIDs.length
-      && a.missingPartMessageIDs.every((id, index) => id === b.missingPartMessageIDs[index])
-    ),
+    select,
+    materializationStatusEqual,
     options,
   )
 }
@@ -313,6 +326,15 @@ export function useTranscriptContextUsage(
   )
 }
 
+const transcriptMessagesEqual = (a: readonly Message[], b: readonly Message[]): boolean => {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
 /** Chronological message array for a session (store-order references). */
 export function useTranscriptMessages(
   sessionID: string,
@@ -324,15 +346,8 @@ export function useTranscriptMessages(
     sessionID,
     directory,
     store,
-    (data) => messagesFromTranscriptData(data),
-    (a, b) => {
-      if (a === b) return true
-      if (a.length !== b.length) return false
-      for (let i = 0; i < a.length; i += 1) {
-        if (a[i] !== b[i]) return false
-      }
-      return true
-    },
+    messagesFromTranscriptData,
+    transcriptMessagesEqual,
     options,
   )
 }

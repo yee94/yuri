@@ -27,11 +27,13 @@ export const CommitInput: React.FC<CommitInputProps> = ({
 }) => {
   const { t } = useI18n();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const dragRef = React.useRef<{ pointerId: number; startY: number; height: number } | null>(null);
   const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
-  const minimumHeight = compact ? 48 : MIN_HEIGHT;
+  const minimumHeight = MIN_HEIGHT;
 
   // Auto-resize based on content (layout phase to avoid mount flicker)
   React.useLayoutEffect(() => {
+    if (!isMobile) return;
     const textarea = textareaRef.current;
     if (!textarea) return;
     const hadFocus = document.activeElement === textarea;
@@ -54,21 +56,37 @@ export const CommitInput: React.FC<CommitInputProps> = ({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [minimumHeight, value]);
+  }, [isMobile, minimumHeight, value]);
 
-  return (
+  const finishResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const resizeTo = (height: number, handle: HTMLDivElement) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const nextHeight = Math.max(minimumHeight, height);
+    textarea.style.height = `${nextHeight}px`;
+    handle.setAttribute('aria-valuenow', String(Math.round(nextHeight)));
+  };
+
+  const input = (
     <textarea
       ref={textareaRef}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder ?? t('gitView.commit.messagePlaceholder')}
-      rows={compact ? 2 : 1}
+      rows={1}
       disabled={disabled}
       autoCorrect={hasTouchInput ? 'on' : 'off'}
       autoCapitalize={hasTouchInput ? 'sentences' : 'off'}
       spellCheck={isMobile || inputSpellcheckEnabled}
       className={cn(
-        'w-full resize-none outline-none text-foreground placeholder:text-muted-foreground',
+        'block w-full resize-none outline-none text-foreground placeholder:text-muted-foreground',
         compact ? [
           'appearance-none rounded-md px-2 py-1.5 text-xs leading-4',
           'bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--background))]',
@@ -81,7 +99,60 @@ export const CommitInput: React.FC<CommitInputProps> = ({
         ],
         disabled && 'opacity-50'
       )}
-      style={{ minHeight: minimumHeight, maxHeight: MAX_HEIGHT }}
+      style={{
+        height: isMobile ? undefined : minimumHeight,
+        minHeight: minimumHeight,
+        maxHeight: isMobile ? MAX_HEIGHT : undefined,
+        overflowY: isMobile ? undefined : 'auto',
+      }}
     />
+  );
+
+  if (isMobile) return input;
+
+  return (
+    <div className="relative min-w-0">
+      {input}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={t('textarea.resizeHandleAria')}
+        aria-valuemin={minimumHeight}
+        aria-valuenow={minimumHeight}
+        aria-disabled={disabled}
+        tabIndex={disabled ? -1 : 0}
+        className={cn(
+          'absolute inset-x-0 top-0 z-10 h-2 -translate-y-1/2 cursor-ns-resize touch-none select-none rounded-sm',
+          'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--interactive-focus-ring)]',
+          disabled && 'pointer-events-none'
+        )}
+        onPointerDown={(event) => {
+          if (disabled || dragRef.current || !event.isPrimary || event.button !== 0) return;
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          dragRef.current = {
+            pointerId: event.pointerId,
+            startY: event.clientY,
+            height: textarea.getBoundingClientRect().height,
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current;
+          if (disabled || !drag || drag.pointerId !== event.pointerId) return;
+          resizeTo(drag.height + drag.startY - event.clientY, event.currentTarget);
+        }}
+        onPointerUp={finishResize}
+        onPointerCancel={finishResize}
+        onLostPointerCapture={finishResize}
+        onKeyDown={(event) => {
+          if (disabled || !['ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
+          event.preventDefault();
+          const height = parseFloat(textareaRef.current?.style.height ?? '') || minimumHeight;
+          resizeTo(event.key === 'Home' ? minimumHeight : height + (event.key === 'ArrowUp' ? 10 : -10), event.currentTarget);
+        }}
+      />
+    </div>
   );
 };

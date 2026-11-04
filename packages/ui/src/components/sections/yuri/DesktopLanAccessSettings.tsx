@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import {
   getDesktopLanAddress,
@@ -224,7 +224,7 @@ export const DesktopLanAccessSettings: React.FC = () => {
           ) : null}
         </div>
         <div className="yuri-settings-split-row-control">
-          <Checkbox
+          <SettingsSwitch
             checked={draftValue}
             onChange={handleToggle}
             ariaLabel={t('settings.yuri.desktopNetwork.field.allowLanAccessAria')}

@@ -24,6 +24,7 @@ import { usePluginBusy } from './usePluginBusy';
 import { splitPluginSpec } from './pluginPresentation';
 import { configEntryRuntimeTarget, pluginFileRuntimeTarget, findRuntimeMatches, resolveEffectivePluginVersion } from './pluginLoadState';
 import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
+import { SettingsJsonEditor } from '@/components/sections/shared/SettingsJsonEditor';
 import {
   usePluginsStore,
   type PluginDraft,
@@ -329,19 +330,16 @@ export const PluginsPage: React.FC = () => {
           <SettingsGroup
             label={t('settings.plugins.page.field.options')}
             description={!optionsValid ? t('settings.plugins.page.field.options.invalidJson') : undefined}
-            cardClassName="contents"
+            cardClassName="overflow-hidden p-0"
           >
-            <Textarea
+            <SettingsJsonEditor
               value={draft.optionsJson}
-              onChange={(event) => setDraft({ ...draft, optionsJson: event.target.value })}
-              rows={3}
-              className="min-h-20 font-mono"
+              onChange={(optionsJson) => setDraft({ ...draft, optionsJson })}
+              className="h-[clamp(180px,32dvh,360px)]"
               hasError={!optionsValid}
-              aria-invalid={!optionsValid}
-              aria-label={t('settings.plugins.page.field.options')}
+              ariaLabel={t('settings.plugins.page.field.options')}
               placeholder={t('settings.plugins.page.field.options.placeholder')}
-              disabled={busy}
-              spellCheck={false}
+              readOnly={busy}
             />
           </SettingsGroup>
         </div>

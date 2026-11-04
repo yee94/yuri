@@ -43,15 +43,16 @@ const normalizeProviderId = (providerId: string | null | undefined) => {
 };
 
 const buildLogoCandidates = (providerId: string | null | undefined) => {
+    const fallback = providerId?.toLowerCase().includes('magpie') ? ['magpie'] : [];
     let brandId = providerId;
     const magpie = providerId?.match(/^magpie:[^:]+:(.+)$/i);
     if (magpie) {
         try { brandId = decodeURIComponent(magpie[1]); }
-        catch { return []; }
+        catch { return fallback; }
     }
     const normalized = normalizeProviderId(brandId);
     if (!normalized) {
-        return [] as string[];
+        return fallback;
     }
 
     const compact = normalized.replace(/[^a-z0-9_\-./:]/g, '');
@@ -64,7 +65,7 @@ const buildLogoCandidates = (providerId: string | null | undefined) => {
         if (LOCAL_PROVIDER_LOGO_MAP.has(brand)) candidates.push(brand);
     }
 
-    return [...new Set(candidates)];
+    return [...new Set(candidates.filter((candidate) => candidate !== 'magpie')), ...fallback];
 };
 
 const resolveProviderLogoSrc = (providerId: string | null | undefined): string | null => {

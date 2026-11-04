@@ -1,4 +1,9 @@
 import { createProjectRegistry } from '../projects/registry.js';
+import { createCustomProvider } from './custom-provider.js';
+import { updateProviderModel } from './provider-model-config.js';
+import { removeProviderConfiguration } from './providers.js';
+import { readProviderSources } from './provider-sources.js';
+import { discoverCustomProviderModels } from './custom-provider-models.js';
 import { projectBootstrapSettingsResponse } from './settings-helpers.js';
 import {
   evaluateOpenCodeHealthBody,
@@ -695,6 +700,47 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     }
   });
 
+  app.put('/api/config/providers/model', async (req, res) => {
+    try {
+      const validated = req.body?.directory ? await validateDirectoryPath(req.body.directory) : null;
+      if (validated && !validated.ok) return res.status(400).json({ error: 'Invalid directory' });
+      return res.json(updateProviderModel(req.body, validated?.directory));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: 'Unable to save provider model' });
+    }
+  });
+
+  app.post('/api/config/providers/custom', async (req, res) => {
+    try {
+      const validated = req.body?.directory ? await validateDirectoryPath(req.body.directory) : null;
+      if (validated && !validated.ok) return res.status(400).json({ error: 'Invalid directory' });
+      return res.json(await createCustomProvider(req.body, validated?.directory));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: 'Unable to create custom provider', code: error.code || 'PROVIDER_SAVE_FAILED' });
+    }
+  });
+
+  app.post('/api/config/providers/custom/models', async (req, res) => {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    res.once('close', cancel);
+    try {
+      return res.json(await discoverCustomProviderModels(req.body, { signal: controller.signal }));
+    } catch {
+      return res.status(502).json({ error: 'Unable to discover provider models' });
+    } finally { res.off('close', cancel); }
+  });
+
+  app.get('/api/config/providers/sources', async (req, res) => {
+    try {
+      const resolved = await resolveProjectDirectory(req);
+      if (resolved.error) return res.status(400).json({ error: 'Invalid directory' });
+      return res.json(await readProviderSources(resolved.directory || undefined));
+    } catch {
+      return res.status(502).json({ error: 'Unable to read provider sources' });
+    }
+  });
+
   app.get('/api/provider/:providerId/source', async (req, res) => {
     try {
       const { providerId } = req.params;
@@ -760,7 +806,10 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       }
 
       let removed = false;
-      if (scope === 'auth') {
+      if (scope === 'config') {
+        removed = removeProviderConfiguration(providerId, directory);
+        return res.json({ success: true, removed, requiresReload: false });
+      } else if (scope === 'auth') {
         const { removeProviderAuth } = await getAuthLibrary();
         removed = await removeProviderAuth(providerId);
       } else if (scope === 'user' || scope === 'project' || scope === 'custom') {

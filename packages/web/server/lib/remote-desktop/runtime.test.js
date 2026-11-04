@@ -153,3 +153,23 @@ it('carries screen frames and validated input through the real Relay WS dispatch
     expect(Buffer.from(reassembled)).toEqual(jpeg);
   } finally { host.close(); }
 });
+
+it('releases failed capture ownership and reconnects through the authenticated Relay dispatcher', async () => {
+  adapter.start.mockRejectedValueOnce(Object.assign(new Error('capture_timeout'), { code: 'capture_timeout' }));
+  const frames = [];
+  const host = createTunnelHost({ connectionId: 'desktop-recovery-test', getLocalPort: () => port,
+    sendFrame: frame => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
+  const open = id => host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsOpen, id,
+    encodeJsonPayload({ path: '/api/remote-desktop/ws', query: `yuri_url_token=${token}` })));
+  try {
+    await open(2);
+    await vi.waitFor(() => expect(frames.some(frame => frame.frameType === TunnelFrameType.WsClose)).toBe(true));
+    const errors = frames.filter(frame => frame.frameType === TunnelFrameType.WsText).map(frame => JSON.parse(Buffer.from(frame.payload).toString()));
+    expect(errors).toContainEqual({ type: 'error', code: 'capture_timeout' });
+    await open(4);
+    await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledTimes(2));
+    const desktop = await adapter.start.mock.results[1].value;
+    await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsText, 4, Buffer.from('{"type":"key","key":"Enter"}')));
+    await vi.waitFor(() => expect(desktop.handle).toHaveBeenCalledWith({ type: 'key', key: 'Enter' }));
+  } finally { host.close(); }
+});

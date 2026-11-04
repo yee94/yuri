@@ -202,12 +202,18 @@ it('ignores all sensor samples and preserves the manually selected orientation w
   expect(mock.connect).toHaveBeenCalledTimes(1);
   expect(document.body.style.transform).toBe('');
 });
-it('closes capture when the phone goes to the background', () => {
+it('keeps the lifecycle owner while suspended and re-enables controls on a recovered frame', () => {
   render();
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
-  act(() => document.dispatchEvent(new Event('visibilitychange')));
-  expect(mock.close).toHaveBeenCalledTimes(1);
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  const options = mock.connect.mock.calls[0][0];
+  const control = document.querySelector<HTMLButtonElement>('button[aria-label="Cursor · Control computer"]')!;
+  act(() => options.onState('webrtc'));
+  expect(control.disabled).toBe(false);
+  act(() => options.onState('connecting'));
+  expect(control.disabled).toBe(true);
+  act(() => options.onState('tunnel'));
+  expect(control.disabled).toBe(false);
+  expect(mock.connect).toHaveBeenCalledTimes(1);
+  expect(mock.close).not.toHaveBeenCalled();
 });
 
 it('manually rotates a portrait-locked viewport and discards orientation on close', () => {

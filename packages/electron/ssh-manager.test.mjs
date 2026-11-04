@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
@@ -87,6 +87,45 @@ test('concurrent connect callers share preparation while the old connection is c
   await Promise.all([first, second]);
   expect(bootstraps).toBe(1);
   expect(manager.connecting.size).toBe(0);
+});
+
+test('connecting an already ready SSH session reuses it without bootstrap or update checks', async () => {
+  const dir = await makeTempDir();
+  const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
+  manager.readInstances = () => ({ instances: [{ id: 'ssh-test' }] });
+  manager.sessions.set('ssh-test', { master: { exitCode: null }, mainForward: { exitCode: null } });
+  manager.statuses.set('ssh-test', { phase: 'ready' });
+  manager.sanitizeInstance = (instance) => instance;
+  manager.disconnectInternal = vi.fn();
+  manager.connectBlocking = vi.fn();
+  await manager.connect('ssh-test');
+  expect(manager.disconnectInternal).not.toHaveBeenCalled();
+  expect(manager.connectBlocking).not.toHaveBeenCalled();
+});
+
+test('a ready badge without a live SSH session still runs bootstrap', async () => {
+  const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '0.0.0-test', emit() {} });
+  manager.readInstances = () => ({ instances: [{ id: 'ssh-test' }] });
+  manager.statuses.set('ssh-test', { phase: 'ready' });
+  manager.sanitizeInstance = (instance) => instance;
+  manager.disconnectInternal = vi.fn();
+  manager.connectBlocking = vi.fn();
+  await manager.connect('ssh-test');
+  expect(manager.connectBlocking).toHaveBeenCalledOnce();
+});
+
+test.each(['master', 'mainForward'])('a terminated %s does not qualify for the connected fast path', async (processKey) => {
+  const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '0.0.0-test', emit() {} });
+  manager.readInstances = () => ({ instances: [{ id: 'ssh-test' }] });
+  const session = { master: { exitCode: null, signalCode: null }, mainForward: { exitCode: null, signalCode: null } };
+  session[processKey].signalCode = 'SIGTERM';
+  manager.sessions.set('ssh-test', session);
+  manager.statuses.set('ssh-test', { phase: 'ready' });
+  manager.sanitizeInstance = (instance) => instance;
+  manager.disconnectInternal = vi.fn();
+  manager.connectBlocking = vi.fn();
+  await manager.connect('ssh-test');
+  expect(manager.connectBlocking).toHaveBeenCalledOnce();
 });
 
 describe('parseSshCommand host:port destination', () => {

@@ -8,7 +8,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SettingsSwitch } from '@/components/sections/shared/SettingsSwitch';
 import { Input } from '@/components/ui/input';
 import { Radio } from '@/components/ui/radio';
 import { Button } from '@/components/ui/button';
@@ -770,7 +770,7 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
                 <SettingsGroup label={t('settings.voice.page.section.playbackAndSummary')} actions={<Button size="sm" disabled={tts.saving} aria-busy={tts.saving} onClick={() => { if (!tts.saving) void tts.save(); }}>{t('settings.voice.volcengine.save')}</Button>}>
 
                     <SettingsRow label={t('settings.voice.page.field.messageReadAloudButton')}>
-                        <Checkbox checked={showMessageTTSButtons} onChange={setShowMessageTTSButtons} ariaLabel={t('settings.voice.page.field.messageReadAloudButtonAria')} />
+                        <SettingsSwitch checked={showMessageTTSButtons} onChange={setShowMessageTTSButtons} ariaLabel={t('settings.voice.page.field.messageReadAloudButtonAria')} />
                     </SettingsRow>
 
                     {showMessageTTSButtons && (
@@ -1101,7 +1101,7 @@ const VoiceSettingsContent = ({ settings }: { settings: SpeechSettings }) => {
             <div data-settings-item="voice.speech-recognition">
                     <SettingsGroup label={t('settings.voice.page.section.speechRecognition')} actions={<Button size="sm" disabled={asr.saving} aria-busy={asr.saving} onClick={() => { if (!asr.saving) void asr.save(); }}>{t('settings.voice.volcengine.save')}</Button>}>
                         <SettingsRow label={t('settings.voice.page.field.enableVoiceInput')}>
-                            <Checkbox checked={dictationEnabled} onChange={setDictationEnabled} ariaLabel={t('settings.voice.page.field.enableVoiceInputAria')} />
+                            <SettingsSwitch checked={dictationEnabled} onChange={setDictationEnabled} ariaLabel={t('settings.voice.page.field.enableVoiceInputAria')} />
                         </SettingsRow>
 
                         {dictationEnabled && (<>

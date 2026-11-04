@@ -45,6 +45,7 @@ Within one direction, scope changes retain the displayed preview and discovered 
 
 ## Invariants
 
+- The allowlist includes OpenCode configuration and generic extension directories, not plugin-specific configuration files or private state directories. Existing excluded files are neither copied nor deleted.
 - Plan is computed on the source filesystem/inventory snapshot; destination executors never re-walk the source.
 - All local, HTTP and SSH archive builders exclude `node_modules`, `.venv-asc` and `*.backup`
   at every depth, including followed symlinks, matching the inventory walk. Keep

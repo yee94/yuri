@@ -2,6 +2,8 @@ import type { I18nKey } from './en';
 import { settingsDict } from './pl.settings';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.switch.off': 'Wył.',
+  'settings.switch.on': 'Wł.',
   'miniChat.actions.failed': 'Nie udało się wykonać operacji okna. Spróbuj ponownie.',
   'remoteDesktop.title': 'Pulpit zdalny',
   'remoteDesktop.drag': 'Drag · Przesuwaj obszar',

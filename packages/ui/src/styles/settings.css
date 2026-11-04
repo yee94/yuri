@@ -35,8 +35,54 @@
   --yuri-settings-row-divider: var(--form-row-divider);
   --yuri-settings-row-inset: 0.875rem;
   --yuri-settings-desktop-value-max-width: 12.5rem;
+  --yuri-settings-control-background: transparent;
+  --yuri-settings-control-border: transparent;
+  --yuri-settings-control-interaction-background: var(--interactive-hover);
   --yuri-settings-avatar-action-background: white;
   --yuri-settings-avatar-action-foreground: black;
+}
+
+.yuri-settings-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-shrink: 0;
+  align-self: center;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border-radius: var(--form-control-radius, 0.625rem);
+  background: color-mix(in srgb, var(--surface-foreground) 5%, var(--surface-muted));
+}
+
+.yuri-settings-switch .yuri-settings-switch-option {
+  min-width: 2.75rem;
+  border-radius: calc(var(--form-control-radius, 0.625rem) - 0.1875rem);
+  corner-shape: round;
+  font-weight: 400;
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-settings-switch .yuri-settings-switch-option[data-checked] {
+  color: var(--surface-elevated-foreground, var(--foreground));
+}
+
+.dark .yuri-settings-switch .yuri-settings-switch-option[data-checked] {
+  color: var(--interactive-selection-foreground);
+}
+
+.yuri-settings-switch-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.yuri-settings-switch[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.yuri-settings-switch .yuri-settings-switch-option:disabled {
+  opacity: 1;
 }
 
 .yuri-settings-section-stack,
@@ -124,7 +170,7 @@
 
 /* Older boolean settings are direct interactive rows. Once hosted by the
    shared SettingsGroup, they inherit the exact same tokenized geometry while
-   their existing keyboard and checkbox behavior remains unchanged. */
+   their existing row activation behavior remains unchanged. */
 .yuri-settings-detail-group .yuri-settings-group-card > [role="button"] {
   width: 100%;
   min-width: 0;
@@ -135,9 +181,9 @@
 }
 
 /* Legacy boolean rows retain their interactive implementation while matching
-   the shared label/value layout: copy on the left and the checkbox in the
+   the shared label/value layout: copy on the left and the switch in the
    right-aligned value position. */
-.yuri-settings-group-card > [role="button"]:has([role="checkbox"]) {
+.yuri-settings-group-card > [role="button"]:has(> [data-slot="settings-switch"]) {
   flex-direction: row-reverse;
   justify-content: space-between;
 }
@@ -196,6 +242,7 @@
 
 .yuri-settings-split-row-control > [data-slot="select-trigger"],
 .yuri-settings-split-row-control > [data-slot="input"],
+.yuri-settings-split-row-control > [data-slot="input-wrapper"],
 .yuri-settings-split-row-control > .yuri-settings-inline-value {
   width: auto;
   min-width: 0;
@@ -210,22 +257,75 @@
   flex: 0 0 auto;
 }
 
-/* Settings values share the Scheduled Task detail grammar: controls read as
-   right-aligned values in their row instead of as permanently outlined input
-   boxes. A transparent border is always reserved so the hover/focus affordance
-   never changes the control's size or moves surrounding content. */
+/* One material owner for Settings form controls, including search/toolbars and
+   scoped dialogs outside SettingsRow. Focus uses fill rather than outlines. */
+.yuri-settings-workspace
+  :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], [data-slot="textarea"], .yuri-settings-inline-value, .yuri-settings-sidebar-picker) {
+  border: 1px solid var(--yuri-settings-control-border) !important;
+  border-radius: var(--form-control-radius) !important;
+  background: var(--yuri-settings-control-background) !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.yuri-settings-workspace
+  :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], [data-slot="textarea"], .yuri-settings-inline-value, .yuri-settings-sidebar-picker):not(:disabled):not([aria-disabled="true"]):not([data-disabled]):not(:has(input:disabled, textarea:disabled)):is(:hover, :focus-within, [data-popup-open], [data-state="open"]) {
+  background: var(--yuri-settings-control-interaction-background) !important;
+}
+
+/* Sidebar controls need a quiet resting boundary, unlike detail form inputs.
+   Keep this edge stable while interaction continues to use fill only. */
+.yuri-settings-workspace :is(.yuri-settings-sidebar, .yuri-settings-sidebar-picker) {
+  --yuri-settings-control-border: var(--form-surface-border);
+}
+
+.yuri-settings-workspace [data-slot="input"][data-bordered="true"] {
+  --yuri-settings-control-border: var(--form-surface-border);
+}
+
+.yuri-settings-workspace [data-slot="input"][data-bordered="false"] {
+  --yuri-settings-control-border: transparent;
+}
+
+/* Native placeholder state follows the live value for controlled/uncontrolled
+   text inputs; :empty only inspects child nodes and always matches an input. */
+.yuri-settings-workspace [data-slot="input"]:not([data-bordered]):placeholder-shown {
+  --yuri-settings-control-border: var(--form-surface-border);
+}
+
+.yuri-settings-workspace [data-slot="input-wrapper"]:not(:has(> input:disabled)):is(:hover, :focus-within) > [data-slot="input"] {
+  background: var(--yuri-settings-control-interaction-background) !important;
+}
+
+.yuri-settings-workspace
+  :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], [data-slot="textarea"], .yuri-settings-inline-value, .yuri-settings-sidebar-picker):is([data-invalid="true"], [aria-invalid="true"], :has(input[aria-invalid="true"], textarea[aria-invalid="true"])) {
+  box-shadow: inset 0 0 0 1px var(--status-error) !important;
+}
+
+/* Compact Settings values retain their right-aligned geometry independently
+   of the shared material used by all Settings inputs. */
 .yuri-settings-workspace .yuri-settings-group-row
   :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], .yuri-settings-inline-value) {
   height: var(--form-control-height) !important;
   min-height: var(--form-control-height) !important;
   justify-content: flex-end !important;
   gap: 0.5rem !important;
-  border: 1px solid transparent !important;
-  border-radius: var(--form-control-radius) !important;
-  background: transparent !important;
-  margin-inline-end: -0.5rem;
+  margin-inline-end: 0;
   padding-inline: 0.5rem !important;
   text-align: right !important;
+}
+
+.yuri-settings-workspace [data-slot="input-wrapper"] > [data-slot="input"] {
+  padding-inline-end: calc(var(--form-control-height) + 0.25rem) !important;
+}
+
+.yuri-settings-workspace [data-slot="input-end-adornment"] > button {
+  width: var(--form-control-height);
+  height: 100%;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  border-radius: var(--form-control-radius);
+  outline: none !important;
   box-shadow: none !important;
 }
 
@@ -253,21 +353,22 @@
   white-space: nowrap;
 }
 
-.yuri-settings-workspace .yuri-settings-group-row
-  :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], .yuri-settings-inline-value):hover:not(:focus),
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="select-trigger"][data-popup-open],
-.yuri-settings-workspace .yuri-settings-group-row
-  .yuri-settings-inline-value[data-popup-open],
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="number-input"]:focus-within {
-  border-color: var(--form-control-border) !important;
-  background: var(--form-control-background) !important;
+/* Multi-line editors share the Settings control material without inheriting
+   compact value-column geometry. Hover/focus use fill, not focus outlines. */
+.yuri-settings-workspace :is(.yuri-settings-group-row, .yuri-settings-group-card):has(> :is([data-slot="textarea"], .yuri-textarea-simple):only-child) {
+  padding: 0 !important;
 }
 
-.yuri-settings-workspace .yuri-settings-group-row
-  :is([data-slot="select-trigger"], [data-slot="input"], .yuri-settings-inline-value):focus-visible {
-  box-shadow: 0 0 0 2px var(--interactive-focus-ring) !important;
+.yuri-settings-workspace [data-slot="textarea"] {
+  border: 0 !important;
+  transition-property: background-color, box-shadow;
+}
+
+.yuri-settings-workspace [data-slot="textarea"] [data-slot="textarea-input"] {
+  border: 0 !important;
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .yuri-settings-workspace .yuri-settings-group-row
@@ -275,24 +376,10 @@
   text-align: right;
 }
 
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="number-input"] > button:first-child {
-  border-right-color: transparent !important;
-}
-
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="number-input"] > button:last-child {
-  border-left-color: transparent !important;
-}
-
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="number-input"]:is(:hover, :focus-within) > button:first-child {
-  border-right-color: var(--form-control-border) !important;
-}
-
-.yuri-settings-workspace .yuri-settings-group-row
-  [data-slot="number-input"]:is(:hover, :focus-within) > button:last-child {
-  border-left-color: var(--form-control-border) !important;
+.yuri-settings-workspace [data-slot="number-input"] > :is(button, input) {
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .yuri-settings-split-row-stacked {
@@ -347,9 +434,8 @@
   justify-self: start;
 }
 
-/* Credential entry is the primary task in the channel dialog, so its fields
-   keep a full-width, left-aligned, visibly bordered input instead of the
-   compact right-aligned Settings value grammar. */
+/* Channel credentials retain full-width, left-aligned geometry while sharing
+   the same borderless material and hover/focus fill as other Settings inputs. */
 .yuri-settings-channel-form .yuri-settings-split-row-control {
   width: 100%;
   max-width: none;
@@ -364,12 +450,9 @@
 
 .yuri-settings-workspace .yuri-settings-channel-form .yuri-settings-split-row-control
   > [data-slot="input"] {
-  border-color: var(--form-surface-border) !important;
-  background: var(--surface-elevated) !important;
   margin-inline-end: 0;
   padding-inline: 0.75rem !important;
   text-align: left !important;
-  box-shadow: none !important;
 }
 
 @media (max-width: 640px) {
@@ -411,10 +494,6 @@
     minmax(12rem, 1fr)
     minmax(0, var(--yuri-settings-desktop-value-max-width));
   column-gap: 2rem;
-}
-
-.yuri-settings-workspace-desktop .yuri-settings-summary-model-source-row {
-  --yuri-settings-desktop-value-max-width: 24rem;
 }
 
 /* Agent mode chips (主 Agent / 子 Agent / 全部) need a wider value column on
@@ -480,7 +559,7 @@
 
 .yuri-settings-workspace-desktop
   .yuri-settings-split-row-control
-  > :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="number-input"], .yuri-settings-inline-value) {
+  > :is([data-slot="select-trigger"], [data-slot="input"], [data-slot="input-wrapper"], [data-slot="number-input"], .yuri-settings-inline-value) {
   max-width: 100%;
 }
 
@@ -536,6 +615,14 @@
     width: auto;
     max-width: min(60cqw, 20rem);
     justify-self: end;
+  }
+
+  .yuri-settings-workspace .yuri-settings-equal-controls .yuri-settings-split-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, min(60cqw, 20rem));
+  }
+
+  .yuri-settings-workspace .yuri-settings-equal-controls .yuri-settings-split-row > .yuri-settings-split-row-control {
+    width: 100%;
   }
 
   .yuri-settings-workspace .yuri-settings-split-row-copy {

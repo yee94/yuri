@@ -25,6 +25,7 @@ export function QuestionAutoDelegateSetting() {
   useEffect(() => { resetSave(); }, [generation, resetSave]);
   return <>
     <SettingsToggleRow
+      itemId="chat.question-auto-delegate"
       label={t('settings.chat.questionDelegate.label')}
       ariaLabel={t('settings.chat.questionDelegate.label')}
       description={t('settings.chat.questionDelegate.description')}

@@ -1,37 +1,20 @@
 import React from 'react';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useConfigStore } from '@/stores/useConfigStore';
-import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useDirectoryStore } from '@/stores/useDirectoryStore';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
-import { SettingsProjectSelector } from '@/components/sections/shared/SettingsProjectSelector';
 import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
 import { Icon } from "@/components/icon/Icon";
-import { opencodeClient } from '@/lib/opencode/client';
 import { useI18n } from '@/lib/i18n';
-import { runtimeFetch } from '@/lib/runtime-fetch';
+import { providerSourceQueryOptions } from './providerSourceQueries';
+import { getRuntimeGeneration, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import './provider-settings.css';
 
 const ADD_PROVIDER_ID = '__add_provider__';
-
-interface ProviderSourceInfo {
-  exists: boolean;
-  path?: string | null;
-}
-
-interface ProviderSources {
-  auth: ProviderSourceInfo;
-  user: ProviderSourceInfo;
-  project: ProviderSourceInfo;
-  custom?: ProviderSourceInfo;
-}
-
-const getCurrentDirectory = (): string | null => {
-  const dir = opencodeClient.getDirectory();
-  if (typeof dir === 'string' && dir.trim().length > 0) {
-    return dir.trim();
-  }
-  return null;
-};
+const CUSTOM_PROVIDER_ID = '__custom_provider__';
 
 interface ProvidersSidebarProps {
   onItemSelect?: () => void;
@@ -42,73 +25,28 @@ export const ProvidersSidebar: React.FC<ProvidersSidebarProps> = ({ onItemSelect
   const providers = useConfigStore((state) => state.providers);
   const selectedProviderId = useConfigStore((state) => state.selectedProviderId);
   const setSelectedProvider = useConfigStore((state) => state.setSelectedProvider);
-  const activeProjectId = useProjectsStore((s) => s.activeProjectId);
-  const [sourcesByProvider, setSourcesByProvider] = React.useState<Record<string, ProviderSources>>({});
-  const directory = React.useMemo(() => {
-    // tie refresh to active project changes (directory is stored in the client)
-    void activeProjectId;
-    return getCurrentDirectory();
-  }, [activeProjectId]);
-
-  React.useEffect(() => {
-    if (providers.length === 0) {
-      setSourcesByProvider({});
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadAllSources = async () => {
-      const tasks = providers.map(async (provider) => {
-        try {
-          const query = directory ? `?directory=${encodeURIComponent(directory)}` : '';
-          // Yuri-only metadata endpoint: the SDK exposes provider data but
-          // not local auth/source-file provenance used by this settings sidebar.
-          const response = await runtimeFetch(`/api/provider/${encodeURIComponent(provider.id)}/source${query}`, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-          });
-          if (!response.ok) {
-            return;
-          }
-          const payload = await response.json().catch(() => null);
-          const sources = (payload?.sources ?? payload?.data?.sources) as ProviderSources | undefined;
-          if (!sources) {
-            return;
-          }
-          if (cancelled) {
-            return;
-          }
-          setSourcesByProvider((prev) => ({
-            ...prev,
-            [provider.id]: sources,
-          }));
-        } catch {
-          // ignore
-        }
-      });
-
-      await Promise.all(tasks);
-    };
-
-    void loadAllSources();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [directory, providers]);
+  const directory = useDirectoryStore((state) => state.currentDirectory);
+  React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
+  const sourceQuery = useQuery(providerSourceQueryOptions(directory ?? undefined));
+  const sourcesByProvider = sourceQuery.data;
+  const [search, setSearch] = React.useState('');
+  const connectionLabel = (id: string) => {
+    const type = sourcesByProvider?.[id]?.auth.type;
+    return t(type === 'api' ? 'settings.providers.page.auth.apiKeyLabel' : type === 'oauth' || type === 'external'
+      ? 'settings.providers.auth.account' : 'settings.providers.auth.managed');
+  };
 
   const projectProviders = React.useMemo(() => {
-    return providers.filter((p) => Boolean(sourcesByProvider[p.id]?.project?.exists));
-  }, [providers, sourcesByProvider]);
+    return providers.filter((p) => Boolean(sourcesByProvider?.[p.id]?.project?.exists) && `${p.name} ${p.id}`.toLowerCase().includes(search.trim().toLowerCase()));
+  }, [providers, sourcesByProvider, search]);
 
   const userProviders = React.useMemo(() => {
-    return providers.filter((p) => !sourcesByProvider[p.id]?.project?.exists);
-  }, [providers, sourcesByProvider]);
+    return providers.filter((p) => !sourcesByProvider?.[p.id]?.project?.exists && `${p.name} ${p.id}`.toLowerCase().includes(search.trim().toLowerCase()));
+  }, [providers, sourcesByProvider, search]);
 
   const userProvidersLabel = (
     <div className="flex items-center justify-between gap-4">
-      <span>{t('settings.providers.sidebar.section.userProviders')}</span>
+      <span>{t('settings.providers.sidebar.title')}</span>
       <Button
         size="icon"
         variant="ghost"
@@ -124,13 +62,27 @@ export const ProvidersSidebar: React.FC<ProvidersSidebarProps> = ({ onItemSelect
     </div>
   );
 
+  const customProviderItem = (
+    <ProviderListItem
+      provider={{ id: CUSTOM_PROVIDER_ID, name: t('settings.providers.custom.title') }}
+      selectedProviderId={selectedProviderId}
+      onSelect={() => { setSelectedProvider(CUSTOM_PROVIDER_ID); onItemSelect?.(); }}
+    />
+  );
+
   return (
     <div className="yuri-settings-page-content h-full overflow-y-auto bg-background p-3">
-      <SettingsProjectSelector />
-
+      {userProvidersLabel}
+      {sourceQuery.isError && <p role="alert" className="typography-meta text-muted-foreground">{t('settings.providers.page.toast.providerSourcesLoadFailed')}</p>}
+      <div className="relative">
+        <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input className="!h-8 !min-h-0 !pl-7 !text-left !text-[13px]" aria-label={t('settings.providers.page.connect.searchProvidersPlaceholder')}
+          placeholder={t('settings.providers.page.connect.searchProvidersPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)} />
+      </div>
+      <SettingsGroup cardClassName="yuri-provider-collection-card">{customProviderItem}</SettingsGroup>
       <>
         {providers.length === 0 ? (
-          <SettingsGroup label={userProvidersLabel}>
+          <SettingsGroup>
             <div className="yuri-settings-group-row py-12 text-center text-muted-foreground">
               <Icon name="stack" className="mx-auto mb-3 h-10 w-10 opacity-50" />
               <p className="typography-ui-label font-medium">{t('settings.providers.sidebar.empty.title')}</p>
@@ -140,11 +92,12 @@ export const ProvidersSidebar: React.FC<ProvidersSidebarProps> = ({ onItemSelect
         ) : (
           <>
             {userProviders.length > 0 ? (
-              <SettingsGroup label={userProvidersLabel}>
+              <SettingsGroup label={t('settings.providers.sidebar.section.userProviders')} cardClassName="yuri-provider-collection-card">
                 {userProviders.map((provider) => (
                   <ProviderListItem
                     key={provider.id}
                     provider={provider}
+                    description={connectionLabel(provider.id)}
                     selectedProviderId={selectedProviderId}
                     onSelect={() => {
                       setSelectedProvider(provider.id);
@@ -153,18 +106,15 @@ export const ProvidersSidebar: React.FC<ProvidersSidebarProps> = ({ onItemSelect
                   />
                 ))}
               </SettingsGroup>
-            ) : (
-              <SettingsGroup label={userProvidersLabel} cardClassName="hidden">
-                <span />
-              </SettingsGroup>
-            )}
+            ) : null}
 
             {projectProviders.length > 0 && (
-              <SettingsGroup label={t('settings.providers.sidebar.section.projectProviders')}>
+              <SettingsGroup label={t('settings.providers.sidebar.section.projectProviders')} cardClassName="yuri-provider-collection-card">
                 {projectProviders.map((provider) => (
                   <ProviderListItem
                     key={provider.id}
                     provider={provider}
+                    description={connectionLabel(provider.id)}
                     selectedProviderId={selectedProviderId}
                     onSelect={() => {
                       setSelectedProvider(provider.id);
@@ -177,6 +127,7 @@ export const ProvidersSidebar: React.FC<ProvidersSidebarProps> = ({ onItemSelect
           </>
         )}
       </>
+      {search && !userProviders.length && !projectProviders.length && <p className="typography-meta text-muted-foreground">{t('settings.providers.page.connect.noProvidersFound')}</p>}
     </div>
   );
 };
@@ -185,7 +136,8 @@ const ProviderListItem: React.FC<{
   provider: { id: string; name?: string; models?: unknown[] };
   selectedProviderId: string;
   onSelect: () => void;
-}> = ({ provider, selectedProviderId, onSelect }) => {
+  description?: string;
+}> = ({ provider, selectedProviderId, onSelect, description }) => {
   const modelCount = Array.isArray(provider.models) ? provider.models.length : 0;
   const isSelected = provider.id === selectedProviderId;
 
@@ -194,23 +146,26 @@ const ProviderListItem: React.FC<{
       key={provider.id}
       className={cn(
         // Compact single-line entity row: tighter than the default form-row geometry.
-        'yuri-settings-group-row group relative flex items-center transition-colors duration-150 !min-h-0 py-2',
+        'yuri-provider-collection-row group relative flex items-center transition-colors duration-150',
         isSelected ? 'bg-interactive-selection' : 'hover:bg-interactive-hover'
       )}
     >
       <button
         type="button"
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/20"
+        aria-current={isSelected ? 'page' : undefined}
         tabIndex={0}
       >
-        <ProviderLogo providerId={provider.id} className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="typography-ui-label font-normal truncate flex-1 min-w-0 text-foreground">
-          {provider.name || provider.id}
+        {provider.id === CUSTOM_PROVIDER_ID ? <span className="flex size-6 shrink-0 items-center justify-center rounded-lg border border-dashed border-[var(--interactive-border)]"><Icon name="add" className="size-4" /></span> : <ProviderLogo providerId={provider.id} className="size-5 shrink-0" />}
+        <span className="flex-1 min-w-0 text-foreground">
+          <span className="block truncate text-[13px] leading-[18px] font-normal">{provider.name || provider.id}</span>
+          {description && <span className="block truncate text-[11px] leading-4 text-muted-foreground">{description}</span>}
         </span>
-        <span className="typography-micro text-muted-foreground/60 flex-shrink-0">
+        {provider.id === CUSTOM_PROVIDER_ID && <Icon name="arrow-right-s" className="size-4 text-muted-foreground" />}
+        {provider.id !== CUSTOM_PROVIDER_ID && <span className="text-[11px] leading-4 tabular-nums text-muted-foreground/60 flex-shrink-0">
           {modelCount}
-        </span>
+        </span>}
       </button>
     </div>
   );

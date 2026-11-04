@@ -78,8 +78,7 @@ describe('i18n dictionaries', () => {
     expect(enDict['assistants.contact.card.assistant.aria']).toBe('Bot {name}');
     for (const [key, value] of Object.entries(enDict)) {
       if (key.startsWith('assistants.') || key === 'settings.page.assistants.title'
-        || key.startsWith('settings.notifications.page.events.assistants')
-        || key === 'settings.yuri.defaults.summary.providerDescription') {
+        || key.startsWith('settings.notifications.page.events.assistants')) {
         expect(value, key).not.toMatch(/\bassistan(?:ts?|ce)\b/i);
       }
     }
