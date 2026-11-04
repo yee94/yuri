@@ -17,7 +17,7 @@ afterAll(() => {
     if (!keepEvidence()) for (const dir of workDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-test.skipIf(!resolveChrome()).each(['normal', 'delayed-resize', 'virtualize-transition', 'continued-drag', 'desktop-short', 'desktop-warmup', 'desktop-warmup-scrolling', 'desktop-warmup-pinned', 'desktop-warmup-small-pinned', 'column-resize-desktop', 'partial-turn', 'mobile-partial-turn', 'fast-entry', 'fast-entry-desktop-wheel', 'fast-entry-desktop-key', 'compact-prepend', 'compact-prepend-desktop', 'turn-prepend', 'turn-prepend-desktop'] as const)('history prepend keeps the reading row (%s)', async (scenario) => {
+test.skipIf(!resolveChrome()).each(['normal', 'delayed-resize', 'virtualize-transition', 'continued-drag', 'desktop-short', 'desktop-warmup', 'desktop-warmup-scrolling', 'desktop-warmup-pinned', 'desktop-warmup-small-pinned', 'column-resize-desktop', 'partial-turn', 'mobile-partial-turn', 'fast-entry', 'fast-entry-desktop-wheel', 'fast-entry-desktop-key', 'compact-prepend', 'compact-prepend-desktop', 'turn-prepend', 'turn-prepend-desktop', 'mobile-scroll-controls'] as const)('history prepend keeps the reading row (%s)', async (scenario) => {
     const fastEntry = scenario.startsWith('fast-entry');
     const desktop = scenario.includes('desktop') || scenario === 'partial-turn';
     const width = desktop ? 1200 : 402;
@@ -70,6 +70,52 @@ window.addEventListener('error',e=>{
         await page.send('Page.navigate', { url: `http://127.0.0.1:${address.port}/?scenario=${scenario}` });
         await new Promise((resolve) => setTimeout(resolve, 1500));
         expect(await page.evaluate('window.errors')).toEqual([]);
+        if (scenario === 'mobile-scroll-controls') {
+            await page.evaluate(`document.documentElement.classList.add('mobile-pointer', 'device-mobile');
+                document.documentElement.style.setProperty('--yuri-chat-foot-inset','160px');`);
+            for (let run = 0; run < 3; run++) {
+                await page.evaluate(`(() => {
+                    const scroll = document.querySelector('[data-history-scroller]');
+                    const child = document.querySelector('[data-gesture-child]');
+                    const touch = (type, y) => {
+                        const point = new Touch({identifier: 1, target: child, clientX: 150, clientY: y});
+                        child.dispatchEvent(new TouchEvent(type, {bubbles:true, touches:type === 'touchend' ? [] : [point], changedTouches:[point]}));
+                    };
+                    touch('touchstart',400); touch('touchmove',430);
+                    scroll.scrollTop -= 30;
+                    scroll.dispatchEvent(new Event('scroll'));
+                    touch('touchend',430);
+                })()`);
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                const released = await page.evaluate<{ phase: string; button: boolean; rest: string }>(`(() => {
+                    const scope=document.querySelector('.yuri-chat-composer-swap-scope');
+                    const button=document.querySelector('.yuri-transcript-scroll-controls button');
+                    return {phase:scope.dataset.yuriComposerSwapPhase,rest:scope.dataset.yuriComposerSwapRest,
+                        button:!!button && button.getClientRects().length > 0};
+                })()`);
+                // Leave the at-bottom band after the compact transition settles.
+                await page.evaluate(`(() => {const scroll=document.querySelector('[data-history-scroller]');scroll.scrollTop-=300;scroll.dispatchEvent(new Event('scroll'));})()`);
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                expect(released.phase).toBe('rest');
+                expect(released.rest).toBe('compact');
+                expect(await page.evaluate(`!!document.querySelector('.yuri-transcript-scroll-controls button')?.getClientRects().length`)).toBe(true);
+                await page.evaluate(`document.querySelector('.yuri-transcript-scroll-controls button').click()`);
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                const resumed = await page.evaluate<{ gap: number; phase: string; rest: string; header: string; opacity: string; pointer: string; focused: boolean; button: boolean }>(`(() => {
+                    const scroll=document.querySelector('[data-history-scroller]'),scope=document.querySelector('.yuri-chat-composer-swap-scope');
+                    const header=document.querySelector('[data-yuri-collapsible-header]');
+                    const expanded=document.querySelector('.yuri-mobile-composer-expanded-layer');
+                    return {gap:scroll.scrollHeight-scroll.clientHeight-scroll.scrollTop,
+                        phase:scope.dataset.yuriComposerSwapPhase,rest:scope.dataset.yuriComposerSwapRest,
+                        header:header.dataset.yuriHeaderCollapseRest,opacity:getComputedStyle(header).opacity,
+                        pointer:getComputedStyle(expanded).pointerEvents,focused:document.activeElement.tagName==='TEXTAREA',
+                        button:!!document.querySelector('.yuri-transcript-scroll-controls button')};
+                })()`);
+                expect(resumed).toEqual({ gap: 0, phase: 'rest', rest: 'expanded', header: 'expanded', opacity: '1', pointer: 'auto', focused: false, button: false });
+            }
+            expect(await page.evaluate('window.errors')).toEqual([]);
+            return;
+        }
         expect((await page.evaluate<Sample>('window.historyScrollFixture.sample()')).loads).toBe(0);
         const opened = await page.evaluate<Sample>('window.historyScrollFixture.sample()');
         expect(Math.abs(opened.max - opened.top), 'cold open must reach the bottom without an out-of-range initial offset').toBeLessThan(3);

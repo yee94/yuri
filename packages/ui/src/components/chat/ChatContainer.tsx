@@ -1348,7 +1348,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         onUpwardUserIntent: handleHistoryUpwardIntentBridge,
     });
     const composerSwapScopeRef = React.useRef<HTMLDivElement>(null);
-    useMobileComposerSwap({
+    const expandMobileComposer = useMobileComposerSwap({
         enabled: isMobile,
         scrollRef,
         scopeRef: composerSwapScopeRef,
@@ -1505,6 +1505,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
     const resumeToLatestInstant = useEvent(() => {
         // goToBottom resumes follow policy and delegates to the active list.
         goToBottom('instant');
+        expandMobileComposer();
     });
     const scrollViewportOnSend = useEvent(() => {
         scrollToBottomOnSend();

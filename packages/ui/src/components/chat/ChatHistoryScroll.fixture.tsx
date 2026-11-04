@@ -15,6 +15,8 @@ import { createWebAPIs } from '../../../../web/src/api';
 import { useUIStore } from '@/stores/useUIStore';
 import type { ChatMessageEntry } from './lib/turns/types';
 import type { Message, Part } from '@/lib/opencode/v2-types';
+import { useMobileComposerSwap } from './useMobileComposerSwap';
+import { TranscriptScrollControls } from './components/TranscriptScrollControls';
 
 const sessionID = 'history-scroll-fixture';
 const fixtureScenario = new URLSearchParams(location.search).get('scenario') ?? '';
@@ -35,6 +37,35 @@ const makeTurns = (start: number, count: number): ChatMessageEntry[] => makeRows
     { ...message, parts: message.parts.map((part) => part.type === 'text' ? { ...part, text: `Question ${start + index}` } : part) },
     partialAssistant(`answer-${start + index}`, Array.from({ length: 12 }, (_, line) => `Paragraph ${line}. ${'Historical assistant response. '.repeat(8)}`).join('\n\n'), 'stop'),
 ]);
+
+function ScrollControlsFixture() {
+    const auto = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 80, sessionIsWorking: false, isMobile: true });
+    const scopeRef = React.useRef<HTMLDivElement | null>(null);
+    const expandComposer = useMobileComposerSwap({ enabled: true, scrollRef: auto.scrollRef, scopeRef });
+    const { goToBottom } = auto;
+    const resume = useEvent(() => { goToBottom('instant'); expandComposer(); });
+    React.useEffect(() => { goToBottom('instant'); }, [goToBottom]);
+    useEventListener('touchstart', (event: TouchEvent) => event.stopPropagation(), () => auto.scrollRef.current?.firstElementChild, { passive: true });
+    useEventListener('touchmove', (event: TouchEvent) => event.stopPropagation(), () => auto.scrollRef.current?.firstElementChild, { passive: true });
+    useEventListener('touchend', (event: TouchEvent) => event.stopPropagation(), () => auto.scrollRef.current?.firstElementChild, { passive: true });
+    return <section className="mobile-chat-screen" style={{ height: '100%', position: 'relative' }}>
+        <header className="yuri-mobile-detail-navigation" data-yuri-collapsible-header="true">Conversation</header>
+        <div ref={scopeRef} className="yuri-chat-composer-swap-scope" style={{ height: '100%', position: 'relative' }}>
+            <div ref={auto.scrollRef} data-history-scroller="true" style={{ height: '100%', overflowY: 'auto', overflowAnchor: 'none' }}>
+                <div data-gesture-child>{Array.from({ length: 80 }, (_, index) => <p key={index} style={{ height: 60 }}>Reading row {index}</p>)}</div>
+            </div>
+            <div className="yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay">
+                <TranscriptScrollControls active scrollRef={auto.scrollRef} showScrollToBottom={auto.showScrollButton} onScrollToBottom={resume} />
+                <form className="yuri-mobile-composer"><div className="chat-input-column">
+                    <div className="yuri-mobile-composer-motion-viewport" style={{ height: 144 }}>
+                        <div className="yuri-mobile-composer-expanded-layer"><textarea data-chat-input="true" aria-label="Message" /></div>
+                        <div className="yuri-mobile-composer-compact-layer">Tap to type</div>
+                    </div>
+                </div></form>
+            </div>
+        </div>
+    </section>;
+}
 
 export default function Fixture() {
     const scenario = new URLSearchParams(location.search).get('scenario');
@@ -190,7 +221,7 @@ useUIStore.setState({ isMobile, chatRenderMode: partialTurn || fixtureScenario.s
 createRoot(document.getElementById('root')!).render(
     <RuntimeAPIProvider apis={createWebAPIs()}><QueryClientProvider client={queryClient}><I18nProvider>
         <SyncProvider sdk={opencodeClient.getSdkClient()} directory="/fixture" bootstrapDirectory={false}>
-            <Fixture />
+            {fixtureScenario === 'mobile-scroll-controls' ? <ScrollControlsFixture /> : <Fixture />}
         </SyncProvider>
     </I18nProvider></QueryClientProvider></RuntimeAPIProvider>,
 );

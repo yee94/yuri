@@ -200,6 +200,8 @@ describe('ChatContainer source contracts', () => {
         expect(resumeStart).toBeGreaterThan(-1);
         const resumeBody = source.slice(resumeStart, source.indexOf('});', resumeStart));
         expect(resumeBody).toContain("goToBottom('instant')");
+        expect(resumeBody).toContain('expandMobileComposer()');
+        expect(source).toContain('const expandMobileComposer = useMobileComposerSwap(');
         const autoFollowSource = readFileSync(join(here, '../../hooks/useChatAutoFollow.ts'), 'utf8');
         expect(source).toContain('scrollControllerRef: messageListRef');
         expect(autoFollowSource).toContain("scrollControllerRef?.current?.scrollToBottom({ behavior: mode === 'smooth' ? 'smooth' : 'auto', ...options })");

@@ -201,9 +201,12 @@ it('waits for trusted main activation and installs the authoritative bundle with
   const request = vi.fn<NativeGuiBridge['request']>(() => new Promise((resolve) => { complete = resolve; }));
   state.nativeBridge = { request, subscribe: () => () => {} };
   await load();
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(request).toHaveBeenCalledExactlyOnceWith('acquire', { id: 'dsl', revision: 'one' });
+  }, { timeout: 2_000 });
   expect(context.loading).toBe(true);
   expect(state.hosts[0].install).not.toHaveBeenCalled();
-  expect(request).toHaveBeenCalledExactlyOnceWith('acquire', { id: 'dsl', revision: 'one' });
   const authoritative = { ...bundle, options: { trusted: true } };
   await act(async () => complete({ ok: true, value: { lease: 'native', bundle: authoritative, os: 'macos', app: { version: '1', packaged: false } } }));
   await settle();

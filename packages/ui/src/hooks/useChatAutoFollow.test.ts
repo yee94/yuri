@@ -211,6 +211,102 @@ describe('virtual list scroll ownership', () => {
 });
 
 describe('primary transcript reading ownership', () => {
+    test('capture subscriptions survive 50 unchanged renders and detach when disabled', async () => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        const host = document.createElement('div');
+        document.body.append(host);
+        const root = createRoot(host);
+        const scroller = document.createElement('div');
+        const add = vi.spyOn(scroller, 'addEventListener');
+        const remove = vi.spyOn(scroller, 'removeEventListener');
+        const captured = (calls: ReadonlyArray<ReadonlyArray<unknown>>) => calls.filter((call) => (
+            typeof call[2] === 'object' && call[2] !== null && 'capture' in call[2] && call[2].capture === true
+        ));
+        function Harness({ enabled }: { enabled: boolean }) {
+            const api = useChatAutoFollow({ enabled, currentSessionId: null, sessionMessageCount: 5,
+                sessionIsWorking: false, isMobile: true });
+            api.scrollRef.current = scroller;
+            return null;
+        }
+        try {
+            await act(async () => root.render(React.createElement(Harness, { enabled: true })));
+            expect(captured(add.mock.calls)).toHaveLength(5);
+            for (let edit = 0; edit < 50; edit++) {
+                await act(async () => root.render(React.createElement(Harness, { enabled: true })));
+            }
+            expect(captured(add.mock.calls)).toHaveLength(5);
+            expect(captured(remove.mock.calls)).toHaveLength(0);
+            await act(async () => root.render(React.createElement(Harness, { enabled: false })));
+            expect(captured(remove.mock.calls)).toEqual(captured(add.mock.calls));
+        } finally {
+            await act(async () => root.unmount());
+            host.remove();
+            add.mockRestore();
+            remove.mockRestore();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    test.each(['touch', 'wheel', 'nested-wheel'] as const)('capture observes %s intent even when a child stops bubbling', async (gesture) => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        const host = document.createElement('div');
+        document.body.append(host);
+        const root = createRoot(host);
+        let api!: UseChatAutoFollowResult;
+        let top = 600;
+        const scrollToBottom = vi.fn(() => true);
+        const controller = { current: { scrollToBottom, cancelScroll: vi.fn() } };
+        function Harness() {
+            api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 5,
+                sessionIsWorking: false, isMobile: true, scrollControllerRef: controller });
+            return React.createElement('div', { ref: api.scrollRef }, React.createElement('pre'));
+        }
+        try {
+            await act(async () => root.render(React.createElement(Harness)));
+            const scroller = api.scrollRef.current!;
+            const child = scroller.firstElementChild as HTMLElement;
+            Object.defineProperties(scroller, {
+                scrollTop: { configurable: true, get: () => top },
+                scrollHeight: { configurable: true, value: 900 },
+                clientHeight: { configurable: true, value: 300 },
+            });
+            if (gesture === 'nested-wheel') {
+                child.style.overflowY = 'auto';
+                Object.defineProperties(child, {
+                    scrollTop: { configurable: true, value: 50 },
+                    scrollHeight: { configurable: true, value: 400 },
+                    clientHeight: { configurable: true, value: 100 },
+                });
+            }
+            for (const type of ['touchstart', 'touchmove', 'wheel']) child.addEventListener(type, (event) => event.stopPropagation());
+            await act(async () => {
+                scroller.dispatchEvent(new Event('scroll'));
+                api.notifyContentChange('animation');
+            });
+            scrollToBottom.mockClear();
+            await act(async () => {
+                if (gesture === 'touch') {
+                    for (const [type, y] of [['touchstart', 100], ['touchmove', 130]] as const) {
+                        const event = new Event(type, { bubbles: true });
+                        Object.defineProperty(event, 'touches', { value: { item: () => ({ clientX: 20, clientY: y }) } });
+                        child.dispatchEvent(event);
+                    }
+                } else child.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -100 }));
+                if (gesture !== 'nested-wheel') {
+                    top = 400;
+                    scroller.dispatchEvent(new Event('scroll'));
+                }
+            });
+            expect(api.showScrollButton).toBe(gesture !== 'nested-wheel');
+            expect(api.state).toBe(gesture === 'nested-wheel' ? 'following' : 'released');
+            expect(scrollToBottom).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => root.unmount());
+            host.remove();
+            vi.unstubAllGlobals();
+        }
+    });
+
     test.each(['anchor-correction', 'short-measurement-frame'] as const)('history completion does not reacquire follow from a %s', async (geometryChange) => {
         vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
         const host = document.createElement('div');

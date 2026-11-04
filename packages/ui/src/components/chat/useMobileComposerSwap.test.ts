@@ -47,6 +47,8 @@ describe('useMobileComposerSwap gesture commit', () => {
     let scrollRef: React.RefObject<HTMLElement | null>;
     let scopeRef: React.RefObject<HTMLElement | null>;
     let activeTouches: Map<number, { clientX: number; clientY: number }>;
+    let touchTarget: HTMLElement | undefined;
+    let expandComposer: (() => void) | undefined;
 
     beforeEach(() => {
         vi.useFakeTimers({
@@ -58,6 +60,8 @@ describe('useMobileComposerSwap gesture commit', () => {
         scrollEl = document.createElement('div');
         scopeEl = document.createElement('div');
         activeTouches = new Map();
+        touchTarget = undefined;
+        expandComposer = undefined;
         scrollHeight = SCROLL_HEIGHT;
         Object.defineProperty(scrollEl, 'scrollHeight', {
             configurable: true,
@@ -84,7 +88,7 @@ describe('useMobileComposerSwap gesture commit', () => {
 
     const mount = async () => {
         const Probe = () => {
-            useMobileComposerSwap({
+            expandComposer = useMobileComposerSwap({
                 enabled: true,
                 scrollRef,
                 scopeRef,
@@ -147,7 +151,7 @@ describe('useMobileComposerSwap gesture commit', () => {
                 configurable: true,
                 value: Date.now(),
             });
-            scrollEl.dispatchEvent(event);
+            (touchTarget ?? scrollEl).dispatchEvent(event);
         });
     };
 
@@ -178,6 +182,65 @@ describe('useMobileComposerSwap gesture commit', () => {
         for (const distance of [30, 60, 100, 300]) await fireScroll(distance);
         expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'compact', progress: '1' });
     };
+
+    test.each(['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const)('a child stopping %s cannot strand tracking and hide transcript controls', async (blockedType) => {
+        touchTarget = document.createElement('div');
+        scrollEl.append(touchTarget);
+        touchTarget.addEventListener(blockedType, (event) => event.stopPropagation());
+        await mount();
+        await beginSwipe();
+        await fireScroll(30);
+        expect(readSwap(scopeEl).phase).toBe('tracking');
+        await fireTouch(blockedType === 'touchcancel' ? 'touchcancel' : 'touchend', 420);
+        await advance(120 + COMPOSER_SWAP_SNAP_MS);
+        expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'compact', progress: '1' });
+    });
+
+    test.each([true, false])('explicit resume reveals composer and header without another scroll event (already at bottom=%s)', async (alreadyAtBottom) => {
+        const screen = document.createElement('section');
+        screen.className = 'mobile-chat-screen';
+        const header = document.createElement('header');
+        header.dataset.yuriCollapsibleHeader = 'true';
+        screen.append(header, scopeEl);
+        container.append(screen);
+        await mount();
+        await collapse();
+        await fireTouch('touchend', 420);
+        await advance(COMPOSER_SWAP_USER_SCROLL_WINDOW_MS + 1);
+        if (alreadyAtBottom) await fireScroll(0);
+        else setDistance(scrollEl, 0);
+        await act(async () => { expandComposer?.(); });
+        await advance(COMPOSER_SWAP_SNAP_MS);
+        expect(readSwap(scopeEl)).toEqual({ phase: 'rest', rest: 'expanded', progress: '0' });
+        expect(header.dataset.yuriHeaderCollapseRest).toBe('expanded');
+        expect(header.style.getPropertyValue('--yuri-mobile-header-collapse')).toBe('0');
+        expect(document.activeElement?.tagName).not.toBe('TEXTAREA');
+        expect(readDock(scopeEl)).toMatchObject({ rest: 'bottom', progress: '0' });
+    });
+
+    test('capture subscriptions stay bounded across 50 renders and clean up when disabled', async () => {
+        const add = vi.spyOn(scrollEl, 'addEventListener');
+        const remove = vi.spyOn(scrollEl, 'removeEventListener');
+        const Probe = ({ enabled }: { enabled: boolean }) => {
+            useMobileComposerSwap({ enabled, scrollRef, scopeRef });
+            return null;
+        };
+        const captured = (calls: ReadonlyArray<ReadonlyArray<unknown>>) => calls.filter((call) => (
+            typeof call[2] === 'object' && call[2] !== null && 'capture' in call[2] && call[2].capture === true
+        ));
+        await act(async () => root.render(React.createElement(Probe, { enabled: true })));
+        expect(captured(add.mock.calls)).toHaveLength(4);
+        for (let edit = 0; edit < 50; edit++) {
+            await act(async () => root.render(React.createElement(Probe, { enabled: true })));
+        }
+        expect(captured(add.mock.calls)).toHaveLength(4);
+        expect(captured(remove.mock.calls)).toHaveLength(0);
+        await act(async () => root.render(React.createElement(Probe, { enabled: false })));
+        expect(captured(remove.mock.calls)).toHaveLength(4);
+        expect(captured(remove.mock.calls)).toEqual(captured(add.mock.calls));
+        add.mockRestore();
+        remove.mockRestore();
+    });
 
     test('held finger never commits — flash regression', async () => {
         await mount();

@@ -964,6 +964,22 @@ The mobile Composer mounts separate expanded and compact layers. Main chat and h
 
 Swap geometry carries user ownership only after a vertical-dominant `touchmove`. Each fresh touch gesture resets the prior intent, travel, and geometry baseline; hold, tap, horizontal movement, and cancellation leave later program scroll frames isolated. A claimed gesture keeps ownership through its active fingers and a bounded lift-off momentum window. Timeline anchoring advances the distance/size baseline, clears accumulated travel, and rebases active touch coordinates, so released prepend correction stays isolated while the next real vertical move can claim the gesture immediately. Content-height and viewport-height changes also advance the baseline without contributing to the 24px reveal travel. In `mobileComposerSwap.ts`, `userDriven=false` preserves the exact current swap phase, rest, and progress, including tracking and snapping; their already-armed timers remain the lifecycle owner. Native accessory dock publication continues to follow its independent live-edge distance contract.
 
+Auto-follow observes wheel/touch intent on the actual scroller in passive capture;
+composer swap observes the complete touch lifecycle there in capture as well.
+Child propagation stops must neither mask release nor strand swap in `tracking`
+(which deliberately hides transcript controls). These capture subscriptions use
+explicit, symmetric cleanup because the installed ReactUse listener Hook omits
+the capture flag when removing listeners. They rebind only on scroller identity
+or enablement, never draft edits. Nested scroll consumption still gates follow release.
+Explicit resume-to-latest first delegates to `goToBottom`, then calls the stable
+expansion action returned by `useMobileComposerSwap`: cancel idle/compact-settle
+intent, refresh distance, and expand both composer and mirrored header without
+focusing the textarea or opening the keyboard. No scroll event is required, including
+when already at the bottom. Passive growth/anchor correction retains its existing
+no-reveal behavior. Hook regressions cover stopped propagation and subscription
+cleanup; the `mobile-scroll-controls` Chrome fixture repeats visibility and resume
+with production CSS. It is not Android/iOS device acceptance.
+
 `QueuedMessageChips` roots the queue surface with `yuri-composer-queue` and uses compact mobile control sizes. Those sizes only stick under real touch when `mobile.css` opts the cluster out of the global `:root.mobile-pointer` 36px button min — React `isMobile` alone is not enough. See `packages/ui/src/styles/DOCUMENTATION.md` (`isMobile` vs `mobile-pointer`) before debugging queue chip spacing that changes when DevTools inspect opens or closes. The shell uses `-mb-5` plus a trailing overlap spacer (`h-4` / `h-5` on `data-yuri-queue-composer-overlap`) so the card tucks behind the in-flow composer on web and Android. Native iOS hides that spacer and zeros the negative margin because the overlay does not cover it; the card then uses matching top and bottom padding. The same shell may host `SessionGoalRow` as an optional `trailing` strip under the queue chips (with a divider when both are present) so goal and queue share one border/surface above the composer; the shell still renders when only the goal is present. The goal strip shows the native objective, status and continuation count (`rounds/maxRounds`), with pause/resume and a detail dialog for the native reason. It has no Yuri token or elapsed-time accounting.
 
 Streaming assistant and reasoning rendering reads `streamingRenderCadence.ts`: Android native uses a 100ms source throttle and 128ms Markdown reveal pace; web, desktop, VS Code, and iOS use 20ms and 64ms. Finalized content renders immediately. `shouldStreamSortedFinalBody` controls inline text animation only. Text membership comes from the ordered projection: intermediate narration is interleaved with its reasoning/tools inside Activity, and only the trailing reply is inline. No message-wide live-reveal dedup removes selected text from that prefix. The phase derivation remains owned by `resolveSortedRevealStreamPhase` in `assistantMessageLifecycle.ts`.

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,7 +60,7 @@ describe('Assistant UI product contract', () => {
     expect(settings).not.toContain('assistants.instance-enabled');
     expect(settings).not.toContain('setAssistantsEnabled');
     expect(settings).not.toContain('settings.page.assistants.title');
-    expect(settings).toContain('yuri-settings-group-description');
+    expect(settings).not.toContain('yuri-settings-group-description');
     expect(settings).toContain('useProjectsStore((state) => state.projects)');
     expect(settings).toContain("patchDraft('workspacePath', null)");
     expect(settings).toContain("patchDraft('workspacePath', project.path)");
@@ -70,15 +70,16 @@ describe('Assistant UI product contract', () => {
     expect(settings).toContain('descriptionPlacement="outside"');
     expect(settings).toContain('data-settings-item="assistants.create"');
     expect(settings).not.toContain('itemId="assistants.create"');
-    expect(settings.indexOf('assistants.settings.description')).toBeLessThan(settings.indexOf('data-settings-item="assistants.create"'));
+    expect(settings).not.toContain("t('assistants.settings.description')");
     expect(settings).toContain('flex min-w-0 items-center gap-2');
     expect(settings).toContain('min-w-0 flex-1 truncate typography-micro text-muted-foreground');
-    expect(settings).not.toContain('block truncate typography-micro text-muted-foreground');
+    const workspaceOption = settings.slice(settings.indexOf('const WorkspaceOption'), settings.indexOf('export const AssistantsSettingsSidebar'));
+    expect(workspaceOption).not.toContain('block truncate typography-micro text-muted-foreground');
     expect(settings).not.toContain('h-auto min-h-10');
-    expect(settings).toContain('href="#assistant-share-welcome"');
-    expect(settings).toContain('setWelcomeOpen(true)');
-    expect(settings.slice(settings.indexOf('const WorkspaceOption'), settings.indexOf('export const AssistantsSettingsSidebar'))).not.toContain('break-all');
-    expect(settings.slice(settings.indexOf('const WorkspaceOption'), settings.indexOf('export const AssistantsSettingsSidebar'))).not.toContain('whitespace-normal');
+    expect(settings).not.toContain('href="#assistant-share-welcome"');
+    expect(settings).not.toContain('setWelcomeOpen');
+    expect(workspaceOption).not.toContain('break-all');
+    expect(workspaceOption).not.toContain('whitespace-normal');
     expect(settings).toContain('if (!onItemSelect && selectedID === null');
     expect(settings).toContain('selectSettingsAssistant(onItemSelect ? null :');
     expect(settings).toContain('interface AssistantsSettingsPageProps');
@@ -697,17 +698,20 @@ describe('Assistant UI product contract', () => {
   });
 
   test('keeps primary-chat source-session and edit callbacks on ChatContainer, not the contact transcript', async () => {
-    const [conversation, sessionSurface, messageBody, chatMessage] = await Promise.all([
+    const [conversation, sessionSurface, messageBody, messageActions, chatMessage] = await Promise.all([
       read('AssistantConversationSurface.tsx'),
       read('../chat/SessionSurfaceContext.tsx'),
       read('../chat/message/MessageBody.tsx'),
+      read('../chat/message/AssistantMessageActionButtons.tsx'),
       read('../chat/ChatMessage.tsx'),
     ]);
     expect(conversation).not.toContain('openSourceSession');
     expect(conversation).not.toContain('onEditMessage');
     expect(sessionSurface).toContain('openSourceSession?: (sessionId: string, directory: string) => void');
     expect(sessionSurface).toContain('onEditMessage?: (messageId: string, snapshot: SessionSurfaceMessageEditSnapshot) => Promise<void>');
-    expect(messageBody).toContain("t('chat.messageBody.actions.openSourceSession')");
+    expect(messageBody).toContain('<AssistantMessageActionButtons');
+    expect(messageActions).toContain("t('chat.messageBody.actions.openSourceSession')");
+    expect(messageActions).toContain('sessionSurface.openSourceSession(targetSessionId, sessionSurface.directory)');
     expect(chatMessage).toContain('sessionSurface.onEditMessage');
   });
 
@@ -826,9 +830,9 @@ describe('Assistant UI product contract', () => {
     expect(welcome).toContain('object-bottom');
     expect(welcome).toContain('lg:w-[min(calc(100%-4rem),74rem)]');
     expect(welcome).toContain("t('assistants.shareWelcome.action')");
-    expect(settings).toContain('<AssistantShareWelcome open={welcomeOpen} onOpenChange={setWelcomeOpen} />');
-    expect(settings).toContain("t('assistants.settings.descriptionLearnMore')");
-    expect(settings).toContain('setWelcomeOpen(true)');
+    expect(settings).not.toContain('<AssistantShareWelcome');
+    expect(settings).not.toContain('assistants.settings.descriptionLearnMore');
+    expect(settings).not.toContain('setWelcomeOpen');
   });
 
   test('keeps primary Chat activity on ChatContainer while Assistant uses the contact transcript', async () => {

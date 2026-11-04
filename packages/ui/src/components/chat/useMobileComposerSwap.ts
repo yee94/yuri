@@ -69,7 +69,7 @@ export const useMobileComposerSwap = (args: {
     enabled: boolean;
     scrollRef: React.RefObject<HTMLElement | null>;
     scopeRef: React.RefObject<HTMLElement | null>;
-}): void => {
+}): (() => void) => {
     const stateRef = React.useRef<ComposerSwapState>(createComposerSwapState());
     const publishedRef = React.useRef<{ progress: string; phase: string; rest: string } | undefined>(undefined);
     const publishedDockRef = React.useRef<{ progress: string; rest: string } | undefined>(undefined);
@@ -449,6 +449,18 @@ export const useMobileComposerSwap = (args: {
         finishTouch(event, false);
     });
 
+    const expandComposer = useEvent(() => {
+        if (!enabledRef.current) return;
+        clearTimer(idleTimerRef);
+        compactSettleArmedRef.current = false;
+        compactSettleUntilRef.current = 0;
+        resetTravelRun();
+        rebaseTouchIntent();
+        handleScroll();
+        replaceState(applyComposerSwapForce(stateRef.current, 'expanded'));
+        armSnapDone();
+    });
+
     const armExpandFocusShield = useEvent(() => {
         const scope = args.scopeRef.current;
         if (!scope || typeof window === 'undefined') return;
@@ -480,9 +492,7 @@ export const useMobileComposerSwap = (args: {
         if ('stopPropagation' in event) event.stopPropagation();
         // Follow is relative, so a later scroll frame can only collapse it
         // again by real upward travel, not by the absolute distance.
-        resetTravelRun();
-        replaceState(applyComposerSwapForce(stateRef.current, 'expanded'));
-        armSnapDone();
+        expandComposer();
         armExpandFocusShield();
         const textarea = args.scopeRef.current?.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
         textarea?.focus({ preventScroll: true });
@@ -532,10 +542,23 @@ export const useMobileComposerSwap = (args: {
 
     useEventListener('scroll', handleScroll, scrollTarget, passive);
     useEventListener('scrollend', handleScrollEnd, scrollTarget, passive);
-    useEventListener('touchstart', handleTouchStart, scrollTarget, passive);
-    useEventListener('touchmove', handleTouchMove, scrollTarget, passive);
-    useEventListener('touchend', handleTouchEnd, scrollTarget, passive);
-    useEventListener('touchcancel', handleTouchCancel, scrollTarget, passive);
+    React.useEffect(() => {
+        if (!args.enabled || !scrollEl) return;
+        // Capture survives child propagation stops. ReactUse currently drops
+        // capture on removal, so this subscription owns symmetric cleanup.
+        const options = { passive: true, capture: true } as const;
+        scrollEl.addEventListener('touchstart', handleTouchStart, options);
+        scrollEl.addEventListener('touchmove', handleTouchMove, options);
+        scrollEl.addEventListener('touchend', handleTouchEnd, options);
+        scrollEl.addEventListener('touchcancel', handleTouchCancel, options);
+        return () => {
+            scrollEl.removeEventListener('touchstart', handleTouchStart, options);
+            scrollEl.removeEventListener('touchmove', handleTouchMove, options);
+            scrollEl.removeEventListener('touchend', handleTouchEnd, options);
+            scrollEl.removeEventListener('touchcancel', handleTouchCancel, options);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- enabled and scrollEl own the subscription; handlers are useEvent-stable.
+    }, [args.enabled, scrollEl]);
     useEventListener('pointerdown', handleCompactActivate, scopeTarget);
     useEventListener('click', handleCompactActivate, scopeTarget);
     useEventListener('focusin', syncPin, scopeTarget);
@@ -560,4 +583,6 @@ export const useMobileComposerSwap = (args: {
         // control this effect.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [args.enabled, scrollEl, scopeEl]);
+
+    return expandComposer;
 };

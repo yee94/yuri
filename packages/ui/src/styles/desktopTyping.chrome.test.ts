@@ -2,6 +2,9 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AssistantMessageFooter } from '../components/chat/message/AssistantMessageFooter';
 import { messageHoverHandlers } from '../components/chat/lib/messageHover';
 import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../components/ui/chromeCdpHarness';
 
@@ -78,15 +81,16 @@ test.skipIf(!resolveChrome())('message hover during scrolling restyles only chro
     // Read production call-site classes so restoring a broad group-hover utility
     // also changes this browser regression fixture.
     const scope = body.match(/className="relative w-full ([^"]+)"/)![1];
-    const time = body.match(/: '(hidden [^']+)',\s*\)\}\s*data-message-time/)![1];
     const actions = body.match(/: '(pointer-events-none opacity-0 transition-opacity[^']+)'/)![1];
     const css = await compileProductionCssAsync(source);
     const html = join(root, 'message-hover.html');
     writeFileSync(html, `<!doctype html><html><head><style>${css}</style></head><body>
       <div id="scroller" style="height:600px;overflow:auto;width:700px">
       ${Array.from({ length: 3 }, (_, i) => `<div class="relative w-full ${scope}" style="height:600px">
-        <span class="${time}" data-message-time>timestamp ${i}</span>
-        <div class="${actions}" data-action-probe>Copy / Fork</div>
+        ${renderToStaticMarkup(createElement(AssistantMessageFooter, {
+          messageId: `hover-${i}`, isMobile: false, timestamp: `timestamp ${i}`,
+          actions: createElement('div', { className: actions, 'data-action-probe': '' }, 'Copy / Fork'),
+        }))}
         <div>${'<span class="text-foreground">rich text </span>'.repeat(5000)}</div>
       </div>`).join('')}</div><script>
       document.querySelectorAll('.${scope}').forEach(scope => {
@@ -120,7 +124,7 @@ test.skipIf(!resolveChrome())('message hover during scrolling restyles only chro
       }
       await chrome.send('Tracing.end');
       await completed;
-      expect(visible).toBe('inline-flex');
+      expect(visible).toBe('flex');
       expect(sizes.length).toBeGreaterThan(0);
       expect(Math.max(...sizes)).toBeLessThan(100);
       await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 300 });

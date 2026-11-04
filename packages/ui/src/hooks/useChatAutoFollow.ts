@@ -930,11 +930,25 @@ export const useChatAutoFollow = ({
     const passiveScrollOptions = React.useMemo(() => ({ passive: true } as const), []);
     useEventListener('scroll', handleScrollEvent, scrollListenerTarget, passiveScrollOptions);
     useEventListener('scrollend', handleScrollEnd, scrollListenerTarget, passiveScrollOptions);
-    useEventListener('wheel', handleWheel, scrollListenerTarget, passiveScrollOptions);
-    useEventListener('touchstart', handleTouchStart, scrollListenerTarget, passiveScrollOptions);
-    useEventListener('touchmove', handleTouchMove, scrollListenerTarget, passiveScrollOptions);
-    useEventListener('touchend', handleTouchEnd, scrollListenerTarget, passiveScrollOptions);
-    useEventListener('touchcancel', handleTouchEnd, scrollListenerTarget, passiveScrollOptions);
+    React.useEffect(() => {
+        if (!enabled || !containerEl) return;
+        // Observe intent before child handlers can stop bubbling. ReactUse
+        // currently omits capture during removal; keep cleanup symmetric here.
+        const options = { passive: true, capture: true } as const;
+        containerEl.addEventListener('wheel', handleWheel, options);
+        containerEl.addEventListener('touchstart', handleTouchStart, options);
+        containerEl.addEventListener('touchmove', handleTouchMove, options);
+        containerEl.addEventListener('touchend', handleTouchEnd, options);
+        containerEl.addEventListener('touchcancel', handleTouchEnd, options);
+        return () => {
+            containerEl.removeEventListener('wheel', handleWheel, options);
+            containerEl.removeEventListener('touchstart', handleTouchStart, options);
+            containerEl.removeEventListener('touchmove', handleTouchMove, options);
+            containerEl.removeEventListener('touchend', handleTouchEnd, options);
+            containerEl.removeEventListener('touchcancel', handleTouchEnd, options);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- enabled and containerEl own the subscription; handlers are useEvent-stable.
+    }, [enabled, containerEl]);
     useEventListener('keydown', handleKeyDown, scrollListenerTarget);
     useEventListener('pointermove', handleScrollbarPointerMove, enabled && typeof window !== 'undefined' ? window : noEventTarget, true);
     useEventListener('pointerup', handleScrollbarPointerEnd, enabled && typeof window !== 'undefined' ? window : noEventTarget, true);
