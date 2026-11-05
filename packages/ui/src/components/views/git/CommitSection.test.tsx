@@ -9,11 +9,6 @@ const fixture = vi.hoisted(() => ({ mobile: false, contentHeight: 0 }));
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: fixture.mobile, hasTouchInput: fixture.mobile }) }));
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  TooltipTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  TooltipContent: () => null,
-}));
 
 let host: HTMLDivElement;
 let root: Root;
@@ -66,11 +61,53 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('compact Git sidebar commit section', () => {
+  test.each([
+    { compact: true, mobile: false },
+    { compact: false, mobile: false },
+    { compact: false, mobile: true },
+  ])('shows hover descriptions for every action, including disabled buttons ($compact, $mobile)', async ({ compact, mobile }) => {
+    vi.useFakeTimers();
+    fixture.mobile = mobile;
+    await render({ compact });
+    for (const label of [
+      'gitView.commit.generateAria',
+      'gitView.commit.addGitmoji',
+      'gitView.commit.commitAria',
+      'gitView.commit.pushAria',
+    ]) {
+      const action = button(label);
+      const trigger = action.closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+      expect(trigger).not.toBeNull();
+      await act(async () => {
+        trigger.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false, pointerType: 'mouse' }));
+        trigger.dispatchEvent(new MouseEvent('mouseenter'));
+        trigger.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      const tooltip = document.querySelector('[data-slot="tooltip-content"]');
+      expect(tooltip?.textContent).toBe(mobile && label === 'gitView.commit.pushAria' ? 'gitView.commit.push' : label);
+      await act(async () => {
+        trigger.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body }));
+        document.body.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 1000, clientY: 1000 }));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    }
+    expect(props.onGenerateMessage).not.toHaveBeenCalled();
+    expect(props.onCommit).not.toHaveBeenCalled();
+    expect(props.onCommitAndPush).not.toHaveBeenCalled();
+  });
+
   test('uses a small title, single-line resizable textarea and shared xs actions with a small bottom inset', async () => {
     fixture.contentHeight = 300;
     await render();

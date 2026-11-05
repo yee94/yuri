@@ -80,27 +80,36 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
         />
 
         <div className={cn('@container/commit-actions flex items-center min-w-0', compact ? 'gap-1' : 'gap-2')}>
-          <Button
-            variant={compact ? 'ghost' : 'outline'}
-            size={compact ? 'xs' : 'sm'}
-            onClick={onGenerateMessage}
-            disabled={
-              isGeneratingMessage ||
-              commitAction !== null ||
-              hasPendingIndexMutation ||
-              stagedCount === 0
-            }
-            type="button"
-            aria-label={t('gitView.commit.generateAria')}
-            className={cn('commit-actions__btn', compact && 'text-xs')}
-          >
-            {isGeneratingMessage ? (
-              <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
-            ) : (
-              <Icon name="ai-generate-2" className={cn(iconClassName, 'text-primary')} />
-            )}
-            <span className="commit-actions__label">{t('gitView.commit.generate')}</span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex shrink-0">
+                <Button
+                  variant={compact ? 'ghost' : 'outline'}
+                  size={compact ? 'xs' : 'sm'}
+                  onClick={onGenerateMessage}
+                  disabled={
+                    isGeneratingMessage ||
+                    commitAction !== null ||
+                    hasPendingIndexMutation ||
+                    stagedCount === 0
+                  }
+                  type="button"
+                  aria-label={t('gitView.commit.generateAria')}
+                  className={cn('commit-actions__btn', compact && 'text-xs')}
+                >
+                  {isGeneratingMessage ? (
+                    <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
+                  ) : (
+                    <Icon name="ai-generate-2" className={cn(iconClassName, 'text-primary')} />
+                  )}
+                  <span className="commit-actions__label">{t('gitView.commit.generate')}</span>
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{t('gitView.commit.generateAria')}</p>
+            </TooltipContent>
+          </Tooltip>
 
           {gitmojiEnabled ? (
             <Tooltip>
@@ -124,70 +133,90 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
 
           <div className="flex-1" />
 
-          <Button
-            size={compact ? 'xs' : 'sm'}
-            variant={compact ? 'default' : 'outline'}
-            onClick={onCommit}
-            disabled={!canCommit || isGeneratingMessage}
-            className={cn('commit-actions__btn whitespace-nowrap', compact && 'text-xs')}
-            aria-label={t('gitView.commit.commitAria')}
-          >
-            {commitAction === 'commit' ? (
-              <>
-                <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
-                <span className="commit-actions__label">{t('gitView.commit.committing')}</span>
-              </>
-            ) : (
-              <>
-                <Icon name="git-commit" className={iconClassName} />
-                <span className="commit-actions__label">{t('gitView.commit.commit')}</span>
-              </>
-            )}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex shrink-0">
+                <Button
+                  size={compact ? 'xs' : 'sm'}
+                  variant={compact ? 'default' : 'outline'}
+                  onClick={onCommit}
+                  disabled={!canCommit || isGeneratingMessage}
+                  className={cn('commit-actions__btn whitespace-nowrap', compact && 'text-xs')}
+                  aria-label={t('gitView.commit.commitAria')}
+                >
+                  {commitAction === 'commit' ? (
+                    <>
+                      <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
+                      <span className="commit-actions__label">{t('gitView.commit.committing')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="git-commit" className={iconClassName} />
+                      <span className="commit-actions__label">{t('gitView.commit.commit')}</span>
+                    </>
+                  )}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{t('gitView.commit.commitAria')}</p>
+            </TooltipContent>
+          </Tooltip>
 
           {isMobile ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => onCommitAndPush()}
-                  disabled={!canCommit || isGeneratingMessage}
-                  className="h-7 w-7 p-0"
-                  aria-label={t('gitView.commit.pushAria')}
-                >
-                  {commitAction === 'commitAndPush' ? (
-                    <Icon name="loader-4" className="size-4 animate-spin" />
-                  ) : (
-                    <Icon name="arrow-up" className="size-3.5" />
-                  )}
-                </Button>
+                <span className="inline-flex shrink-0">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => onCommitAndPush()}
+                    disabled={!canCommit || isGeneratingMessage}
+                    className="h-7 w-7 p-0"
+                    aria-label={t('gitView.commit.pushAria')}
+                  >
+                    {commitAction === 'commitAndPush' ? (
+                      <Icon name="loader-4" className="size-4 animate-spin" />
+                    ) : (
+                      <Icon name="arrow-up" className="size-3.5" />
+                    )}
+                  </Button>
+                </span>
               </TooltipTrigger>
               <TooltipContent side="top">
                 <p>{t('gitView.commit.push')}</p>
               </TooltipContent>
             </Tooltip>
           ) : (
-            <Button
-              size={compact ? 'xs' : 'sm'}
-              variant="default"
-              onClick={() => onCommitAndPush()}
-              disabled={!canCommit || isGeneratingMessage}
-              className={cn('commit-actions__btn', compact && 'text-xs')}
-              aria-label={t('gitView.commit.pushAria')}
-            >
-              {commitAction === 'commitAndPush' ? (
-                <>
-                  <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
-                  <span className="commit-actions__label commit-actions__label--push">{t('gitView.commit.pushing')}</span>
-                </>
-              ) : (
-                <>
-                  <Icon name="arrow-up" className="size-3.5" />
-                  <span className="commit-actions__label commit-actions__label--push">{t('gitView.commit.push')}</span>
-                </>
-              )}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex shrink-0">
+                  <Button
+                    size={compact ? 'xs' : 'sm'}
+                    variant="default"
+                    onClick={() => onCommitAndPush()}
+                    disabled={!canCommit || isGeneratingMessage}
+                    className={cn('commit-actions__btn', compact && 'text-xs')}
+                    aria-label={t('gitView.commit.pushAria')}
+                  >
+                    {commitAction === 'commitAndPush' ? (
+                      <>
+                        <Icon name="loader-4" className={cn(iconClassName, 'animate-spin')} />
+                        <span className="commit-actions__label commit-actions__label--push">{t('gitView.commit.pushing')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="arrow-up" className="size-3.5" />
+                        <span className="commit-actions__label commit-actions__label--push">{t('gitView.commit.push')}</span>
+                      </>
+                    )}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{t('gitView.commit.pushAria')}</p>
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>
