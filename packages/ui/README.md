@@ -9,6 +9,18 @@ Remote Instances SSH row actions show a spinner and disable repeated clicks duri
 the local request and every live bootstrap/reconnect phase, including installation
 and updates. Request failure releases the local lock so the user can retry.
 
+The SSH editor uses one shared Settings card, with connection, logs, delete and
+save actions in its header rather than a separate toolbar row. Managed
+connections expose command, name and SSH password; existing external connections
+also expose their remote port and server password. A configured managed server
+password remains editable. Timeout, installation, keep-alive, local access and
+extra forwarding controls are omitted; saving preserves those stored values.
+Delete immediately disconnects and removes the instance without confirmation or
+another Save/Delete step. After success, the UI also drops the same-ID Host mirror
+and resets that default selection to local, matching the native settings write;
+failure keeps the editor and saved records available for retry. Independently
+paired Hosts with other IDs are unaffected.
+
 Tests that launch real Chrome/Chromium are temporarily marked `test.skip` /
 `it.skip`, including the standalone avatar performance gate. Non-browser tests
 in the same files remain enabled; browser fixtures and assertions are retained.
