@@ -917,8 +917,8 @@ interface UIStore {
   openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null, targetLine?: number, turnMessageId?: string | null, sessionId?: string | null) => void;
   openContextToolDiff: (directory: string, filePath: string, patches: ReadonlyArray<{ path: string; patch: string }>, targetLine?: number, turnMessageId?: string | null, sessionId?: string | null) => void;
   openContextFileDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
-  openContextFile: (directory: string, filePath: string, options?: { fileNotice?: ContextPanelFileNotice | null; viewerMode?: 'preview' | 'edit' }) => void;
-  openContextFileAtLine: (directory: string, filePath: string, line: number, column?: number) => void;
+  openContextFile: (directory: string, filePath: string, options?: { fileNotice?: ContextPanelFileNotice | null; viewerMode?: 'preview' | 'edit'; closeFileTree?: boolean }) => void;
+  openContextFileAtLine: (directory: string, filePath: string, line: number, column?: number, options?: { closeFileTree?: boolean }) => void;
   openContextOverview: (directory: string) => void;
   openContextPreview: (directory: string, url: string) => void;
   openContextBrowser: (directory: string, url?: string) => void;
@@ -1563,6 +1563,9 @@ export const useUIStore = create<UIStore>()(
             return;
           }
 
+          if (options?.closeFileTree && !get().isMobile) {
+            get().setRightSidebarOpen(false);
+          }
           get().openContextPanelTab(normalizedDirectory, {
             mode: 'file',
             targetPath: normalizedFilePath,
@@ -1573,7 +1576,7 @@ export const useUIStore = create<UIStore>()(
           get().setPendingFileViewerMode(options?.viewerMode ?? null);
         },
 
-        openContextFileAtLine: (directory, filePath, line, column) => {
+        openContextFileAtLine: (directory, filePath, line, column, options) => {
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           const normalizedFilePath = normalizeContextTargetPath(filePath);
           const normalizedLine = Number.isFinite(line) ? Math.max(1, Math.trunc(line)) : 1;
@@ -1581,10 +1584,13 @@ export const useUIStore = create<UIStore>()(
           if (!normalizedDirectory || !normalizedFilePath) {
             return;
           }
-          if (!canNavigateToContextFile(get(), normalizedDirectory, normalizedFilePath, () => get().openContextFileAtLine(directory, filePath, line, column))) {
+          if (!canNavigateToContextFile(get(), normalizedDirectory, normalizedFilePath, () => get().openContextFileAtLine(directory, filePath, line, column, options))) {
             return;
           }
 
+          if (options?.closeFileTree && !get().isMobile) {
+            get().setRightSidebarOpen(false);
+          }
           get().openContextPanelTab(normalizedDirectory, { mode: 'file', targetPath: normalizedFilePath });
           get().setPendingFileFocusPath(null);
           get().setPendingFileNavigation({

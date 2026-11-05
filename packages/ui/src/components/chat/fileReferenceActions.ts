@@ -288,7 +288,7 @@ export const openFileReference = async (
   // and files the user can already see in the transcript.
   const uiStore = useUIStore.getState();
   if (htmlPreview) {
-    uiStore.openContextFile(contextDirectory, resolved.resolvedPath, { viewerMode: 'preview' });
+    uiStore.openContextFile(contextDirectory, resolved.resolvedPath, { viewerMode: 'preview', closeFileTree: true });
     return;
   }
   if (Number.isFinite(resolved.line ?? Number.NaN)) {
@@ -299,10 +299,11 @@ export const openFileReference = async (
       Number.isFinite(resolved.column ?? Number.NaN)
         ? Math.max(1, Math.trunc(resolved.column as number))
         : 1,
+      { closeFileTree: true },
     );
     return;
   }
-  uiStore.openContextFile(contextDirectory, resolved.resolvedPath);
+  uiStore.openContextFile(contextDirectory, resolved.resolvedPath, { closeFileTree: true });
 };
 
 export const openFileReferenceFromElement = async (

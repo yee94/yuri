@@ -14,6 +14,7 @@ beforeEach(() => {
     contextToolDiffByDirectory: {},
     sessionWorkspacePanelById: {},
     isRightSidebarOpen: false,
+    isMobile: false,
     activeMainTab: 'chat',
     rightSidebarTab: 'git',
     pendingFileFocusPath: null,
@@ -24,6 +25,57 @@ beforeEach(() => {
 });
 
 describe('useUIStore context panel tabs', () => {
+  test.each(['file', 'line'] as const)('transcript %s navigation hides the rail only after the guard resumes it', (kind) => {
+    const store = useUIStore.getState();
+    store.openContextFile('/repo', '/repo/a.ts');
+    store.setRightSidebarTab('files');
+    store.setRightSidebarWidth(420);
+    store.setRightSidebarOpen(true);
+    const original = useUIStore.getState().contextPanelByDirectory['/repo'];
+    let resume: (() => void) | undefined;
+    store.setMainTabGuard((_tab, continueNavigation) => { resume = continueNavigation; return false; });
+    if (kind === 'line') {
+      store.openContextFileAtLine('/repo', '/repo/report.eficy', 12, 3, { closeFileTree: true });
+    } else {
+      store.openContextFile('/repo', '/repo/report.eficy', { closeFileTree: true });
+    }
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(true);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toBe(original);
+    expect(resume).toBeTypeOf('function');
+    store.setMainTabGuard(null);
+    resume?.();
+    const current = useUIStore.getState();
+    expect(current).toMatchObject({ isRightSidebarOpen: false, rightSidebarTab: 'files', rightSidebarWidth: 420 });
+    expect(current.contextPanelByDirectory['/repo']).toMatchObject({ isOpen: true, activeView: 'preview' });
+    expect(current.contextPanelByDirectory['/repo'].tabs.map((tab) => tab.targetPath)).toEqual(['/repo/a.ts', '/repo/report.eficy']);
+    if (kind === 'line') {
+      expect(current.pendingFileNavigation).toEqual({ path: '/repo/report.eficy', line: 12, column: 3 });
+    }
+    store.setRightSidebarOpen(true);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].activeView).toBe('rail');
+  });
+
+  test.each(['file', 'line'] as const)('ordinary %s navigation and mobile requests preserve rail visibility', (kind) => {
+    const store = useUIStore.getState();
+    store.setRightSidebarOpen(true);
+    if (kind === 'line') store.openContextFileAtLine('/repo', '/repo/a.ts', 7);
+    else store.openContextFile('/repo', '/repo/a.ts');
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(true);
+    useUIStore.setState({ isMobile: true });
+    if (kind === 'line') store.openContextFileAtLine('/repo', '/repo/b.ts', 7, 1, { closeFileTree: true });
+    else store.openContextFile('/repo', '/repo/b.ts', { closeFileTree: true });
+    expect(useUIStore.getState().isRightSidebarOpen).toBe(true);
+  });
+
+  test('invalid transcript file navigation leaves the rail open', () => {
+    const store = useUIStore.getState();
+    store.setRightSidebarOpen(true);
+    const before = useUIStore.getState();
+    store.openContextFile('', '/repo/report.eficy', { closeFileTree: true });
+    store.openContextFileAtLine('/repo', '', 7, 1, { closeFileTree: true });
+    expect(useUIStore.getState()).toBe(before);
+  });
+
   test('commits compact rail/preview navigation synchronously with each action', () => {
     const store = useUIStore.getState();
     store.openContextFile('/repo', '/repo/a.ts');

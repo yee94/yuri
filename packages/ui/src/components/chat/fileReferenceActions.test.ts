@@ -97,23 +97,23 @@ describe('fileReferenceActions', () => {
       source.append(anchor);
     }
     await openFileReferenceFromElement(source, { effectiveDirectory: '/repo' });
-    expect(openContextFileMock).toHaveBeenCalledWith('/repo', `/repo/${path}`);
+    expect(openContextFileMock).toHaveBeenCalledWith('/repo', `/repo/${path}`, { closeFileTree: true });
   });
 
   test('decodes href filenames once after parsing line fragments, but preserves raw paths', async () => {
     const anchor = document.createElement('a');
     anchor.setAttribute('href', 'docs/a%23b%3Bc%2520.md#L12');
     await openFileReferenceFromElement(anchor, { effectiveDirectory: '/repo' });
-    expect(openContextFileAtLineMock).toHaveBeenCalledWith('/repo', '/repo/docs/a#b;c%20.md', 12, 1);
+    expect(openContextFileAtLineMock).toHaveBeenCalledWith('/repo', '/repo/docs/a#b;c%20.md', 12, 1, { closeFileTree: true });
     await openFileReference('/repo/literal%20.eficy', false, { effectiveDirectory: '/repo' });
-    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/literal%20.eficy');
+    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/literal%20.eficy', { closeFileTree: true });
   });
 
   test('malformed percent escapes do not crash file-link opening', async () => {
     const anchor = document.createElement('a');
     anchor.setAttribute('href', 'docs/100%.md');
     await openFileReferenceFromElement(anchor, { effectiveDirectory: '/repo' });
-    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/docs/100%.md');
+    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/docs/100%.md', { closeFileTree: true });
   });
 
   test('stats through /api/fs/stat and remembers existence', async () => {
@@ -197,7 +197,7 @@ describe('fileReferenceActions', () => {
       preferRuntimeEditor: true,
     });
     expect(editorOpenFileMock).not.toHaveBeenCalled();
-    expect(openContextFileMock).toHaveBeenCalledWith('/tmp', '/tmp/report.html', { viewerMode: 'preview' });
+    expect(openContextFileMock).toHaveBeenCalledWith('/tmp', '/tmp/report.html', { viewerMode: 'preview', closeFileTree: true });
   });
 
   test.each([
@@ -212,7 +212,7 @@ describe('fileReferenceActions', () => {
     anchor.setAttribute('href', href);
     anchor.textContent = '查看预览';
     await openFileReferenceFromElement(anchor, { effectiveDirectory: '/session' });
-    expect(openContextFileMock).toHaveBeenCalledWith('/session', path);
+    expect(openContextFileMock).toHaveBeenCalledWith('/session', path, { closeFileTree: true });
   });
 
   test.each(['https://example.com/a.eficy', 'mailto:a.eficy', 'file:///work/%ZZ.eficy'])('does not treat %s as a local file', async (href) => {
@@ -228,6 +228,7 @@ describe('fileReferenceActions', () => {
     expect(openContextFileMock).toHaveBeenCalledWith(
       '/Users/dev/project',
       '/private/var/folders/x/report.md',
+      { closeFileTree: true },
     );
   });
 
@@ -241,6 +242,7 @@ describe('fileReferenceActions', () => {
     expect(openContextFileMock).toHaveBeenCalledWith(
       '/Users/dev/project',
       '/Users/dev/.local/share/opencode/worktree/abc/wechat-gui/src/app.ts',
+      { closeFileTree: true },
     );
   });
 
@@ -253,6 +255,7 @@ describe('fileReferenceActions', () => {
     expect(openContextFileMock).toHaveBeenCalledWith(
       '/Users/dev/project',
       '/Users/dev/project/app/wxaaiagentnodelogicsvr/test/yi/stochastic/reports/kf-full-review.md',
+      { closeFileTree: true },
     );
   });
 
@@ -261,7 +264,7 @@ describe('fileReferenceActions', () => {
     await openFileReference('research/KF-ITERATION-REPORT.shadcn.eficy', true, {
       effectiveDirectory: '/repo',
     });
-    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/research/KF-ITERATION-REPORT.shadcn.eficy');
+    expect(openContextFileMock).toHaveBeenCalledWith('/repo', '/repo/research/KF-ITERATION-REPORT.shadcn.eficy', { closeFileTree: true });
     expect(openDesktopPathMock).not.toHaveBeenCalled();
     expect(toastWarningMock).not.toHaveBeenCalled();
   });
@@ -277,7 +280,7 @@ describe('fileReferenceActions', () => {
     });
     expect(openDesktopPathMock).not.toHaveBeenCalled();
     expect(toastWarningMock).not.toHaveBeenCalled();
-    expect(openContextFileMock).toHaveBeenCalledWith('/tmp', path);
+    expect(openContextFileMock).toHaveBeenCalledWith('/tmp', path, { closeFileTree: true });
   });
 
   test('opens an archive in the context panel without an external-preview warning', async () => {
@@ -290,6 +293,7 @@ describe('fileReferenceActions', () => {
     expect(openContextFileMock).toHaveBeenCalledWith(
       '/Users/dev/project',
       '/private/var/folders/x/evidence-bundle.tar.gz',
+      { closeFileTree: true },
     );
   });
 
@@ -311,7 +315,7 @@ describe('fileReferenceActions', () => {
     anchor.setAttribute('data-yuri-file-ref', '/repo/report.eficy:12:3');
     anchor.setAttribute('data-yuri-file-binary', 'true');
     await openFileReferenceFromElement(anchor, { effectiveDirectory: '/repo' });
-    expect(openContextFileAtLineMock).toHaveBeenCalledWith('/repo', '/repo/report.eficy', 12, 3);
+    expect(openContextFileAtLineMock).toHaveBeenCalledWith('/repo', '/repo/report.eficy', 12, 3, { closeFileTree: true });
     expect(openDesktopPathMock).not.toHaveBeenCalled();
   });
 });

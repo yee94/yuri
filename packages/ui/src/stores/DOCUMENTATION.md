@@ -78,6 +78,10 @@ persistence and session workspace restoration; filtering transient-only BTW tabs
 still cannot persist an open phantom surface. `isRightSidebarOpen` now controls
 the Files/Git/Browser rail nested inside the desktop preview, not an outer column.
 Its toggle never changes preview visibility. Session snapshots retain both flags.
+Transcript file links request `closeFileTree` when opening a file or line reference.
+After navigation validation and the unsaved-file guard allow it, desktop opens the
+preview and synchronously hides the nested rail, preserving its tab and width.
+Ordinary file-tree navigation and mobile drawer visibility remain unchanged.
 
 With no saved workspace-panel state, the desktop workspace opens its empty preview
 and Files/Git rail on Git Changes when the first directory becomes available.
