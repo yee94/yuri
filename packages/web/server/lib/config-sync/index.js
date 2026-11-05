@@ -43,7 +43,7 @@ export {
   sanitizeSyncRunIdForPath,
   shellQuote,
 } from './scripts.js';
-export { collectLocalTarBuffer } from './tar.js';
+export { collectLocalTarBuffer, collectSshConfigTarBuffer, filterConfigSyncArchive } from './tar.js';
 export { applyConfigSyncPlan, probePathsForPlan } from './engine.js';
 export {
   buildDefaultSyncSelections,

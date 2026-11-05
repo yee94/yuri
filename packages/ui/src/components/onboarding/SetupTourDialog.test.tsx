@@ -12,7 +12,7 @@ import type { useSpeechSettingsForm } from '@/components/sections/yuri/useSpeech
 const fixture = vi.hoisted(() => ({
   runtime: 'tour-host', generation: 1, client: null as QueryClient | null,
   entries: [] as PluginEntry[], metadata: {} as Record<string, unknown>,
-  install: vi.fn(), catalog: vi.fn(), save: vi.fn(), close: vi.fn(),
+  savePlugins: vi.fn(), catalog: vi.fn(), save: vi.fn(), close: vi.fn(),
 }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeKey: () => fixture.runtime, getRuntimeGeneration: () => fixture.generation,
@@ -53,7 +53,7 @@ vi.mock('@/components/sections/yuri/VolcengineSpeechSettings', () => ({
 vi.mock('./tourPlugins', () => ({
   tourPlugins: [{ name: 'Magpie', spec: 'opencode-magpie-plugin' }, { name: 'Eficy', spec: '@eficy/opencode2-plugin' }, { name: 'yee-profile', spec: '@yee94/opencode-profile' }],
   hasTourPlugin: (entries: PluginEntry[], spec: string) => entries.some((entry) => entry.spec === spec),
-  installRecommendedPlugins: (...args: unknown[]) => fixture.install(...args),
+  saveRecommendedPlugins: (...args: unknown[]) => fixture.savePlugins(...args),
 }));
 
 let root: Root;
@@ -71,7 +71,7 @@ const render = async () => {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
   fixture.generation = 1; fixture.entries = []; fixture.close.mockReset();
-  fixture.install.mockReset().mockResolvedValue({ failed: [], pending: [] });
+  fixture.savePlugins.mockReset().mockResolvedValue({ failed: [] });
   fixture.catalog.mockReset().mockResolvedValue({ providers: [{ id: 'gateway', models: { model: { id: 'model' } } }], partial: false });
   fixture.save.mockReset().mockResolvedValue({ ...speechDefaults, configured: true });
   fixture.metadata = Object.fromEntries(['opencode-magpie-plugin', '@eficy/opencode2-plugin', '@yee94/opencode-profile'].map((spec) => [spec, {
@@ -90,8 +90,8 @@ test('renders built-in Magpie guidance and developer metadata for tools; Magpie 
   expect(document.body.textContent).toContain(en['tour.recommended']);
   expect(document.body.textContent).not.toContain('opencode-magpie-plugin');
   expect(document.querySelector('img[alt="Magpie"]')).not.toBeNull();
-  await click('Apply and continue');
-  expect(fixture.install.mock.calls[0][0]).toEqual(['opencode-magpie-plugin']);
+  await click('Save and continue');
+  expect(fixture.savePlugins.mock.calls[0][0]).toEqual(['opencode-magpie-plugin']);
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
   expect(document.body.textContent).toContain('Developer description for @eficy/opencode2-plugin');
   expect(document.querySelector('[data-plugin-icon-mask]')).not.toBeNull();
@@ -99,33 +99,41 @@ test('renders built-in Magpie guidance and developer metadata for tools; Magpie 
   expect(document.body.textContent).toContain('# Original README for @eficy/opencode2-plugin');
   await click('Back');
   expect(document.querySelector('[aria-label="Magpie"]')).toBeNull();
-  await click('Apply and continue');
-  expect(fixture.install.mock.calls[1][0]).toEqual(['@eficy/opencode2-plugin', '@yee94/opencode-profile']);
+  await click('Save and continue');
+  expect(fixture.savePlugins.mock.calls[1][0]).toEqual(['@eficy/opencode2-plugin', '@yee94/opencode-profile']);
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(2);
 });
 
-test('saved-but-not-active plugins do not advance and retry never pretends failure is success', async () => {
-  fixture.install.mockResolvedValueOnce({ failed: [], pending: ['opencode-magpie-plugin'] });
-  await render(); await click('Apply and continue');
+test('failed plugin config saves preserve the step and can be retried', async () => {
+  fixture.savePlugins.mockResolvedValueOnce({ failed: ['opencode-magpie-plugin'] });
+  await render(); await click('Save and continue');
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('not yet active');
-  await click('Apply and continue');
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not save');
+  await click('Save and continue');
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
 });
 
-test('no-model and network errors preserve the model step instead of claiming a working connection', async () => {
+test('Magpie config saves advance without waiting for any available models', async () => {
+  fixture.catalog.mockResolvedValue({ providers: [], partial: true });
+  await render(); await click('Save and continue');
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
+  expect(fixture.catalog).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+});
+
+test('no-model and network errors preserve the direct-provider step instead of claiming a working connection', async () => {
   fixture.catalog.mockResolvedValueOnce({ providers: [], partial: false }).mockRejectedValueOnce(new Error('offline'));
-  await render(); await click('Apply and continue');
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('no models');
-  await click('Apply and continue');
+  await render(); await click('Use another provider'); await click('Save and continue');
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(en['tour.noModels']);
+  await click('Save and continue');
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
   expect(fixture.close).not.toHaveBeenCalled();
 });
 
-test('all three steps can be postponed without installing plugins or saving credentials', async () => {
+test('all three steps can be postponed without saving plugins or credentials', async () => {
   await render(); await click('Set up later'); await click('Set up later'); await click('Set up later');
   expect(fixture.close).toHaveBeenCalledOnce();
-  expect(fixture.install).not.toHaveBeenCalled();
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
   expect(fixture.save).not.toHaveBeenCalled();
 });
 
@@ -141,8 +149,8 @@ test('configured tools keep whole-card toggles and README does not change select
   await click('README');
   await click('Back');
   expect(toggle().getAttribute('aria-pressed')).toBe('false');
-  await click('Apply and continue');
-  expect(fixture.install.mock.calls[0][0]).toEqual(['@yee94/opencode-profile']);
+  await click('Save and continue');
+  expect(fixture.savePlugins.mock.calls[0][0]).toEqual(['@yee94/opencode-profile']);
 });
 
 test('Magpie whole-card selection can be toggled off and back on', async () => {
@@ -153,7 +161,7 @@ test('Magpie whole-card selection can be toggled off and back on', async () => {
   expect(toggle.getAttribute('aria-pressed')).toBe('false');
   await act(async () => toggle.click());
   expect(toggle.getAttribute('aria-pressed')).toBe('true');
-  expect(fixture.install).not.toHaveBeenCalled();
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
 });
 
 test('uses the shared speech form to save both providers, preserves failed drafts, and closes only after success', async () => {
@@ -181,10 +189,10 @@ test('uses the shared speech form to save both providers, preserves failed draft
 
 test('late completion after a runtime switch cannot advance the new runtime', async () => {
   let release!: (value: unknown) => void;
-  fixture.install.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
-  await render(); await click('Apply and continue');
+  fixture.savePlugins.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+  await render(); await click('Save and continue');
   fixture.generation++;
-  await act(async () => release({ failed: [], pending: [] }));
+  await act(async () => release({ failed: [] }));
   await tick();
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
   expect(fixture.catalog).not.toHaveBeenCalled();

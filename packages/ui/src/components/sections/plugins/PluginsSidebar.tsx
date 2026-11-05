@@ -18,17 +18,18 @@ import { Icon } from '@/components/icon/Icon';
 import { SettingsSidebarLayout } from '@/components/sections/shared/SettingsSidebarLayout';
 import { SettingsSidebarItem } from '@/components/sections/shared/SettingsSidebarItem';
 import {
-  useCheckPluginUpdates,
   usePendingPluginUpdateTargets,
   usePluginReloadPending,
-  useReloadPlugins,
+  useUpdatePluginPackage,
 } from '@/queries/pluginMutations';
 import { PluginIcon } from './PluginIcon';
 import { PluginListSkeleton } from './PluginSkeletons';
 import { splitPluginSpec } from './pluginPresentation';
 import './plugin-settings.css';
 import { useI18n } from '@/lib/i18n';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import {
+  resolveConfigQueryDirectory,
   usePluginRegistryQuery,
   usePluginRuntimeQuery,
   usePluginsQuery,
@@ -69,9 +70,9 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
   const registryInfo = React.useMemo(() => data ?? {}, [data]);
   const runtimeQuery = usePluginRuntimeQuery();
   const runtimeUnavailable = runtimeQuery.isError && runtimeQuery.data === undefined;
-  const checkUpdates = useCheckPluginUpdates(specs);
-  const reload = useReloadPlugins();
-  const isCheckingUpdates = checkUpdates.isPending;
+  const updatePackage = useUpdatePluginPackage();
+  const [isUpdatingAll, setIsUpdatingAll] = React.useState(false);
+  const updateAllPending = React.useRef(false);
   const pendingUpdateTargets = usePendingPluginUpdateTargets();
   const isReloading = usePluginReloadPending();
   const isInitialLoading = pluginsQuery.isPending && pluginsQuery.data === undefined;
@@ -141,9 +142,34 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
     [onItemSelect, setSelected],
   );
 
-  const handleRefresh = useEvent(() => {
-    if (isReloading || isCheckingUpdates) return;
-    reload.mutate(undefined, { onSuccess: () => checkUpdates.mutate() });
+  const availableUpdates = entries.flatMap((entry) => {
+    const target = configEntryRuntimeTarget(entry.spec, entry.sourcePath);
+    if (target?.kind !== 'package' || pendingUpdateTargets.has(target.target)) return [];
+    const info = registryInfo[entry.spec];
+    const registryUpdate = info?.kind === 'npm-ok' && info.hasUpdate && info.latestVersion ? info : null;
+    if (!registryUpdate && !openCodeUpdateTargets.has(entry.id)) return [];
+    return [{ target: target.target, name: splitPluginSpec(entry.spec, true).name,
+      entry: registryUpdate ? { id: entry.id, spec: `${registryUpdate.name}@${registryUpdate.latestVersion}` } : undefined }];
+  });
+
+  const handleUpdateAll = useEvent(async () => {
+    if (isReloading || updateAllPending.current || pendingUpdateTargets.size > 0) return;
+    const transport = getRuntimeTransportIdentity();
+    const directory = resolveConfigQueryDirectory();
+    updateAllPending.current = true;
+    setIsUpdatingAll(true);
+    try {
+      const updatedTargets = new Set<string>();
+      for (const update of availableUpdates) {
+        if (getRuntimeTransportIdentity() !== transport || resolveConfigQueryDirectory() !== directory) break;
+        if (!update.entry && updatedTargets.has(update.target)) continue;
+        await updatePackage(update.target, update.name, update.entry);
+        updatedTargets.add(update.target);
+      }
+    } finally {
+      updateAllPending.current = false;
+      setIsUpdatingAll(false);
+    }
   });
 
   const renderEntry = (entry: PluginEntry) => {
@@ -224,16 +250,16 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
     <div className="flex shrink-0 items-center gap-1">
       <Button
         type="button"
-        variant="ghost"
         size="xs"
-        onClick={handleRefresh}
-        aria-busy={isReloading || isCheckingUpdates}
-        disabled={isFetching || runtimeQuery.isFetching || isCheckingUpdates || isReloading || isInitialLoading}
-        aria-label={t('settings.plugins.sidebar.actions.reload')}
-        title={t('settings.plugins.sidebar.actions.reload')}
+        data-settings-item="plugins.updateAll"
+        onClick={() => void handleUpdateAll()}
+        aria-busy={isUpdatingAll}
+        disabled={isFetching || runtimeQuery.isFetching || isUpdatingAll || isReloading || isInitialLoading || pendingUpdateTargets.size > 0 || availableUpdates.length === 0}
+        aria-label={t('settings.plugins.sidebar.actions.updateAll')}
+        title={t('settings.plugins.sidebar.actions.updateAll')}
       >
-        {isReloading || isCheckingUpdates ? <Icon name="loader-4" className="size-3 animate-spin" aria-hidden /> : null}
-        {t('settings.plugins.page.action.reload')}
+        {isUpdatingAll ? <Icon name="loader-4" className="size-3 animate-spin" aria-hidden /> : null}
+        {t('settings.plugins.sidebar.actions.updateAll')}
       </Button>
       <Button
         data-settings-item="plugins.create"

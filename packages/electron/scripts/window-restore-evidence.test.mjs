@@ -126,7 +126,7 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
             const status = await state.mainWindow.webContents.executeJavaScript('document.querySelector(".startup-status").textContent');
             expectStatus(status);
           }
-          const target = await context.resolve(entry.hostId, { localUrl, localUiUrl, localOrigin: localUrl });
+          const target = await context.resolve(entry.hostId, { localUrl, localUiUrl, localOrigin: localUrl, restoreSession: true });
           const url = new URL(entry.route, mode === 'bundled' ? localUiUrl : target.initialUrl).href;
           const win = index === 0 ? await context.activate(url, localUrl, target.bootOutcome, target)
             : context.create({ label: 'main-' + (index + 1), savedState: entry, url, runtimeConfig: target });

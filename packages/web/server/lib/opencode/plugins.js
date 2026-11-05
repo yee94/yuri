@@ -256,7 +256,7 @@ function createPluginEntry(entry, workingDirectory) {
     config = fs.existsSync(targetPath) ? readConfigFile(targetPath) : {};
   } else {
     targetPath = layers.paths.customPath || layers.paths.userPath;
-    config = getConfigForPath(layers, targetPath);
+    config = { $schema: 'https://opencode.ai/config.json', lsp: true, ...getConfigForPath(layers, targetPath) };
   }
 
   writePluginArray(config, [...readPluginArray(config), serializePluginEntry({ spec, options: entry.options })], targetPath);

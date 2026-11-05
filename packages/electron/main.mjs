@@ -3419,17 +3419,23 @@ const resolveMiniChatRuntimeConfig = (browserWindow, args = {}) => {
   };
 };
 
-const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, localOrigin }) => {
+const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, localOrigin, restoreSession = false }) => {
   let config = readDesktopHostsConfig();
   let host = config.hosts.find((entry) => entry.id === hostId);
   let probe = null;
-  if (host && !host.relay && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
-    try {
-      await sshManager.connect(hostId);
-      config = readDesktopHostsConfig();
-      host = config.hosts.find((entry) => entry.id === hostId);
-    } catch {
-      probe = { status: 'unreachable' };
+  if (host && (!restoreSession || !host.relay) && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
+    if (restoreSession) {
+      probe = await probeHostWithTimeout(host.apiUrl || host.url, 2_000, host.clientToken || '', sanitizeRuntimeRequestHeaders(host.requestHeaders || {}));
+    }
+    if (!probe || !['ok', 'update-recommended'].includes(probe.status)) {
+      try {
+        await sshManager.connect(hostId);
+        config = readDesktopHostsConfig();
+        host = config.hosts.find((entry) => entry.id === hostId);
+        probe = null;
+      } catch {
+        probe = { status: 'unreachable' };
+      }
     }
   }
   const relayHostId = host?.relay && !probe ? host.id : '';
@@ -3450,7 +3456,7 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
 
 const restoreAdditionalDesktopWindows = async (entries, local) => {
   for (const entry of entries) {
-    const target = await resolveDesktopStartupTarget(entry.hostId, local);
+    const target = await resolveDesktopStartupTarget(entry.hostId, { ...local, restoreSession: true });
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(entry.route) : entry.route, target.initialUrl).toString();
     createBrowserWindow({ label: nextWindowLabel(), savedState: entry, url, runtimeConfig: target });
   }
@@ -3489,8 +3495,9 @@ const resolveInitialUrl = async () => {
   const envTarget = normalizeHostUrl(process.env.YURI_SERVER_URL || '');
   const config = readDesktopHostsConfig();
   if (!envTarget) {
-    const hostId = readWindowStates()[0]?.hostId || config.defaultHostId;
-    return resolveDesktopStartupTarget(hostId, { localUrl, localUiUrl, localOrigin });
+    const savedWindow = readWindowStates()[0];
+    const hostId = savedWindow?.hostId || config.defaultHostId;
+    return resolveDesktopStartupTarget(hostId, { localUrl, localUiUrl, localOrigin, restoreSession: Boolean(savedWindow) });
   }
   if (envTarget) {
     apiBaseUrl = envTarget;
@@ -4153,8 +4160,11 @@ const runSpecChain = (specs, appName) => {
 const prepareDesktopHost = async (hostId, browserWindow) => {
   let host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
   if (!host) throw new Error('Host not found');
-  if (!host.relay && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
-    if (!isLocalSender(browserWindow?.webContents)) throw new Error('SSH preparation requires a local desktop page');
+  if (sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
+    if (!isLocalSender(browserWindow?.webContents)) {
+      if (host.relay) return host;
+      throw new Error('SSH preparation requires a local desktop page');
+    }
     await sshManager.connect(hostId);
     host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
     if (!host) throw new Error('Host not found after SSH preparation');

@@ -169,6 +169,97 @@ describe.each(['packaged', 'HMR'])('remote-computer worktree routing in %s UI', 
     expect(nativeFetch.mock.calls.some(([input]) => inputUrl(input).pathname === '/auth/session')).toBe(true);
   });
 
+  it('restores a healthy paired transport without SSH preparation', async () => {
+    await restoreDesktopRelayRuntime(host.id);
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(0);
+    expect(tunnelFetch.mock.calls.some(([input]) => inputUrl(input).pathname === '/auth/session')).toBe(true);
+  });
+
+  it('initializes once after both restored transports fail and retries with refreshed SSH credentials', async () => {
+    tunnelFetch.mockRejectedValue(new Error('Host process stopped'));
+    const refreshedHost = { ...host, apiUrl: 'http://refreshed.example:3000', clientToken: 'refreshed-token' };
+    const invokeOther = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === 'desktop_host_prepare') {
+        healthIdentity = host.relay!.serverId;
+        return refreshedHost;
+      }
+      return invokeOther(command, args);
+    });
+    await restoreDesktopRelayRuntime(host.id);
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toEqual([['desktop_host_prepare', { hostId: host.id }]]);
+    expect(getRuntimeKey()).toBe(`host:${host.id}`);
+    expect(getActiveRelayTunnel()).toBeNull();
+    const authenticated = nativeFetch.mock.calls.find(([input]) => inputUrl(input).origin === refreshedHost.apiUrl && inputUrl(input).pathname === '/auth/session');
+    expect(authenticated).toBeDefined();
+    expect(new Headers(authenticated![1]?.headers).get('authorization')).toBe('Bearer refreshed-token');
+    expect(mocks.createTunnel.mock.results[0].value.close).toHaveBeenCalledOnce();
+  });
+
+  it('shows remote recovery after initialization fails instead of committing a dead Relay', async () => {
+    tunnelFetch.mockRejectedValue(new Error('Remote process stopped'));
+    const invokeOther = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === 'desktop_host_prepare') throw new Error('SSH initialization failed');
+      return invokeOther(command, args);
+    });
+    await expect(restoreDesktopRelayRuntime(host.id)).rejects.toThrow('SSH initialization failed');
+    expect(window.__YURI_DESKTOP_BOOT_OUTCOME__).toMatchObject({ target: 'remote', status: 'unreachable', hostId: host.id });
+    expect(getRuntimeKey()).toBe('local');
+    expect(getActiveRelayTunnel()).toBeNull();
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(1);
+  });
+
+  it('retries and adopts an authenticated Relay after SSH initialization starts the Host', async () => {
+    tunnelFetch.mockRejectedValueOnce(new Error('Host not running'));
+    await restoreDesktopRelayRuntime(host.id);
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(1);
+    expect(mocks.createTunnel).toHaveBeenCalledTimes(2);
+    expect(mocks.createTunnel.mock.results[0].value.close).toHaveBeenCalledOnce();
+    expect(getActiveRelayTunnel()).toBe(mocks.createTunnel.mock.results[1].value);
+    await expectRemoteWorktreeCatalog();
+  });
+
+  it('closes a successful but stale Relay probe without starting SSH recovery', async () => {
+    let finish!: (response: Response) => void;
+    tunnelFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    const restoring = restoreDesktopRelayRuntime(host.id);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    switchRuntimeEndpoint({ apiBaseUrl: 'http://other.example', runtimeKey: 'host:other' });
+    finish(Response.json({ authenticated: true }));
+    await restoring;
+    expect(getRuntimeKey()).toBe('host:other');
+    expect(mocks.createTunnel.mock.results[0].value.close).toHaveBeenCalledOnce();
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(0);
+  });
+
+  it('bounds recovery to one initialization attempt if the refreshed transports also fail', async () => {
+    tunnelFetch.mockRejectedValue(new Error('Offline'));
+    await expect(restoreDesktopRelayRuntime(host.id)).rejects.toThrow('unreachable after initialization');
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(1);
+    expect(mocks.createTunnel).toHaveBeenCalledTimes(2);
+    for (const result of mocks.createTunnel.mock.results) expect(result.value.close).toHaveBeenCalledOnce();
+    expect(getRuntimeKey()).toBe('local');
+    expect(window.__YURI_DESKTOP_BOOT_OUTCOME__).toMatchObject({ target: 'remote', status: 'unreachable' });
+  });
+
+  it('discards SSH recovery completion after the user selects another runtime', async () => {
+    tunnelFetch.mockRejectedValue(new Error('Offline'));
+    let finish!: (value: DesktopHost) => void;
+    const invokeOther = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) => command === 'desktop_host_prepare'
+      ? new Promise<DesktopHost>((resolve) => { finish = resolve; }) : invokeOther(command, args));
+    const restoring = restoreDesktopRelayRuntime(host.id);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    switchRuntimeEndpoint({ apiBaseUrl: 'http://other.example', runtimeKey: 'host:other' });
+    healthIdentity = host.relay!.serverId;
+    finish(host);
+    await restoring;
+    expect(getRuntimeKey()).toBe('host:other');
+    expect(getActiveRelayTunnel()).toBeNull();
+    expect(window.__YURI_DESKTOP_BOOT_OUTCOME__).toBeUndefined();
+  });
+
   it('does not classify a Relay virtual loopback URL as the local computer or inherit local storage', async () => {
     Object.defineProperty(window, '__YURI_API_BASE_URL__', { value: localOrigin, writable: false, configurable: true });
     const storage = { getItem: (key: string) => key === 'lastDirectory' ? '/client-only/project' : null };

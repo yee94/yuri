@@ -26,6 +26,7 @@ describe('Magpie authorization transfer', () => {
     expect(result.plugins).toEqual(auth.plugins);
     expect(result.logins).toEqual([]);
     expect(result.incomplete).toBe(true);
+    expect(result.untransferred).toEqual([{ agent: 'chatgpt-api', user: 'fixture' }]);
   });
 
   it('does not turn corrupted stores into successful empty credentials', async () => {
@@ -75,5 +76,8 @@ describe('Magpie authorization transfer', () => {
     expect(() => verifyMagpieAuth(two, [{ agent: 'cursor' }])).toThrow('not recognized');
     expect(() => verifyMagpieAuth(two, [{ agent: 'cursor' }, { agent: 'cursor' }])).not.toThrow();
     expect(() => verifyMagpieAuth(auth, {})).toThrow('verify');
+    expect(() => validateMagpieAuth({ ...auth, untransferred: 'unknown' })).toThrow();
+    expect(() => validateMagpieAuth({ ...auth, incomplete: true, untransferred: [{ agent: 'claude', user: {} }] })).toThrow();
+    expect(() => validateMagpieAuth({ ...auth, incomplete: true, untransferred: [] })).toThrow();
   });
 });

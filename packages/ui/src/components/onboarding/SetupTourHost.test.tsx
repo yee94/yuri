@@ -6,7 +6,7 @@ import { SetupTourHost } from './SetupTourHost';
 import { useSetupTourStore } from '@/stores/useSetupTourStore';
 
 const fixture = vi.hoisted(() => ({
-  runtime: 'tour-host-a', generation: 1, vscode: false, ready: true, initialized: true,
+  runtime: 'tour-host-a', generation: 1, vscode: false, ready: true, initialized: true, directory: null as string | null,
   hydrate: null as Promise<boolean> | null, fetch: vi.fn(),
 }));
 vi.mock('@/lib/runtime-switch', () => ({
@@ -20,11 +20,10 @@ vi.mock('@/lib/runtime-switch', () => ({
 vi.mock('@/lib/desktop', () => ({ isDesktopShell: () => false, isDesktopLocalOriginActive: () => false }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useIsVSCodeRuntime: () => fixture.vscode }));
 vi.mock('@/lib/settingsStartup', () => ({ getSettingsHydrationPromise: () => fixture.hydrate }));
-vi.mock('@/stores/useDirectoryStore', () => ({ useDirectoryStore: (select: (state: unknown) => unknown) => select({ isHomeReady: fixture.ready, currentDirectory: null }) }));
+vi.mock('@/stores/useDirectoryStore', () => ({ useDirectoryStore: (select: (state: unknown) => unknown) => select({ isHomeReady: fixture.ready, currentDirectory: fixture.directory }) }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (select: (state: unknown) => unknown) => select({ isInitialized: fixture.initialized }) }));
-vi.mock('@/queries/projectOrderQueries', () => ({ projectOrderQueryOptions: () => ({
-  queryKey: [fixture.runtime, 'projects'], queryFn: () => fixture.fetch(), retry: false, staleTime: 0,
-}) }));
+vi.mock('@/lib/queryRuntime', () => ({ queryClient: new QueryClient() }));
+vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => Response.json(await fixture.fetch()) }));
 vi.mock('./SetupTourDialog', () => ({ SetupTourDialog: ({ runtime, onClose }: { runtime: string; onClose: () => void }) => <div data-tour={runtime}><button onClick={onClose}>Later</button></div> }));
 
 let root: Root;
@@ -41,7 +40,7 @@ beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.useFakeTimers();
   fixture.runtime = 'tour-host-a'; fixture.generation = 1; fixture.vscode = false;
-  fixture.ready = true; fixture.initialized = true; fixture.hydrate = null;
+  fixture.ready = true; fixture.initialized = true; fixture.hydrate = null; fixture.directory = null;
   fixture.fetch.mockReset().mockResolvedValue({ projects: [] });
   useSetupTourStore.setState({ progress: {}, openedRuntime: null });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -69,12 +68,29 @@ test('a failed project read never certifies a fresh install or dismisses its pen
   expect(useSetupTourStore.getState().progress[fixture.runtime]).toBeUndefined();
 });
 
+test('fresh settings open the tour even while OpenCode is using the home directory', async () => {
+  fixture.directory = '/root';
+  fixture.fetch.mockResolvedValue({ darkThemeId: 'cursor-dark', homeDirectory: '/root', lastDirectory: '/root' });
+  await render();
+  expect(container.querySelector('[data-tour]')).not.toBeNull();
+  expect(useSetupTourStore.getState().progress[fixture.runtime].dismissed).toBe(false);
+});
+
+test.each([null, [], { projects: null }, { projects: {} }, { projects: [null] }, { projects: [{ path: '' }] }].map((settings) => [settings]))(
+  'malformed settings never certify a fresh install: %j', async (settings) => {
+    fixture.fetch.mockResolvedValue(settings);
+    await render();
+    expect(container.querySelector('[data-tour]')).toBeNull();
+    expect(useSetupTourStore.getState().progress[fixture.runtime]).toBeUndefined();
+  },
+);
+
 test('existing projects consume only automatic eligibility; deleting the last project does not open a tour', async () => {
   fixture.fetch.mockResolvedValue({ projects: [{ path: '/workspace/existing' }] });
   await render();
   expect(container.querySelector('[data-tour]')).toBeNull();
   expect(useSetupTourStore.getState().progress[fixture.runtime].dismissed).toBe(true);
-  await act(async () => { client.setQueryData([fixture.runtime, 'projects'], { projects: [] }); });
+  await act(async () => { client.setQueryData([fixture.runtime, 'settings', 'project-order'], { projects: [] }); });
   await render();
   expect(container.querySelector('[data-tour]')).toBeNull();
   await act(async () => { useSetupTourStore.getState().open(fixture.runtime); });

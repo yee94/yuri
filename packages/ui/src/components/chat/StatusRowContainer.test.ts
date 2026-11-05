@@ -30,15 +30,15 @@ describe('StatusRowContainer source contracts', () => {
     expect(slot).toBeLessThan(pinRootClose)
   })
 
-  test('Tasks shares the Changes trigger type scale and keeps popup headings and rows the same size', () => {
+  test('mobile Tasks shares the Changes type scale without changing desktop typography', () => {
     const statusRowSource = readFileSync(join(here, 'StatusRow.tsx'), 'utf8')
     const sharedStylesSource = readFileSync(join(here, 'statusBarPopover.ts'), 'utf8')
     const typeScale = 'text-xs leading-4 md:text-[0.8125rem] md:leading-5'
 
     for (const token of typeScale.split(' ')) expect(sharedStylesSource).toContain(token)
     expect(statusRowSource).toContain('cn(statusBarTriggerLabelClassName, "text-muted-foreground")')
-    expect(statusRowSource).toContain(`pb-[0.875em] ${typeScale}`)
-    expect(statusRowSource).toContain('[&_[dir=auto]]:text-[1em]')
-    expect(statusRowSource).not.toMatch(/text-\[0\.(?:84|88|94)em\]/)
+    expect(statusRowSource).toContain(`isMobile ? "${typeScale}" : "text-base"`)
+    expect(statusRowSource).toContain('isMobile && "[&_[dir=auto]]:text-[1em]"')
+    expect(statusRowSource).toContain('!isMobile && "text-[0.88em]"')
   })
 })

@@ -1257,7 +1257,7 @@ export const settingsDict = {
   'settings.plugins.update.running': '업데이트 중…',
   'settings.plugins.update.running.toVersion': '{version}(으)로 업데이트 중…',
   'settings.plugins.update.available.toVersion': '{version}(으)로 업데이트 가능',
-  'settings.plugins.sidebar.actions.reload': '모든 플러그인 다시 불러오기',
+  'settings.plugins.sidebar.actions.updateAll': '모두 업데이트',
   'settings.plugins.sidebar.reloading': '다시 불러오는 중…',
   'settings.plugins.update.failed.title': '업데이트 실패',
   'settings.plugins.update.toast.done': '{name} 업데이트됨',

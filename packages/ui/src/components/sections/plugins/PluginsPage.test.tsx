@@ -102,6 +102,28 @@ afterEach(async () => {
   restore();
 });
 
+test('update all serializes package upgrades and continues after a failed entry without reloading', async () => {
+  queryClient.setQueryData(pluginRuntimeQueryOptions(directory).queryKey, inventory.map((plugin, index) => ({
+    ...plugin, source: { ...plugin.source, outdated: index === 0 || index === 3 },
+  })));
+  let finishFirst!: () => void;
+  gateway.update.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }));
+  gateway.updateEntry.mockResolvedValueOnce({ ok: false, message: 'Failed to install' });
+  await mount();
+  const button = host.querySelector<HTMLButtonElement>('[data-settings-item="plugins.updateAll"]')!;
+  expect(button.textContent).toBe('全部更新');
+  await act(async () => button.click());
+  expect(gateway.update).toHaveBeenCalledTimes(1);
+  expect(gateway.updateEntry).not.toHaveBeenCalled();
+  expect(button.disabled).toBe(true);
+  await act(async () => finishFirst());
+  await flush();
+  expect(gateway.updateEntry).toHaveBeenCalledWith(selected.id, { spec: '@example/runmark-opencode-plugin@0.2.12' });
+  expect(gateway.update.mock.calls.map((call) => call[1])).toEqual([entries[0].spec, entries[3].spec]);
+  expect(gateway.reload).not.toHaveBeenCalled();
+  expect(button.getAttribute('aria-busy')).toBe('false');
+});
+
 function NavigationUpdateProbe() {
   const available = usePluginUpdates();
   return <span hidden data-navigation-plugin-update={String(available)} />;
@@ -268,9 +290,9 @@ test('uses one compact update strip, clean rows, and no GUI manager above the ed
   expect(host.querySelector('[data-plugin-sidebar] details')).toBeNull();
   expect(host.querySelector('[data-plugin-sidebar]')?.textContent).not.toContain('npm 包');
   expect(host.querySelector('[data-plugin-sidebar]')?.textContent).not.toContain('有 1 个更新');
-  const reloadButton = host.querySelector<HTMLButtonElement>('[aria-label="重载全部插件"]')!;
-  expect(reloadButton.textContent).toBe('重载');
-  expect(reloadButton.querySelector('svg')).toBeNull();
+  const updateAllButton = host.querySelector<HTMLButtonElement>('[aria-label="全部更新"]')!;
+  expect(updateAllButton.textContent).toBe('全部更新');
+  expect(updateAllButton.querySelector('svg')).toBeNull();
   const row = host.querySelector(`[data-row-id="${selected.id}"]`)!;
   expect(row.querySelector('[title="' + selected.spec + '"]')?.textContent).toBe('@example/runmark-opencode-plugin');
   expect(editor.querySelector('h2')?.textContent).toBe('@example/runmark-opencode-plugin');
@@ -457,7 +479,7 @@ test('reload marks every row without replacing the selected editor', async () =>
   gateway.reload.mockImplementationOnce(() => new Promise<void>((resolve) => { complete = resolve; }));
   await mount();
   const input = host.querySelector('[data-plugin-editor] input');
-  const button = host.querySelector<HTMLButtonElement>('[aria-label="重载全部插件"]')!;
+  const button = [...host.querySelectorAll<HTMLButtonElement>('[data-plugin-editor] button')].find((item) => item.textContent === '重载')!;
   await act(async () => button.click());
   await flush();
   expect(gateway.reload).toHaveBeenCalledTimes(1);
@@ -616,7 +638,7 @@ test.skip('measures and captures the rendered production editor with production 
     await flush();
     let finishReload!: () => void;
     gateway.reload.mockImplementationOnce(() => new Promise<void>((resolve) => { finishReload = resolve; }));
-    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="重载全部插件"]')!.click());
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-plugin-editor] button')].find((button) => button.textContent === '重载')!.click());
     await flush();
     await render('plugins-reloading', true, 1040);
     await act(async () => finishReload());

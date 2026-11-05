@@ -89,7 +89,7 @@ test('concurrent connect callers share preparation while the old connection is c
   expect(manager.connecting.size).toBe(0);
 });
 
-test('connecting an already ready SSH session reuses it without bootstrap or update checks', async () => {
+test('an explicit connection initializes and checks versions even when an SSH session is already ready', async () => {
   const dir = await makeTempDir();
   const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
   manager.readInstances = () => ({ instances: [{ id: 'ssh-test' }] });
@@ -99,8 +99,8 @@ test('connecting an already ready SSH session reuses it without bootstrap or upd
   manager.disconnectInternal = vi.fn();
   manager.connectBlocking = vi.fn();
   await manager.connect('ssh-test');
-  expect(manager.disconnectInternal).not.toHaveBeenCalled();
-  expect(manager.connectBlocking).not.toHaveBeenCalled();
+  expect(manager.disconnectInternal).toHaveBeenCalledExactlyOnceWith('ssh-test', false);
+  expect(manager.connectBlocking).toHaveBeenCalledOnce();
 });
 
 test('a ready badge without a live SSH session still runs bootstrap', async () => {
@@ -1470,5 +1470,64 @@ describe('runExclusiveForTarget sync response shape', () => {
     expect(result.remoteExisting).toEqual(['opencode.jsonc']);
     expect(typeof result.syncRunId).toBe('string');
     expect(result.syncRunId).not.toBe('');
+  });
+});
+
+describe('SSH portable plugin config sync', () => {
+  test.each([
+    ['push', false], ['pull', false], ['push', true], ['pull', true],
+  ])('%s filters plugin archives before target mutation (invalid=%s)', async (direction, invalid) => {
+    const local = await makeTempDir();
+    const remote = await makeTempDir();
+    const source = direction === 'push' ? local : remote;
+    const target = direction === 'push' ? remote : local;
+    const configDir = (home) => path.join(home, '.config', 'opencode');
+    for (const home of [source, target]) await fsp.mkdir(path.join(configDir(home), 'plugins'), { recursive: true });
+    const content = invalid ? '{broken' : JSON.stringify({
+      plugins: ['file:///opt/local', '/opt/local', { package: '@scope/registry@^1', options: { mode: 'safe' } }],
+    });
+    await fsp.writeFile(path.join(configDir(source), 'opencode.jsonc'), content);
+    await fsp.writeFile(path.join(configDir(source), 'plugins', 'source.js'), 'source local plugin');
+    await fsp.writeFile(path.join(configDir(target), 'opencode.jsonc'), '{}');
+    await fsp.writeFile(path.join(configDir(target), 'plugins', 'target.js'), 'target local plugin');
+
+    const bin = await makeTempDir();
+    const quote = (value) => `'${value.replace(/'/g, `'\\''`)}'`;
+    await fsp.writeFile(path.join(bin, 'ssh'), `#!/bin/sh\nfor last do :; done\neval "set -- $last"\nHOME=${quote(remote)} exec /bin/sh -c "$3"\n`, { mode: 0o755 });
+    const originalPath = process.env.PATH;
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(local);
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    try {
+      const manager = new ElectronSshManager({ settingsFilePath: path.join(local, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
+      manager.runExclusiveSync = (_id, _stage, work) => work({ syncRunId: 'portable-ssh', targetId: 'ssh:fixture' });
+      manager.resolveManagedReadySession = () => ({
+        id: 'fixture', target: { capabilities: { tarExtract: true } },
+        session: { parsed: { args: [], destination: 'fixture' }, controlPath: 'fixture-control', instance: {} },
+      });
+      manager.appendLogWithLevel = () => {};
+      manager.getLocalSyncExecutor = () => ({ magpieInventory: async () => ({ available: false, installed: false }) });
+      manager.collectRemoteInventory = async () => planOpenCodeConfigSync(remote, { includeProviderCredentials: false });
+      const operation = manager.applyOpencodeConfigSync('fixture', { direction });
+      if (invalid) {
+        await expect(operation).rejects.toThrow('invalid OpenCode JSONC configuration');
+        expect(await fsp.readFile(path.join(configDir(target), 'opencode.jsonc'), 'utf8')).toBe('{}');
+        await expect(fsp.stat(path.join(configDir(target), '.yuri.sync-backup'))).rejects.toThrow();
+      } else {
+        expect((await operation).ok).toBe(true);
+        expect(JSON.parse(await fsp.readFile(path.join(configDir(target), 'opencode.jsonc'), 'utf8'))).toEqual({
+          plugins: [{ package: '@scope/registry@^1', options: { mode: 'safe' } }],
+        });
+        expect(await fsp.readFile(path.join(configDir(target), '.yuri.sync-backup', 'portable-ssh', 'opencode.jsonc'), 'utf8')).toBe('{}');
+      }
+      expect(await fsp.readFile(path.join(configDir(source), 'opencode.jsonc'), 'utf8')).toBe(content);
+      if (invalid) {
+        expect(await fsp.readFile(path.join(configDir(target), 'plugins', 'target.js'), 'utf8')).toBe('target local plugin');
+      } else {
+        expect(await fsp.readFile(path.join(configDir(target), 'plugins', 'source.js'), 'utf8')).toBe('source local plugin');
+      }
+    } finally {
+      process.env.PATH = originalPath;
+      homedir.mockRestore();
+    }
   });
 });

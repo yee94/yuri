@@ -120,7 +120,7 @@ describe('opencode plugins data layer', () => {
   });
 
   test('converts untouched legacy options on save and preserves unrelated JSONC', () => {
-    fs.writeFileSync(userConfigPath, '// retained comment\n' + JSON.stringify({ model: 'example/model', plugin: [['old', { nested: { enabled: false } }]] }));
+    fs.writeFileSync(userConfigPath, '// retained comment\n' + JSON.stringify({ model: 'example/model', lsp: false, plugin: [['old', { nested: { enabled: false } }]] }));
     plugins.createPluginEntry({ spec: 'new', scope: 'user' }, projectDir);
     const text = fs.readFileSync(userConfigPath, 'utf8');
     expect(text).toContain('// retained comment');
@@ -130,6 +130,7 @@ describe('opencode plugins data layer', () => {
     expect(text).toContain('"plugins"');
     expect(text).not.toContain('"plugin"');
     expect(text).toContain('example/model');
+    expect(text).toMatch(/"lsp":\s*false/);
   });
 
   test('prefers native plugins over legacy entries including an empty native array', () => {
@@ -141,7 +142,7 @@ describe('opencode plugins data layer', () => {
     writeJson(userConfigPath, { plugin: ['shadowed'], plugins: [] });
     expect(plugins.listPluginEntries(projectDir)).toEqual([]);
     plugins.createPluginEntry({ spec: 'new' }, projectDir);
-    expect(readJson(userConfigPath)).toEqual({ plugins: ['new'] });
+    expect(readJson(userConfigPath)).toEqual({ $schema: 'https://opencode.ai/config.json', lsp: true, plugins: ['new'] });
   });
 
   test('malformed legacy data and failed atomic writes leave original config intact', () => {

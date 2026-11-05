@@ -125,8 +125,8 @@ describe('PendingChangesBar expand refresh', () => {
 });
 
 describe('composer popovers', () => {
-  test.each([false, true])('Tasks and Changes are full-width and mutually exclusive (mobile=%s)', async (isMobile) => {
-    surface.isMobile = isMobile;
+  test('mobile Tasks and Changes are full-width and mutually exclusive', async () => {
+    surface.isMobile = true;
     surface.todos = [{ content: 'Current task', status: 'in_progress', priority: 'medium' }];
     await renderBar();
     const changes = host.querySelector<HTMLButtonElement>('.yuri-pending-changes-trigger')!;
@@ -170,6 +170,30 @@ describe('composer popovers', () => {
     await act(async () => tasks.click());
     await act(async () => tasks.click());
     expect(popups()).toHaveLength(0);
+  });
+
+  test('desktop retains bounded trigger-anchored popovers with independent expansion', async () => {
+    surface.todos = [{ content: 'Current task', status: 'in_progress', priority: 'medium' }];
+    await renderBar();
+    const changes = host.querySelector<HTMLButtonElement>('.yuri-pending-changes-trigger')!;
+    const tasks = host.querySelector<HTMLButtonElement>('.yuri-status-row-trigger')!;
+    await act(async () => changes.click());
+    await act(async () => tasks.click());
+    const popups = host.querySelectorAll<HTMLDivElement>('.yuri-popup-surface');
+    expect(popups).toHaveLength(2);
+    for (const popup of popups) {
+      expect(popup.style.width).not.toBe('100%');
+      expect(popup.style.maxWidth).toBe('min(28rem, calc(100cqw - 4ch))');
+      expect(popup.parentElement?.classList.contains('relative')).toBe(true);
+    }
+    expect(popups[1].classList.contains('text-base')).toBe(true);
+    expect(changes.getAttribute('aria-expanded')).toBe('true');
+    expect(tasks.getAttribute('aria-expanded')).toBe('true');
+    await act(async () => tasks.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(changes.getAttribute('aria-expanded')).toBe('false');
+    expect(tasks.getAttribute('aria-expanded')).toBe('true');
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(host.querySelectorAll('.yuri-popup-surface')).toHaveLength(0);
   });
 });
 

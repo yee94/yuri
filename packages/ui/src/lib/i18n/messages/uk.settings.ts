@@ -1257,7 +1257,7 @@ export const settingsDict = {
   'settings.plugins.update.running': 'Оновлення…',
   'settings.plugins.update.running.toVersion': 'Оновлення до {version}…',
   'settings.plugins.update.available.toVersion': 'Доступне оновлення: {version}',
-  'settings.plugins.sidebar.actions.reload': 'Перезавантажити всі плагіни',
+  'settings.plugins.sidebar.actions.updateAll': 'Оновити всі',
   'settings.plugins.sidebar.reloading': 'Перезавантаження…',
   'settings.plugins.update.failed.title': 'Не вдалося оновити',
   'settings.plugins.update.toast.done': '{name} оновлено',

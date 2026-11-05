@@ -2266,7 +2266,7 @@
   'settings.plugins.update.running': '正在更新…',
   'settings.plugins.update.running.toVersion': '正在更新至 {version}…',
   'settings.plugins.update.available.toVersion': '可更新至 {version}',
-  'settings.plugins.sidebar.actions.reload': '重新載入所有外掛',
+  'settings.plugins.sidebar.actions.updateAll': '全部更新',
   'settings.plugins.sidebar.reloading': '正在重新載入…',
   'settings.plugins.update.failed.title': '更新失敗',
   'settings.plugins.update.toast.done': '已更新 {name}',

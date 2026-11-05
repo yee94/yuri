@@ -78,6 +78,11 @@ mini-chat's in-root logo is replaced by React without a destructive timeout.
 Desktop remote-instance startup displays a localized connection status below the
 logo before transport selection and React initialization; the label does not
 participate in logo centering or overlap session synchronization progress.
+Saved desktop windows first authenticate their existing direct/Relay transports.
+If neither works, startup awaits one native SSH initialization and retries with
+fresh credentials; final failure opens remote recovery instead of mounting the
+local runtime or leaving an unverified Relay selected. Explicit local entries
+retain SSH initialization/version checks, independent of Relay pairing.
 GUI revision checks, code downloads and installation stay silent, including failures;
 diagnostics remain in plugin settings, and file previews own their local loading state.
 

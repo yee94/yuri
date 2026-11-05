@@ -22,7 +22,9 @@ import {
   buildRemoteSyncPrepareScript as buildRemoteSyncPrepareScriptShared,
   buildRemoteSyncProbeScript,
   createSshSyncTarget,
+  collectSshConfigTarBuffer,
   extractTarGzBuffer,
+  filterConfigSyncArchive,
   finalizeLocalSyncDestination,
   normalizeSyncSelections,
   planOpenCodeConfigSync,
@@ -2407,7 +2409,7 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
 
         const timeoutSec = session.instance?.connectionTimeoutSec || DEFAULT_CONNECTION_TIMEOUT_SEC;
         const configTar = (plan.files.length > 0 || plan.directories.length > 0)
-          ? await runRemoteCommandBinary(session.parsed, session.controlPath, buildRemoteConfigTarScript(plan), timeoutSec)
+          ? await filterConfigSyncArchive(await runRemoteCommandBinary(session.parsed, session.controlPath, buildRemoteConfigTarScript(plan), timeoutSec))
           : null;
         const agentsTar = plan.agentsRoot
           ? await runRemoteCommandBinary(session.parsed, session.controlPath, buildRemoteAgentsTarScript(), timeoutSec)
@@ -2476,6 +2478,7 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
         executor,
         syncRunId,
         sourceHomedir: home,
+        collectTar: collectSshConfigTarBuffer,
         collectCredentials: () => this.getLocalSyncExecutor().download('credentials'),
         collectMagpie: () => this.getLocalSyncExecutor().download('magpie'),
       });
@@ -2806,14 +2809,6 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
     if (this.connecting.has(trimmed)) {
       this.appendLogWithLevel(trimmed, 'INFO', 'Connection already in progress');
       return this.connecting.get(trimmed);
-    }
-
-    const session = this.sessions.get(trimmed);
-    if (this.statuses.get(trimmed)?.phase === 'ready' && session
-      && !session.master?.signalCode && !session.mainForward?.signalCode
-      && (session.masterDetached || session.master?.exitCode === null)
-      && (session.mainForwardDetached || session.mainForward?.exitCode === null)) {
-      return;
     }
 
     const instance = this.readInstances().instances.find((entry) => entry?.id === trimmed);

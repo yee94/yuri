@@ -1,50 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { hasTourPlugin, installRecommendedPlugins, installTourPlugins, tourPlugins } from './tourPlugins';
+import { hasTourPlugin, saveRecommendedPlugins, saveTourPlugins, tourPlugins } from './tourPlugins';
 import { listPluginRuntime } from '@/lib/opencode/plugins';
+import { queryClient } from '@/lib/queryRuntime';
 import type { PluginEntry } from '@/stores/usePluginsStore';
 
-vi.mock('@/stores/usePluginsStore', () => ({ usePluginsStore: { getState: () => ({ createEntry: async () => ({ ok: true }) }) } }));
-vi.mock('@/queries/pluginQueries', () => ({ pluginsListQueryOptions: () => ({}), pluginRuntimeQueryOptions: () => ({ queryKey: ['runtime'] }) }));
+const fixture = vi.hoisted(() => ({ create: vi.fn(async () => ({ ok: true })) }));
+vi.mock('@/stores/usePluginsStore', () => ({ usePluginsStore: { getState: () => ({ createEntry: fixture.create }) } }));
+vi.mock('@/queries/pluginQueries', () => ({ pluginsListQueryOptions: () => ({}) }));
 vi.mock('@/lib/opencode/plugins', () => ({ listPluginRuntime: vi.fn() }));
-vi.mock('@/lib/queryRuntime', () => ({ queryClient: { fetchQuery: async () => ({ entries: [] }), setQueryData: vi.fn() } }));
+vi.mock('@/lib/queryRuntime', () => ({ queryClient: { fetchQuery: vi.fn(async () => ({ entries: [] })) } }));
 vi.mock('@/lib/runtime-switch', () => ({ getRuntimeGeneration: () => 1, getRuntimeTransportIdentity: () => 'test-host' }));
 
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
-it('waits for native activation, with a bounded number of reads', async () => {
+it('only saves user-scope config, without native activation reads or timers', async () => {
   vi.useFakeTimers();
-  vi.mocked(listPluginRuntime).mockResolvedValue([]);
-  const result = installRecommendedPlugins(['one'], '/workspace', new AbortController().signal);
-  await vi.runAllTimersAsync();
-  expect(await result).toEqual({ failed: [], pending: ['one'] });
-  expect(listPluginRuntime).toHaveBeenCalledTimes(20);
+  expect(await saveRecommendedPlugins(['one'], '/workspace', new AbortController().signal)).toEqual({ failed: [] });
+  expect(fixture.create).toHaveBeenCalledWith({ spec: 'one', scope: 'user' });
+  expect(listPluginRuntime).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it('cancels the activation delay on unmount without another inventory read', async () => {
-  vi.useFakeTimers();
-  vi.mocked(listPluginRuntime).mockResolvedValue([]);
+it('does not write if the tour closes while its config snapshot is loading', async () => {
+  let release!: (value: { entries: PluginEntry[] }) => void;
+  vi.mocked(queryClient.fetchQuery).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
   const controller = new AbortController();
-  const result = installRecommendedPlugins(['one'], '/workspace', controller.signal);
+  const result = saveRecommendedPlugins(['one'], '/workspace', controller.signal);
   const rejected = expect(result).rejects.toThrow('Runtime changed');
-  await vi.advanceTimersByTimeAsync(0);
-  expect(listPluginRuntime).toHaveBeenCalledTimes(1);
   controller.abort();
+  release({ entries: [] });
   await rejected;
-  await vi.runAllTimersAsync();
-  expect(listPluginRuntime).toHaveBeenCalledTimes(1);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-it('stops polling when native activation arrives', async () => {
-  vi.useFakeTimers();
-  vi.mocked(listPluginRuntime).mockResolvedValueOnce([]).mockResolvedValueOnce([
-    { source: { kind: 'package', target: 'one@1.0.0', version: '1.0.0', outdated: false, updating: false }, state: { kind: 'active' } },
-  ]);
-  const result = installRecommendedPlugins(['one'], '/workspace', new AbortController().signal);
-  await vi.runAllTimersAsync();
-  expect(await result).toEqual({ failed: [], pending: [] });
-  expect(listPluginRuntime).toHaveBeenCalledTimes(2);
+  expect(fixture.create).not.toHaveBeenCalled();
+  expect(listPluginRuntime).not.toHaveBeenCalled();
 });
 
 const entry = (spec: string): PluginEntry => ({ id: spec, spec, scope: 'user', kind: 'config', parsedKind: 'npm' });
@@ -62,11 +49,10 @@ describe('recommended plugin application', () => {
     const deps = {
       list: async () => existing,
       create,
-      active: async () => existing.map((item) => item.spec.replace(/@\d.*$/, '')),
       current: () => true,
     };
-    expect(await installTourPlugins(specs, deps)).toEqual({ failed: [specs[2]], pending: [] });
-    expect(await installTourPlugins(specs, deps)).toEqual({ failed: [], pending: [] });
+    expect(await saveTourPlugins(specs, deps)).toEqual({ failed: [specs[2]] });
+    expect(await saveTourPlugins(specs, deps)).toEqual({ failed: [] });
     expect(create.mock.calls.map(([spec]) => spec)).toEqual([specs[1], specs[2], specs[2]]);
     expect(existing[0].options).toEqual({ gateway: 'existing' });
     expect(existing).toHaveLength(3);
@@ -74,25 +60,18 @@ describe('recommended plugin application', () => {
 
   it('does not treat a failed inventory read as an empty configuration to overwrite', async () => {
     const create = vi.fn();
-    const result = await installTourPlugins(['one'], {
-      list: async () => { throw new Error('offline'); }, create, active: async () => [], current: () => true,
+    const result = await saveTourPlugins(['one'], {
+      list: async () => { throw new Error('offline'); }, create, current: () => true,
     });
-    expect(result).toEqual({ failed: ['one'], pending: [] });
+    expect(result).toEqual({ failed: ['one'] });
     expect(create).not.toHaveBeenCalled();
-  });
-
-  it('does not certify activation from a successful config write', async () => {
-    const result = await installTourPlugins(['one'], {
-      list: async () => [], create: async () => ({ ok: true }), active: async () => [], current: () => true,
-    });
-    expect(result).toEqual({ failed: [], pending: ['one'] });
   });
 
   it('stops before a write if the runtime changed during its inventory read', async () => {
     let current = true;
     const create = vi.fn();
-    await expect(installTourPlugins(['one', 'two'], {
-      list: async () => { current = false; return []; }, create, active: async () => [], current: () => current,
+    await expect(saveTourPlugins(['one', 'two'], {
+      list: async () => { current = false; return []; }, create, current: () => current,
     })).rejects.toThrow('Runtime changed');
     expect(create).not.toHaveBeenCalled();
   });

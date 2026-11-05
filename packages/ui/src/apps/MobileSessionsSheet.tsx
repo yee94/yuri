@@ -985,6 +985,14 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
 
     return (
       <div>
+        {roots.length === 0 && !hasRemoteSessions && !isLoadingRemoteSessions ? (
+          <div
+            className="py-1.5 pr-3 typography-ui-label font-normal text-muted-foreground/80"
+            style={{ paddingLeft: indent }}
+          >
+            {t('sessions.sidebar.group.empty.noSessionsInWorkspace')}
+          </div>
+        ) : null}
         <SessionFolderDndScope
           scopeKey={confirmingArchiveSessionId ? null : normalizePath(bucket.path)}
           sessionIds={visibleRoots.map((session) => session.id)}
@@ -1690,7 +1698,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                           const worktreeBuckets = buckets.filter((bucket) => bucket.worktree !== null);
                           return (
                             <>
-                              {rootBucket && rootBucket.sessions.length > 0
+                              {rootBucket && (rootBucket.sessions.length > 0 || worktreeBuckets.length === 0)
                                 ? renderBucketSessions(node, rootBucket, PROJECT_SESSION_INDENT)
                                 : null}
                               {worktreeBuckets.map((bucket) => {

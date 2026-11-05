@@ -2,14 +2,15 @@
 
 ## Composer status popovers
 
-`StatusRow` owns one active popup (`todos`, `changes`, or none) for the composer.
-Tasks and pending Changes open mutually exclusively, span the full composer column
-on desktop and mobile, and dismiss on an outside click. `PendingChangesBar` receives
-its expansion state from that owner; opening still refreshes Git silently, and
-closed change lists do not construct per-file rows. The two popups share
-`statusBarComposerPopoverStyle`; turn-level file popovers keep their bounded size.
-Tasks uses the Changes trigger's responsive type scale throughout its header,
-counter and list, without separate mobile title/body scaling.
+`StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
+they open mutually exclusively, span the full composer column through
+`statusBarComposerPopoverStyle`, and share outside-click dismissal. Mobile Tasks
+uses the Changes trigger's responsive type scale throughout its header, counter
+and list. Desktop and VS Code retain independently controlled, trigger-anchored,
+bounded popovers with their original typography and individual outside-click
+dismissal. `PendingChangesBar` receives its expansion state from that owner;
+opening still refreshes Git silently, and closed change lists do not construct
+per-file rows. Turn-level file popovers keep their bounded size.
 
 ## Workspace review boundary
 

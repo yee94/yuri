@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('desktop startup splash', () => {
   it.each(['remote', 'local'])('shows the remote connection state before rendering only for a %s boot target', (target) => {
     const source = readFileSync(new URL('./runtimeConfig.ts', import.meta.url), 'utf8');
     const status = { textContent: '', hidden: true };
-    runInNewContext(source.slice(source.indexOf('  const connectionStatus ='), source.indexOf('  desktopRelayRestoreReady = Promise.race')), {
+    runInNewContext(source.slice(source.indexOf('  const connectionStatus ='), source.indexOf('  // Transport probes')), {
       document: { getElementById: () => status },
       getInjectedBootOutcome: () => ({ target }),
       getBootstrapMessages: () => ({ connectingRemote: '正在连接远程实例…' }),
@@ -15,6 +15,23 @@ describe('desktop startup splash', () => {
     });
     expect(status.hidden).toBe(target !== 'remote');
     expect(status.textContent).toBe(target === 'remote' ? '正在连接远程实例…' : '');
+  });
+  it('waits for SSH recovery instead of rendering the local runtime after ten seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const source = readFileSync(new URL('./runtimeConfig.ts', import.meta.url), 'utf8');
+      let finish!: () => void;
+      const recovery = new Promise<void>((resolve) => { finish = resolve; });
+      const context = { desktopRelayRestoreReady: Promise.resolve(), relayHostId: 'remote', restoreDesktopRelayRuntime: () => recovery, window: { setTimeout } };
+      runInNewContext(source.slice(source.indexOf('  desktopRelayRestoreReady ='), source.indexOf('  return createWebAPIs')), context);
+      let ready = false;
+      void context.desktopRelayRestoreReady.then(() => { ready = true; });
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(ready).toBe(false);
+      finish();
+      await context.desktopRelayRestoreReady;
+      expect(ready).toBe(true);
+    } finally { vi.useRealTimers(); }
   });
   it('does not time out to a blank page when application imports have not committed', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');

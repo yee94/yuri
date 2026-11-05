@@ -68,10 +68,8 @@ export const createConfiguredWebAPIs = () => {
     connectionStatus.textContent = getBootstrapMessages(readStoredLocaleForBootstrap()).connectingRemote;
     connectionStatus.hidden = false;
   }
-  desktopRelayRestoreReady = Promise.race([
-    restoreDesktopRelayRuntime(typeof relayHostId === 'string' && relayHostId ? relayHostId : undefined).catch(() => {}),
-    // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
-    new Promise<void>((resolve) => { window.setTimeout(resolve, 10_000); }),
-  ]);
+  // Transport probes and native SSH initialization own their timeouts. Do not
+  // render the app against the local endpoint while remote recovery is running.
+  desktopRelayRestoreReady = restoreDesktopRelayRuntime(typeof relayHostId === 'string' && relayHostId ? relayHostId : undefined).catch(() => {});
   return createWebAPIs({ urls });
 };

@@ -30,7 +30,12 @@ export const validateMagpieAuth = (value) => {
       || !['api', 'oauth'].includes(auth.type)
       || (auth.type === 'api' ? typeof auth.key !== 'string' || !auth.key
         : typeof auth.access !== 'string' || typeof auth.refresh !== 'string'))
-    || value.logins.some((row) => !portableLogin(row, value.plugins))) {
+    || value.logins.some((row) => !portableLogin(row, value.plugins))
+    || (value.untransferred !== undefined && (!Array.isArray(value.untransferred)
+      || value.incomplete !== (value.untransferred.length > 0)
+      || value.untransferred.some((row) => !object(row) || typeof row.agent !== 'string' || !row.agent
+        || (row.user !== undefined && typeof row.user !== 'string')
+        || Object.keys(row).some((key) => !['agent', 'user'].includes(key)))))) {
     throw new Error('Invalid Magpie authorization payload');
   }
   return value;
@@ -49,9 +54,10 @@ export const collectMagpieAuth = async (dir, accounts) => {
   const visiblePlugins = Object.fromEntries(Object.entries(plugins).filter(([key]) => available.has(key.split('#')[0])
     && !rows.some((row) => row.agent === `plugin:${key.split('#')[0]}` && row.home === key && row.hidden)));
   const logins = rows.filter((row) => !row.hidden && portableLogin(row, visiblePlugins));
-  return validateMagpieAuth({ plugins: visiblePlugins, logins,
-    incomplete: accounts.some((account) => !Object.keys(visiblePlugins).some((key) => key.split('#')[0] === account.agent)
-      && !logins.some((row) => row.agent === account.agent && row.user === account.user)) });
+  const untransferred = accounts.filter((account) => !Object.keys(visiblePlugins).some((key) => key.split('#')[0] === account.agent)
+    && !logins.some((row) => row.agent === account.agent && row.user === account.user))
+    .map(({ agent, user }) => ({ agent, ...(typeof user === 'string' ? { user } : {}) }));
+  return validateMagpieAuth({ plugins: visiblePlugins, logins, incomplete: untransferred.length > 0, untransferred });
 };
 
 const writeStore = async (file, value) => {

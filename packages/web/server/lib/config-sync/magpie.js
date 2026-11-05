@@ -33,6 +33,16 @@ export const parseMagpieAccountsJson = (raw) => {
   }
 };
 
+const readRestoreResult = (output) => {
+  if (/^Library:.*couldn't/im.test(output)) throw new Error('Magpie restore partially completed: library application failed. Check the target Magpie library.');
+  if (/^Needs a key\b/im.test(output)) throw new Error('Magpie restore partially completed: some providers still require API keys.');
+  return {
+    pluginInstallFailed: /^Couldn't add the plugin\b/im.test(output),
+    agentSettingsSkipped: /^Left as they are\b[^\r\n]*:[ \t]*\S/im.test(output),
+    needsSignIn: /^The backup's settings use these, not signed in on this computer\b/im.test(output),
+  };
+};
+
 // Raw CLI output may contain provider names, paths or credentials. Never forward it.
 const runCli = (binary, args, { input = '', env, timeout = 600_000 } = {}) => new Promise((resolve, reject) => {
   const child = spawn(binary, args, { env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -262,10 +272,8 @@ export function createMagpieSync({
         try { output = await run(binary, ['restore', file], { env, input: `${decoded.passphrase}\n` }); }
         catch { throw new Error('Magpie restore failed; some configuration may already have been applied. Retry to finish.'); }
         // Private/unreachable plugin specs can fail while the rest of restore still applies.
-        let pluginInstallFailed = /Couldn't add the plugin/i.test(output);
-        if (/Library:.*couldn't/i.test(output)) throw new Error('Magpie restore partially completed: library application failed. Check the target Magpie library.');
-        if (/Needs a key/i.test(output)) throw new Error('Magpie restore partially completed: some providers still require API keys.');
-        let needsSignIn = /not signed in on this computer/i.test(output);
+        let result = readRestoreResult(output);
+        let needsSignIn = result.needsSignIn;
         if (decoded.format === 'magpie-sync-v2') {
           const dir = await dataDir(binary);
           const rejected = new Set();
@@ -282,39 +290,37 @@ export function createMagpieSync({
                 }
               } finally { await fs.rm(credentialFile, { force: true }); }
             });
+            if (result.pluginInstallFailed || result.agentSettingsSkipped || result.needsSignIn) {
+              output = await run(binary, ['restore', file], { env, input: `${decoded.passphrase}\n` });
+              result = readRestoreResult(output);
+            }
             const accounts = parseMagpieAccountsJson(await run(binary, ['accounts', '--json'], { env }));
             const known = new Set(accounts.map((account) => account.agent));
             // Skip verification for plugins that never installed and for spent Codex tokens.
             const expected = {
               ...decoded.authorization,
               plugins: Object.fromEntries(Object.entries(decoded.authorization.plugins)
-                .filter(([key]) => !pluginInstallFailed || known.has(key.split('#')[0]))),
+                .filter(([key]) => !result.pluginInstallFailed || known.has(key.split('#')[0]))),
               logins: decoded.authorization.logins.filter((row) => !rejected.has(row.auth)
-                && (!pluginInstallFailed || known.has(row.agent.replace(/^plugin:/, '')))),
+                && (row.agent === 'codex' || !result.pluginInstallFailed || known.has(row.agent.replace(/^plugin:/, '')))),
             };
             verifyMagpieAuth(expected, accounts);
-            const configured = JSON.parse(await fs.readFile(path.join(dir, 'providers.json'), 'utf8').catch((error) => {
-              if (error.code === 'ENOENT') return '{"providers":[]}';
-              throw error;
-            }));
-            if (!Array.isArray(configured.providers)) throw new Error();
-            const signedIn = new Set(accounts.map((account) => account.agent));
-            needsSignIn = rejected.size > 0 || decoded.authorization.incomplete || configured.providers.some((provider) =>
-              !provider.hidden && provider.id && !['chat', 'responses', 'anthropic', 'gemini'].some((key) => provider[key])
-              && !signedIn.has(provider.id));
-            if (/Left as they are/i.test(output)) {
-              output = await run(binary, ['restore', file], { env, input: `${decoded.passphrase}\n` });
-              if (/Couldn't add the plugin/i.test(output)) pluginInstallFailed = true;
-              if (/Needs a key|Library:.*couldn't/i.test(output)) throw new Error();
-            }
+            const recognized = (row) => accounts.some((account) => account.agent === row.agent.replace(/^plugin:/, '')
+              && (row.user === undefined || String(account.user).toLowerCase() === row.user.toLowerCase())
+              && !account.lapsed);
+            needsSignIn = result.needsSignIn
+              || decoded.authorization.logins.some((row) => !recognized(row))
+              || (decoded.authorization.untransferred
+                ? decoded.authorization.untransferred.some((row) => !recognized(row))
+                : decoded.authorization.incomplete);
           } catch (error) {
             throw new Error('Magpie authorization sync or verification failed; some configuration and accounts may already be applied. Retry to finish.', { cause: error });
           }
         }
         const magpieWarnings = [];
         if (needsSignIn) magpieWarnings.push('sign_in_required');
-        if (pluginInstallFailed) magpieWarnings.push('plugin_install_failed');
-        if (/Left as they are/i.test(output)) magpieWarnings.push('agent_settings_skipped');
+        if (result.pluginInstallFailed) magpieWarnings.push('plugin_install_failed');
+        if (result.agentSettingsSkipped) magpieWarnings.push('agent_settings_skipped');
         return { ok: true, ...(magpieWarnings.length ? { magpieWarnings } : {}) };
       });
     }),

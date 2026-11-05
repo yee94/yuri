@@ -4,9 +4,13 @@ import {
   desktopHostProbe,
   desktopHostsGet,
   desktopHostsSet,
+  desktopPrepareHost,
   getDesktopHostApiUrl,
   normalizeHostUrl,
+  probeRelayDesktopHost,
+  type DesktopHost,
 } from '@/lib/desktopHosts';
+import { adoptRelayTunnel } from '@/lib/relay/runtime-tunnel';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopHostSwitch';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
@@ -181,7 +185,7 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
   const windowHostId = boot?.target === 'remote' ? boot.hostId : boot?.target === 'local' ? 'local' : null;
   const hostId = targetHostId || windowHostId || (config.defaultHostId !== 'local' ? config.defaultHostId : null);
   if (!hostId) return;
-  const host = config.hosts.find((entry) => entry.id === hostId);
+  let host = config.hosts.find((entry) => entry.id === hostId);
   if (!host) return;
   // Must match runtimeKeyForHost() in DesktopHostSwitcher so switch/resolve agree.
   const runtimeKey = runtimeKeyForDesktopHost(host);
@@ -196,64 +200,53 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
     return;
   }
 
-  const switchToDirect = (url: string) => {
-    switchRuntimeEndpoint({
-      apiBaseUrl: url,
-      clientToken: host.clientToken || null,
-      requestHeaders: host.requestHeaders || null,
-      runtimeKey,
-    });
-  };
-  const switchToRelay = () => {
-    switchRuntimeEndpoint({
-      apiBaseUrl: desktopRelayApiBaseUrl(),
-      clientToken: host.clientToken || null,
-      runtimeKey,
-      relay: host.relay ?? undefined,
-    });
+  const selectTransport = async (candidate: DesktopHost): Promise<boolean> => {
+    const directUrl = candidate.apiUrl || !candidate.relay ? normalizeHostUrl(getDesktopHostApiUrl(candidate)) : null;
+    if (directUrl) {
+      // Preserve the short LAN headstart. A losing probe never commits later.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const winner = await Promise.race([
+        desktopHostProbe(directUrl, {
+          clientToken: candidate.clientToken || null,
+          requestHeaders: candidate.requestHeaders || null,
+          expectedServerId: candidate.relay?.serverId,
+        }).catch(() => null),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), DIRECT_PROBE_HEADSTART_MS); }),
+      ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+      if (!canRestore()) return false;
+      if (winner && isDirectTransportUsable(winner.status)) {
+        switchRuntimeEndpoint({ apiBaseUrl: directUrl, clientToken: candidate.clientToken || null, requestHeaders: candidate.requestHeaders || null, runtimeKey });
+        return true;
+      }
+    }
+
+    if (!candidate.relay || !canRestore()) return false;
+    const probe = await probeRelayDesktopHost(candidate.relay, { keepTunnel: true, clientToken: candidate.clientToken || null });
+    if (!canRestore()) {
+      probe.tunnel?.close();
+      return false;
+    }
+    if (probe.status !== 'ok' || !probe.tunnel) return false;
+    adoptRelayTunnel(candidate.relay, probe.tunnel);
+    switchRuntimeEndpoint({ apiBaseUrl: desktopRelayApiBaseUrl(), clientToken: candidate.clientToken || null, runtimeKey, relay: candidate.relay });
     // Ask the connected Host for its current LAN address in a separate,
     // identity-verified refresh; the losing startup probe cannot switch it.
-    scheduleDesktopHostCandidateRefresh(host.id);
+    scheduleDesktopHostCandidateRefresh(candidate.id);
+    return true;
   };
 
-  const directUrl = host.apiUrl ? normalizeHostUrl(getDesktopHostApiUrl(host)) : null;
-  if (!directUrl) {
-    switchToRelay();
-    return;
-  }
-
-  // Race the direct probe against a short headstart instead of serializing the
-  // full probe timeout in front of the relay fallback: a live LAN answers well
-  // inside the window (direct keeps priority); a dead one no longer delays
-  // startup. Once relay wins, discard the losing direct result, as mobile does.
-  // A later candidate refresh must independently verify identity and generation.
-  // Direct adoption requires a USABLE probe: 'auth' (reachable but our token
-  // is rejected) must keep the relay transport instead of stranding the
-  // session on a direct leg that 401s everything.
-  const probeUsable = (probe: { status: string }) => isDirectTransportUsable(probe.status);
-  const probePromise = desktopHostProbe(directUrl, {
-    clientToken: host.clientToken || null,
-    requestHeaders: host.requestHeaders || null,
-    // Identity gate: a re-leased LAN address may now belong to a different
-    // machine; the probe must not send the token on a serverId mismatch.
-    expectedServerId: host.relay.serverId,
-  }).catch(() => ({ status: 'unreachable' as const, latencyMs: 0 }));
-
-  const winner = await Promise.race([
-    probePromise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), DIRECT_PROBE_HEADSTART_MS)),
-  ]);
-  if (!canRestore()) return;
-  if (winner) {
-    if (probeUsable(winner)) {
-      switchToDirect(directUrl);
-      return;
+  try {
+    if (await selectTransport(host) || !canRestore()) return;
+    // Fast restore failed on both legs. Re-enter the normal main-owned SSH
+    // initialization once, then retry using its refreshed endpoint/credentials.
+    host = await desktopPrepareHost(host);
+    if (!canRestore()) return;
+    if (await selectTransport(host) || !canRestore()) return;
+    throw new Error('Remote instance is unreachable after initialization');
+  } catch (error) {
+    if (canRestore()) {
+      window.__YURI_DESKTOP_BOOT_OUTCOME__ = { target: 'remote', status: 'unreachable', hostId, url: getDesktopHostApiUrl(host) };
     }
-    switchToRelay();
-    return;
+    throw error;
   }
-
-  // Headstart expired: select relay once. The caught probePromise may finish,
-  // but no late callback may tear down the transport selected by this race.
-  switchToRelay();
 };

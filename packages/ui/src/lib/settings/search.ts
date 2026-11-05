@@ -761,6 +761,12 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['add', 'plugin', 'npm', 'path', 'file'],
   },
   {
+    id: 'plugins.updateAll',
+    page: 'plugins',
+    titleKey: 'settings.plugins.sidebar.actions.updateAll',
+    keywords: ['update', 'upgrade', 'all', 'plugin'],
+  },
+  {
     id: 'plugins.spec',
     page: 'plugins',
     titleKey: 'settings.plugins.page.field.spec',

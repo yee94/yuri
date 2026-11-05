@@ -8,7 +8,13 @@ setup, recovery and content indexing. The tour never opens Add Project.
 
 Desktop/web `MainLayout` mounts the host after connection. Automatic eligibility
 waits for home/config readiness, settings hydration and the authoritative
-`projectOrderQueryOptions` snapshot. Failed/pending reads are not empty projects.
+`projectOrderQueryOptions` snapshot. A successful settings object without a
+`projects` property is the fresh-install empty catalog; an explicit malformed
+property, malformed response, or failed/pending read is not an empty catalog.
+The catalog is Yuri's registered-project list, not OpenCode's discovered root
+project. The Host initializes an empty registry before accepting first-launch
+directory updates; `lastDirectory` is migrated only from pre-registry settings,
+never from a deliberate empty registry.
 An existing project snapshot suppresses subsequent automatic onboarding, even if
 the last project is later deleted. Opening alone records pending progress, not
 completion. Closing postpones automatic presentation, retains the current step,
@@ -28,20 +34,23 @@ Mini Chat and embedded conversation roots do not mount it.
 1. **Models:** Magpie is `opencode-magpie-plugin`, applied once in this step.
    Plugin entry writes reuse `usePluginsStore.createEntry` with user scope and
    retain existing pins/options. OpenCode owns package installation and activation.
-   The tour then requires a nonpartial authoritative model catalog before advancing;
-   it does not infer provider-to-plugin ownership or claim an inference request was
-   tested. Magpie itself must be set up on the connected Host (local or remote) as
-   described in its README. Missing models keep this step open with setup guidance.
+   Host user-scope plugin creation fills missing `$schema` with
+   `https://opencode.ai/config.json` and missing `lsp` with `true`, alongside the
+   selected `plugins` entries. Existing explicit values and JSONC comments survive.
+   Saving the Magpie entry immediately advances the tour, without requesting plugin
+   activation or waiting for a model catalog. Magpie itself must be set up on the
+   connected Host (local or remote) as described in its setup guide.
    Other providers reuse `ProvidersPage`, including its native OAuth, credential,
-   custom-provider and discovery flows, inside the same dialog.
+   custom-provider and discovery flows, inside the same dialog. These direct-provider
+   flows retain their authoritative model-catalog check before advancing.
 2. **Tools:** Only Eficy and yee-profile are offered. Exact package identity detects
    existing versioned entries; existing configuration is not overwritten. Batch
    failures preserve successful independent writes and retries do not duplicate
-   those entries. Activation is read from OpenCode, not inferred from configuration.
-   Explicit application performs at most twenty activation reads, 750 ms apart,
-   stopping when selected plugins have a reported state, the scope changes, or the
-   dialog unmounts. Pending/failed activation keeps the step open for retry/README
-   inspection; closing performs no further writes.
+   those entries. “Save and continue” writes the selected entries to OpenCode config
+   and advances after successful saves. It does not install packages, poll activation,
+   or gate progress on background loading; OpenCode's config watcher owns that work.
+   Saving is not a claim that a plugin or model is already usable. Failed saves keep
+   the step open for retry; runtime changes or closing stop subsequent writes.
 3. **Voice:** Independent input and read-aloud entry points render the corresponding
    section of `VoiceSettings`, preserving its full provider choices and native
    availability checks. Entering an editor never changes the saved provider.
@@ -91,7 +100,8 @@ behavior, not explanatory copy in the onboarding cards.
 
 Tests cover authoritative startup gating, existing workspace suppression,
 postponement/manual reopening, runtime partitioning, unchanged pins/options,
-partial installation/retry, late completions, README/icon metadata, the real speech
+partial config saves/retry, absence of activation/model waits for Magpie, late
+completions, README/icon metadata, the real speech
 save adapter and absence of automatic work while dismissed. Browser/platform tests
 must use isolated configuration or mock mutation routes rather than installing
 plugins or altering speech credentials on a developer's active Host.

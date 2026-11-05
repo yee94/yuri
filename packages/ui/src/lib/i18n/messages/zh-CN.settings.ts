@@ -1257,7 +1257,7 @@ export const settingsDict = {
   'settings.plugins.update.running': '正在更新…',
   'settings.plugins.update.running.toVersion': '正在更新至 {version}…',
   'settings.plugins.update.available.toVersion': '可更新至 {version}',
-  'settings.plugins.sidebar.actions.reload': '重载全部插件',
+  'settings.plugins.sidebar.actions.updateAll': '全部更新',
   'settings.plugins.sidebar.reloading': '正在重载…',
   'settings.plugins.update.failed.title': '更新失败',
   'settings.plugins.update.toast.done': '已更新 {name}',

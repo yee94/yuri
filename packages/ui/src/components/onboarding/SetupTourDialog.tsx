@@ -26,7 +26,7 @@ import type { RegistryResult } from '@/stores/usePluginsStore';
 import type { SpeechSettings } from '@/lib/voice/speechSettings';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { tourPlugins, hasTourPlugin, installRecommendedPlugins } from './tourPlugins';
+import { tourPlugins, hasTourPlugin, saveRecommendedPlugins } from './tourPlugins';
 import './setup-tour.css';
 
 const specs = tourPlugins.map((plugin) => plugin.spec);
@@ -129,16 +129,15 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
     try {
       const wanted = step === 0 ? provider === 'magpie' ? [specs[0]] : [] : selected;
       if (wanted.length) {
-        const result = await installRecommendedPlugins(wanted, directory, lifetime.current.signal);
+        const result = await saveRecommendedPlugins(wanted, directory, lifetime.current.signal);
         if (!current()) return;
-        if (result.failed.length) { setError(t('tour.installFailed', { names: result.failed.join(', ') })); return; }
-        if (result.pending.length) { setError(t('tour.activationPending', { names: result.pending.join(', ') })); return; }
+        if (result.failed.length) { setError(t('tour.saveFailed', { names: result.failed.join(', ') })); return; }
       }
-      if (step === 0) {
+      if (step === 0 && provider === 'other') {
         const catalog = await queryClient.fetchQuery({ ...providerCatalogQueryOptions(directory, transport), staleTime: 0 });
         if (!current()) return;
         if (catalog.partial || !catalog.providers.some((entry) => Object.keys(entry.models).length > 0)) {
-          setError(t(provider === 'magpie' ? 'tour.magpieSetup' : 'tour.noModels')); return;
+          setError(t('tour.noModels')); return;
         }
         await useConfigStore.getState().loadProviders({ directory, forceRefresh: true, source: 'setup-tour' });
       }

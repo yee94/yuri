@@ -123,7 +123,7 @@ test.skip('popup glass has a readable theme fill, real menu blur and an opaque a
           sheetHeaderImage:style('sheet-model-header').backgroundImage,sheetSearchFill:style('sheet-model-search').backgroundColor};
       })()`);
       const modelPicker = await inspectModelPicker();
-      expect(modelPicker.headerFill).toBe('rgba(0, 0, 0, 0)');
+      expect(modelPicker.headerFill).toBe(normal.fill);
       expect(modelPicker.headerImage).toBe('none');
       expect(modelPicker.searchFill).toBe('rgba(0, 0, 0, 0)');
       expect(modelPicker.sheetHeaderImage).toContain('linear-gradient');

@@ -184,7 +184,7 @@ describe('Magpie discovery and native transfer', () => {
       if (args[1] === 'import') throw Object.assign(new Error('Magpie CLI operation failed or timed out'), { code: 'magpie_codex_authorization_rejected' });
       return '[{"agent":"codex","user":"fixture@example.invalid"}]';
     });
-    await expect(createMagpieSync({ ...target.options, run }).import(payload)).resolves.toEqual({ ok: true, magpieWarnings: ['sign_in_required'] });
+    await expect(createMagpieSync({ ...target.options, run }).import(payload)).resolves.toEqual({ ok: true });
   });
 
   it('rejects malformed v2 authorization before installing or restoring', async () => {
@@ -236,7 +236,7 @@ else console.log('restored');
     const run = async (_binary, args) => {
       if (args[0] === '--version') return 'magpie 0.1.1319';
       if (args[0] === 'accounts') return '[]';
-      return ++restores === 1 ? 'Left as they are' : 'restored';
+      return ++restores === 1 ? "Left as they are (agent not here, or its model can't be reached yet): codex.model" : 'restored';
     };
     const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
       backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
@@ -244,6 +244,131 @@ else console.log('restored');
     await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true });
     expect(restores).toBe(2);
   });
+
+  it.each([
+    "Couldn't add the plugin fixture-plugin@latest: registry unavailable",
+    "Couldn't add the plugin fixture-plugin@latest: registry unavailable\nLeft as they are (agent not here, or its model can't be reached yet): codex.model",
+    "The backup's settings use these, not signed in on this computer (a backup carries settings, not sign-ins; to use one here: magpie accounts add <id>): fixture-plugin",
+  ])('rechecks accounts after a recovered restore and clears earlier warnings: %s', async (firstOutput) => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    let restores = 0;
+    const run = vi.fn(async (_binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.1319';
+      if (args[0] === 'accounts') return restores === 2 ? '[{"agent":"fixture-plugin"}]' : '[]';
+      return ++restores === 1 ? firstOutput : 'restored';
+    });
+    const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+      backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
+      authorization: { plugins: { 'fixture-plugin': { type: 'api', key: 'fixture' } }, logins: [], incomplete: false } }));
+    await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true });
+    expect(restores).toBe(2);
+    expect(run.mock.calls.at(-1)[1]).toEqual(['accounts', '--json']);
+  });
+
+  it.each([true, false, 'lapsed'])('checks an untransferred account by identity on the destination (recognized=%s)', async (recognized) => {
+    const source = await machine();
+    const target = await machine();
+    for (const item of [source, target]) await write(path.join(item.home, '.local/bin/magpie'), 'fixture');
+    await write(path.join(source.home, '.config/magpie/providers.json'), '{"providers":[{"id":"claude"}]}');
+    const payload = await createMagpieSync({ ...source.options, run: async (_binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.1319';
+      if (args[0] === 'accounts') return '[{"agent":"claude","user":"fixture@example.invalid"}]';
+      await write(args[1], '{"format":"magpie-backup"}');
+      return 'saved';
+    } }).download();
+    const run = async (_binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.1319';
+      if (args[0] === 'accounts') return JSON.stringify([{ agent: 'claude',
+        user: recognized ? 'FIXTURE@example.invalid' : 'other@example.invalid',
+        ...(recognized === 'lapsed' ? { lapsed: 'signed out' } : {}),
+      }]);
+      return 'restored';
+    };
+    await expect(createMagpieSync({ ...target.options, run }).import(payload)).resolves.toEqual(
+      recognized === true ? { ok: true } : { ok: true, magpieWarnings: ['sign_in_required'] },
+    );
+  });
+
+  it('does not mistake plugin diagnostics quoting restore text for a restore warning', async () => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    const run = async (_binary, args) => args[0] === '--version' ? 'magpie 0.1.1319'
+      : args[0] === 'accounts' ? '[]'
+        : "plugin [debug]: Left as they are: fixture\nplugin [debug]: Couldn't add the plugin fixture\nrestored";
+    const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+      backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
+      authorization: { plugins: {}, logins: [], incomplete: false } }));
+    await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true });
+  });
+
+  it('keeps genuine final warnings and bounds the post-authorization restore to one retry', async () => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    let restores = 0;
+    const run = async (_binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.1319';
+      if (args[0] === 'accounts') return '[]';
+      restores++;
+      return "Couldn't add the plugin fixture-plugin: missing\nLeft as they are (agent not here, or its model can't be reached yet): codex.model\nThe backup's settings use these, not signed in on this computer (a backup carries settings, not sign-ins; to use one here: magpie accounts add <id>): claude";
+    };
+    const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+      backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
+      authorization: { plugins: {}, logins: [], incomplete: false } }));
+    await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true,
+      magpieWarnings: ['sign_in_required', 'plugin_install_failed', 'agent_settings_skipped'] });
+    expect(restores).toBe(2);
+  });
+
+  it('retains the warning for older v2 senders with unknown untransferred identities', async () => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    const run = async (_binary, args) => args[0] === '--version' ? 'magpie 0.1.1319' : args[0] === 'accounts' ? '[]' : 'restored';
+    const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+      backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
+      authorization: { plugins: {}, logins: [], incomplete: true } }));
+    await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true, magpieWarnings: ['sign_in_required'] });
+  });
+
+  it('does not use unrelated destination provider entries to produce sign-in warnings', async () => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    await write(path.join(home, '.config/magpie/providers.json'), '{"providers":[{"id":"destination-only"}]}');
+    const run = async (_binary, args) => args[0] === '--version' ? 'magpie 0.1.1319' : args[0] === 'accounts' ? '[]' : 'restored';
+    const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+      backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'),
+      authorization: { plugins: {}, logins: [], incomplete: false, untransferred: [] } }));
+    await expect(createMagpieSync({ ...options, run }).import(payload)).resolves.toEqual({ ok: true });
+  });
+
+  it.each(['missing-account', 'unrelated-plugin-failure', 'key-failure', 'library-failure', 'accounts-failure'])(
+    'does not hide a final failure behind an earlier recoverable warning: %s', async (failure) => {
+      const { home, options } = await machine();
+      await write(path.join(home, '.local/bin/magpie'), 'fixture');
+      let restores = 0;
+      const run = async (_binary, args) => {
+        if (args[0] === '--version') return 'magpie 0.1.1319';
+        if (args[0] === 'accounts') {
+          if (failure === 'accounts-failure') throw new Error('offline');
+          return '[]';
+        }
+        if (args[0] === 'restore') {
+          if (++restores === 1 || failure === 'unrelated-plugin-failure') return "Couldn't add the plugin fixture-plugin: missing";
+          if (failure === 'key-failure') return 'Needs a key (magpie provider key <id>): fixture';
+          if (failure === 'library-failure') return "Library: fixture couldn't get skills: denied";
+        }
+        return 'restored';
+      };
+      const authorization = failure === 'unrelated-plugin-failure'
+        ? { plugins: {}, logins: [{ agent: 'codex', user: 'fixture', auth: { tokens: {} } }], incomplete: false }
+        : { plugins: { 'fixture-plugin': { type: 'api', key: 'fixture' } }, logins: [], incomplete: false };
+      const payload = Buffer.from(JSON.stringify({ format: 'magpie-sync-v2', passphrase: 'a'.repeat(64),
+        backup: Buffer.from('{"format":"magpie-backup"}').toString('base64'), authorization }));
+      await expect(createMagpieSync({ ...options, run }).import(payload)).rejects.toThrow('authorization sync or verification failed');
+      expect(restores).toBe(2);
+      expect((await fs.readdir(home)).filter((name) => name.startsWith('yuri-magpie-'))).toEqual([]);
+    },
+  );
 
   it('does not install on malformed payload and refuses partial restore without leaking CLI output', async () => {
     const { home, options } = await machine();

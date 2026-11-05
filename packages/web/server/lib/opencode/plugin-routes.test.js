@@ -281,6 +281,7 @@ describe('opencode plugin routes', () => {
   test('POST /entry persists for V2 hot reload without restarting', async () => {
     const response = await createEntry('a');
 
+    expect(readJson(userConfigPath)).toEqual({ $schema: 'https://opencode.ai/config.json', lsp: true, plugins: ['a'] });
     expect(response.body).toMatchObject({ success: true, requiresReload: false, application: 'watch' });
     expect(refreshOpenCodeAfterConfigChange).not.toHaveBeenCalled();
   });

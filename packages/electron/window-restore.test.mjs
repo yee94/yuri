@@ -161,7 +161,7 @@ describe('startup instance resolution', () => {
     });
     vm.runInContext(`${source.slice(source.indexOf('const resolveInitialUrl ='), source.indexOf('let desktopUpdateActionBusy ='))}\nglobalThis.start = resolveInitialUrl;`, context);
     expect(await context.start()).toMatchObject({ hostId: expected });
-    expect(resolveTarget).toHaveBeenCalledWith(expected, expect.objectContaining({ localUrl: 'http://localhost:3000' }));
+    expect(resolveTarget).toHaveBeenCalledWith(expected, expect.objectContaining({ localUrl: 'http://localhost:3000', restoreSession: saved.length > 0 }));
   });
 
   const startup = (mode, hostOverrides = {}) => {
@@ -177,14 +177,14 @@ describe('startup instance resolution', () => {
       computeBootOutcome: ({ config, probe }) => ({ target: config.defaultHostId === 'local' ? 'local' : 'remote', status: probe?.status || 'ok', hostId: config.defaultHostId }),
     });
     vm.runInContext(`${source.slice(source.indexOf('const resolveDesktopStartupTarget ='), source.indexOf('const restoreAdditionalDesktopWindows ='))}\nglobalThis.resolve = resolveDesktopStartupTarget;`, context);
-    return { connect, probe, resolve: (id) => context.resolve(id, { localUrl: 'http://localhost:3000', localUiUrl: mode === 'bundled' ? 'yuri-ui://app/index.html' : 'http://localhost:5173', localOrigin: 'http://localhost:3000' }) };
+    return { connect, probe, resolve: (id, restoreSession = true) => context.resolve(id, { localUrl: 'http://localhost:3000', localUiUrl: mode === 'bundled' ? 'yuri-ui://app/index.html' : 'http://localhost:5173', localOrigin: 'http://localhost:3000', restoreSession }) };
   };
 
   for (const mode of ['HMR', 'bundled']) {
     it(`restores a remote window instead of the local default (${mode})`, async () => {
       const f = startup(mode, { ssh: true });
       expect(await f.resolve('remote')).toMatchObject({ hostId: 'remote', apiBaseUrl: 'http://remote.example:3000', bootOutcome: { target: 'remote', status: 'ok' } });
-      expect(f.connect).toHaveBeenCalledWith('remote');
+      expect(f.connect).not.toHaveBeenCalled();
       expect(f.probe).toHaveBeenCalledOnce();
     });
 
@@ -204,9 +204,26 @@ describe('startup instance resolution', () => {
 
     it(`failed SSH restoration remains a remote failure, not a successful local connection (${mode})`, async () => {
       const f = startup(mode, { ssh: true });
+      f.probe.mockResolvedValue({ status: 'unreachable' });
       f.connect.mockRejectedValue(new Error('offline'));
       expect(await f.resolve('remote')).toMatchObject({ hostId: 'remote', bootOutcome: { target: 'remote', status: 'unreachable' } });
-      expect(f.probe).not.toHaveBeenCalled();
+      expect(f.probe).toHaveBeenCalledOnce();
+      expect(f.connect).toHaveBeenCalledExactlyOnceWith('remote');
+    });
+
+    it(`reinitializes SSH after the fast restored connection fails (${mode})`, async () => {
+      const f = startup(mode, { ssh: true });
+      f.probe.mockResolvedValueOnce({ status: 'unreachable' });
+      expect(await f.resolve('remote')).toMatchObject({ bootOutcome: { status: 'ok' } });
+      expect(f.connect).toHaveBeenCalledExactlyOnceWith('remote');
+      expect(f.probe).toHaveBeenCalledTimes(2);
+      expect(f.probe.mock.invocationCallOrder[0]).toBeLessThan(f.connect.mock.invocationCallOrder[0]);
+    });
+
+    it(`initializes a default SSH host on a fresh entry even when paired with Relay (${mode})`, async () => {
+      const f = startup(mode, { ssh: true, relay: { serverId: 'fixture-server' } });
+      await f.resolve('remote', false);
+      expect(f.connect).toHaveBeenCalledExactlyOnceWith('remote');
     });
   }
 });

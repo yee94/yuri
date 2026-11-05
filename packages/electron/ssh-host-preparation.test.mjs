@@ -6,8 +6,9 @@ const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
 const prepareSource = source.slice(source.indexOf('const prepareDesktopHost ='), source.indexOf('const handleInvoke ='));
 const windowCases = source.slice(source.indexOf("    case 'desktop_new_window':"), source.indexOf("    case 'desktop_open_session_mini_chat_window':"));
 
-const fixture = (ssh = true, packaged = true, local = true) => {
-  let host = { id: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token' };
+const fixture = (ssh = true, packaged = true, local = true, paired = false) => {
+  let host = { id: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token',
+    ...(paired ? { relay: { serverId: 'fixture', relayUrl: 'wss://relay.example', hostEncPubJwk: {} } } : {}) };
   let finish;
   const connect = vi.fn(() => new Promise((resolve, reject) => {
     finish = (error) => {
@@ -135,5 +136,21 @@ describe('SSH preparation before opening desktop windows', () => {
     const pending = f.invoke('desktop_host_prepare', { hostId: 'ssh-test' });
     f.finish();
     await expect(pending).resolves.toMatchObject({ url: 'http://127.0.0.1:5000', clientToken: 'new-test-token' });
+  });
+
+  it.each(['desktop_host_prepare', 'desktop_new_window_for_host', 'desktop_new_window', 'desktop_new_window_at_url'])('%s retains SSH initialization for an explicit local entry even with Relay pairing', async (command) => {
+    const f = fixture(true, true, true, true);
+    const pending = f.invoke(command, { hostId: 'ssh-test', url: 'http://127.0.0.1:4000' });
+    expect(f.connect).toHaveBeenCalledExactlyOnceWith('ssh-test');
+    expect(f.createWindow).not.toHaveBeenCalled();
+    f.finish();
+    await pending;
+  });
+
+  it('does not silently fall back to Relay if an explicit SSH initialization fails', async () => {
+    const f = fixture(true, true, true, true);
+    const pending = f.invoke('desktop_host_prepare', { hostId: 'ssh-test' });
+    f.finish(new Error('Upgrade failed'));
+    await expect(pending).rejects.toThrow('Upgrade failed');
   });
 });

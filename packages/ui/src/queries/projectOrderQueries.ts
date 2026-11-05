@@ -11,15 +11,18 @@ export const projectOrderQueryOptions = (transport = getRuntimeTransportIdentity
     const response = await runtimeFetch('/api/config/settings', { signal });
     if (!response.ok) throw new Error(`Project order request failed (${response.status})`);
     const settings = await response.json();
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)
-      || !Array.isArray(settings.projects)
-      || settings.projects.some((project: unknown) => !project || typeof project !== 'object'
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error('Invalid project order snapshot');
+    }
+    const projects = Object.hasOwn(settings, 'projects') ? settings.projects : [];
+    if (!Array.isArray(projects)
+      || projects.some((project: unknown) => !project || typeof project !== 'object'
         || !('path' in project) || typeof project.path !== 'string' || !project.path.trim())) {
       throw new Error('Invalid project order snapshot');
     }
     // Cache only the shared project fields, never the full settings response.
     return {
-      projects: settings.projects,
+      projects,
       projectSortOrder: settings.projectSortOrder,
     } as Pick<DesktopSettings, 'projects' | 'projectSortOrder'>;
   }),

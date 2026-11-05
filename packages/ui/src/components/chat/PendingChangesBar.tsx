@@ -14,7 +14,7 @@ import {
     summarizeGitChangedFiles,
 } from './changedFiles';
 import { ChangedFilesList } from './ChangedFilesList';
-import { changedFilesPopoverClassName } from './changedFilesPopover';
+import { changedFilesPopoverClassName, changedFilesPopoverStyle } from './changedFilesPopover';
 import {
     statusBarComposerPopoverStyle,
     statusBarTriggerClassName,
@@ -31,6 +31,7 @@ interface PendingChangesBarProps {
 
 export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({ isExpanded, onExpandedChange }) => {
     const { t } = useI18n();
+    const isMobile = useUIStore((state) => state.isMobile);
     const currentDirectory = useEffectiveDirectory() ?? null;
     const runtime = React.useContext(RuntimeAPIContext);
     const isGitRepo = useIsGitRepo(currentDirectory);
@@ -108,7 +109,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     };
 
     return (
-        <div className="contents">
+        <div className={isMobile ? "contents" : "relative"}>
             <button
                 type="button"
                 className={cn(statusBarTriggerClassName, 'yuri-pending-changes-trigger max-w-full text-left')}
@@ -132,7 +133,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
             </button>
             {isExpanded && (
                 <div
-                    style={statusBarComposerPopoverStyle}
+                    style={isMobile ? statusBarComposerPopoverStyle : changedFilesPopoverStyle}
                     className={cn(
                         changedFilesPopoverClassName,
                         "absolute left-0 bottom-full mb-1 z-50",

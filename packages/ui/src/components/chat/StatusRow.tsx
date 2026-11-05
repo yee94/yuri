@@ -20,6 +20,7 @@ import { useI18n } from "@/lib/i18n";
 import { useSessionSurface } from "./SessionSurfaceContext";
 import {
   statusBarPopoverClassName,
+  statusBarPopoverStyle,
   statusBarComposerPopoverStyle,
   statusBarTriggerClassName,
   statusBarTriggerIconClassName,
@@ -76,8 +77,8 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   className,
 }) => {
   const { t } = useI18n();
-  const [openPopover, setOpenPopover] = React.useState<'todos' | 'changes' | null>(null);
-  const isExpanded = openPopover === 'todos';
+  const [expandedPopovers, setExpandedPopovers] = React.useState({ todos: false, changes: false });
+  const isExpanded = expandedPopovers.todos;
   const sessionSurface = useSessionSurface();
   const primarySessionId = useSessionUIStore((state) => state.currentSessionId);
   const currentSessionId = sessionSurface.sessionId ?? primarySessionId;
@@ -109,6 +110,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }, [transcriptTodos, liveTodos, persistedSessionTodos, currentSessionId]);
   const isMobile = useUIStore((state) => state.isMobile);
   const isCompact = isMobile || isVSCodeRuntime();
+  const changesExpanded = expandedPopovers.changes && (!isMobile || !isExpanded);
 
   // Filter out cancelled todos for display and keep original order.
   // This prevents items from jumping around when status changes.
@@ -171,6 +173,8 @@ export const StatusRow: React.FC<StatusRowProps> = ({
 
   // Close popover when clicking outside
   const popoverRef = React.useRef<HTMLDivElement>(null);
+  const todoPopoverRef = React.useRef<HTMLDivElement>(null);
+  const changesPopoverRef = React.useRef<HTMLDivElement>(null);
   const todoListRef = React.useRef<HTMLUListElement>(null);
   React.useLayoutEffect(() => {
     const list = todoListRef.current;
@@ -183,20 +187,37 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }, [isExpanded]);
 
   React.useEffect(() => {
-    if (!openPopover) return;
+    if (!isExpanded && !changesExpanded) return;
 
     const handleClickOutside = (event: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        setOpenPopover(null);
+      const target = event.target as Node;
+      if (isMobile) {
+        if (popoverRef.current && !popoverRef.current.contains(target)) {
+          setExpandedPopovers({ todos: false, changes: false });
+        }
+        return;
       }
+      const closeTodos = isExpanded && todoPopoverRef.current && !todoPopoverRef.current.contains(target);
+      const closeChanges = changesExpanded && changesPopoverRef.current && !changesPopoverRef.current.contains(target);
+      if (!closeTodos && !closeChanges) return;
+      setExpandedPopovers((current) => ({
+        todos: closeTodos ? false : current.todos,
+        changes: closeChanges ? false : current.changes,
+      }));
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [openPopover]);
+  }, [isExpanded, changesExpanded, isMobile]);
 
-  const toggleExpanded = useEvent(() => setOpenPopover((prev) => prev === 'todos' ? null : 'todos'));
-  const handleChangesExpandedChange = useEvent((expanded: boolean) => setOpenPopover(expanded ? 'changes' : null));
+  const toggleExpanded = useEvent(() => setExpandedPopovers((current) => ({
+    todos: !current.todos,
+    changes: isMobile && !current.todos ? false : current.changes,
+  })));
+  const handleChangesExpandedChange = useEvent((expanded: boolean) => setExpandedPopovers((current) => ({
+    todos: isMobile && expanded ? false : current.todos,
+    changes: expanded,
+  })));
   const todoSummaryLabel = t('chat.statusRow.summary.activeLeft', {
     active: statusSummary.active,
     left: statusSummary.left,
@@ -240,7 +261,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }
 
   return (
-    <div ref={popoverRef} className={cn("relative mb-1", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
+    <div ref={popoverRef} className={cn("mb-1", isMobile && "relative", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
       {/*
         When showPendingChanges is set (ChatInput pending-changes row), the parent is
         already `chat-input-column`. Use the same horizontal inset as the composer
@@ -248,7 +269,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
       */}
       <div className={cn("flex items-center justify-between py-0.5 gap-2", isEmbedded && "px-3")}>
         {/* Left: Abort prompt | Abort status | Working placeholder | Changes */}
-        <div className={cn("flex-1 flex items-center min-w-0 gap-2", !isEmbedded && "overflow-x-hidden")}>
+        <div ref={changesPopoverRef} className={cn("flex-1 flex items-center min-w-0 gap-2", !isEmbedded && "overflow-x-hidden")}>
           {hasAbortPrompt ? (
             <div
               className="flex min-w-0 items-center text-muted-foreground"
@@ -288,23 +309,24 @@ export const StatusRow: React.FC<StatusRowProps> = ({
               agentName={agentName}
             />
           ) : showPendingChanges ? (
-            <PendingChangesBar isExpanded={openPopover === 'changes'} onExpandedChange={handleChangesExpandedChange} />
+            <PendingChangesBar isExpanded={changesExpanded} onExpandedChange={handleChangesExpandedChange} />
           ) : null}
         </div>
 
         {/* Right: Todo */}
-        <div className={cn("flex items-center gap-2 flex-shrink-0", !isEmbedded && "-mr-3")}>
+        <div ref={todoPopoverRef} className={cn("flex items-center gap-2 flex-shrink-0", !isMobile && "relative", !isEmbedded && "-mr-3")}>
           {todoTrigger}
 
           {/* Popover dropdown */}
           {isExpanded && hasTodoContent && (
             <div
-              style={statusBarComposerPopoverStyle}
+              style={isMobile ? statusBarComposerPopoverStyle : statusBarPopoverStyle}
               className={cn(
                 statusBarPopoverClassName,
                 "absolute right-0 bottom-full mb-1 z-50",
                 "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
-                "duration-150 p-[0.5em] pb-[0.875em] text-xs leading-4 md:text-[0.8125rem] md:leading-5"
+                "duration-150 p-[0.5em] pb-[0.875em]",
+                isMobile ? "text-xs leading-4 md:text-[0.8125rem] md:leading-5" : "text-base"
               )}
             >
               {/* Header */}
@@ -314,8 +336,8 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 ) : (
                   <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
                 )}
-                <span className="min-w-0 flex-1 truncate leading-[1.5] text-foreground">{t('chat.workStatus.todos.title')}</span>
-                <TodoCount done={progress.completed} total={progress.total} className="text-muted-foreground" />
+                <span className={cn("min-w-0 flex-1 truncate leading-[1.5] text-foreground", !isMobile && "text-[0.88em]")}>{t('chat.workStatus.todos.title')}</span>
+                <TodoCount done={progress.completed} total={progress.total} className={cn("text-muted-foreground", !isMobile && "text-[0.88em]")} />
               </div>
 
               {/* Todo list */}
@@ -324,7 +346,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 isWorking={isWorking}
                 animate
                 listRef={todoListRef}
-                className="max-h-[min(22rem,50vh)] overflow-y-auto text-inherit [&_[dir=auto]]:text-[1em]"
+                className={cn("max-h-[min(22rem,50vh)] overflow-y-auto text-inherit", isMobile && "[&_[dir=auto]]:text-[1em]")}
                 rowClassName="gap-[0.6em] px-[0.5em] py-[0.4em]"
               />
             </div>

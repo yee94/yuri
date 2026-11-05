@@ -1290,7 +1290,7 @@ export const settingsDict = {
   'settings.plugins.update.running': 'アップデート中…',
   'settings.plugins.update.running.toVersion': '{version} に更新中…',
   'settings.plugins.update.available.toVersion': '{version} に更新できます',
-  'settings.plugins.sidebar.actions.reload': 'すべてのプラグインを再読み込み',
+  'settings.plugins.sidebar.actions.updateAll': 'すべて更新',
   'settings.plugins.sidebar.reloading': '再読み込み中…',
   'settings.plugins.update.failed.title': 'アップデートに失敗しました',
   'settings.plugins.update.toast.done': '{name} をアップデートしました',

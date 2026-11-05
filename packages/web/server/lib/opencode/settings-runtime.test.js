@@ -36,6 +36,48 @@ const createRuntime = async (overrides = {}) => {
 };
 
 describe('settings runtime', () => {
+  it.each(['read-first', 'write-first', 'functional-write-first'])(
+    'keeps a fresh home-directory bootstrap out of the project registry (%s)', async (order) => {
+      const { runtime, tempRoot, cleanup } = await createRuntime({
+        mergePersistedSettings: (current, changes) => ({ ...current, ...changes }),
+      });
+      try {
+        if (order === 'read-first') await runtime.readSettingsFromDiskMigrated();
+        const update = { lastDirectory: tempRoot, homeDirectory: tempRoot };
+        await runtime.persistSettings(order === 'functional-write-first' ? () => update : update);
+        const settings = await runtime.readSettingsFromDiskMigrated();
+        expect(settings.projects).toEqual([]);
+        expect(settings.activeProjectId).toBeUndefined();
+        expect(settings.lastDirectory).toBe(tempRoot);
+        expect((await runtime.readSettingsFromDiskMigrated()).projects).toEqual([]);
+      } finally { await cleanup(); }
+    },
+  );
+
+  it('does not resurrect a removed last project from the saved directory', async () => {
+    const { runtime, tempRoot, cleanup } = await createRuntime({
+      mergePersistedSettings: (current, changes) => ({ ...current, ...changes }),
+    });
+    try {
+      await runtime.persistSettings({ projects: [{ id: createProjectIdFromPath(tempRoot), path: tempRoot }], lastDirectory: tempRoot });
+      await runtime.persistSettings({ projects: [] });
+      expect((await runtime.readSettingsFromDiskMigrated()).projects).toEqual([]);
+    } finally { await cleanup(); }
+  });
+
+  it.each([false, true])('still migrates a saved pre-registry directory exactly once (write first=%s)', async (writeFirst) => {
+    const { runtime, settingsFilePath, tempRoot, cleanup } = await createRuntime({
+      mergePersistedSettings: (current, changes) => ({ ...current, ...changes }),
+    });
+    try {
+      await fsPromises.writeFile(settingsFilePath, JSON.stringify({ lastDirectory: tempRoot }));
+      if (writeFirst) await runtime.persistSettings({ homeDirectory: '/home/fixture' });
+      const settings = await runtime.readSettingsFromDiskMigrated();
+      expect(settings.projects).toEqual([expect.objectContaining({ id: createProjectIdFromPath(tempRoot), path: tempRoot })]);
+      expect((await runtime.readSettingsFromDiskMigrated()).projects).toEqual(settings.projects);
+    } finally { await cleanup(); }
+  });
+
   it.each([
     [{}, 'cursor-dark'],
     [{ darkThemeId: 'vitesse-dark-dark' }, 'vitesse-dark-dark'],
@@ -77,6 +119,8 @@ describe('settings runtime', () => {
       expect((await runtime.readSettingsFromDisk()).projectSortOrder).toBe('recent');
       fail = false;
       await runtime.persistSettings({ projects: [] });
+      expect(tips).toBe(1);
+      await runtime.persistSettings({ projectSortOrder: 'manual' });
       expect(tips).toBe(2);
     } finally { await cleanup(); }
   });

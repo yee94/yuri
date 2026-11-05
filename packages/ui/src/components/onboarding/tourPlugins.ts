@@ -1,7 +1,6 @@
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
-import { listPluginRuntime, type PluginRuntimeInfo } from '@/lib/opencode/plugins';
-import { pluginsListQueryOptions, pluginRuntimeQueryOptions } from '@/queries/pluginQueries';
+import { pluginsListQueryOptions } from '@/queries/pluginQueries';
 import { usePluginsStore, type PluginEntry } from '@/stores/usePluginsStore';
 import { splitPluginSpec } from '@/components/sections/plugins/pluginPresentation';
 
@@ -15,15 +14,14 @@ export function hasTourPlugin(entries: readonly PluginEntry[], spec: string): bo
   return entries.some((entry) => entry.parsedKind === 'npm' && splitPluginSpec(entry.spec).name === spec);
 }
 
-type InstallDependencies = {
+type SaveDependencies = {
   list: () => Promise<PluginEntry[]>;
   create: (spec: string) => Promise<{ ok: boolean }>;
-  active: (specs: readonly string[]) => Promise<string[]>;
   current: () => boolean;
 };
 
-/** Writes are idempotent across partial batches; activation remains a separate read. */
-export async function installTourPlugins(specs: readonly string[], dependencies: InstallDependencies) {
+/** Configuration writes are idempotent across partial batches; OpenCode owns activation. */
+export async function saveTourPlugins(specs: readonly string[], dependencies: SaveDependencies) {
   const failed: string[] = [];
   for (const spec of new Set(specs)) {
     if (!dependencies.current()) throw new Error('Runtime changed');
@@ -39,39 +37,16 @@ export async function installTourPlugins(specs: readonly string[], dependencies:
     }
   }
   if (!dependencies.current()) throw new Error('Runtime changed');
-  const applied = specs.filter((spec) => !failed.includes(spec));
-  const active = applied.length ? await dependencies.active(applied) : [];
-  if (!dependencies.current()) throw new Error('Runtime changed');
-  return { failed, pending: specs.filter((spec) => !failed.includes(spec) && !active.includes(spec)) };
+  return { failed };
 }
 
-export function installRecommendedPlugins(specs: readonly string[], directory: string | null, signal: AbortSignal) {
+export function saveRecommendedPlugins(specs: readonly string[], directory: string | null, signal: AbortSignal) {
   const transport = getRuntimeTransportIdentity();
   const generation = getRuntimeGeneration();
   const current = () => !signal.aborted && generation === getRuntimeGeneration() && transport === getRuntimeTransportIdentity();
-  return installTourPlugins(specs, {
+  return saveTourPlugins(specs, {
     current,
     list: async () => (await queryClient.fetchQuery({ ...pluginsListQueryOptions(directory, transport), staleTime: 0 })).entries,
     create: (spec) => usePluginsStore.getState().createEntry({ spec, scope: 'user' }),
-    active: async (applied) => {
-      let inventory: PluginRuntimeInfo[] = [];
-      for (let attempt = 0; attempt < 20; attempt++) {
-        if (!current()) throw new Error('Runtime changed');
-        inventory = await listPluginRuntime(directory, signal);
-        if (!current()) throw new Error('Runtime changed');
-        queryClient.setQueryData(pluginRuntimeQueryOptions(directory, transport).queryKey, inventory);
-        const settled = applied.every((spec) => inventory.some((plugin) => plugin.source.kind === 'package'
-          && splitPluginSpec(plugin.source.target).name === spec));
-        if (settled || attempt === 19) break;
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(new Error('Runtime changed')); };
-          const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 750);
-          signal.addEventListener('abort', abort, { once: true });
-          if (signal.aborted) abort();
-        });
-      }
-      return inventory.flatMap((plugin) => plugin.source.kind === 'package' && plugin.state.kind === 'active'
-        ? [splitPluginSpec(plugin.source.target).name] : []);
-    },
   });
 }

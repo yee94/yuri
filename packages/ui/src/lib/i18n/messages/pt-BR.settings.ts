@@ -1257,7 +1257,7 @@ export const settingsDict = {
   'settings.plugins.update.running': 'Atualizando…',
   'settings.plugins.update.running.toVersion': 'Atualizando para {version}…',
   'settings.plugins.update.available.toVersion': 'Atualização disponível: {version}',
-  'settings.plugins.sidebar.actions.reload': 'Recarregar todos os plugins',
+  'settings.plugins.sidebar.actions.updateAll': 'Atualizar todos',
   'settings.plugins.sidebar.reloading': 'Recarregando…',
   'settings.plugins.update.failed.title': 'Falha na atualização',
   'settings.plugins.update.toast.done': '{name} atualizado',

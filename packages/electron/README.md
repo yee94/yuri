@@ -37,7 +37,7 @@ Packaged UI and local backend resources may be replaced by a verified desktop OT
 
 Desktop instance switches revalidate the target's authentication before committing the runtime endpoint. Direct probes verify service compatibility and `/auth/session` with the saved client credential; Relay probes verify `/auth/session` over the pinned E2EE tunnel and hand that authenticated tunnel to the runtime. Cached connected badges remain display snapshots. A direct authentication failure triggers Relay fallback when available; failed authentication on every candidate preserves the current instance and reports authentication required.
 
-Direct-only saved SSH targets pass through the SSH manager before an instance switch or a new window (default host, saved host ID, or saved URL) proceeds. A ready in-memory session with live SSH processes is reused directly, without disconnecting, bootstrapping or checking/updating the installation again. A cached Ready badge without a session does not qualify. Disconnected targets complete the full connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Already-paired Relay-capable targets instead use direct/Relay selection without requiring SSH connectivity or installation updates. Explicit SSH management remains local-only. Main owns this preparation gate and returns the newly persisted endpoint and credentials. Preparation failure blocks navigation/window creation, concurrent connects share one attempt, and remote pages cannot trigger SSH preparation through window commands. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
+Explicit local instance switches, new windows (default host, saved host ID, or saved URL), and fresh default-host launches pass saved SSH targets through the SSH manager, including Relay-paired targets and targets with a live Ready session. These entries run the normal connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Only saved-window restoration tries existing authenticated direct/Relay transports before initialization. If both transports fail, restoration performs one normal SSH initialization and retries with the newly persisted endpoint and credentials. Explicit SSH management remains local-only; restricted/remote documents may resolve paired transports but cannot trigger SSH initialization through window commands. Preparation failure blocks navigation/window creation and concurrent connects share one attempt. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
 
 Managed SSH bootstrap discovers registered daemons through `yuri status --json` and confirms each live runtime before choosing a retained `ssh-remote` Host. Within the remote user's CLI data scope it consolidates SSH-managed daemons, preserving manually launched web and desktop runtimes. A matching running version with valid in-memory/configured credentials is reused even without a preferred port. Missing credentials after desktop restart or a stale running version requires a verified stop and replacement on the same port; credentials are not persisted for reuse. Package upgrades drain managed daemons before replacing installation files. Shutdown uses `yuri stop --port ... --json`, whose registry/PID checks and signal fallback work with password-protected Hosts. Discovery or shutdown failure blocks replacement rather than adding another database writer. A failed install leaves the old daemon stopped and surfaces the error for retry. External SSH mode remains probe-only. These lifecycle fixes are installer-owned.
 
@@ -55,8 +55,15 @@ and arbitrary query/hash parameters are never copied into window state. The
 explicit default Host preference remains independent of the last window instance.
 
 Normal launches restore these windows instead of selecting the local/default Host.
-Direct-only SSH targets reconnect before navigation; Relay selection remains renderer-owned
-and uses that window's boot target, never another window's default. An unavailable
+Direct-only SSH targets first probe their saved authenticated endpoint and reconnect
+before navigation only if it is unusable. Relay selection remains renderer-owned
+and authenticates the tunnel before committing it, using that window's boot target,
+never another window's default. Failed direct/Relay restoration re-enters local SSH
+initialization once, then retries transport selection; generation checks discard
+late probes and initialization results after a runtime switch. The web startup gate
+waits for this bounded recovery rather than rendering the local runtime after ten
+seconds. Transport and SSH command timeouts remain owned by their respective
+modules. Exhausted recovery renders the remote-unavailable screen. An unavailable
 or deleted target retains its recovery state instead of silently becoming local.
 Startup/quit snapshots cannot overwrite the session with partially opened/closed
 windows, and shutdown waits for the final settings write. Legacy settings without
@@ -152,6 +159,8 @@ After authorization, each pending/active capture owns a `prevent-display-sleep` 
 | `ssh-manager.mjs` | SSH host import, connection lifecycle, tunnel/port forwarding helpers; managed OpenCode config sync via shared `@yuriai/web/server/lib/config-sync` (plan/executor/generational backup) with per-target mutex and run records |
 
 Relay config sync runs in the renderer (`packages/ui/src/lib/relay/relay-config-sync.ts`) because the E2EE tunnel client is UI-owned. Main process helpers pack/extract local tars (`desktop_relay_sync_pack_local` / `desktop_relay_sync_apply_local`) and append `relay:<serverId>` run records. `credentialPayload` carries versioned V2 credential bytes; `providerCredentials` carries metadata. Only the current credential API protocol is supported. Local credential operations use authenticated local-host HTTP so OTA backends resolve their own OpenCode service client. Identity is pinned to `serverId`; a changed fingerprint fails with `relay_identity_changed`.
+
+SSH config synchronization filters file URLs/local paths from plugin declarations in configuration copies, retaining NPM versions and options. Push stages only configuration files; pull filters the remote POSIX archive locally before prepare. Source files and directory-selection semantics are unchanged. This integration is installer-owned.
 | `scripts/electron-dev.mjs` | Desktop dev launcher with Vite HMR support |
 | `scripts/build-web-assets.mjs` | Builds `packages/web` and stages UI assets into `resources/web-dist` |
 | `scripts/prepare-opencode-cli.mjs` | Resolves latest stable OpenCode 2.x from npm platform packages (`@opencode/cli-<os>-<arch>`) and stages it into `resources/opencode-cli` |

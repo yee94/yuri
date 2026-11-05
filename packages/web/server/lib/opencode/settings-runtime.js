@@ -596,15 +596,16 @@ export const createSettingsRuntime = (deps) => {
   const migrateSettingsFromLegacyLastDirectory = async (current) => {
     const settings = current && typeof current === 'object' ? current : {};
     const now = Date.now();
+    const hasProjectRegistry = Object.prototype.hasOwnProperty.call(settings, 'projects');
 
     const sanitizedProjects = sanitizeProjects(settings.projects) || [];
     let nextProjects = sanitizedProjects;
     let nextActiveProjectId =
       typeof settings.activeProjectId === 'string' ? settings.activeProjectId : undefined;
 
-    let changed = false;
+    let changed = !hasProjectRegistry;
 
-    if (nextProjects.length === 0) {
+    if (!hasProjectRegistry) {
       const legacy = typeof settings.lastDirectory === 'string' ? settings.lastDirectory.trim() : '';
       const candidate = legacy ? resolveDirectoryCandidate(legacy) : null;
 
@@ -852,10 +853,11 @@ export const createSettingsRuntime = (deps) => {
 
   const persistSettings = async (changes) => runPersistedWrite(async () => {
     const updateCurrent = typeof changes === 'function';
-    const current = updateCurrent
+    const stored = updateCurrent
       ? await readSettingsFromDiskStrict()
       : await readSettingsFromDisk();
-    if (updateCurrent && Array.isArray(current)) throw new Error('Settings file is malformed (array payload)');
+    if (updateCurrent && Array.isArray(stored)) throw new Error('Settings file is malformed (array payload)');
+    const { settings: current } = await migrateSettingsFromLegacyLastDirectory(stored);
     if (typeof changes === 'function') changes = await changes(current);
     // Log field names only — changes can carry credentials (UI password,
     // client tokens) that must never reach the log file.
@@ -905,8 +907,8 @@ export const createSettingsRuntime = (deps) => {
     }
 
     await writeSettingsToDiskUnlocked(next);
-    if (JSON.stringify(current.projects) !== JSON.stringify(next.projects)
-      || current.projectSortOrder !== next.projectSortOrder) {
+    if (JSON.stringify(stored.projects) !== JSON.stringify(next.projects)
+      || stored.projectSortOrder !== next.projectSortOrder) {
       onProjectOrderChanged?.();
     }
     return formatSettingsResponse(next);

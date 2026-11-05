@@ -11,8 +11,6 @@ import {
 import { reloadOpenCodeLocations } from '@/stores/useAgentsStore';
 import { usePluginsStore, type PluginEntry } from '@/stores/usePluginsStore';
 import {
-  checkPluginRuntimeUpdates,
-  refreshPluginRegistryQuery,
   refreshPluginRuntimeQuery,
   usePluginConfigDirectory,
   resolveConfigQueryDirectory,
@@ -23,7 +21,6 @@ import {
 const PACKAGE_UPDATE_KEY = ['plugins', 'package-update'] as const;
 
 const reloadMutationKey = (directory: string | null) => [getRuntimeTransportIdentity(), 'plugins', 'reload', directory ?? ''] as const;
-const checkMutationKey = (directory: string | null) => [getRuntimeTransportIdentity(), 'plugins', 'check-updates', directory ?? ''] as const;
 
 export type PluginOperationState =
   | { kind: 'idle' }
@@ -123,7 +120,7 @@ export function useUpdatePluginPackage() {
     const pending = client.getMutationCache().findAll({ mutationKey: PACKAGE_UPDATE_KEY, status: 'pending' });
     if (pending.some((item) => sameUpdate(item.state.variables as PackageUpdateVariables | undefined, directory, target, transport, entry?.id))) return;
     const original = entry ? client.getQueryData<PluginsList>(pluginsListQueryOptions(directory, transport).queryKey)?.entries.find((item) => item.id === entry.id) : undefined;
-    mutation.mutate({ target, name, directory, transport, entry: entry ? { ...entry, original } : undefined });
+    return mutation.mutateAsync({ target, name, directory, transport, entry: entry ? { ...entry, original } : undefined }).catch(() => undefined);
   });
 }
 
@@ -155,25 +152,4 @@ export function usePluginReloadPending(): boolean {
     filters: { mutationKey: reloadMutationKey(directory), status: 'pending' },
     select: () => true,
   }).length > 0;
-}
-
-/** Re-checks registries and OpenCode's outdated flags together; each half reports its own failure. */
-export function useCheckPluginUpdates(specs: readonly string[]) {
-  const { t } = useI18n();
-  const client = useQueryClient();
-  const directory = usePluginConfigDirectory();
-  return useMutation<void, Error, void>({
-    mutationKey: checkMutationKey(directory),
-    mutationFn: async () => {
-      const [registry, runtime] = await Promise.allSettled([
-        refreshPluginRegistryQuery(client, directory, specs),
-        checkPluginRuntimeUpdates(directory, client),
-      ]);
-      if (registry.status === 'rejected') toast.error(t('settings.plugins.toast.refreshFailed'));
-      if (runtime.status === 'rejected') toast.error(t('settings.plugins.toast.checkFailed'));
-      if (registry.status === 'rejected' && runtime.status === 'rejected') {
-        throw new Error(t('settings.plugins.toast.refreshFailed'));
-      }
-    },
-  });
 }
