@@ -325,6 +325,12 @@ export const desktopPrepareHost = async (host: DesktopHost): Promise<DesktopHost
   return prepared;
 };
 
+export const desktopOpenLocalHostSettings = async (): Promise<void> => {
+  const invoke = getInvoke();
+  if (!invoke) throw new Error('Local host settings are unavailable');
+  await invoke('desktop_open_local_host_settings');
+};
+
 export const desktopLocalClientTokenGet = async (): Promise<string> => {
   const invoke = getInvoke();
   if (!invoke) return '';

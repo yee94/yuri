@@ -18,14 +18,15 @@ const fixture = (ssh = true, packaged = true, local = true) => {
   }));
   const createWindow = vi.fn();
   const context = vm.createContext({
+    URL,
     browserWindow: { webContents: {} },
     isLocalSender: () => local,
     readDesktopHostsConfig: () => ({ hosts: [host], defaultHostId: host.id }),
     sshManager: { readInstances: () => ({ instances: ssh ? [{ id: host.id }] : [] }), connect },
     LOCAL_HOST_ID: 'local',
-    state: { localUiOrigin: 'http://localhost:5173', unreachableHosts: new Set() },
+    state: { localUiOrigin: 'http://localhost:5173', sidecarUrl: 'http://localhost:3000', unreachableHosts: new Set() },
     shouldUsePackagedUi: () => packaged,
-    buildPackagedUiUrl: () => 'yuri-ui://app/index.html',
+    buildPackagedUiUrl: (route = '/index.html') => `yuri-ui://app${route}`,
     normalizeHostUrl: (url) => url,
     sanitizeClientTokenForStorage: (token) => token,
     sanitizeRuntimeRequestHeaders: (headers) => headers,
@@ -82,6 +83,51 @@ describe('SSH preparation before opening desktop windows', () => {
     await expect(f.invoke('desktop_new_window_for_host', { hostId: 'ssh-test' })).rejects.toThrow('local desktop page');
     expect(f.connect).not.toHaveBeenCalled();
     expect(f.createWindow).not.toHaveBeenCalled();
+  });
+
+  it('resolves a paired host in a window-only document without invoking SSH', async () => {
+    const host = { id: 'paired-ssh', relay: { serverId: 'fixture' } };
+    const connect = vi.fn();
+    const context = vm.createContext({
+      readDesktopHostsConfig: () => ({ hosts: [host] }), isLocalSender: () => false,
+      sshManager: { readInstances: () => ({ instances: [{ id: host.id }] }), connect },
+    });
+    vm.runInContext(`${prepareSource}\nglobalThis.prepare = prepareDesktopHost;`, context);
+    await expect(context.prepare(host.id, { webContents: {} })).resolves.toEqual(host);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('opens an isolated local manager without giving its credentials to the remote caller (bundled: %s)', async (packaged) => {
+    const f = fixture(true, packaged, false);
+    await expect(f.invoke('desktop_open_local_host_settings', { clientToken: 'untrusted-token' })).resolves.toBeNull();
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.createWindow).toHaveBeenCalledWith(
+      packaged ? 'yuri-ui://app/settings/remote-instances' : 'http://localhost:5173/settings/remote-instances',
+      expect.objectContaining({ hostId: 'local', apiBaseUrl: 'http://localhost:3000', clientToken: '', relayHostId: '' }),
+    );
+  });
+
+  it('restores the prior instance if the clean local navigation fails', async () => {
+    const previous = { __yuriHostId: 'remote', __yuriRuntimeConfig: { apiBaseUrl: 'http://remote.invalid' },
+      __yuriBootOutcome: { target: 'remote', status: 'ok' }, __yuriInitScript: 'remote-script' };
+    const browserWindow = { ...previous, isDestroyed: () => false };
+    const scheduled = [];
+    const context = vm.createContext({
+      browserWindow, URL, LOCAL_HOST_ID: 'local', state: { localOrigin: 'http://localhost:3000', localUiOrigin: 'http://localhost:5173' },
+      shouldUsePackagedUi: () => false, buildRendererRuntimeConfig: (_url, runtime) => runtime,
+      readDesktopLocalClientToken: () => 'fixture-local-token', buildInitScript: () => 'local-script',
+      setImmediate: run => scheduled.push(run), navigateWindow: vi.fn(async () => { throw new Error('Navigation failed'); }), log: { warn: vi.fn() },
+    });
+    vm.runInContext(`globalThis.invoke = async () => { switch ('desktop_switch_to_local') { ${windowCases} } };`, context);
+    await context.invoke();
+    await context.invoke();
+    expect(scheduled).toHaveLength(1);
+    expect(browserWindow.__yuriHostId).toBe('local');
+    scheduled[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(browserWindow).toMatchObject(previous);
+    expect(browserWindow.__yuriLocalNavigation).toBeNull();
   });
 
   it('returns the refreshed host to the runtime switch only after preparation', async () => {

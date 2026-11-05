@@ -226,6 +226,7 @@ export type DesktopSettings = {
 };
 
 type DesktopBridgeGlobal = {
+  isDocumentRestricted?: () => boolean;
   viewExport?: DesktopViewExportBridge;
   guiPlugins?: NativeGuiBridge;
   invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -306,6 +307,9 @@ export const hasDesktopInvoke = (): boolean => {
 };
 
 export const canUseElectronDesktopIPC = (): boolean => isElectronShell() && hasDesktopInvoke();
+
+export const canManageDesktopHosts = (): boolean => hasDesktopInvoke()
+  && isDesktopLocalOriginActive() && getDesktopBridge()?.isDocumentRestricted?.() !== true;
 
 export const getDesktopGuiPluginBridge = (): NativeGuiBridge | undefined =>
   isElectronShell() && isDesktopLocalOriginActive() ? getDesktopBridge()?.guiPlugins : undefined;

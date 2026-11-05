@@ -194,6 +194,14 @@ describe('startup instance resolution', () => {
       expect(f.probe).not.toHaveBeenCalled();
     });
 
+    it(`restores a paired SSH host over Relay without requiring a new SSH connection (${mode})`, async () => {
+      const f = startup(mode, { ssh: true, relay: { serverId: 'fixture-server' } });
+      f.connect.mockRejectedValue(new Error('SSH unavailable on this network'));
+      expect(await f.resolve('remote')).toMatchObject({ relayHostId: 'remote', bootOutcome: { target: 'remote', status: 'ok' } });
+      expect(f.connect).not.toHaveBeenCalled();
+      expect(f.probe).not.toHaveBeenCalled();
+    });
+
     it(`failed SSH restoration remains a remote failure, not a successful local connection (${mode})`, async () => {
       const f = startup(mode, { ssh: true });
       f.connect.mockRejectedValue(new Error('offline'));
@@ -201,4 +209,28 @@ describe('startup instance resolution', () => {
       expect(f.probe).not.toHaveBeenCalled();
     });
   }
+});
+
+describe('first window preload after the startup splash', () => {
+  const preload = readFileSync(new URL('./preload.mjs', import.meta.url), 'utf8');
+  it.each(['yuri-ui://app/session/one', 'http://localhost:5173/session/one'])('reads the resolved window target before renderer modules execute: %s', (href) => {
+    const globals = {};
+    const runtime = {
+      localOrigin: 'http://localhost:3000', apiBaseUrl: 'http://localhost:3000',
+      clientToken: 'fixture-local-token', requestHeaders: {}, relayHostId: 'remote', localUiOrigin: 'http://localhost:5173',
+      bootOutcome: { target: 'remote', status: 'ok', hostId: 'remote' },
+    };
+    const context = vm.createContext({
+      process: { argv: ['electron', '--yuri-local-origin=', '--yuri-api-base-url=', '--yuri-boot-outcome=null'], platform: 'darwin' },
+      location: { origin: new URL(href).origin, protocol: new URL(href).protocol, hostname: new URL(href).hostname, host: new URL(href).host },
+      contextBridge: { exposeInMainWorld: (key, value) => { globals[key] = value; } },
+      ipcRenderer: { sendSync: vi.fn(() => runtime), on: vi.fn() },
+      window: { addEventListener() {} }, URL,
+    });
+    vm.runInContext(preload.slice(preload.indexOf('const eventListeners ='), preload.indexOf("window.addEventListener('yuri:runtime-endpoint-changed'")), context);
+    expect(globals.__YURI_RELAY_HOST_ID__).toBe('remote');
+    expect(globals.__YURI_LOCAL_ORIGIN__).toBe(runtime.localOrigin);
+    expect(globals.__YURI_CLIENT_TOKEN__).toBe(runtime.clientToken);
+    expect(globals.__YURI_DESKTOP_BOOT__.getOutcome()).toEqual(runtime.bootOutcome);
+  });
 });

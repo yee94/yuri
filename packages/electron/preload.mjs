@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 const eventListeners = new Map();
+let documentRestricted = false;
 
 const readArgValue = (name) => {
   const prefix = `${name}=`;
@@ -11,10 +12,13 @@ const readArgValue = (name) => {
   return entry.slice(prefix.length);
 };
 
-const localOrigin = readArgValue('--yuri-local-origin');
-const apiBaseUrl = readArgValue('--yuri-api-base-url');
-const clientToken = readArgValue('--yuri-client-token');
-const runtimeHeadersRaw = readArgValue('--yuri-runtime-headers');
+// The first window is created before its target resolves. Read the current
+// main-owned snapshot on every document, not the immutable splash-window argv.
+const windowRuntime = ipcRenderer.sendSync('yuri:window-runtime');
+const localOrigin = windowRuntime?.localOrigin ?? readArgValue('--yuri-local-origin');
+const apiBaseUrl = windowRuntime?.apiBaseUrl ?? readArgValue('--yuri-api-base-url');
+const clientToken = windowRuntime?.clientToken ?? readArgValue('--yuri-client-token');
+const runtimeHeadersRaw = windowRuntime ? JSON.stringify(windowRuntime.requestHeaders || {}) : readArgValue('--yuri-runtime-headers');
 const homeDirectory = readArgValue('--yuri-home');
 const macosMajorRaw = readArgValue('--yuri-macos-major');
 const macosMajor = Number.parseInt(macosMajorRaw, 10);
@@ -27,7 +31,7 @@ const hasMacVibrancy = macVibrancySupported && readArgValue('--yuri-mac-vibrancy
 // renderer splash gate does not race executeJavaScript(initScript). contextBridge
 // values are read-only, so keep a mutable holder and expose a getter; main can
 // push updates over IPC after hosts_set / host switch.
-const bootOutcomeRaw = readArgValue('--yuri-boot-outcome');
+const bootOutcomeRaw = windowRuntime ? JSON.stringify(windowRuntime.bootOutcome) : readArgValue('--yuri-boot-outcome');
 let bootOutcomeState = null;
 if (bootOutcomeRaw) {
   try {
@@ -70,6 +74,7 @@ const isPackagedUiPage = (() => {
   }
 })();
 const isLocalPage = isPackagedUiPage
+  || (Boolean(windowRuntime?.localUiOrigin) && currentOrigin === windowRuntime.localUiOrigin)
   || (Boolean(currentOrigin)
     && currentOrigin !== 'null'
     && Boolean(localOrigin)
@@ -95,7 +100,7 @@ if (clientToken && isLocalPage) {
 // Which saved host this window should connect to over the relay-capable path
 // (direct probe first, E2EE tunnel fallback). Local pages only — the id is
 // only useful together with the desktop IPC channel anyway.
-const relayHostId = readArgValue('--yuri-relay-host-id');
+const relayHostId = windowRuntime?.relayHostId ?? readArgValue('--yuri-relay-host-id');
 if (relayHostId && isLocalPage) {
   contextBridge.exposeInMainWorld('__YURI_RELAY_HOST_ID__', relayHostId);
 }
@@ -280,8 +285,13 @@ const previewGatewayApi = isLocalPage
 contextBridge.exposeInMainWorld('__YURI_DESKTOP__', {
   applicationId: readArgValue('--yuri-application-id'),
   shellApiVersion: 2,
+  isDocumentRestricted: () => documentRestricted,
   guiPlugins: isLocalPage && process.isMainFrame ? {
-    request: (action, input) => ipcRenderer.invoke('yuri:gui-plugin', action, input),
+    request: async (action, input) => {
+      const reply = await ipcRenderer.invoke('yuri:gui-plugin', action, input);
+      if (action === 'window-only' && reply?.ok) documentRestricted = true;
+      return reply;
+    },
     subscribe: (handler) => {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on('yuri:gui-plugin:event', listener);

@@ -76,6 +76,7 @@ import {
   desktopHostsGet,
   desktopHostsSet,
   desktopInstallIdGet,
+  desktopOpenLocalHostSettings,
   DESKTOP_HOST_SOURCE_CONNECT_LINK,
   getDesktopHostApiUrl,
   isSettingsLinkDesktopHost,
@@ -92,7 +93,7 @@ import {
   type DesktopHostProbeSnapshot,
 } from '@/lib/desktopHostSwitch';
 import { createRelayTunnelClient } from '@/lib/relay/tunnel-client';
-import { getDesktopLanAddress, hasDesktopInvoke, isDesktopLocalOriginActive, isDesktopShell } from '@/lib/desktop';
+import { canManageDesktopHosts, getDesktopLanAddress, hasDesktopInvoke, isDesktopLocalOriginActive, isDesktopShell } from '@/lib/desktop';
 import { DesktopLanAccessSettings } from '@/components/sections/yuri/DesktopLanAccessSettings';
 import { RemoteDesktopSettings } from '@/components/sections/yuri/RemoteDesktopSettings';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -1082,7 +1083,7 @@ export const RemoteInstancesPage: React.FC = () => {
   // SSH instance management needs the desktop IPC bridge (ssh invokes), which
   // only the Electron shell provides. Web/vscode/mobile keep the device list and
   // pairing links but hide the SSH card instead of showing dead controls.
-  const showInstanceManagement = import.meta.env.DEV || hasDesktopInvoke();
+  const showInstanceManagement = hasDesktopInvoke() ? canManageDesktopHosts() : import.meta.env.DEV;
   const instances = useDesktopSshStore((state) => state.instances);
   const statusesById = useDesktopSshStore((state) => state.statusesById);
   const isLoading = useDesktopSshStore((state) => state.isLoading);
@@ -1176,9 +1177,10 @@ export const RemoteInstancesPage: React.FC = () => {
   const [sshNameDraft, setSshNameDraft] = React.useState('');
 
   React.useEffect(() => {
+    if (!showInstanceManagement) return;
     void load();
     void loadImports();
-  }, [load, loadImports]);
+  }, [load, loadImports, showInstanceManagement]);
 
   const loadDirectHosts = React.useCallback(async () => {
     setDirectLoading(true);
@@ -1820,7 +1822,7 @@ export const RemoteInstancesPage: React.FC = () => {
 
   React.useEffect(() => {
     let cancelled = false;
-    if (!selectedId || selectedInstance?.remoteYuri?.mode !== 'managed') {
+    if (!showInstanceManagement || !selectedId || selectedInstance?.remoteYuri?.mode !== 'managed') {
       setSyncRuns([]);
       return () => {
         cancelled = true;
@@ -1840,10 +1842,10 @@ export const RemoteInstancesPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedId, selectedInstance?.remoteYuri?.mode, syncDialogOpen]);
+  }, [selectedId, selectedInstance?.remoteYuri?.mode, showInstanceManagement, syncDialogOpen]);
 
   React.useEffect(() => {
-    if (!selectedId) {
+    if (!showInstanceManagement || !selectedId) {
       return;
     }
     const interval = window.setInterval(() => {
@@ -1856,7 +1858,7 @@ export const RemoteInstancesPage: React.FC = () => {
     return () => {
       window.clearInterval(interval);
     };
-  }, [refreshStatuses, selectedId]);
+  }, [refreshStatuses, selectedId, showInstanceManagement]);
 
   React.useEffect(() => {
     // Use requestAnimationFrame for smoother clock updates without setInterval overhead
@@ -2368,6 +2370,14 @@ export const RemoteInstancesPage: React.FC = () => {
           </RemoteSettingsSection>
         ) : null}
 
+        {!showInstanceManagement && hasDesktopInvoke() ? <RemoteSettingsSection
+          itemId="remote-instances.instances"
+          label={t('settings.remoteInstances.sidebar.title')}
+        >
+          <Button size="sm" onClick={() => void desktopOpenLocalHostSettings().catch((error) => toast.error(String(error)))}>
+            {t('settings.remoteInstances.openLocalManager')}
+          </Button>
+        </RemoteSettingsSection> : null}
         {showInstanceManagement ? <RemoteSettingsSection
           itemId="remote-instances.instances"
           label={t('settings.remoteInstances.sidebar.title')}

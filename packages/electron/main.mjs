@@ -1926,6 +1926,9 @@ const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => 
 
 const buildStartupSplashHtml = () => {
   const settings = readSettingsRoot();
+  const hostId = readWindowStates()[0]?.hostId || readDesktopHostsConfig().defaultHostId;
+  const connectingRemote = Boolean(process.env.YURI_SERVER_URL || (hostId && hostId !== LOCAL_HOST_ID));
+  const status = connectingRemote ? getMenuLabels(normalizeMenuLocale(app.getLocale())).startupConnectingRemote : '';
   const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#FFFCF0';
   const splashFgLight = typeof settings.splashFgLight === 'string' ? settings.splashFgLight.trim() : '#100F0F';
   const splashBgDark = typeof settings.splashBgDark === 'string' ? settings.splashBgDark.trim() : '#1a1a1a';
@@ -1971,6 +1974,7 @@ const buildStartupSplashHtml = () => {
         }
       }
       .stack {
+        position: relative;
         display: grid;
         justify-items: center;
       }
@@ -1979,11 +1983,19 @@ const buildStartupSplashHtml = () => {
         width: 120px;
         height: 120px;
       }
+      .startup-status {
+        position: absolute;
+        top: calc(100% + 24px);
+        width: min(360px, 85vw);
+        text-align: center;
+        font-size: 13px;
+      }
     </style>
   </head>
   <body>
     <div class="stack">
       ${logo.replace('<svg ', '<svg role="img" aria-label="Yuri" ')}
+      <div class="startup-status" role="status">${status}</div>
     </div>
   </body>
   </html>`;
@@ -3411,7 +3423,7 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
   let config = readDesktopHostsConfig();
   let host = config.hosts.find((entry) => entry.id === hostId);
   let probe = null;
-  if (host && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
+  if (host && !host.relay && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
     try {
       await sshManager.connect(hostId);
       config = readDesktopHostsConfig();
@@ -4141,7 +4153,7 @@ const runSpecChain = (specs, appName) => {
 const prepareDesktopHost = async (hostId, browserWindow) => {
   let host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
   if (!host) throw new Error('Host not found');
-  if (sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
+  if (!host.relay && sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
     if (!isLocalSender(browserWindow?.webContents)) throw new Error('SSH preparation requires a local desktop page');
     await sshManager.connect(hostId);
     host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
@@ -4557,6 +4569,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_window_runtime_set': {
+      if (browserWindow.__yuriLocalNavigation) return null;
       const runtimeKey = typeof args.runtimeKey === 'string' ? args.runtimeKey : '';
       const hostId = runtimeKey === 'local' ? LOCAL_HOST_ID : runtimeKey.startsWith('host:') ? runtimeKey.slice(5) : '';
       const config = readDesktopHostsConfig();
@@ -4800,6 +4813,48 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         apiBaseUrl: normalizeHostUrl(apiBaseUrl) || apiBaseUrl,
         clientToken: sanitizeClientTokenForStorage(clientToken),
         requestHeaders,
+      });
+      return null;
+    }
+
+    case 'desktop_open_local_host_settings': {
+      const localUiUrl = state.localUiOrigin || state.sidecarUrl || state.localOrigin;
+      const route = '/settings/remote-instances';
+      const url = shouldUsePackagedUi() ? buildPackagedUiUrl(route) : new URL(route, localUiUrl).toString();
+      await createAdditionalWindow(url, {
+        hostId: LOCAL_HOST_ID, apiBaseUrl: state.sidecarUrl || state.localOrigin,
+        clientToken: readDesktopLocalClientToken(), requestHeaders: {}, relayHostId: '',
+        bootOutcome: { target: 'local', status: 'ok' },
+      });
+      return null;
+    }
+
+    case 'desktop_switch_to_local': {
+      if (!browserWindow || browserWindow.isDestroyed()) throw new Error('Window unavailable');
+      if (browserWindow.__yuriLocalNavigation) return null;
+      const localUiUrl = state.localUiOrigin || state.sidecarUrl || state.localOrigin;
+      const url = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : new URL('/index.html', localUiUrl).toString();
+      const runtime = buildRendererRuntimeConfig(url, {
+        apiBaseUrl: state.sidecarUrl || state.localOrigin, clientToken: readDesktopLocalClientToken(), requestHeaders: {},
+      });
+      const previous = {
+        __yuriHostId: browserWindow.__yuriHostId,
+        __yuriRuntimeConfig: browserWindow.__yuriRuntimeConfig,
+        __yuriBootOutcome: browserWindow.__yuriBootOutcome,
+        __yuriInitScript: browserWindow.__yuriInitScript,
+      };
+      browserWindow.__yuriLocalNavigation = runtime;
+      browserWindow.__yuriHostId = LOCAL_HOST_ID;
+      browserWindow.__yuriRuntimeConfig = runtime;
+      browserWindow.__yuriBootOutcome = { target: 'local', status: 'ok' };
+      browserWindow.__yuriInitScript = buildInitScript(state.localOrigin, browserWindow.__yuriBootOutcome, runtime.apiBaseUrl, runtime.clientToken, runtime.requestHeaders);
+      setImmediate(() => {
+        void navigateWindow(browserWindow, url).catch((error) => {
+          if (!browserWindow.isDestroyed() && browserWindow.__yuriLocalNavigation === runtime) Object.assign(browserWindow, previous);
+          log.warn('[electron] local window recovery failed', error);
+        }).finally(() => {
+          if (browserWindow.__yuriLocalNavigation === runtime) browserWindow.__yuriLocalNavigation = null;
+        });
       });
       return null;
     }
@@ -5567,7 +5622,36 @@ const viewExportHost = createViewExportHost({
 });
 ipcMain.handle('yuri:view-export', (event, method, input) => viewExportHost.dispatch(event, method, input));
 
+ipcMain.on('yuri:window-runtime', (event) => {
+  let snapshot = null;
+  try {
+    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || guiPluginHost.isWindowOnly(event.sender)) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    const runtime = getWindowRuntimeConfig(win);
+    if (!isGuiPluginWindow(event)) {
+      if (win.__yuriRuntimeConfig && isGuiPluginUiUrl(event.sender.getURL(), [runtime.apiBaseUrl])) {
+        snapshot = { apiBaseUrl: runtime.apiBaseUrl, bootOutcome: win.__yuriBootOutcome ?? null };
+      }
+      return;
+    }
+    snapshot = {
+      ...runtime,
+      relayHostId: win.__yuriRuntimeConfig?.relayHostId || '',
+      localOrigin: state.localOrigin || state.sidecarUrl || '',
+      localUiOrigin: state.localUiOrigin || '',
+      bootOutcome: win.__yuriBootOutcome ?? state.bootOutcome ?? null,
+    };
+  } finally {
+    event.returnValue = snapshot;
+  }
+});
+
 ipcMain.handle('yuri:invoke', async (event, command, args) => {
+  if ((command === 'desktop_open_local_host_settings' || command === 'desktop_switch_to_local')
+    && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
+    throw new Error('Local window navigation requires the main desktop frame');
+  }
   if (command === 'desktop_window_runtime_set' && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
     throw new Error('Window runtime updates require the main desktop frame');
   }
@@ -5575,7 +5659,8 @@ ipcMain.handle('yuri:invoke', async (event, command, args) => {
     && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
     throw new Error('Remote desktop setup requires the main desktop frame');
   }
-  if (!isLocalSender(event.sender) && !isRemoteIpcCommandAllowed(command, args)) {
+  const windowRuntimeUpdate = command === 'desktop_window_runtime_set' && isGuiPluginWindow(event);
+  if (!windowRuntimeUpdate && !isLocalSender(event.sender) && !isRemoteIpcCommandAllowed(command, args)) {
     log.warn(`[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');
   }

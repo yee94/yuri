@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
-import { isElectronShell, isDesktopShell } from '@/lib/desktop';
+import { canManageDesktopHosts, isElectronShell, isDesktopShell } from '@/lib/desktop';
 import { Icon } from "@/components/icon/Icon";
 import { useUIStore } from '@/stores/useUIStore';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -22,6 +22,7 @@ import {
   desktopHostsGet,
   desktopHostsSet,
   desktopLocalClientTokenGet,
+  desktopOpenLocalHostSettings,
   desktopOpenNewWindowAtUrl,
   desktopOpenNewWindowForHost,
   getDesktopHostApiUrl,
@@ -99,7 +100,7 @@ const getLocalOrigin = (): string => {
 };
 
 const getLocalClientToken = async (): Promise<string> => {
-  if (!isElectronShell()) return '';
+  if (!isElectronShell() || !canManageDesktopHosts()) return '';
   return desktopLocalClientTokenGet().catch(() => '');
 };
 
@@ -403,11 +404,15 @@ export function DesktopHostSwitcherDialog({
     return allHosts.find((h) => h.id === id)?.label || t('desktopHostSwitcher.instance.local');
   }, [allHosts, defaultHostId, t]);
 
-  const persist = React.useCallback(async (nextHosts: DesktopHost[], nextDefaultHostId: string | null) => {
+  const persist = useEvent(async (nextHosts: DesktopHost[], nextDefaultHostId: string | null) => {
     if (!isDesktopShell()) return;
     setIsSaving(true);
     setError('');
     try {
+      if (isElectronShell() && !canManageDesktopHosts()) {
+        await desktopOpenLocalHostSettings();
+        return;
+      }
       const remote = nextHosts.filter((h) => h.id !== LOCAL_HOST_ID);
       await desktopHostsSet({ hosts: remote, defaultHostId: nextDefaultHostId });
       setConfigHosts(remote);
@@ -417,13 +422,18 @@ export function DesktopHostSwitcherDialog({
     } finally {
       setIsSaving(false);
     }
-  }, [t]);
+  });
 
-  const openRemoteInstancesSettings = React.useCallback(() => {
+  const openRemoteInstancesSettings = useEvent(() => {
+    if (isElectronShell() && !canManageDesktopHosts()) {
+      void desktopOpenLocalHostSettings().catch((error) => toast.error(String(error)));
+      onOpenChange(false);
+      return;
+    }
     setSettingsPage('remote-instances');
     setSettingsDialogOpen(true);
     onOpenChange(false);
-  }, [onOpenChange, setSettingsDialogOpen, setSettingsPage]);
+  });
 
   const refresh = React.useCallback(async () => {
     if (!isDesktopShell()) return;
@@ -432,8 +442,8 @@ export function DesktopHostSwitcherDialog({
     try {
       const [cfg, sshCfg, sshStatusMap] = await Promise.all([
         desktopHostsGet(),
-        desktopSshInstancesGet().catch(() => ({ instances: [] })),
-        getSshStatusById(),
+        canManageDesktopHosts() ? desktopSshInstancesGet().catch(() => ({ instances: [] })) : Promise.resolve({ instances: [] }),
+        canManageDesktopHosts() ? getSshStatusById() : Promise.resolve({}),
       ]);
       if (cfg.localOrigin) {
         setLocalOrigin(cfg.localOrigin);
@@ -517,7 +527,7 @@ export function DesktopHostSwitcherDialog({
   }, [open, visibleHosts, probeAll]);
 
   React.useEffect(() => {
-    if (!open || !isDesktopShell()) {
+    if (!open || !isDesktopShell() || !canManageDesktopHosts()) {
       return;
     }
     let cancelled = false;

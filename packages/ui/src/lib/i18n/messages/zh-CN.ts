@@ -3,6 +3,7 @@ import { settingsDict } from './zh-CN.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.remoteInstances.openLocalManager': '在本机窗口管理实例',
   ...tourMessages['zh-CN'],
   'settings.switch.off': '关闭',
   'settings.switch.on': '开启',

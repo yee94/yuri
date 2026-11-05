@@ -9,6 +9,9 @@ This package owns the native shell: windows, menus, deep links, native notificat
 Tests that launch real Electron are temporarily marked `test.skip`, including
 IndexedDB, Dock and evidence fixtures. Node-only and mocked Electron tests remain
 enabled, including those sharing an evidence test file. Fixture code is retained.
+Window-restore evidence can be explicitly enabled with
+`YURI_WINDOW_RESTORE_EVIDENCE=1`; it exercises the real preload and the first
+window's splash-to-app transition in HMR and bundled modes.
 
 ## How It Runs
 
@@ -28,13 +31,13 @@ its transparent native backdrop; saved renderer theme choices remain authoritati
 
 The preload bridge exposes desktop-only APIs to the web UI through `window.__YURI_DESKTOP__`. Privileged commands are checked in `main.mjs`, not only in the UI. The binary-path probe samples at most 8 KiB before a non-image binary file opens through the system handler. It shares the Web-owned `fs/binary-file.js` classifier: a UTF-8 code point split by a non-EOF sample is text, while NUL, invalid UTF-8 and incomplete UTF-8 at EOF remain binary.
 
-Startup uses the transparent `icons/source/yuri-mark-black.svg` silhouette, matching the web startup SVG at 120 × 120 CSS pixels centered in the viewport. The web progress indicator is positioned below the logo without participating in centering, so showing progress does not move the mark. Keep the native and web splash geometry and default theme colors aligned.
+Startup uses the transparent `icons/source/yuri-mark-black.svg` silhouette, matching the web startup SVG at 120 × 120 CSS pixels centered in the viewport. The web progress indicator is positioned below the logo without participating in centering, so showing progress does not move the mark. Restoring a remote window shows a localized connecting-to-remote-instance status below the mark, both on the native splash and while the web UI initializes. Keep the native and web splash geometry and default theme colors aligned.
 
 Packaged UI and local backend resources may be replaced by a verified desktop OTA directory under `userData/ota`. `desktop-ota.mjs` owns download, channel selection, atomic staging and next-launch activation. New backend-bearing bundles are activated without an automatic rollback: invalid active resources fail startup and require reinstall. Packaged pages use `yuri-ui://app`; the startup migration below imports the previous origin before the UI loads. Main, preload and dependencies remain installer-owned. `desktop-backend.mjs` loads the selected backend in-process and resolves its dependencies from the installed web package using synchronous Node module hooks; file grants use that same backend module instance. Config-sync modules shared with the shell and local dictation workers remain installer-owned and fingerprinted. `packages/web/server/lib/zip-assets.js` owns the bounded archive codec using the existing web-package ZIP dependency. The first migration requires a new installer with this backend loader; subsequent compatible UI/backend releases can use OTA.
 
 Desktop instance switches revalidate the target's authentication before committing the runtime endpoint. Direct probes verify service compatibility and `/auth/session` with the saved client credential; Relay probes verify `/auth/session` over the pinned E2EE tunnel and hand that authenticated tunnel to the runtime. Cached connected badges remain display snapshots. A direct authentication failure triggers Relay fallback when available; failed authentication on every candidate preserves the current instance and reports authentication required.
 
-Saved SSH targets pass through the SSH manager before an instance switch or a new window (default host, saved host ID, or saved URL) proceeds. A ready in-memory session with live SSH processes is reused directly, without disconnecting, bootstrapping or checking/updating the installation again. A cached Ready badge without a session does not qualify. Disconnected targets complete the full connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Main owns this preparation gate and returns the newly persisted endpoint and credentials. Preparation failure blocks navigation/window creation, concurrent connects share one attempt, and remote pages cannot trigger SSH preparation through window commands. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
+Direct-only saved SSH targets pass through the SSH manager before an instance switch or a new window (default host, saved host ID, or saved URL) proceeds. A ready in-memory session with live SSH processes is reused directly, without disconnecting, bootstrapping or checking/updating the installation again. A cached Ready badge without a session does not qualify. Disconnected targets complete the full connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Already-paired Relay-capable targets instead use direct/Relay selection without requiring SSH connectivity or installation updates. Explicit SSH management remains local-only. Main owns this preparation gate and returns the newly persisted endpoint and credentials. Preparation failure blocks navigation/window creation, concurrent connects share one attempt, and remote pages cannot trigger SSH preparation through window commands. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
 
 Managed SSH bootstrap discovers registered daemons through `yuri status --json` and confirms each live runtime before choosing a retained `ssh-remote` Host. Within the remote user's CLI data scope it consolidates SSH-managed daemons, preserving manually launched web and desktop runtimes. A matching running version with valid in-memory/configured credentials is reused even without a preferred port. Missing credentials after desktop restart or a stale running version requires a verified stop and replacement on the same port; credentials are not persisted for reuse. Package upgrades drain managed daemons before replacing installation files. Shutdown uses `yuri stop --port ... --json`, whose registry/PID checks and signal fallback work with password-protected Hosts. Discovery or shutdown failure blocks replacement rather than adding another database writer. A failed install leaves the old daemon stopped and surfaces the error for retry. External SSH mode remains probe-only. These lifecycle fixes are installer-owned.
 
@@ -52,7 +55,7 @@ and arbitrary query/hash parameters are never copied into window state. The
 explicit default Host preference remains independent of the last window instance.
 
 Normal launches restore these windows instead of selecting the local/default Host.
-SSH targets reconnect before navigation; Relay selection remains renderer-owned
+Direct-only SSH targets reconnect before navigation; Relay selection remains renderer-owned
 and uses that window's boot target, never another window's default. An unavailable
 or deleted target retains its recovery state instead of silently becoming local.
 Startup/quit snapshots cannot overwrite the session with partially opened/closed
@@ -60,6 +63,21 @@ windows, and shutdown waits for the final settings write. Legacy settings withou
 `desktopWindowStates` retain single-window geometry/default-Host behavior. An
 explicit `YURI_SERVER_URL` still overrides instance restore. Mini Chat windows are
 not included. These main/preload changes require a new installer.
+
+Preload synchronously reads the current main-owned window snapshot before app
+modules run. The initial splash window's immutable process arguments are only a
+fallback, not the restored endpoint or boot outcome. The snapshot is returned
+once, only to the owned main frame: local app documents receive runtime auth;
+saved remote app documents receive only their API URL and boot outcome. Preview
+pages, subframes and window-only documents cannot obtain runtime credentials.
+
+Window-only application documents may report a validated saved Host/endpoint
+commit without regaining native privileges. Their instance switcher avoids SSH
+polling and uses paired direct/Relay connections. Native instance management
+opens `/settings/remote-instances` in a separate local window; returning to local
+performs a full document navigation with main-owned local credentials, never a
+soft permission reset. File/Shell/SSH/configuration IPC remains restricted in the
+old document. Remote-host device/pairing APIs still address the selected runtime.
 
 ## Leased image disk cache
 

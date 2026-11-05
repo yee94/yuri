@@ -115,6 +115,8 @@ options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/�
 
 远端 GUI 的 `setup`、LinkHandler、Panel 和格式预览继续可用。带本地 preload 的文档在加载 window-only bundle **之前**，必须等待 main 确认 `window-only` 限权：撤销本窗口 native leases/调用，并让本机文件、Shell、设置等特权 desktop IPC gate 拒绝后续请求。限权持续至跨文档导航提交，切会话、hash/path 同文档导航和重新申请 lease 均不能恢复权限；切回 native 能力须重新加载应用文档。图片缓存、虚拟资源流与预览 gateway 属于独立的前端展示能力，不受插件原生降权影响；只允许经过来源、应用路由及当前主 frame 校验的客户端应用文档调用，继续执行资源归属和容量限制，不开放本机路径、凭证或插件 main。图片和 `.eficy` 等前端格式预览必须保持可用；真正的远程页面和预览 iframe 不因此取得本地桥接能力。真正的远程页面没有本地 GUI bridge，保持 window-only。窗口插件仍不是独立 JS 沙箱；不能在同一文档混合远端窗口代码与本机原生插件权限。独立的本地可信插件访问远端数据通道尚未开放，不能通过移除 Relay 判断来实现。
 
+内置实例切换不等于插件原生权限：window-only 应用文档可提交由 main 校验的已保存 Host/endpoint 身份，并通过既有直连/Relay 切换。SSH、设置写入仍在独立的本机实例管理窗口处理；该入口只打开固定的本机设置路由，不向原文档返回本机凭证。返回本机时执行完整文档导航，不在原文档解除限权。实例切换器与远端设置页不再持续发起必然被拒绝的本机 SSH 查询；远端设备列表和配对继续使用当前 Host 的 API。
+
 ### 原生拒绝错误契约
 
 错误目录为 `native-errors.json`。main 的 IPC 返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, message } }`；preload 只转发可序列化结果，`requestNativeGui` 在窗口重建 `GuiPluginError`，保证 `error.code` 不被 Electron/contextBridge 丢掉。日志记录同一 code，不记录调用参数、schema 原值、上游响应或凭证。未知异常归 `GUI_PLUGIN_FAILED`。窗口 host 的未捕获原生错误还在 snapshot 保留 `errorCode`。

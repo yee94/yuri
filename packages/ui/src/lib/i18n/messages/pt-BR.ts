@@ -3,6 +3,7 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.remoteInstances.openLocalManager': 'Gerenciar instâncias em uma janela local',
   ...tourMessages['pt-BR'],
   'settings.switch.off': 'Deslig.',
   'settings.switch.on': 'Ligado',

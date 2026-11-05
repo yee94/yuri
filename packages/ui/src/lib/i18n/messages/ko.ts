@@ -3,6 +3,7 @@ import { settingsDict } from './ko.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'settings.remoteInstances.openLocalManager': '로컬 창에서 인스턴스 관리',
   ...tourMessages.ko,
   'settings.switch.off': '끄기',
   'settings.switch.on': '켜기',

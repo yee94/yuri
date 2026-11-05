@@ -4,6 +4,18 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 describe('desktop startup splash', () => {
+  it.each(['remote', 'local'])('shows the remote connection state before rendering only for a %s boot target', (target) => {
+    const source = readFileSync(new URL('./runtimeConfig.ts', import.meta.url), 'utf8');
+    const status = { textContent: '', hidden: true };
+    runInNewContext(source.slice(source.indexOf('  const connectionStatus ='), source.indexOf('  desktopRelayRestoreReady = Promise.race')), {
+      document: { getElementById: () => status },
+      getInjectedBootOutcome: () => ({ target }),
+      getBootstrapMessages: () => ({ connectingRemote: '正在连接远程实例…' }),
+      readStoredLocaleForBootstrap: () => 'zh-CN',
+    });
+    expect(status.hidden).toBe(target !== 'remote');
+    expect(status.textContent).toBe(target === 'remote' ? '正在连接远程实例…' : '');
+  });
   it('does not time out to a blank page when application imports have not committed', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const fallback = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].find(match => match[1].includes('Fallback: hide loading screen'))![1];

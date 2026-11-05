@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { QueryClient } from '@tanstack/react-query';
-import { it } from 'vitest';
+import { it, vi } from 'vitest';
+
+const native = vi.hoisted(() => ({ electron: false, canManage: true, invoke: vi.fn() }));
+vi.mock('@/lib/desktop', () => ({
+  isElectronShell: () => native.electron,
+  canManageDesktopHosts: () => native.canManage,
+  invokeDesktop: native.invoke,
+}));
 
 // Controllable impls + manual call tracking (project bun-test.d.ts does not
 // declare mock matcher / mockClear types; existing tests use plain arrays).
@@ -96,9 +103,20 @@ afterEach(() => {
   switchRuntimeEndpointImpl = () => undefined;
   isDesktopHostActiveImpl = () => false;
   toastErrorImpl = () => undefined;
+  native.electron = false;
+  native.canManage = true;
+  native.invoke.mockReset();
 });
 
 describe('desktopHostSwitchMutation', () => {
+  it('returns to local through a clean native navigation instead of soft-switching a restricted document', async () => {
+    native.electron = true;
+    native.canManage = false;
+    native.invoke.mockResolvedValue(null);
+    expect(await switchDesktopHostInstance({ host: { id: 'local', label: 'Local', url: 'http://localhost:3000' } })).toMatchObject({ ok: true });
+    expect(native.invoke.mock.calls).toEqual([['desktop_switch_to_local']]);
+    expect(switchRuntimeEndpointCalls).toEqual([]);
+  });
   it('reports bootstrap failures and releases the pending lane for retry', async () => {
     switchDesktopHostImpl = async () => { throw new Error('Remote update failed'); };
     const result = await switchDesktopHostInstance({ host });

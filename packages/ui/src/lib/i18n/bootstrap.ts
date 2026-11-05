@@ -4,6 +4,7 @@ type BootstrapMessages = {
   startingApi: string;
   initializing: string;
   connecting: string;
+  connectingRemote: string;
   connected: string;
   connectionError: string;
   disconnected: string;
@@ -23,6 +24,7 @@ const EN_MESSAGES: BootstrapMessages = {
   startingApi: 'Starting OpenCode API…',
   initializing: 'Initializing…',
   connecting: 'Connecting…',
+  connectingRemote: 'Connecting to remote instance…',
   connected: 'Connected!',
   connectionError: 'Connection error',
   disconnected: 'Disconnected',
@@ -42,6 +44,7 @@ const FR_MESSAGES: BootstrapMessages = {
   startingApi: 'Démarrage de l’API OpenCode…',
   initializing: 'Initialisation…',
   connecting: 'Connexion…',
+  connectingRemote: 'Connexion à l’instance distante…',
   connected: 'Connecté !',
   connectionError: 'Erreur de connexion',
   disconnected: 'Déconnecté',
@@ -61,6 +64,7 @@ const ZH_CN_MESSAGES: BootstrapMessages = {
   startingApi: '正在启动 OpenCode API…',
   initializing: '正在初始化…',
   connecting: '正在连接…',
+  connectingRemote: '正在连接远程实例…',
   connected: '已连接！',
   connectionError: '连接错误',
   disconnected: '已断开连接',
@@ -80,6 +84,7 @@ const ZH_TW_MESSAGES: BootstrapMessages = {
   startingApi: '正在啟動 OpenCode API…',
   initializing: '正在初始化…',
   connecting: '正在連線…',
+  connectingRemote: '正在連線至遠端執行個體…',
   connected: '已連線！',
   connectionError: '連線錯誤',
   disconnected: '已中斷連線',
@@ -99,6 +104,7 @@ const UK_MESSAGES: BootstrapMessages = {
   startingApi: 'Запуск OpenCode API…',
   initializing: 'Ініціалізація…',
   connecting: 'Підключення…',
+  connectingRemote: 'Підключення до віддаленого екземпляра…',
   connected: 'Підключено!',
   connectionError: 'Помилка підключення',
   disconnected: 'Відключено',
@@ -118,6 +124,7 @@ const ES_MESSAGES: BootstrapMessages = {
   startingApi: 'Iniciando la API de OpenCode…',
   initializing: 'Inicializando…',
   connecting: 'Conectando…',
+  connectingRemote: 'Conectando con la instancia remota…',
   connected: '¡Conectado!',
   connectionError: 'Error de conexión',
   disconnected: 'Desconectado',
@@ -137,6 +144,7 @@ const PT_BR_MESSAGES: BootstrapMessages = {
   startingApi: 'Iniciando a API do OpenCode…',
   initializing: 'Inicializando…',
   connecting: 'Conectando…',
+  connectingRemote: 'Conectando à instância remota…',
   connected: 'Conectado!',
   connectionError: 'Erro de conexão',
   disconnected: 'Desconectado',
@@ -156,6 +164,7 @@ const KO_MESSAGES: BootstrapMessages = {
   startingApi: 'OpenCode API 시작 중…',
   initializing: '초기화 중…',
   connecting: '연결 중…',
+  connectingRemote: '원격 인스턴스에 연결 중…',
   connected: '연결됨!',
   connectionError: '연결 오류',
   disconnected: '연결 끊김',
@@ -175,6 +184,7 @@ const PL_MESSAGES: BootstrapMessages = {
   startingApi: 'Uruchamianie API OpenCode…',
   initializing: 'Inicjalizacja…',
   connecting: 'Łączenie…',
+  connectingRemote: 'Łączenie ze zdalną instancją…',
   connected: 'Połączono!',
   connectionError: 'Błąd połączenia',
   disconnected: 'Rozłączono',
@@ -194,6 +204,7 @@ const JA_MESSAGES: BootstrapMessages = {
   startingApi: 'OpenCode API を起動中…',
   initializing: '初期化中…',
   connecting: '接続中…',
+  connectingRemote: 'リモートインスタンスに接続中…',
   connected: '接続完了！',
   connectionError: '接続エラー',
   disconnected: '切断されました',

@@ -13,8 +13,8 @@ test('keeps generic desktop restarts local to the packaged UI', () => {
   assert.equal(isRemoteIpcCommandAllowed('desktop_restart', { applyUpdate: false }), false);
 });
 
-test('does not allow remote pages to prepare SSH hosts', () => {
-  assert.equal(isRemoteIpcCommandAllowed('desktop_host_prepare'), false);
+test('allows saved host resolution while the main-owned preparation gate blocks SSH work', () => {
+  assert.equal(isRemoteIpcCommandAllowed('desktop_host_prepare'), true);
 });
 
 test('remote pages cannot rewrite the remembered native window instance', () => {

@@ -2,6 +2,7 @@ import { settingsDict } from './fr.settings';
 import { tourMessages } from './tour';
 
 export const dict = {
+  'settings.remoteInstances.openLocalManager': 'Gérer les instances dans une fenêtre locale',
   ...tourMessages.fr,
   'settings.switch.off': 'Désact.',
   'settings.switch.on': 'Activé',

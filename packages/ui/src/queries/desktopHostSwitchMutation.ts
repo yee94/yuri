@@ -12,6 +12,7 @@ import { redactSensitiveUrl } from '@/lib/desktopHosts';
 import { formatMessage, useI18nStore, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { queryClient } from '@/lib/queryRuntime';
 import { switchRuntimeEndpoint } from '@/lib/runtime-switch';
+import { canManageDesktopHosts, invokeDesktop, isElectronShell } from '@/lib/desktop';
 
 /** Stable mutation key — all desktop host switches share one global pending lane. */
 export const DESKTOP_HOST_SWITCH_MUTATION_KEY = ['desktopHostSwitch'] as const;
@@ -50,6 +51,10 @@ const mutationFn = async (
   const { host } = variables;
 
   if (host.id === 'local') {
+    if (isElectronShell() && !canManageDesktopHosts()) {
+      await invokeDesktop('desktop_switch_to_local');
+      return { ok: true, via: 'direct', status: { status: 'ok', latencyMs: 0 } };
+    }
     const apiOrigin = (variables.localApiOrigin || '').trim();
     if (!apiOrigin) {
       throw new DesktopHostSwitchError(

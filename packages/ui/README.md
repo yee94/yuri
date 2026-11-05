@@ -75,6 +75,9 @@ recheck is pending, and a logo Suspense fallback plus error boundary for the app
 This prevents createRoot from replacing static branding with an empty commit.
 The web timeout removes its static overlay only after React has committed content;
 mini-chat's in-root logo is replaced by React without a destructive timeout.
+Desktop remote-instance startup displays a localized connection status below the
+logo before transport selection and React initialization; the label does not
+participate in logo centering or overlap session synchronization progress.
 GUI revision checks, code downloads and installation stay silent, including failures;
 diagnostics remain in plugin settings, and file previews own their local loading state.
 

@@ -4,6 +4,8 @@ import { initializeRuntimeEndpoint } from '@yuriai/ui/lib/runtime-switch';
 import { restoreDesktopRelayRuntime } from '@yuriai/ui/lib/desktopRelayRestore';
 import { configureRuntimeUrlResolver } from '@yuriai/ui/lib/runtime-url';
 import { createWebAPIs } from './api';
+import { getInjectedBootOutcome } from '@yuriai/ui/lib/desktopBoot';
+import { getBootstrapMessages, readStoredLocaleForBootstrap } from '@yuriai/ui/lib/i18n/bootstrap';
 
 const sameOrigin = (left: string, right: string): boolean => {
   if (!left || !right) return false;
@@ -61,6 +63,11 @@ export const createConfiguredWebAPIs = () => {
   // the user sees the splash instead of a transient auth screen against an
   // endpoint that is still being selected.
   const relayHostId = (window as typeof window & { __YURI_RELAY_HOST_ID__?: string }).__YURI_RELAY_HOST_ID__;
+  const connectionStatus = document.getElementById('startup-connection-status');
+  if (connectionStatus && getInjectedBootOutcome()?.target === 'remote') {
+    connectionStatus.textContent = getBootstrapMessages(readStoredLocaleForBootstrap()).connectingRemote;
+    connectionStatus.hidden = false;
+  }
   desktopRelayRestoreReady = Promise.race([
     restoreDesktopRelayRuntime(typeof relayHostId === 'string' && relayHostId ? relayHostId : undefined).catch(() => {}),
     // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
