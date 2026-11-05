@@ -740,7 +740,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const { t } = useI18n();
   const { files, runtime } = useRuntimeAPIs();
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
-  const { isMobile, isTablet, screenWidth } = useDeviceInfo();
+  const { isMobile, isTablet, screenWidth } = useDeviceInfo({ includeScreenWidth: true });
   const alwaysShowActions = isMobile || isTablet;
   const showHidden = useDirectoryShowHidden();
   const showGitignored = useFilesViewShowGitignored();

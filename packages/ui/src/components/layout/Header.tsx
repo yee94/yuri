@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
-import { useEvent } from '@reactuses/core';
+import { useEvent, useResizeObserver } from '@reactuses/core';
 import {
   Tooltip,
   TooltipContent,
@@ -1285,54 +1285,22 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, [isDesktopApp, isVSCode, isPreviewPanelOpen, usesFramelessChrome]);
 
-  const updateHeaderHeight = React.useCallback(() => {
-    if (typeof document === 'undefined') {
-      return;
+  const updateHeaderHeight = useEvent((height: number | undefined) => {
+    if (!height || typeof document === 'undefined') return;
+    const style = document.documentElement.style;
+    const value = `${height}px`;
+    if (style.getPropertyValue('--yuri-header-height') !== value) {
+      style.setProperty('--yuri-header-height', value);
     }
+  });
 
-    const height = headerRef.current?.getBoundingClientRect().height;
-    if (height) {
-      document.documentElement.style.setProperty('--yuri-header-height', `${height}px`);
-    }
-  }, []);
+  useResizeObserver(headerRef, ([entry]) => {
+    if (!entry) return;
+    updateHeaderHeight(entry.borderBoxSize[0]?.blockSize ?? entry.target.getBoundingClientRect().height);
+  }, { box: 'border-box' });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    updateHeaderHeight();
-
-    const node = headerRef.current;
-    if (!node || typeof ResizeObserver === 'undefined') {
-      return () => { };
-    }
-
-    let rafId = 0;
-    const scheduleUpdate = () => {
-      if (rafId) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        updateHeaderHeight();
-      });
-    };
-
-    const observer = new ResizeObserver(scheduleUpdate);
-
-    observer.observe(node);
-    window.addEventListener('resize', scheduleUpdate);
-    window.addEventListener('orientationchange', scheduleUpdate);
-
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      observer.disconnect();
-      window.removeEventListener('resize', scheduleUpdate);
-      window.removeEventListener('orientationchange', scheduleUpdate);
-    };
-  }, [updateHeaderHeight]);
-
-  useEffect(() => {
-    updateHeaderHeight();
+  React.useLayoutEffect(() => {
+    updateHeaderHeight(headerRef.current?.getBoundingClientRect().height);
   }, [updateHeaderHeight, isMobile, macosHeaderSizeClass]);
 
   const handleDragStart = React.useCallback(async (e: React.MouseEvent) => {

@@ -158,6 +158,21 @@ Yuri has **two independent mobile signals**. Layout bugs that "look fine in DevT
 
 Capacitor forces `deviceType = 'mobile'` (so React `isMobile` stays true on tablets), but **`mobile-pointer` still follows real pointer capability**. Desktop Electron / VS Code add `desktop-runtime` and strip `mobile-pointer`.
 
+`useDeviceInfo()` subscribes only to device/pointer classification and breakpoint
+changes. Pixel-width consumers explicitly use `useDeviceInfo({ includeScreenWidth:
+true })`; the default snapshot does not expose `screenWidth`. Both groups share
+one resize/media-query source, with a stable layout snapshot and no layout-subscriber
+notifications for width-only changes. Root classes and device CSS properties are
+written only when their values change. `getDeviceInfo()` still returns the current
+pixel width for imperative callers. `lib/device.test.tsx` guards repeated resizes,
+pointer transitions, runtime overrides and last-subscriber cleanup.
+
+The desktop left sidebar writes live widths directly to its outer and content
+elements; its width is not an inherited custom property that invalidates the whole
+session list on every pointer move. Width persistence remains pointer-end-only.
+The conversation header publishes its observed border-box height only when it
+changes, without a second geometry read on width-only ResizeObserver deliveries.
+
 ### Symptom that means you hit this
 
 - `isMobile === true` in both states.

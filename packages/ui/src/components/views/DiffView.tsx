@@ -1076,7 +1076,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const effectiveDirectory = (typeof directory === 'string' && directory.trim())
         ? directory.trim()
         : fallbackDirectory;
-    const { screenWidth, isMobile } = useDeviceInfo();
+    const { screenWidth, isMobile } = useDeviceInfo({ includeScreenWidth: true });
 
     const isGitRepo = useIsGitRepo(effectiveDirectory ?? null);
     const status = useGitStatus(effectiveDirectory ?? null);

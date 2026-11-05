@@ -16,6 +16,10 @@ export interface DeviceInfo {
   hasTouchOnlyPointer: boolean;
 }
 
+type DeviceLayoutInfo = Omit<DeviceInfo, 'screenWidth'>;
+
+const toDeviceLayoutInfo = ({ screenWidth: _screenWidth, ...layout }: DeviceInfo): DeviceLayoutInfo => layout;
+
 const BREAKPOINTS = {
   xs: 0,
   sm: 640,
@@ -35,6 +39,8 @@ const DEFAULT_DEVICE_INFO: DeviceInfo = {
   hasTouchInput: false,
   hasTouchOnlyPointer: false,
 };
+
+const DEFAULT_DEVICE_LAYOUT_INFO = toDeviceLayoutInfo(DEFAULT_DEVICE_INFO);
 
 const hasDesktopSurfaceOverride = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -69,38 +75,37 @@ const setRootDeviceAttributes = (
   const isMobile = deviceType === 'mobile';
   const isTablet = deviceType === 'tablet';
 
-  root.classList.remove('device-mobile', 'device-tablet', 'device-desktop');
-  root.classList.add(
-    deviceType === 'mobile'
-      ? 'device-mobile'
-      : deviceType === 'tablet'
-        ? 'device-tablet'
-        : 'device-desktop'
-  );
+  const toggleClass = (name: string, enabled: boolean) => {
+    if (root.classList.contains(name) !== enabled) root.classList.toggle(name, enabled);
+  };
+  const setProperty = (name: string, value: string) => {
+    if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+  };
+
+  toggleClass('device-mobile', isMobile);
+  toggleClass('device-tablet', isTablet);
+  toggleClass('device-desktop', deviceType === 'desktop');
+  toggleClass('desktop-runtime', isDesktopShellRuntime);
+  toggleClass('mobile-pointer', !isDesktopShellRuntime && hasTouchInput);
 
   if (isDesktopShellRuntime) {
-    root.classList.add('desktop-runtime');
-    root.style.setProperty('--is-mobile', '0');
-    root.style.setProperty('--device-type', 'desktop');
-    root.style.setProperty('--font-scale', '1');
-    root.style.setProperty('--has-coarse-pointer', '0');
-    root.style.setProperty('--has-touch-input', '0');
-    root.classList.remove('mobile-pointer');
+    setProperty('--is-mobile', '0');
+    setProperty('--device-type', 'desktop');
+    setProperty('--font-scale', '1');
+    setProperty('--has-coarse-pointer', '0');
+    setProperty('--has-touch-input', '0');
   } else {
-    root.classList.remove('desktop-runtime');
-    root.style.setProperty('--is-mobile', isMobile ? '1' : '0');
-    root.style.setProperty('--device-type', deviceType);
-    root.style.setProperty('--font-scale', isMobile ? '0.9' : isTablet ? '0.95' : '1');
-    root.style.setProperty('--has-coarse-pointer', hasTouchInput ? '1' : '0');
-    root.style.setProperty('--has-touch-input', hasTouchInput ? '1' : '0');
-    if (hasTouchInput) {
-      root.classList.add('mobile-pointer');
-    } else {
-      root.classList.remove('mobile-pointer');
-    }
+    setProperty('--is-mobile', isMobile ? '1' : '0');
+    setProperty('--device-type', deviceType);
+    setProperty('--font-scale', isMobile ? '0.9' : isTablet ? '0.95' : '1');
+    setProperty('--has-coarse-pointer', hasTouchInput ? '1' : '0');
+    setProperty('--has-touch-input', hasTouchInput ? '1' : '0');
   }
 
-  applyDesignPtScaleToRoot(isDesktopShellRuntime ? 1 : readCachedDesignPtScale(), root);
+  const scale = isDesktopShellRuntime ? 1 : readCachedDesignPtScale();
+  if (root.style.getPropertyValue('--dpt') !== `${scale}px` || root.style.getPropertyValue('--dpt-n') !== String(scale)) {
+    applyDesignPtScaleToRoot(scale, root);
+  }
 };
 
 export function getDeviceInfo(): DeviceInfo {
@@ -170,19 +175,20 @@ export function getDeviceInfo(): DeviceInfo {
   };
 }
 
-const isSameDeviceInfo = (left: DeviceInfo, right: DeviceInfo): boolean => (
+const isSameDeviceLayout = (left: DeviceLayoutInfo, right: DeviceLayoutInfo): boolean => (
   left.isMobile === right.isMobile
   && left.isTablet === right.isTablet
   && left.isDesktop === right.isDesktop
   && left.deviceType === right.deviceType
-  && left.screenWidth === right.screenWidth
   && left.breakpoint === right.breakpoint
   && left.hasTouchInput === right.hasTouchInput
   && left.hasTouchOnlyPointer === right.hasTouchOnlyPointer
 );
 
 const deviceInfoSubscribers = new Set<() => void>();
+const deviceLayoutSubscribers = new Set<() => void>();
 let deviceInfoSnapshot: DeviceInfo | null = null;
+let deviceLayoutSnapshot: DeviceLayoutInfo | null = null;
 let deviceInfoFrameId: number | undefined;
 let cleanupDeviceInfoSource: (() => void) | null = null;
 
@@ -198,21 +204,26 @@ const readDeviceInfoSnapshot = (): DeviceInfo => {
   return deviceInfoSnapshot;
 };
 
-const notifyDeviceInfoSubscribers = () => {
-  for (const listener of deviceInfoSubscribers) {
-    listener();
-  }
+const readDeviceLayoutSnapshot = (): DeviceLayoutInfo => {
+  if (typeof window === 'undefined') return DEFAULT_DEVICE_LAYOUT_INFO;
+  if (!deviceLayoutSnapshot) deviceLayoutSnapshot = toDeviceLayoutInfo(readDeviceInfoSnapshot());
+  return deviceLayoutSnapshot;
 };
 
 const updateDeviceInfoSnapshot = () => {
   deviceInfoFrameId = undefined;
   const next = getDeviceInfo();
-  if (deviceInfoSnapshot && isSameDeviceInfo(deviceInfoSnapshot, next)) {
+  const layoutChanged = !deviceLayoutSnapshot || !isSameDeviceLayout(deviceLayoutSnapshot, next);
+  if (!layoutChanged && deviceInfoSnapshot?.screenWidth === next.screenWidth) {
     return;
   }
 
   deviceInfoSnapshot = next;
-  notifyDeviceInfoSubscribers();
+  if (layoutChanged) {
+    deviceLayoutSnapshot = toDeviceLayoutInfo(next);
+    for (const listener of deviceLayoutSubscribers) listener();
+  }
+  for (const listener of deviceInfoSubscribers) listener();
 };
 
 const scheduleDeviceInfoUpdate = () => {
@@ -246,7 +257,7 @@ const startDeviceInfoSource = (): (() => void) => {
     return () => {};
   }
 
-  deviceInfoSnapshot = getDeviceInfo();
+  updateDeviceInfoSnapshot();
   window.addEventListener('resize', scheduleDeviceInfoUpdate);
 
   const pointerQuery = typeof window.matchMedia === 'function'
@@ -269,25 +280,29 @@ const startDeviceInfoSource = (): (() => void) => {
   };
 };
 
-const subscribeDeviceInfo = (listener: () => void): (() => void) => {
+const subscribeToDeviceSource = (subscribers: Set<() => void>, listener: () => void): (() => void) => {
   if (typeof window === 'undefined') {
     return () => {};
   }
 
-  deviceInfoSubscribers.add(listener);
+  subscribers.add(listener);
   if (!cleanupDeviceInfoSource) {
     cleanupDeviceInfoSource = startDeviceInfoSource();
   }
 
   return () => {
-    deviceInfoSubscribers.delete(listener);
-    if (deviceInfoSubscribers.size === 0 && cleanupDeviceInfoSource) {
+    subscribers.delete(listener);
+    if (deviceInfoSubscribers.size === 0 && deviceLayoutSubscribers.size === 0 && cleanupDeviceInfoSource) {
       cleanupDeviceInfoSource();
       cleanupDeviceInfoSource = null;
       deviceInfoSnapshot = null;
+      deviceLayoutSnapshot = null;
     }
   };
 };
+
+const subscribeDeviceInfo = (listener: () => void) => subscribeToDeviceSource(deviceInfoSubscribers, listener);
+const subscribeDeviceLayout = (listener: () => void) => subscribeToDeviceSource(deviceLayoutSubscribers, listener);
 
 export function isMobileDeviceViaCSS(): boolean {
   if (typeof window === 'undefined') return false;
@@ -387,10 +402,13 @@ export function useOrientation(): Orientation {
   return orientation;
 }
 
-export function useDeviceInfo(): DeviceInfo {
+export function useDeviceInfo(options: { includeScreenWidth: true }): DeviceInfo;
+export function useDeviceInfo(options?: { includeScreenWidth?: false }): DeviceLayoutInfo;
+export function useDeviceInfo(options: { includeScreenWidth: boolean }): DeviceLayoutInfo | DeviceInfo;
+export function useDeviceInfo(options?: { includeScreenWidth?: boolean }): DeviceLayoutInfo | DeviceInfo {
   return React.useSyncExternalStore(
-    subscribeDeviceInfo,
-    readDeviceInfoSnapshot,
-    () => DEFAULT_DEVICE_INFO,
+    options?.includeScreenWidth ? subscribeDeviceInfo : subscribeDeviceLayout,
+    options?.includeScreenWidth ? readDeviceInfoSnapshot : readDeviceLayoutSnapshot,
+    () => options?.includeScreenWidth ? DEFAULT_DEVICE_INFO : DEFAULT_DEVICE_LAYOUT_INFO,
   );
 }

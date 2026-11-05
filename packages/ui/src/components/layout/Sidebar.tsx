@@ -1,4 +1,5 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
 import { cn } from '@/lib/utils';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { useI18n } from '@/lib/i18n';
@@ -7,6 +8,8 @@ import { useUIStore } from '@/stores/useUIStore';
 const SIDEBAR_CONTENT_WIDTH = 260;
 const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = 500;
+
+const clampSidebarWidth = (value: number) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
 
 interface SidebarProps {
     isOpen: boolean;
@@ -27,12 +30,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
     const resizingWidthRef = React.useRef<number | null>(null);
     const activeResizePointerIDRef = React.useRef<number | null>(null);
     const sidebarRef = React.useRef<HTMLElement | null>(null);
+    const contentRef = React.useRef<HTMLDivElement | null>(null);
 
-    const clampSidebarWidth = React.useCallback((value: number) => {
-        return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
-    }, []);
-
-    const applyLiveWidth = React.useCallback((nextWidth: number) => {
+    const applyLiveWidth = useEvent((nextWidth: number) => {
         const sidebar = sidebarRef.current;
         if (!sidebar) {
             return;
@@ -41,8 +41,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
         sidebar.style.width = `${nextWidth}px`;
         sidebar.style.minWidth = `${nextWidth}px`;
         sidebar.style.maxWidth = `${nextWidth}px`;
-        sidebar.style.setProperty('--yuri-left-sidebar-width', `${nextWidth}px`);
-    }, []);
+        if (contentRef.current) contentRef.current.style.width = `${nextWidth}px`;
+    });
 
     React.useEffect(() => {
         if (isMobile && isResizing) {
@@ -135,7 +135,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                 width: `${currentWidth}px`,
                 minWidth: `${currentWidth}px`,
                 maxWidth: `${currentWidth}px`,
-                ['--yuri-left-sidebar-width' as string]: `${isResizing ? currentWidth : openWidth}px`,
                 overflowX: 'clip',
                 transitionProperty: isResizing ? 'none' : 'width, min-width, max-width',
                 transitionDuration: '200ms',
@@ -159,12 +158,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                 />
             )}
             <div
+                ref={contentRef}
                 className={cn(
                     'relative z-10 flex h-full shrink-0 flex-col transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
                     isResizing && 'pointer-events-none',
                     !isOpen && 'pointer-events-none select-none opacity-0'
                 )}
-                style={{ width: 'var(--yuri-left-sidebar-width)', overflowX: 'hidden' }}
+                style={{ width: `${isResizing ? currentWidth : openWidth}px`, overflowX: 'hidden' }}
                 aria-hidden={!isOpen}
             >
                 {topBar}
