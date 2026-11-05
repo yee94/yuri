@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "channel": "beta",
-  "generation": 49,
+  "generation": 50,
   "activeBundle": {
     "applicationId": "com.yee94.yuri",
     "bundleId": "4432d3bafae639f6",
@@ -9,8 +9,8 @@
     "url": "/ota/bundles/4432d3bafae639f6.zip",
     "size": 10276042,
     "checksum": "4432d3bafae639f63a3b5eca86b72e5996cb114b6755904329597e8eeaadd1c0",
-    "rolloutPercent": 100,
-    "rolloutSalt": "stable-7",
+    "rolloutPercent": 0,
+    "rolloutSalt": "beta-50",
     "minShellApiVersion": 3,
     "platforms": {
       "ios": {
