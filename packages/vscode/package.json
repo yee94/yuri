@@ -2,7 +2,7 @@
   "name": "yuri",
   "displayName": "Yuri",
   "description": "%extension.description%",
-  "version": "0.2.31-beta.5",
+  "version": "0.2.31",
   "publisher": "yee94",
   "private": true,
   "repository": {
