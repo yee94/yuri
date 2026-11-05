@@ -106,10 +106,12 @@ export async function writeDesktopAssetMetadata(directory) {
   const backend = path.join(directory, 'desktop-backend');
   await rm(backend, { recursive: true, force: true });
   await mkdir(backend, { recursive: true });
-  await cp(path.join(root, 'packages/web/server'), path.join(backend, 'server'), {
-    recursive: true,
-    filter: (source) => !/\.(?:test|spec)\./.test(source),
-  });
+  for (const directory of ['server', 'shared']) {
+    await cp(path.join(root, 'packages/web', directory), path.join(backend, directory), {
+      recursive: true,
+      filter: (source) => !/\.(?:test|spec)\./.test(source),
+    });
+  }
   await cp(path.join(root, 'packages/web/package.json'), path.join(backend, 'package.json'));
   const metadata = { applicationId: 'dev.yuri.desktop', shellApiVersion: 2, releaseVersion: version, backendVersion: version, shellFingerprint: await desktopShellFingerprint() };
   await writeFile(path.join(directory, 'desktop-ota.json'), JSON.stringify(metadata));

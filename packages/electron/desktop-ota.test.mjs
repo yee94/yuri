@@ -3,8 +3,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { DesktopOta } from './desktop-ota.mjs';
-import { createAssetZip } from '../web/server/lib/zip-assets.js';
+import { createAssetZip, extractAssetZip } from '../web/server/lib/zip-assets.js';
 import { writeDesktopAssetMetadata } from '../../scripts/desktop-ota-assets.mjs';
 
 const roots = [];
@@ -48,12 +50,27 @@ describe('desktop OTA lifecycle', () => {
     expect(f.ota.decision).toBe(decision);
     expect(await readFile(path.join(f.options.directory, 'state.json'), 'utf8')).toBe(disk);
   });
-  test('accepts resources produced by the release metadata writer', async () => {
+  test('release archive loads the real backend after extraction with installed dependencies', { timeout: 30000 }, async () => {
     const f = await fixture();
     const assets = path.join(f.root, 'assets');
     const metadata = await writeDesktopAssetMetadata(assets);
     const ota = new DesktopOta({ ...f.options, requireBackend: true });
     await expect(ota.validateResources(assets, metadata.releaseVersion)).resolves.toBeUndefined();
+    const archive = path.join(f.root, 'release.zip');
+    createAssetZip(assets, archive);
+    const extracted = path.join(f.root, 'extracted');
+    await extractAssetZip(await readFile(archive), extracted);
+    const loader = new URL('./desktop-backend.mjs', import.meta.url).href;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+      import { loadDesktopBackend } from ${JSON.stringify(loader)};
+      const backend = await loadDesktopBackend(${JSON.stringify(path.join(extracted, 'desktop-backend'))});
+      if (typeof backend.startWebUiServer !== 'function' || typeof backend.mintOutsideFileGrant !== 'function') {
+        throw new Error('Incomplete release backend');
+      }
+      console.log('release backend import OK');
+      process.exit(0);
+    `], { timeout: 15000 });
+    expect(stdout).toContain('release backend import OK');
   });
   test('reports the native desktop identity and rejects foreign or old-bridge resources', async () => {
     const f = await fixture();
