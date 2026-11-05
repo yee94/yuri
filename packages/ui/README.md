@@ -5,6 +5,10 @@ OpenCode package identities and protocols remain third-party contracts.
 
 ## Tests
 
+Remote Instances SSH row actions show a spinner and disable repeated clicks during
+the local request and every live bootstrap/reconnect phase, including installation
+and updates. Request failure releases the local lock so the user can retry.
+
 Tests that launch real Chrome/Chromium are temporarily marked `test.skip` /
 `it.skip`, including the standalone avatar performance gate. Non-browser tests
 in the same files remain enabled; browser fixtures and assertions are retained.

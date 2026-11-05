@@ -1077,6 +1077,30 @@ const normalizeForSave = (instance: DesktopSshInstance): DesktopSshInstance => {
   };
 };
 
+const SshConnectionButton = ({ phase, onAction }: { phase?: string; onAction: () => Promise<unknown> }) => {
+  const { t } = useI18n();
+  const [pending, setPending] = React.useState(false);
+  const inFlight = React.useRef(false);
+  const busy = pending || isConnectingPhase(phase) || phase === 'degraded';
+  const ready = phase === 'ready';
+  return (
+    <Button type="button" variant="ghost" size="xs" className="!font-normal" disabled={busy} aria-busy={busy} onClick={async () => {
+      if (inFlight.current || busy) return;
+      inFlight.current = true;
+      setPending(true);
+      try {
+        await onAction();
+      } finally {
+        inFlight.current = false;
+        setPending(false);
+      }
+    }}>
+      <Icon name={busy ? 'refresh' : ready ? 'stop' : 'plug-2'} className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
+      {ready ? t('settings.remoteInstances.sidebar.actions.disconnect') : busy ? t('settings.remoteInstances.page.actions.connecting') : t('settings.remoteInstances.sidebar.actions.connect')}
+    </Button>
+  );
+};
+
 export const RemoteInstancesPage: React.FC = () => {
   const { t } = useI18n();
   const { clientAuth } = useRuntimeAPIs();
@@ -2558,9 +2582,9 @@ export const RemoteInstancesPage: React.FC = () => {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => {
+                        <SshConnectionButton phase={phase} onAction={() => {
                           const op = ready ? disconnect(instance.id) : connect(instance.id);
-                          void op.catch((err) => {
+                          return op.catch((err) => {
                             const connectDetail = instanceStatus?.detail || (err instanceof Error ? err.message : String(err));
                             const connectCode = resolveManagedSshBootstrapErrorCode(instanceStatus?.errorCode, connectDetail);
                             toast.error(ready ? t('settings.remoteInstances.sidebar.toast.disconnectFailed') : t('settings.remoteInstances.sidebar.toast.connectFailed'), {
@@ -2573,10 +2597,7 @@ export const RemoteInstancesPage: React.FC = () => {
                                 ),
                             });
                           });
-                        }}>
-                          {ready ? <Icon name="stop" className="h-3.5 w-3.5" /> : <Icon name="plug-2" className="h-3.5 w-3.5" />}
-                          {ready ? t('settings.remoteInstances.sidebar.actions.disconnect') : t('settings.remoteInstances.sidebar.actions.connect')}
-                        </Button>
+                        }} />
                         {ready ? switchButton : (
                           <Tooltip>
                             <TooltipTrigger asChild>
