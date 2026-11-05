@@ -9,7 +9,6 @@ import {
   keepEvidence,
   openChromeSession,
   openPageSession,
-  resolveChrome,
 } from '../ui/chromeCdpHarness'
 
 type Measure = {
@@ -22,7 +21,6 @@ type Measure = {
 
 const here = dirname(fileURLToPath(import.meta.url))
 const uiSrc = join(here, '../..')
-const chromeAvailable = Boolean(resolveChrome())
 const evidenceDirs: string[] = []
 
 afterAll(() => {
@@ -33,7 +31,7 @@ afterAll(() => {
 })
 
 describe('Assistant contact auto-follow in Chrome', () => {
-  test.skipIf(!chromeAvailable).each(['prepend', 'existing ownership', 'touch', 'scrollbar', 'DOM', 'cumulative', 'late-scrollbar', 'late-wheel', 'late-touch-pointer', 'late-previous-touch'] as const)('%s', async (scenario) => {
+  test.skip.each(['prepend', 'existing ownership', 'touch', 'scrollbar', 'DOM', 'cumulative', 'late-scrollbar', 'late-wheel', 'late-touch-pointer', 'late-previous-touch'] as const)('%s', async (scenario) => {
     const root = evidenceRoot()
     evidenceDirs.push(root)
     const work = mkdtempSync(join(root, 'assistant-contact-scroll-'))

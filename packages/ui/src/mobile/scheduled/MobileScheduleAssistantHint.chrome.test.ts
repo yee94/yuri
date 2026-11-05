@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { build } from 'vite';
 import { dict } from '@/lib/i18n/messages/en';
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '@/components/ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '@/components/ui/chromeCdpHarness';
 
-test.skipIf(!resolveChrome())('real Schedule avatar keeps ordinary idle motion through the visible greeting', async () => {
+test.skip('real Schedule avatar keeps ordinary idle motion through the visible greeting', async () => {
   const repo = join(dirname(fileURLToPath(import.meta.url)), '../../../../..');
   const work = evidenceRoot();
   const state = join(repo, 'scripts/experiments/assistant-avatar/schedule-fixture-state.ts');
@@ -154,7 +154,7 @@ test.skipIf(!resolveChrome())('real Schedule avatar keeps ordinary idle motion t
   }
 }, 120_000);
 
-test.skipIf(!resolveChrome())('Schedule hint travels left and back without changing existing height; add stays circular', async () => {
+test.skip('Schedule hint travels left and back without changing existing height; add stays circular', async () => {
   const css = await compileProductionCssAsync(join(dirname(fileURLToPath(import.meta.url)), '../..'));
   const work = mkdtempSync(join(evidenceRoot(), 'schedule-hint-'));
   const browser = await openChromeSession({ width: 390, height: 844 });

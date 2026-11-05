@@ -48,6 +48,7 @@ export function createRuntime(config: Config, options?: { body?: string; isGazeA
   setBody(body: string, options?: { isInstant?: boolean }): void;
   blink(): void;
   readonly isSettled: boolean;
+  readonly loopCount: number;
 };
 export function createStateMachine(config: Config, runtime: ReturnType<typeof createRuntime>, state: string, options?: {
   seed?: number; isCompact?: boolean; isResting?: boolean; firstPhase?: number;

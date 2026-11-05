@@ -214,6 +214,34 @@ describe('Anatomy animation integration', () => {
     expect(createAssistantAvatarPlayer(dark, 'contrast', 'idle').advance(1 / 30).model.spotPaint).toBe('#f2f4f7');
   });
 
+  test.each([true, false])('single-cycle idle (compact=%s) finishes on the actual clip loop, not its entry bridge', compact => {
+    const seed = 'single-cycle';
+    const recipe = { ...resolveAssistantAvatar(seed), shape: 'round' as const };
+    const config = makeConfig(recipes);
+    const runtime = createRuntime(config, { body: 'sphere', isGazeAlways: true });
+    let hash = 2166136261;
+    for (const c of seed) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619) >>> 0;
+    const machine = createStateMachine(config, runtime, 'idle', { seed: hash, firstPhase: 0, isCompact: compact, isResting: true });
+    runtime.pause(); runtime.seek(0);
+    for (let i = 0; i < 60; i++) runtime.advance(0.1);
+    machine.setResting(false);
+    const player = createAssistantAvatarPlayer(recipe, seed, 'idle', compact, { resting: true, playOnce: true });
+    player.setResting(false);
+    let steps = 0;
+    while (runtime.loopCount === 0 && steps < 600) {
+      machine.advance(1 / 60); runtime.advance(1 / 60);
+      player.advance(1 / 60);
+      expect(player.finished).toBe(runtime.loopCount > 0);
+      steps++;
+    }
+    expect(player.finished).toBe(true);
+    expect(steps).toBeGreaterThan(240);
+    for (let i = 0; i < 120; i++) player.advance(1 / 60);
+    expect(player.isSettled).toBe(true);
+    const settled = geometry(player.advance(0).model);
+    for (let i = 0; i < 120; i++) expect(geometry(player.advance(1 / 60).model)).toBe(settled);
+  });
+
   test.each(['idle', 'working'] as const)('round %s geometry is the reference output, without hand-tuned eye angles', (motion) => {
     const recipe = { ...resolveAssistantAvatar(createDefaultAssistantAvatarSeed('reference')), color: 'iris' as const };
     const config = makeConfig(recipes), generators = makeMorphGenerators(config), trail = makeTrail(config);

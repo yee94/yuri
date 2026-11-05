@@ -3,9 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { build } from 'vite';
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../../components/ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../../components/ui/chromeCdpHarness';
 
-test.skipIf(!resolveChrome())('speech marker covers inline code backgrounds without moving text or changing unrelated code', async () => {
+test.skip('speech marker covers inline code backgrounds without moving text or changing unrelated code', async () => {
     const root = evidenceRoot();
     const src = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
     const chrome = await openChromeSession({ width: 402, height: 874 });

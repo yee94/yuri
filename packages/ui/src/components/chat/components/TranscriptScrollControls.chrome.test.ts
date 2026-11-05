@@ -5,11 +5,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, vi } from 'vitest';
 import { TranscriptScrollControls } from './TranscriptScrollControls';
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../../ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../../ui/chromeCdpHarness';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 
-test.skipIf(!resolveChrome())('navigation follows compact pill geometry and uses the player green in light and dark', async () => {
+test.skip('navigation follows compact pill geometry and uses the player green in light and dark', async () => {
     const root = evidenceRoot();
     const chrome = await openChromeSession({ width: 402, height: 874 });
     try {

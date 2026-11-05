@@ -11,7 +11,6 @@ import {
   keepEvidence,
   openChromeSession,
   openPageSession,
-  resolveChrome,
   type RgbSample,
 } from '@/components/ui/chromeCdpHarness';
 
@@ -31,8 +30,6 @@ const mobileCssSource = readFileSync(join(uiSrc, 'styles/mobile.css'), 'utf-8');
 const DARK_IFRAME = { r: 11, g: 61, b: 11 }; // #0b3d0b
 const LIGHT_SHELL = { r: 248, g: 247, b: 243 }; // #f8f7f3
 const WHITE = { r: 255, g: 255, b: 255 };
-
-const chromeAvailable = Boolean(resolveChrome());
 
 const buildFixtureHtml = (opts: {
   mode: 'preview' | 'source' | 'inert-preview' | 'default-sheet' | 'file-preview' | 'inert-file-preview';
@@ -215,7 +212,7 @@ describe('MobileFilesSurface HTML preview production layout', () => {
     expect(mobileCssSource).toMatch(/display-mode:\s*standalone[\s\S]*data-mobile-html-preview/);
   });
 
-  test.skipIf(!chromeAvailable)(
+  test.skip(
     'CDP standalone + production CSS: preview edge green, source keeps pad, screenshots differ',
     async () => {
       const compiledCssRaw = await compileProductionCssAsync(uiSrc);

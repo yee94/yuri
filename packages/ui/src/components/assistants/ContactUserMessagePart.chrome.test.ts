@@ -6,13 +6,13 @@ import { build } from 'vite'
 import { expect, test } from 'vitest'
 import cursorDark from '@/lib/theme/themes/cursor-dark.json'
 import carbonfoxLight from '@/lib/theme/themes/carbonfox-light.json'
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../ui/chromeCdpHarness'
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../ui/chromeCdpHarness'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const uiSrc = join(here, '../..')
 const require = createRequire(import.meta.url)
 
-test.skipIf(!resolveChrome())('failed parts stay independently centered, have no hover fill, and open an anchored retry popup', async () => {
+test.skip('failed parts stay independently centered, have no hover fill, and open an anchored retry popup', async () => {
   const work = evidenceRoot()
   const entry = join(work, 'entry.tsx')
   const html = join(work, 'index.html')

@@ -70,10 +70,11 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   let settling = false;
   let settleDeadline = 0;
   let appeared = false;
+  let onceFinished = false;
   let nextAppearanceBlinkIn: number | null = null;
   let remainingAppearanceBlinks = 0;
-  let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean; animateIdle?: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
-  const resting = () => state.motion === 'idle' && !randomizeShape && !state.followPointer && !state.animateIdle;
+  let state: { active: boolean; motion: AvatarMotion; size: number; followPointer: boolean; animateIdle?: boolean; playOnce?: boolean } = { active: false, motion: 'idle', size: 0, followPointer: false };
+  const resting = () => state.motion === 'idle' && ((state.playOnce && onceFinished) || (!randomizeShape && !state.followPointer && !state.animateIdle && !state.playOnce));
   const sharing = () => state.motion === 'working' && !randomizeShape;
   // Work uses one clip/geometry mode so slot size cannot change the shared pose.
   const compact = () => sharing() || state.size < 48;
@@ -82,6 +83,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     nextAppearanceBlinkIn = null;
     remainingAppearanceBlinks = 0;
     if (!stop) return;
+    if (state.playOnce) onceFinished = true;
     stop(); stop = null; player = null; shared = null; settling = false;
     renderer.still();
   };
@@ -89,8 +91,8 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     if (player) return;
     const win = host.ownerDocument.defaultView;
     if (!win) return;
-    const idleEntrance = Boolean(state.motion === 'idle' && state.animateIdle && !randomizeShape && !state.followPointer);
-    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, compact(), { randomizeShape, eyeColor, resting: resting() || idleEntrance });
+    const idleEntrance = Boolean(state.motion === 'idle' && (state.animateIdle || state.playOnce) && !(state.playOnce && onceFinished) && !randomizeShape && !state.followPointer);
+    const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, compact(), { randomizeShape, eyeColor, resting: resting() || idleEntrance, ...(state.playOnce && !onceFinished ? { playOnce: true } : {}) });
     if (idleEntrance) live.setResting(false);
     player = live;
     shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe) : null;
@@ -115,6 +117,11 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         }
       }
       const sample = live.advance(dt, source?.read(timestamp));
+      if (state.playOnce && !onceFinished && live.finished) {
+        onceFinished = true;
+        settling = true;
+        settleDeadline = timestamp + 1500;
+      }
       renderer.paint(sample);
       previous = timestamp;
       if (resting() && nextAppearanceBlinkIn === null && !sample.hovering && !sample.blinking && (!settling || timestamp > settleDeadline || (source ? source.settled() : live.isSettled))) reset();
@@ -135,12 +142,12 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
   };
 
   return {
-    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean | 2; animateIdle?: boolean }) {
+    update(next: { active: boolean; motion: AvatarMotion; size: number; followPointer?: boolean; blinkOnMount?: boolean | 2; animateIdle?: boolean; playOnce?: boolean }) {
       if (disposed) return;
       const wasResting = resting();
       const wasSharing = sharing();
       const previous = state;
-      state = { ...next, active: next.active && recipe.animate, followPointer: Boolean(next.followPointer && (next.motion !== 'working' || randomizeShape)) };
+      state = { ...next, active: next.active && recipe.animate, followPointer: Boolean(next.followPointer && !next.playOnce && (next.motion !== 'working' || randomizeShape)) };
       // Leaving live work: ease from the current pose to the static pose, then release.
       if (state.active && player && !wasResting && resting()) {
         settling = true;
@@ -173,7 +180,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
         if (sharing()) return;
         start();
         remainingAppearanceBlinks = next.blinkOnMount === 2 ? 2 : 1;
-        if (state.animateIdle) {
+        if (state.animateIdle || state.playOnce) {
           // Keep the native .35s rest-to-idle bridge visible with open eyes.
           // An immediate blink hides the turn and makes reopening look like a reset.
           nextAppearanceBlinkIn = 0.4;

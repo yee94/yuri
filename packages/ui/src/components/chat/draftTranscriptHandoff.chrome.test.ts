@@ -10,7 +10,6 @@ import {
   keepEvidence,
   openChromeSession,
   openPageSession,
-  resolveChrome,
 } from '../ui/chromeCdpHarness';
 
 type PaintSample = {
@@ -38,7 +37,6 @@ type ClaimTiming = 'fast' | 'slow';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const uiSrc = join(here, '../..');
-const chromeAvailable = Boolean(resolveChrome());
 const evidenceDirs: string[] = [];
 
 afterAll(() => {
@@ -53,7 +51,7 @@ const closeEnough = (left: number | null, right: number | null, tolerance = 0.5)
 );
 
 describe('draft transcript handoff Chrome continuity', () => {
-  test.skipIf(!chromeAvailable)(
+  test.skip(
     'keeps the committed user turn visible through fast and slow claims at the real ChatContainer seam',
     async () => {
       const evidence = evidenceRoot();

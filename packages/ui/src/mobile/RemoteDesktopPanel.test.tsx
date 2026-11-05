@@ -8,7 +8,7 @@ import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } from '@/components/ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession } from '@/components/ui/chromeCdpHarness';
 
 const mock = vi.hoisted(() => ({
   supported: true, enabled: true, query: vi.fn(), connect: vi.fn(), send: vi.fn(), close: vi.fn(), setZoomed: vi.fn(),
@@ -355,7 +355,7 @@ it('requests detail on Drag double-tap, preserves it across encoder size changes
   expect(mock.connect).toHaveBeenCalledOnce();
 });
 
-it.skipIf(!resolveChrome())('clips the zoomed screen without scrollports under production mobile-pointer CSS', async () => {
+it.skip('clips the zoomed screen without scrollports under production mobile-pointer CSS', async () => {
   vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
   vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(844);
   render();

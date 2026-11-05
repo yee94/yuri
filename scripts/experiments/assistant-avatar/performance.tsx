@@ -24,9 +24,9 @@ Element.prototype.getBoundingClientRect = function () {
 };
 const recipeFor = (index: number) => ({ ...resolveAssistantAvatar('performance'), shape: AVATAR_PICKER_SHAPES[index % AVATAR_PICKER_SHAPES.length] });
 const frames = async (count: number) => { for (let i = 0; i < count; i++) await new Promise(requestAnimationFrame); };
-const render = (count: number, draft: number, motion: 'idle' | 'working' = 'working', followPointer = true, synchronized = false) => flushSync(() => root.render(<div data-draft={draft} style={{ display: 'flex', gap: 4 }}>
+const render = (count: number, draft: number, motion: 'idle' | 'working' = 'working', followPointer = true, synchronized = false, greeting = false) => flushSync(() => root.render(<div data-draft={draft} style={{ display: 'flex', gap: 4 }}>
   {Array.from({ length: count }, (_, i) => <React.Profiler key={i} id={`face-${i}`} onRender={() => { commits++; }}>
-    <ProceduralAssistantAvatar seed={encodeAssistantAvatar(recipeFor(synchronized ? 0 : i))} size={synchronized ? [64, 40, 28][i % 3] : 44} motion={motion} followPointer={followPointer && (!synchronized || i % 3 !== 2)} animationKey={synchronized ? 'shared-bot' : `bot-${i}`} blinkOnMount={synchronized} />
+    <ProceduralAssistantAvatar seed={encodeAssistantAvatar(recipeFor(synchronized ? 0 : i))} size={synchronized ? [64, 40, 28][i % 3] : 44} motion={motion} followPointer={followPointer && (!synchronized || i % 3 !== 2)} animationKey={synchronized ? 'shared-bot' : `bot-${i}`} blinkOnMount={greeting ? 2 : synchronized} playOnce={greeting} />
   </React.Profiler>)}
 </div>));
 
@@ -92,6 +92,20 @@ Object.assign(window, { avatarPerformance: {
       samples.push(poses.length === 20 && poses.every((pose) => pose === poses[0]));
     }
     return samples;
+  },
+  async greeting() {
+    flushSync(() => root.render(null));
+    render(1, 0, 'idle', false, false, true);
+    await frames(3);
+    const before = writes;
+    const svg = host.querySelector('svg');
+    const start = performance.now();
+    while (performance.now() < start + 2000) await frames(1);
+    const poses = new Set<string>();
+    for (let i = 0; i < 24; i++) { await frames(1); poses.add(svg!.innerHTML); }
+    const deadline = start + 6500;
+    while (performance.now() < deadline) await frames(1);
+    return { writes: writes - before, poses: poses.size, sameSvg: host.querySelector('svg') === svg };
   },
   async steady() {
     const before = { commits, writes };

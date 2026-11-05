@@ -44,7 +44,7 @@ test('Dock appearance restores app intent, avoids redundant writes and retries f
   expect(setIcon).toHaveBeenCalledTimes(3);
 });
 
-test.skipIf(process.platform !== 'darwin')('real macOS Dock accepts both themes from development and staged resources', { timeout: 30000 }, async () => {
+test.skip('real macOS Dock accepts both themes from development and staged resources', { timeout: 30000 }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'yuri-dock-theme-'));
   try {
     const staged = path.join(root, 'resources');

@@ -13,7 +13,9 @@ Omit `motion` for a standalone history/picker/static face. Active contact rows,
 headers, transcript avatars (including settled messages), and empty/error states
 use `AssistantWorkingAvatar` to connect the same authoritative live work, with an
 optional row hover target. Inactive contact surfaces omit live motion. The
-navigation facade opts into ambient shape cycling. No persisted
+navigation facade plays one complete first-visible idle clip with a double blink,
+then eases back to rest and stays still
+without pointer following or ambient shape cycling. No persisted
 recipe or visual geometry changes as a result of this runtime extraction.
 
 List/header faces default to `followPointer` while idle; the React leaf enables gaze only
@@ -25,7 +27,7 @@ the assistant ID as `animationKey`, independently of its saved recipe seed.
 `runtime.ts` is the non-React seam. `mountAvatarAnimation(host, { id, seed,
 animationKey?, randomizeShape?, eyeColor? })` returns only:
 
-- `update({ active, motion, size, followPointer?, blinkOnMount?, animateIdle? })`: update live state, preserving the player
+- `update({ active, motion, size, followPointer?, blinkOnMount?, animateIdle?, playOnce? })`: update live state, preserving the player
   during continuous non-idle work/size changes. `active` is the view's intersecting, foreground,
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
   `blinkOnMount: true` opts into one native blink on the first eligible update, consumed
@@ -45,7 +47,14 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   Both greeting blinks use the existing frame countdown and cancel on interruption.
   Turning it off eases the same player
   back to rest before releasing frame work. Schedule enables it only during its
-  seven-second greeting; other idle callers retain their quiet default.
+   seven-second greeting; other idle callers retain their quiet default.
+   `playOnce: true` enables a single idle clip without pointer following. The engine
+   observes its actual loop counter, not a guessed timeout, to finish the whole
+   selected clip (four seconds for compact navigation, plus entry/exit bridges),
+   then eases the same player back to rest before unsubscribing from the frame clock.
+   The entry bridge does not count as a completed clip. Offscreen, hidden-document,
+   reduced-motion or unmount interruption cancels it; visibility return and unrelated
+   renders never replay it. Other callers retain their existing continuous motion.
 - `hover()`: trigger the bounded existing shrink/rebound outside working; eligible idle faces
   lazily start a resting player only for the hover excursion.
 - `dispose()`: idempotently release subscriptions/pointer ownership and remove
@@ -55,11 +64,11 @@ The React leaf owns standard observer/media/document Hooks and updates eligible
 animation state in a layout effect before paint; the runtime owns all
 imperative resources and per-frame DOM work. Mount paints a still face once.
 Inactive instances allocate no player or frame subscription. Idle faces without
-pointer following or `animateIdle` hold the exact reference static pose (looking up-right), with
+pointer following, `animateIdle` or `playOnce` hold the exact reference static pose (looking up-right), with
 no player, pointer lease or frame work outside an opted-in first-visible blink. Hover briefly animates that settled pose,
 then restores it and releases the player/clock. Returning from work to idle does
 the same cleanup. Mouse-capable list/header faces retain live gaze even when idle.
-Ambient navigation keeps its existing continuous shape cycle. Static React faces
+Navigation releases its player/clock after the greeting. Static React faces
 serialize their image only when needed; live faces do not generate an unused URI.
 Navigation alone supplies an optional `eyeColor` (`white` or `black`) from the
 application theme. The same painted-eye mode is used for live, reduced-motion
@@ -135,7 +144,8 @@ The same browser test verifies twenty active production faces, zero React commit
 per animation frame, zero SVG writes for fifty unrelated parent updates, one
 shared pointer listener, zero reads/writes/commits during a thousand pointer
 events, desktop idle gaze, zero ongoing writes/listeners for twenty idle transcript
-or touch-only faces, sixty frame-identical working samples across late mounts,
+or touch-only faces, zero ongoing writes/listeners after the bounded navigation-style
+greeting, sixty frame-identical working samples across late mounts,
 mixed slot sizes, mouse gaze requests and hover, and zero ongoing
 writes/listeners under reduced motion. Unit tests guard 30Hz cadence,
 read-before-write, visibility/identity/hover lifecycle, one timeline advance per

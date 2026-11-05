@@ -67,7 +67,6 @@ import { cn, formatDirectoryName } from '@/lib/utils';
 import { ModelControls } from './ModelControls';
 import { LeaderKeyHint } from './LeaderKeyHint';
 import { StatusRow } from './StatusRow';
-import { PendingChangesBar } from './PendingChangesBar';
 import ScrollToBottomButton from './components/ScrollToBottomButton';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { getSessionSurfaceActionAvailability, useSessionSurface } from './SessionSurfaceContext';
@@ -7483,7 +7482,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     showAssistantStatus={false}
                     showTodos
                     insideInputColumn
-                    leftAccessory={newSessionDraftOpen || !hasPendingChanges ? null : <PendingChangesBar />}
+                    showPendingChanges={!newSessionDraftOpen && hasPendingChanges}
                 />
                 {!isMobile && showDraftTargetSelectors ? (
                     <div className="mb-1.5 flex min-w-0 items-center gap-1.5 px-0.5">

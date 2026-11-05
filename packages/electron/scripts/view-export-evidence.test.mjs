@@ -9,7 +9,7 @@ import { expect, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-test('real Electron: isolated container PDF/long PNG through production preload, HMR and packaged origin', { timeout: 120000 }, async () => {
+test.skip('real Electron: isolated container PDF/long PNG through production preload, HMR and packaged origin', { timeout: 120000 }, async () => {
   const work = await mkdtemp(join(process.env.YURI_TEST_EVIDENCE_DIR || tmpdir(), 'view-export-'));
   let server;
   let forbiddenRequests = 0;

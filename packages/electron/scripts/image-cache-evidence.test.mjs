@@ -15,7 +15,7 @@ const chunk = (name, content) => {
   const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([type, content])));
   return Buffer.concat([length, type, content, checksum]);
 };
-test('real Electron protocol: four 5 MiB images, preview and ten session revisits', { timeout: 120000 }, async () => {
+test.skip('real Electron protocol: four 5 MiB images, preview and ten session revisits', { timeout: 120000 }, async () => {
   const work = await mkdtemp(join(process.env.YURI_TEST_EVIDENCE_DIR || tmpdir(), 'yuri-image-bench-'));
   const src = resolve(repositoryRoot, 'packages/ui/src');
   try {

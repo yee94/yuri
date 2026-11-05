@@ -107,7 +107,7 @@ export function assistantAvatarArtboard(recipe: AssistantAvatarRecipe) {
   return board;
 }
 
-export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, seed: string, motion: AvatarMotion, compact = false, { randomizeShape = false, resting = false }: { randomizeShape?: boolean; resting?: boolean } = {}) {
+export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, seed: string, motion: AvatarMotion, compact = false, { randomizeShape = false, resting = false, playOnce = false }: { randomizeShape?: boolean; resting?: boolean; playOnce?: boolean } = {}) {
   const runtime = createRuntime(config, { body: AVATAR_BODY_NAMES[recipe.shape], isGazeAlways: true });
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i++) hash = Math.imul(hash ^ seed.charCodeAt(i), 16777619) >>> 0;
@@ -119,11 +119,14 @@ export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, see
   }
   let shape = recipe.shape;
   let nextShapeIn = randomizeShape ? 4 + Math.random() * 3 : Infinity;
+  const firstLoop = runtime.loopCount;
+  let finished = false;
   return {
     setMotion: (next: AvatarMotion) => machine.setState(next),
     setCompact: (next: boolean) => machine.setCompact(next),
     setResting: (next: boolean) => machine.setResting(next),
     get isSettled() { return runtime.isSettled; },
+    get finished() { return finished; },
     setGaze: (point: Point | null) => runtime.setGaze(point),
     blink: () => runtime.blink(),
     advance(dt: number) {
@@ -132,7 +135,7 @@ export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, see
       let left = Math.min(0.1, Math.max(0, dt));
       while (left > 1e-8) {
         const step = Math.min(left, 1 / 60);
-        if (randomizeShape && (nextShapeIn -= step) <= 0) {
+        if (randomizeShape && !finished && (nextShapeIn -= step) <= 0) {
           const choices = AVATAR_PICKER_SHAPES.filter((candidate) => candidate !== shape);
           shape = choices[Math.floor(Math.random() * choices.length)];
           runtime.setBody(AVATAR_BODY_NAMES[shape]);
@@ -140,6 +143,10 @@ export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, see
         }
         machine.advance(step);
         runtime.advance(step);
+        if (playOnce && !finished && runtime.loopCount > firstLoop) {
+          finished = true;
+          machine.setResting(true);
+        }
         left -= step;
       }
       return runtime.frame();
@@ -147,8 +154,8 @@ export function createAssistantAvatarTimeline(recipe: AssistantAvatarRecipe, see
   };
 }
 
-export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed: string, motion: AvatarMotion, compact = false, { randomizeShape = false, eyeColor, resting = false }: { randomizeShape?: boolean; eyeColor?: AvatarEyeColor; resting?: boolean } = {}) {
-  const timeline = createAssistantAvatarTimeline(recipe, seed, motion, compact, { randomizeShape, resting });
+export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed: string, motion: AvatarMotion, compact = false, { randomizeShape = false, eyeColor, resting = false, playOnce = false }: { randomizeShape?: boolean; eyeColor?: AvatarEyeColor; resting?: boolean; playOnce?: boolean } = {}) {
+  const timeline = createAssistantAvatarTimeline(recipe, seed, motion, compact, { randomizeShape, resting, playOnce });
   const theme = themeFor(recipe, eyeColor);
   let hoverTime: number | null = null;
   let blinkTime: number | null = null;
@@ -157,6 +164,7 @@ export function createAssistantAvatarPlayer(recipe: AssistantAvatarRecipe, seed:
     setCompact: (next: boolean) => { compact = next; timeline.setCompact(next); },
     setResting: timeline.setResting,
     get isSettled() { return timeline.isSettled; },
+    get finished() { return timeline.finished; },
     setGaze: timeline.setGaze,
     blink: () => { if (blinkTime === null) { timeline.blink(); blinkTime = 0; } },
     hover: () => { hoverTime ??= 0; },

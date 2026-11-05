@@ -9,6 +9,6 @@ export const AssistantNavigationIcon = React.memo(function AssistantNavigationIc
   const theme = useOptionalThemeSystem();
   const eyeColor = theme?.currentTheme.metadata.variant === 'dark' ? 'black' : 'white';
   return avatar
-    ? <span aria-hidden="true" data-assistant-navigation-avatar="" className={`${className} inline-flex`}><ProceduralAssistantAvatar seed={avatar} size={size} motion="idle" randomizeShape eyeColor={eyeColor} /></span>
+    ? <span aria-hidden="true" data-assistant-navigation-avatar="" className={`${className} inline-flex`}><ProceduralAssistantAvatar seed={avatar} size={size} motion="idle" playOnce followPointer={false} blinkOnMount={2} eyeColor={eyeColor} /></span>
     : <Icon name="ai-agent" className={className} />;
 });

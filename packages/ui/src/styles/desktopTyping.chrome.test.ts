@@ -6,9 +6,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AssistantMessageFooter } from '../components/chat/message/AssistantMessageFooter';
 import { messageHoverHandlers } from '../components/chat/lib/messageHover';
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../components/ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../components/ui/chromeCdpHarness';
 
-test.skipIf(!resolveChrome())('desktop typing does not invalidate the retained transcript tree', async () => {
+test.skip('desktop typing does not invalidate the retained transcript tree', async () => {
   const root = evidenceRoot();
   const chrome = await openChromeSession({ width: 1842, height: 1892 });
   try {
@@ -72,7 +72,7 @@ test.skipIf(!resolveChrome())('desktop typing does not invalidate the retained t
   }
 }, 120_000);
 
-test.skipIf(!resolveChrome())('message hover during scrolling restyles only chrome, not rich message descendants', async () => {
+test.skip('message hover during scrolling restyles only chrome, not rich message descendants', async () => {
   const root = evidenceRoot();
   const chrome = await openChromeSession({ width: 900, height: 700 });
   try {

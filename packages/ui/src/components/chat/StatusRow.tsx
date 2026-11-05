@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useDirectorySync, useSessionLatestTodos } from "@/sync/sync-context";
 import type { Todo } from '@/lib/opencode/v2-types';
 import { TodoCompleteMark, TodoCount, TodoList, TodoProgressMark } from "./todo/TodoList";
+import { PendingChangesBar } from "./PendingChangesBar";
 
 // Compat aliases for old TodoItem shape
 type TodoItem = Todo & { id?: string };
@@ -19,7 +20,7 @@ import { useI18n } from "@/lib/i18n";
 import { useSessionSurface } from "./SessionSurfaceContext";
 import {
   statusBarPopoverClassName,
-  statusBarPopoverStyle,
+  statusBarComposerPopoverStyle,
   statusBarTriggerClassName,
   statusBarTriggerIconClassName,
   statusBarTriggerLabelClassName,
@@ -49,7 +50,7 @@ interface StatusRowProps {
   showAssistantStatus?: boolean;
   showTodos?: boolean;
   agentName?: string;
-  leftAccessory?: React.ReactNode;
+  showPendingChanges?: boolean;
   /** Mounted inside the composer's `chat-input-column`; must not add another column. */
   insideInputColumn?: boolean;
   className?: string;
@@ -70,12 +71,13 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   showAssistantStatus = true,
   showTodos = true,
   agentName,
-  leftAccessory,
+  showPendingChanges = false,
   insideInputColumn = false,
   className,
 }) => {
   const { t } = useI18n();
-  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [openPopover, setOpenPopover] = React.useState<'todos' | 'changes' | null>(null);
+  const isExpanded = openPopover === 'todos';
   const sessionSurface = useSessionSurface();
   const primarySessionId = useSessionUIStore((state) => state.currentSessionId);
   const currentSessionId = sessionSurface.sessionId ?? primarySessionId;
@@ -161,12 +163,11 @@ export const StatusRow: React.FC<StatusRowProps> = ({
     Boolean(wasAborted) ||
     Boolean(showAbortStatus)
   );
-  const hasLeftAccessory = Boolean(leftAccessory);
-  const isEmbedded = hasLeftAccessory || insideInputColumn;
+  const isEmbedded = showPendingChanges || insideInputColumn;
   // Original logic from ChatInput
   const shouldRenderPlaceholder = !showAbortStatus && !hasAbortPrompt && (wasAborted || !abortActive);
 
-  const hasContent = hasAbortPrompt || hasAssistantContent || hasTodoContent || hasLeftAccessory;
+  const hasContent = hasAbortPrompt || hasAssistantContent || hasTodoContent || showPendingChanges;
 
   // Close popover when clicking outside
   const popoverRef = React.useRef<HTMLDivElement>(null);
@@ -182,19 +183,20 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }, [isExpanded]);
 
   React.useEffect(() => {
-    if (!isExpanded) return;
+    if (!openPopover) return;
 
     const handleClickOutside = (event: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        setIsExpanded(false);
+        setOpenPopover(null);
       }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isExpanded]);
+  }, [openPopover]);
 
-  const toggleExpanded = useEvent(() => setIsExpanded((prev) => !prev));
+  const toggleExpanded = useEvent(() => setOpenPopover((prev) => prev === 'todos' ? null : 'todos'));
+  const handleChangesExpandedChange = useEvent((expanded: boolean) => setOpenPopover(expanded ? 'changes' : null));
   const todoSummaryLabel = t('chat.statusRow.summary.activeLeft', {
     active: statusSummary.active,
     left: statusSummary.left,
@@ -208,6 +210,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
       className={cn(statusBarTriggerClassName, "yuri-status-row-trigger shrink-0")}
       aria-label={todoSummaryLabel}
       title={todoSummaryLabel}
+      aria-expanded={isExpanded}
     >
       {statusSummary.left === 0 ? (
         <TodoCompleteMark />
@@ -220,7 +223,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
           {activeTodo.content}
         </span>
       ) : (
-        <span className="text-xs leading-4 md:text-[0.8125rem] md:leading-5">{t('chat.statusRow.tasksTitle')}</span>
+        <span className={cn(statusBarTriggerLabelClassName, "text-muted-foreground")}>{t('chat.statusRow.tasksTitle')}</span>
       )}
       <TodoCount done={progress.completed} total={progress.total} className={statusBarTriggerMetaClassName} animate={false} />
       {isExpanded ? (
@@ -237,14 +240,14 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }
 
   return (
-    <div className={cn("mb-1", isMobile && "relative", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
+    <div ref={popoverRef} className={cn("relative mb-1", !isEmbedded && "chat-column -mt-1", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
       {/*
-        When leftAccessory is set (ChatInput pending-changes row), the parent is
+        When showPendingChanges is set (ChatInput pending-changes row), the parent is
         already `chat-input-column`. Use the same horizontal inset as the composer
         textarea (`px-3`) so the status triggers align with input content.
       */}
       <div className={cn("flex items-center justify-between py-0.5 gap-2", isEmbedded && "px-3")}>
-        {/* Left: Abort prompt | Abort status | Working placeholder | leftAccessory */}
+        {/* Left: Abort prompt | Abort status | Working placeholder | Changes */}
         <div className={cn("flex-1 flex items-center min-w-0 gap-2", !isEmbedded && "overflow-x-hidden")}>
           {hasAbortPrompt ? (
             <div
@@ -284,24 +287,24 @@ export const StatusRow: React.FC<StatusRowProps> = ({
               isTurnSettled={isTurnSettled}
               agentName={agentName}
             />
-          ) : leftAccessory ? (
-            leftAccessory
+          ) : showPendingChanges ? (
+            <PendingChangesBar isExpanded={openPopover === 'changes'} onExpandedChange={handleChangesExpandedChange} />
           ) : null}
         </div>
 
         {/* Right: Todo */}
-        <div className={cn("flex items-center gap-2 flex-shrink-0", !isMobile && "relative", !isEmbedded && "-mr-3")} ref={popoverRef}>
+        <div className={cn("flex items-center gap-2 flex-shrink-0", !isEmbedded && "-mr-3")}>
           {todoTrigger}
 
           {/* Popover dropdown */}
           {isExpanded && hasTodoContent && (
             <div
-              style={isMobile ? { ...statusBarPopoverStyle, width: '100%', minWidth: 0, maxWidth: '100%' } : statusBarPopoverStyle}
+              style={statusBarComposerPopoverStyle}
               className={cn(
                 statusBarPopoverClassName,
                 "absolute right-0 bottom-full mb-1 z-50",
                 "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
-                "duration-150 p-[0.5em] pb-[0.875em] text-base"
+                "duration-150 p-[0.5em] pb-[0.875em] text-xs leading-4 md:text-[0.8125rem] md:leading-5"
               )}
             >
               {/* Header */}
@@ -311,8 +314,8 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 ) : (
                   <TodoProgressMark done={progress.completed} total={progress.total} spinning={isWorking} />
                 )}
-                <span className={cn("min-w-0 flex-1 truncate leading-[1.5] text-foreground", isMobile ? "text-[0.94em]" : "text-[0.88em]")}>{t('chat.workStatus.todos.title')}</span>
-                <TodoCount done={progress.completed} total={progress.total} className="text-[0.88em] text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate leading-[1.5] text-foreground">{t('chat.workStatus.todos.title')}</span>
+                <TodoCount done={progress.completed} total={progress.total} className="text-muted-foreground" />
               </div>
 
               {/* Todo list */}
@@ -321,7 +324,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
                 isWorking={isWorking}
                 animate
                 listRef={todoListRef}
-                className={cn("max-h-[min(22rem,50vh)] overflow-y-auto text-inherit", isMobile && "[&_[dir=auto]]:text-[0.84em]")}
+                className="max-h-[min(22rem,50vh)] overflow-y-auto text-inherit [&_[dir=auto]]:text-[1em]"
                 rowClassName="gap-[0.6em] px-[0.5em] py-[0.4em]"
               />
             </div>

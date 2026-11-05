@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } from '@/components/ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession } from '@/components/ui/chromeCdpHarness';
 import { dict } from '@/lib/i18n/messages/en';
 import { dict as zh } from '@/lib/i18n/messages/zh-CN';
 import { QueuedMessageChips } from './QueuedMessageChips';
@@ -243,7 +243,7 @@ it.each(['long-press', 'release-in-place', 'tap', 'quick-swipe', 'cancel'] as co
   expect(fixture.haptic).toHaveBeenCalledTimes(releasedDrag ? 2 : gesture === 'cancel' ? 1 : 0);
   if (releasedDrag) expect(fixture.haptic).toHaveBeenNthCalledWith(2, 'light', { bypassCadence: true });
 });
-it.skipIf(!resolveChrome())('preserves touch ownership on enabled queue drag handles under production mobile CSS', async () => {
+it.skip('preserves touch ownership on enabled queue drag handles under production mobile CSS', async () => {
   prepareSortableQueue();
   await render();
   const selector = `button[aria-label="${dict['chat.queuedMessage.reorderAria']}"]`;

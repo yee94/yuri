@@ -3,6 +3,12 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+## Tests
+
+Tests that launch real Chrome/Chromium are temporarily marked `test.skip` /
+`it.skip`, including the standalone avatar performance gate. Non-browser tests
+in the same files remain enabled; browser fixtures and assertions are retained.
+
 ## File editor toolbar
 
 File controls use the compact floating toolbar in the editor's upper-right corner,

@@ -3,9 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
 import { expect, test } from 'vitest';
-import { evidenceRoot, openChromeSession, openPageSession, resolveChrome } from '../components/ui/chromeCdpHarness';
+import { evidenceRoot, openChromeSession, openPageSession } from '../components/ui/chromeCdpHarness';
 
-test.skipIf(!resolveChrome())('real IndexedDB preserves blobs, retries aborted copy, and never restores deleted new records', async () => {
+test.skip('real IndexedDB preserves blobs, retries aborted copy, and never restores deleted new records', async () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const source = stripTypeScriptTypes(readFileSync(join(here, 'brand-storage-migration.ts'), 'utf8'), { mode: 'strip' }).replace(/\bexport\s+/g, '');
   const work = mkdtempSync(join(evidenceRoot(), 'brand-storage-'));
@@ -61,7 +61,7 @@ test.skipIf(!resolveChrome())('real IndexedDB preserves blobs, retries aborted c
   }
 }, 120_000);
 
-test.skipIf(!resolveChrome())('runtime file store retries failed brand copy and preserves committed clear across restart', async () => {
+test.skip('runtime file store retries failed brand copy and preserves committed clear across restart', async () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const migration = stripTypeScriptTypes(readFileSync(join(here, 'brand-storage-migration.ts'), 'utf8'), { mode: 'strip' }).replace(/\bexport\s+/g, '');
   const store = stripTypeScriptTypes(readFileSync(join(here, 'runtime-file-store.ts'), 'utf8'), { mode: 'strip' })

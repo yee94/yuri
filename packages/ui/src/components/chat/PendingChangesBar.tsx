@@ -14,8 +14,9 @@ import {
     summarizeGitChangedFiles,
 } from './changedFiles';
 import { ChangedFilesList } from './ChangedFilesList';
-import { changedFilesPopoverClassName, changedFilesPopoverStyle } from './changedFilesPopover';
+import { changedFilesPopoverClassName } from './changedFilesPopover';
 import {
+    statusBarComposerPopoverStyle,
     statusBarTriggerClassName,
     statusBarTriggerIconClassName,
     statusBarTriggerLabelClassName,
@@ -23,10 +24,13 @@ import {
 } from './statusBarPopover';
 import { useI18n } from '@/lib/i18n';
 
-export const PendingChangesBar: React.FC = React.memo(() => {
+interface PendingChangesBarProps {
+    isExpanded: boolean;
+    onExpandedChange: (expanded: boolean) => void;
+}
+
+export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({ isExpanded, onExpandedChange }) => {
     const { t } = useI18n();
-    const [isExpanded, setIsExpanded] = React.useState(false);
-    const popoverRef = React.useRef<HTMLDivElement>(null);
     const currentDirectory = useEffectiveDirectory() ?? null;
     const runtime = React.useContext(RuntimeAPIContext);
     const isGitRepo = useIsGitRepo(currentDirectory);
@@ -35,20 +39,6 @@ export const PendingChangesBar: React.FC = React.memo(() => {
     );
     const fetchStatus = useGitStore((s) => s.fetchStatus);
     const mobileActions = useMobileAppActions();
-
-    // Close popover when clicking outside
-    React.useEffect(() => {
-        if (!isExpanded) return;
-
-        const handleClickOutside = (event: MouseEvent) => {
-            if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-                setIsExpanded(false);
-            }
-        };
-
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [isExpanded]);
 
     const hasChanges = Boolean(currentDirectory && isGitRepo === true && gitStatus && !gitStatus.isClean);
 
@@ -73,7 +63,7 @@ export const PendingChangesBar: React.FC = React.memo(() => {
         if (!currentDirectory) return;
         if (!isGitFile(file)) return;
 
-        setIsExpanded(false);
+        onExpandedChange(false);
 
         const absolutePath = file.path;
 
@@ -112,13 +102,13 @@ export const PendingChangesBar: React.FC = React.memo(() => {
     // current summary on screen; do not flip the status loading flag.
     const handleToggleExpanded = () => {
         const nextExpanded = !isExpanded;
-        setIsExpanded(nextExpanded);
+        onExpandedChange(nextExpanded);
         if (!nextExpanded || !currentDirectory || !runtime?.git) return;
         void fetchStatus(currentDirectory, runtime.git, { silent: true });
     };
 
     return (
-        <div className="relative" ref={popoverRef}>
+        <div className="contents">
             <button
                 type="button"
                 className={cn(statusBarTriggerClassName, 'yuri-pending-changes-trigger max-w-full text-left')}
@@ -142,7 +132,7 @@ export const PendingChangesBar: React.FC = React.memo(() => {
             </button>
             {isExpanded && (
                 <div
-                    style={changedFilesPopoverStyle}
+                    style={statusBarComposerPopoverStyle}
                     className={cn(
                         changedFilesPopoverClassName,
                         "absolute left-0 bottom-full mb-1 z-50",

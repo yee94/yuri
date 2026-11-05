@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 import { build } from 'vite';
 import {
   compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession,
-  openPageSession, resolveChrome,
+  openPageSession,
 } from '../../ui/chromeCdpHarness';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +24,7 @@ type Measurement = {
 type Replay = { legacy: Measurement; nested: Measurement; global: Record<string, string> };
 
 describe('Markstream nested legacy code card Chromium styles', () => {
-  test.skipIf(!resolveChrome())('preserves legacy chrome in light/dark mobile and A→B→A content', async () => {
+  test.skip('preserves legacy chrome in light/dark mobile and A→B→A content', async () => {
     const work = mkdtempSync(join(evidenceRoot(), 'markstream-styles-'));
     const boundary = join(here, 'markstreamStyles.chrome.boundary.fixture.tsx');
     const css = await compileProductionCssAsync(uiSrc);

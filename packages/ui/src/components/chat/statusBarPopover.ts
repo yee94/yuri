@@ -11,6 +11,13 @@ export const statusBarPopoverStyle: CSSProperties = {
     color: 'var(--surface-elevated-foreground)',
 };
 
+export const statusBarComposerPopoverStyle: CSSProperties = {
+    ...statusBarPopoverStyle,
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+};
+
 export const statusBarPopoverHeaderClassName =
     'flex items-center justify-between gap-3 border-b-[length:var(--yuri-popup-divider-width)] border-[var(--yuri-popup-divider)] px-3 py-2.5';
 

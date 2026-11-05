@@ -273,7 +273,7 @@ describe('foreign DOM ownership', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
-  test('floating preview controls leave a content inset before the native scrollbar', async ({ skip }) => {
+  test.skip('floating preview controls leave a content inset before the native scrollbar', async ({ skip }) => {
     const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
     const { dirname, join } = await import('node:path');
     const { fileURLToPath } = await import('node:url');

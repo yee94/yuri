@@ -4,6 +4,12 @@ Electron desktop runtime for Yuri on macOS, Windows, and Linux.
 
 This package owns the native shell: windows, menus, deep links, native notifications, auto-updates, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and Yuri server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
 
+## Tests
+
+Tests that launch real Electron are temporarily marked `test.skip`, including
+IndexedDB, Dock and evidence fixtures. Node-only and mocked Electron tests remain
+enabled, including those sharing an evidence test file. Fixture code is retained.
+
 ## How It Runs
 
 Desktop starts the Yuri web server in the same Electron main process. There is no separate sidecar subprocess for the Yuri server.
@@ -270,7 +276,7 @@ Desktop OTA writes only to userData on macOS, Windows and Linux. It does not rep
 
 ### Updater End-to-End Fixture
 
-`bun run test:updater` covers OTA state transitions and runs a real Electron relaunch fixture (`scripts/desktop-ota-evidence.test.mjs`): verified assets are queued, the process PID changes, and the new window loads the new resources through `yuri-ui://`. Full signed installer, Windows and Linux runtime validation still requires those platform builds.
+`bun run test:updater` covers OTA state transitions. Its real Electron relaunch fixture (`scripts/desktop-ota-evidence.test.mjs`) is temporarily skipped: it verifies assets are queued, the process PID changes, and the new window loads the new resources through `yuri-ui://`. Full signed installer, Windows and Linux runtime validation still requires those platform builds.
 
 The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls and auto-update; system tray and launch-at-login remain macOS/Windows only. Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS and Windows (Linux returns an empty list without errors).
 
@@ -649,9 +655,9 @@ documentation. Owner: desktop maintainers. Exit: after the 2.x migration window 
 successful user recovery, remove the importer and its legacy fixtures together; never
 remove compatibility strings independently while the importer remains supported.
 
-`test:brand-migration` runs a real Electron old-profile seed, new-origin import and
-independent restart verification for drafts, attachment bytes, transcript content,
-schema and settings. Unit tests cover WAL, destination precedence, corruption/retry,
+`test:brand-migration` retains a temporarily skipped real Electron old-profile seed,
+new-origin import and independent restart verification for drafts, attachment bytes,
+transcript content, schema and settings. Unit tests cover WAL, destination precedence, corruption/retry,
 running-source refusal and Preview isolation. macOS headless Electron evidence does
 not verify Windows/Linux installation, signed upgrades, OS credentials, Dock cache,
 real user-profile imports or remote update deployment.

@@ -13,12 +13,10 @@ import {
   keepEvidence,
   openChromeSession,
   openPageSession,
-  resolveChrome,
 } from './chromeCdpHarness';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const uiSrc = join(here, '../..');
-const chromeAvailable = Boolean(resolveChrome());
 const evidenceDirs: string[] = [];
 
 afterAll(() => {
@@ -29,7 +27,7 @@ afterAll(() => {
 });
 
 describe('iframeSheetOverscroll Chrome iframe realm', () => {
-  test.skipIf(!chromeAvailable)(
+  test.skip(
     'screen coords stay monotonic under surface transform; form/nested block; one begin/finish',
     async () => {
       const root = evidenceRoot();

@@ -10,7 +10,6 @@ import {
   keepEvidence,
   openChromeSession,
   openPageSession,
-  resolveChrome,
 } from '../ui/chromeCdpHarness';
 
 type FrameMeasure = {
@@ -36,7 +35,6 @@ type FrameMeasure = {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const uiSrc = join(here, '../..');
-const chromeAvailable = Boolean(resolveChrome());
 const evidenceDirs: string[] = [];
 
 afterAll(() => {
@@ -51,7 +49,7 @@ const closeEnough = (left: number, right: number, tolerance = 0.5) => (
 );
 
 describe('pending assistant header Chrome continuity', () => {
-  test.skipIf(!chromeAvailable)(
+  test.skip(
     'replays MessageList state in real Chrome with production CSS',
     async () => {
       const root = evidenceRoot();

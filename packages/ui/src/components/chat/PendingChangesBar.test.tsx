@@ -12,6 +12,10 @@ const gitState = vi.hoisted(() => ({
   },
 }));
 const defaultStatus = vi.hoisted(() => ({ value: null as unknown }));
+const surface = vi.hoisted(() => ({
+  isMobile: false,
+  todos: [] as { content: string; status: string; priority: string }[],
+}));
 
 vi.mock('@/lib/i18n', () => ({
   useI18n: () => ({ t: (key: string, values?: { count?: number }) => (
@@ -38,9 +42,24 @@ vi.mock('@/stores/useGitStore', () => ({
   }),
 }));
 
+vi.mock('@/sync/session-ui-store', () => ({
+  useSessionUIStore: (selector: (state: unknown) => unknown) => selector({ currentSessionId: 'session' }),
+}));
+vi.mock('@/sync/sync-context', () => ({
+  useDirectorySync: (selector: (state: unknown) => unknown) => selector({ todo: {} }),
+  useSessionLatestTodos: () => surface.todos,
+}));
+vi.mock('@/stores/useTodosPersistStore', () => ({
+  useTodosPersistStore: (selector: (state: unknown) => unknown) => selector({ sessions: {} }),
+}));
+vi.mock('@/stores/useUIStore', () => ({
+  useUIStore: (selector: (state: unknown) => unknown) => selector({ isMobile: surface.isMobile }),
+}));
+vi.mock('./message/parts/WorkingPlaceholder', () => ({ WorkingPlaceholder: () => null }));
+
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import type { RuntimeAPIs } from '@/lib/api/types';
-import { PendingChangesBar } from './PendingChangesBar';
+import { StatusRow } from './StatusRow';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,6 +73,8 @@ afterEach(async () => {
   host.remove();
   fetchStatus.mockClear();
   gitState.status = defaultStatus.value as typeof gitState.status;
+  surface.todos = [];
+  surface.isMobile = false;
 });
 
 const renderBar = async () => {
@@ -63,7 +84,7 @@ const renderBar = async () => {
   await act(async () => {
     root.render(
       <RuntimeAPIContext.Provider value={{ git } as unknown as RuntimeAPIs}>
-        <PendingChangesBar />
+        <StatusRow showPendingChanges showAssistantStatus={false} insideInputColumn />
       </RuntimeAPIContext.Provider>,
     );
   });
@@ -100,6 +121,55 @@ describe('PendingChangesBar expand refresh', () => {
 
     expect(button?.getAttribute('aria-expanded')).toBe('false');
     expect(fetchStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('composer popovers', () => {
+  test.each([false, true])('Tasks and Changes are full-width and mutually exclusive (mobile=%s)', async (isMobile) => {
+    surface.isMobile = isMobile;
+    surface.todos = [{ content: 'Current task', status: 'in_progress', priority: 'medium' }];
+    await renderBar();
+    const changes = host.querySelector<HTMLButtonElement>('.yuri-pending-changes-trigger')!;
+    const tasks = host.querySelector<HTMLButtonElement>('.yuri-status-row-trigger')!;
+    const popups = () => host.querySelectorAll<HTMLDivElement>('.yuri-popup-surface');
+    const expectFullWidth = () => {
+      expect(popups()).toHaveLength(1);
+      const popup = popups()[0];
+      expect(popup.style.width).toBe('100%');
+      expect(parseFloat(popup.style.minWidth)).toBe(0);
+      expect(popup.style.maxWidth).toBe('100%');
+      let ancestor = popup.parentElement;
+      while (ancestor && ancestor !== host.firstElementChild) {
+        expect(ancestor.classList.contains('relative')).toBe(false);
+        ancestor = ancestor.parentElement;
+      }
+      expect(ancestor?.classList.contains('relative')).toBe(true);
+    };
+
+    await act(async () => changes.click());
+    expectFullWidth();
+    expect(changes.getAttribute('aria-expanded')).toBe('true');
+    expect(tasks.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => tasks.click());
+    expectFullWidth();
+    expect(popups()[0].textContent).toContain('Current task');
+    expect(changes.getAttribute('aria-expanded')).toBe('false');
+    expect(tasks.getAttribute('aria-expanded')).toBe('true');
+
+    await act(async () => changes.click());
+    expectFullWidth();
+    expect(tasks.getAttribute('aria-expanded')).toBe('false');
+    expect(changes.getAttribute('aria-expanded')).toBe('true');
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => changes.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expectFullWidth();
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(popups()).toHaveLength(0);
+    await act(async () => tasks.click());
+    await act(async () => tasks.click());
+    expect(popups()).toHaveLength(0);
   });
 });
 

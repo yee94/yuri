@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterAll, expect, test } from 'vitest';
 import { build } from 'vite';
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../ui/chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../ui/chromeCdpHarness';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const exec = promisify(execFile);
@@ -17,7 +17,7 @@ afterAll(() => {
     if (!keepEvidence()) for (const dir of workDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-test.skipIf(!resolveChrome()).each(['normal', 'delayed-resize', 'virtualize-transition', 'continued-drag', 'desktop-short', 'desktop-warmup', 'desktop-warmup-scrolling', 'desktop-warmup-pinned', 'desktop-warmup-small-pinned', 'column-resize-desktop', 'partial-turn', 'mobile-partial-turn', 'fast-entry', 'fast-entry-desktop-wheel', 'fast-entry-desktop-key', 'compact-prepend', 'compact-prepend-desktop', 'turn-prepend', 'turn-prepend-desktop', 'mobile-scroll-controls'] as const)('history prepend keeps the reading row (%s)', async (scenario) => {
+test.skip.each(['normal', 'delayed-resize', 'virtualize-transition', 'continued-drag', 'desktop-short', 'desktop-warmup', 'desktop-warmup-scrolling', 'desktop-warmup-pinned', 'desktop-warmup-small-pinned', 'column-resize-desktop', 'partial-turn', 'mobile-partial-turn', 'fast-entry', 'fast-entry-desktop-wheel', 'fast-entry-desktop-key', 'compact-prepend', 'compact-prepend-desktop', 'turn-prepend', 'turn-prepend-desktop', 'mobile-scroll-controls'] as const)('history prepend keeps the reading row (%s)', async (scenario) => {
     const fastEntry = scenario.startsWith('fast-entry');
     const desktop = scenario.includes('desktop') || scenario === 'partial-turn';
     const width = desktop ? 1200 : 402;

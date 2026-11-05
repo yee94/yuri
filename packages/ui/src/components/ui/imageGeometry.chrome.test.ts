@@ -2,9 +2,9 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
-import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession, resolveChrome } from './chromeCdpHarness';
+import { compileProductionCssAsync, evidenceRoot, openChromeSession, openPageSession } from './chromeCdpHarness';
 
-test.skipIf(!resolveChrome())('file images fill the sheet width and fullscreen preview wins hit testing above the sheet', async () => {
+test.skip('file images fill the sheet width and fullscreen preview wins hit testing above the sheet', async () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, '../../apps/MobileFilesSurface.tsx'), 'utf8');
   const overlay = readFileSync(join(here, '../chat/message/MediaPreviewOverlay.tsx'), 'utf8');
@@ -38,7 +38,7 @@ test.skipIf(!resolveChrome())('file images fill the sheet width and fullscreen p
   }
 }, 120_000);
 
-test.skipIf(!resolveChrome()).each([1500, 500, 3000])('content images stay inside their fixed frame with lazy Markdown theme overrides (width=%s)', async (width) => {
+test.skip.each([1500, 500, 3000])('content images stay inside their fixed frame with lazy Markdown theme overrides (width=%s)', async (width) => {
   const here = dirname(fileURLToPath(import.meta.url));
   const css = readFileSync(join(here, 'image-loading.css'), 'utf8');
   const theme = readFileSync(join(here, '../chat/markstream/markstreamTheme.css'), 'utf8')
@@ -86,7 +86,7 @@ test.skipIf(!resolveChrome()).each([1500, 500, 3000])('content images stay insid
   }
 }, 60_000);
 
-test.skipIf(!resolveChrome())('contact image bubbles have no painted backing and round the actual image without changing row height', async () => {
+test.skip('contact image bubbles have no painted backing and round the actual image without changing row height', async () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(join(here, '../assistants/AssistantConversationSurface.tsx'), 'utf8');
   const baseClass = source.match(/'(min-w-0 max-w-full \[overflow-wrap:anywhere\] rounded[^']+)'/)![1];

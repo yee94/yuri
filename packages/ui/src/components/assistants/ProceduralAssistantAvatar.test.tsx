@@ -11,12 +11,14 @@ import * as avatarEngine from '@/lib/assistant-avatar/engine';
 import { AssistantWorkingAvatar as LiveAssistantWorkingAvatar } from './AssistantWorkingAvatar';
 import { ProceduralAssistantAvatar } from './ProceduralAssistantAvatar';
 import { mountAvatarAnimation } from '@/lib/assistant-avatar/runtime';
+import { AssistantNavigationIcon } from './AssistantNavigationIcon';
 
 const globalStyles = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../index.css'), 'utf8');
 const AssistantWorkingAvatar = (props: React.ComponentProps<typeof LiveAssistantWorkingAvatar>) => <LiveAssistantWorkingAvatar {...props} blinkOnMount={false} />;
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('motion', () => import('../../../../../scripts/test/motion-frame-mock'));
+vi.mock('./useAssistantNavigationAvatar', () => ({ useAssistantNavigationAvatar: () => 'navigation-greeting' }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root;
@@ -839,7 +841,74 @@ test('changing the row hover target moves one listener and unmount removes it wi
   enter(b); expect(hover).toHaveBeenCalledTimes(2);
 });
 
-test('navigation shape cycling shares the live clock and stays disabled offscreen or under reduced motion', async () => {
+test('navigation plays a full idle cycle beyond its greeting, then performs no frame, pointer or SVG work', async () => {
+  mouseAvailable = true;
+  const add = vi.spyOn(window, 'addEventListener');
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
+  const render = (draft: number) => root.render(<div data-draft={draft}><AssistantNavigationIcon className="size-4" /></div>);
+  await act(async () => render(0));
+  const pose = () => host.querySelector('svg')!.innerHTML;
+  const initial = pose();
+  expect(frames.size).toBe(0);
+  await intersect(true);
+  expect(frames.size).toBe(1);
+  const start = performance.now();
+  const poses = new Set<string>();
+  for (let i = 1; i <= 60; i++) { frame(start + i * 34); poses.add(pose()); }
+  expect(poses.size).toBeGreaterThan(1);
+  poses.clear();
+  for (let i = 61; i <= 110; i++) { frame(start + i * 34); poses.add(pose()); }
+  expect(poses.size, 'The full idle clip must still move after the greeting blinks').toBeGreaterThan(4);
+  expect(frames.size).toBe(1);
+  for (let i = 111; i <= 240; i++) frame(start + i * 34);
+  expect(frames.size).toBe(0);
+  expect(pose()).toBe(initial);
+  expect(add.mock.calls.filter(([type]) => String(type) === 'pointermove')).toHaveLength(0);
+  const writes = vi.spyOn(Element.prototype, 'setAttribute');
+  for (let i = 1; i <= 50; i++) await act(async () => render(i));
+  await intersect(false);
+  await intersect(true);
+  visible = 'hidden';
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  visible = 'visible';
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  for (let i = 241; i <= 540; i++) frame(start + i * 34);
+  expect(frames.size).toBe(0);
+  expect(create).toHaveBeenCalledOnce();
+  expect(writes.mock.contexts.filter(node => node instanceof SVGElement && node.closest('[data-procedural-avatar]'))).toHaveLength(0);
+});
+
+test.each(['offscreen', 'hidden', 'reduced', 'unmounted'])('interrupting the navigation single cycle cancels frame work without replay when %s', async reason => {
+  await act(async () => root.render(<AssistantNavigationIcon className="size-4" />));
+  await intersect(true);
+  const start = performance.now();
+  for (let i = 1; i <= 60; i++) frame(start + i * 34);
+  expect(frames.size).toBe(1);
+  if (reason === 'offscreen') await intersect(false);
+  if (reason === 'hidden') {
+    visible = 'hidden';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: true });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  if (reason === 'unmounted') await act(async () => root.render(null));
+  expect(frames.size).toBe(0);
+  if (reason === 'offscreen') await intersect(true);
+  if (reason === 'hidden') {
+    visible = 'visible';
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  if (reason === 'reduced') {
+    Object.assign(media, { matches: false });
+    await act(async () => media.dispatchEvent(new Event('change')));
+  }
+  for (let i = 61; i <= 300; i++) frame(start + i * 34);
+  expect(frames.size).toBe(0);
+});
+
+test('opted-in shape cycling shares the live clock and stays disabled offscreen or under reduced motion', async () => {
   const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer');
   const render = (draft: number) => root.render(<div data-draft={draft}><ProceduralAssistantAvatar seed="navigation" size={16} motion="idle" randomizeShape /></div>);
   await act(async () => render(0));

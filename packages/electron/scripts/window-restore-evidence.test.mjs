@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const electronDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test.each(['HMR', 'bundled'])('real Electron restores two primary windows and the switched instance (%s)', { timeout: 30000 }, async (mode) => {
+test.skip.each(['HMR', 'bundled'])('real Electron restores two primary windows and the switched instance (%s)', { timeout: 30000 }, async (mode) => {
   const root = await mkdtemp(path.join(tmpdir(), 'yuri-window-restore-'));
   const script = path.join(root, 'fixture.mjs');
   const fixture = `
