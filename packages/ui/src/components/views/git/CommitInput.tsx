@@ -14,6 +14,7 @@ interface CommitInputProps {
 }
 
 const MIN_HEIGHT = 38; // Single line height
+const DESKTOP_MIN_HEIGHT = 68; // Larger baseline for the desktop commit box
 const MAX_HEIGHT = 200;
 
 export const CommitInput: React.FC<CommitInputProps> = ({
@@ -29,7 +30,7 @@ export const CommitInput: React.FC<CommitInputProps> = ({
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const dragRef = React.useRef<{ pointerId: number; startY: number; height: number } | null>(null);
   const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
-  const minimumHeight = MIN_HEIGHT;
+  const minimumHeight = !isMobile && !compact ? DESKTOP_MIN_HEIGHT : MIN_HEIGHT;
 
   // Auto-resize based on content (layout phase to avoid mount flicker)
   React.useLayoutEffect(() => {
