@@ -73,7 +73,7 @@ export const WorkStatusPanel: React.FC<Props> = ({ sessionId, directory, visible
         pointerEvents: visible ? undefined : 'none',
       }}
     >
-      {visible || (overlay && contentMounted) ? <WorkStatusCompact sessionId={sessionId} directory={directory} /> : null}
+      {visible || (overlay && contentMounted) ? <WorkStatusCompact sessionId={sessionId} directory={directory} active={visible} placement={overlay ? 'popover' : 'inline'} /> : null}
     </aside>
   );
 };

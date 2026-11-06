@@ -5,7 +5,7 @@ The supported contract is OpenCode GUI SDK **2.2.0**. Consult current official d
 ## Window APIs
 
 - `Command`: command palette and plugin management execution; hidden commands can be called by `ctx.commands.run`. No GUI shortcut registration or slash autocomplete yet.
-- `TitlebarItem`: global action/status, independent of a session; reactive label/title/icon/busy/pressed.
+- `TitlebarItem`: global action/status, independent of a session; reactive label/title/icon/busy/pressed. Supported icon names and upstream/Yuri differences: [icons](icons.md).
 - `Panel`: Solid `list/render`, reactive session/tab getters; file panels mount in existing file previews. An independent panel uses a dialog/mobile sheet, not upstream's full draggable workspace layout.
 - `LinkHandler`: match, exists and open file/custom links. Use `ctx.links.open({ href, base, session })` for navigation. Preserve workspace-relative identity; never resolve against a different session's directory.
 - `SettingsPage`: independent plugin settings pages; host `page/section` injection is unsupported.
@@ -20,11 +20,14 @@ The supported contract is OpenCode GUI SDK **2.2.0**. Consult current official d
 
 Unsupported registries include upstream `Server`, `ComposerPill`, `Slot`, `FileViewer`, native menu/embeds. Unsupported APIs reject rather than succeeding silently.
 
+Plugin renderers own their Solid/DOM content. Yuri does not implement upstream `ctx.ui` or expose its React components to plugins; follow [CSS variables and styling](plugin-styles.md) and [icons](icons.md) for visual consistency.
+
 ## Yuri supplemental registries and contracts
 
 - `yuri.theme`, `yuri.branding`: see [appearance](appearance.md).
 - `yuri.file-icon`: `{ id, extensions: string[], svg, lightSvg? }`; static SVG resources for file extensions, not app/Dock icons.
 - `yuri.page` / `yuri.pages`: global main-content Solid pages, desktop layouts/VS Code only. Exact types, entry points and optional web-app embedding: [global pages](global-pages.md).
+- `yuri.work-status`: inline/popup widgets below Changes in the desktop conversation status column; read-only displayed-session/project/Git context and mount-scoped cancellation. See [work-status widgets](work-status.md).
 - Custom suffix parsing, normalized file identities, `PanelTab.file` and mobile sheets: [file previews](file-previews.md).
 - `yuri.exportPDF`, `yuri.exportLongImage`, `yuri.previewActions`: separate host contracts for client-owned export/preview actions. Exact types, registration lifetime, capture protocol and runtime matrix: [preview actions and exports](preview-exports.md).
 

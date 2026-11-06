@@ -64,3 +64,23 @@ it('runs the shipped custom-suffix parser as a real file Panel and keeps network
     expect(node.querySelector('pre')?.textContent).toContain('"summary": "ok"');
     host.uninstall('report'); expect(node.childElementCount).toBe(0);
 });
+
+it('runs the shipped work-status CJS example with reactive scoped data and cleanup', async () => {
+    const { host } = fixture();
+    host.install('workspace', { code: await example('work-status', 'js'), options: {}, revision: '1' });
+    const node = document.createElement('div'); document.body.append(node);
+    const input = {
+        sessionId: 'viewed', directory: '/work', project: { name: 'Work', directory: '/work' }, worktree: null,
+        placement: 'inline' as const,
+        git: { state: 'ready' as const, loading: false, branch: 'main', changedFiles: 0, additions: 0, deletions: 0 },
+    };
+    const mount = host.mountWorkStatus(host.workStatus.getSnapshot()[0], node, input);
+    expect(node.textContent).toBe('Work · main');
+    expect(node.querySelector('use')?.getAttribute('href')).toBe('#yuri-git-branch');
+    const row = node.firstElementChild;
+    mount.update({ ...input, git: { ...input.git, branch: 'topic' } });
+    expect(node.textContent).toBe('Work · topic'); expect(node.firstElementChild).toBe(row);
+    host.uninstall('workspace');
+    expect(node.children).toHaveLength(0);
+    expect(document.querySelector('[data-yuri-plugin-style="workspace"]')).toBeNull();
+});

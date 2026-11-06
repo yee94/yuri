@@ -1,6 +1,6 @@
 ---
 name: yuri-customization
-description: Customize Yuri through GUI plugins for appearance, global pages, custom file previews, export actions, panels, commands, and settings.
+description: Customize Yuri through GUI plugins for appearance, work-status widgets, global pages, custom file previews, export actions, panels, commands, and settings.
 ---
 
 # Yuri customization
@@ -11,14 +11,18 @@ Use a standard OpenCode GUI plugin to change the running Yuri UI without modifyi
 
 1. Identify the requested change and target client: Web, Electron, VS Code, hosted mobile, or Capacitor. Separate visual changes from backend behavior. Inspect the user's existing plugin/config before changing it. An explanation request does not authorize installation.
 2. Choose the extension point by the requested capability and read its reference:
+   - Every plugin-owned view: [CSS variables and styling](references/plugin-styles.md); use the host's existing tokens in plugin-owned CSS to follow Yuri's appearance.
    - Existing UI blocks, backgrounds/transparency, selectors, spacing and built-in style tokens: [UI structure and styles](references/ui-surfaces.md). Start here for CSS changes before inspecting application bundles.
    - Themes, CSS, logos, Dock icons: [appearance](references/appearance.md).
    - Global main-content tabs and titlebar entries: [global pages](references/global-pages.md).
+   - Widgets under Changes in the conversation's status column: [work-status widgets](references/work-status.md).
+   - Entry/tab icons or icons inside plugin content: [icons](references/icons.md), including supported names, same-document SVG usage and artwork boundaries.
    - Custom file suffixes, parsers, inline/mobile previews and file icons: [file previews](references/file-previews.md).
    - Preview toolbar placement, PDF/PNG/HTML export and iframe snapshot boundaries: [preview actions and exports](references/preview-exports.md).
    - Panels, commands, settings, files, RPC, lifecycle, runtime support: [GUI API](references/gui-api.md).
    - Every implementation: [direct-CJS package, installation, updates and rollback](references/workflow.md); compilation is an optional branch.
 3. Default to `package.json` plus a directly authored `gui-experimental.cjs`, using host-provided modules and inline CSS/assets. This needs no dependency install or compilation. Implement only the requested capabilities; use the optional build branch when TS/TSX or dependency bundling is actually needed.
+   Yuri's React shell owns the container; the plugin owns its Solid/DOM content. Share visual style through CSS variables and icon references, not host React components or a host-provided Solid component library.
 4. Syntax-check the exported CJS file and install within the requested scope, preserving unrelated global OpenCode configuration. A local CJS edit reloads through the existing watcher; project-only configuration does not provide window GUI inventory.
 5. Verify each requested capability in the target client, including its failure and cleanup behavior; use the matching reference's verification criteria. Finish with the plugin directory, changed settings, verified behavior, known limits, and how to undo it.
 

@@ -74,7 +74,7 @@ Those message names, header and navigation rules form Runmark's service protocol
 
 ## Entry icon versus content branding
 
-The top-level plugin `package.json` `icon` supplies Yuri's plugin-entry artwork when available (validated image/data resource; monochrome SVG can follow `currentColor` through the host mask). `TitlebarItem.icon` is a name from the official icon catalog. Neither replaces the application's Logo; use `yuri.branding` for that. Keep existing official product artwork instead of inventing a substitute.
+Choose `TitlebarItem.icon` from the supported catalog names in [plugin entry icons](icons.md), which covers upstream `IconName`, Yuri's compatible names/aliases and fallback behavior. Set it on the entry itself; `yuri.page.icon` does not configure that entry. Top-level `package.json.icon` supplies artwork in Settings plugin details, not the global navigation entry. Application Logo/Dock branding uses `yuri.branding`; see [appearance](appearance.md).
 
 ## Verification
 

@@ -21,6 +21,7 @@ import { createPreviewActions, PREVIEW_ACTIONS_CONTRACT, PreviewActionsContext }
 import type { toast } from 'sonner';
 import { GUI_PAGE_REGISTRY, GUI_PAGES_CONTRACT, guiPageKey, validateGuiPage, type GuiPage, type GuiPagesAPI } from './pages';
 import { GuiPluginAppearance, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY } from './appearance';
+import { GUI_WORK_STATUS_REGISTRY, GuiWorkStatusCatalog, createWorkStatusState, type GuiWorkStatusEntry, type GuiWorkStatusInput, type GuiWorkStatusMount } from './work-status';
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
@@ -49,6 +50,7 @@ type Instance = {
     cleanups: Set<() => void>; contributions: Set<Contribution>;
     iconChanges: ReturnType<typeof createSignal<number>>; iconError?: string;
     appearanceChanges: ReturnType<typeof createSignal<number>>;
+    workStatusChanges: ReturnType<typeof createSignal<number>>;
     commands: CommandView[]; panels: PanelEntry[]; settings: Gui.SettingsPage[]; menus: Gui.SessionPanelMenuItem[];
     titlebarItems: (TitlebarView & { run?: Gui.TitlebarItem['run'] })[];
     pages: GuiPage[];
@@ -86,6 +88,7 @@ function guardCleanups(owner: Owner | undefined, report: (error: unknown) => voi
 export class GuiPluginHost {
     readonly fileIcons = new GuiPluginFileIcons();
     readonly appearanceCatalog = new GuiPluginAppearance();
+    readonly workStatus = new GuiWorkStatusCatalog();
     private instances = new Map<string, Instance>();
     private listeners = new Set<() => void>();
     private panelMounts = new Set<() => void>();
@@ -130,14 +133,18 @@ export class GuiPluginHost {
         if (!session) for (const stop of [...this.panelMounts]) stop();
         this.files?.dispose();
         this.files = session ? new GuiPluginFiles(this.options.files, this.options.queryClient, this.options.transport, session.directory) : undefined;
-        const server = partial<Gui.ServerRef>('session.server', { id: this.options.transport, name: this.options.transport, client: this.options.client });
-        const mounted = session ? Object.freeze(partial<Gui.MountedSession>('session', {
-            id: session.id, directory: session.directory, key: `${this.options.transport}\n${session.id}`, tab: session.id,
-            server, pending: false, visit: {}, location: { directory: session.directory },
-        })) : undefined;
+        const mounted = session ? this.sessionReference(session) : undefined;
         const snapshot = this.snapshot;
         this.session[1](mounted);
         if (snapshot === this.snapshot) this.publish();
+    }
+
+    private sessionReference(session: { id: string; directory: string }): Gui.MountedSession {
+        const server = partial<Gui.ServerRef>('session.server', { id: this.options.transport, name: this.options.transport, client: this.options.client });
+        return Object.freeze(partial<Gui.MountedSession>('session', {
+            id: session.id, directory: session.directory, key: `${this.options.transport}\n${session.id}`, tab: session.id,
+            server, pending: false, visit: {}, location: { directory: session.directory },
+        }));
     }
 
     setAppearance(input: Appearance): void {
@@ -155,7 +162,7 @@ export class GuiPluginHost {
         const previous = this.instances.get(id);
         if (this.ended || (previous?.status === 'active' && previous.revision === bundle.revision && previous.native?.active !== false)) { native?.dispose(); return; }
         if (previous) { this.instances.delete(id); this.release(previous); }
-        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), appearanceChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menus: [] };
+        const instance: Instance = { id, native, revision: bundle.revision, controller: new AbortController(), status: 'active', cleanups: new Set(), contributions: new Set(), iconChanges: createSignal(0), appearanceChanges: createSignal(0), workStatusChanges: createSignal(0), commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menus: [] };
         this.instances.set(id, instance);
         try {
             if (id === 'yuri' || id.startsWith('yuri.')) throw new Error('The yuri namespace is reserved to the host');
@@ -203,6 +210,14 @@ export class GuiPluginHost {
                     } catch (error) { untrack(() => this.fail(instance, error)); }
                 }));
                 if (!instance.controller.signal.aborted) runWithOwner(instance.owner!, () => createRenderEffect(() => {
+                    instance.workStatusChanges[0]();
+                    if (instance.controller.signal.aborted) return;
+                    try {
+                        const inputs = [...instance.contributions].filter((entry) => entry.registry === GUI_WORK_STATUS_REGISTRY).map((entry) => entry.read()).filter((value) => value !== undefined);
+                        this.workStatus.replace(instance.id, instance.revision, inputs);
+                    } catch (error) { untrack(() => this.fail(instance, error)); }
+                }));
+                if (!instance.controller.signal.aborted) runWithOwner(instance.owner!, () => createRenderEffect(() => {
                     this.changes[0](); this.session[0](); this.appearance[0]();
                     try { this.derive(instance); } catch (error) { untrack(() => this.fail(instance, error)); }
                     untrack(() => this.publish());
@@ -222,6 +237,7 @@ export class GuiPluginHost {
         instance.contributions.clear(); instance.commands = []; instance.titlebarItems = []; instance.panels = []; instance.pages = []; instance.settings = []; instance.menus = [];
         this.fileIcons.remove(instance.id);
         this.appearanceCatalog.remove(instance.id);
+        this.workStatus.remove(instance.id);
         for (const entry of this.contracts.values()) if (entry.provider === instance) {
             entry.provider = undefined;
             entry.live[1]({ status: 'inactive', reason: instance.status === 'failed' ? 'failed' : 'disabled' });
@@ -249,7 +265,7 @@ export class GuiPluginHost {
         this.ended = true;
         batch(() => { for (const id of [...this.instances.keys()]) this.uninstall(id); });
         this.viewExports.dispose();
-        this.files?.dispose(); this.fileIcons.dispose(); this.appearanceCatalog.dispose(); this.storage.dispose(); this.layouts.clear(); this.fileViews.clear(); this.contracts.clear(); this.listeners.clear();
+        this.files?.dispose(); this.fileIcons.dispose(); this.appearanceCatalog.dispose(); this.workStatus.dispose(); this.storage.dispose(); this.layouts.clear(); this.fileViews.clear(); this.contracts.clear(); this.listeners.clear();
     }
 
     async setDockIcon(pluginId: string, image: string | null): Promise<void> {
@@ -376,10 +392,12 @@ export class GuiPluginHost {
                 instance.contributions.add(contribution);
                 const iconsChanged = () => { if (registry.id === GUI_FILE_ICON_REGISTRY) instance.iconChanges[1]((value) => value + 1); };
                 const appearanceChanged = () => { if (registry.id === GUI_THEME_REGISTRY || registry.id === GUI_BRANDING_REGISTRY) instance.appearanceChanges[1]((value) => value + 1); };
+                const workStatusChanged = () => { if (registry.id === GUI_WORK_STATUS_REGISTRY) instance.workStatusChanges[1]((value) => value + 1); };
                 untrack(iconsChanged);
                 untrack(appearanceChanged);
+                untrack(workStatusChanged);
                 untrack(() => this.changed());
-                return this.own(instance, () => { guardCleanups(contributionOwner, (error) => { instance.error ??= String(error); }); dispose(); instance.contributions.delete(contribution); untrack(iconsChanged); untrack(appearanceChanged); untrack(() => this.changed()); });
+                return this.own(instance, () => { guardCleanups(contributionOwner, (error) => { instance.error ??= String(error); }); dispose(); instance.contributions.delete(contribution); untrack(iconsChanged); untrack(appearanceChanged); untrack(workStatusChanged); untrack(() => this.changed()); });
             },
             list: <T>(registry: Gui.Registry<T>) => this.list(registry),
             provide: (token, value) => {
@@ -439,7 +457,7 @@ export class GuiPluginHost {
         const pages: GuiPage[] = [];
         const session = this.session[0]();
         for (const contribution of instance.contributions) {
-            if ([GUI_FILE_ICON_REGISTRY, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY].includes(contribution.registry)) continue;
+            if ([GUI_FILE_ICON_REGISTRY, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY, GUI_WORK_STATUS_REGISTRY].includes(contribution.registry)) continue;
             const value = contribution.read(); if (value === undefined) continue;
             if (contribution.registry === GUI_PAGE_REGISTRY) {
                 const page = validateGuiPage(value);
@@ -681,6 +699,30 @@ export class GuiPluginHost {
         }
         return () => {};
     }
+    mountWorkStatus(entry: GuiWorkStatusEntry, element: HTMLElement, input: GuiWorkStatusInput): GuiWorkStatusMount {
+        const instance = this.instances.get(entry.pluginId);
+        if (!instance || !this.workStatus.contains(entry) || this.ended) return { update() {}, dispose() {} };
+        const session = input.sessionId && input.directory ? this.sessionReference({ id: input.sessionId, directory: input.directory }) : undefined;
+        const state = createWorkStatusState(input, session, this.options.transport);
+        let unmount = () => {};
+        let unsubscribe = () => {};
+        const dispose = this.own(instance, () => {
+            state.dispose();
+            unsubscribe();
+            unmount();
+        });
+        unsubscribe = this.workStatus.subscribe(() => { if (!this.workStatus.contains(entry)) dispose(); });
+        unmount = this.mount(instance, element, () => entry.render(state.props));
+        if (state.props.signal.aborted) { unsubscribe(); unmount(); }
+        return {
+            update: (next) => {
+                if (!state.matches(next)) { dispose(); return; }
+                state.update(next);
+            },
+            dispose,
+        };
+    }
+
     private mount(instance: Instance, element: HTMLElement, view: () => JSX.Element): () => void {
         if (instance.controller.signal.aborted) return () => {};
         let dispose = () => {};

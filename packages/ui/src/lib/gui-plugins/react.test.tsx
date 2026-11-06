@@ -15,7 +15,7 @@ const state = vi.hoisted(() => ({
   windowBridge: undefined as NativeGuiBridge | undefined,
   focusFile: undefined as undefined | ((path: string, directory: string) => Promise<void>),
   list: vi.fn(), gui: vi.fn(), hostImports: vi.fn(), toastError: vi.fn(), signals: [] as AbortSignal[], hostFailure: false, surfaceFailure: false,
-  hosts: [] as Array<{ install: ReturnType<typeof vi.fn>; uninstall: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; setSession: ReturnType<typeof vi.fn>; appearanceCatalog: { setOrder: ReturnType<typeof vi.fn> } }>,
+  hosts: [] as Array<{ install: ReturnType<typeof vi.fn>; uninstall: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; setSession: ReturnType<typeof vi.fn>; appearanceCatalog: { setOrder: ReturnType<typeof vi.fn> }; workStatus: { setOrder: ReturnType<typeof vi.fn> } }>,
 }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeTransportIdentity: () => state.transport, getRuntimeKey: () => state.transport, getRuntimeGeneration: () => 0,
@@ -46,6 +46,7 @@ vi.mock('./host', () => { state.hostImports(); return {
     snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null };
     install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn();
     appearanceCatalog = { setOrder: vi.fn() };
+    workStatus = { setOrder: vi.fn() };
     subscribe = () => () => {};
     getSnapshot = () => this.snapshot;
     constructor(options: { focusFile: (path: string, directory: string) => Promise<void> }) {
@@ -142,18 +143,22 @@ it('uses application readiness only as an initial gate and retains the host duri
   expect(state.gui).toHaveBeenCalledOnce();
 });
 
-it('passes authoritative inventory order to appearance once per catalog change, not on unrelated renders', async () => {
+it('passes authoritative inventory order to appearance and widgets only on catalog changes', async () => {
   const zeta = { ...plugin, id: 'zeta' }, alpha = { ...plugin, id: 'alpha' };
   state.list.mockResolvedValue({ data: [zeta, alpha] });
   await load();
   const order = state.hosts[0].appearanceCatalog.setOrder;
+  const widgetOrder = state.hosts[0].workStatus.setOrder;
   expect(order).toHaveBeenLastCalledWith(['zeta', 'alpha']);
+  expect(widgetOrder).toHaveBeenLastCalledWith(['zeta', 'alpha']);
   const calls = order.mock.calls.length;
   for (let index = 0; index < 50; index++) await act(async () => draw());
   expect(order).toHaveBeenCalledTimes(calls);
+  expect(widgetOrder).toHaveBeenCalledTimes(calls);
   state.list.mockResolvedValue({ data: [alpha, zeta] });
   await act(async () => context.refresh()); await settle();
   expect(order).toHaveBeenLastCalledWith(['alpha', 'zeta']);
+  expect(widgetOrder).toHaveBeenLastCalledWith(['alpha', 'zeta']);
 });
 
 it('keeps slow plugin loading silent across instance switches', async () => {

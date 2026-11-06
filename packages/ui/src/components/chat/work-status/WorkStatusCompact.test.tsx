@@ -5,6 +5,11 @@ import type { WorktreeMetadata } from '@/types/worktree';
 import { dict } from '@/lib/i18n/messages/en';
 import { WorkStatusCompact } from './WorkStatusCompact';
 import { useWorkStatusVisibility } from './useWorkStatusVisibility';
+import { QueryClient } from '@tanstack/react-query';
+import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
+import type { FilesAPI } from '@/lib/api/types';
+import { GuiPluginHost } from '@/lib/gui-plugins/host';
+import { GuiPluginHostContext } from '@/lib/gui-plugins/react';
 
 const fixture = vi.hoisted(() => ({
   worktrees: new Map<string, WorktreeMetadata[]>(),
@@ -53,6 +58,8 @@ vi.mock('@/stores/useGitStore', () => ({
   useGitStatus: () => ({ current: 'feature/topic', files: [{ path: 'a' }, { path: 'b' }], diffStats: {
     a: { insertions: 5, deletions: 2 }, b: { insertions: 3, deletions: 1 },
   } }),
+  useGitLoadingStatus: () => false,
+  useIsGitRepo: () => true,
 }));
 
 let root: Root;
@@ -208,6 +215,38 @@ it('does not reuse attached worktree metadata after changing the displayed direc
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
   expect(host.textContent).toBe('Project labelfeature/topicChanges+8−3');
   expect(host.querySelector('[title^="Worktree:"]')).toBeNull();
+});
+
+it('injects the displayed scope between Changes and Todos and unmounts plugins when hidden', async () => {
+  fixture.liveTodos = { displayed: [{ content: 'Todo after plugin', status: 'pending', priority: 'medium' }] };
+  const plugins = new GuiPluginHost({
+    client: {} as OpenCodeClient, files: {} as FilesAPI, queryClient: new QueryClient(), storage: localStorage,
+    transport: 'scope-test', locale: 'en', mode: 'dark', narrow: false,
+  });
+  plugins.setSession({ id: 'globally-selected', directory: '/other' });
+  plugins.install('example', { revision: '1', options: {}, code: `
+    const G=require('@opencode/plugin/gui');
+    module.exports=G.Plugin.define({setup(ctx){ctx.add(G.Registry.define('yuri.work-status'),{id:'scope',render(props){
+      const node=document.createElement('span');
+      node.textContent=['Plugin',props.session.id,props.project.name,props.worktree.name,props.git.branch,props.git.changedFiles,props.git.additions,props.git.deletions,props.placement].join('|');
+      return node;
+    }})}});
+  ` });
+  const render = (active: boolean) => root.render(<GuiPluginHostContext.Provider value={plugins}>
+    <WorkStatusCompact sessionId="displayed" directory="/trees/topic" placement="popover" active={active} />
+  </GuiPluginHostContext.Provider>);
+  try {
+    await act(async () => render(true));
+    const contents = host.textContent!;
+    expect(contents).toContain('Plugin|displayed|Project label|topic|feature/topic|2|8|3|popover');
+    expect(contents.indexOf('Changes')).toBeLessThan(contents.indexOf('Plugin|'));
+    expect(contents.indexOf('Plugin|')).toBeLessThan(contents.indexOf('Todo after plugin'));
+    await act(async () => render(false));
+    expect(host.querySelector('[data-gui-work-status]')).toBeNull();
+    expect(host.textContent).toContain('Todo after plugin');
+  } finally {
+    await act(async () => plugins.dispose());
+  }
 });
 
 it('excludes empty previews and visible nested rails, but not a hidden rail in another directory', async () => {

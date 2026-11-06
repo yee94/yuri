@@ -2,6 +2,8 @@
 
 Read this for changes to existing Yuri blocks: backgrounds, sidebar, header, chat, composer, preview, Settings or overlays. For contribution schemas and activation, use [appearance](appearance.md). This map travels with Yuri so plugin authors can start without a source checkout or unpacking the application.
 
+For styling a plugin's own content, start with [CSS variables and styling](plugin-styles.md) and [icons](icons.md). The map below describes existing host surfaces rather than reusable UI components.
+
 ## Fast path
 
 1. Locate the requested block in the table below. Prefer a theme contribution for coordinated colors, or a scoped `Style` rule for one block's material/geometry.

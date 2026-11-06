@@ -10,6 +10,7 @@
 - React inventory 保留官方 `source`，插件设置按来源关联 GUI 能力，不按 GUI id 猜 npm 包名。commands/menuItems 与 panels/settings 一样携带显式 `pluginId`，以便详情只展示当前插件自己的贡献；停用后仍保留来源与 GUI 标识。
 - `files.ts` 负责会话工作区文件读取与变更观察；`storage.ts` 和 `preferences.ts` 负责插件持久状态及 GUI 启用偏好。
 - `file-icons.ts` 负责窗口级文件扩展名图标索引、SVG 资源校验和独立订阅，不依赖 host snapshot。
+- `work-status.ts` 负责 `yuri.work-status` 注册目录和每次挂载的只读响应式数据；独立订阅不跟随窗口 session/layout snapshot，渲染仍复用 host.mount。
 - Web、Electron、VS Code 聊天窗口、hosted/mobile 使用同一个窗口 host。嵌入会话和独立 Agent Manager 不重复加载宿主。只有新版 Electron 的本地实例主 frame 可以申请 native lease；其他运行时、远程/Relay 实例及旧 shell 保持 `app.platform: web`、`desktop: undefined`。获得 lease 后为 `app.platform: desktop`，提供 `desktop.os`（其他 desktop 方法仍明确 unsupported）。若部署的 CSP 禁止 CJS 求值，插件状态显示求值失败，不能绕过 CSP。
 - `native.ts` 负责窗口 IPC codec、响应式 state/live、事件与取消；`native-types.ts` 定义 preload 消息契约。`main-modules.mjs` 仅导出 main 进程使用的固定 ABI 共享模块映射，由 Electron 打包；原生求值、可信代码获取、调用授权与生命周期归 `packages/electron/gui-plugin-host.mjs`，不能导入 renderer bundle。
 - `view-export.ts` 将当前客户端容器的两个 GSAPI 发布为宿主保留的 `yuri.exportPDF`、`yuri.exportLongImage` Contract。实现与跨端传输归 `lib/view-export`；通过 `RuntimeAPIs.viewExport` 注入，不改 `ctx.client`、官方 OpenAPI 或插件 main/IPC。
@@ -167,6 +168,42 @@ PDF/长图现在另有两个独立的容器 GSAPI，使用官方 `Contract.defin
 插件主动导航统一使用官方 `ctx.links.open({ href, base, session })`：本地文件先通过 Provider 的文件导航回调进入现有文件标签页，再由 `GuiFileLinkBridge` 注册展示 lease 并调用底层 `host.openLink` 分派 handler；底层分派不再次导航。`base` 是来源文件所在目录，相对路径复用共享路径解析；文件标签页的目录作用域仍来自当前 mounted session 的权威元数据。显式传入非当前 session/server 的引用返回 false，避免把旧会话路径套入当前目录。`file://` 的中文/空格编码、Windows drive 与 UNC 通过消息文件解析器归一化；HTTP/mailto 等非文件链接不进入文件导航。官方 open 保持同步 boolean 接受语义，异步导航失败归属发起插件。
 
 插件 setup、render、异步动作失败应归属对应插件，不阻断其他插件。原生模块占位仅用于让跨进程 CJS 顶层声明可求值，不代表原生能力已实现，也不是代码沙箱。
+
+## 工作状态栏插槽
+
+`Registry.define<GuiWorkStatusContribution>('yuri.work-status')` 接受
+`{ id, order?, render(props) }`，供桌面会话状态列 Changes 下方、Todos 上方消费。
+这是 Yuri 补充注册表；官方 `Slot` 仍未实现。没有宿主组件库或 `ctx.ui`，
+插件通过内置 skill 的 CSS 变量与 SVG 图标参考编写自身 Solid/DOM 内容。
+
+独立 `workStatus` catalog 只在注册贡献变化时发布稳定快照；顺序为 order、
+global inventory 顺序、插件内注册顺序，ID 用 plugin/id 元组编码。
+Provider 的独立 `GuiPluginHostContext` 只传播 host 身份，不让窗口 snapshot
+变化扇出到插槽。Git 汇总由现有状态列计算一次，各插件只接收窄摘要。
+改变普通数据/placement 不重挂；改变 render 函数或插件 revision 会重挂，
+仅调整 order 保留 DOM。每次撤销后重新注册产生新的 mount generation，避免
+React 将撤销/恢复合并成一次提交时留下已经清空的旧容器。
+
+每次 mount 的 session/directory 来自显示该列的调用者，与窗口主会话分离；
+project/worktree 使用内置行相同的归属解析。props 包含只读的 session、directory、
+runtimeId、project、worktree、git、placement、active、signal。
+Git 未知和缺失行数为 null，非仓库为独立状态；共享 Git store 没有向插槽提供
+refresh error，失败后保留最后快照，ready 不代表本次刷新成功。
+作用域变化、隐藏、撤销、插件停用/失败/替换及 host 销毁先终止 mount signal，
+再释放 Solid owner；两份挂载相互独立，旧 handle 不能把新目录数据写入旧实例。
+注册/render 失败沿用插件设置中的诊断，其他插件保持可用。
+
+Web/Electron 的 inline/popover 两种 placement 使用相同内容，包括远程/Relay
+连接。移动端、Capacitor 和 VS Code 没有该状态列，因此不挂载；不增加原生权限。
+完整字段与直接 CJS 示例见内置 skill `references/work-status.md`。
+`work-status.test.tsx` 使用真实 SDK/host/React mount 覆盖排序、双实例、响应式更新、
+50 次无关更新、作用域切换和失败清理；`skill-examples.test.ts` 执行发货示例。
+
+生产构建的 Chromium 夹具验证了 20 个插件块与 2000 个保留文本节点下，
+60 次同步派发 input 更新不增加插件 render/effect/cleanup，主题切换和
+196px/264px 宽度下内容无横向溢出，作用域切换取消旧实例，渲染失败保留其他插件。
+该夹具使用真实 React bridge、Solid host 和生产 CSS，但并非完整聊天编辑器或
+真实 Electron/Relay 验收。浏览器的帧回调受节流影响，未据此宣称输入到绘制延迟达标。
 
 ## 预览操作插槽
 
