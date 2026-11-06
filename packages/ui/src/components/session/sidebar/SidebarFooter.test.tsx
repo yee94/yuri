@@ -62,6 +62,11 @@ describe('SidebarFooter update button', () => {
     const { render } = renderFooter(onOpenUpdate);
     await render();
 
+    expect(button().textContent).toBe('sessions.sidebar.footer.actions.restartUpdate');
+    expect(button().querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
+    expect(button().className).toContain('bg-[var(--surface-muted)]');
+    expect(button().className).not.toContain('size-7');
+
     await act(async () => button().click());
     await act(async () => button().click());
     await act(async () => button().click());
@@ -71,10 +76,29 @@ describe('SidebarFooter update button', () => {
     expect(button().disabled).toBe(true);
     expect(button().getAttribute('aria-busy')).toBe('true');
     expect(button().getAttribute('aria-label')).toBe('updateDialog.status.updating');
+    expect(button().textContent).toBe('updateDialog.status.updating');
 
     resolveRestart();
     await act(async () => {});
     expect(restartToUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  test('finishing a background download reveals the labeled restart button without opening details', async () => {
+    const restartToUpdate = vi.fn(async () => {});
+    const onOpenUpdate = vi.fn();
+    useUpdateStore.setState({ downloading: true, downloaded: false, available: true, restartToUpdate });
+    const { render } = renderFooter(onOpenUpdate, true); await render();
+    expect(host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]')).toBeNull();
+    await act(async () => useUpdateStore.setState({ downloading: false, downloaded: true }));
+    const ready = host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]') as HTMLButtonElement;
+    expect(ready.textContent).toBe('sessions.sidebar.footer.actions.restartUpdate');
+    expect(ready.querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
+    expect(ready.querySelector('[role="progressbar"]')).toBeNull();
+    expect(onOpenUpdate).not.toHaveBeenCalled();
+    expect(restartToUpdate).not.toHaveBeenCalled();
+    await act(async () => ready.click());
+    expect(restartToUpdate).toHaveBeenCalledOnce();
+    expect(onOpenUpdate).not.toHaveBeenCalled();
   });
 
   test('an undownloaded update still opens the update dialog', async () => {

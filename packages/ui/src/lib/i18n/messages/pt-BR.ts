@@ -665,6 +665,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.footer.actions.shortcuts": "Atalhos",
   "sessions.sidebar.footer.actions.aboutYuri": "Sobre o Yuri",
   "sessions.sidebar.footer.actions.update": "Atualizar",
+  "sessions.sidebar.footer.actions.restartUpdate": "Reiniciar para atualizar",
   "sessions.sidebar.empty.noSessions.title": "Não há sessões ainda",
   "sessions.sidebar.empty.noSessions.description": "Crie sua primeira sessão para começar a programar.",
   "sessions.sidebar.empty.noMatches.title": "Não há sessões coincidentes",

@@ -671,6 +671,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.shortcuts': '快速鍵',
   'sessions.sidebar.footer.actions.aboutYuri': '關於 Yuri',
   'sessions.sidebar.footer.actions.update': '更新',
+  'sessions.sidebar.footer.actions.restartUpdate': '重新啟動更新',
   'sessions.sidebar.empty.noSessions.title': '暫無會話',
   'sessions.sidebar.empty.noSessions.description': '建立你的第一個會話以開始編碼。',
   'sessions.sidebar.empty.noMatches.title': '沒有符合的會話',

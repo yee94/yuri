@@ -658,6 +658,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.shortcuts': '단축키',
   'sessions.sidebar.footer.actions.aboutYuri': 'Yuri 정보',
   'sessions.sidebar.footer.actions.update': '업데이트',
+  'sessions.sidebar.footer.actions.restartUpdate': '다시 시작하여 업데이트',
   'sessions.sidebar.empty.noSessions.title': '아직 세션 없음',
   'sessions.sidebar.empty.noSessions.description': '첫 세션을 만들고 코딩을 시작하세요.',
   'sessions.sidebar.empty.noMatches.title': '일치하는 세션 없음',

@@ -658,6 +658,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.shortcuts': 'ショートカット',
   'sessions.sidebar.footer.actions.aboutYuri': 'Yuriについて',
   'sessions.sidebar.footer.actions.update': '更新',
+  'sessions.sidebar.footer.actions.restartUpdate': '再起動して更新',
   'sessions.sidebar.empty.noSessions.title': 'まだセッションがありません',
   'sessions.sidebar.empty.noSessions.description': '最初のセッションを作成してコーディングを始めましょう。',
   'sessions.sidebar.empty.noMatches.title': '一致するセッションがありません',

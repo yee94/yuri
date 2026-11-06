@@ -438,6 +438,7 @@ export const dict = {
   'sessions.sidebar.footer.actions.shortcuts': 'Raccourcis',
   'sessions.sidebar.footer.actions.aboutYuri': 'À propos de Yuri',
   'sessions.sidebar.footer.actions.update': 'Mise à jour',
+  'sessions.sidebar.footer.actions.restartUpdate': 'Redémarrer pour mettre à jour',
   'sessions.sidebar.empty.noSessions.title': 'Aucune session pour l\'instant',
   'sessions.sidebar.empty.noSessions.description': 'Créez votre première session pour commencer à coder.',
   'sessions.sidebar.empty.noMatches.title': 'Aucune session correspondante',

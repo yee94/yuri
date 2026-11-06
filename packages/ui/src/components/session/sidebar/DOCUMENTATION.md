@@ -52,7 +52,11 @@ changed plan is a visible failure, never an implicit update to a newer release.
 Client downloads reuse their owning updater with `resume: true`, without applying
 or restarting the client. Check-only failures do not invent download tasks.
 The old update footer button hides its duplicate download indicator while this
-area is mounted; ready-to-restart/update actions remain unchanged.
+area is mounted. After the client reports `downloaded`, the footer shows a compact
+shared neutral solid Button with the restart icon and visible “Restart to update”
+label (“重启更新” in Simplified Chinese), rather than an icon-only download button.
+Clicking delegates directly to the existing restart mutation, never the details
+dialog; pending restart disables repeat clicks and shows the updating label.
 Runtime generation changes remount the observers and clear completion tracking.
 Import/index/update polling uses 1s/3s/2s while active and 15s while idle; unsupported
 capabilities stop polling. The memoized leaf isolates this work from session-tree

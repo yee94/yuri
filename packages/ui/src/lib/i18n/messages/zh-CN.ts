@@ -658,6 +658,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.shortcuts': '快捷键',
   'sessions.sidebar.footer.actions.aboutYuri': '关于 Yuri',
   'sessions.sidebar.footer.actions.update': '更新',
+  'sessions.sidebar.footer.actions.restartUpdate': '重启更新',
   'sessions.sidebar.empty.noSessions.title': '暂无会话',
   'sessions.sidebar.empty.noSessions.description': '创建你的第一个会话以开始编码。',
   'sessions.sidebar.empty.noMatches.title': '没有匹配的会话',

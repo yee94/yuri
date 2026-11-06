@@ -62,7 +62,7 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
     : restarting
       ? t('updateDialog.status.updating')
       : downloaded
-        ? t('updateDialog.actions.restartToUpdate')
+        ? t('sessions.sidebar.footer.actions.restartUpdate')
         : t('sessions.sidebar.footer.actions.update'));
 
   if (hideDownload && downloading) return null;
@@ -72,15 +72,20 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
-          size="icon"
-          className={`ml-auto ${footerIconButtonClassName} disabled:opacity-100`}
+          variant={downloaded ? "default" : "ghost"}
+          size={downloaded ? "xs" : "icon"}
+          className={downloaded ? "ml-auto min-w-0 shrink gap-1.5 disabled:opacity-100" : `ml-auto ${footerIconButtonClassName} disabled:opacity-100`}
           onClick={handleClick}
           disabled={restarting}
           aria-busy={restarting || undefined}
           aria-label={updateLabel}
         >
-          {downloading ? (
+          {downloaded ? (
+            <>
+              <Icon name="restart" className={`size-3.5 ${restarting ? 'motion-safe:animate-spin' : ''}`} />
+              <span className="truncate">{t(restarting ? 'updateDialog.status.updating' : 'sessions.sidebar.footer.actions.restartUpdate')}</span>
+            </>
+          ) : downloading ? (
             <svg
               viewBox="0 0 18 18"
               className={percent === null ? 'size-4 animate-spin' : 'size-4 -rotate-90'}

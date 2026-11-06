@@ -665,6 +665,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.footer.actions.shortcuts": "Гарячі клавіші",
   "sessions.sidebar.footer.actions.aboutYuri": "Про Yuri",
   "sessions.sidebar.footer.actions.update": "Оновити",
+  "sessions.sidebar.footer.actions.restartUpdate": "Перезапустити для оновлення",
   "sessions.sidebar.empty.noSessions.title": "Сесій ще немає",
   "sessions.sidebar.empty.noSessions.description": "Створіть першу сесію, щоб почати кодувати.",
   "sessions.sidebar.empty.noMatches.title": "Немає відповідних сесій",

@@ -425,6 +425,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.shortcuts': 'Skróty',
   'sessions.sidebar.footer.actions.aboutYuri': 'O Yuri',
   'sessions.sidebar.footer.actions.update': 'Aktualizuj',
+  'sessions.sidebar.footer.actions.restartUpdate': 'Uruchom ponownie, aby zaktualizować',
   'sessions.sidebar.empty.noSessions.title': 'Brak sesji',
   'sessions.sidebar.empty.noSessions.description': 'Utwórz swoją pierwszą sesję, aby rozpocząć kodowanie.',
   'sessions.sidebar.empty.noMatches.title': 'Brak pasujących sesji',
