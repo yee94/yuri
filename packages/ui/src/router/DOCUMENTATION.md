@@ -11,7 +11,7 @@ These are **siblings**, not children of a session:
 | **schedule** | `/schedule` · `/schedule/history` · `/schedule/tasks/$p/$t` · `…/agent/$focus` | Schedule workspace only |
 | **assistant** | `/assistant` · `/assistant/$id` · `…/agent/$focus` | Assistant workspace only |
 | **settings** | `/settings/$slug[/$entity]` | Settings overlay only |
-| **plugin** | `/plugins/$pluginId/$pageId` | Desktop global Solid plugin placement only |
+| **plugin** | `/plugins/$pluginId/$pageId` | Global Solid placement; Capacitor uses a mobile Sheet |
 
 **Invalid product URLs (must not be written):**
 
@@ -31,6 +31,12 @@ restore page identity before plugins finish loading. The immersive placement add
 no header/back/loading/retry chrome; rendering failures use the shared centered
 preview-error SVG and text, while detailed diagnostics stay in plugin settings. It never
 opens an external browser. Runtime switching clears the selection.
+
+On Capacitor, Projects' Apps cards select the same plugin/page identity and the
+shared window stack owns the sheet/back action. The prior main tab is retained.
+Only registered pages create cards; unrelated plugin failures do not keep removed
+pages open. The GUI Provider must establish the native Relay proxy before setup
+or mounting; hosted mobile cannot mount global pages.
 
 ## Session tools only under session
 

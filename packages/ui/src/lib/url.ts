@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { YuriExternalBrowser } from '@/lib/native-external-browser';
+import { getRuntimeGeneration } from '@/lib/runtime-switch';
 
 type DesktopBridgeGlobal = {
   openExternal?: (url: string) => Promise<unknown>;
@@ -8,7 +9,7 @@ type DesktopBridgeGlobal = {
 
 const parseUrlSafely = (value: string): URL | null => {
   try {
-    return new URL(value);
+    return new URL(/^localhost:\d+(?:[/?#]|$)/i.test(value) ? `http://${value}` : value);
   } catch {
     return null;
   }
@@ -22,6 +23,11 @@ export const isExternalHttpUrl = (url: string): boolean => {
   return parsed.protocol === 'http:' || parsed.protocol === 'https:';
 };
 
+export const normalizeExternalHttpUrl = (url: string): string | null => {
+  const parsed = parseUrlSafely(url.trim());
+  return parsed && (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
+};
+
 export const getExternalFaviconUrl = (url: string): string | null => {
   const parsed = parseUrlSafely(url.trim());
   if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
@@ -31,7 +37,7 @@ export const getExternalFaviconUrl = (url: string): string | null => {
   return `https://icons.duckduckgo.com/ip3/${parsed.hostname.toLowerCase()}.ico`;
 };
 
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]', '[::]']);
 
 /**
  * Returns true when the URL is an http(s) URL pointing at a loopback host
@@ -85,6 +91,7 @@ export const extractLoopbackUrls = (text: string): string[] => {
 /**
  * Opens an external URL in the system browser.
  * In desktop runtime, uses the native shell for proper handling.
+ * Native mobile loopback URLs open the Host-backed in-app HTML preview.
  * Falls back to window.open() for web runtime.
  *
  * @param url - The URL to open
@@ -110,6 +117,14 @@ export const openExternalUrl = async (url: string): Promise<boolean> => {
   }
 
   const normalizedTarget = parsed.toString();
+
+  if (Capacitor.isNativePlatform() && isLoopbackHttpUrl(normalizedTarget)) {
+    const generation = getRuntimeGeneration();
+    const { useMobileHtmlPreviewStore } = await import('@/mobile/useMobileHtmlPreviewStore');
+    if (generation !== getRuntimeGeneration()) return false;
+    useMobileHtmlPreviewStore.getState().open(normalizedTarget);
+    return true;
+  }
 
   if (Capacitor.getPlatform() === 'android') {
     if (!Capacitor.isPluginAvailable('YuriExternalBrowser')) return false;

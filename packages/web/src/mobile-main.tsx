@@ -1,4 +1,4 @@
-import { createConfiguredWebAPIs } from './runtimeConfig';
+import { prepareMobileGuiNetwork } from '@yuriai/ui/lib/gui-plugins/mobile-network-bridge';
 import type { RuntimeAPIs } from '@yuriai/ui/lib/api/types';
 import '@yuriai/ui/index.css';
 import '@yuriai/ui/styles/fonts';
@@ -9,9 +9,10 @@ declare global {
   }
 }
 
-window.__YURI_RUNTIME_APIS__ = createConfiguredWebAPIs();
-
-void import('@yuriai/ui/apps/renderMobileApp')
-  .then(({ renderMobileApp }) => {
-    renderMobileApp(window.__YURI_RUNTIME_APIS__ ?? createConfiguredWebAPIs());
+void prepareMobileGuiNetwork()
+  .then(() => import('./runtimeConfig'))
+  .then(async ({ createConfiguredWebAPIs }) => {
+    window.__YURI_RUNTIME_APIS__ = createConfiguredWebAPIs();
+    const { renderMobileApp } = await import('@yuriai/ui/apps/renderMobileApp');
+    renderMobileApp(window.__YURI_RUNTIME_APIS__);
   });

@@ -45,7 +45,7 @@ test('capacitor.config.ts declares CapacitorUpdater and YuriOTA OTA contracts', 
 
   assert.match(config, /YuriOTA:\s*\{/);
   assert.match(config, /channel:\s*otaChannel/);
-  assert.match(config, /shellApiVersion:\s*3/);
+  assert.match(config, /shellApiVersion:\s*4/);
 });
 
 test('yuri-ota.ts registers a local CapacitorUpdater bridge without package imports', async () => {

@@ -53,6 +53,11 @@ Everything a client normally sends to the single Yuri origin:
 - **Events** — relay `auto` uses SSE (bearer), the same path mobile uses. Desktop WebSocket upgrades over the tunnel close and drop assistant deltas; an explicit `ws` setting is unchanged.
 - **SSE** — streamed responses opened through `runtimeFetch`, including `/api/yuri/events` and SDK global SSE. Relay carries these HTTP response body frames through the tunnel.
 - **WebSocket** — the endpoints that use a real socket (the global event stream on platforms that support WS, terminal I/O, dictation, and Preview/Browser HMR under `/api/preview/proxy/<id>/...`).
+- **Mobile GUI TCP egress** — `/api/gui-network/ws` carries bounded SOCKS TCP
+  streams to the authenticated Host. It uses a separate client connection to the
+  same paired Relay identity, with a native wire so the WebView proxy needs no
+  hostname bypass. E2EE and tunnel framing are unchanged; both senders immediately
+  flush this path. Scope, auth and native probe evidence: `../gui-network/DOCUMENTATION.md`.
 
 The host dispatcher restricts tunneled traffic to explicit path allowlists (one for HTTP, one for WS). WS allowlist is exact-match for app sockets and **prefix** `/api/preview/proxy/` for Vite/dev-server HMR only (`isTunnelWsPathAllowed`).
 

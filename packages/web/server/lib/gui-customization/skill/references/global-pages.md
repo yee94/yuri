@@ -35,7 +35,7 @@ export default Plugin.define({
     ctx.add(Page, { id: 'dashboard', title: 'Studio', icon: 'window-analytics', render: () => createComponent(Dashboard, {}) })
     const open = () => {
       const live = pages()
-      if (!ctx.layout.narrow() && live.status === 'active' && live.value.open('dashboard')) return
+       if (live.status === 'active' && live.value.open('dashboard')) return
       ctx.toast.show({ title: ctx.t('unavailable'), variant: 'error' })
     }
     ctx.add(TitlebarItem, (): TitlebarContribution | undefined => {
@@ -46,14 +46,29 @@ export default Plugin.define({
         pressed: live.status === 'active' && live.value.current() === 'dashboard', run: open,
       }
     })
-    ctx.add(Command, () => ({ id: 'dashboard', title: ctx.t('open'), enabled: !ctx.layout.narrow(), run: open }))
+     ctx.add(Command, () => ({ id: 'dashboard', title: ctx.t('open'), enabled: pages().status === 'active', run: open }))
   },
 })
 ```
 
 The host key is `JSON.stringify([pluginId, pageId])`; pass only your **local** page ID to `pages.open`. The API cannot open another plugin's page or override a host contract. It returns false if navigation is unavailable. Access `ctx.use(Pages)()` live when clicking; it can be inactive while a provider is unavailable.
 
-Global pages and their entry points are for desktop/Web desktop layouts and VS Code. On mobile the pages contract is inactive and the page is not mounted; hide the titlebar item and disable its command when `ctx.layout.narrow()`. Use a file Panel for mobile file previews instead. Registration itself does not navigate.
+Desktop/Web desktop layouts and VS Code use the main-content placement. New
+Capacitor shells show registered pages as icon cards under Projects → Apps and
+mount them in a mobile sheet. Keep the page registration on narrow layouts even
+when hiding its desktop titlebar item. Registration itself does not navigate.
+Use the live pages contract to determine availability rather than treating every
+narrow layout as unsupported. Hosted mobile global pages remain unsupported.
+
+Native mobile requires shell API 4, iOS 17+ or Android WebView proxy support, a
+saved Relay pairing and an updated Host. A gateway is prepared at mobile startup
+and switched to Relay before plugin code/setup; rendering stays local. Current
+iOS 26.5 Simulator acceptance still fails for loopback IP literals, including with
+a fresh data store. The supported native bridge therefore does not establish that
+every HTTP(S)/WS(S) request follows Relay. Website CSP, CORS, framing policy and
+authentication still apply. This does not cover WebRTC/UDP, native networking or
+external-browser handoff, and is not a sandbox for arbitrary plugin code. Cleanup
+must still release plugin timers, frames and subscriptions with their owner.
 
 ## Optional: embed an existing application
 

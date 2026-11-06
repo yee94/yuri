@@ -1,11 +1,8 @@
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
-import type { IconName } from '@/components/icon/icons';
-import { iconSpriteData } from '@/components/icon/sprite';
+import { guiPluginIcon } from './icons';
 import { useGuiPlugins } from '@/lib/gui-plugins/react';
 import { cn } from '@/lib/utils';
-
-const iconAliases: Record<string, IconName> = { globe: 'global', server: 'server', 'circle-check': 'checkbox-circle', 'circle-x': 'close-circle', 'window-analytics': 'bar-chart-box' };
 
 export function GuiPluginTitlebarItems({ mobile = false, sidebar = false }: { mobile?: boolean; sidebar?: boolean }) {
   const { host, snapshot } = useGuiPlugins();
@@ -14,7 +11,7 @@ export function GuiPluginTitlebarItems({ mobile = false, sidebar = false }: { mo
   return <div data-gui-titlebar-items={!sidebar || undefined} data-gui-sidebar-items={sidebar || undefined}
     className={sidebar ? 'app-region-no-drag space-y-0.5' : 'app-region-no-drag flex min-w-0 max-w-32 items-center gap-1 overflow-x-auto scrollbar-hidden'}>
     {snapshot.titlebarItems.map((item) => {
-      const icon = item.icon && (iconAliases[item.icon] ?? (Object.hasOwn(iconSpriteData, item.icon) ? item.icon as IconName : undefined));
+      const icon = guiPluginIcon(item.icon);
       const content = <>
         {item.busy ? <Icon name="loader-4" className={cn(sidebar ? 'size-4' : 'size-3.5', 'shrink-0 animate-spin motion-reduce:animate-none')} />
           : icon ? <Icon name={icon} className={sidebar ? 'size-4 shrink-0' : 'size-3.5'} />

@@ -79,7 +79,49 @@ React 只拥有空容器；插件可返回 iframe，也可自行渲染 DOM。无
 没有宿主标题、返回按钮、加载状态或重试按钮；渲染失败时复用文件/Eficy 的
 `FilePreviewError` 居中 SVG 与文字兜底，详细诊断仍在插件设置中，
 不会回退外部浏览器。`/plugins/$pluginId/$pageId` 只包含身份，不包含配置。
-全局页只用于桌面/Web 桌面布局和 VS Code；移动端契约 inactive、不挂载页面。
+桌面/Web 桌面布局和 VS Code 保留上述全局 placement。新版 Capacitor 通过
+Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet 中挂载同一个页面。
+卡片只来自真实 `yuri.page` 注册；没有页面时不显示入口。多个插件相同页面 ID
+按完整 host key 区分；无图标或未知图标沿用 window 回退。其他 root header 不重复放入口。
+普通 hosted mobile 的全局页仍为 unsupported，`yuri.pages` 在网络未就绪时 inactive。
+
+### Capacitor 网络生命周期
+
+`mobile-main.tsx` 先等待轻量 `mobile-network-bridge.ts` 的 `prepare`，再动态导入
+runtime 配置，避免应用网络先建立连接。常驻 SOCKS 网关在没有 GUI 租约时直接
+转发普通应用 TCP；原生 `capabilities.supported` 只表示准备成功，不表示零旁路。
+
+`GuiPluginsProvider` 在创建 host、求值 CJS 和执行 setup **之前**取得
+`acquireMobileHtmlNetwork` 共享租约，底层仍由 `openMobileGuiNetwork` 持有。内置 HTML
+文件预览及 URL Sheet 也申请同一个 owner。缺少新版原生桥、iOS 17+ 代理能力、已配对 Relay
+或新版 Host 出口时，不执行移动插件代码，错误保留在插件设置中。LAN 连接也使用
+同一已保存设备的 Relay candidate；不猜测其他设备或降级手机直连。
+
+租约覆盖整个 host，因此页面、Panel、Settings、setup 和插件后台任务共用代理；
+关闭单个页面不释放租约。`start` 关闭旧网关连接并切换 Relay 出口；失败先 dispose
+插件，再 abort 自己的引用；HTML 消费者先移除内容再释放，最后一个 owner 才结束
+Relay 模式。正常清理先释放 host owner，再 abort 网络；`stop` 关闭流和 wire，恢复
+普通应用转发，但保留 WebView 代理配置。
+并发 acquire 等待上次 release，旧 generation 的回调丢弃。页面被权威移除会关闭，所属插件
+失败则保留错误页；其他插件的失败不阻碍关闭已移除页面。
+
+`mobile-network-wire.ts` 将**同一配对 Relay 的独立连接**交给原生 URLSession /
+OkHttp；加密仍由既有 TS tunnel client 完成。WebView 代理没有 Relay hostname
+bypass；配置的 HTTP(S)/WS(S) 路径为 loopback SOCKS → 现有 Relay → Host TCP 出口。
+32 流、16 KiB 分块和 128 KiB/流 credit 限制在途字节，写入完成后才归还 credit。
+
+当前复用主 WebView：iOS 同 website data store、Android 同进程的其他 WebView
+请求也会受代理影响。iOS 26.5 模拟器的冷/预热 `localhost` 均通过，包括租约
+释放后的联网恢复；`127.0.0.1` 和 `[::1]` 四个用例仍旁路。创建前配置不可达代理的
+全新 nonpersistent WebView 也复现回环 IP 直连；真机行为未验证。
+网络握手 ready 不代表所有浏览器请求已经切到代理。
+内置 loopback 链接经 Host preview proxy 改写后的三个预热原生用例已通过；它只覆盖
+该入口，不能外推为任意插件直接访问 IP 也已修复。共享 HTML owner 和 URL 续期见
+`../preview/DOCUMENTATION.md`。
+尚未实现独立插件 WebView/Android 进程；WebRTC/UDP、原生
+联网、外部浏览器和代理安装前的连接不在强制覆盖范围。因此这不是“所有协议零旁路”
+的完成证明。真实 iOS 网络探针与完整边界见
+`packages/web/server/lib/gui-network/DOCUMENTATION.md`。
 
 options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/持久缓存。
 同文档第三方 JS 不是安全沙箱；iframe 的认证、来源校验和跨域策略由插件拥有，

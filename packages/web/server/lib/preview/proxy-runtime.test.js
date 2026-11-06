@@ -18,6 +18,10 @@ const rewrite = (bodyText, kind) => rewritePreviewBody({
   targetOrigin: 'http://127.0.0.1:3000',
 });
 
+it('preserves an explicit IPv6 loopback service instead of dialing IPv4', () => {
+  expect(normalizeProxyTargetUrl('http://[::1]:3000/app')).toEqual({ ok: true, origin: 'http://[::1]:3000' });
+});
+
 describe('preview Inertia header passthrough', () => {
   it('forwards Inertia request headers to the preview target', () => {
     const forwarded = new Map();

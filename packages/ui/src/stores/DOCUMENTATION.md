@@ -1,5 +1,11 @@
 # UI Stores
 
+Native `openContextPreview`/`openContextBrowser` actions open the transient
+`mobile/useMobileHtmlPreviewStore` URL sheet. Targets carry the runtime generation,
+are not persisted, and are hidden on runtime switch. The sheet and GUI host share
+native Relay ownership through `lib/preview/mobile-html-network.ts`; this selection
+store owns no transport or credentials.
+
 Provider Settings uses two transient selections: `__add_provider__` for the
 provider grid and `__custom_provider__` for a new custom draft. Catalog refresh and
 directory snapshot reconciliation preserve both in memory; persistence strips both

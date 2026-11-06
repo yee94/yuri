@@ -9,18 +9,21 @@ const native = vi.hoisted(() => ({
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     getPlatform: () => native.platform,
+    isNativePlatform: () => native.platform !== 'web',
     isPluginAvailable: () => native.available,
   },
   registerPlugin: () => ({ open: native.open }),
 }));
 
 import { openExternalUrl } from './url';
+import { useMobileHtmlPreviewStore } from '@/mobile/useMobileHtmlPreviewStore';
 
 afterEach(() => {
   vi.restoreAllMocks();
   native.open.mockReset();
   native.platform = 'android';
   native.available = true;
+  useMobileHtmlPreviewStore.getState().close();
 });
 
 test('Android hands external links to the native system browser', async () => {
@@ -50,4 +53,12 @@ test.each(['web', 'ios'])('%s keeps the window browser handoff', async (platform
   expect(await openExternalUrl('https://example.com')).toBe(true);
   expect(popup).toHaveBeenCalledWith('https://example.com/', '_blank', 'noopener,noreferrer');
   expect(native.open).not.toHaveBeenCalled();
+});
+
+test.each(['http://localhost:3000/page?x=1#top', 'http://127.0.0.1:3000/', 'http://[::1]:3000/', 'localhost:3000'])('native local link %s opens the in-app Relay preview', async url => {
+  const popup = vi.spyOn(window, 'open');
+  expect(await openExternalUrl(url)).toBe(true);
+  expect(useMobileHtmlPreviewStore.getState().target?.url).toBe(url === 'localhost:3000' ? 'http://localhost:3000/' : url);
+  expect(native.open).not.toHaveBeenCalled();
+  expect(popup).not.toHaveBeenCalled();
 });

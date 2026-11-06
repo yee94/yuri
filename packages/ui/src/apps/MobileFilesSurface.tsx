@@ -1,5 +1,6 @@
 import React from 'react';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
+import { MobileHtmlNetworkBoundary } from '@/components/preview/MobileHtmlNetworkBoundary';
 import { GuiFileLinkBridge } from '@/components/gui-plugins/GuiFileLinkBridge';
 import { LoadingImage } from '@/components/ui/LoadingImage';
 import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder';
@@ -759,7 +760,11 @@ const MobileFileDetail: React.FC<{
   );
 };
 
-const MobileHtmlPreview: React.FC<{ path: string }> = ({ path }) => {
+const MobileHtmlPreview: React.FC<{ path: string }> = ({ path }) => (
+  <MobileHtmlNetworkBoundary>{() => <MobileHtmlDocument path={path} />}</MobileHtmlNetworkBoundary>
+);
+
+const MobileHtmlDocument: React.FC<{ path: string }> = ({ path }) => {
   const { t } = useI18n();
   const relay = isRelayModeActive();
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);

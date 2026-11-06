@@ -33,6 +33,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(YuriVirtualAssetPlugin.class);
         registerPlugin(YuriMediaPlugin.class);
         registerPlugin(YuriViewExportPlugin.class);
+        registerPlugin(YuriGuiNetworkPlugin.class);
         registerPlugin(YuriPhysicalScalePlugin.class);
         registerPlugin(YuriNotificationsPlugin.class);
         super.onCreate(savedInstanceState);

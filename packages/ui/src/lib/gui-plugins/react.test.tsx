@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   transport: 'host-a', directory: '/project', sessionID: 'session-a' as string | null,
   sessions: {} as Record<string, { id: string; directory: string }>,
   files: {},
+  mobile: false, network: vi.fn(),
   nativeBridge: undefined as NativeGuiBridge | undefined,
   windowBridge: undefined as NativeGuiBridge | undefined,
   focusFile: undefined as undefined | ((path: string, directory: string) => Promise<void>),
@@ -24,6 +25,8 @@ vi.mock('@/lib/runtime-switch', () => ({
     return () => window.removeEventListener('yuri:runtime-endpoint-changed', callback);
   },
 }));
+vi.mock('@/lib/platform', () => ({ isCapacitorApp: () => state.mobile }));
+vi.mock('@/lib/preview/mobile-html-network', () => ({ acquireMobileHtmlNetwork: (...args: unknown[]) => state.network(...args) }));
 vi.mock('@/lib/desktop', () => ({ getDesktopGuiPluginBridge: () => state.nativeBridge, getDesktopGuiPluginWindowBridge: () => state.windowBridge ?? state.nativeBridge }));
 vi.mock('@/lib/instanceScopedStorage', () => ({ instanceScopedStorageKey: (key: string, runtime: string) => `${runtime}:${key}` }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: state.files }) }));
@@ -44,7 +47,7 @@ vi.mock('@/components/gui-plugins/GuiPluginSurface', () => ({ GuiPluginSurface: 
 vi.mock('./host', () => { state.hostImports(); return {
   GuiPluginHost: class {
     snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null };
-    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn();
+    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn(); setMobilePageNetworkReady = vi.fn();
     appearanceCatalog = { setOrder: vi.fn() };
     subscribe = () => () => {};
     getSnapshot = () => this.snapshot;
@@ -88,6 +91,7 @@ beforeEach(() => {
   vi.stubGlobal('cancelIdleCallback', vi.fn((id: number) => idleTasks.delete(id)));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   state.transport = 'host-a'; state.hosts.length = 0; state.signals.length = 0; state.hostFailure = false;
+  state.mobile = false; state.network.mockReset();
   state.nativeBridge = undefined;
   state.windowBridge = undefined;
   state.surfaceFailure = false;
@@ -140,6 +144,56 @@ it('uses application readiness only as an initial gate and retains the host duri
   await act(async () => draw()); await settle();
   expect(state.hosts).toHaveLength(1);
   expect(state.gui).toHaveBeenCalledOnce();
+});
+
+it('waits for native Relay before any plugin setup, then retains it across page-independent updates', async () => {
+  state.mobile = true;
+  let ready!: () => void;
+  let signal!: AbortSignal;
+  state.network.mockImplementation((owner: AbortSignal) => {
+    signal = owner;
+    return new Promise<void>(resolve => { ready = resolve; });
+  });
+  await load();
+  expect(state.hosts).toHaveLength(0);
+  expect(state.gui).not.toHaveBeenCalled();
+  await act(async () => ready()); await settle(); await settle();
+  expect(state.hosts).toHaveLength(1);
+  expect(state.hosts[0].install).toHaveBeenCalledOnce();
+  for (let index = 0; index < 50; index++) await act(async () => draw());
+  expect(state.network).toHaveBeenCalledOnce();
+  expect(signal.aborted).toBe(false);
+  let disposedBeforeRestore = false;
+  signal.addEventListener('abort', () => { disposedBeforeRestore = state.hosts[0].dispose.mock.calls.length > 0; });
+  await act(async () => root.render(null));
+  expect(disposedBeforeRestore).toBe(true);
+});
+
+it('disposes plugins before releasing a failed shared Relay owner, and can retry', async () => {
+  state.mobile = true;
+  state.network.mockResolvedValue(undefined);
+  await load();
+  const host = state.hosts[0];
+  const [signal, fail] = state.network.mock.calls[0] as [AbortSignal, () => void];
+  await act(async () => fail());
+  expect(host.dispose).toHaveBeenCalledOnce();
+  expect(context.error).toBe('relay_unavailable');
+  expect(signal.aborted).toBe(true);
+  await act(async () => context.refresh()); await settle(); await settle();
+  expect(signal.aborted).toBe(true);
+  expect(state.network).toHaveBeenCalledTimes(2);
+  expect(state.hosts).toHaveLength(2);
+  expect(context.error).toBe(null);
+});
+
+it('never installs mobile plugins when the native bridge or paired Relay is unavailable', async () => {
+  state.mobile = true;
+  state.network.mockRejectedValue(new Error('relay_required'));
+  await load();
+  expect(state.hosts).toHaveLength(0);
+  expect(state.gui).not.toHaveBeenCalled();
+  expect(context.error).toBe('relay_required');
+  expect(context.loading).toBe(false);
 });
 
 it('passes authoritative inventory order to appearance once per catalog change, not on unrelated renders', async () => {

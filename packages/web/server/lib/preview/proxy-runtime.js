@@ -1008,7 +1008,7 @@ export const normalizeProxyTargetUrl = (rawUrl, { allowExternal = false } = {}) 
 
   // Normalize common loopback hostnames to IPv4 to avoid environments where
   // `localhost` resolves to ::1 but the dev server only binds IPv4.
-  if (LOOPBACK_HOSTS.has(hostname) && (hostname === '0.0.0.0' || hostname === 'localhost' || hostname === '::1' || hostname === '[::1]')) {
+  if (LOOPBACK_HOSTS.has(hostname) && (hostname === '0.0.0.0' || hostname === 'localhost')) {
     url.hostname = '127.0.0.1';
   }
 
