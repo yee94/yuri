@@ -68,6 +68,7 @@ vi.mock('@/stores/useUIStore', () => ({
 import { useUpdateStore } from './useUpdateStore';
 import type { MobileUpdateDecision } from '@/lib/mobile-updates/types';
 import { checkForDesktopUpdates, downloadDesktopUpdate, restartToApplyUpdate } from '@/lib/desktop';
+import { getSafeStorage } from '@/stores/utils/safeStorage';
 
 const otaAvailableDecision = (): MobileUpdateDecision => ({
   status: 'ok',
@@ -495,5 +496,46 @@ describe('desktop shared OTA policy', () => {
     await useUpdateStore.getState().checkForUpdates();
     expect(useUpdateStore.getState().downloaded).toBe(false);
     expect(useUpdateStore.getState().error).toBe('offline');
+  });
+
+  test('download failure stays distinct from check failures, retries safely and merges repeated clicks', async () => {
+    vi.mocked(checkForDesktopUpdates).mockResolvedValue({ available: true, currentVersion: '1.18.2', version: '1.18.3', inAppApply: true });
+    vi.mocked(downloadDesktopUpdate).mockRejectedValueOnce(new Error('offline'));
+    await useUpdateStore.getState().checkForUpdates();
+    expect(useUpdateStore.getState().downloadError).toBeNull();
+    await useUpdateStore.getState().downloadUpdate();
+    expect(useUpdateStore.getState()).toMatchObject({ downloading: false, downloadError: 'offline', downloadVersion: '1.18.3' });
+    await useUpdateStore.getState().checkForUpdates();
+    expect(useUpdateStore.getState().downloadError).toBe('offline');
+    let resolve!: (ok: boolean) => void;
+    vi.mocked(downloadDesktopUpdate).mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const retry = useUpdateStore.getState().downloadUpdate();
+    await useUpdateStore.getState().downloadUpdate();
+    await Promise.resolve();
+    expect(downloadDesktopUpdate).toHaveBeenCalledTimes(2);
+    resolve(true); await retry;
+    expect(useUpdateStore.getState()).toMatchObject({ downloaded: true, downloading: false, downloadError: null });
+    expect(restartToApplyUpdate).not.toHaveBeenCalled();
+  });
+
+  test('a failed client download cannot silently retry a different release', async () => {
+    useUpdateStore.setState({ available: true, runtimeType: 'desktop', info: { available: true, currentVersion: '1.18.2', version: '1.18.3' } });
+    vi.mocked(checkForDesktopUpdates).mockResolvedValue({ available: true, currentVersion: '1.18.2', version: '1.18.4' });
+    await useUpdateStore.getState().downloadUpdate();
+    expect(useUpdateStore.getState().downloadError).toBe('update_plan_changed');
+    expect(downloadDesktopUpdate).not.toHaveBeenCalled();
+  });
+
+  test('interrupted client intent survives a UI restart without persisting URLs, errors or per-progress writes', async () => {
+    const storage = getSafeStorage(); const write = vi.spyOn(storage, 'setItem');
+    useUpdateStore.setState({ downloading: true, runtimeType: 'desktop', downloadVersion: '1.18.3', downloadChannel: 'stable' });
+    const count = write.mock.calls.length;
+    for (let downloaded = 0; downloaded < 50; downloaded++) useUpdateStore.setState({ progress: { downloaded, total: 100 } });
+    expect(write.mock.calls.length).toBe(count);
+    expect(JSON.parse(storage.getItem('yuri-client-update-download')!)).toEqual({ version: '1.18.3', channel: 'stable', runtimeType: 'desktop' });
+    vi.resetModules();
+    const reloaded = (await import('./useUpdateStore')).useUpdateStore;
+    expect(reloaded.getState()).toMatchObject({ downloading: false, downloadError: 'update_interrupted', downloadVersion: '1.18.3' });
+    reloaded.getState().reset(); useUpdateStore.getState().reset(); write.mockRestore();
   });
 });

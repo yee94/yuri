@@ -1,5 +1,11 @@
 # Host self-update
 
+The sidebar retains failed/interrupted Host operations with a red progress ring.
+Continue re-fetches the original channel and requires an exact version/artifact
+kind match before submitting a fresh plan. It never replays expired plan IDs or
+silently substitutes the channel's newest release. Existing operation persistence,
+admission serialization and fresh artifact validation remain authoritative.
+
 `GET /api/system/update?channel=stable|beta` returns the **serving Host's**
 identity/version, supported capability, selected/query channel, optional update
 plan (exact version, release notes, OTA/installer/CLI kind, rollback and expiry),

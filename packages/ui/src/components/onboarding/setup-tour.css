@@ -83,8 +83,7 @@
   .yuri-tour-plugins { grid-template-columns: 1fr; }
   .yuri-tour-provider-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .yuri-tour-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px; }
-  .yuri-tour-progress { flex-direction: row; gap: 8px; }
-  .yuri-tour-progress > button { flex: 1; }
-  .yuri-tour-progress > button { padding-inline: 4px; gap: 6px; font-size: 11px; }
-  .yuri-tour-number { font-size: 24px; }
+  .yuri-tour-progress { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .yuri-tour-progress > button { flex-direction: column; height: auto; padding: 4px; gap: 5px; font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
+  .yuri-tour-number { font-size: 20px; }
 }

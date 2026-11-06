@@ -26,7 +26,7 @@ vi.mock('@/lib/yuriEvents', () => ({
   },
 }));
 vi.mock('@/components/assistants/ProceduralAssistantAvatar', () => ({
-  ProceduralAssistantAvatar: ({ seed, randomizeShape }: { seed: string; randomizeShape: boolean }) => <img src={generatedAvatarDataUri('assistant', seed)} data-randomize-shape={String(randomizeShape)} />,
+  ProceduralAssistantAvatar: ({ seed, randomizeShape = false, playOnce, followPointer, blinkOnMount }: { seed: string; randomizeShape?: boolean; playOnce?: boolean; followPointer?: boolean; blinkOnMount?: boolean | 2 }) => <img src={generatedAvatarDataUri('assistant', seed)} data-randomize-shape={String(randomizeShape)} data-play-once={String(playOnce)} data-follow-pointer={String(followPointer)} data-blink-on-mount={String(blinkOnMount)} />,
 }));
 import { assistantQueryKeys, assistantSnapshotQueryOptions, markAllAssistantsRead, markAssistantContactRead, useAssistantUnreadTotal } from './assistantQueries';
 import { AssistantNavigationIcon } from '@/components/assistants/AssistantNavigationIcon';
@@ -58,7 +58,7 @@ afterEach(async () => {
 });
 
 describe('Assistant shared read contract', () => {
-  test('navigation follows latest messages, keeps its ambient animator through work, and clears on runtime or catalog changes', async () => {
+  test('navigation follows latest messages, keeps its one-shot animator through work, and clears on runtime or catalog changes', async () => {
     const a = { ...assistant('a', 99), avatarSeed: 'face-a', latestMessagePreview: { ...assistantContractFixtures.assistant.latestMessagePreview, createdAt: 10 } };
     const b = { ...assistant('b', 0), avatarSeed: 'face-b', latestMessagePreview: { ...assistantContractFixtures.assistant.latestMessagePreview, createdAt: 20 } };
     let snapshot = { enabled: true, revision: 1, assistants: [a, b] };
@@ -69,7 +69,10 @@ describe('Assistant shared read contract', () => {
     await act(async () => root!.render(<QueryClientProvider client={state.client!}><React.Profiler id="navigation" onRender={rendered}><AssistantNavigationIcon className="size-4" /></React.Profiler></QueryClientProvider>));
     const src = () => host.querySelector('img')?.getAttribute('src');
     await vi.waitFor(() => expect(src()).toBe(generatedAvatarDataUri('assistant', 'face-b')));
-    expect(host.querySelector('img')?.getAttribute('data-randomize-shape')).toBe('true');
+    expect(host.querySelector('img')?.getAttribute('data-randomize-shape')).toBe('false');
+    expect(host.querySelector('img')?.getAttribute('data-play-once')).toBe('true');
+    expect(host.querySelector('img')?.getAttribute('data-follow-pointer')).toBe('false');
+    expect(host.querySelector('img')?.getAttribute('data-blink-on-mount')).toBe('2');
     const update = async () => {
       await act(async () => {
         state.client!.setQueryData(assistantQueryKeys.snapshot(), { ...snapshot });

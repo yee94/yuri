@@ -1,5 +1,9 @@
 # VS Code Backend Modules
 
+Standalone webviews return 501 `history_import_unsupported` for
+`/api/yuri/history-import/*`. Source history filesystem access and background
+import jobs belong to a Yuri Host, not the generic direct-OpenCode proxy.
+
 Standalone webviews return explicit 501 for `/api/yuri/assistants/:id/weixin` and
 `/api/yuri/assistants/:id/channels` and their subroutes. These message channels belong to a running Yuri Host,
 not a direct OpenCode connection; these routes must not reach generic proxy fallback.

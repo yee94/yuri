@@ -843,7 +843,7 @@ const sanitizeHostRelayForStorage = (value) => {
 // the home network, relay away — mirrors the mobile connection model). Returns
 // null for entries that can't be stored (missing id, reserved 'local', or no
 // usable transport at all).
-const buildStoredHostEntry = (entry) => {
+const buildStoredHostEntry = (entry, sshInstanceIds) => {
   const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
   if (!id || id === LOCAL_HOST_ID) return null;
   const clientToken = sanitizeClientTokenForStorage(entry?.clientToken);
@@ -852,7 +852,9 @@ const buildStoredHostEntry = (entry) => {
   const tokenField = clientToken ? { clientToken } : {};
   const labelRaw = typeof entry?.label === 'string' && entry.label.trim() ? entry.label.trim() : '';
 
-  const relay = sanitizeHostRelayForStorage(entry?.relay);
+  const relay = sshInstanceIds.has(id) && entry?.source !== 'connect-link'
+    ? null
+    : sanitizeHostRelayForStorage(entry?.relay);
   const relayField = relay ? { relay } : {};
   const sourceField = entry?.source === 'connect-link' ? { source: 'connect-link' } : {};
   const directUrl = sanitizeHostUrlForStorage(entry?.url);
@@ -871,8 +873,9 @@ const buildStoredHostEntry = (entry) => {
 const readDesktopHostsConfig = () => {
   const root = readSettingsRoot();
   const hostsRaw = Array.isArray(root.desktopHosts) ? root.desktopHosts : [];
+  const sshInstanceIds = new Set((Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : []).map((entry) => entry?.id));
   const hosts = hostsRaw
-    .map(buildStoredHostEntry)
+    .map((entry) => buildStoredHostEntry(entry, sshInstanceIds))
     .filter(Boolean);
 
   return {
@@ -886,9 +889,10 @@ const readDesktopHostsConfig = () => {
 
 const writeDesktopHostsConfig = async (config) => {
   await mutateSettingsRoot((root) => {
+    const sshInstanceIds = new Set((Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : []).map((entry) => entry?.id));
     root.desktopHosts = Array.isArray(config?.hosts)
       ? config.hosts
-          .map(buildStoredHostEntry)
+          .map((entry) => buildStoredHostEntry(entry, sshInstanceIds))
           .filter(Boolean)
       : [];
     root.desktopDefaultHostId = typeof config?.defaultHostId === 'string' && config.defaultHostId.trim()

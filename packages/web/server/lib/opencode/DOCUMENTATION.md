@@ -10,6 +10,9 @@ diagnostics use provider/location/session-active V2 routes and location query
 encoding, not removed V1 endpoints.
 
 ## Entrypoints and structure
+- `feature-routes-runtime.js` registers the Host-owned history importer before
+  the generic proxy, using the official client, project registry and session
+  index. Its domain contract is in `../history-import/DOCUMENTATION.md`.
 - `native-goal.js`: official `@opencode/schema/goal` RPC read adapter shared by
   scheduled tasks, Assistant reconciliation and notification suppression. It
   validates native state and distinguishes an absent plugin from transport/auth

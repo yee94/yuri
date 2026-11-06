@@ -7,6 +7,7 @@ import { useUpdateStore } from '@/stores/useUpdateStore';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('./DeviceConnections', () => ({ DeviceConnections: () => null }));
+vi.mock('./SidebarBackgroundTasks', () => ({ SidebarBackgroundTasks: () => <div data-background-tasks /> }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,7 +15,7 @@ const initialState = useUpdateStore.getState();
 let root: ReturnType<typeof createRoot> | undefined;
 let host: HTMLDivElement;
 
-function renderFooter(onOpenUpdate: () => void) {
+function renderFooter(onOpenUpdate: () => void, showRuntimeButtons = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement('div');
   document.body.append(host);
@@ -23,7 +24,7 @@ function renderFooter(onOpenUpdate: () => void) {
     root!.render(
       <QueryClientProvider client={client}>
         <SidebarFooter
-          showRuntimeButtons={false}
+          showRuntimeButtons={showRuntimeButtons}
           showUpdateButton
           onOpenSettings={() => {}}
           onOpenShortcuts={() => {}}
@@ -47,6 +48,12 @@ afterEach(async () => {
 });
 
 describe('SidebarFooter update button', () => {
+  test('downloads use the shared background indicator instead of a second update ring', async () => {
+    useUpdateStore.setState({ downloading: true, available: true, progress: { downloaded: 20, total: 100 } });
+    const { render } = renderFooter(vi.fn(), true); await render();
+    expect(host.querySelector('[data-background-tasks]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="updateDialog.status.downloading"]')).toBeNull();
+  });
   test('a queued update restarts once through the mutation and stays disabled while pending', async () => {
     let resolveRestart: () => void = () => {};
     const restartToUpdate = vi.fn(() => new Promise<void>((resolve) => { resolveRestart = resolve; }));

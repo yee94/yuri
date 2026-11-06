@@ -57,6 +57,7 @@ const resolveBatchWindowMs = (option) => {
  *   identity: { serverId: string, hostEncPrivateKey: CryptoKey, signRelayAuth: (role: string, connectionId?: string | null) => { ts: number, sig: string, pk: string } },
  *   localPort?: number,
  *   getLocalPort?: () => number,
+ *   authorizeRequest?: (req: { method: string, url: string, headers: Record<string, string> }) => Promise<boolean>,
  *   onStatus?: (status: { state: string, lastError: string | null, connectedClients: number }) => void,
  *   logger?: Pick<Console, 'warn'>,
  *   reconnectBaseDelayMs?: number,
@@ -64,7 +65,7 @@ const resolveBatchWindowMs = (option) => {
  *   controlStableMs?: number,
  * }} options
  */
-export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, onStatus, logger = console, batchWindowMs, batch, reconnectBaseDelayMs, reconnectMaxDelayMs, controlStableMs }) => {
+export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, authorizeRequest, onStatus, logger = console, batchWindowMs, batch, reconnectBaseDelayMs, reconnectMaxDelayMs, controlStableMs }) => {
   const resolveLocalPort = typeof getLocalPort === 'function' ? getLocalPort : () => localPort;
   const localBatch = batch !== false;
   const resolvedBatchWindowMs = resolveBatchWindowMs(batchWindowMs);
@@ -197,6 +198,7 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
             : null;
           entry.tunnel = createTunnelHost({
             connectionId,
+            authorizeRequest,
             getLocalPort: resolveLocalPort,
             getBufferedAmount: () => socket.bufferedAmount,
             sendFrame: (plaintextFrame, immediate = false) => {

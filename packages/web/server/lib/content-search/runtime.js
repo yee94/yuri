@@ -21,16 +21,20 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
     return { ...(state.runtime === runtime ? state : { runtime, phase: 'pending', since: now() - RETENTION, total: 0, completed: 0, failed: 0, updatedAt: null }),
       ...coverage, initializationRequired: coverage.indexCompletedAt === null, ...service.stats(runtime) };
   };
-  const sync = ({ incremental = false } = {}) => {
+  const sync = ({ incremental = false, resume = false } = {}) => {
     if (stopped) return Promise.resolve();
-    if (flight) return flight;
+    if (flight) {
+      if (resume) state.phase = 'indexing';
+      return flight;
+    }
     const runtime = getRuntimeKey();
     controller = new AbortController();
     const signal = controller.signal;
     const current = () => !stopped && runtime === getRuntimeKey() && !signal.aborted;
     if (state.runtime !== runtime) { dirty.clear(); deleted.clear(); }
     const previous = state.runtime === runtime ? state.updatedAt : null;
-    state = { runtime, phase: previous ? 'ready' : 'indexing', since: now() - RETENTION, total: state.total, completed: 0, failed: 0, updatedAt: previous };
+    const showProgress = resume || !previous || ['partial', 'error', 'pending'].includes(state.phase);
+    state = { runtime, phase: showProgress ? 'indexing' : 'ready', since: now() - RETENTION, total: state.total, completed: 0, failed: 0, updatedAt: previous };
     flight = (async () => {
       if (service.coverage(runtime).indexCompletedAt === null) service.beginInitialization(runtime, now());
       const revisions = new Map(service.pending(runtime).map(({ id, revision }) => [id, revision]));

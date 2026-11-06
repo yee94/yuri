@@ -63,6 +63,7 @@ import type { UsageWindow } from '@/types';
 import type { GitHubAuthStatus } from '@/lib/api/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
 import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
+import { DesktopCurrentHostButton } from '@/components/desktop/DesktopCurrentHostButton';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { resolveServicesPanelIntent } from '@/components/layout/servicesPanelIntent';
@@ -314,8 +315,11 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
   return (
     <DropdownMenu
       open={isDesktopServicesOpen}
-      onOpenChange={(open) => {
-        if (!open && hostActionBusyRef.current) return;
+      onOpenChange={(open, details) => {
+        if (!open && (details.reason === 'trigger-hover' || details.reason === 'focus-out' || hostActionBusyRef.current)) {
+          details.cancel();
+          return;
+        }
         setIsDesktopServicesOpen(open);
         if (open) {
           void refreshCurrentInstanceLabel();
@@ -326,7 +330,7 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
       }}
     >
       {/* Keep a focusable trigger for Base UI; positioning uses the ··· anchor. */}
-      <DropdownMenuTrigger asChild>
+      <DropdownMenuTrigger asChild openOnHover={false}>
         <button
           type="button"
           aria-hidden
@@ -1737,6 +1741,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="flex shrink-0 items-center gap-1">
           {sessionOverflowMenu}
+          {isDesktopApp && <DesktopCurrentHostButton open={isDesktopServicesOpen && desktopServicesTab === 'instance'} onClick={() => applyServicesPanelOpen('instance')} />}
           {showDesktopHeaderContextUsage && stableDesktopContextUsage ? (
             <ContextUsageDisplay
               pending={stableDesktopContextUsage.pending}

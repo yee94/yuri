@@ -10,7 +10,9 @@
 
 Yuri 是基于 OpenCode 的 AI 工作台，支持编程、个人助理和计划任务。对话、文件、终端与预览集中在一个工作空间，可从桌面、iOS、Android、浏览器和 VS Code 访问。
 
-![Yuri 桌面工作空间](site/assets/shots/home.webp)
+![Yuri 桌面工作空间：代码差异审查](site/assets/shots/workspace-diff.webp)
+
+![Yuri 桌面工作空间：交互页面预览](site/assets/shots/workspace-preview.webp)
 
 ## 可以做什么
 

@@ -499,6 +499,31 @@ export const createUiAuth = ({
     client: clientAuth?.client || null,
   });
 
+  const authorizeRelayRequest = async (req) => {
+    const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+    // Pairing redeems its one-time secret before a client credential exists.
+    if (req.method === 'POST' && pathname === '/api/client-auth/pairing/redeem') return true;
+    try {
+      const urlAuth = authenticateUrlAuthToken(req);
+      let client;
+      if (urlAuth) {
+        const id = clientAuthClientId(urlAuth);
+        const clients = await clientAuthController?.listClients?.();
+        client = clients?.find((entry) => entry.id === id);
+      } else {
+        const token = getBearerTokenFromRequest(req);
+        if (!token) return false;
+        const result = await clientAuthController?.authenticateBearerToken?.(token, req);
+        if (!result?.ok) return false;
+        client = result.client;
+      }
+      return client?.usesRelay === true && client.authMethod === 'pairing' && Boolean(client.pairingId)
+        && !client.revokedAt && (!client.expiresAt || Date.parse(client.expiresAt) > Date.now());
+    } catch {
+      return false;
+    }
+  };
+
   if (!normalizedPassword) {
     const setSessionCookie = (req, res, token, ttlMs = sessionTtlMs) => {
       const secure = isSecureRequest(req);
@@ -565,6 +590,7 @@ export const createUiAuth = ({
 
     return {
       enabled: false,
+      authorizeRelayRequest,
       requireAuth,
       requireSessionAuth,
       resolveAuthContext,
@@ -975,6 +1001,7 @@ export const createUiAuth = ({
 
   return {
     enabled: true,
+    authorizeRelayRequest,
     requireAuth,
     requireSessionAuth,
     resolveAuthContext,

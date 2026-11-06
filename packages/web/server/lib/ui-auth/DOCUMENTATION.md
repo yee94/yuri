@@ -5,6 +5,8 @@ This module owns Yuri UI authentication for browser access, including password s
 
 Trusted-device access has one durable credential model: a remote client bearer token stored by `packages/web/server/lib/client-auth/remote-clients.js`. Password, passkey, and Pairing v2 are issuance methods for that credential, not separate credential systems. Issued client tokens are returned once, stored server-side only as hashes, and are later authenticated via `Authorization: Bearer yuri_client_...`.
 
+Relay admission additionally requires an active client record with `usesRelay: true`, `authMethod: 'pairing'`, and a pairing ID. `authorizeRelayRequest` enforces this before the tunnel forwards any HTTP/SSE request or WebSocket upgrade, including when the Host has no UI password. SSH/password/passkey credentials, owner cookies, and direct-only pairings do not grant Relay access. URL tokens resolve back to their issuing client and recheck current revocation/expiry and Relay permission. The only pre-credential route is `POST /api/client-auth/pairing/redeem`; its one-time secret validation also requires a Relay-enabled pairing when arriving through Relay. Direct authentication behavior is unchanged.
+
 Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. It stores short-lived one-time pairing sessions with hashed secrets, exposes create/cancel/redeem routes under `/api/client-auth/pairing/*`, and redeems a valid pairing secret into the same remote client token used by password/passkey trusted-device flows.
 
 Client deduplication is scoped by device `dedupeKey`, `usesRelay`, and the pairing's canonical `relayUrl`. The create route records the actual advertised Relay candidate (including a default or environment-selected endpoint), and redemption uses this stored scope even when it arrives over LAN. Re-pairing through the same Relay replaces that connection's credential; another Relay or direct-only pairing retains an independent client record, label, credential, and revocation. The endpoint is internal persistence metadata, not a client-supplied redemption override. Legacy records without `relayUrl` remain readable with an unknown Relay scope; new endpoint-specific pairings preserve them rather than guessing which connection to overwrite. No stored credential conversion is needed.
@@ -20,6 +22,7 @@ Remote desktop uses the exact `/api/remote-desktop/ws` scoped URL-token path, mi
 ## Public exports (ui-auth.js)
 - `isUrlAuthWebSocketPath(pathname)`: true when a WebSocket upgrade may authenticate with `yuri_url_token` (exact terminal/dictation/event/realtime-proxy paths, plus prefix `/api/preview/proxy/` for Preview HMR). Keep in sync with tunnel-host `isTunnelWsPathAllowed`.
 - `createUiAuth({ password, cookieName, sessionTtlMs, readSettingsFromDiskMigrated })`: creates UI auth controller with methods:
+  - `authorizeRelayRequest(req)`
   - `enabled`
   - `requireAuth(req, res, next)`
   - `handleSessionStatus(req, res)`

@@ -22,6 +22,27 @@ import { createTunnelHost, isTunnelWsPathAllowed } from './tunnel-host.js';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+describe('relay admission before loopback access', () => {
+  it('denies HTTP and WebSocket traffic without an authorization provider', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const dial = vi.fn(() => new FakeWebSocket('unused'));
+    const frames = [];
+    const host = createTunnelHost({ connectionId: 'unpaired', getLocalPort: () => 9,
+      sendFrame: (frame) => frames.push(decodeTunnelFrame(frame)), getBufferedAmount: () => 0, createWebSocket: dial });
+    try {
+      await host.handleFrame(encodeTunnelFrame(TunnelFrameType.HttpRequest, 1, encodeJsonPayload({
+        method: 'GET', path: '/auth/session', query: '', headers: { authorization: 'Bearer ssh-token' },
+      })));
+      await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsOpen, 2, encodeJsonPayload({
+        path: '/api/terminal/ws', query: 'yuri_url_token=ssh-url-token',
+      })));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(dial).not.toHaveBeenCalled();
+      expect(JSON.parse(textDecoder.decode(frames[0].payload)).status).toBe(403);
+    } finally { host.close(); fetchMock.mockRestore(); }
+  });
+});
+
 /** Minimal EventEmitter-shaped fake used only by createTunnelHost tests. */
 class FakeWebSocket {
   static OPEN = 1;
@@ -83,7 +104,7 @@ describe('negotiated JSON response compression', () => {
       headers: { 'content-type': contentType, 'content-length': String(raw.byteLength) },
     }));
     const frames = [];
-    const host = createTunnelHost({ connectionId: 'compression-test', getLocalPort: () => 9,
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'compression-test', getLocalPort: () => 9,
       sendFrame: (frame) => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
     try {
       await host.handleFrame(encodeTunnelFrame(TunnelFrameType.HttpRequest, 1, encodeJsonPayload({
@@ -112,7 +133,7 @@ describe('negotiated JSON response compression', () => {
       headers: { 'content-type': 'text/event-stream; charset=utf-8' },
     }));
     const frames = [];
-    const host = createTunnelHost({ connectionId: 'sse-gzip-test', getLocalPort: () => 9,
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'sse-gzip-test', getLocalPort: () => 9,
       sendFrame: (frame) => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
     const bodies = () => frames.filter((frame) => frame.frameType === TunnelFrameType.HttpBody).map((frame) => textDecoder.decode(frame.payload));
     try {
@@ -135,7 +156,7 @@ describe('remote desktop send scheduling', () => {
   it.each(['/api/remote-desktop/ws', '/api/event/ws'])('only remote desktop requests immediate data flushes: %s', async (path) => {
     FakeWebSocket.reset();
     const sent = [];
-    const host = createTunnelHost({ connectionId: 'scheduling', getLocalPort: () => 9,
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'scheduling', getLocalPort: () => 9,
       sendFrame: (frame, immediate) => { sent.push({ ...decodeTunnelFrame(frame), immediate }); },
       getBufferedAmount: () => 0, createWebSocket: (url, protocols) => new FakeWebSocket(url, protocols) });
     try {
@@ -184,6 +205,7 @@ describe('createTunnelHost WS path allowlist', () => {
     /** @type {Uint8Array[]} */
     const outbound = [];
     const host = createTunnelHost({
+      authorizeRequest: async () => true,
       connectionId: 'test-conn',
       getLocalPort: () => 9,
       sendFrame: (frame) => {
@@ -232,6 +254,7 @@ describe('createTunnelHost WS fragment ordering', () => {
     };
 
     const host = createTunnelHost({
+      authorizeRequest: async () => true,
       connectionId: 'test-conn',
       getLocalPort: () => 9,
       sendFrame,
@@ -314,6 +337,7 @@ describe('createTunnelHost WS fragment ordering', () => {
       };
 
       const host = createTunnelHost({
+        authorizeRequest: async () => true,
         connectionId: 'test-conn',
         getLocalPort: () => 9,
         sendFrame,

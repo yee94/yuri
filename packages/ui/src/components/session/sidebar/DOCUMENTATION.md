@@ -1,5 +1,56 @@
 # Session Sidebar Documentation
 
+`SidebarBackgroundTasks` is the shared inline progress area to the right of the
+footer settings/device/help buttons. It consumes existing runtime-scoped import,
+content-index and Host-update Queries plus the client update store; it adds no
+separate task store or floating tip. The subdued area is right-aligned and fits
+its content. A single task shows a progress ring and short label; multiple tasks
+show only adjacent rings. No visible percentages are rendered. Unknown totals use
+an indeterminate ring, with animation disabled for reduced motion. Clicking the
+group opens a Base UI Popover centered above its trigger, with live task phases and
+processed/downloaded counts. It shares DeviceConnections' exact popup material
+(`yuri-mobile-overlay-surface yuri-popup-surface`), 10px offset, 72-unit width,
+viewport bound and 2xl outer radius. The compact header/list share a 3-unit inset.
+Each item uses one 16px ring, task name/status and a trailing Continue button;
+processed and failed counts share one secondary line. Items have no card/large
+icon plate and are separated only by the shared popup divider token/width.
+Only the outer surface paints blur, fill, edge and shadow; rows remain transparent.
+There is no modal scrim or corner close button; outside click and Escape dismiss.
+Details initially retain focus on the trigger (`initialFocus: false`), so global
+focus-ring suppression cannot erase the popup's shared rim/shadow.
+Only successful/idle indicators disappear. Failed, partial, cancelled and
+interrupted tasks stay visible with non-spinning error-colored rings and per-row
+Continue actions. Each row owns independent mutation pending/error state and
+synchronous duplicate-click admission. Failed retries preserve the task and its
+successful results. An already-open popup shows its empty state after the final
+task succeeds. Observed import completion refreshes the project
+catalog once. Refresh failure retains progress with retry wording in details.
+Client downloads reuse store events, while Host-owned/background downloads use
+the existing update operation snapshot. A same-version local client/Host mirror
+is shown once; different target versions are not deduplicated.
+Imports use the unfinished `jobs` query, so a newer task cannot hide older failed
+ones; the tour keeps its separate latest-job query. Recovery seeds both caches
+only in the captured runtime generation. Continue sends only the original job ID
+and confirmation; source/fallback-directory selection never appears in the popup.
+Imports resume saved original intent. A failed Continue changes that import row's
+button to Remove; nothing is removed until a second explicit click. Remove only
+dismisses the task record, not imported content. Failed removal retains the row
+and Remove action for retry. Legacy jobs with missing intent report that limitation
+instead of fabricating a new selection; they follow the same Continue→Remove flow.
+Index recovery reuses durable checkpoints. Host update recovery fetches a fresh
+plan for the failed operation's exact version/channel/kind; an unavailable or
+changed plan is a visible failure, never an implicit update to a newer release.
+Client downloads reuse their owning updater with `resume: true`, without applying
+or restarting the client. Check-only failures do not invent download tasks.
+The old update footer button hides its duplicate download indicator while this
+area is mounted; ready-to-restart/update actions remain unchanged.
+Runtime generation changes remount the observers and clear completion tracking.
+Import/index/update polling uses 1s/3s/2s while active and 15s while idle; unsupported
+capabilities stop polling. The memoized leaf isolates this work from session-tree
+renders. Hidden/runtime-button-free footers do not mount its observers. Shared
+web/desktop and hosted/native-mobile sidebar surfaces consume Host state;
+standalone VS Code has no Host import/index capability.
+
 The sidebar does not discover or refresh GitHub PR status. Session-tree mounting,
 project/worktree expansion, and session updates must not request PR auth/status
 or subscribe to PR-store projections. The obsolete PR request effect and group
@@ -59,7 +110,7 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   this shortcut. Its outer popup uses the shared `yuri-popup-surface` frost and
   light elevation; device rows stay transparent rather than nested material cards.
 
-- Navigation loading includes live busy/retry descendants and Agent-owned running shells through `useSessionActivity`; a parent remains loading after its own reply completes while background subagents or shells run. Shell owners and their ancestors share the same projection, without changing the parent's raw execution status. `useRunningSessionIds` uses the same shared tree projection for pinned/in-progress and always-visible rows. Execution reads the parent's own status. Manual transcript refresh remains available during busy/retry so missed terminal events cannot block recovery.
+- Navigation loading includes live busy/retry descendants and Agent-owned running shells through `useSessionActivity`; a parent remains loading after its own reply completes while background subagents or shells run. Shell indicators are limited to the owning session's latest authored user round; older processes continue running without keeping the row loading. Shell owners and their ancestors share the same projection, without changing the parent's raw execution status. `useRunningSessionIds` uses the same shared tree projection for pinned/in-progress and always-visible rows. Execution reads the parent's own status. Manual transcript refresh remains available during busy/retry so missed terminal events cannot block recovery.
 - `SessionSidebar.tsx` now acts mainly as orchestration; core logic moved to focused hooks/components.
 - Sidebar is now a single multi-project tree: an optional pinned + in-progress
   top section, then projects, then worktrees/archived groups, then sessions.

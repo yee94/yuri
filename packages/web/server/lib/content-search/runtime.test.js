@@ -171,6 +171,32 @@ test('persists initialization times only after all thirty-day history is covered
   await runtime.stop(); service.close();
 });
 
+test('explicit resume reports active indexing, merges duplicate flights and skips successful checkpoints', async () => {
+  const service = createContentSearchService({ dbPath: ':memory:' });
+  let release; let block = false; let fail = true; const reads = [];
+  const runtime = createContentSearchRuntime({ service, getRuntimeKey: () => 'host', now: () => 1000,
+    listSessions: async () => ({ data: ['a', 'b'].map((id) => ({ id, time: { updated: 999 } })) }),
+    listMessages: async ({ sessionID }) => {
+      reads.push(sessionID);
+      if (block) await new Promise((resolve) => { release = resolve; });
+      if (sessionID === 'b' && fail) throw new Error('offline');
+      return { data: [] };
+    },
+  });
+  try {
+    await runtime.sync();
+    expect(runtime.status().phase).toBe('partial');
+    block = true; fail = false;
+    const first = runtime.sync({ resume: true });
+    expect(runtime.sync({ resume: true })).toBe(first);
+    expect(runtime.status().phase).toBe('indexing');
+    for (let attempt = 0; attempt < 10 && !release; attempt++) await Promise.resolve();
+    expect(reads).toEqual(['a', 'b', 'b']);
+    release(); await first;
+    expect(runtime.status()).toMatchObject({ phase: 'ready', completed: 2, failed: 0 });
+  } finally { await runtime.stop(); service.close(); }
+});
+
 test('completed initialization survives incremental refresh, failure, restart and dirty events', async () => {
   const service = createContentSearchService({ dbPath: ':memory:' });
   let clock = 1000;

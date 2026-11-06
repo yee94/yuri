@@ -83,7 +83,11 @@ const zh = {
   'hero.cta': '在 GitHub 查看',
   'hero.more': '查看连接方式',
   'hero.scroll': '向下滚动',
-  'stage.alt': 'Yuri 桌面端：左侧是正在进行的会话',
+  'stage.alt': 'Yuri 桌面工作空间：对话、代码差异审查与文件树',
+  'stage.views': '选择桌面工作空间视图',
+  'stage.diff': '代码审查',
+  'stage.preview': '交互预览',
+  'stage.previewAlt': 'Yuri 桌面工作空间：在对话旁预览交互页面',
 
 
   'mobile.kicker': '手机端',
@@ -256,7 +260,11 @@ const en = {
   'hero.cta': 'View on GitHub',
   'hero.more': 'Connection options',
   'hero.scroll': 'Scroll down',
-  'stage.alt': 'Yuri desktop: sessions in progress on the left',
+  'stage.alt': 'Yuri desktop workspace with chat, code diff review and a file tree',
+  'stage.views': 'Choose a desktop workspace view',
+  'stage.diff': 'Code review',
+  'stage.preview': 'Interactive preview',
+  'stage.previewAlt': 'Yuri desktop workspace with an interactive page preview beside the conversation',
 
 
   'mobile.kicker': 'Mobile',

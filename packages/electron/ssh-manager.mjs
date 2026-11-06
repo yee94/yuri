@@ -1403,22 +1403,19 @@ export class ElectronSshManager {
     return this.updateHostRuntime(instanceId, label, localUrl, '');
   }
 
-  async updateHostRuntime(instanceId, label, localUrl, clientToken = '', relay = null) {
+  async updateHostRuntime(instanceId, label, localUrl, clientToken = '') {
     await this.mutateSettingsRoot((root) => {
       const hosts = Array.isArray(root.desktopHosts) ? root.desktopHosts : [];
       const existing = hosts.find((entry) => entry?.id === instanceId);
       const token = typeof clientToken === 'string' ? clientToken.trim() : '';
-      const nextRelay = parseRelayDescriptorFromStatus(
-        relay && typeof relay === 'object'
-          ? { hostAllowed: true, relayUrl: relay.relayUrl, serverId: relay.serverId, hostEncPubJwk: relay.hostEncPubJwk }
-          : null,
-      );
       if (existing) {
         existing.label = label;
         existing.url = localUrl;
         existing.apiUrl = localUrl;
-        if (token) existing.clientToken = token;
-        if (nextRelay) existing.relay = nextRelay;
+        if (existing.source !== 'connect-link') {
+          if (token) existing.clientToken = token;
+          delete existing.relay;
+        }
       } else {
         hosts.push({
           id: instanceId,
@@ -1426,7 +1423,6 @@ export class ElectronSshManager {
           url: localUrl,
           apiUrl: localUrl,
           ...(token ? { clientToken: token } : {}),
-          ...(nextRelay ? { relay: nextRelay } : {}),
         });
       }
       root.desktopHosts = hosts;
@@ -2688,10 +2684,7 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
       throw new Error('Yuri UI password is required to mint a client token');
     }
     const clientToken = await this.issueClientToken(localUrl, uiPassword);
-    const relay = instanceWantsRelayHost(instance)
-      ? await this.fetchRemoteRelayDescriptor(localUrl, clientToken)
-      : null;
-    await this.updateHostRuntime(id, label, localUrl, clientToken, relay);
+    await this.updateHostRuntime(id, label, localUrl, clientToken);
     if (instance.localForward?.preferredLocalPort !== localPort) {
       await this.persistLocalPort(id, localPort);
     }

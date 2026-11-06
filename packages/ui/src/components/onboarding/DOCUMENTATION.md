@@ -1,4 +1,4 @@
-# Three-step setup tour
+# Four-step setup tour
 
 `SetupTourHost` owns startup eligibility; `SetupTourDialog` owns the bounded
 shared Dialog. `OnboardingScreen` continues to own pre-connection/fullscreen
@@ -51,7 +51,87 @@ Mini Chat and embedded conversation roots do not mount it.
    or gate progress on background loading; OpenCode's config watcher owns that work.
    Saving is not a claim that a plugin or model is already usable. Failed saves keep
    the step open for retry; runtime changes or closing stop subsequent writes.
-3. **Voice:** Independent input and read-aloud entry points render the corresponding
+3. **Import:** `HistoryImportStep` owns source selection, read-only examples and the
+   explicit “Next” import action. Host-owned `/api/yuri/history-import/*` routes read Claude
+    Code, Codex, Cursor editor/CLI, DeepSeek Harness and current-instance OpenCode
+    histories. OpenCode selection registers its original projects and indexes
+    existing sessions without copying them or rewriting native configuration. Entering this
+   step detects sources once through a runtime-scoped Query (60s freshness,
+   five-minute cache retention, no focus refetch). Discovery reads only; nothing
+   is written until “Next”. Every step remains optional. The job Query
+    polls only a running job. Five compact horizontal cards fill the content width
+   in three equal columns (one on narrow screens), with a small logo, source name
+   and installation dot, never source/destination paths. Top source cards and
+   preview group headings show the same metadata-derived count, separate from
+   the five displayed examples. Positive candidate counts use `≈` because
+   duplicates, malformed and empty transcripts have not been checked; unavailable
+   counts are hidden without placeholders, never replaced with zero. A successful
+   empty inventory shows `0`.
+   Executable/application probes run on the connected Host, not the browser/phone,
+   and do not launch agents. Installed, not detected and unknown are distinct;
+   readable history remains selectable even after its tool was uninstalled.
+   Entering uses `scan` with `limitPerSource: 5, includeCounts: true`. Metadata
+   traversal counts candidate history files while transcript parsing stops once
+   each source has enough examples. Cursor editor uses `COUNT(*)` and a bounded
+   composer-header query within the same private DB/WAL snapshot; counts do not
+   require reading the remaining message bodies. These are candidate counts, not
+   verified importable totals or the latest conversations across the catalog.
+   Below the source cards, read-only conversation cards are grouped by source,
+   up to five each, in full-width single-column lists with title, source logo,
+   localized date and an excerpt of real conversation text as the subtitle.
+   The excerpt prefers assistant text, falls back to user text and excludes
+    thinking/tool records. There is no per-conversation selection or pagination.
+    The subtitle states that duplicates are not imported again. A separate
+    runtime/scan/destination/job-revision-scoped Query checks only sample import
+    identities after preview is available; it does not disable “Next”. Verified
+    entries show “Already imported”; failed/unknown checks show no status instead
+    of claiming “not imported”. A completed job changes the badge query key.
+    Counts still include already imported histories, not just pending work.
+   Checkboxes beside source group headings and top source cards share the same
+   local selection, controlling which tools are imported, not individual examples.
+   Every source starts unchecked. Previews and counts remain visible; “Next” with
+   no selected source advances without starting an import job or full scan.
+   Unchecked source previews remain visible and dimmed so they can be reselected.
+   There is no selected-count toolbar, rule/merge/refresh control or select-all
+   button. A text retry action appears only when discovery or job loading fails.
+   Per-source/file sample read failures stay silent in the tour; readable previews
+   remain usable. The Host response still retains those failures, and a failed
+   sample never displays the successful empty-history message. Confirmed
+   jobs continue on the Host after closing the dialog; cancellation stops between
+   items. Full receipts survive Host restart; unfinished jobs become interrupted.
+   Retrying imports is safe through deterministic session IDs and verified
+   provenance. Conversations retain their source project; missing project paths
+   use the current tour directory. Each selected conversation remains separate;
+   the tour never combines selected histories into one conversation.
+    The tour footer submits `yuri-tour-import`: “Next” immediately starts Host-owned
+    scanning, validation, project creation/registration and verified writes for
+     selected sources. Phase progress appears below the title/subtitle, before
+     source cards and history previews. An accepted start scrolls to the heading
+     once so the new progress is immediately visible; polling never scrolls the
+     user's reading position. Previous terminal jobs and their retained errors
+     are not displayed here. A running Host job remains visible; a job started
+     in this mounted step retains its completion/failure feedback until leaving.
+     “Continue in
+    background” advances to voice without cancelling the task. Samples never bound
+    the import selection; the Host rejects plans built from sampled scans. Missing
+    project directories are created only after confirmation. Partial/cancelled/
+    interrupted jobs can be retried; accepted successful jobs advance without
+    starting another import. Empty source selection and
+   skipping perform no write. Errors keep the step open; runtime changes abort
+   pending operations and cannot trigger the next write or navigation.
+    Retained per-item failure codes are deduplicated beside the top progress, so
+    a partial job exposes its cause rather than only a generic failure label.
+    Project rules and skills accompany the selected histories. Unsafe settings
+    planning is reported separately and does not discard readable conversations.
+    The tour omits the
+   import-options heading and explanatory footer; conversion limits remain in the
+   Host documentation. Conflicts always preserve existing content in
+   this tour; the Host API retains its explicit keep-both/replace policies.
+   Project rule text and SKILL.md are eligible; skill support
+   files and executable configuration are excluded. Scoped rules are archived
+   without global activation. See the Host `history-import/DOCUMENTATION.md` for
+   formats, conflict policy, limits and intentionally lossy conversion.
+4. **Voice:** Independent input and read-aloud entry points render the corresponding
    section of `VoiceSettings`, preserving its full provider choices and native
    availability checks. Entering an editor never changes the saved provider.
    Each section retains its own save/test controls. The overview uses microphone,
@@ -89,9 +169,13 @@ Escape and form layout. CSS only sizes the frame, scroll region and entity cards
 all colors use semantic theme variables. Localized chrome ships in every locale;
 developer content and package identities retain their original language.
 
-Desktop uses a vertical three-step navigation rail beside the content viewport.
+Persisted tour version 0 voice progress (`step: 2`) migrates to `step: 3`, retaining
+dismissal. Version 1 stores the new import step at `2` without remapping it again.
+
+Desktop uses a vertical four-step navigation rail beside the content viewport.
 Provider/voice editors and README occupy that same right-hand viewport without
-resizing the dialog. Narrow screens stack navigation above content. Embedded
+resizing the dialog. Narrow screens stack navigation above content, with four
+equal columns and numbers above wrapping labels so steps cannot overlap. Embedded
 Provider content drops its standalone page insets; its own scroller owns the form
 viewport. The tour footer remains outside that viewport. Plugin deduplication is
 behavior, not explanatory copy in the onboarding cards.

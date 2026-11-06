@@ -10,6 +10,7 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useGlobalSessionStatusStore } from './global-session-status';
 import type { Session } from '@/lib/opencode/v2-types';
 import type { SessionShellLoaders } from '@/queries/sessionShellQueries';
+import { queryClient } from '@/lib/queryRuntime';
 
 const runtime = vi.hoisted(() => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [] })));
@@ -116,6 +117,92 @@ test('bootstrap/reconnect replaces successful scopes, preserves failed scopes an
   await activity.refresh(client, loaders([]));
   expect(activity.read().size).toBe(0);
   expect(children.children.size).toBe(0);
+});
+
+test('cold snapshots count only shells started in the latest authored user round, without changing execution or subagents', async () => {
+  const children = new ChildStoreManager();
+  const store = children.ensureChild('/workspace', { bootstrap: false });
+  store.setState({ session: [{ id: 'parent' }, { id: 'child', parentID: 'parent' }] as Session[],
+    session_status: { parent: { type: 'idle' }, child: { type: 'busy' } } });
+  const activity = getSessionShellActivity(children);
+  const reader = getSessionActivityReader(children);
+  const unsubscribe = reader.subscribe(() => {});
+  const load = loaders([100, 200, 250].map(started => ({ ...shell(`sh_${started}`), time: { started } })));
+  load.latestUser = vi.fn(async () => 200);
+  await activity.refresh(client, load);
+  expect([...activity.read().keys()]).toEqual(['sh_200', 'sh_250']);
+  expect(reader.readBackgroundCount('parent')).toBe(3);
+  expect(reader.readBackgroundCount('parent', { childSessionIDs: new Set(), shellIDs: new Set(['sh_100']) })).toBe(0);
+  expect(store.getState().session_status.parent.type).toBe('idle');
+  expect(load.latestUser).toHaveBeenCalledTimes(1);
+  load.latestUser = async () => { throw new Error('offline'); };
+  await activity.refresh(client, load);
+  expect([...activity.read().keys()]).toEqual(['sh_200', 'sh_250']);
+  unsubscribe();
+});
+
+test('only a consumed authored user boundary retires old shell indicators; queueing and synthetic completion do not', async () => {
+  const children = new ChildStoreManager();
+  const activity = getSessionShellActivity(children);
+  await activity.refresh(client, { ...loaders([{ ...shell('sh_old'), time: { started: 150 } }]), latestUser: async () => 100 });
+  const readUser = vi.spyOn(queryClient, 'fetchQuery').mockResolvedValue(100);
+  dispatch(children, 'session.inbox.enqueued', { sessionID: 'parent', inboxID: 'queued' });
+  expect(readUser).not.toHaveBeenCalled();
+  expect(activity.read().has('sh_old')).toBe(true);
+  dispatch(children, 'session.inbox.delivered', { sessionID: 'parent', inboxID: 'synthetic' });
+  await vi.waitFor(() => expect(readUser).toHaveBeenCalledTimes(1));
+  expect(activity.read().has('sh_old')).toBe(true);
+  readUser.mockResolvedValue(200);
+  dispatch(children, 'session.inbox.delivered', { sessionID: 'parent', inboxID: 'new-user' });
+  await vi.waitFor(() => expect(readUser).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(activity.read().size).toBe(0));
+  dispatch(children, 'shell.created', { info: { ...shell('sh_new'), time: { started: 250 } } });
+  expect([...activity.read().keys()]).toEqual(['sh_new']);
+  // Filtering affects presentation only: the old process still accepts its terminal receipt.
+  dispatch(children, 'shell.exited', { id: 'sh_old', status: 'exited' });
+  expect([...activity.read().keys()]).toEqual(['sh_new']);
+});
+
+test('a delivered input during a user-boundary read forces a fresh read instead of restoring an older round', async () => {
+  const children = new ChildStoreManager();
+  const activity = getSessionShellActivity(children);
+  let resolve!: (value: number) => void;
+  const latestUser = vi.fn<NonNullable<SessionShellLoaders['latestUser']>>()
+    .mockImplementationOnce(() => new Promise<number>(done => { resolve = done; }))
+    .mockResolvedValue(300);
+  const refresh = activity.refresh(client, { ...loaders([{ ...shell('sh_old'), time: { started: 200 } }]), latestUser });
+  await vi.waitFor(() => expect(latestUser).toHaveBeenCalledTimes(1));
+  dispatch(children, 'session.inbox.delivered', { sessionID: 'parent', inboxID: 'new-user' });
+  resolve(100);
+  await refresh;
+  expect(latestUser).toHaveBeenCalledTimes(2);
+  expect(activity.read().size).toBe(0);
+});
+
+test('round recovery bounds owner reads, shares same-owner shells and releases them on runtime teardown', async () => {
+  const children = new ChildStoreManager();
+  const activity = getSessionShellActivity(children);
+  let inFlight = 0;
+  let maximum = 0;
+  const latestUser = vi.fn<NonNullable<SessionShellLoaders['latestUser']>>(async () => {
+    inFlight += 1;
+    maximum = Math.max(maximum, inFlight);
+    await Promise.resolve();
+    inFlight -= 1;
+    return 100;
+  });
+  const processes = Array.from({ length: 51 }, (_, index) => ({ ...shell(`sh_${index}`, `owner-${index % 10}`), time: { started: 200 } }));
+  await activity.refresh(client, { ...loaders(processes), latestUser });
+  expect(latestUser).toHaveBeenCalledTimes(10);
+  expect(maximum).toBeLessThanOrEqual(2);
+  expect(activity.read().size).toBe(51);
+  const resolveReads: Array<(value: number) => void> = [];
+  const late = activity.refresh(client, { ...loaders(processes), latestUser: () => new Promise<number>(done => { resolveReads.push(done); }) });
+  await vi.waitFor(() => expect(resolveReads).toHaveLength(2));
+  activity.clear();
+  resolveReads.forEach(resolve => resolve(300));
+  await late;
+  expect(activity.read().size).toBe(0);
 });
 
 test('events during a shared snapshot win, including unseen exit receipts and location shutdown', async () => {

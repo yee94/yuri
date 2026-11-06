@@ -250,6 +250,7 @@ describe('relay host-client integration', () => {
   it('tunnels an HTTP GET /health with only binary frames post-handshake', async () => {
     const identity = await buildIdentity();
     host = startRelayHost({
+      authorizeRequest: async () => true,
       relayUrl: `${relay.wsUrl}/`,
       identity,
       getLocalPort: () => origin.port,

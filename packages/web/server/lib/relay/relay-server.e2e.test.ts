@@ -195,10 +195,13 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
   const bearerRequests: string[] = [];
   const observedOrigins: string[] = [];
   const sockets = new Set<net.Socket>();
+  const pairedClient = { id: 'device-1', authMethod: 'pairing', pairingId: 'fixture-pairing', usesRelay: true };
+  const sshClient = { id: 'ssh-client', authMethod: 'password', clientKind: 'desktop-local', usesRelay: false };
   const clientAuthController = {
+    listClients: async () => [pairedClient, sshClient],
     authenticateBearerToken: async (token: string) => token === 'client-token'
-      ? { ok: true, clientId: 'device-1', sessionToken: 'client:device-1' }
-      : { ok: false },
+      ? { ok: true, clientId: 'device-1', sessionToken: 'client:device-1', client: pairedClient }
+      : token === 'ssh-token' ? { ok: true, clientId: sshClient.id, client: sshClient } : { ok: false },
   };
   const uiAuth = createUiAuth({ requireClientAuth: true, clientAuthController });
   const requestSecurity = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
@@ -366,6 +369,7 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as net.AddressInfo).port;
   return {
+    authorizeRequest: uiAuth.authorizeRelayRequest,
     port, videoPath, previewPath, previewContent, guiBundle, pluginInventory, guiRequests, bearerRequests, observedOrigins, attachmentAssistant, getHostSubscriptions: () => hostSubscriptions,
     advanceRecoveryRevision: () => { recoveryRevision += 1; return `ses_recovery_${recoveryRevision}`; },
     stop: async () => {
@@ -484,7 +488,7 @@ describe('private relay compiled-process boundary', () => {
     relay = await startCompiledRelay(binary, await freePort());
     origin = await startOrigin();
     const identity = await buildIdentity();
-    host = startRelayHost({ relayUrl: relay.url, identity, getLocalPort: () => origin!.port,
+    host = startRelayHost({ authorizeRequest: origin.authorizeRequest, relayUrl: relay.url, identity, getLocalPort: () => origin!.port,
       batch: hostBatch, batchWindowMs: 2_000, onStatus() {}, logger: { warn() {}, info() {} } });
     client = createRelayTunnelClient({ relayUrl: relay.url, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk,
       batch: clientBatch, batchWindowMs: 2_000, pingIntervalMs: 60_000 });
@@ -526,13 +530,13 @@ describe('private relay compiled-process boundary', () => {
     };
     origin = await startOrigin();
     const identity = await buildIdentity();
-    host = startRelayHost({ relayUrl, identity, getLocalPort: () => origin!.port,
+    host = startRelayHost({ authorizeRequest: origin.authorizeRequest, relayUrl, identity, getLocalPort: () => origin!.port,
       batchWindowMs: 5, onStatus() {}, logger: { warn() {}, info() {} } });
     client = createRelayTunnelClient({ relayUrl, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk,
       batchWindowMs: 5, helloRetryMs: 50 });
     await eventually(() => host!.getStatus().state === 'connected' && client!.getStatus().state === 'connected', 'Worker E2EE tunnel did not connect');
 
-    expect((await client.fetch('/api/event')).status).toBe(401);
+    expect((await client.fetch('/api/event')).status).toBe(403);
     const headers = { authorization: 'Bearer client-token' };
     const httpResponse = await client.fetch('/api/e2e/http', { method: 'POST', headers, body: 'worker-stream-body' });
     expect(await httpResponse.json()).toEqual({ body: 'worker-stream-body', hasRelayConnection: true });
@@ -598,7 +602,7 @@ describe('private relay compiled-process boundary', () => {
     relay = await startCompiledRelay(binary, port);
     origin = await startOrigin({ recoveryEvents: true });
     const identity = await buildIdentity();
-    const startHost = () => startRelayHost({ relayUrl: relay!.url, identity, getLocalPort: () => origin!.port,
+    const startHost = () => startRelayHost({ authorizeRequest: origin!.authorizeRequest, relayUrl: relay!.url, identity, getLocalPort: () => origin!.port,
       onStatus() {}, logger: { warn() {}, info() {} }, reconnectBaseDelayMs: 30, reconnectMaxDelayMs: 100 });
     host = startHost();
     await eventually(() => host!.getStatus().state === 'connected', 'Host did not register');
@@ -719,7 +723,7 @@ describe('private relay compiled-process boundary', () => {
     relay = await startCompiledRelay(binary, port);
     origin = await startOrigin();
     const identity = await buildIdentity();
-    host = startRelayHost({ relayUrl: relay.url, identity, getLocalPort: () => origin.port, onStatus: () => {}, logger: { warn: () => {}, info: () => {} } });
+    host = startRelayHost({ authorizeRequest: origin.authorizeRequest, relayUrl: relay.url, identity, getLocalPort: () => origin.port, onStatus: () => {}, logger: { warn: () => {}, info: () => {} } });
     let receivedBytes = 0;
     client = createRelayTunnelClient({
       relayUrl: relay.url, serverId: identity.serverId, hostEncPubJwk: identity.hostEncPubJwk,
@@ -749,6 +753,17 @@ describe('private relay compiled-process boundary', () => {
     });
 
     await eventually(() => host!.getStatus().state === 'connected' && client!.getStatus().state === 'connected', 'host and TypeScript client did not connect');
+    const directSsh = await fetch(`http://127.0.0.1:${origin.port}/auth/url-token`, {
+      method: 'POST', headers: { authorization: 'Bearer ssh-token' },
+    });
+    expect(directSsh.status).toBe(200);
+    const sshUrlToken = (await directSsh.json()).token;
+    for (const route of ['/auth/session', '/api/e2e/initialization', '/api/e2e/sse']) {
+      expect((await client.fetch(route, { headers: { authorization: 'Bearer ssh-token' } })).status).toBe(403);
+    }
+    const unpairedSocket = client.openWebSocket(`/api/terminal/ws?yuri_url_token=${encodeURIComponent(sshUrlToken)}`);
+    await expect(waitSocketOpen(unpairedSocket)).rejects.toThrow();
+    expect(origin.observedOrigins).toEqual([]);
     const body = new ReadableStream<Uint8Array>({
       start(controller) { controller.enqueue(new TextEncoder().encode('stream-')); controller.enqueue(new TextEncoder().encode('body')); controller.close(); },
     });
@@ -774,7 +789,7 @@ describe('private relay compiled-process boundary', () => {
     expect(new TextDecoder().decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))))).toBe('data: one\n\ndata: two\n\ndata: three\n\n');
 
     const denied = await client.fetch('/api/event');
-    expect(denied.status).toBe(401);
+    expect(denied.status).toBe(403);
     const hostEvents = await client.fetch('/api/event', { headers: { authorization: 'Bearer client-token' } });
     expect(hostEvents.status).toBe(200);
     const frames = (await hostEvents.text()).trim().split('\n\n').map((block) => JSON.parse(block.slice(6)));
@@ -821,7 +836,7 @@ describe('private relay compiled-process boundary', () => {
         const assistantID = origin.attachmentAssistant.id;
         const uploadPath = `/api/yuri/assistants/${assistantID}/contact/attachments`;
         for (const headers of [{}, { authorization: 'Bearer invalid-token' }]) {
-          expect((await client.fetch(`${uploadPath}/denied`, { method: 'PUT', headers, body: previewPng })).status).toBe(401);
+          expect((await client.fetch(`${uploadPath}/denied`, { method: 'PUT', headers, body: previewPng })).status).toBe(403);
         }
         const attachmentParts: Awaited<ReturnType<typeof uploadAssistantAttachment>>[] = [];
         for (const [index, file] of [
@@ -839,7 +854,7 @@ describe('private relay compiled-process boundary', () => {
           const download = await runtimeFetch(`${uploadPath}/${descriptor.attachmentID}`);
           expect(download.status).toBe(200);
           expect(Buffer.from(await download.arrayBuffer())).toEqual(Buffer.from(await file.arrayBuffer()));
-          expect((await client.fetch(`${uploadPath}/${descriptor.attachmentID}`)).status).toBe(401);
+          expect((await client.fetch(`${uploadPath}/${descriptor.attachmentID}`)).status).toBe(403);
         }
         const admission = await runtimeFetch(`/api/yuri/assistants/${assistantID}/messages`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -854,8 +869,8 @@ describe('private relay compiled-process boundary', () => {
         const files = createWebFilesAPI({ getDirectory: () => path.dirname(origin.previewPath) });
         expect(Buffer.byteLength(origin.guiBundle.code)).toBeGreaterThan(2_270_000);
         for (const route of ['/api/plugin', '/api/plugin/gui?id=preview-fixture', `/api/fs/stat?path=${encodeURIComponent(origin.previewPath)}`, `/api/fs/raw?path=${encodeURIComponent(origin.previewPath)}`]) {
-          expect((await client.fetch(route)).status).toBe(401);
-          expect((await client.fetch(route, { headers: { authorization: 'Bearer invalid-token' } })).status).toBe(401);
+          expect((await client.fetch(route)).status).toBe(403);
+          expect((await client.fetch(route, { headers: { authorization: 'Bearer invalid-token' } })).status).toBe(403);
         }
         expect((await gui.plugin.list()).data).toEqual(origin.pluginInventory);
         expect((await gui.plugin.gui({ id: 'preview-fixture' })).data).toEqual(origin.guiBundle);
@@ -908,10 +923,10 @@ describe('private relay compiled-process boundary', () => {
       });
       try {
         const deniedSpeech = await client.fetch('/api/tts/speak', { method: 'POST' });
-        expect(deniedSpeech.status).toBe(401);
-        expect((await client.fetch('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"kind":"tts"}' })).status).toBe(401);
-        expect((await client.fetch('/api/voice/volcengine')).status).toBe(401);
-        expect((await client.fetch('/api/voice/volcengine', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(401);
+        expect(deniedSpeech.status).toBe(403);
+        expect((await client.fetch('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"kind":"tts"}' })).status).toBe(403);
+        expect((await client.fetch('/api/voice/volcengine')).status).toBe(403);
+        expect((await client.fetch('/api/voice/volcengine', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(403);
         const saved = await realFetch(`http://127.0.0.1:${origin.port}/api/voice/settings`, {
           method: 'PUT', headers: { authorization: 'Bearer client-token', 'Content-Type': 'application/json' },
           body: JSON.stringify({ apiKey: 'fixture-speech-key', voice: 'zh_female_vv_uranus_bigtts', showMessageTTSButtons: true, voiceProvider: 'volcengine', dictationEnabled: true, sttProvider: 'volcengine' }),
@@ -978,7 +993,7 @@ describe('private relay compiled-process boundary', () => {
         releaseAsset: async () => { released = true; },
       } });
       const deniedImage = await client.fetch('/api/fs/raw?path=%2Fremote%2Ficons-zoom.png');
-      expect(deniedImage.status).toBe(401);
+      expect(deniedImage.status).toBe(403);
       for (const intent of ['inline', 'preview'] as const) {
         received.length = 0;
         ended = false;

@@ -133,6 +133,7 @@ export const createRelayService = ({
   // regeneration — see identity.js/signing-key.js.
   readSettingsStrict,
   getLocalPort,
+  authorizeRequest = async () => false,
   // Returns true when any paired device or pending pairing session uses the
   // relay transport. The relay lifecycle is driven purely by this demand.
   hasRelayDemand = async () => false,
@@ -316,6 +317,7 @@ export const createRelayService = ({
       if (hostClients.has(relayUrl)) continue;
       const hostClient = startRelayHost({
         relayUrl,
+        authorizeRequest,
         identity,
         getLocalPort,
         logger,

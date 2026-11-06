@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, expect, test, vi } from 'vitest';
-import { fetchSessionShellSnapshot, sessionShellSnapshotQueryOptions } from './sessionShellQueries';
+import { fetchSessionShellSnapshot, latestShellOwnerUserQueryOptions, sessionShellSnapshotQueryOptions } from './sessionShellQueries';
 
 const transport = vi.hoisted(() => ({ fetch: vi.fn<typeof fetch>() }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: transport.fetch }));
@@ -53,5 +53,27 @@ test('reconnect requests share one Query flight and bound concurrency to loaded 
     expect(loaders.locations).toHaveBeenCalledTimes(1);
     expect(loaders.shells).toHaveBeenCalledTimes(51);
     expect(max).toBeLessThanOrEqual(2);
+  } finally { client.clear(); }
+});
+
+test('shell owners read just the newest authored user, excluding synthetic notices and propagating failures', async () => {
+  const requests: Request[] = [];
+  transport.fetch.mockImplementation(async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json({ data: [{ id: 'user-latest', type: 'user', time: { created: 200 }, text: 'next' }] });
+  });
+  const client = new QueryClient();
+  const options = latestShellOwnerUserQueryOptions('/work tree', 'parent');
+  try {
+    expect(await client.fetchQuery(options)).toBe(200);
+    const url = new URL(requests[0].url);
+    expect(url.searchParams.get('type')).toBe('user');
+    expect(url.searchParams.get('order')).toBe('desc');
+    expect(url.searchParams.get('limit')).toBe('1');
+    expect(requests[0].signal).toBeInstanceOf(AbortSignal);
+    transport.fetch.mockImplementation(async () => Response.json({ data: [] }));
+    expect(await client.fetchQuery(options)).toBeNull();
+    transport.fetch.mockImplementation(async () => Response.json({ error: 'offline' }, { status: 503 }));
+    await expect(client.fetchQuery(options)).rejects.toThrow();
   } finally { client.clear(); }
 });

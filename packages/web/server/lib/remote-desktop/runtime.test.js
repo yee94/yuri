@@ -129,7 +129,7 @@ it('stops native control when the device is revoked', { timeout: 10000 }, async 
 });
 it('carries screen frames and validated input through the real Relay WS dispatcher and auth gates', async () => {
   const frames = [];
-  const host = createTunnelHost({ connectionId: 'desktop-test', getLocalPort: () => port,
+  const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'desktop-test', getLocalPort: () => port,
     sendFrame: frame => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
   try {
     await host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsOpen, 2, encodeJsonPayload({ path: '/api/remote-desktop/ws', query: `yuri_url_token=${token}` })));
@@ -157,7 +157,7 @@ it('carries screen frames and validated input through the real Relay WS dispatch
 it('releases failed capture ownership and reconnects through the authenticated Relay dispatcher', async () => {
   adapter.start.mockRejectedValueOnce(Object.assign(new Error('capture_timeout'), { code: 'capture_timeout' }));
   const frames = [];
-  const host = createTunnelHost({ connectionId: 'desktop-recovery-test', getLocalPort: () => port,
+  const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'desktop-recovery-test', getLocalPort: () => port,
     sendFrame: frame => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
   const open = id => host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsOpen, id,
     encodeJsonPayload({ path: '/api/remote-desktop/ws', query: `yuri_url_token=${token}` })));

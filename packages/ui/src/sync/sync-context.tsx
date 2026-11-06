@@ -2217,7 +2217,7 @@ export function handleEvent(
   childStores: ChildStoreManager,
   routingIndex: EventRoutingIndex,
 ) {
-  if (payload.type.startsWith('shell.') || payload.type === 'server.instance.disposed' || payload.type === 'location.shutdown') {
+  if (payload.type.startsWith('shell.') || payload.type === 'session.inbox.delivered' || payload.type === 'server.instance.disposed' || payload.type === 'location.shutdown') {
     getSessionShellActivity(childStores).event(rawDirectory, payload)
     if (payload.type.startsWith('shell.')) return
   }

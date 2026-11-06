@@ -50,3 +50,14 @@ test('malformed saved records cannot suppress or misposition the tour', async ()
   await useSetupTourStore.persist.rehydrate();
   expect(useSetupTourStore.getState().progress).toEqual({});
 });
+
+test('old persisted voice progress moves from step three to four without clearing dismissal', async () => {
+  localStorage.setItem(instanceScopedStorageKey('yuri-setup-tour', runtime.key), JSON.stringify({ state: { progress: {
+    [runtime.key]: { step: 2, dismissed: true },
+  } }, version: 0 }));
+  await useSetupTourStore.persist.rehydrate();
+  expect(useSetupTourStore.getState().progress[runtime.key]).toEqual({ step: 3, dismissed: true });
+  useSetupTourStore.getState().move(runtime.key, 2);
+  await useSetupTourStore.persist.rehydrate();
+  expect(useSetupTourStore.getState().progress[runtime.key].step).toBe(2);
+});

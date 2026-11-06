@@ -18,6 +18,7 @@ import { registerScheduledTaskToolRoute } from '../scheduled-tasks/managed-tool-
 import { registerScheduledTaskSessionSkill } from '../scheduled-tasks/session-skill.js';
 import { registerCustomizationSessionSkill } from '../gui-customization/session-skill.js';
 import { registerConversationRoutes } from '../conversations/routes.js';
+import { registerHistoryImportRoutes } from '../history-import/routes.js';
 import { registerSessionTurnPageRoutes } from '../session-turn-pages/routes.js';
 import { registerAssistantRoutes } from '../assistants/routes.js';
 import { createProjectRegistry } from '../projects/registry.js';
@@ -88,10 +89,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   };
 
   let assistantRoutesRuntime = null;
+  let historyImportRuntime = null;
 
   const registerRoutes = async (app, routeDependencies) => {
     const {
       express,
+      uiAuthController,
       crypto,
       fs,
       os,
@@ -288,6 +291,13 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     };
     await refreshAssistantAllowedRoots();
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
+    historyImportRuntime = registerHistoryImportRoutes(app, {
+      express, uiAuthController, dataDir: yuriDataDir,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
+      getRuntimeIdentity: () => buildOpenCodeUrl('/', ''),
+      registerProject: (input) => projectRegistry.register(input),
+      onImported: (session) => sessionIndexService?.upsert(session),
+    });
     const registerAssistantProject = async (input) => {
       const result = await projectRegistry.register(input);
       await refreshAssistantAllowedRoots();
@@ -539,6 +549,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   return {
     registerRoutes,
-    close: () => assistantRoutesRuntime?.close(),
+    close: async () => { await historyImportRuntime?.close(); await assistantRoutesRuntime?.close(); },
   };
 };

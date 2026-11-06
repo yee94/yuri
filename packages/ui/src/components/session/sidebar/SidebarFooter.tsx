@@ -11,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from "@/lib/i18n";
 import { DeviceConnections } from './DeviceConnections';
 import { useUpdateStore } from '@/stores/useUpdateStore';
+import { SidebarBackgroundTasks } from './SidebarBackgroundTasks';
 
 type Props = {
   onOpenSettings: () => void;
@@ -27,7 +28,7 @@ const footerIconButtonClassName =
 const footerIconClassName =
   "size-4 text-foreground/55 transition-colors group-hover:text-foreground group-focus-visible:text-foreground";
 
-function SidebarUpdateButton({ onOpenUpdate }: { onOpenUpdate: () => void }) {
+function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () => void; hideDownload: boolean }) {
   const { t } = useI18n();
   const downloading = useUpdateStore((state) => state.downloading);
   const downloaded = useUpdateStore((state) => state.downloaded);
@@ -63,6 +64,8 @@ function SidebarUpdateButton({ onOpenUpdate }: { onOpenUpdate: () => void }) {
       : downloaded
         ? t('updateDialog.actions.restartToUpdate')
         : t('sessions.sidebar.footer.actions.update'));
+
+  if (hideDownload && downloading) return null;
 
   return (
     <Tooltip>
@@ -158,7 +161,8 @@ export function SidebarFooter({
           </Tooltip>
         </>
       ) : null}
-      {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} /> : null}
+      {showRuntimeButtons ? <SidebarBackgroundTasks /> : null}
+      {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} hideDownload={showRuntimeButtons} /> : null}
     </div>
   );
 }

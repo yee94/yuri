@@ -40,3 +40,24 @@ test('global route returns coverage and preserves hit directories without a sele
   search.mockImplementation(() => { throw new Error('database unavailable'); });
   expect((await request(app).get('/api/yuri/content-search').query({ q: 'needle' })).status).toBe(500);
 });
+
+test('resume requires real auth and same-origin browser intent, rejects preview credentials, and starts background work', async () => {
+  const app = express(); let context = null;
+  const resolveAuthContext = vi.fn(async () => context);
+  const sync = vi.fn(() => new Promise(() => {}));
+  registerContentSearchRoutes(app, { uiAuthController: { resolveAuthContext }, contentSearch: {
+    runtime: { sync, status: () => ({ phase: 'indexing', completed: 79, total: 357 }) },
+  } });
+  const route = '/api/yuri/content-search/resume';
+  expect((await request(app).post(route)).status).toBe(401);
+  context = { type: 'session' };
+  expect((await request(app).post(route).set('Origin', 'https://other.example')).status).toBe(403);
+  expect((await request(app).post(`${route}?yuri_preview_token=preview`)).status).toBe(403);
+  expect(sync).not.toHaveBeenCalled();
+  const accepted = await request(app).post(route);
+  expect(accepted.status).toBe(202);
+  expect(accepted.headers['cache-control']).toBe('no-store');
+  expect(accepted.body.index).toMatchObject({ phase: 'indexing', completed: 79 });
+  expect(sync).toHaveBeenCalledExactlyOnceWith({ resume: true });
+  expect(resolveAuthContext.mock.calls[0][2]).toEqual({ allowClientAuth: true, allowUrlToken: false });
+});

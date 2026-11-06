@@ -28,7 +28,9 @@ The sequence moves from overview to mechanism to usage and details:
 
 1. Full-bleed portrait, Yuri wordmark, existing tagline, and one capability sentence.
 2. A connection panorama: the device illustration recedes as real desktop and
-   phone screenshots advance. On wide, tall viewports only, one 160svh section has
+   phone screenshots advance. The desktop switches between the shared code-review
+   and interactive-preview covers, using the existing accessible screenshot selector.
+   On wide, tall viewports only, one 160svh section has
    a sticky stage. There is no wheel interception, snap, or scroll hijacking.
 3. A tunnel-backed connection selector distinguishes LAN, encrypted relay, and
    desktop SSH, with real configuration screenshots and explicit runtime boundaries.

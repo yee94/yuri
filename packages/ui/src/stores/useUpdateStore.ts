@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getSafeStorage } from '@/stores/utils/safeStorage';
 import type { UpdateInfo, UpdateProgress } from '@/lib/desktop';
 import { getDeviceInfo } from '@/lib/device';
 import { useUIStore } from './useUIStore';
@@ -51,6 +52,9 @@ type UpdateState = {
   info: UpdateInfo | null;
   progress: UpdateProgress | null;
   error: string | null;
+  downloadError: string | null;
+  downloadVersion: string | null;
+  downloadChannel: 'stable' | 'beta' | null;
   runtimeType: 'desktop' | 'web' | 'vscode' | 'mobile' | null;
   lastChecked: number | null;
   nextCheckInSec: number | null;
@@ -70,7 +74,7 @@ type UpdateState = {
 
 interface UpdateStore extends UpdateState {
   checkForUpdates: () => Promise<number | null>;
-  downloadUpdate: () => Promise<void>;
+  downloadUpdate: (options?: { resume?: boolean }) => Promise<void>;
   restartToUpdate: () => Promise<void>;
   /** Wire main-process idle/manual download events into store state. */
   subscribeDesktopUpdateEvents: () => Promise<() => void>;
@@ -242,6 +246,9 @@ const initialState: UpdateState = {
   info: null,
   progress: null,
   error: null,
+  downloadError: null,
+  downloadVersion: null,
+  downloadChannel: null,
   runtimeType: null,
   lastChecked: null,
   nextCheckInSec: null,
@@ -250,6 +257,17 @@ const initialState: UpdateState = {
   otaDownloadSkipped: false,
   lastOtaChannelOverride: null,
 };
+
+const DOWNLOAD_INTENT_KEY = 'yuri-client-update-download';
+const validDownloadVersion = (version: unknown): version is string => typeof version === 'string' && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version);
+function interruptedDownload(): Partial<UpdateState> {
+  try {
+    const saved = JSON.parse(getSafeStorage().getItem(DOWNLOAD_INTENT_KEY) ?? 'null');
+    if (!saved || saved.runtimeType !== detectRuntimeType() || !['desktop', 'mobile'].includes(saved.runtimeType)
+      || !validDownloadVersion(saved.version) || ![null, 'stable', 'beta'].includes(saved.channel)) return {};
+    return { runtimeType: saved.runtimeType, downloadVersion: saved.version, downloadChannel: saved.channel, downloadError: 'update_interrupted' };
+  } catch { return {}; }
+}
 
 function mapOtaDecisionToUpdateInfo(
   decision: MobileUpdateDecision,
@@ -326,6 +344,7 @@ let updateCheckGeneration = 0;
 
 export const useUpdateStore = create<UpdateStore>()((set, get) => ({
   ...initialState,
+  ...interruptedDownload(),
 
   checkForUpdates: async () => {
     const runtime = detectRuntimeType();
@@ -352,7 +371,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
           // Main may already have queued the resource bundle in another window.
           downloaded: alreadyDownloaded,
           // A queued bundle is ready for the next launch.
-          ...(alreadyDownloaded ? { downloading: false, progress: null } : {}),
+          ...(alreadyDownloaded ? { downloading: false, progress: null, downloadError: null } : {}),
           info: desktopInfo,
           error: null,
           lastChecked: Date.now(),
@@ -488,8 +507,17 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }
   },
 
-  downloadUpdate: async () => {
+  downloadUpdate: async (options) => {
+    if (options?.resume === true && !get().info) await get().checkForUpdates();
     const { available, runtimeType, otaDecision, downloading, downloaded } = get();
+    if (downloading || downloaded) return;
+    const channel = useUIStore.getState().otaChannelOverride;
+    const resume = options?.resume === true;
+    const version = resume ? get().downloadVersion : get().info?.version;
+    if (resume && (get().downloadChannel !== channel || version !== get().info?.version)) {
+      set({ downloadError: 'update_plan_changed', error: 'update_plan_changed' });
+      return;
+    }
 
     if (
       runtimeType === 'mobile'
@@ -502,6 +530,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       if (!mobileUpdates) {
         set({
           error: 'Mobile OTA updates are unavailable in this runtime',
+          downloadError: 'Mobile OTA updates are unavailable in this runtime',
           otaPhase: 'error',
         });
         return;
@@ -510,6 +539,9 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       set({
         downloading: true,
         error: null,
+        downloadError: null,
+        downloadVersion: version ?? null,
+        downloadChannel: channel,
         progress: null,
         otaPhase: 'downloading',
         otaDownloadSkipped: false,
@@ -520,6 +552,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
         set({
           downloading: false,
           downloaded: true,
+          downloadError: null,
           progress: null,
           otaPhase: 'pending_restart',
           otaDownloadSkipped: skipped,
@@ -528,6 +561,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
         set({
           downloading: false,
           error: error instanceof Error ? error.message : 'Failed to download update',
+          downloadError: error instanceof Error ? error.message : 'Failed to download update',
           otaPhase: 'error',
         });
       }
@@ -540,12 +574,13 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }
 
     // Main owns resource download and next-launch activation.
-    set({ downloading: true, error: null, progress: null });
+    set({ downloading: true, error: null, downloadError: null, downloadVersion: version ?? null, downloadChannel: channel, progress: null });
 
     try {
       const channelOverride = useUIStore.getState().otaChannelOverride;
       const desktopInfo = await checkForDesktopUpdates(channelOverride);
       if (channelOverride !== useUIStore.getState().otaChannelOverride) throw new Error('OTA channel changed');
+      if (version && desktopInfo?.version !== version) throw new Error('update_plan_changed');
       if (!desktopInfo?.available || desktopInfo.manualUpdate) {
         throw new Error('Update detected, but desktop package is not ready yet. Retry in a moment.');
       }
@@ -586,6 +621,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       set({
         downloading: false,
         error: error instanceof Error ? error.message : 'Failed to download update',
+        downloadError: error instanceof Error ? error.message : 'Failed to download update',
       });
     }
   },
@@ -623,7 +659,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       }
 
       if (eventName === 'Finished') {
-        set({ downloading: false, downloaded: true, progress: null });
+        set({ downloading: false, downloaded: true, progress: null, downloadError: null });
       }
     });
     if (unlistenProgress) cleanups.push(unlistenProgress);
@@ -631,7 +667,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     const unlistenReady = await listenDesktopUpdateReady((payload) => {
       if (payload.downloaded) {
         // A completion in any window makes the queued update restartable.
-        set({ downloading: false, downloaded: true, available: true, progress: null });
+        set({ downloading: false, downloaded: true, available: true, progress: null, downloadError: null });
       }
     });
     if (unlistenReady) cleanups.push(unlistenReady);
@@ -731,13 +767,14 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       downloading: false,
       downloaded: false,
       error: message ?? 'Failed to download update',
+      downloadError: message ?? 'Failed to download update',
       otaPhase: 'error',
     });
   },
 
   dismiss: () => {
     const state = get();
-    if (state.otaPhase === 'pending_restart') return;
+    if (state.otaPhase === 'pending_restart' || state.downloading || state.downloadError) return;
     set({
       available: false,
       downloaded: false,
@@ -752,3 +789,13 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     set(initialState);
   },
 }));
+
+useUpdateStore.subscribe((state, previous) => {
+  if (state.downloading === previous.downloading && state.downloaded === previous.downloaded
+    && state.downloadError === previous.downloadError && state.downloadVersion === previous.downloadVersion
+    && state.downloadChannel === previous.downloadChannel) return;
+  const storage = getSafeStorage();
+  if ((state.downloading || state.downloadError) && !state.downloaded && validDownloadVersion(state.downloadVersion)) {
+    storage.setItem(DOWNLOAD_INTENT_KEY, JSON.stringify({ version: state.downloadVersion, channel: state.downloadChannel, runtimeType: state.runtimeType }));
+  } else storage.removeItem(DOWNLOAD_INTENT_KEY);
+});

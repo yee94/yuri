@@ -78,7 +78,7 @@ it('uses the real Relay dispatcher without injecting credentials for GET and POS
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const frames = [];
-  const tunnel = createTunnelHost({ connectionId: 'host-update', getLocalPort: () => server.address().port,
+  const tunnel = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'host-update', getLocalPort: () => server.address().port,
     sendFrame: (frame) => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
   const call = async (stream, method, headers, body) => {
     await tunnel.handleFrame(encodeTunnelFrame(TunnelFrameType.HttpRequest, stream, encodeJsonPayload({ method, path: '/api/system/update', query: '', headers })));

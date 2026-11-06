@@ -3,7 +3,7 @@
 // HTTP streams -> fetch http://127.0.0.1:<port> with streamed duplex bodies;
 // WS streams -> `ws` client to the loopback WebSocket endpoints.
 // The dispatcher NEVER injects credentials: tunneled requests authenticate
-// exactly like any remote client (bearer yuri_client_* header, yuri_url_token query).
+// using bearer/URL tokens, with Relay pairing admission before loopback forwarding.
 // Spec: .opencode/plans/private-relay/01-protocol-spec.md (Layer 3).
 
 import { WebSocket } from 'ws';
@@ -110,6 +110,7 @@ const isWsClosePayload = (parsed) => Boolean(parsed && typeof parsed === 'object
  *   getLocalPort: () => number,
  *   sendFrame: (plaintextFrame: Uint8Array, immediate?: boolean) => void | Promise<void>,
  *   getBufferedAmount: () => number,
+ *   authorizeRequest?: (req: { method: string, url: string, headers: Record<string, string> }) => Promise<boolean>,
  *   createWebSocket?: (url: string, protocols: string[] | undefined, options: { headers: Record<string, string> }) => import('ws').WebSocket,
  * }} deps
  */
@@ -118,6 +119,7 @@ export const createTunnelHost = ({
   getLocalPort,
   sendFrame,
   getBufferedAmount,
+  authorizeRequest = async () => false,
   createWebSocket = (url, protocols, options) => new WebSocket(url, protocols, options),
 }) => {
   /** @type {Map<number, { kind: 'http', abort: AbortController, body: ReadableStreamDefaultController | null } | { kind: 'ws', socket: WebSocket, opened: boolean }>} */
@@ -465,6 +467,29 @@ export const createTunnelHost = ({
   const handleFrame = async (plaintextFrame) => {
     if (closed) return;
     const frame = decodeTunnelFrame(plaintextFrame);
+
+    if (frame.frameType === TunnelFrameType.HttpRequest || frame.frameType === TunnelFrameType.WsOpen) {
+      const websocket = frame.frameType === TunnelFrameType.WsOpen;
+      let authorized = false;
+      try {
+        const request = decodeJsonPayload(frame.payload, websocket ? isWsOpenPayload : isHttpRequestPayload);
+        authorized = await authorizeRequest({
+          method: websocket ? 'GET' : request.method.toUpperCase(),
+          url: `${request.path}${request.query ? `?${request.query}` : ''}`,
+          headers: websocket
+            ? { upgrade: 'websocket', 'x-yuri-relay-connection': connectionId }
+            : buildRequestHeaders(request.headers),
+        }) === true;
+      } catch {
+        authorized = false;
+      }
+      if (closed) return;
+      if (!authorized) {
+        if (websocket) await sendAbort(frame.streamId, 'Relay pairing authorization required');
+        else await syntheticResponse(frame.streamId, 403, 'Relay pairing authorization required');
+        return;
+      }
+    }
 
     // WS message frames can be fragmented; everything else arrives whole.
     if (frame.frameType === TunnelFrameType.WsText || frame.frameType === TunnelFrameType.WsBinary) {

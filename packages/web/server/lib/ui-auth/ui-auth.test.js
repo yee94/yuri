@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -69,6 +69,47 @@ describe('isUrlAuthWebSocketPath', () => {
 });
 
 describe('ui auth client credential seam', () => {
+  for (const password of ['', 'secret']) {
+    it(`relay requires a current relay pairing grant for bearer and URL credentials (password=${Boolean(password)})`, async () => {
+      const createUiAuth = await loadCreateUiAuth();
+      const clients = [
+        { id: 'ssh', clientKind: 'desktop-local', authMethod: 'password', usesRelay: false },
+        { id: 'direct', authMethod: 'pairing', pairingId: 'direct-pairing', usesRelay: false },
+        { id: 'paired', authMethod: 'pairing', pairingId: 'relay-pairing', usesRelay: true },
+        { id: 'legacy', authMethod: 'password', usesRelay: true },
+      ];
+      const auth = createUiAuth({ password, clientAuthController: {
+        listClients: async () => clients,
+        authenticateBearerToken: async (token) => {
+          const client = clients.find((entry) => entry.id === token);
+          return client ? { ok: true, clientId: client.id, client } : null;
+        },
+      } });
+      try {
+        for (const client of clients) {
+          const req = { method: 'GET', url: '/auth/session', headers: { authorization: `Bearer ${client.id}` } };
+          expect(await auth.authorizeRelayRequest(req)).toBe(client.id === 'paired');
+          const res = createResponse();
+          await auth.handleUrlAuthToken(req, res);
+          const wsReq = { method: 'GET', url: `/api/terminal/ws?yuri_url_token=${res.body.token}`, headers: { upgrade: 'websocket' } };
+          expect(await auth.authorizeRelayRequest(wsReq)).toBe(client.id === 'paired');
+          if (client.id === 'paired') {
+            client.revokedAt = new Date().toISOString();
+            expect(await auth.authorizeRelayRequest(req)).toBe(false);
+            expect(await auth.authorizeRelayRequest(wsReq)).toBe(false);
+            delete client.revokedAt;
+            client.expiresAt = new Date(0).toISOString();
+            expect(await auth.authorizeRelayRequest(wsReq)).toBe(false);
+          }
+        }
+        expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/health', headers: {} })).toBe(false);
+        expect(await auth.authorizeRelayRequest({ method: 'POST', url: '/auth/session', headers: { cookie: 'yuri_ui_session=owner' } })).toBe(false);
+        expect(await auth.authorizeRelayRequest({ method: 'POST', url: '/api/client-auth/pairing/redeem', headers: {} })).toBe(true);
+        expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/api/client-auth/pairing/redeem', headers: {} })).toBe(false);
+      } finally { auth.dispose(); }
+    });
+  }
+
   it('accepts bearer client credentials when UI password auth is enabled', async () => {
     const createUiAuth = await loadCreateUiAuth();
     const auth = createUiAuth({

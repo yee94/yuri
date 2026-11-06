@@ -44,6 +44,10 @@ vi.mock('@/queries/speechSettingsQueries', async () => {
   };
 });
 vi.mock('@/components/sections/providers/ProvidersPage', () => ({ ProvidersPage: () => <p>Existing provider editor</p> }));
+vi.mock('./HistoryImportStep', () => ({ HistoryImportStep: ({ onPrimaryChange, onComplete }: { onPrimaryChange: (action: { disabled: boolean }) => void; onComplete: () => void }) => {
+  React.useEffect(() => onPrimaryChange({ disabled: false }), [onPrimaryChange]);
+  return <form id="yuri-tour-import" onSubmit={(event) => { event.preventDefault(); onComplete(); }}><p>History import editor</p></form>;
+} }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({ SimpleMarkdownRenderer: ({ content }: { content: string }) => <article>{content}</article> }));
 vi.mock('@/components/sections/yuri/VolcengineSpeechSettings', () => ({
   VolcengineSpeechSettings: ({ mode, form, showCredentials = true }: { mode: string; form: ReturnType<typeof useSpeechSettingsForm>; showCredentials?: boolean }) => <div data-speech-mode={mode}>
@@ -130,8 +134,8 @@ test('no-model and network errors preserve the direct-provider step instead of c
   expect(fixture.close).not.toHaveBeenCalled();
 });
 
-test('all three steps can be postponed without saving plugins or credentials', async () => {
-  await render(); await click('Set up later'); await click('Set up later'); await click('Set up later');
+test('all four steps can be postponed without saving plugins, history or credentials', async () => {
+  await render(); await click('Set up later'); await click('Set up later'); await click('Set up later'); await click('Set up later');
   expect(fixture.close).toHaveBeenCalledOnce();
   expect(fixture.savePlugins).not.toHaveBeenCalled();
   expect(fixture.save).not.toHaveBeenCalled();
@@ -165,7 +169,7 @@ test('Magpie whole-card selection can be toggled off and back on', async () => {
 });
 
 test('uses the shared speech form to save both providers, preserves failed drafts, and closes only after success', async () => {
-  useSetupTourStore.getState().move(fixture.runtime, 2);
+  useSetupTourStore.getState().move(fixture.runtime, 3);
   fixture.save.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ ...speechDefaults, configured: true });
   await render(); await click('Set up Doubao voice');
   expect(document.querySelectorAll('[data-speech-mode]')).toHaveLength(2);
@@ -196,4 +200,16 @@ test('late completion after a runtime switch cannot advance the new runtime', as
   await tick();
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
   expect(fixture.catalog).not.toHaveBeenCalled();
+});
+
+test('third step submits its import form and confirmed start advances to voice without saving plugins again', async () => {
+  useSetupTourStore.getState().move(fixture.runtime, 2);
+  await render();
+  expect(document.querySelectorAll('nav[aria-label] [aria-current="step"]')).toHaveLength(1);
+  expect(document.body.textContent).toContain('History import editor');
+  expect(document.body.textContent).not.toContain(en['historyImport.preview']);
+  await click('Next');
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(3);
+  expect(document.body.textContent).toContain(en['tour.voiceHeading']);
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
 });

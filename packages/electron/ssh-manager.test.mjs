@@ -779,7 +779,7 @@ describe('managed SSH relay host defaults', () => {
     expect(remoteHelpMentionsRelayHost('  --relay                 connect-url: also include the relay')).toBe(false);
   });
 
-  test('updateHostRuntime attaches a relay descriptor and preserves it when omitted', async () => {
+  test('SSH runtime updates never authorize relay from remote status and clear legacy descriptors', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
     tempDirs.push(tempDir);
     const settingsFilePath = path.join(tempDir, 'settings.json');
@@ -794,11 +794,27 @@ describe('managed SSH relay host defaults', () => {
       hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'abc', y: 'def' },
     };
     await manager.updateHostRuntime('ssh-1', 'SSH Host', 'http://127.0.0.1:18765', 'tok-1', relay);
-    expect(JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')).desktopHosts[0].relay).toEqual(relay);
+    expect(JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')).desktopHosts[0].relay).toBeUndefined();
+    fs.writeFileSync(settingsFilePath, JSON.stringify({ desktopHosts: [{ id: 'ssh-1', relay }] }));
     await manager.updateHostRuntime('ssh-1', 'SSH Host renamed', 'http://127.0.0.1:18766', 'tok-2');
     const after = JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')).desktopHosts[0];
-    expect(after.relay).toEqual(relay);
+    expect(after.relay).toBeUndefined();
     expect(after.clientToken).toBe('tok-2');
+  });
+
+  test('SSH updates preserve explicitly paired relay identity and credentials', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
+    tempDirs.push(tempDir);
+    const settingsFilePath = path.join(tempDir, 'settings.json');
+    const relay = { relayUrl: 'wss://relay.example/ws', serverId: 'paired', hostEncPubJwk: {} };
+    fs.writeFileSync(settingsFilePath, JSON.stringify({ desktopHosts: [
+      { id: 'ssh-1', source: 'connect-link', relay, clientToken: 'paired-token' },
+    ] }));
+    const manager = new ElectronSshManager({ settingsFilePath, appVersion: '0.0.0-test', emit: () => undefined });
+    await manager.updateHostRuntime('ssh-1', 'SSH', 'http://127.0.0.1:18766', 'ssh-token');
+    expect(JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')).desktopHosts[0]).toMatchObject({
+      relay, clientToken: 'paired-token', source: 'connect-link', apiUrl: 'http://127.0.0.1:18766',
+    });
   });
 });
 

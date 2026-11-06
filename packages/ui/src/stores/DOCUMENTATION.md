@@ -153,6 +153,17 @@ same OTA channel override and beta→stable confirmation flow; Electron delegate
 checks/download/relaunch to main-process IPC, while Capacitor uses mobileUpdates.
 The desktop decision and pending-restart state are main-process authoritative and
 independent of the selected Host. Web and VS Code keep their existing package paths.
+`downloadError` is separate from general check/apply errors, so only failed
+downloads become resumable background tasks. Downloads synchronously reject
+duplicate starts; `downloadUpdate({ resume: true })` preserves the original
+version/channel and refuses changed candidates. Ordinary explicit new downloads
+can choose a newly checked version. Dismissal preserves active/failed downloads.
+Only version/channel/client-runtime intent is stored under
+`yuri-client-update-download`; no URLs, credentials, release contents or error
+messages are persisted. Restoring this intent reports an interruption, never
+live activity; Continue rechecks the native owner before retrying. Progress-only
+updates perform no persistence writes. Successful native-ready evidence clears
+the intent. This state belongs to the local client, not the selected Host.
 
 Use a store when state is:
 
