@@ -149,10 +149,10 @@ export function UpdateDialogView({ open, onOpenChange, model, onAction }: {
             <h3 className="typography-ui-caption font-medium text-muted-foreground">{changelog.title}</h3>
           </div>
           <ScrollableOverlay className={model.stableLayout ? "p-0" : "max-h-[min(42dvh,22rem)] p-0 sm:max-h-[400px]"} outerClassName={model.stableLayout ? "flex-1" : undefined} fillContainer={Boolean(model.stableLayout)}>
-            {changelog.kind === 'raw' ? <div className="break-words p-3.5 text-[13px] leading-[1.65] text-foreground sm:p-4 sm:text-sm [&_.markdown-content]:leading-[1.65] [&_a]:!text-[var(--primary-base)] [&_a]:!no-underline [&_a:hover]:!underline" onClickCapture={handleChangelogClick}>
+            {changelog.kind === 'raw' ? <div className="break-words px-3.5 py-2 text-[13px] leading-[1.65] text-foreground sm:px-4 sm:text-sm [&_.markdown-content]:leading-[1.65] [&_.markdown-content>:first-child]:!mt-0 [&_.markdown-content>:first-child>:first-child]:!mt-0 [&_.markdown-content>:last-child]:!mb-0 [&_a]:!text-[var(--primary-base)] [&_a]:!no-underline [&_a:hover]:!underline" onClickCapture={handleChangelogClick}>
               <SimpleMarkdownRenderer content={changelog.content} disableLinkSafety={true} enableFileReferences={false} />
             </div> : <div className="divide-y divide-[var(--surface-subtle)]">
-              {changelog.sections.map((section) => <div key={section.version} className="p-3.5 sm:p-4">
+              {changelog.sections.map((section) => <div key={section.version} className="px-3.5 py-2 sm:px-4">
                 <div className="mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 sm:mb-3">
                   <span className="rounded-md bg-[var(--primary-base)]/10 px-1.5 py-0.5 font-mono text-[11px] font-medium leading-4 text-[var(--primary-base)] tabular-nums sm:text-xs">v{section.version}</span>
                   <span className="text-[11px] leading-4 text-muted-foreground/75 sm:text-xs">{section.dateLabel}</span>

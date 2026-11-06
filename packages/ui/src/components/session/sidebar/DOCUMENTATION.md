@@ -12,7 +12,14 @@ processed/downloaded counts. It shares DeviceConnections' exact popup material
 (`yuri-mobile-overlay-surface yuri-popup-surface`), 10px offset, 72-unit width,
 viewport bound and 2xl outer radius. The compact header/list share a 3-unit inset.
 Each item uses one 16px ring, task name/status and a trailing Continue button;
-processed and failed counts share one secondary line. Items have no card/large
+processed and failed counts share one secondary line. Every task detail uses the
+same 4px rounded progress bar, `surface.subtle` track, `primary.base` fill and
+300ms reduced-motion-aware width transition, independent of task type. Failures
+switch only the fill to `status.error`; unknown totals use the same one-third
+indeterminate fill, static on failure or reduced motion. Client byte counts use
+decimal MB with one localized decimal place; unknown totals show only downloaded
+MB. Host snapshots without byte counts never fabricate MB.
+The footer keeps its rings and never shows percentage text. Items have no card/large
 icon plate and are separated only by the shared popup divider token/width.
 Only the outer surface paints blur, fill, edge and shadow; rows remain transparent.
 There is no modal scrim or corner close button; outside click and Escape dismiss.

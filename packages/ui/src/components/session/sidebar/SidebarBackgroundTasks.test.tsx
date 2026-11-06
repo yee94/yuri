@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { SidebarBackgroundTasks } from './SidebarBackgroundTasks';
 import { useUpdateStore } from '@/stores/useUpdateStore';
+import { historyImportMessages } from '@/lib/i18n/messages/history-import';
 
 const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
   listeners: new Set<() => void>(), renders: vi.fn() }));
@@ -13,7 +14,10 @@ vi.mock('@/lib/runtime-switch', () => ({
 }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: (...args: unknown[]) => fixture.fetch(...args) }));
 vi.mock('@/lib/queryRuntime', () => ({ get queryClient() { return client; }, queryKeys: {} }));
-vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { locale: 'en', t: (key: string) => key }; } }));
+vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { locale: 'en', t: (key: string, params: Record<string, string> = {}) => {
+  const message = key === 'backgroundTasks.downloaded' || key === 'backgroundTasks.downloadedUnknownTotal' ? historyImportMessages.en[key] : key;
+  return message.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+} }; } }));
 vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => true }));
 vi.mock('@/stores/useUpdateStore', async () => {
   const { create } = await import('zustand');
@@ -89,6 +93,44 @@ test('a single task keeps just its ring and short label, with no visible percent
   expect(host.textContent).toBe('backgroundTasks.import');
   expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
   expect(host.textContent).not.toContain('%');
+});
+
+test('import, index, client and Host details share one progress-bar design independent of task type', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, job(), index(),
+    { id: 'host-download', status: 'downloading', version: '2.0.1', progress: 42 }));
+  useUpdateStore.setState({ downloading: true, downloadVersion: '2.0.0', progress: { downloaded: 30_000_000, total: 100_000_000 } });
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  const bars = [...document.querySelectorAll('[data-background-task] div[role="progressbar"]')];
+  expect(bars).toHaveLength(4);
+  expect(bars.map(bar => bar.getAttribute('aria-valuenow'))).toEqual(['25', '60', '30', '42']);
+  expect(new Set(bars.map(bar => bar.className)).size).toBe(1);
+  expect(new Set(bars.map(bar => bar.firstElementChild?.className)).size).toBe(1);
+  expect(bars[0].className).toContain('h-1 overflow-hidden rounded-full bg-[var(--surface-subtle)]');
+  expect(bars[0].firstElementChild?.className).toContain('bg-[var(--primary-base)]');
+  expect(bars[0].firstElementChild?.className).toContain('motion-safe:duration-300');
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('%');
+});
+
+test('all unknown task totals share indeterminate styling and failures share the same error token', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url,
+    job({ progress: { phase: 'scanning', total: 0, completed: 0 } }), index({ total: 0 }),
+    { id: 'host-download', status: 'downloading', version: '2.0.1' }));
+  useUpdateStore.setState({ downloading: true, progress: { downloaded: 1_000_000, total: 0 } });
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  const bars = [...document.querySelectorAll('[data-background-task] div[role="progressbar"]')];
+  expect(bars).toHaveLength(4);
+  expect(bars.every(bar => !bar.hasAttribute('aria-valuenow'))).toBe(true);
+  expect(new Set(bars.map(bar => bar.firstElementChild?.className)).size).toBe(1);
+  expect(bars[0].firstElementChild?.className).toContain('motion-safe:animate-pulse');
+  await act(async () => {
+    client.setQueryData(jobKey(), [job({ state: 'interrupted', total: 0 })]);
+    client.setQueryData(indexKey(), index({ phase: 'error', total: 0 }));
+    client.setQueryData([fixture.transport, 'host-update', fixture.generation, 'current'], hostUpdate({ id: 'host-download', status: 'failed', version: '2.0.1' }));
+    useUpdateStore.setState({ downloading: false, downloadError: 'interrupted' });
+  }); await tick();
+  expect(new Set(bars.map(bar => bar.firstElementChild?.className)).size).toBe(1);
+  expect(bars[0].firstElementChild?.className).toContain('bg-[var(--status-error)]');
+  expect(bars[0].firstElementChild?.className).not.toContain('animate-pulse');
 });
 
 test('a partially completed import is finished, not a persistent Continue task', async () => {
@@ -268,7 +310,41 @@ test('client downloads join the group without another request; local Host mirror
   await act(async () => useUpdateStore.setState({ progress: { downloaded: 60, total: 100 } })); await tick();
   expect(host.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('60');
   await act(async () => host.querySelector('button')!.click()); await tick();
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('backgroundTasks.downloaded');
+  expect(document.querySelector('[data-background-task="client-update"] [role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('60');
+});
+
+test('download details use a live progress bar and compact decimal MB, not bytes or visible percentages', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloading: true, progress: { downloaded: 256_293_440, total: 270_552_805 } });
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  const row = document.querySelector('[data-background-task="client-update"]')!;
+  const bar = row.querySelector('div[role="progressbar"]')!;
+  expect(row.textContent).toContain('Downloaded 256.3 / 270.6 MB');
+  expect(row.textContent).not.toMatch(/bytes|256,293,440|%/);
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeCloseTo(94.7, 1);
+  expect((bar.firstElementChild as HTMLElement).style.width).toMatch(/^94\.7/);
+  expect(host.querySelector('svg')).not.toBeNull();
+  await act(async () => useUpdateStore.setState({ progress: { downloaded: 270_552_805, total: 270_552_805 } })); await tick();
+  expect(row.textContent).toContain('Downloaded 270.6 / 270.6 MB');
+  expect(bar.getAttribute('aria-valuenow')).toBe('100');
+  expect((bar.firstElementChild as HTMLElement).style.width).toBe('100%');
+  expect(host.textContent).not.toContain('%');
+});
+
+test('unknown download totals keep downloaded MB without fabricating totals or progress; failures stop animation', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloading: true, progress: { downloaded: 12_500_000, total: 0 } });
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  const row = document.querySelector('[data-background-task="client-update"]')!;
+  const bar = row.querySelector('div[role="progressbar"]')!;
+  expect(row.textContent).toContain('Downloaded 12.5 MB');
+  expect(row.textContent).not.toMatch(/\/|%/);
+  expect(bar.hasAttribute('aria-valuenow')).toBe(false);
+  expect(bar.firstElementChild?.className).toContain('motion-safe:animate-pulse');
+  await act(async () => useUpdateStore.setState({ downloading: false, downloadError: 'interrupted' })); await tick();
+  expect(bar.firstElementChild?.className).not.toContain('animate-pulse');
+  expect(bar.firstElementChild?.className).toContain('bg-[var(--status-error)]');
+  expect(row.textContent).toContain('Downloaded 12.5 MB');
 });
 
 test('Host-owned background downloads are visible without a foreground store operation', async () => {
@@ -278,6 +354,9 @@ test('Host-owned background downloads are visible without a foreground store ope
   expect(host.textContent).toBe('');
   await act(async () => host.querySelector('button')!.click()); await tick();
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain('2.0.0');
+  const download = document.querySelector('[data-background-task="auto-download"]')!;
+  expect(download.querySelector('div[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('42');
+  expect(download.textContent).not.toMatch(/MB|%/);
   await act(async () => {
     client.setQueryData(jobKey(), []);
     client.setQueryData(indexKey(), index({ phase: 'ready' }));

@@ -35,6 +35,8 @@ function TaskDetails({ task }: { task: Task }) {
     finally { flight.current = false; }
   }, onError: (_error, action) => { if (action === 'resume' && task.dismiss) setRemoving(true); }, retry: false });
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
+  const megabytes = (value: number) => new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value / 1_000_000);
+  const progress = task.total > 0 ? Math.min(100, Math.max(0, task.completed / task.total * 100)) : undefined;
   return <div className="grid grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-2 py-2.5" data-background-task={task.id}>
     <span className="text-muted-foreground"><TaskRing task={task} /></span>
     <div className="min-w-0 space-y-0.5">
@@ -42,9 +44,15 @@ function TaskDetails({ task }: { task: Task }) {
         <span className="typography-ui-label">{task.label}</span>
         {task.detail !== task.label && <span className="break-words typography-micro text-muted-foreground">{task.detail}</span>}
       </div>
+      <div role="progressbar" aria-label={task.detail} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}
+        className="my-1.5 h-1 overflow-hidden rounded-full bg-[var(--surface-subtle)]">
+        <div className={`h-full rounded-full ${task.failed ? 'bg-[var(--status-error)]' : 'bg-[var(--primary-base)]'} ${progress === undefined ? task.failed ? 'w-1/3' : 'w-1/3 motion-safe:animate-pulse' : 'motion-safe:transition-[width] motion-safe:duration-300'}`}
+          style={progress === undefined ? undefined : { width: `${progress}%` }} />
+      </div>
       <div className="flex flex-wrap items-baseline gap-x-2 typography-micro tabular-nums text-muted-foreground" data-background-task-meta>
-        {task.total > 0 && !task.hideCounts && <span aria-label={t(task.bytes ? 'backgroundTasks.downloaded' : 'backgroundTasks.processed', { completed: number(task.completed), total: number(task.total) })}>
-          {task.bytes ? t('backgroundTasks.downloaded', { completed: number(task.completed), total: number(task.total) }) : `${number(task.completed)} / ${number(task.total)}`}
+        {task.bytes ? <span>{t(task.total > 0 ? 'backgroundTasks.downloaded' : 'backgroundTasks.downloadedUnknownTotal', { completed: megabytes(task.completed), total: megabytes(task.total) })}</span>
+          : task.total > 0 && !task.hideCounts && <span aria-label={t('backgroundTasks.processed', { completed: number(task.completed), total: number(task.total) })}>
+          {`${number(task.completed)} / ${number(task.total)}`}
         </span>}
         {Boolean(task.failures) && <span className="text-[var(--status-error)]">{t('backgroundTasks.failedCount', { count: number(task.failures!) })}</span>}
       </div>
