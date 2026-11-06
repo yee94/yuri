@@ -148,14 +148,14 @@ test('explicit merges flatten transcripts without requiring a valid source paren
   expect(client.session.import.mock.calls[0][0].info.parentID).toBeUndefined();
 });
 
-test('unsafe Codex project settings are reported once without blocking readable conversations', async () => {
+test('Codex project settings are not inspected, so unsafe skills paths cannot affect conversation-only import', async () => {
   const outside = path.join(directory, 'external-skills'); await fs.mkdir(outside);
   await fs.mkdir(path.join(directory, '.agents')); await fs.symlink(outside, path.join(directory, '.agents', 'skills'));
   records = new Map([['one', { ...record('one'), source: 'codex' }], ['two', { ...record('two'), source: 'codex' }]]);
   const job = await service.start({ sources: ['codex'], confirm: true }, actor); const result = await wait(job.id);
-  expect(result.state).toBe('partial');
+  expect(result.state).toBe('completed');
   expect(result.results.filter((item) => item.phase === 'session' && item.status === 'imported')).toHaveLength(2);
-  expect(result.results.filter((item) => item.code === 'unsafe_settings_path')).toHaveLength(1);
+  expect(result.results.filter((item) => item.phase === 'settings')).toHaveLength(0);
   expect(client.session.import).toHaveBeenCalledTimes(2);
   expect(await fs.readdir(outside)).toEqual([]);
 });
@@ -282,6 +282,33 @@ test('source jobs return while scanning and continue independently of the caller
   expect(result).toMatchObject({ state: 'completed', completed: 1, total: 1, progress: { phase: 'importing', completed: 1, total: 1 } });
 });
 
+test.each(['claude', 'codex', 'cursor', 'dsh'])('source jobs import only conversations, never %s project rules or skills', async (source) => {
+  records.set('one', { ...record('one'), source });
+  const skillDirectories = { claude: '.claude/skills/example', codex: '.codex/skills/example', cursor: '.cursor/skills/example', dsh: '.dsh/skills/example' };
+  const rules = { claude: '.claude/rules/rule.md', codex: 'AGENTS.md', cursor: '.cursorrules', dsh: 'AGENTS.md' };
+  const skill = path.join(directory, skillDirectories[source], 'SKILL.md');
+  const rule = path.join(directory, rules[source]);
+  await fs.mkdir(path.dirname(skill), { recursive: true }); await fs.mkdir(path.dirname(rule), { recursive: true });
+  await fs.writeFile(skill, '# Source skill'); await fs.writeFile(rule, '# Source rule');
+  const result = await wait((await service.start({ sources: [source], directory, settings: true, confirm: true }, actor)).id);
+  expect(result).toMatchObject({ state: 'completed', total: 1, completed: 1 });
+  expect(result.results.every((item) => item.phase === 'session')).toBe(true);
+  expect(client.session.import).toHaveBeenCalledOnce();
+  await expect(fs.stat(path.join(directory, '.opencode'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await fs.readFile(skill, 'utf8')).toBe('# Source skill');
+  expect(await fs.readFile(rule, 'utf8')).toBe('# Source rule');
+});
+
+test('resume treats partial as finished without discarding receipts or starting another attempt', async () => {
+  const store = createImportStore(path.join(directory, 'partial-finished.sqlite'));
+  store.create('partial', actor, digest(runtime), 1, { sources: ['claude'], directory });
+  store.append('partial', 0, { key: 'failed', status: 'failed', code: 'empty_transcript' }); store.finish('partial', 'partial');
+  await service.close(); service = makeService({ store });
+  expect((await service.resume({ id: 'partial', confirm: true }, actor))).toMatchObject({ state: 'partial', completed: 1, results: [{ code: 'empty_transcript' }] });
+  expect(service.jobs(actor)).toEqual([]);
+  expect(client.session.import).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled();
+});
+
 test('dismiss removes only the owned inactive task record from lists, not receipts or imported content', async () => {
   const store = createImportStore(path.join(directory, 'dismiss.sqlite'));
   store.create('failed', actor, digest(runtime), 357);
@@ -297,15 +324,18 @@ test('dismiss removes only the owned inactive task record from lists, not receip
   expect(client.session.import).not.toHaveBeenCalled();
 });
 
-test('a partial source job resumes after restart with its original selection and skips committed sessions', async () => {
+test('a cancelled source job resumes after restart with its original selection and skips committed sessions', async () => {
   records.set('two', record('two'));
+  let release;
   const persist = client.session.import.getMockImplementation();
   client.session.import.mockImplementation(async (transfer) => {
-    if (transfer.info.title === 'two') throw new Error('temporarily offline');
+    if (transfer.info.title === 'two') { await new Promise((resolve) => { release = resolve; }); throw new Error('temporarily offline'); }
     return persist(transfer);
   });
   const job = await service.start({ sources: ['claude'], directory, confirm: true }, actor);
-  expect((await wait(job.id)).state).toBe('partial');
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+  service.cancel(job.id, actor); release();
+  expect((await wait(job.id)).state).toBe('cancelled');
   await service.close(); service = makeService();
   expect(service.jobs(actor).map((item) => item.id)).toContain(job.id);
   expect(service.status(job.id, actor).resumable).toBe(true);
@@ -336,13 +366,13 @@ test('legacy interrupted jobs never replace a missing original selection with ne
 });
 
 test('resume uses only the original saved sources even if a caller supplies a different selection', async () => {
+  const store = createImportStore(path.join(directory, 'original-selection.sqlite'));
+  store.create('interrupted', actor, digest(runtime), 0, { sources: ['claude'], directory }); store.finish('interrupted', 'interrupted');
   const discover = vi.fn(async () => { throw new Error('offline'); });
-  await service.close(); service = makeService({ discover });
-  const job = await service.start({ sources: ['claude'], directory, confirm: true }, actor);
-  expect((await wait(job.id)).state).toBe('partial');
-  await service.resume({ id: job.id, confirm: true, sources: ['codex'], directory: '/other-project' }, actor);
-  expect((await wait(job.id)).state).toBe('partial');
-  expect(discover.mock.calls.map(([input]) => input.sources)).toEqual([['claude'], ['claude']]);
+  await service.close(); service = makeService({ store, discover });
+  await service.resume({ id: 'interrupted', confirm: true, sources: ['codex'], directory: '/other-project' }, actor);
+  expect((await wait('interrupted')).state).toBe('partial');
+  expect(discover.mock.calls.map(([input]) => input.sources)).toEqual([['claude']]);
 });
 
 test('validation and unreadable-source failures retain independent successful imports', async () => {

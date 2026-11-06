@@ -43,8 +43,12 @@ never on the browser/phone. There is no upload flow. Standalone VS Code returns
 The setup tour sends `start({ sources, directory, confirm: true })` on “Next”.
 It immediately accepts a Host-owned job; full discovery, per-item validation and
 fingerprint-bound planning run in the background, without another confirmation page.
-Settings conflicts keep existing files. The explicit `planID` start API remains
-available with keep-both/replace decisions. Closing a client does not cancel either flow.
+Source jobs import conversations only (`settings: false`), including retries of
+saved source intent. They never inspect/copy/activate project rules, SKILL.md or
+other configuration. Existing previously imported settings are not removed.
+Project registration remains necessary to expose imported sessions. The explicit
+preview/`planID` API retains opt-in settings migration with keep-both/replace
+decisions, separate from the tour/source flow. Closing a client does not cancel either flow.
 `progress` describes `scanning`, `validating` or `importing` with phase-local
 `completed`/`total`; zero total means unknown, not 0% progress. The receipt total
 is finalized after planning, including scan/validation failures. An additive SQLite
@@ -54,6 +58,11 @@ background job. Failed items do not block unrelated projects.
 
 `jobs` returns all unfinished jobs for the authenticated owner/runtime, oldest
 first, using summary counts (including failures) without transcript/receipt bodies.
+Both `completed` and `partial` are finished states and excluded from `jobs`;
+existing persisted partial jobs need no migration. Their receipts remain available
+through `job`, `resumable` is false, and `resume` returns them unchanged without
+clearing receipts or starting another attempt. A user may explicitly start a new
+conversation-only import; deterministic session IDs still avoid duplicates.
 New source jobs durably retain only their source IDs and fallback destination in a
 private SQLite `request` column; responses expose only `resumable`. `resume` needs
 `{ id, confirm: true }`, reuses the same job ID, and merges duplicate active retries.
@@ -61,8 +70,8 @@ Another active import rejects with `import_busy`. A transaction resets only that
 job's attempt receipts/progress, never imported sessions, project registrations or
 source files. Discovery/validation is repeated; deterministic revision IDs and
 authoritative provenance readback skip committed sessions. Index callbacks and
-project registration are retried independently. Settings retain the keep-existing
-conflict policy. This is an idempotent retry, not a byte/file-offset resume.
+project registration are retried independently. Source retries do not include
+settings. This is an idempotent retry, not a byte/file-offset resume.
 Continue always uses the stored original source intent; the resume payload cannot
 replace it with new sources or destinations. Legacy/explicit-plan jobs without
 stored intent return `resume_request_missing` without resetting receipts or

@@ -76,7 +76,7 @@ test('source start rejects old generations before a request and fences late comp
 
 test('unfinished list and resume keep old failed jobs and update the same identity without exposing source intent', async () => {
   const options = importJobsQueryOptions(); const signal = new AbortController().signal;
-  const old = { id: 'old', state: 'partial' }; const job = { id: 'job', state: 'running' };
+  const old = { id: 'old', state: 'interrupted' }; const job = { id: 'job', state: 'running' };
   fixture.fetch.mockResolvedValueOnce(Response.json([old]));
   expect(await options.queryFn({ signal })).toEqual([old]);
   expect(fixture.fetch).toHaveBeenCalledWith('/api/yuri/history-import/jobs', { signal });
@@ -90,6 +90,16 @@ test('unfinished list and resume keep old failed jobs and update the same identi
   fixture.setQueryData.mockClear();
   await expect(resumeImport('job', 'one', 1)).rejects.toThrow('runtime_changed');
   expect(fixture.setQueryData).not.toHaveBeenCalled();
+});
+
+test.each(['partial', 'completed'])('%s resume results stay in receipts but leave the unfinished query cache', async (state) => {
+  const result = { id: 'finished', state, results: [{ status: 'failed', code: 'empty_transcript' }] };
+  fixture.fetch.mockResolvedValue(Response.json(result));
+  await resumeImport('finished', 'one', 1);
+  const latest = fixture.setQueryData.mock.calls.find(([key]) => key[2] === 'job')![1];
+  expect(latest).toEqual(result);
+  const unfinished = fixture.setQueryData.mock.calls.find(([key]) => key[2] === 'jobs')![1];
+  expect(unfinished([{ id: 'finished', state: 'interrupted' }, { id: 'other', state: 'running' }])).toEqual([{ id: 'other', state: 'running' }]);
 });
 
 test('dismiss removes only the confirmed task from its captured caches and ignores stale completions', async () => {

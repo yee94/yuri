@@ -18,8 +18,9 @@ Only the outer surface paints blur, fill, edge and shadow; rows remain transpare
 There is no modal scrim or corner close button; outside click and Escape dismiss.
 Details initially retain focus on the trigger (`initialFocus: false`), so global
 focus-ring suppression cannot erase the popup's shared rim/shadow.
-Only successful/idle indicators disappear. Failed, partial, cancelled and
-interrupted tasks stay visible with non-spinning error-colored rings and per-row
+Import `completed` and `partial` are both finished: they leave the background
+list and offer no Continue action, while durable receipts retain failure details.
+Cancelled/interrupted imports and failed index/update tasks remain visible with non-spinning error-colored rings and per-row
 Continue actions. Each row owns independent mutation pending/error state and
 synchronous duplicate-click admission. Failed retries preserve the task and its
 successful results. An already-open popup shows its empty state after the final
@@ -28,7 +29,8 @@ catalog once. Refresh failure retains progress with retry wording in details.
 Client downloads reuse store events, while Host-owned/background downloads use
 the existing update operation snapshot. A same-version local client/Host mirror
 is shown once; different target versions are not deduplicated.
-Imports use the unfinished `jobs` query, so a newer task cannot hide older failed
+Imports use the unfinished `jobs` query, excluding both completed and partial
+imports, so a newer task cannot hide older interrupted/cancelled
 ones; the tour keeps its separate latest-job query. Recovery seeds both caches
 only in the captured runtime generation. Continue sends only the original job ID
 and confirmation; source/fallback-directory selection never appears in the popup.

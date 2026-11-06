@@ -1358,7 +1358,7 @@ export const Header: React.FC<HeaderProps> = ({
   const servicesTabs = React.useMemo(() => {
     const base: Array<{ value: 'instance' | 'usage' | 'mcp'; label: string; icon: React.ReactNode }> = [];
     if (isDesktopApp) {
-      base.push({ value: 'instance', label: t('layout.services.instance'), icon: <Icon name="server" className="h-3.5 w-3.5" /> });
+      base.push({ value: 'instance', label: t('layout.services.instance'), icon: <Icon name="connection-local" className="h-3.5 w-3.5" /> });
     }
     base.push(
       { value: 'usage', label: t('layout.services.usage'), icon: <Icon name="timer" className="h-3.5 w-3.5" /> },
@@ -1665,6 +1665,7 @@ export const Header: React.FC<HeaderProps> = ({
         <WorkStatusToggle />
       ) : null}
       <OpenInAppButton directory={actionDirectory} />
+      {isDesktopApp && <DesktopCurrentHostButton open={isDesktopServicesOpen && desktopServicesTab === 'instance'} onClick={() => applyServicesPanelOpen('instance')} />}
       <HeaderIconActionButton
         title={t('header.actions.rightSidebarWithShortcut', { shortcut: shortcutLabel('toggle_right_sidebar') })}
         ariaLabel={t('contextPanel.actions.togglePanel')}
@@ -1741,7 +1742,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="flex shrink-0 items-center gap-1">
           {sessionOverflowMenu}
-          {isDesktopApp && <DesktopCurrentHostButton open={isDesktopServicesOpen && desktopServicesTab === 'instance'} onClick={() => applyServicesPanelOpen('instance')} />}
           {showDesktopHeaderContextUsage && stableDesktopContextUsage ? (
             <ContextUsageDisplay
               pending={stableDesktopContextUsage.pending}

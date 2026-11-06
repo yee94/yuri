@@ -8,11 +8,13 @@ const state = vi.hoisted(() => ({
   hosts: [] as Array<{ id: string; label: string; url: string; apiUrl?: string; relay?: object }>,
   ssh: [] as Array<{ id: string }>, statuses: [] as Array<{ id: string; phase: string }>,
   probe: vi.fn(), relayProbe: vi.fn(), click: vi.fn(),
+  canManage: true, sshHostIds: undefined as string[] | undefined,
+  apiUrl: 'http://local.test',
 }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string, values?: { current: string }) => values?.current || key }) }));
-vi.mock('@/lib/desktop', () => ({ canManageDesktopHosts: () => true }));
+vi.mock('@/lib/desktop', () => ({ canManageDesktopHosts: () => state.canManage, isDesktopLocalOriginActive: () => state.key === 'local' }));
 vi.mock('@/lib/desktopHosts', () => ({
-  desktopHostsGet: async () => ({ hosts: state.hosts }),
+  desktopHostsGet: async () => ({ hosts: state.hosts, sshHostIds: state.sshHostIds }),
   desktopHostProbe: state.probe, probeRelayDesktopHost: state.relayProbe,
   getDesktopHostApiUrl: (host: { url: string; apiUrl?: string }) => host.apiUrl || host.url,
   isVisibleDesktopHost: () => true, locationMatchesHost: (a: string, b: string) => a === b,
@@ -23,7 +25,7 @@ vi.mock('@/lib/desktopSsh', () => ({
 }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeKey: () => state.key, getRuntimeTransportIdentity: () => state.transport,
-  getRuntimeApiBaseUrl: () => 'http://local.test', subscribeRuntimeEndpointChanged: () => () => {},
+  getRuntimeApiBaseUrl: () => state.apiUrl, subscribeRuntimeEndpointChanged: () => () => {},
 }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (value: object) => unknown) => select({ isSettingsDialogOpen: false }) }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (select: (value: object) => unknown) => select({ isConnected: state.connected }) }));
@@ -43,6 +45,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.key = 'local'; state.transport = 'direct:local'; state.connected = true;
   state.hosts = []; state.ssh = []; state.statuses = [];
+  state.canManage = true; state.sshHostIds = undefined;
+  state.apiUrl = 'http://local.test';
   state.probe.mockResolvedValue({ status: 'ok' }); state.relayProbe.mockResolvedValue({ status: 'ok' });
   element = document.createElement('div'); document.body.append(element); root = createRoot(element);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -57,13 +61,24 @@ async function render() {
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
 }
 
-it('hides the entry for a single local instance and for offline remote instances', async () => {
+it('hides the entry only for a single local instance', async () => {
   await render();
   expect(element.querySelector('button')).toBeNull();
+});
+
+it('keeps the machine entry visible with multiple configured instances even when probes fail', async () => {
   state.hosts = [{ id: 'remote', label: 'Offline', url: 'http://remote.test' }];
   state.probe.mockResolvedValue({ status: 'unreachable' });
-  await act(async () => { await client.invalidateQueries(); });
-  expect(element.querySelector('button')).toBeNull();
+  await render();
+  expect(element.querySelector('[data-icon="connection-local"]')).not.toBeNull();
+  expect(state.probe).not.toHaveBeenCalled();
+  expect(state.relayProbe).not.toHaveBeenCalled();
+});
+
+it('shows the current remote entry even when its saved catalog is unavailable in that window', async () => {
+  state.key = 'host:remote'; state.transport = 'relay:studio';
+  await render();
+  expect(element.querySelector('[data-icon="connection-relay"]')).not.toBeNull();
 });
 
 it('shows a neutral local icon without a visible machine name and opens on click', async () => {
@@ -84,14 +99,24 @@ it('uses the live relay transport rather than an SSH host origin or stale probe'
   expect(element.querySelector('button')?.getAttribute('aria-label')).toBe('Studio');
 });
 
-it('keeps an independently reachable host when another probe fails', async () => {
+it('shows SSH from read-only catalog provenance in a remote window', async () => {
   state.hosts = [
     { id: 'broken', label: 'Broken', url: 'http://broken.test' },
     { id: 'ssh', label: 'Server', url: 'http://ssh.test' },
   ];
   state.probe.mockRejectedValue(new Error('probe unavailable'));
-  state.ssh = [{ id: 'ssh' }]; state.statuses = [{ id: 'ssh', phase: 'ready' }];
+  state.canManage = false;
+  state.sshHostIds = ['ssh'];
   state.key = 'host:ssh';
   await render();
   expect(element.querySelector('[data-icon="connection-ssh"]')).not.toBeNull();
+});
+
+it('identifies a restored direct SSH window by endpoint before a host runtime key exists', async () => {
+  state.hosts = [{ id: 'ssh', label: 'Server', url: 'http://ssh.test' }];
+  state.canManage = false; state.sshHostIds = ['ssh'];
+  state.key = 'http://ssh.test'; state.apiUrl = 'http://ssh.test';
+  await render();
+  expect(element.querySelector('[data-icon="connection-ssh"]')).not.toBeNull();
+  expect(element.querySelector('button')?.getAttribute('aria-label')).toBe('Server');
 });

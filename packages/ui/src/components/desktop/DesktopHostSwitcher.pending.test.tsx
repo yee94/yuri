@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   openWindow: vi.fn(), switchHost: vi.fn(), close: vi.fn(), busy: vi.fn(), error: vi.fn(),
   canManage: vi.fn(() => true), sshInstances: vi.fn(), sshStatus: vi.fn(), openManager: vi.fn(),
+  runtimeKey: 'local',
   t: (key: string, params?: Record<string, string>) => `${key}${params?.instance ? `:${params.instance}` : ''}`,
 }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: mocks.t }) }));
@@ -12,7 +13,7 @@ vi.mock('@/lib/desktop', () => ({ isElectronShell: () => true, isDesktopShell: (
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (state: object) => unknown) => select({ setSettingsDialogOpen() {}, setSettingsPage() {} }) }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (select: (state: object) => unknown) => select({ isConnected: true, connectionPhase: 'connected' }) }));
 vi.mock('@/lib/runtime-switch', () => ({
-  getRuntimeKey: () => 'local', getRuntimeApiBaseUrl: () => 'http://localhost:3000',
+  getRuntimeKey: () => mocks.runtimeKey, getRuntimeApiBaseUrl: () => 'http://localhost:3000',
   getRuntimeTransportIdentity: () => 'direct:local', subscribeRuntimeEndpointChanged: () => () => {},
 }));
 vi.mock('@/lib/desktopHostSwitch', () => ({ runtimeKeyForDesktopHost: (host: { id: string }) => host.id === 'local' ? 'local' : `host:${host.id}` }));
@@ -21,13 +22,13 @@ vi.mock('@/queries/desktopHostSwitchMutation', () => ({
   useDesktopHostSwitchingHostId: () => null,
 }));
 vi.mock('@/lib/desktopHosts', () => ({
-  desktopHostsGet: async () => ({ hosts: [{ id: 'ssh', label: 'SSH fixture', url: 'http://localhost:4000' }], localOrigin: 'http://localhost:3000' }),
+  desktopHostsGet: async () => ({ hosts: [{ id: 'ssh', label: 'SSH fixture', url: 'http://localhost:4000' }], sshHostIds: ['ssh'], localOrigin: 'http://localhost:3000' }),
   desktopHostProbe: async () => ({ status: 'ok', latencyMs: 1 }),
   desktopLocalClientTokenGet: async () => '',
   desktopOpenLocalHostSettings: mocks.openManager,
   desktopOpenNewWindowAtUrl: mocks.openWindow, desktopOpenNewWindowForHost: mocks.openWindow,
   getDesktopHostApiUrl: (host: { url: string }) => host.url,
-  isVisibleDesktopHost: () => true, locationMatchesHost: () => false,
+  isVisibleDesktopHost: (host: { id: string }, ids: Set<string>) => ids.has(host.id), locationMatchesHost: () => false,
   normalizeHostUrl: (url: string) => url, redactSensitiveUrl: (url: string) => url,
 }));
 vi.mock('@/lib/desktopSsh', () => ({
@@ -56,6 +57,7 @@ beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.clearAllMocks();
   mocks.canManage.mockReturnValue(true);
+  mocks.runtimeKey = 'local';
   mocks.sshInstances.mockResolvedValue({ instances: [{ id: 'ssh' }] });
   mocks.sshStatus.mockResolvedValue([{ id: 'ssh', phase: 'ready' }]);
   container = document.createElement('div');
@@ -120,6 +122,7 @@ it('uses inline switch progress and blocks repeated switch/window clicks', async
 
 it('does not issue privileged SSH reads after restoring a remote window-only document', async () => {
   mocks.canManage.mockReturnValue(false);
+  mocks.runtimeKey = 'host:ssh';
   await act(async () => root.render(<DesktopHostSwitcherDialog embedded open={false} onOpenChange={mocks.close} />));
   mocks.sshInstances.mockClear();
   mocks.sshStatus.mockClear();
@@ -127,4 +130,7 @@ it('does not issue privileged SSH reads after restoring a remote window-only doc
   expect(mocks.sshInstances).not.toHaveBeenCalled();
   expect(mocks.sshStatus).not.toHaveBeenCalled();
   expect(switchButton()).not.toBeNull();
+  expect(switchButton().getAttribute('aria-current')).toBe('true');
+  expect(container.textContent).not.toContain('desktopHostSwitcher.sshPhase.idle');
+  expect(container.textContent).not.toContain('desktopHostSwitcher.actions.connect');
 });

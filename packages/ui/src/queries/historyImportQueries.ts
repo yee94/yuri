@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryRuntime';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
-import { historyPreviewLimit, historySources, type HistorySource, type ImportJob, type ImportScan, type ImportStates } from '@/lib/historyImport';
+import { historyPreviewLimit, historySources, isImportJobFinished, type HistorySource, type ImportJob, type ImportScan, type ImportStates } from '@/lib/historyImport';
 
 const request = async <T>(route: string, body: unknown, signal: AbortSignal, transport: string): Promise<T> => {
   const generation = getRuntimeGeneration();
@@ -33,7 +33,7 @@ export const importJobsQueryOptions = (transport = getRuntimeTransportIdentity()
 function cacheImportJob(result: ImportJob, transport: string) {
   queryClient.setQueryData(importJobQueryOptions(transport).queryKey, result);
   queryClient.setQueryData<ImportJob[]>(importJobsQueryOptions(transport).queryKey, (previous) => {
-    if (result.state === 'completed') return previous?.filter((job) => job.id !== result.id);
+    if (isImportJobFinished(result)) return previous?.filter((job) => job.id !== result.id);
     return previous?.some((job) => job.id === result.id)
       ? previous.map((job) => job.id === result.id ? result : job) : [...(previous ?? []), result];
   });

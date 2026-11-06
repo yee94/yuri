@@ -289,7 +289,7 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
       const total = found.sessions.length;
       receipts().progress(job.id, { phase: 'validating', completed, total });
       scanID = remember(scans, { owner: job.owner, runtime: job.runtime, sampled: false, descriptors: found.descriptors });
-      const prepared = total ? await prepare({ scanID, sessions: found.sessions.map((session) => ({ key: session.key, directory: session.directory || input.directory || '' })), settings: true, merge: false }, job.owner, {
+       const prepared = total ? await prepare({ scanID, sessions: found.sessions.map((session) => ({ key: session.key, directory: session.directory || input.directory || '' })), settings: false, merge: false }, job.owner, {
         valid, advance: () => receipts().progress(job.id, { phase: 'validating', completed: ++completed, total }),
       }) : null;
       planID = prepared?.id;
@@ -340,7 +340,7 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
     const runtime = identity(); const previous = receipts().get(input.id, owner, runtime);
     if (!previous) fail('job_missing');
     if (previous.dismissed) fail('job_dismissed');
-    if (previous.state === 'completed' || active?.id === input.id && active.owner === owner) return previous;
+    if (['completed', 'partial'].includes(previous.state) || active?.id === input.id && active.owner === owner) return previous;
     if (active || scanning) fail('import_busy');
     const request = receipts().request(input.id, owner, runtime);
     if (!request) fail('resume_request_missing');

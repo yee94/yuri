@@ -18,14 +18,21 @@ describe('stored SSH relay authorization', () => {
     });
     vm.runInContext(source.slice(source.indexOf('const sanitizeHostRelayForStorage ='), source.indexOf('const writeDesktopHostsConfig ='))
       + '\nglobalThis.result = readDesktopHostsConfig();', context);
-    return context.result.hosts;
+    return context.result;
   };
   it('does not expose legacy auto-discovered relay during restart or reconnect', () => {
-    expect(readHosts({ id: 'ssh-test', url: 'http://127.0.0.1:4000', relay })[0].relay).toBeUndefined();
+    expect(readHosts({ id: 'ssh-test', url: 'http://127.0.0.1:4000', relay }).hosts[0].relay).toBeUndefined();
   });
   it('retains explicitly paired SSH transports and standalone paired hosts', () => {
-    expect(readHosts({ id: 'ssh-test', source: 'connect-link', url: 'http://127.0.0.1:4000', relay })[0].relay).toEqual(relay);
-    expect(readHosts({ id: 'paired-host', relay })[0].relay).toEqual(relay);
+    expect(readHosts({ id: 'ssh-test', source: 'connect-link', url: 'http://127.0.0.1:4000', relay }).hosts[0].relay).toEqual(relay);
+    expect(readHosts({ id: 'paired-host', relay }).hosts[0].relay).toEqual(relay);
+  });
+  it('exposes only SSH mirror IDs as read-only catalog metadata', () => {
+    const config = readHosts({ id: 'ssh-test', url: 'http://127.0.0.1:4000' });
+    expect(config.sshHostIds).toEqual(['ssh-test']);
+    expect(config).not.toHaveProperty('desktopSshInstances');
+    expect(config).not.toHaveProperty('instances');
+    expect(readHosts({ id: 'paired-host', relay }).sshHostIds).toEqual([]);
   });
 });
 

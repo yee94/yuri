@@ -5,7 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { historyPreviewLimit, historySources, importJobProgress, type HistorySource, type ImportSession } from '@/lib/historyImport';
+import { historyPreviewLimit, historySources, importJobProgress, isImportJobFinished, type HistorySource, type ImportSession } from '@/lib/historyImport';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { cancelImport, startSourceImport, useImportJobQuery, useImportSourcesQuery, useImportStatesQuery } from '@/queries/historyImportQueries';
 import claudeLogo from '@/assets/brand/history-import/claude-code.svg';
@@ -54,7 +54,7 @@ export function HistoryImportStep({ onBusy, directory = null, onPrimaryChange, o
     }
     return groups.filter((group) => group.sessions.length);
   }, [scan.data]);
-  const finished = Boolean(accepted.current && job.data?.id === accepted.current && job.data.state === 'completed');
+  const finished = Boolean(accepted.current && job.data?.id === accepted.current && isImportJobFinished(job.data));
   const disabled = busy || (!running && !finished && (scan.isFetching || !scan.data || scan.isError || job.isError));
   React.useEffect(() => { notifyPrimary({ disabled, background: running }); }, [disabled, running, notifyPrimary]);
   const current = () => !controller.current?.signal.aborted && transport === getRuntimeTransportIdentity() && generation === getRuntimeGeneration();
@@ -92,8 +92,8 @@ export function HistoryImportStep({ onBusy, directory = null, onPrimaryChange, o
   return <form id="yuri-tour-import" className="yuri-history-import" data-history-import onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     <h2 ref={heading} className="yuri-import-heading">{t('historyImport.heading')}</h2>
     <p className="yuri-import-subtitle">{t('historyImport.deduplication')}</p>
-    {job.data && (running || accepted.current === job.data.id) && <div className="yuri-import-job" role="status">
-      <Icon name={running ? 'loader-4' : job.data.state === 'completed' ? 'check' : 'error-warning'} className={cn('size-4', running && 'animate-spin')} />
+    {job.data && !isImportJobFinished(job.data) && (running || accepted.current === job.data.id) && <div className="yuri-import-job" role="status">
+      <Icon name={running ? 'loader-4' : 'error-warning'} className={cn('size-4', running && 'animate-spin')} />
       <span>{t(running && progress ? `historyImport.phase.${progress.phase}` : `historyImport.state.${job.data.state}`)}</span>
       {progress && progress.total > 0 && <span className="tabular-nums">{progress.completed} / {progress.total}</span>}
       {running && <Button variant="ghost" size="icon" disabled={busy} aria-label={t('historyImport.cancel')} title={t('historyImport.cancel')} onClick={() => void operation(async (signal) => { await cancelImport(job.data!.id, signal, transport); if (current()) await job.refetch(); })}><Icon name="stop" className="size-4" /></Button>}

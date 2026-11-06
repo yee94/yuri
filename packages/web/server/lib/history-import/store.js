@@ -26,7 +26,7 @@ export function createImportStore(file) {
     const failures = db.prepare("SELECT position, result FROM import_receipt WHERE job = ? AND (json_extract(result, '$.status') = 'failed' OR json_extract(result, '$.project') = 'failed' OR json_extract(result, '$.index') = 'failed') ORDER BY position LIMIT 40").all(id);
     const results = [...new Map([...failures, ...recent].map((entry) => [entry.position, entry])).values()]
       .sort((left, right) => left.position - right.position).map((entry) => JSON.parse(entry.result));
-    return { id: row.id, state: row.state, total: row.total, completed, created: row.created, results, resumable: Boolean(row.request), dismissed: Boolean(row.dismissed),
+    return { id: row.id, state: row.state, total: row.total, completed, created: row.created, results, resumable: Boolean(row.request) && !['completed', 'partial'].includes(row.state), dismissed: Boolean(row.dismissed),
       ...(row.progress ? { progress: JSON.parse(row.progress) } : {}) };
   };
   return {
@@ -49,7 +49,7 @@ export function createImportStore(file) {
     },
     unfinished: (owner, runtime) => db.prepare(`SELECT j.*, (SELECT COUNT(*) FROM import_receipt r WHERE r.job = j.id) AS completed,
       (SELECT COUNT(*) FROM import_receipt r WHERE r.job = j.id AND (json_extract(result, '$.status') = 'failed' OR json_extract(result, '$.project') = 'failed' OR json_extract(result, '$.index') = 'failed')) AS failures
-      FROM import_job j WHERE owner = ? AND runtime = ? AND state != 'completed' AND dismissed = 0 ORDER BY created`).all(owner, runtime)
+      FROM import_job j WHERE owner = ? AND runtime = ? AND state NOT IN ('completed', 'partial') AND dismissed = 0 ORDER BY created`).all(owner, runtime)
       .map((row) => ({ id: row.id, state: row.state, total: row.total, completed: row.completed, created: row.created,
         results: [], failures: row.failures, resumable: Boolean(row.request), ...(row.progress ? { progress: JSON.parse(row.progress) } : {}) })),
     get,

@@ -91,6 +91,23 @@ test('a single task keeps just its ring and short label, with no visible percent
   expect(host.textContent).not.toContain('%');
 });
 
+test('a partially completed import is finished, not a persistent Continue task', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url,
+    job({ state: 'partial', total: 358, completed: 358, failures: 33 }), index({ phase: 'ready' })));
+  await render();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).toBeNull();
+  expect(fixture.fetch.mock.calls.some(([url]) => url.endsWith('/resume'))).toBe(false);
+});
+
+test('running import becoming partial disappears and refreshes projects once, retaining unrelated index work', async () => {
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  await act(async () => client.setQueryData(jobKey(), [job({ state: 'partial', completed: 20, failures: 3 })]));
+  await tick();
+  expect(document.querySelector('[data-background-task="import-job"]')).toBeNull();
+  expect(document.querySelector('[data-background-task="content-index"]')).not.toBeNull();
+  expect(fixture.refresh).toHaveBeenCalledExactlyOnceWith('host-one');
+});
+
 test('interrupted import, partial index and failed update remain visible with red rings and Continue actions', async () => {
   fixture.fetch.mockImplementation(async (url: string) => response(url,
     job({ state: 'interrupted', total: 357, completed: 79, failures: 79 }), index({ phase: 'partial', failed: 9 }),

@@ -246,7 +246,7 @@ test('validation progress is authoritative and shown before any items are writte
   expect(fixture.complete).not.toHaveBeenCalled();
 });
 
-test('partial import exposes retained item failure codes beside the top progress', async () => {
+test('partial import hides its progress and item errors while retaining the failure receipt', async () => {
   await render(); await selectSources(); await click('Next');
   await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], {
     id: 'job', state: 'partial', total: 3, completed: 3,
@@ -254,10 +254,9 @@ test('partial import exposes retained item failure codes beside the top progress
     results: [{ key: 'one', status: 'failed', code: 'unsafe_settings_path' }, { key: 'two', status: 'failed', code: 'unsafe_settings_path' }, { key: 'three', status: 'imported' }],
   }));
   await tick();
-  const status = container.querySelector('[role="status"]')!;
-  expect(status.nextElementSibling?.className).toBe('yuri-import-source-grid');
-  expect(status.querySelector('[role="alert"]')?.textContent).toContain('unsafe_settings_path');
-  expect(status.querySelectorAll('code')).toHaveLength(1);
+  expect(container.querySelector('.yuri-import-job, progress, [role="alert"]')).toBeNull();
+  expect(container.textContent).not.toContain('unsafe_settings_path');
+  expect(fixture.client!.getQueryData(['host-one', 'history-import', 'job'])).toMatchObject({ state: 'partial', results: expect.arrayContaining([expect.objectContaining({ code: 'unsafe_settings_path' })]) });
 });
 
 test('a late source response after changing runtime cannot populate the new view', async () => {
@@ -303,9 +302,9 @@ test('an empty sample does not claim there is no history; full discovery belongs
   expect(fixture.fetch.mock.calls.some(([url]) => url.endsWith('/start'))).toBe(true);
 });
 
-test('a background validation failure remains visible rather than being reported as success', async () => {
+test('an interrupted validation retains retryable error feedback', async () => {
   await render(); await selectSources(); await click('Next');
-  await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], { id: 'job', state: 'partial', total: 0, completed: 0, results: [], progress: { phase: 'validating', total: 0, completed: 0, code: 'source_changed' } }));
+  await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], { id: 'job', state: 'interrupted', total: 0, completed: 0, results: [], progress: { phase: 'validating', total: 0, completed: 0, code: 'source_changed' } }));
   await tick();
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('source_changed');
   expect(fixture.complete).not.toHaveBeenCalled();
@@ -340,16 +339,16 @@ test('a failed start keeps the selection available for retry without advancing',
   expect(fixture.complete).not.toHaveBeenCalled();
 });
 
-test('a terminal partial job can be retried, while a successful accepted job advances without another import', async () => {
+test.each(['partial', 'completed'])('an accepted %s job advances without restarting the import', async (state) => {
   await render(); await selectSources(); await click('Next');
-  await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], { id: 'job', state: 'partial', total: 1, completed: 1, results: [{ key: 'bad', status: 'failed' }] }));
-  await tick(); await click('Next');
-  expect(fixture.fetch.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(2);
-  expect(fixture.complete).not.toHaveBeenCalled();
-  await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], { id: 'job', state: 'completed', total: 1, completed: 1, results: [] }));
-  await tick(); await click('Next');
+  expect(container.querySelector('.yuri-import-job')).not.toBeNull();
+  await act(async () => fixture.client!.setQueryData(['host-one', 'history-import', 'job'], { id: 'job', state, total: 1, completed: 1, results: state === 'partial' ? [{ key: 'bad', status: 'failed' }] : [] }));
+  await tick();
+  expect(container.querySelector('.yuri-import-job, progress')).toBeNull();
+  expect(container.textContent).not.toContain(en['historyImport.state.partial']);
+  await click('Next');
   expect(fixture.complete).toHaveBeenCalledOnce();
-  expect(fixture.fetch.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(2);
+  expect(fixture.fetch.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1);
 });
 
 test('leaving the import step never cancels accepted Host work', async () => {

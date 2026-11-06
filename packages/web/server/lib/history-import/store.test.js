@@ -35,7 +35,7 @@ test('private retry selection survives restart; unfinished jobs are scoped and r
   const selection = { sources: ['claude'], directory: '/workspace' };
   store.create('one', 'owner', 'runtime', 357, selection);
   store.append('one', 0, { status: 'imported', sessionID: 'saved' });
-  store.finish('one', 'partial');
+  store.finish('one', 'interrupted');
   store.create('two', 'owner', 'runtime', 0, selection);
   store.create('other', 'other', 'runtime', 0, selection);
   store.create('runtime', 'owner', 'other', 0, selection);
@@ -52,6 +52,18 @@ test('private retry selection survives restart; unfinished jobs are scoped and r
   expect(store.get('two', 'owner', 'runtime')).toMatchObject({ state: 'interrupted' });
   store.finish('one', 'completed');
   expect(store.unfinished('owner', 'runtime').map((job) => job.id)).toEqual(['two']);
+});
+
+test('partial imports leave unfinished lists but keep durable failure receipts across restart', () => {
+  const file = path.join(directory, 'partial.sqlite'); store = createImportStore(file);
+  store.create('partial', 'owner', 'runtime', 1, { sources: ['claude'] });
+  store.append('partial', 0, { key: 'bad', status: 'failed', code: 'empty_transcript' });
+  store.finish('partial', 'partial');
+  expect(store.unfinished('owner', 'runtime')).toEqual([]);
+  expect(store.get('partial', 'owner', 'runtime')).toMatchObject({ state: 'partial', completed: 1, resumable: false, results: [{ code: 'empty_transcript' }] });
+  store.close(); store = createImportStore(file);
+  expect(store.unfinished('owner', 'runtime')).toEqual([]);
+  expect(store.get('partial', 'owner', 'runtime').results).toHaveLength(1);
 });
 
 test('dismissal is scoped, rejects active jobs, survives restart and retains receipts', () => {

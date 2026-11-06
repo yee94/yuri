@@ -880,6 +880,7 @@ const readDesktopHostsConfig = () => {
 
   return {
     hosts,
+    sshHostIds: hosts.filter((host) => sshInstanceIds.has(host.id)).map((host) => host.id),
     defaultHostId: typeof root.desktopDefaultHostId === 'string' && root.desktopDefaultHostId.trim()
       ? root.desktopDefaultHostId.trim()
       : null,

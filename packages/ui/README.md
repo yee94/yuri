@@ -6,15 +6,20 @@ OpenCode package identities and protocols remain third-party contracts.
 ## Tests
 
 The desktop header shows a neutral connection glyph when more than one instance
-is online (including the local backend). The glyph follows the active transport:
+is configured (including the local backend), independently of probe/auth status.
+An active remote always retains its entry even when its catalog is unavailable.
+The glyph follows the active transport:
 Relay, LAN/direct, SSH, or local. Its tooltip names the current machine; clicking
-opens the existing services panel. Inventory/reachability refreshes on mount,
+opens the existing services panel. Inventory refreshes on mount,
 runtime changes, window focus, and returning from Settings, without background
 polling. The embedded instance list uses the same glyphs, compact transport/ping
 details, and a current-row check, preserving add, connect, default, and new-window
 actions. Addresses and the repeated current/default summary are omitted there.
 The services panel ignores hover/focus-leave dismissal; outside clicks and Escape
 still close it, subject to the existing pending-host-action guard.
+The header does not probe hosts. Remote windows use read-only `sshHostIds` from
+the desktop host catalog to classify SSH mirrors without privileged SSH reads.
+The active host remains visible even with older installers lacking that metadata.
 
 Remote Instances SSH row actions show a spinner and disable repeated clicks during
 the local request and every live bootstrap/reconnect phase, including installation
@@ -138,7 +143,9 @@ hidden when unavailable), while only five examples per tool are parsed. â€œNextâ
 Host-owned full scanning, validation and import; the step shows phase progress
 and offers background continuation. Sidebar footer rows share import/index progress.
 There is no per-conversation selection, pagination or options toolbar.
-Selected conversations remain separate, and setting conflicts preserve existing files. Paths stay out
+Selected conversations remain separate; source jobs never import skills, rules or
+settings. Completed and partially completed imports both leave the background list
+and let the tour advance without restarting; failure receipts remain intact. Paths stay out
 of the tour; conversations retain their project or use the current project when
 the source lacks one. It preserves source data and never replays tool calls.
 

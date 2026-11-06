@@ -19,3 +19,4 @@ export type ImportJob = {
 };
 
 export const importJobProgress = (job: ImportJob) => job.progress ?? { phase: 'importing' as const, completed: job.completed, total: job.total };
+export const isImportJobFinished = (job: Pick<ImportJob, 'state'> | null | undefined) => job?.state === 'completed' || job?.state === 'partial';

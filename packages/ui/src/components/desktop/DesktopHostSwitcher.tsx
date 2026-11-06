@@ -256,7 +256,7 @@ const resolveCurrentHost = (hosts: DesktopHost[]) => {
   // matching can't distinguish them — identify the active relay host by its
   // stable runtime key instead.
   const activeRuntimeKey = getRuntimeKey();
-  const relayMatch = hosts.find((h) => h.relay && runtimeKeyForHost(h) === activeRuntimeKey);
+  const relayMatch = hosts.find((h) => runtimeKeyForHost(h) === activeRuntimeKey);
   if (relayMatch) {
     return { id: relayMatch.id, label: relayMatch.label, url: relayMatch.url };
   }
@@ -384,8 +384,11 @@ export function DesktopHostSwitcherDialog({
     [sshHostIds],
   );
   const visibleHosts = React.useMemo(
-    () => allHosts.filter((host) => host.id === LOCAL_HOST_ID || isVisibleDesktopHost(host, sshInstanceIds)),
-    [allHosts, sshInstanceIds],
+    () => {
+      const activeId = resolveCurrentHost(allHosts).id;
+      return allHosts.filter((host) => host.id === LOCAL_HOST_ID || isVisibleDesktopHost(host, sshInstanceIds) || host.id === activeId);
+    },
+    [allHosts, sshInstanceIds, runtimeEndpointEpoch],
   );
 
   React.useEffect(() => {
@@ -450,6 +453,9 @@ export function DesktopHostSwitcherDialog({
         setLocalOrigin(cfg.localOrigin);
       }
       const nextSshHostIds: Record<string, true> = {};
+      for (const id of cfg.sshHostIds ?? []) {
+        nextSshHostIds[id] = true;
+      }
       for (const instance of sshCfg.instances) {
         nextSshHostIds[instance.id] = true;
       }
@@ -868,7 +874,7 @@ export function DesktopHostSwitcherDialog({
       {!embedded && (
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
-            <Icon name="server" className="h-5 w-5" />
+            <Icon name="connection-local" className="h-5 w-5" />
             {t('desktopHostSwitcher.title')}
           </DialogTitle>
           <DialogDescription>
@@ -916,6 +922,7 @@ export function DesktopHostSwitcherDialog({
               visibleHosts.map((host) => {
                 const isLocal = host.id === LOCAL_HOST_ID;
                 const isSsh = Boolean(sshHostIds[host.id]);
+                const canManageSsh = isSsh && canManageDesktopHosts();
                 const isActive = host.id === current.id;
                 const isDefault = (defaultHostId || LOCAL_HOST_ID) === host.id;
                 const status = statusById[host.id] || null;
@@ -925,7 +932,7 @@ export function DesktopHostSwitcherDialog({
                 // matches the badge (no stale direct latency + Relay).
                 const rowDisplay = resolveHostRowDisplay({
                   isActive,
-                  isSsh,
+                  isSsh: canManageSsh,
                   runtimeIsConnected,
                   runtimeConnectionPhase,
                   currentTransportIsRelay,
@@ -1000,11 +1007,11 @@ export function DesktopHostSwitcherDialog({
                           <span>{connectionLabel}</span>
                           {rowDisplay.latencyMs != null && <span>{rowDisplay.latencyMs} ms</span>}
                           {statusKind !== 'ok' && <span className={cn('truncate', statusTextClass(statusKind))}>
-                            {isSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
+                            {canManageSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
                           </span>}
                         </div> : <div className={cn('typography-micro truncate', statusTextClass(statusKind))}>
                           <span className={cn('mr-1 inline-block h-1.5 w-1.5 rounded-full', statusDotClass(statusKind))} />
-                          {isSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
+                          {canManageSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
                           {rowDisplay.latencyMs != null
                             ? t('desktopHostSwitcher.status.ping', { ms: rowDisplay.latencyMs })
                             : ''}
@@ -1018,7 +1025,7 @@ export function DesktopHostSwitcherDialog({
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {embedded && isActive && <Icon name="check" className="size-4 text-foreground" aria-label={t('desktopHostSwitcher.header.current')} />}
-                      {isSsh && !isLocal && (
+                      {canManageSsh && !isLocal && (
                         (sshStatus?.phase === 'idle' || !sshStatus?.phase) ? (
                           <Button
                             type="button"

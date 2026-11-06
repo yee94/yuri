@@ -5,12 +5,13 @@ Cursor and DeepSeek Harness in the setup tour. OpenCode's current-instance
 history can also register its original projects without copying sessions.
 Sample entries asynchronously show verified “Already imported” badges.
 External histories become new OpenCode
-sessions through the official import API; original data is not modified. Project
-rules and SKILL.md are eligible; credentials/executable settings are excluded.
+sessions through the official import API; original data is not modified. The tour
+and background source jobs import conversations only, never rules, skills or settings.
 The tour detects installed tools and shows five read-only examples per source.
 “Next” starts Host-owned scanning, validation and import in the background,
 creating/registering missing projects and verifying saved sessions. Existing
-settings files are preserved on conflict.
+existing settings files are untouched. Partially completed imports count as finished
+and leave the background list; their failure receipts remain available.
 See `server/lib/history-import/DOCUMENTATION.md` for supported
 formats, conflict/retry policy and conversion limits.
 

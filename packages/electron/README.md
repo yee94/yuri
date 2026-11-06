@@ -88,6 +88,12 @@ performs a full document navigation with main-owned local credentials, never a
 soft permission reset. File/Shell/SSH/configuration IPC remains restricted in the
 old document. Remote-host device/pairing APIs still address the selected runtime.
 
+`desktop_hosts_get` includes read-only `sshHostIds` for saved mirror hosts, derived
+from native SSH configuration. This lets remote/window-only renderers retain and
+identify SSH rows without granting `desktop_ssh_instances_get` or exposing SSH
+commands, passwords, or configuration. The metadata requires an updated installer;
+the UI still retains the active remote entry on older installers.
+
 ## Leased image disk cache
 
 `image-disk-cache.mjs` owns the optional `imageCache` preload capability. Shared UI authorizes the file and requests its SHA-256 through the active runtime's stat API, then keys bytes by stable runtime/credential scope and content fingerprint (no session/path partition). Downloaded content is hash-verified before commit; only an opaque key and bounded chunks cross IPC. Old Hosts retain the previous path/size/mtime compatibility key. Completed files live in `userData/image-cache-v1`, not IndexedDB. The existing `yuri-asset://cache/<opaque-id>` handler supports repeated/concurrent reads, while the older `stream` host remains a one-use progressive stream. The local-sender-gated `image-cache:clear` IPC purges cached bodies and leases on credential invalidation/logout; normal endpoint switches keep durable bytes. That clear capability requires the updated installer.

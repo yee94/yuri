@@ -110,26 +110,25 @@ Mini Chat and embedded conversation roots do not mount it.
      once so the new progress is immediately visible; polling never scrolls the
      user's reading position. Previous terminal jobs and their retained errors
      are not displayed here. A running Host job remains visible; a job started
-     in this mounted step retains its completion/failure feedback until leaving.
+     in this mounted step hides its progress and error feedback immediately on
+     completed/partial. Cancelled/interrupted feedback remains available for retry.
      “Continue in
     background” advances to voice without cancelling the task. Samples never bound
     the import selection; the Host rejects plans built from sampled scans. Missing
-    project directories are created only after confirmation. Partial/cancelled/
-    interrupted jobs can be retried; accepted successful jobs advance without
-    starting another import. Empty source selection and
+     project directories are created only after confirmation. Accepted completed
+     or partial jobs advance without starting another import; cancelled/interrupted
+     jobs remain retryable. Empty source selection and
    skipping perform no write. Errors keep the step open; runtime changes abort
    pending operations and cannot trigger the next write or navigation.
-    Retained per-item failure codes are deduplicated beside the top progress, so
-    a partial job exposes its cause rather than only a generic failure label.
-    Project rules and skills accompany the selected histories. Unsafe settings
-    planning is reported separately and does not discard readable conversations.
-    The tour omits the
-   import-options heading and explanatory footer; conversion limits remain in the
-   Host documentation. Conflicts always preserve existing content in
-   this tour; the Host API retains its explicit keep-both/replace policies.
-   Project rule text and SKILL.md are eligible; skill support
-   files and executable configuration are excluded. Scoped rules are archived
-   without global activation. See the Host `history-import/DOCUMENTATION.md` for
+     Retained per-item failure codes are deduplicated beside retryable progress.
+     Partial-job failure details remain in Host receipts, not the finished UI.
+     Tour/background source jobs import conversations only. They never scan,
+     copy or activate project rules, skills or configuration, including on resume.
+     Existing files are left untouched; project registration only exposes sessions
+     in the project list. The explicit Host preview API retains optional settings
+     planning for separate, explicitly requested operations, not this tour.
+     The tour omits the import-options heading and explanatory footer.
+     See the Host `history-import/DOCUMENTATION.md` for
    formats, conflict policy, limits and intentionally lossy conversion.
 4. **Voice:** Independent input and read-aloud entry points render the corresponding
    section of `VoiceSettings`, preserving its full provider choices and native

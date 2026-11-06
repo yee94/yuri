@@ -3,7 +3,7 @@ import { Popover } from '@base-ui/react/popover';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
-import { importJobProgress } from '@/lib/historyImport';
+import { importJobProgress, isImportJobFinished } from '@/lib/historyImport';
 import { isDesktopLocalOriginActive } from '@/lib/desktop';
 import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { dismissImport, importJobsQueryOptions, resumeImport } from '@/queries/historyImportQueries';
@@ -92,7 +92,7 @@ function RuntimeBackgroundTasks() {
   }, [jobs.data, jobs.isError, transport, generation]);
 
   const tasks: Task[] = [];
-  for (const job of jobs.data ?? []) if (job.state !== 'completed') {
+  for (const job of jobs.data ?? []) if (!isImportJobFinished(job)) {
     const progress = importJobProgress(job);
     tasks.push({ id: job.id, label: t('backgroundTasks.import'), detail: t(job.state === 'running' ? `historyImport.phase.${progress.phase}` : `historyImport.state.${job.state}`),
       ...progress, stale: jobs.isError, failed: job.state !== 'running', failures: job.failures,
