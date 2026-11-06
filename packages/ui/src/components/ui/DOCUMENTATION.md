@@ -342,6 +342,12 @@ The mobile connection welcome also reuses the `yuri-image-loading` visual class 
 
 Coverage: `LoadingImage.test.tsx`, `markstreamImages.test.tsx`, `MobileFilesSurface.imagePreview.test.tsx`, and the existing attachment/preview contracts. Avatar/provider icons retain their existing icon-specific fallbacks.
 
+`ProviderLogo` and `ModelLogo` normalize brand images with `brightness-0` before
+applying dark-mode inversion. This keeps SVG marks monochrome and visible even
+when their source `currentColor` resolves to a light color; inversion alone would
+turn those marks black on a dark surface. Missing provider marks retain the
+theme-colored stack fallback.
+
 Mobile file-detail images fill the available content width at their natural aspect ratio, including their loading frame; tall images scroll within the sheet. Fullscreen media previews portal to the body above mobile sheets (`z-index: 80`) and join `MobileWindowStack` while open on mobile, suspending the underlying sheet's modal input ownership until the preview closes. `imageGeometry.chrome.test.ts` checks width and fullscreen hit testing; `ToolOutputDialog.preview.test.tsx` checks modal ownership and restoration.
 
 File read/preview failures in `FilesView` (including fullscreen) and `MobileFilesSurface` use `FilePreviewError`: a bounded, theme-aware SVG canvas above the error title and wrapping details, with the caller's retry action when available. Error details remain visible and accessible via `role="alert"`; they do not replace the preview with unstructured red text.

@@ -23,6 +23,8 @@ import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { getLocalChatCommand, preservesComposerResources } from './localCommandClassifier';
 import { stripLeadingSlashCommandSlot } from './typedSlashChipPromotion';
 import { shouldRouteComposerThroughQueue, assistantQueueAdmissionAvailable } from './queueAdmission';
+import { resolveComposerActionAvailability } from './chatPromptAvailability';
+import { composerSendPhase } from '@/sync/composer-send-manager';
 
 vi.mock('@/sync/session-ui-store', async () => {
     const { create } = await import('zustand');
@@ -163,6 +165,96 @@ function surface<Props extends object>(body: string, scope: Record<string, unkno
 const host = document.createElement('div');
 const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); vi.restoreAllMocks(); });
+
+const actionButtonDefaults = {
+    isMobile: true,
+    compact: false,
+    footerIconButtonClass: 'footer-action',
+    stopFooterIconButtonClass: 'trailing-circle',
+    compactCircleButtonClass: 'compact-circle',
+    sendIconSizeClass: 'send-icon',
+    stopIconSizeClass: 'circle-icon',
+    canSend: true,
+    canAbort: true,
+    abortPending: false,
+    hasContent: true,
+    currentSessionId: 'session',
+    newSessionDraftOpen: false,
+    submissionBlocked: false,
+    sendPhase: composerSendPhase(null, false),
+    queueFrozen: false,
+    queueFallbackAvailable: true,
+    onPrimaryAction: () => {},
+    onAbort: () => {},
+};
+const actionButtonScope = {
+    React, cn, resolveComposerActionAvailability, Icon,
+    useI18n: () => ({ t: (key: string) => key }),
+    SendCircleIcon: ({ spinning }: { spinning?: boolean }) => <span data-send-glyph data-spinning={spinning || undefined} />,
+    StopIcon: () => <span data-stop-glyph />,
+};
+const actionButtonSource = ts.transpileModule(declarations.get('ComposerActionButtons')!, {
+    compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+}).outputText;
+const ActionButtons: React.ComponentType<typeof actionButtonDefaults> = new Function(
+    ...Object.keys(actionButtonScope), `${actionButtonSource}\nreturn ComposerActionButtons;`,
+)(...Object.values(actionButtonScope));
+
+it.each([false, true])('mobile actions switch Send and Stop in one trailing slot (compact: %s)', async (compact) => {
+    const onPrimaryAction = vi.fn();
+    const onAbort = vi.fn();
+    const props = { ...actionButtonDefaults, compact, onPrimaryAction, onAbort };
+    await act(async () => root.render(<ActionButtons {...props} hasContent={false} />));
+    const stop = host.querySelector<HTMLButtonElement>('[data-composer-stop]')!;
+    const slotClass = stop.className.split(' ').filter((name) => name !== 'relative' && name !== 'z-30').join(' ');
+    expect(host.querySelector('[data-composer-send]')).toBeNull();
+    await act(async () => stop.click());
+    expect(onAbort).toHaveBeenCalledOnce();
+
+    for (let edit = 0; edit < 50; edit++) {
+        await act(async () => root.render(<ActionButtons {...props} />));
+        expect(host.querySelector('[data-composer-stop]')).toBeNull();
+        expect(host.querySelectorAll('[data-composer-send]')).toHaveLength(1);
+    }
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.className).toBe(slotClass);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.className).not.toContain('absolute');
+    await act(async () => send.click());
+    expect(onPrimaryAction).toHaveBeenCalledOnce();
+    expect(onAbort).toHaveBeenCalledOnce();
+
+    await act(async () => root.render(<ActionButtons {...props} hasContent={false} />));
+    expect(host.querySelector('[data-composer-send]')).toBeNull();
+    expect(host.querySelectorAll('[data-composer-stop]')).toHaveLength(1);
+});
+
+it.each([false, true])('an empty mobile draft shows only Stop during queue admission (compact: %s)', async (compact) => {
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults}
+        compact={compact} hasContent={false} sendPhase={composerSendPhase('queue', false)} abortPending />));
+    expect(host.querySelector('[data-composer-send]')).toBeNull();
+    const stop = host.querySelector<HTMLButtonElement>('[data-composer-stop]')!;
+    expect(stop.disabled).toBe(true);
+    expect(stop.getAttribute('aria-busy')).toBe('true');
+});
+
+it('mobile Send preserves blocked and in-flight states without exposing Stop', async () => {
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults} submissionBlocked />));
+    expect(host.querySelector<HTMLButtonElement>('[data-composer-send]')?.disabled).toBe(true);
+    expect(host.querySelector('[data-composer-stop]')).toBeNull();
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults} sendPhase={composerSendPhase('queue', false)} />));
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.disabled).toBe(true);
+    expect(send.getAttribute('aria-busy')).toBe('true');
+    expect(send.querySelector('[data-spinning="true"]')).not.toBeNull();
+    expect(host.querySelector('[data-composer-stop]')).toBeNull();
+});
+
+it('desktop keeps its floating follow-up Send and Stop controls', async () => {
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults} isMobile={false} />));
+    expect(host.querySelector('[data-composer-stop]')).not.toBeNull();
+    expect(host.querySelector('[data-composer-send]')?.className).toContain('absolute');
+});
 
 it.each([true, false])('/new opens the visible draft through the production primary backend (phone shell: %s)', async (phone) => {
     const sessionBefore = useSessionUIStore.getState();

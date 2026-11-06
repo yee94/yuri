@@ -443,8 +443,8 @@ describe('Assistant UI product contract', () => {
     expect(card).toContain('role="button"');
     expect(card).toContain('onClick={openSession}');
     expect(card).toContain('CONTACT_SESSION_CARD_COVER_CLASS');
-    expect(await read('contactCardChrome.ts')).toContain('h-[148px] w-[19rem] min-w-0 max-w-full');
-    expect(await read('contactCardChrome.ts')).toContain('grid-rows-[40px_20px_20px_48px]');
+    expect(await read('contactCardChrome.ts')).toContain('h-[calc(148px*var(--padding-scale,1))] w-[19rem] min-w-0 max-w-full');
+    expect(await read('contactCardChrome.ts')).toContain('grid-rows-[calc(40px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(48px*var(--padding-scale,1))]');
     expect(await read('contactCardChrome.ts')).toContain('rounded-[1.35rem]');
     expect(await read('contactCardChrome.ts')).not.toContain('ring-[var(--surface-subtle)]');
     expect(card).toContain('readSessionChangeSummary');

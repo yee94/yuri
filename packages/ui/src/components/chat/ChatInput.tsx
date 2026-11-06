@@ -1043,7 +1043,8 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
         ? (compactCircleButtonClass ?? stopFooterIconButtonClass ?? footerIconButtonClass)
         : (stopFooterIconButtonClass ?? footerIconButtonClass);
     const circleGlyphClass = stopIconSizeClass;
-    const showSendCircle = !canAbort && (!actionAvailability.sendDisabled || inFlight);
+    const showStop = canAbort && (!isMobile || !hasContent);
+    const showSendCircle = !showStop && (!actionAvailability.sendDisabled || inFlight);
 
     const sendButton = (
         <button
@@ -1068,19 +1069,19 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
                         ? actionAvailability.disabledClass
                         : 'text-primary hover:text-primary',
             )}
-            aria-label={sendInFlight || (!canAbort && inFlight)
+            aria-label={sendInFlight || (!showStop && inFlight)
                 ? t(queueInFlight ? 'chat.chatInput.actions.queuingMessageAria' : 'chat.chatInput.actions.sendingMessageAria')
                 : t('chat.chatInput.actions.sendMessageAria')}
         >
             {showSendCircle ? (
-                <SendCircleIcon className={circleGlyphClass} spinning={Boolean(inFlight && !canAbort)} />
+                <SendCircleIcon className={circleGlyphClass} spinning={Boolean(inFlight && !showStop)} />
             ) : (
                 <Icon name="send-plane-2" className={sendIconSizeClass} />
             )}
         </button>
     );
 
-    if (!canAbort) {
+    if (!showStop) {
         return sendButton;
     }
 
@@ -1089,7 +1090,7 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
     // steer while canAbort is true. Stack above the textarea (z-10).
     // Keep the floating control visible while queue admission is in flight even
     // after the composer cleared, so the user sees an immediate "queuing" state.
-    const showFloatingSend = !compact && (hasContent || queueInFlight);
+    const showFloatingSend = !isMobile && !compact && (hasContent || queueInFlight);
     const floatingSendReady = !actionAvailability.sendDisabled && !queueInFlight;
     return (
         <div className={cn('relative z-30 overflow-visible', compact && 'h-full')}>
@@ -6934,7 +6935,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 canSend={canSend}
                                 canAbort={canAbort}
                                 abortPending={abortPending}
-                                hasContent={false}
+                                hasContent={!!hasContent}
                                 currentSessionId={currentSessionId}
                                 newSessionDraftOpen={newSessionDraftOpen}
                                 draftSubmitting={resolvedDraftBusy}

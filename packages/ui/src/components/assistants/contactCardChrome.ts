@@ -2,7 +2,7 @@ import type { KeyboardEvent } from 'react'
 
 /** Shared contact-card geometry. Whole card is the hit target. */
 const CONTACT_CARD_CHROME_CLASS = [
-  'grid h-[148px] w-[19rem] min-w-0 max-w-full shrink-0 grid-rows-[40px_20px_20px_48px] content-start cursor-pointer rounded-[1.35rem] bg-[var(--surface-muted)]',
+  'grid h-[calc(148px*var(--padding-scale,1))] w-[19rem] min-w-0 max-w-full shrink-0 grid-rows-[calc(40px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(48px*var(--padding-scale,1))] content-start cursor-pointer rounded-[1.35rem] bg-[var(--surface-muted)]',
   'px-4 py-2.5 text-left typography-ui-label transition-colors duration-150 motion-reduce:transition-none',
   'hover:bg-interactive-hover/45',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]',

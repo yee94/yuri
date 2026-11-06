@@ -53,6 +53,15 @@ reuses the existing session-message subscription and skips transcript work when
 the inbox is empty. `ChatInput.hooks.test.tsx` covers admission, consumption and
 pending recovery through the production projection.
 
+## Mobile composer actions
+
+Mobile web composer actions share one trailing slot in compact and expanded
+layouts. While a session can abort, draft content (including attachments and
+quotes) replaces Stop with Send; an empty draft shows Stop alone, even with queued
+messages or a queue admission in flight. Send keeps the existing admission and
+disabled-state rules. Desktop retains its floating follow-up Send above Stop;
+native iOS chrome is unchanged.
+
 ## Mobile composer height snaps
 
 Web composers with text expose the shared height handle (native iOS composer is excluded).

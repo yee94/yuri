@@ -12,6 +12,8 @@ import { CONTACT_CARD_COVER_CLASS, CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CAR
 import { iconSpriteData } from '../icon/sprite'
 import cursorDark from '@/lib/theme/themes/cursor-dark.json'
 import carbonfoxLight from '@/lib/theme/themes/carbonfox-light.json'
+import { createRequire } from 'node:module'
+import { IOS_DESIGN_PT_SCALE } from '@/lib/designPtScale'
 
 // Render the production card markup with deterministic runtime data. Chrome owns layout.
 vi.mock('@/lib/i18n', async () => {
@@ -69,6 +71,60 @@ type Measurement = {
 const sprite = `<svg style="display:none">${Object.entries(iconSpriteData).map(([name, content]) => `<symbol id="yuri-${name}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="var(--yuri-icon-stroke, 1.5)" stroke-linecap="round" stroke-linejoin="round">${content}</symbol>`).join('')}</svg>`
 
 describe('contact card width', () => {
+  test('keeps card footers inside the padded frame at native mobile density', async () => {
+    const compiled = await compileProductionCssAsync(join(here, '../..'))
+    const require = createRequire(import.meta.url)
+    const postcss = createRequire(require.resolve('@tailwindcss/postcss'))('postcss')
+    const designPtCss = require('../../../../../scripts/postcss-dpt-font-size.mjs').default
+    const css = (await postcss([designPtCss()]).process(compiled, { from: undefined })).css
+    const root = evidenceRoot()
+    const htmlPath = join(root, 'contact-cards-density.html')
+    const examples = cards(true)
+    const markup = renderToStaticMarkup(<main className="p-4"><div className="flex flex-col gap-4">{[examples[8], examples[7], examples[1]]}</div></main>)
+    writeFileSync(htmlPath, `<!doctype html><html class="mobile-pointer"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${sprite}${markup}</body></html>`)
+    const session = await openChromeSession({ width: 390, height: 844 })
+    try {
+      const page = await openPageSession(session, { width: 390, height: 844, standalone: false })
+      await page.navigateFile(htmlPath)
+      for (const width of [320, 390, 430]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true })
+        for (const [themeName, theme] of [['light', carbonfoxLight], ['dark', cursorDark]] as const) {
+          await page.evaluate(`(() => {
+            document.documentElement.className = 'mobile-pointer ${themeName}';
+            const colors = ${JSON.stringify(theme.colors)};
+            for (const [group, values] of Object.entries(colors)) for (const [key, value] of Object.entries(values)) {
+              if (typeof value === 'string') document.documentElement.style.setProperty('--' + group + '-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase()), value);
+            }
+            document.documentElement.style.setProperty('--background', colors.surface.background);
+            document.documentElement.style.setProperty('--foreground', colors.surface.foreground);
+          })()`)
+          for (const scale of [1, IOS_DESIGN_PT_SCALE, 0.9, 1.2]) {
+            const measurements = await page.evaluate<Array<{ kind: string; clearance: number; padding: number; height: number }>>(`(() => {
+              document.documentElement.style.setProperty('--dpt', '${scale}px');
+              document.documentElement.style.setProperty('--dpt-n', '${scale}');
+              return [...document.querySelectorAll('[data-assistant-contact-card]')].map(card => {
+                const rect = card.getBoundingClientRect(), style = getComputedStyle(card);
+                return { kind: card.dataset.assistantContactCard, height: rect.height,
+                  clearance: rect.bottom - card.lastElementChild.getBoundingClientRect().bottom,
+                  padding: parseFloat(style.paddingBottom) };
+              });
+            })()`)
+            writeFileSync(join(root, `${themeName}-${width}-density-${scale}.json`), JSON.stringify(measurements, null, 2))
+            if (keepEvidence()) await page.screenshotPng(join(root, `${themeName}-${width}-density-${scale}.png`))
+            for (const row of measurements) {
+              expect(row.clearance, `${row.kind} / scale=${scale}: footer clears bottom padding`).toBeGreaterThanOrEqual(row.padding - 1)
+            }
+            expect(new Set(measurements.map(row => row.height)).size).toBe(1)
+            for (const row of measurements) expect(row.height).toBeCloseTo(148 * scale, 1)
+          }
+        }
+      }
+    } finally {
+      await session.close()
+      if (!keepEvidence()) rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   test.skip('keeps the contact typing row above the mobile composer fade', async () => {
     const source = readFileSync(join(here, 'AssistantConversationSurface.tsx'), 'utf8')
     const mobilePadding = source.match(/isMobile && '(pb-\d+)'/)?.[1] ?? ''
@@ -107,7 +163,7 @@ describe('contact card width', () => {
   }, 60_000)
 
   test('shares fixed height and parent-bounded width across all three types', () => {
-    expect(CONTACT_CARD_COVER_CLASS).toContain('h-[148px] w-[19rem] min-w-0 max-w-full')
+    expect(CONTACT_CARD_COVER_CLASS).toContain('h-[calc(148px*var(--padding-scale,1))] w-[19rem] min-w-0 max-w-full')
     expect(CONTACT_SESSION_CARD_COVER_CLASS).toBe(CONTACT_CARD_COVER_CLASS)
     expect(CONTACT_CARD_COVER_CLASS).not.toMatch(/overflow-(hidden|clip)/)
     expect(CONTACT_CARD_COVER_CLASS).toContain('rounded-[1.35rem] bg-[var(--surface-muted)]')
