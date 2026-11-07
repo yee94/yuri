@@ -166,6 +166,55 @@ describe.each(['source', 'prebundled'])('external runtime provider bridge (%s)',
     expect(await run(input)).toMatchObject({ text: 'host model' });
   });
 
+  it('adapts 2.2.6 flat host options at every route boundary', async () => {
+    const { input, resolve, headers, requests, run } = await fixture({ role: 'assistant', content: 'host 2.2.6' });
+    const original = resolve.getMockImplementation();
+    const boundaries = [];
+    resolve.mockImplementation(ref => original(ref).pipe(Effect.map(value => {
+      const legacy = value.model;
+      const { defaults, ...route } = legacy.route;
+      const host = { ...legacy, defaults: undefined, route, options: { maxTokens: 4096, temperature: 0.2, providerOptions: { fixture: { enabled: true } },
+        headers: { 'provider-header': 'retained' }, timeout: { headers: 5000, chunk: false }, http: { body: { provider_marker: true } } } };
+      // The actual 2.2.6 boundary has no route.defaults and consumes flat fields.
+      // Translate back only inside the fixture's 2.2.1 transport implementation.
+      const check = (name, request) => {
+        boundaries.push(name);
+        expect(request.model).toBe(host);
+        expect(request.maxTokens).toBe(64);
+        expect(request.temperature).toBe(0.2);
+        expect(request.providerOptions).toEqual({ fixture: { enabled: true } });
+        expect(request.headers).toMatchObject({ 'x-opencode-session': input.cacheKey, 'provider-header': 'retained' });
+        expect(request.timeout).toMatchObject({ headers: 5000, chunk: false });
+        expect(request.generation).toBeUndefined();
+        expect(request.http.headers).toBeUndefined();
+        return { ...request, model: legacy, generation: { maxTokens: request.maxTokens, temperature: request.temperature },
+          http: { ...request.http, headers: request.headers, headerTimeout: request.timeout.headers, chunkTimeout: request.timeout.chunk } };
+      };
+      route.headers = ({ request }) => { check('headers', request); return { 'route-header': 'retained' }; };
+      route.body = { ...route.body, from: request => legacy.route.body.from(check('body', request)) };
+      route.prepareTransport = (body, request, options) => legacy.route.prepareTransport(body, check('prepare', request), options);
+      route.streamPrepared = (prepared, request, runtime, options) => legacy.route.streamPrepared(prepared, check('stream', request), runtime, options);
+      return { ...value, model: host };
+    })));
+    expect(await run({ ...input, maxOutputTokens: 64 })).toMatchObject({ text: 'host 2.2.6' });
+    expect(boundaries).toEqual(['headers', 'body', 'prepare', 'stream']);
+    expect(requests[0]).toMatchObject({ messages: input.messages, temperature: 0.2, provider_marker: true });
+    expect(headers[0]['provider-header']).toBe('retained');
+    expect(headers[0]['route-header']).toBe('retained');
+  });
+
+  it.each(['model', 'route'])('rejects context injection in 2.2.6 %s options', async (owner) => {
+    const { input, resolve, run } = await fixture({ role: 'assistant', content: 'unused' });
+    const original = resolve.getMockImplementation();
+    resolve.mockImplementation(ref => original(ref).pipe(Effect.map(value => {
+      const host = { ...value.model, route: { ...value.model.route } };
+      delete host.route.defaults;
+      (owner === 'model' ? host : host.route).options = { http: { body: { messages: [] } } };
+      return { ...value, model: host };
+    })));
+    await expect(run(input)).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
   it('preserves interruption instead of converting cancellation into a provider error', async () => {
     let handlers;
     await Effect.runPromise(bridge.effect({ rpc: { register: (_definition, value) => { handlers = value; return Effect.void; } } }));
