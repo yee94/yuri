@@ -92,7 +92,7 @@ describe('markstream-react trial path', () => {
     expect(codeBlock).toContain('host.isStreaming');
     expect(codeBlock).not.toContain('props.stream');
     expect(codeBlock).toContain('markstreamCodeBlockMessageId');
-    expect(codeBlock).toContain('partId: host.part?.id');
+    expect(codeBlock).toContain('partId: host.partId');
     expect(codeBlock).toContain('indexKey: props.indexKey');
     const messageIdHelper = readFileSync(join(here, 'markstream/markstreamCodeBlockMessageId.ts'), 'utf8');
     expect(messageIdHelper).toContain('export const markstreamCodeBlockMessageId');

@@ -266,6 +266,10 @@
   content-visibility: hidden;
 }
 
+[data-mobile-navigation-parked="true"]:not([data-mobile-back-revealing="true"]) .animate-spin {
+  animation-play-state: paused !important;
+}
+
 .yuri-mobile-floating-bottom-bar-frame {
   pointer-events: none;
   position: fixed;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
     applyPrefixDiffHtmlLines,
@@ -18,6 +18,55 @@ const lineHtml = (code: HTMLElement): string[] => (
 );
 
 describe('prefix-diff streaming highlight', () => {
+    test('50 growing-line updates retain the trailing blank line without removing its separator', () => {
+        const code = document.createElement('code');
+        applyPrefixDiffHtmlLines(code, ['', '']);
+        const trailingLine = code.lastChild;
+        const separator = trailingLine!.previousSibling;
+        const removeSpy = vi.spyOn(CharacterData.prototype, 'remove');
+        try {
+            for (let index = 0; index < 50; index += 1) {
+                applyPrefixDiffHtmlLines(code, [`<span>const value = ${index}</span>`, '']);
+                expect(code.lastChild).toBe(trailingLine);
+                expect(trailingLine!.previousSibling).toBe(separator);
+                expect(code.textContent).toBe(`const value = ${index}\n`);
+            }
+            expect(removeSpy).not.toHaveBeenCalled();
+        } finally {
+            removeSpy.mockRestore();
+        }
+    });
+
+    test('updates multiple changed lines in place and retains an unchanged suffix', () => {
+        const code = document.createElement('code');
+        applyPrefixDiffHtmlLines(code, ['one', 'two', 'three', '']);
+        const lines = Array.from(code.children);
+        const result = applyPrefixDiffHtmlLines(code, ['ONE', 'TWO', 'three', '']);
+        expect(result).toEqual({ reused: 0, replaced: 2, added: 0, removed: 0 });
+        expect(Array.from(code.children)).toEqual(lines);
+        expect(code.textContent).toBe('ONE\nTWO\nthree\n');
+    });
+
+    test('initial highlighting never exposes an empty connected code body between DOM writes', () => {
+        const code = document.createElement('code');
+        code.textContent = 'const a = 1\nconst b = 2\n';
+        document.body.append(code);
+        const replacementText: string[] = [];
+        const replace = code.replaceChildren.bind(code);
+        const replaceSpy = vi.spyOn(code, 'replaceChildren').mockImplementation((...nodes) => {
+            replacementText.push(nodes.map((node) => typeof node === 'string' ? node : node.textContent ?? '').join(''));
+            replace(...nodes);
+        });
+        try {
+            applyPrefixDiffHtmlLines(code, ['<span>const a = 1</span>', '<span>const b = 2</span>', '']);
+            expect(replacementText).toEqual(['const a = 1\nconst b = 2\n']);
+            expect(code.textContent).toBe('const a = 1\nconst b = 2\n');
+        } finally {
+            replaceSpy.mockRestore();
+            code.remove();
+        }
+    });
+
     test('keeps source newlines when plain streaming code becomes highlighted', () => {
         const code = document.createElement('code');
         code.textContent = 'const a = 1\nconst b = 2\n';
@@ -160,6 +209,52 @@ describe('prefix-diff streaming highlight', () => {
             '<span>const x = 1</span>',
             '<span>const y = 2</span>',
         ]);
+    });
+
+    test('preserving a growing fence adopts completed language metadata without replacing its lines', async () => {
+        const root = document.createElement('div');
+        root.innerHTML = `<pre ${STREAM_FENCE_ATTR}="true" data-md-lang="typ"><code class="language-typ">const value = 1</code></pre>`;
+        const from = root.querySelector('pre')!;
+        const code = from.querySelector('code')!;
+        const languages: string[] = [];
+        const highlight = async (_source: string, language: string) => {
+            languages.push(language);
+            return [`<span data-language="${language}">const value = 1</span>`];
+        };
+        await upgradeStreamingFenceHighlight(root, highlight);
+        const line = code.firstChild;
+        const incoming = document.createElement('pre');
+        incoming.setAttribute(STREAM_FENCE_ATTR, 'true');
+        incoming.setAttribute('data-md-lang', 'typescript');
+        incoming.innerHTML = '<code class="language-typescript">const value = 1</code>';
+        expect(shouldPreserveStreamingFence(from, incoming)).toBe(true);
+        await upgradeStreamingFenceHighlight(root, highlight);
+        expect(languages).toEqual(['typ', 'typescript']);
+        expect(from.getAttribute('data-md-lang')).toBe('typescript');
+        expect(code.className).toBe('language-typescript');
+        expect(code.firstChild).toBe(line);
+    });
+
+    test('does not apply a stale language result when the same source gains authoritative fence metadata', async () => {
+        const root = document.createElement('div');
+        root.innerHTML = `<pre ${STREAM_FENCE_ATTR}="true" data-md-lang="typ"><code>const value = 1</code></pre>`;
+        const from = root.querySelector('pre')!;
+        const code = from.querySelector('code')!;
+        let complete!: (lines: string[]) => void;
+        const pending = upgradeStreamingFenceHighlight(root, () => new Promise(resolve => { complete = resolve; }));
+        const incoming = document.createElement('pre');
+        incoming.setAttribute(STREAM_FENCE_ATTR, 'true');
+        incoming.setAttribute('data-md-lang', 'typescript');
+        incoming.innerHTML = '<code>const value = 1</code>';
+        shouldPreserveStreamingFence(from, incoming);
+        complete(['<span>stale grammar</span>']);
+        await pending;
+        expect(code.children.length).toBe(0);
+        expect(code.getAttribute(STREAM_SRC_ATTR)).toBe('const value = 1');
+        const highlight = vi.fn(async () => ['<span>const value = 1</span>']);
+        await upgradeStreamingFenceHighlight(root, highlight);
+        expect(highlight).toHaveBeenCalledWith('const value = 1', 'typescript', undefined);
+        expect(code.textContent).toBe('const value = 1');
     });
 
     test('worker failure still advances source text and retains highlighted prefix lines', async () => {

@@ -7,6 +7,9 @@ import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useUIStore } from '@/stores/useUIStore';
+import { getClientPlatform } from '@/lib/platform';
+import { useStreamingTextThrottle } from './hooks/useStreamingTextThrottle';
+import { resolveStreamingRenderCadence } from './streamingRenderCadence';
 import { markdownHeightCacheKey, rememberMarkdownHeight } from './markdown/markdownHeightCache';
 import {
   handleMarkstreamFileReferenceKeyDown,
@@ -85,8 +88,9 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
   const effectiveDirectory = useEffectiveDirectory() ?? '';
   const containerRef = React.useRef<HTMLDivElement>(null);
   const customId = part?.id ? `yuri-ms-${part.id}` : `yuri-ms-${messageId}`;
-  const cacheKey = markdownHeightCacheKey(content, `markstream:${variant}`);
+  const partId = part?.id;
   const recordHeight = !isStreaming;
+  const cacheKey = recordHeight ? markdownHeightCacheKey(content, `markstream:${variant}`) : '';
   const fileReferencesEnabled = enableFileReferences && !isStreaming;
   const fileReferenceOptions = fileReferencesEnabled
     ? {
@@ -99,7 +103,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
 
   const hostContext = React.useMemo(() => ({
     messageId,
-    part,
+    partId,
     isStreaming,
     disableStreamAnimation,
     variant,
@@ -107,7 +111,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
     enableFileReferences,
   }), [
     messageId,
-    part,
+    partId,
     isStreaming,
     disableStreamAnimation,
     variant,
@@ -156,6 +160,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
       data-markdown-hydration="ready"
       data-yuri-markdown-engine="markstream"
       data-yuri-markstream-virtual="off"
+      data-yuri-markstream-streaming={isStreaming ? 'true' : undefined}
     >
       <MarkstreamHostContext.Provider value={hostContext}>
         <MarkstreamFileReferenceProvider
@@ -184,7 +189,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
   );
 };
 
-export const MarkstreamRenderer = React.memo(MarkstreamRendererImpl, (prev, next) => (
+const MarkstreamRendererCore = React.memo(MarkstreamRendererImpl, (prev, next) => (
   prev.content === next.content
     && prev.isStreaming === next.isStreaming
     && prev.disableStreamAnimation === next.disableStreamAnimation
@@ -197,3 +202,16 @@ export const MarkstreamRenderer = React.memo(MarkstreamRendererImpl, (prev, next
     && prev.enableFileReferences === next.enableFileReferences
     && prev.part?.id === next.part?.id
 ));
+
+const PacedMarkstreamRenderer: React.FC<MarkstreamRendererProps> = (props) => {
+  const pacedContent = useStreamingTextThrottle({
+    text: props.content,
+    isStreaming: props.isStreaming === true,
+    throttleMs: resolveStreamingRenderCadence(getClientPlatform()).markdownPaceMs,
+  });
+  return <MarkstreamRendererCore {...props} content={props.isStreaming ? pacedContent : props.content} />;
+};
+
+export const MarkstreamRenderer: React.FC<MarkstreamRendererProps> = (props) => (
+  <PacedMarkstreamRenderer key={`${props.messageId}:${props.part?.id ?? 'text'}`} {...props} />
+);

@@ -1008,6 +1008,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
     openCodeServeVersion,
   }),
   getOpenCodeAuthHeaders,
+  isRequestOriginAllowed,
   buildOpenCodeUrl,
   ensureOpenCodeApiPrefix,
   getUiNotificationClients: () => uiNotificationClients,

@@ -683,6 +683,10 @@ button svg.yuri-icon circle[fill],
   background-color: transparent !important;
 }
 
+.chat-scroll [role="status"][aria-busy="false"] > .animate-spin {
+  animation-play-state: paused !important;
+}
+
 /* Specific SVG spinner fixes for WebKit */
 svg.animate-spin {
   /* Use CSS box as transform reference for proper centering with scaled SVGs */

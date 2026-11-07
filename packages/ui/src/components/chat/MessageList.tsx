@@ -1,7 +1,7 @@
 import React from 'react';
 import { useEvent, useEventListener, useInterval, useIsomorphicLayoutEffect, useResizeObserver, useUnmount } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
-import { defaultRangeExtractor, elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
+import { elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { getSpeechTarget, subscribeSpeechTracking } from '@/lib/voice/speech-tracking';
 import { isAssistantSessionDivider } from './hostedSessionHistory';
 import { useI18n } from '@/lib/i18n';
@@ -31,7 +31,7 @@ import { useSessionParts } from '@/sync/sync-context';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { scheduleAfterPaintTask } from '@/lib/afterPaintTaskQueue';
 import { useRenderPhaseCallback } from '@/hooks/useRenderPhaseCallback';
-import { getInitialHistoryOverscan, getNextHistoryOverscan } from './lib/historyOverscan';
+import { getHistoryRenderRange, getInitialHistoryOverscan, getNextHistoryOverscan } from './lib/historyOverscan';
 import { DeferredToolHydrationProvider } from './message/parts/DeferredToolHydrationProvider';
 import {
     applyAuthoritativeTaskSessionIdToSubtaskParts,
@@ -1637,7 +1637,12 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
         estimateSize: () => estimatedEntrySizeRef.current,
         overscan: historyOverscan,
         rangeExtractor: (range) => {
-            const indexes = defaultRangeExtractor(range);
+            const indexes = getHistoryRenderRange(
+                range,
+                tanstackVirtualizer.measurementsCache,
+                tanstackVirtualizer.scrollOffset,
+                tanstackVirtualizer.scrollRect?.height,
+            );
             return speakingIndex >= 0 && !indexes.includes(speakingIndex)
                 ? [...indexes, speakingIndex].sort((left, right) => left - right) : indexes;
         },

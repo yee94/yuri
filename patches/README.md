@@ -19,6 +19,7 @@ If a patch file is missing or the version key drifts from the lockfile, install 
 | Package | File | Why |
 |---------|------|-----|
 | `ghostty-web@0.4.0` | `ghostty-web@0.4.0.patch` | Safe `fromCodePoint` for bad terminal code points; optional `lineHeight` cell metrics. |
+| `markstream-react@2.0.8` | `markstream-react@2.0.8.patch` | Skip placeholder-height measurement in full-DOM mode and skip smooth-stream controller resets while smoothing is disabled. Virtual/deferred measurements and enabled smoothing retain their behavior. |
 
 Each `.patch` file starts with a `# TODO(remove): …` header (same criteria as below).
 
@@ -39,6 +40,15 @@ Checklist:
 3. Terminal theme/`lineHeight` spacing still matches UI.
 4. Invalid codepoint streams do not throw in the canvas text path.
 5. UI terminal surfaces build cleanly.
+
+### `markstream-react`
+
+Remove each hunk only after upstream includes its fix. The installed-library
+regressions in `markstreamMeasurement.test.tsx` require zero placeholder-height
+reads in full-DOM streaming, one commit per content update with smoothing off,
+and correct content after smoothing is toggled. Virtual-window consumers must
+still measure heights. Stable top-level AST reuse is a host parse option, not
+part of this dependency patch.
 
 ## Editing a patch
 

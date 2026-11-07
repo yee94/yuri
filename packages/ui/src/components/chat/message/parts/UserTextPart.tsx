@@ -73,7 +73,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
     const openContextFile = useUIStore((state) => state.openContextFile);
     const { t } = useI18n();
     const isCollapsed = collapsibleUserMessages && !isExpanded;
-    const textRef = React.useRef<HTMLDivElement>(null);
+    const textRef = React.useRef<HTMLDivElement | null>(null);
     const skillByName = React.useMemo(() => new Map(skills.map((skill) => [skill.name, skill])), [skills]);
     const citationHints = React.useMemo(
         () => buildCitationHintsFromParts(messageParts, textContent),
@@ -135,7 +135,6 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
     React.useEffect(() => {
         const el = textRef.current;
         if (!el) return;
-
         // Latch true while collapsed. Hiding images/files after the first
         // overflow measurement must not flip this back (that loops hide/show).
         const checkTruncation = () => {
@@ -143,14 +142,11 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
                 setIsTruncated(true);
             }
         };
-
         setIsTruncated(false);
         checkTruncation();
-
-        const resizeObserver = new ResizeObserver(checkTruncation);
-        resizeObserver.observe(el);
-
-        return () => resizeObserver.disconnect();
+        const observer = new ResizeObserver(checkTruncation);
+        observer.observe(el);
+        return () => observer.disconnect();
     }, [collapsibleUserMessages, textContent, isExpanded]);
 
     React.useEffect(() => {

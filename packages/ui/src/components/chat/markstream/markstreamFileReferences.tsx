@@ -59,6 +59,7 @@ export const MarkstreamFileReferenceProvider: React.FC<{
   content,
   children,
 }) => {
+  const referenceContent = enabled ? content : '';
   const value = React.useMemo<MarkstreamFileReferenceContextValue>(() => ({
     enabled,
     insideLink: false,
@@ -67,8 +68,8 @@ export const MarkstreamFileReferenceProvider: React.FC<{
     editor,
     preferRuntimeEditor,
     onShowPopup,
-    slots: { used: 0, limit: getFileReferenceLinkLimit() },
-  }), [enabled, effectiveDirectory, editor, preferRuntimeEditor, onShowPopup, content]);
+    slots: { content: referenceContent, used: 0, limit: getFileReferenceLinkLimit() },
+  }), [enabled, effectiveDirectory, editor, preferRuntimeEditor, onShowPopup, referenceContent]);
 
   return (
     <MarkstreamFileReferenceContext.Provider value={value}>

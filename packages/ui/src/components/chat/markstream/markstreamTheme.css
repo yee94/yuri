@@ -10,6 +10,16 @@
   color: var(--surface-foreground);
 }
 
+/* Separate unchanged reply layers from WebKit's per-growth touch-region walk.
+   Keep the DOM and normal-flow geometry; do not substitute intrinsic sizes. */
+:root.yuri-capacitor-app:not(.yuri-platform-android) .chat-scroll .yuri-markstream-host {
+  transform: translateZ(0);
+}
+
+:root.yuri-capacitor-app:not(.yuri-platform-android) .chat-scroll .yuri-markstream-host[data-yuri-markstream-streaming="true"] .yuri-markstream-code-host {
+  transform: translateZ(0);
+}
+
 /* The transcript owns visibility and row measurements. The library's
    content-visibility:auto still substitutes an intrinsic height offscreen
    even with its node window disabled. On iOS, scrolling then changes settled

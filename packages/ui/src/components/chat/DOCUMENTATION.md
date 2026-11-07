@@ -23,6 +23,105 @@ Git change lists and working-tree/session/turn diff previews remain independent.
 
 ## Scroll hot-path boundary
 
+The reserved mobile history-loading slot retains its height when idle, but its
+spinner pauses through the existing `role=status` / `aria-busy=false` scope in
+`index.css`. Invisible rotation still wakes WebKit on large transcripts. Only an
+authoritative load resumes it; the status slot never unmounts to save animation
+work or changes scroll geometry.
+
+The active-turn scroll spy reads cached turn offsets during scrolling. When
+`ResizeObserver` is available it refreshes geometry in the post-layout callback;
+streaming subtree mutations do not schedule an additional pre-layout scan. The
+mutation-driven fallback is used only without ResizeObserver. Registration and
+removal still invalidate the structural offset cache. The spy never writes scroll.
+
+History overscan keeps its existing surface-specific row-count ceiling, but
+`getHistoryRenderRange` also bounds extra rows to two observed viewports of
+distance on either side. Every core-visible row and its immediate neighbours
+remain mounted, even for a single very tall turn: core can retain that visible
+range while scrolling within it, so an adjacent row must be hydrated before the
+next boundary. Speech retains its independently pinned row. This reads only the
+virtualizer's measurement/viewport snapshots and at most the count-window
+candidates, never DOM geometry or the whole catalog. Missing measurements or an
+unmeasured viewport retain the count-window fallback. It does not migrate live
+tail turns or substitute estimated sizes for mounted content.
+
+When core clamps its range to the last history row while the viewport is in the
+separate live tail, that core row and its neighbour remain mounted. Pruning this
+last window introduced native remount/overflow-affordance height corrections and
+lost scroll steps in long transcripts; lower DOM/CPU alone does not justify that
+interaction regression.
+
+Markstream full-DOM mode keeps the library's node virtualization and deferral off.
+The version-pinned Bun patch also omits placeholder-height measurement in that
+mode; it does not disable height measurement for virtual/deferred consumers.
+`markstreamMeasurement.test.tsx` guards the installed dependency's real render path.
+
+`MarkstreamRendererImpl` paces streaming source updates at the existing platform
+Markdown cadence before entering its memoized renderer. Message/part identity
+keys the pacing lifetime; completion renders the authoritative text immediately.
+Streaming does not compute settled-height cache hashes. Disabled file references
+retain a content-independent context, and the code-block host context carries
+the stable part ID rather than the token-updated Part object. Enabled references
+still reset their content-scoped budget when content changes. Stable top-level
+AST reuse is enabled through the library parse option; differential tests cover
+Markdown boundaries, replacements and completion, not only append counts.
+
+Markstream's code adapter marks its source `sourceIsPaced`: the outer renderer
+already owns source cadence, so nested legacy code cards must not start a second
+reveal loop or mirror each source update into pacing state. The disabled inner
+pacing Hook receives a stable empty source; rendering uses the adapter's current
+authoritative fence text. This does not disable `live` parsing, incremental code
+highlighting or decoration. Standalone legacy Markdown keeps its existing pacing
+by default, and completion still renders the full source. The real adapter test
+covers 50 updates without a second rAF loop and preserves standalone animation.
+
+The nested legacy renderer also skips settled-height keys while its authoritative
+`isStreaming` flag is true, including when stream animation is disabled. Turning
+off animation does not make a growing reply a settled cache candidate. The real
+renderer regression covers 50 updates in each animation mode and records the
+height key again on completion.
+
+The pinned dependency also avoids resetting its smooth-stream controller when
+smoothing is off. The installed-library regression requires one commit per
+content update and verifies transitions between enabled/disabled smoothing.
+
+Native iOS primary transcripts promote each Markstream host to a separate
+compositing layer, so growing one reply does not make WebKit traverse every
+settled reply's touch regions. This uses the existing Capacitor/non-Android root
+scope, independent of native-composer preference or pointer capability. Content,
+normal-flow height, selection and scroll ownership are unchanged; no offscreen
+intrinsic-size substitution or extra scroll writer is introduced. Other runtimes
+and secondary surfaces retain their existing compositing. Nested popup content
+continues to use its existing portal owners.
+
+Only an authoritatively streaming host also promotes its nested code cards on
+native iOS. Completion removes that extra promotion; settled history never gains
+one layer per code card. This limits the layer-count cost while isolating the
+current reply's code subtree during growth. The host's streaming attribute comes
+from `isStreaming`, not DOM order, inferred activity or persisted message text.
+
+The first plain-code to highlighted-lines upgrade constructs a detached fragment
+and replaces the connected code body's children in one call. It must not empty
+the connected body and append lines individually; those intermediate sizes can
+clamp a native scroller before the replacement finishes. Subsequent prefix-diff
+updates retain unchanged leading line nodes. This invariant alone does not prove
+that every native bottom-follow loss has been resolved.
+
+Incremental code updates retain existing line wrappers and newline separators by
+index, including an unchanged trailing blank line. A changed earlier line must
+not remove and rebuild the suffix: even a temporarily missing trailing separator
+can make native WebKit clamp the transcript by one line and release bottom-follow.
+Only an authoritative decrease in line count removes trailing nodes. Both worker
+highlight output and the plain-text failure path use this same reconciliation.
+
+Preserving a streaming fence subtree does not freeze its language metadata. The
+incoming fence owns `data-md-lang`, `data-md-label`, and the code language class;
+these are synchronized without replacing line wrappers. A completed language
+name invalidates the applied-highlight marker even when source text is unchanged.
+Worker results must still match both current source and language before commit,
+so an earlier partial-language grammar cannot overwrite the authoritative one.
+
 Message hover chrome uses `lib/messageHover.ts` boundary handlers and the
 `data-message-hovered` scope marker. The handlers write only that DOM attribute;
 pointer movement must not publish React state or subscribe to scroll. Newly

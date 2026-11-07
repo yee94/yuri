@@ -2,9 +2,9 @@
  * Incremental highlight for an open/streaming fence.
  *
  * Closed fences stay on the full `codeToHtml` path. While the fence is still
- * growing, tokenize off-thread (`highlightLines`) and patch only the suffix:
- * unchanged leading line nodes are reused, the first differing line is
- * replaced, and trailing lines are appended or removed.
+ * growing, tokenize off-thread (`highlightLines`) and reconcile lines by index:
+ * unchanged line nodes are reused, changed lines are updated in place, and
+ * trailing lines are appended or removed only when the line count changes.
  */
 
 export const STREAM_FENCE_ATTR = 'data-md-stream-fence';
@@ -45,7 +45,7 @@ const createLine = (html: string, index: number): HTMLElement => {
 
 /**
  * Patch `code` so its children match `nextLines` (per-line inner HTML from
- * the Shiki worker). Leading equal lines keep their DOM nodes.
+ * the Shiki worker). Existing line wrappers and unchanged token nodes survive.
  */
 export const applyPrefixDiffHtmlLines = (
     code: HTMLElement,
@@ -56,39 +56,37 @@ export const applyPrefixDiffHtmlLines = (
     const shared = firstDifferingIndex(previous, nextLines);
 
     if (existing.length === 0 && code.childNodes.length > 0 && nextLines.length > 0) {
-        code.replaceChildren();
+        const fragment = document.createDocumentFragment();
         for (let index = 0; index < nextLines.length; index += 1) {
-            if (index > 0) code.appendChild(document.createTextNode('\n'));
-            code.appendChild(createLine(nextLines[index] ?? '', index));
+            if (index > 0) fragment.appendChild(document.createTextNode('\n'));
+            fragment.appendChild(createLine(nextLines[index] ?? '', index));
         }
+        code.replaceChildren(fragment);
         return { reused: 0, replaced: 0, added: nextLines.length, removed: 0 };
     }
 
     let replaced = 0;
-    if (shared < existing.length && shared < nextLines.length) {
-        const line = existing[shared];
-        if (line) {
-            line.innerHTML = nextLines[shared] ?? '';
-            line.setAttribute(STREAM_LINE_ATTR, String(shared));
-            replaced = 1;
-        }
+    for (let index = shared; index < Math.min(existing.length, nextLines.length); index += 1) {
+        if (previous[index] === nextLines[index]) continue;
+        existing[index].innerHTML = nextLines[index] ?? '';
+        replaced += 1;
+    }
+
+    let added = 0;
+    for (let index = existing.length; index < nextLines.length; index += 1) {
+        if (index > 0) code.appendChild(document.createTextNode('\n'));
+        code.appendChild(createLine(nextLines[index] ?? '', index));
+        added += 1;
     }
 
     let removed = 0;
-    for (let index = existing.length - 1; index >= shared + replaced; index -= 1) {
+    for (let index = existing.length - 1; index >= nextLines.length; index -= 1) {
         // Separators belong to the following line, so truncation also removes
         // its newline without touching any unchanged leading token nodes.
         const separator = existing[index]?.previousSibling;
         if (separator?.nodeType === Node.TEXT_NODE) separator.remove();
         existing[index]?.remove();
         removed += 1;
-    }
-
-    let added = 0;
-    for (let index = shared + replaced; index < nextLines.length; index += 1) {
-        if (index > 0) code.appendChild(document.createTextNode('\n'));
-        code.appendChild(createLine(nextLines[index] ?? '', index));
-        added += 1;
     }
 
     const reused = shared;
@@ -110,6 +108,23 @@ export const shouldPreserveStreamingFence = (fromEl: Node, toEl: Node): boolean 
     const fromCode = fromEl.tagName === 'CODE' ? fromEl : fromEl.querySelector('code');
     const toCode = toEl.tagName === 'CODE' ? toEl : toEl.querySelector('code');
     if (fromCode instanceof HTMLElement && toCode instanceof HTMLElement) {
+        const previousLanguage = languageFromCodeElement(fromCode);
+        const fromPre = fromCode.closest('pre') ?? fromCode;
+        const toPre = toCode.closest('pre') ?? toCode;
+        for (const attribute of ['data-md-lang', 'data-md-label']) {
+            const value = toPre.getAttribute(attribute);
+            if (fromPre.getAttribute(attribute) === value) continue;
+            if (value === null) fromPre.removeAttribute(attribute);
+            else fromPre.setAttribute(attribute, value);
+        }
+        const className = toCode.getAttribute('class');
+        if (fromCode.getAttribute('class') !== className) {
+            if (className === null) fromCode.removeAttribute('class');
+            else fromCode.setAttribute('class', className);
+        }
+        if (languageFromCodeElement(fromCode) !== previousLanguage) {
+            fromCode.removeAttribute(STREAM_APPLIED_ATTR);
+        }
         fromCode.setAttribute(STREAM_SRC_ATTR, toCode.textContent ?? '');
     }
     return true;
@@ -163,7 +178,7 @@ export const upgradeStreamingFenceHighlight = async (
         const lang = languageFromCodeElement(code);
         if (lang === 'mermaid') return;
         const lines = await highlightLines(source, lang, options);
-        if (options?.signal?.aborted || !root.contains(code) || streamingFenceSource(code) !== source) return;
+        if (options?.signal?.aborted || !root.contains(code) || streamingFenceSource(code) !== source || languageFromCodeElement(code) !== lang) return;
         if (!lines) {
             const existing = lineElements(code);
             const escaped = document.createElement('span');

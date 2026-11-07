@@ -1,12 +1,11 @@
 import React from 'react';
-import type { Part } from '@/lib/opencode/v2-types';
 import type { ToolPopupContent } from '../message/types';
 
 export type MarkstreamMarkdownVariant = 'assistant' | 'reasoning' | 'tool';
 
 export type MarkstreamHostContextValue = {
   messageId: string;
-  part?: Part;
+  partId?: string;
   isStreaming: boolean;
   disableStreamAnimation: boolean;
   variant: MarkstreamMarkdownVariant;

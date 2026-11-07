@@ -2,6 +2,20 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
+## Hidden spinner lifetime
+
+The parked mobile root-tab underlay pauses descendant `animate-spin` animations
+until it is revealed for page-back or becomes active again. Hiding it with
+`visibility`/`content-visibility` alone does not stop WebKit's animation-driven
+touch-region traversal. Visible secondary-page spinners remain running.
+
+The reserved chat-history status slot also pauses its spinner while its existing
+authoritative `aria-busy` is false. The slot and icon stay mounted with unchanged
+geometry; an actual history load resumes the animation. Neither rule changes
+scroll ownership, content mounting, native gestures or reduced-motion policy.
+`hiddenSpinner.test.ts` covers pause/resume and unrelated visible controls; native
+CPU and animation-progress checks are required separately.
+
 ## Control selection
 
 `lib/theme/cssGenerator.ts` owns the global `--interactive-selection` and
