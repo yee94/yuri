@@ -23,18 +23,20 @@ export function createProjectsSessionDrag(options: {
   let serial = 0, disposed = false;
   let hold: ReturnType<typeof setTimeout> | undefined, tick: ReturnType<typeof setTimeout> | undefined;
   let suppressed: string | undefined;
+  let previousProjection: ProjectsSessionDragProjection | null = null;
   let active: { serial: number; generation: number; id: string; finger: number; x: number; y: number; latestY: number; ids: string[]; claimed: boolean; release?: () => void;
-    frames?: Frame[]; viewport?: { top: number; height: number }; originOffset: number; over?: string; shifts: ReadonlyMap<string, number>; pendingScroll?: number; forward: boolean; backward: boolean } | undefined;
+    frames?: Frame[]; own?: Frame; viewport?: { top: number; height: number }; originOffset: number; over?: string; shifts: ReadonlyMap<string, number>; pendingScroll?: number; forward: boolean; backward: boolean } | undefined;
   function cancel(suppress = true) {
     if (active && suppress) suppressed = active.id;
     serial++;
     if (hold) clearTimeout(hold); if (tick) clearTimeout(tick);
     hold = undefined; tick = undefined;
-    active?.release?.(); active = undefined; options.changed(null);
+    active?.release?.(); active = undefined;
+    if (previousProjection) { previousProjection = null; options.changed(null); }
   }
   const valid = (value: NonNullable<typeof active>) => !disposed && value === active && value.serial === serial && value.generation === options.generation() && options.current();
   function project(value: NonNullable<typeof active>) {
-    const frames = value.frames, own = frames?.find(frame => frame.id === value.id);
+    const frames = value.frames, own = value.own;
     if (!frames || !own) return;
     const dy = value.latestY - value.y, center = own.y + own.height / 2 + dy + options.scroll.offset() - value.originOffset;
     // Measured vertical centers are monotonic; no catalog scan on pointer frames.
@@ -54,7 +56,9 @@ export function createProjectsSessionDrag(options: {
       });
       value.shifts = shifts;
     }
-    options.changed({ id: value.id, over: target.id, x: own.x, y: own.y + dy, width: own.width, height: own.height, shifts: value.shifts });
+    if (previousProjection?.id === value.id && previousProjection.over === target.id && previousProjection.y === own.y + dy) return;
+    previousProjection = { id: value.id, over: target.id, x: own.x, y: own.y + dy, width: own.width, height: own.height, shifts: value.shifts };
+    options.changed(previousProjection);
   }
   function autoScroll() {
     tick = undefined;
@@ -64,6 +68,7 @@ export function createProjectsSessionDrag(options: {
     project(value);
     const { top, height } = value.viewport, threshold = height * .2, bottom = top + height;
     const offset = options.scroll.offset();
+    if (value.pendingScroll !== undefined && Math.abs(value.pendingScroll - offset) < .5) value.pendingScroll = undefined;
     // Same pointer activation/20% edge threshold as dnd-kit; one native command
     // per frame, scaled from its 10pt/5ms speed, awaiting actual offset adoption.
     let speed = 0;
@@ -73,7 +78,7 @@ export function createProjectsSessionDrag(options: {
       const next = Math.max(0, Math.min(options.scroll.max(), offset + speed));
       if (next !== offset) { value.pendingScroll = next; options.scroll.scrollTo(next); }
     }
-    tick = setTimeout(autoScroll, 16);
+    if (speed || value.pendingScroll !== undefined) tick = setTimeout(autoScroll, 16);
   }
   async function activate(value: NonNullable<typeof active>) {
     hold = undefined;
@@ -92,7 +97,7 @@ export function createProjectsSessionDrag(options: {
       ]);
       if (!valid(value)) return;
       if (!viewport || viewport.height <= 0 || options.scroll.offset() !== value.originOffset || frames.some((frame, i) => ![frame.x, frame.y, frame.width, frame.height].every(Number.isFinite) || frame.width <= 0 || frame.height <= 0 || (i > 0 && frame.y < frames[i - 1]!.y + frames[i - 1]!.height))) { cancel(); return; }
-      value.frames = frames; value.viewport = viewport; project(value); tick = setTimeout(autoScroll, 16);
+      value.frames = frames; value.own = frames.find(frame => frame.id === value.id); value.viewport = viewport; project(value); tick = setTimeout(autoScroll, 16);
     } catch { if (active === value) cancel(); }
   }
   return {
@@ -115,6 +120,7 @@ export function createProjectsSessionDrag(options: {
       }
       value.forward ||= value.latestY > previousY; value.backward ||= value.latestY < previousY;
       project(value);
+      if (!tick && value.frames) tick = setTimeout(autoScroll, 16);
     },
     finish(id: string, event?: Pick<Touch, 'identifier' | 'touches'>) {
       const value = active;

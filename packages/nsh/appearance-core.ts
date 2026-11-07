@@ -36,6 +36,7 @@ export type NativeAppearance = {
 export type AppliedNativeAppearance = NativeAppearance & {
   uiFontFamily: string; monoFontFamily: string; assistantFontFamilies: { light: string; dark: string }; unsupportedFonts: string[];
   systemColorScheme?: 'light' | 'dark';
+  sourceHost?: Readonly<AppearanceScope>;
 };
 export type AppearanceScope = { hostID: string; generation: number; url: string };
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -246,7 +247,7 @@ export function createNativeAppearanceSync(deps: {
       const nextRevision = await deps.reset(selected);
       if (captured === generation && previous) {
         const resolved = await deps.apply(selected, nextRevision, previous);
-        if (captured === generation) { value = { ...previous, ...resolved }; deps.changed(value); }
+        if (captured === generation) { value = { ...previous, ...resolved, sourceHost: { ...selected } }; deps.changed(value); }
       }
       return nextRevision;
     })();
@@ -280,7 +281,7 @@ export function createNativeAppearanceSync(deps: {
           const resolved = await deps.apply(selected, nativeRevision, appearance);
           if (!current()) return;
           signature = next;
-          value = { ...appearance, ...resolved }; deps.changed(value);
+          value = { ...appearance, ...resolved, sourceHost: { ...selected } }; deps.changed(value);
         }
         deps.failed('');
       } catch (error) {

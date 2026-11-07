@@ -262,6 +262,7 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
   const refs = new Map<string, ViewRef>();
   let alive = true, wasActive = false, timer: ReturnType<typeof setTimeout> | undefined, gesture = 0, suppressed = false, origin: { x: number; y: number } | undefined;
   let layout: { width: number; height: number } | undefined;
+  let touchActive = false, pressedID: string | undefined, measuredItems: StarterItem[] | undefined;
   const current = () => alive && props.active() && props.owner.current();
   const chipsActive = () => current() && props.visible() && !open();
   const hasProject = !!props.owner.project.id && !!props.owner.project.path;
@@ -348,7 +349,7 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     suppressed = true; drag.set({ id: item.id, dx: 0, dy: 0, over: item.id, rects: rects.filter(rect => !hidden.has(rect.id)), hidden, shifts: new Map() });
   }
   function startDrag(item: StarterItem, x: number, y: number) {
-    cancelDrag(); suppressed = true;
+    cancelDrag(); touchActive = true; pressedID = item.id; suppressed = true;
     if (!chipsActive() || saving()) return;
     suppressed = false;
     origin = { x, y }; props.onGestureActiveChange?.(true); const ticket = gesture;
@@ -364,6 +365,7 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     drag.set({ ...active, dx, dy, over, shifts: over === active.over ? active.shifts : starterShifts(active.id, over, active.rects) });
   }
   function finishDrag() {
+    touchActive = false;
     const active = drag(); cancelDrag();
     if (!active || !chipsActive()) return;
     suppressed = true;
@@ -377,7 +379,17 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     layout = { width: next.width, height: next.height };
     const more = next.height > 32; overflow.set(more); if (!more && expanded()) expanded.set(false);
   }
+  function pressStarter(item: StarterItem) {
+    if (suppressed || !chipsActive() || saving() || pressedID && pressedID !== item.id) return;
+    const currentItem = items().find(next => next.id === item.id);
+    if (!currentItem) return;
+    suppressed = true; props.onSubmit(currentItem);
+  }
   const translation = (id: string) => { const active = drag(); return !active ? { x: 0, y: 0 } : active.id === id ? { x: active.dx, y: active.dy } : active.shifts.get(id) ?? { x: 0, y: 0 }; };
+  effect(() => {
+    const next = items();
+    untracked(() => { if (measuredItems && measuredItems !== next && origin) { suppressed = true; cancelDrag(); } measuredItems = next; });
+  });
   effect(() => {
     const active = props.active(), enabled = chipsActive();
     untracked(() => { if (!active) { wasActive = false; open.set(false); } else if (!wasActive) { wasActive = true; void load(); } if (!enabled) { suppressed = true; cancelDrag(); } });
@@ -386,10 +398,10 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
   return <>
     <If when={props.visible()}><View class="mt-8 w-full gap-2" style={{ maxWidth: 448 }}>
       <View class="flex-row items-start gap-0.5">
-        <View class="flex-1" style={{ maxHeight: expanded() ? undefined : 28, overflow: expanded() || !!drag() ? 'visible' : 'hidden' }}><View class="flex-row flex-wrap items-center justify-center gap-0.5" onLayout={event => layoutChips(event.bounds.size)}><Each of={items()}>{item => <View ref={ref => refs.set(item().id, ref)} style={{ zIndex: drag()?.id === item().id ? 10 : 0, opacity: drag()?.hidden.has(item().id) ? 0 : drag()?.id === item().id ? 0.6 : 1, pointerEvents: drag()?.hidden.has(item().id) ? 'none' : 'auto', transform: [{ translateX: translation(item().id).x }, { translateY: translation(item().id).y }], transitionProperty: 'transform', transitionDuration: drag()?.id === item().id ? 0 : 200, transitionTimingFunction: 'ease' }} onTouchStartCapture={event => { if (event.touches.length > 1) { suppressed = true; cancelDrag(); } else startDrag(item(), event.pageX, event.pageY); }} onTouchMoveCapture={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onTouchEndCapture={finishDrag} onTouchCancel={() => { suppressed = true; cancelDrag(); }} onMoveShouldSetResponderCapture={() => !!drag()} onResponderGrant={() => true} onResponderMove={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onResponderRelease={finishDrag} onResponderTerminate={() => { suppressed = true; cancelDrag(); }} onResponderTerminationRequest={() => !drag()}>
-          <Button testID={`new-session-preset-${item().submitText.startsWith('/') ? item().submitText.slice(1) : `skill-${item().ref.name}`}`} class="h-7 px-2 flex-row items-center gap-1 rounded-md active:bg-accent disabled:opacity-40" disabled={!chipsActive() || saving()} onPressDown={() => { if (origin && !drag() && chipsActive()) suppressed = false; }} onPress={() => { if (!suppressed && chipsActive() && !saving()) { suppressed = true; props.onSubmit(item()); } }}><View style={{ opacity: 0.6 }}><Icon name={item().icon} size={12} color={token('muted-foreground')} /></View><Text class="text-xs text-muted-foreground">{item().label}</Text></Button>
+        <View class="flex-1" style={{ maxHeight: expanded() ? undefined : 28, overflow: expanded() || !!drag() ? 'visible' : 'hidden' }}><View class="flex-row flex-wrap items-center justify-center gap-0.5" onLayout={event => layoutChips(event.bounds.size)}><Each of={items()}>{item => <View ref={ref => refs.set(item().id, ref)} accessibilityElementsHidden={drag()?.hidden.has(item().id) === true} style={{ zIndex: drag()?.id === item().id ? 10 : 0, opacity: drag()?.hidden.has(item().id) ? 0 : drag()?.id === item().id ? 0.6 : 1, pointerEvents: drag()?.hidden.has(item().id) ? 'none' : 'auto', transform: [{ translateX: translation(item().id).x }, { translateY: translation(item().id).y }], transitionProperty: 'transform', transitionDuration: drag()?.id === item().id ? 0 : 200, transitionTimingFunction: 'ease' }} onTouchStartCapture={event => { if (event.touches.length > 1) { touchActive = true; pressedID = undefined; suppressed = true; cancelDrag(); } else startDrag(item(), event.pageX, event.pageY); }} onTouchMoveCapture={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onTouchEndCapture={finishDrag} onTouchCancel={() => { touchActive = false; suppressed = true; cancelDrag(); }} onMoveShouldSetResponderCapture={() => !!drag()} onResponderGrant={() => true} onResponderMove={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onResponderRelease={finishDrag} onResponderTerminate={() => { touchActive = false; suppressed = true; cancelDrag(); }} onResponderTerminationRequest={() => !drag()} onBlur={() => { suppressed = true; cancelDrag(); }}>
+          <Button testID={`new-session-preset-${item().submitText.startsWith('/') ? item().submitText.slice(1) : `skill-${item().ref.name}`}`} class="h-7 px-2 flex-row items-center gap-1 rounded-md active:bg-accent disabled:opacity-40" disabled={!chipsActive() || saving()} onPressDown={() => { if (!touchActive && chipsActive() && !saving()) { pressedID = item().id; suppressed = false; } }} onPress={() => pressStarter(item())}><View style={{ opacity: 0.6 }}><Icon name={item().icon} size={12} color={token('muted-foreground')} /></View><Text class="text-xs text-muted-foreground">{item().label}</Text></Button>
         </View>}</Each></View></View>
-        <If when={overflow() || expanded()}><Button testID="new-session-presets-expand" class="size-6 rounded-md items-center justify-center active:bg-accent" hitSlop={6} accessibilityLabel={t(expanded() ? 'chat.draftStarters.collapse' : 'chat.draftStarters.expand')} onPress={() => { if (!chipsActive() || saving()) return; suppressed = true; cancelDrag(); expanded.set(!expanded()); }}><Icon name={expanded() ? 'arrow-up-s' : 'arrow-down-s'} size={14} /></Button></If>
+        <If when={overflow() || expanded()}><Button testID="new-session-presets-expand" class="size-6 rounded-md items-center justify-center active:bg-accent" hitSlop={6} accessibilityLabel={t(expanded() ? 'chat.draftStarters.collapse' : 'chat.draftStarters.expand')} onPress={() => { if (!chipsActive() || saving()) return; if (touchActive) suppressed = true; cancelDrag(); expanded.set(!expanded()); }}><Icon name={expanded() ? 'arrow-up-s' : 'arrow-down-s'} size={14} /></Button></If>
         <View ref={ref => refs.set(STARTER_TRASH, ref)}><If when={!!drag()} else={<Button testID="new-session-presets-add" class="size-6 rounded-md items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!props.active() || loading() || saving() || !globalReady() || !projectReady()} accessibilityLabel={t('chat.draftStarters.add')} onPress={() => { if (!chipsActive() || loading() || saving() || !globalReady() || !projectReady()) return; suppressed = true; cancelDrag(); Keyboard.dismiss(); search.set(''); open.set(true); error.set(''); void loadCatalog(); }}><Icon name="add" size={14} color={token('muted-foreground')} /></Button>}><View testID="new-session-presets-trash" accessibilityLabel={t('chat.draftStarters.remove')} class="size-6 items-center justify-center rounded-md"><Icon name="delete-bin" size={14} color={token(drag()?.over === STARTER_TRASH ? 'destructive' : 'muted-foreground')} /></View></If></View>
       </View>
       <If when={loading()}><Text class="text-xs text-muted-foreground">{t('common.loading')}</Text></If>

@@ -11,7 +11,8 @@ it('keeps the experiment opt-in, batches the hidden-content handoff, and uses th
   expect(fixture).toContain('value => batch(() => {');
   expect(fixture.indexOf('updateFooter(value, snapshot().pending')).toBeLessThan(fixture.indexOf('snapshot.set(value)'));
   expect(fixture).toContain('style={{ minHeight: footerState().minHeight || undefined }}');
-  expect(fixture).toContain('const height = event.bounds.size.height, admitted = natural.layout(naturalRef, footerScope, key, height)');
+  expect(fixture).toContain('layoutSource = natural.captureLayout(ref, footerScope, key)');
+  expect(fixture).toContain('const height = event.bounds.size.height, admitted = layoutSource?.(height) ?? false');
   expect(fixture).toContain('testID="terminal-footer-natural"');
   expect(fixture).toContain('const admitted = await natural.measure()');
   expect(fixture).toContain("source: 'ref.measure.bounds.size.height'");

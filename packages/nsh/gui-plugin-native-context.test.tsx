@@ -10,7 +10,7 @@ import { CSSVariableGenerator } from '../ui/src/lib/theme/cssGenerator';
 import { getThemeById } from '../ui/src/lib/theme/themes';
 import { guiPreferencesKey } from '../ui/src/lib/gui-plugins/preferences';
 import { UI_FONT_OPTIONS, CODE_FONT_OPTIONS } from '../ui/src/lib/fontOptions';
-import { appearanceFromSettings } from './appearance-core';
+import { createNativeAppearanceSync, type AppliedNativeAppearance } from './appearance-core';
 import { captureGuiPluginNativeContext, bindNativeGuiPluginPreview } from './gui-plugin-native-context-factory';
 import { GUI_NATIVE_CSS_LIMIT, GUI_NATIVE_LABEL_KEYS, validateGuiPluginNativeContext } from './gui-plugin-native-context';
 import { bindGuiPluginPreview } from './gui-plugin-preview';
@@ -28,13 +28,24 @@ import { dict as ptBR } from '../ui/src/lib/i18n/messages/pt-BR';
 import { dict as uk } from '../ui/src/lib/i18n/messages/uk';
 
 const scope = { hostID: 'native-issued-host', lease: 'native-receipt' };
+const appearanceScope = { hostID: scope.hostID, generation: 1, url: 'https://synthetic.invalid' };
+async function appearanceFromSettings(settings: unknown, loadThemes: () => Promise<unknown>): Promise<AppliedNativeAppearance> {
+  let result: AppliedNativeAppearance | null = null, failure = '';
+  const sync = createNativeAppearanceSync({ readSettings: async () => settings, readThemes: loadThemes, reset: async () => 1,
+    apply: async (_, __, value) => ({ uiFontFamily: value.fonts.ui, monoFontFamily: value.fonts.mono, assistantFontFamilies: { light: value.fonts.assistantLight, dark: value.fonts.assistantDark }, unsupportedFonts: [] }),
+    changed: value => { result = value; }, failed: value => { failure = value; },
+  });
+  sync.setScope(appearanceScope); await sync.refresh();
+  if (!result) throw Error(failure || 'Synthetic canonical appearance unavailable');
+  return result;
+}
 const dictionaries = { en, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, ko, fr, es, pl, 'pt-BR': ptBR, uk };
 const settings = { useSystemTheme: true, lightThemeId: 'jetbrains-light', darkThemeId: 'jetbrains-dark', uiFont: 'inter', monoFont: 'fira-code', fontSize: 120 };
 const noThemes = async () => ({ themes: [] });
 describe('real native GUI presentation context', () => {
   it.each(Object.entries(dictionaries))('captures actual %s translations from the existing dictionary', async (locale, dictionary) => {
     const appearance = await appearanceFromSettings(settings, noThemes);
-    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'dark', locale, t: key => dictionary[key] });
+    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale, t: key => dictionary[key] });
     expect(value.locale).toBe(locale);
     for (const [name, key] of Object.entries(GUI_NATIVE_LABEL_KEYS)) expect(value.labels[name as keyof typeof value.labels]).toBe(dictionary[key]);
     expect(value.runtimeKey).toBe('nsh:' + scope.hostID);
@@ -46,7 +57,7 @@ describe('real native GUI presentation context', () => {
     custom.config = { ...custom.config, transitions: { fast: '51ms', normal: '123ms', slow: '456ms' } };
     const load = vi.fn(async () => ({ themes: [custom] }));
     const appearance = await appearanceFromSettings({ ...settings, darkThemeId: custom.metadata.id }, load);
-    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'dark', locale: 'zh-Hant-TW', t: key => zhTW[key] });
+    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'zh-Hant-TW', t: key => zhTW[key] });
     expect(value.locale).toBe('zh-TW'); expect(value.mode).toBe('dark');
     const generated = new CSSVariableGenerator().generate(custom);
     expect(value.themeCSS).toContain(generated);
@@ -59,21 +70,23 @@ describe('real native GUI presentation context', () => {
     expect(value.themeCSS).not.toContain('font-size: 120%');
     custom.colors.surface.background = '#112233';
     expect(value.themeCSS).not.toContain('--surface-background: #112233');
-    const light = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'light', locale: 'en', t: key => en[key] });
+    const light = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'light', locale: 'en', t: key => en[key] });
     expect(light.themeCSS).toContain(new CSSVariableGenerator().generate(getThemeById('jetbrains-light')!));
     expect(load).toHaveBeenCalledOnce(); // No per-preview network or catalog read.
   });
   it('uses fixed canonical mode even when system appearance differs, and fails closed without canonical appearance', async () => {
     const appearance = await appearanceFromSettings({ ...settings, useSystemTheme: false, themeVariant: 'dark' }, noThemes);
-    const input = { expectedHost: scope, appearance, systemMode: 'light' as const, locale: 'en', t: (key: keyof typeof en) => en[key] };
+    const input = { expectedHost: scope, appearanceScope, appearance, systemMode: 'light' as const, locale: 'en', t: (key: keyof typeof en) => en[key] };
     expect(captureGuiPluginNativeContext(input).mode).toBe('dark');
     expect(() => captureGuiPluginNativeContext({ ...input, appearance: null })).toThrow('GUI_APPEARANCE_UNAVAILABLE');
+    expect(() => captureGuiPluginNativeContext({ ...input, appearance: { ...appearance, sourceHost: undefined } })).toThrow('GUI_APPEARANCE_UNAVAILABLE');
+    for (const patch of [{ hostID: 'other' }, { generation: 2 }, { url: 'https://other.invalid' }]) expect(() => captureGuiPluginNativeContext({ ...input, appearanceScope: { ...appearanceScope, ...patch } })).toThrow('GUI_APPEARANCE_UNAVAILABLE');
     expect(() => captureGuiPluginNativeContext({ ...input, appearance: { ...appearance, webTheme: undefined } })).toThrow('GUI_APPEARANCE_UNAVAILABLE');
     expect(() => captureGuiPluginNativeContext({ ...input, t: key => key })).toThrow('GUI_INVALID_NATIVE_CONTEXT');
   });
   it('rejects unknown fields, script/style injection, byte overflow, labels and cross-host identity/preferences', async () => {
     const appearance = await appearanceFromSettings(settings, noThemes);
-    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
+    const value = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
     for (const patch of [{ options: {} }, { directory: '/tmp' }, { runtimeKey: 'nsh:other' }, { preferenceKey: guiPreferencesKey('nsh:other') }, { mode: 'system' }, { locale: 'system' },
       { themeCSS: ':root{--x:"</script><script>alert(1)</script>"}' }, { themeCSS: '</STYLE><img src=x>' }, { themeCSS: '界'.repeat(GUI_NATIVE_CSS_LIMIT / 2) }, { labels: { ...value.labels, extra: 'x' } }, { labels: { ...value.labels, failed: '' } }]) {
       expect(() => validateGuiPluginNativeContext({ ...value, ...patch }, scope, value.preferenceKey)).toThrow('GUI_INVALID_NATIVE_CONTEXT');
@@ -81,7 +94,7 @@ describe('real native GUI presentation context', () => {
   });
   it('binds a copied constructor-time context while owner/scope retain their independent admission', async () => {
     const appearance = await appearanceFromSettings(settings, noThemes);
-    const context = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
+    const context = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
     const mutable = { ...context, labels: { ...context.labels } };
     const calls: Record<string, unknown>[] = [];
     const bound = bindGuiPluginPreview(scope, async (name, input) => { calls.push({ name, ...input }); return name.endsWith('.close') ? true : { closed: true }; }, () => 'owner-1', () => true, mutable);
@@ -93,7 +106,7 @@ describe('real native GUI presentation context', () => {
   it('production binding requires canonical data and captures it before later theme/locale changes', async () => {
     const appearance = await appearanceFromSettings(settings, noThemes);
     const calls: Record<string, unknown>[] = []; let selected = ja;
-    const input = { expectedHost: scope, appearance, systemMode: 'dark' as const, locale: 'ja', t: (key: keyof typeof en) => selected[key],
+    const input = { expectedHost: scope, appearanceScope, appearance, systemMode: 'dark' as const, locale: 'ja', t: (key: keyof typeof en) => selected[key],
       identify: () => 'native-owner', isCurrent: () => true, call: async (name: string, value: Record<string, unknown>) => { calls.push(value); return name.endsWith('.close') ? true : { closed: true }; },
     };
     expect(() => bindNativeGuiPluginPreview({ ...input, appearance: null })).toThrow('GUI_APPEARANCE_UNAVAILABLE');
@@ -105,7 +118,7 @@ describe('real native GUI presentation context', () => {
   });
   it('actual browser factory applies captured mode/locale and full CSS as DOM text, then restores its document', async () => {
     const appearance = await appearanceFromSettings(settings, noThemes);
-    const context = captureGuiPluginNativeContext({ expectedHost: scope, appearance, systemMode: 'dark', locale: 'uk', t: key => uk[key] });
+    const context = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'uk', t: key => uk[key] });
     const prior = { dark: document.documentElement.classList.contains('dark'), lang: document.documentElement.getAttribute('lang'), theme: document.documentElement.getAttribute('data-theme') };
     const content = document.createElement('section'), actions = document.createElement('aside');
     document.body.append(content, actions);
@@ -133,7 +146,7 @@ describe('real native GUI presentation context', () => {
     try {
       const expectedHost = { ...scope, lease: '11111111-1111-4111-8111-111111111111' };
       const appearance = await appearanceFromSettings(settings, noThemes);
-      const context = captureGuiPluginNativeContext({ expectedHost, appearance, systemMode: 'dark', locale: 'ja', t: key => ja[key] });
+      const context = captureGuiPluginNativeContext({ expectedHost, appearanceScope, appearance, systemMode: 'dark', locale: 'ja', t: key => ja[key] });
       const payload = { expectedHost, owner: 'owner-context', sessionId: 'session', directory: '/work', path: 'a.report', context };
       const input = path.join(temporary, 'context.json'); writeFileSync(input, JSON.stringify(payload));
       const staged = path.join(temporary, 'staged');
@@ -207,7 +220,7 @@ describe('real native GUI presentation context', () => {
       }, { timeout: 10000 });
       const capture = module.exports.captureGuiPluginNativeContext as typeof captureGuiPluginNativeContext;
       const appearance = await appearanceFromSettings(settings, noThemes);
-      const context = capture({ expectedHost: scope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
+      const context = capture({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
       expect(context.themeCSS).toContain(new CSSVariableGenerator().generate(getThemeById('jetbrains-dark')!));
       expect(source).not.toContain('NativeAppearanceSync');
     } finally { rmSync(temporary, { recursive: true, force: true }); }

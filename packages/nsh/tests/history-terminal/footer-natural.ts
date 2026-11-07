@@ -3,19 +3,25 @@ type NaturalRef = { measure(): Promise<{ bounds: { size: { height: number } } } 
 
 /** Fixture-only natural-content reader. No held wrapper/ref, timers, or scroll geometry. */
 export function createNaturalFooterReader(accept: (scope: string, height: number, contentKey: string) => boolean) {
-  let context: Context | undefined, ref: NaturalRef | null = null, ticket = 0, wasActive = false, initialLayout = true;
+  let context: Context | undefined, ref: NaturalRef | null = null, ticket = 0, sourceGeneration = 0, wasActive = false, initialLayout = true;
+  function layout(node: NaturalRef | null, scope: string, contentKey: string, height: number) {
+    if (!context || node !== ref || !ref || context.scope !== scope || context.contentKey !== contentKey || !context.visible || !context.active && (!initialLayout || wasActive)) return false;
+    ticket++; // A newer real layout supersedes a pending ref read.
+    return accept(scope, height, contentKey);
+  }
   return {
     update(next: Context) {
+      if (!context || context.scope !== next.scope || context.contentKey !== next.contentKey || context.visible !== next.visible || context.active && !next.active) sourceGeneration++;
       if (!context || context.scope !== next.scope) { wasActive = false; initialLayout = true; }
       if (context?.active && !next.active) initialLayout = false;
       if (!context || Object.keys(next).some(key => next[key as keyof Context] !== context![key as keyof Context])) ticket++;
       context = { ...next }; wasActive ||= next.active;
     },
-    attach(next: NaturalRef | null) { if (ref !== next) { ref = next; ticket++; } },
-    layout(node: NaturalRef | null, scope: string, contentKey: string, height: number) {
-      if (!context || node !== ref || !ref || context.scope !== scope || context.contentKey !== contentKey || !context.visible || !context.active && (!initialLayout || wasActive)) return false;
-      ticket++; // A newer real layout supersedes a pending ref read.
-      return accept(scope, height, contentKey);
+    attach(next: NaturalRef | null) { if (ref !== next) { ref = next; ticket++; sourceGeneration++; } },
+    layout,
+    captureLayout(node: NaturalRef | null, scope: string, contentKey: string) {
+      const generation = sourceGeneration;
+      return (height: number) => generation === sourceGeneration && layout(node, scope, contentKey, height);
     },
     async measure() {
       if (!context?.active || !context.visible || !ref) return false;
@@ -28,6 +34,6 @@ export function createNaturalFooterReader(accept: (scope: string, height: number
         return height !== undefined && Number.isFinite(height) && height > 0 && accept(captured.scope, height, captured.contentKey);
       } catch (failure) { if (!matches()) return false; throw failure; }
     },
-    invalidate() { ticket++; ref = null; context = undefined; wasActive = false; initialLayout = false; },
+    invalidate() { ticket++; sourceGeneration++; ref = null; context = undefined; wasActive = false; initialLayout = false; },
   };
 }

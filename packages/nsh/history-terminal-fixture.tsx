@@ -190,13 +190,14 @@ mount(() => {
         })().catch(error => status.set(String(error)));
       }} onLoadMore={historyScroll.onLoadMore}
       loadMoreThreshold={0.5} onLoadMoreAtStart={historyScroll.onLoadMoreAtStart}
-      footer={() => { let naturalRef: ViewRef | null = null; const key = contentKey(snapshot()); return <View testID="terminal-footer" style={{ minHeight: footerState().minHeight || undefined }}>
+      footer={() => { let layoutSource: ((height: number) => boolean) | undefined; const key = contentKey(snapshot()); return <View testID="terminal-footer" style={{ minHeight: footerState().minHeight || undefined }}>
         <View testID="terminal-footer-natural" class="gap-2" style={{ flexShrink: 0 }} ref={ref => {
-          naturalRef = ref; footerRef = ref; natural.attach(ref);
+          footerRef = ref; natural.attach(ref);
+          layoutSource = natural.captureLayout(ref, footerScope, key);
           if (footerNeedsActiveRead) void confirmFooterHeight('footer-attached-active-ref-height').catch(error => status.set(String(error)));
         }}
         onLayout={event => {
-          const height = event.bounds.size.height, admitted = natural.layout(naturalRef, footerScope, key, height);
+          const height = event.bounds.size.height, admitted = layoutSource?.(height) ?? false;
           recordFooter('footer-layout', { measurement: { source: 'natural.onLayout', scope: footerScope, contentKey: key, height, admitted } });
         }}>
         <If when={snapshot()!.more}><Button testID="history-load-older" class={action} disabled={snapshot()!.footerEnabled && snapshot()!.loading} onPress={() => { void run('page', 'footer-button'); }}><Text class="text-muted-foreground">{snapshot()!.footerEnabled && snapshot()!.loading ? '加载中…' : '载入较早记录'}</Text></Button></If>

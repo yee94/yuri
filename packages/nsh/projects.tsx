@@ -776,25 +776,26 @@ type ProjectsScroll = ReturnType<typeof createProjectsScroll>;
 function ProjectsSessionGroup(props: { controller: Controller; scope: string; rows: () => ProjectSession[]; scroll: ProjectsScroll; onOpen: ProjectsNavigation['onOpenChat']; subtitle?: (row: ProjectSession) => string }) {
   const geometry: ProjectsSessionGeometry = new Map();
   const overlay = signal<ProjectsSessionDragProjection | null>(null), draggedID = signal<string | null>(null), shifts = signal<ReadonlyMap<string, number>>(new Map());
+  const draggedTitle = computed(() => props.rows().find(row => row.id === draggedID())?.title ?? '');
   const ids = () => props.rows().map(row => row.id);
   const drag = createProjectsSessionDrag({ ids, geometry, scroll: props.scroll.drag, generation: epoch,
     current: () => props.controller.current() && !props.controller.pending().includes(`order:${props.scope}`),
     changed(value) { overlay.set(value); if (draggedID() !== (value?.id ?? null)) draggedID.set(value?.id ?? null); if (shifts() !== value?.shifts) shifts.set(value?.shifts ?? new Map()); },
     commit: (active, over) => { void props.controller.reorder(props.scope, active, over); },
   });
-  effect(() => { const members = ids(), current = props.controller.current(); epoch(); untracked(() => { if (!current) drag.cancel(); else drag.reconcile(members); }); });
-  cleanup(drag.dispose);
+  effect(() => { const members = ids(), current = props.controller.current(); epoch(); untracked(() => { const retained = new Set(members); for (const id of geometry.keys()) if (!retained.has(id)) geometry.delete(id); if (!current) drag.cancel(); else drag.reconcile(members); }); });
+  cleanup(() => { drag.dispose(); geometry.clear(); });
   return <View testID={`projects-session-group-${props.scope}`} class="gap-1">
     <Each of={props.rows()}>{row => <View ref={ref => geometry.set(row().id, ref)} style={{ opacity: draggedID() === row().id ? .3 : 1, transform: [{ translateY: shifts().get(row().id) ?? 0 }], transitionProperty: 'transform', transitionDuration: draggedID() ? 200 : 0 }}>
-      <SessionRow row={row()} controller={props.controller} onOpen={props.onOpen} subtitle={props.subtitle?.(row())} drag={drag} />
+      <SessionRow row={row()} controller={props.controller} onOpen={props.onOpen} subtitle={props.subtitle?.(row())} drag={drag} dragScope={props.scope} />
     </View>}</Each>
     <If when={overlay() !== null}><Overlay testID={`projects-session-drag-overlay-${props.scope}`} onCancel={drag.cancel} style={{ position: 'absolute', top: overlay()?.y ?? 0, left: overlay()?.x ?? 0, width: overlay()?.width ?? 0, height: overlay()?.height ?? 0, pointerEvents: 'none' }}>
-      <View class="flex-1 flex-row items-center gap-2 rounded-lg border border-border bg-card px-3"><Icon name="chat-thread" size={16} /><Text class="flex-1 text-sm text-foreground" style={{ numberOfLines: 1 }}>{props.rows().find(row => row.id === overlay()?.id)?.title ?? ''}</Text></View>
+      <View class="flex-1 flex-row items-center gap-2 rounded-lg border border-border bg-card px-3"><Icon name="chat-thread" size={16} /><Text class="flex-1 text-sm text-foreground" style={{ numberOfLines: 1 }}>{draggedTitle()}</Text></View>
     </Overlay></If>
   </View>;
 }
 
-function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen: (target: ChatTarget) => void; subtitle?: string; drag?: ReturnType<typeof createProjectsSessionDrag> }) {
+function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen: (target: ChatTarget) => void; subtitle?: string; drag?: ReturnType<typeof createProjectsSessionDrag>; dragScope?: string }) {
   const offset = signal(0), renaming = signal(false), title = signal(props.row.title); let start = 0, swiped = false;
   const indicator = () => resolveMobileSessionIndicator({ ...readProjectsBlocking(props.controller.attention().blockingByDirectory, props.row.directory, props.row.id), running: props.controller.running().includes(props.row.id), unread: (props.controller.attention().unseenBySession[props.row.id] ?? 0) > 0 });
   const pinLabel = () => t(props.controller.pins().includes(props.row.id) ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin');
@@ -833,11 +834,11 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
       <Button class="flex-1 bg-muted items-center justify-center gap-1" disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('archive')}><Icon name="archive" size={17} /><Text class="text-xs text-destructive">{t('sessions.sidebar.bulkActions.archive')}</Text></Button>
     </View></If>
     <View {...pan.panHandlers} class={`flex-row items-center min-h-12 ${props.controller.attention().currentSessionID === props.row.id ? 'bg-accent' : 'bg-card'}`} style={{ transform: [{ translateX: offset() }] }}>
-      <Button testID={`project-session-${props.row.id}`} class="flex-1 flex-row items-center gap-2 px-3 py-3 min-h-12"
+      <View testID={`project-session-touch-${props.dragScope ?? 'plain'}-${props.row.id}`} class="flex-1"
         onTouchStartCapture={event => props.drag?.start(props.row.id, event)} onTouchMoveCapture={event => props.drag?.move(props.row.id, event)} onTouchEndCapture={event => props.drag?.finish(props.row.id, event)} onTouchCancelCapture={() => props.drag?.cancel()}
         onMoveShouldSetResponderCapture={() => props.drag?.claimed(props.row.id) ?? false} onResponderGrant={() => props.drag?.claimed(props.row.id) ?? false}
-        onResponderMove={event => props.drag?.move(props.row.id, event)} onResponderRelease={event => props.drag?.finish(props.row.id, event)} onResponderTerminate={() => props.drag?.cancel()} onResponderTerminationRequest={() => !props.drag?.claimed(props.row.id)}
-        onPressDown={() => { if (!props.drag?.claimed(props.row.id)) swiped = false; }} onPress={() => {
+        onResponderMove={event => props.drag?.move(props.row.id, event)} onResponderRelease={event => props.drag?.finish(props.row.id, event)} onResponderTerminate={() => props.drag?.cancel()} onResponderTerminationRequest={() => !props.drag?.claimed(props.row.id)}>
+      <Button testID={`project-session-${props.row.id}`} class="flex-1 flex-row items-center gap-2 px-3 py-3 min-h-12" onPressDown={() => { if (!props.drag?.claimed(props.row.id)) swiped = false; }} onPress={() => {
         if (props.drag?.consumeClick(props.row.id)) return;
         if (swiped) { swiped = false; return; } if (offset()) { offset.set(0); return; } props.controller.markViewed(props.row.id); props.onOpen({ kind: 'session', ...props.row });
       }}>
@@ -845,6 +846,7 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
         <View class="flex-1 gap-1"><Text class={`text-sm font-medium ${props.controller.attention().currentSessionID === props.row.id ? 'text-primary' : 'text-foreground'}`} style={{ numberOfLines: 1 }}>{props.row.title || t('mobile.sessions.untitled')}</Text><If when={props.subtitle}><Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{props.subtitle}</Text></If><If when={props.row.changes}><Text class="text-xs text-muted-foreground">{props.row.changes}</Text></If></View>
         <Text class="text-xs text-muted-foreground">{relative(props.row.updated)}</Text>
       </Button>
+      </View>
       <Button testID={`project-session-menu-${props.row.id}`} class="min-h-11 min-w-9 items-center justify-center" accessibilityLabel={t('sessions.sidebar.session.menu.label')} onPress={() => { void menu(); }}><Icon name="more-2" size={16} /></Button>
     </View>
     <Sheet open={renaming()} closeOnSwipe={!props.controller.pending().includes(props.row.id)} closeOnEscape={!props.controller.pending().includes(props.row.id)} closeOnBackdropPress={!props.controller.pending().includes(props.row.id)} onOpenChange={event => { if (!props.controller.pending().includes(props.row.id)) renaming.set(event.open); }} popupClass="bg-background rounded-t-3xl p-5 gap-3">
@@ -858,13 +860,12 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
   </View>;
 }
 
-function DirectoryRows(props: { directory: string; controller: Controller; onOpenChat: ProjectsNavigation['onOpenChat'] }) {
+function DirectoryRows(props: { directory: string; controller: Controller; scroll: ProjectsScroll; onOpenChat: ProjectsNavigation['onOpenChat'] }) {
   const count = signal(3);
   const rows = () => props.controller.byDirectory().get(props.directory) ?? [];
   const visible = () => rows().filter((row, index) => index < count() || props.controller.running().includes(row.id) || props.controller.attention().currentSessionID === row.id);
   return <View class="gap-1">
-    <SessionOrderControl controller={props.controller} scope={props.directory} />
-    <Each of={visible()}>{row => <SessionRow row={row()} controller={props.controller} onOpen={props.onOpenChat} />}</Each>
+    <ProjectsSessionGroup controller={props.controller} scope={props.directory} rows={visible} scroll={props.scroll} onOpen={props.onOpenChat} />
     <If when={count() > 3}><Button class={quiet} onPress={() => count.set(3)}><Text class="text-sm text-muted-foreground">{t('sessions.sidebar.group.showFewer')}</Text></Button></If>
     <If when={rows().length > count() || props.controller.buckets()[props.directory]?.hasMore || !props.controller.buckets()[props.directory]?.loaded}>
       <Button class={quiet} disabled={props.controller.pending().includes(props.directory)} onPress={() => { count.set(count() + 7); if (rows().length <= count()) void props.controller.loadDirectory(props.directory); }}><Text class="text-sm text-muted-foreground">{props.controller.pending().includes(props.directory) ? t('common.loading') : rows().length > count() ? t('mobile.sessions.showMore', { count: Math.min(7, rows().length - count()) }) : t('sessions.sidebar.group.showMore')}</Text></Button>
@@ -873,14 +874,16 @@ function DirectoryRows(props: { directory: string; controller: Controller; onOpe
 }
 
 export function ProjectsHome(props: ProjectsHomeProps) {
-  const treeGeometry: ProjectsOrderGeometry = new Map();
+  const scroll = createProjectsScroll();
   const controller = createProjectsController(), collapsed = signal<string[]>([]), expandedTrees = signal<string[]>([]), pinnedClosed = signal(false), searching = signal(false), term = signal(''), newChat = signal(false), newSessionPending = signal(false);
   let debounce: ReturnType<typeof setTimeout> | undefined;
   effect(() => { if (controller.current()) untracked(() => { newSessionPending.set(false); void controller.refresh(); }); });
   effect(() => { const projects = app.projects(); if (!controller.current()) return; untracked(() => { void (async () => { for (let i = 0; i < projects.length && controller.current(); i += 2) await Promise.all(projects.slice(i, i + 2).map(project => controller.loadWorktrees(project))); })(); }); });
   cleanup(() => { if (debounce) clearTimeout(debounce); });
   function closeSearch() { if (debounce) clearTimeout(debounce); debounce = undefined; controller.cancelSearch(); searching.set(false); }
-  const special = computed(() => [...orderedProjectSessions(controller.sessions().filter(row => controller.pins().includes(row.id)), '__pinned__', controller.order(), controller.pins()), ...projectsInProgress(controller.sessions(), controller.pins(), controller.running(), controller.attention().unseenBySession)]);
+  const pinnedRows = computed(() => orderedProjectSessions(controller.sessions().filter(row => controller.pins().includes(row.id)), '__pinned__', controller.order(), controller.pins()));
+  const inProgressRows = computed(() => projectsInProgress(controller.sessions(), controller.pins(), controller.running(), controller.attention().unseenBySession));
+  const special = computed(() => [...pinnedRows(), ...inProgressRows()]);
   const toggle = (project: Project) => collapsed.set(collapsed().includes(project.id) ? collapsed().filter(id => id !== project.id) : [...collapsed(), project.id]);
   const create = async (project: Project) => {
     if (newSessionPending() || !controller.current()) return;
@@ -894,13 +897,10 @@ export function ProjectsHome(props: ProjectsHomeProps) {
     const started = epoch();
     const gitRepository = await controller.loadRepository(project);
     if (!controller.current() || started !== epoch()) return;
-    const position = app.projects().findIndex(row => row.id === project.id);
     const result = await AlertDialog.show({ title: project.name, presentation: 'actionSheet', actions: [
       { id: 'new', label: t('mobile.sessions.startNewChat') }, ...(gitRepository === true ? [{ id: 'worktree', label: t('sessions.sidebar.project.actions.newWorktree') }] : []), { id: 'open', label: t('mobile.projectEdit.worktreesTitle') },
       { id: 'files', label: t('mobile.menu.files') }, { id: 'changes', label: t('mobile.menu.changes') },
       { id: 'sync', label: t('sessions.sidebar.project.actions.syncSessions') },
-      ...(position > 0 ? [{ id: 'up', label: t('mobile.sessions.moveUpAria', { label: project.name }) }] : []),
-      ...(position >= 0 && position < app.projects().length - 1 ? [{ id: 'down', label: t('mobile.sessions.moveDownAria', { label: project.name }) }] : []),
       { id: 'edit', label: t('sessions.sidebar.project.actions.edit') }, { id: 'close', label: t('sessions.sidebar.project.actions.closeProject'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' },
     ] });
     if (!controller.current() || started !== epoch()) return;
@@ -911,10 +911,6 @@ export function ProjectsHome(props: ProjectsHomeProps) {
     if (result.action === 'changes') props.onOpenChanges(project.path);
     if (result.action === 'edit') props.onEditProject(project);
     if (result.action === 'sync') void controller.syncProject(project);
-    if (result.action === 'up' || result.action === 'down') {
-      const index = app.projects().findIndex(row => row.id === project.id), other = app.projects()[index + (result.action === 'up' ? -1 : 1)];
-      if (other) void controller.updateProjectCatalog('reorder', project.id, other.id);
-    }
     if (result.action === 'close') {
       const result = await AlertDialog.show({ title: t('sessions.sidebar.project.actions.closeProject'), description: t('mobile.projects.closeConfirmMessage', { title: project.name }), actions: [{ id: 'close', label: t('mobile.sessions.confirmRemoveProject'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }] });
       if (result.action === 'close' && controller.current() && started === epoch()) void controller.updateProjectCatalog('close', project.id);
@@ -942,7 +938,7 @@ export function ProjectsHome(props: ProjectsHomeProps) {
     }
   }
   return <View class="flex-1 bg-background">
-    <Scroll class="flex-1" contentClass="px-4 pb-6 gap-5" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
+    <Scroll testID="projects-home-scroll" ref={scroll.ref} onScroll={scroll.onScroll} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentClass="px-4 pb-6 gap-5" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
       <View class="flex-row items-center gap-3 pt-3 pb-1 px-1">
         <Text class="flex-1 text-3xl font-bold text-foreground">{t('mobile.sessions.section.projects')}</Text>
         <Button testID="projects-open-search" class="w-10 h-10 rounded-full border border-border bg-secondary items-center justify-center" accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
@@ -957,7 +953,7 @@ export function ProjectsHome(props: ProjectsHomeProps) {
           <View class="h-10 w-10 rounded-full bg-secondary border border-border items-center justify-center"><Icon name="pushpin" size={19} /></View>
           <View class="flex-1 gap-1"><Text class="font-semibold text-foreground">{t('mobile.sessions.section.pinned')}</Text><Text class="text-xs text-muted-foreground">{sessionCount(special().length)}</Text></View><Icon name={pinnedClosed() ? 'arrow-right-s' : 'arrow-down-s'} size={15} />
         </Button>
-        <If when={!pinnedClosed()}><View><SessionOrderControl controller={controller} scope="__pinned__" /><Each of={special()}>{row => <SessionRow row={row()} controller={controller} onOpen={props.onOpenChat} subtitle={app.projects().find(project => project.path === row().directory)?.name || nameOf(row().directory)} />}</Each></View></If>
+        <If when={!pinnedClosed()}><View><ProjectsSessionGroup controller={controller} scope="__pinned__" rows={pinnedRows} scroll={scroll} onOpen={props.onOpenChat} subtitle={row => app.projects().find(project => project.path === row.directory)?.name || nameOf(row.directory)} /><Each of={inProgressRows()}>{row => <SessionRow row={row()} controller={controller} onOpen={props.onOpenChat} subtitle={app.projects().find(project => project.path === row().directory)?.name || nameOf(row().directory)} />}</Each></View></If>
       </View></If>
       <Each of={app.projects()}>{project => <View class={shell}>
         <View class="flex-row items-center gap-1" onLongPress={() => { void projectMenu(project()); }}>
@@ -969,10 +965,10 @@ export function ProjectsHome(props: ProjectsHomeProps) {
           </Button>
           <Button class="min-h-11 min-w-8 items-center justify-center" accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void projectMenu(project()); }}><Icon name="more-2" size={16} /></Button>
         </View>
-        <If when={!collapsed().includes(project().id)}><View class="gap-2"><DirectoryRows directory={project().path} controller={controller} onOpenChat={props.onOpenChat} />
+        <If when={!collapsed().includes(project().id)}><View class="gap-2"><DirectoryRows directory={project().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} />
           <Each of={controller.orderedWorktrees(project())}>{tree => <View class="gap-1">
-            <WorktreeRow project={project()} tree={tree()} controller={controller} geometry={treeGeometry} expanded={expandedTrees().includes(tree().path)} onSelect={() => { const open = !expandedTrees().includes(tree().path); expandedTrees.set(open ? [...expandedTrees(), tree().path] : expandedTrees().filter(path => path !== tree().path)); if (open) void controller.loadDirectory(tree().path); }} onNewSession={() => { void create({ ...project(), path: tree().path }); }} />
-            <If when={expandedTrees().includes(tree().path)}><DirectoryRows directory={tree().path} controller={controller} onOpenChat={props.onOpenChat} /></If>
+            <WorktreeRow project={project()} tree={tree()} controller={controller} expanded={expandedTrees().includes(tree().path)} onSelect={() => { const open = !expandedTrees().includes(tree().path); expandedTrees.set(open ? [...expandedTrees(), tree().path] : expandedTrees().filter(path => path !== tree().path)); if (open) void controller.loadDirectory(tree().path); }} onNewSession={() => { void create({ ...project(), path: tree().path }); }} />
+            <If when={expandedTrees().includes(tree().path)}><DirectoryRows directory={tree().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} /></If>
           </View>}</Each>
         </View></If>
       </View>}</Each>
@@ -1001,6 +997,7 @@ export function ProjectsHome(props: ProjectsHomeProps) {
 
 export function ProjectDetail(props: ProjectDetailProps) {
   const treeGeometry: ProjectsOrderGeometry = new Map();
+  const scroll = createProjectsScroll();
   const controller = createProjectsController(), directory = signal(props.project.path), creating = signal(props.initialCreateWorktree === true), branch = signal(''), folder = signal(''), source = signal('');
   const mode = signal<'new' | 'existing'>('new');
   const sessionPending = signal(false);
@@ -1015,7 +1012,7 @@ export function ProjectDetail(props: ProjectDetailProps) {
     finally { if (controller.current() && started === epoch()) sessionPending.set(false); }
   }
   return <NavPage title={props.project.name} headerBackTitle="" class="flex-1 bg-background" headerRight={<Button class={quiet} accessibilityLabel={t('mobile.sessions.newSessionAria')} disabled={sessionPending()} onPress={() => { void create(); }}><Icon name="add" /></Button>}>
-    <Scroll class="flex-1" contentClass="p-4 gap-4" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); void controller.loadDirectory(directory(), true); void controller.loadWorktrees(props.project); }}>
+    <Scroll ref={scroll.ref} onScroll={scroll.onScroll} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentClass="p-4 gap-4" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); void controller.loadDirectory(directory(), true); void controller.loadWorktrees(props.project); }}>
       <If when={controller.error()}><Text class="text-destructive text-sm">{controller.error()}</Text></If>
       <RemoteDeleteRetries controller={controller} />
       <ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} />
@@ -1025,7 +1022,7 @@ export function ProjectDetail(props: ProjectDetailProps) {
         <Each of={controller.orderedWorktrees(props.project)}>{tree => <WorktreeRow project={props.project} tree={tree()} controller={controller} geometry={treeGeometry} onSelect={() => select(tree().path)} onNewSession={() => { select(tree().path); void create(); }} onRemoved={() => { if (directory() === tree().path) select(props.project.path); }} />}</Each>
         <Button class={action} onPress={() => { creating.set(true); void controller.loadBranches(props.project); }}><Icon name="add" size={17} /><Text class="text-foreground">{t('session.newWorktree.actions.createWorktree')}</Text></Button>
       </View>
-      <View class={shell}><DirectoryRows directory={directory()} controller={controller} onOpenChat={props.onOpenChat} /><Button class={action} disabled={sessionPending()} onPress={() => { void create(); }}><Text class="text-foreground">{t('mobile.sessions.startNewChat')}</Text></Button></View>
+      <View class={shell}><DirectoryRows directory={directory()} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} /><Button class={action} disabled={sessionPending()} onPress={() => { void create(); }}><Text class="text-foreground">{t('mobile.sessions.startNewChat')}</Text></Button></View>
     </Scroll>
     <Sheet open={creating()} onOpenChange={event => { if (!controller.pending().includes('worktree')) creating.set(event.open); }} closeOnSwipe={!controller.pending().includes('worktree')} closeOnEscape={!controller.pending().includes('worktree')} closeOnBackdropPress={!controller.pending().includes('worktree')} popupClass="bg-background rounded-t-3xl p-5 gap-3">
       <Text class="text-xl font-semibold text-foreground">{t('session.newWorktree.title')}</Text>

@@ -11,6 +11,7 @@ import * as blocking from './projects-attention-blocking';
 import * as indicator from '../ui/src/mobile/projects/mobileSessionIndicator';
 import * as summary from '../ui/src/lib/sessionChangeSummary';
 import * as orderGesture from './projects-order-gesture';
+import * as orderTouch from './projects-order-touch';
 
 const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'projects.tsx'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2023 } }).outputText;
@@ -45,6 +46,7 @@ beforeEach(() => {
        captureHostOperation: () => { const captured = generation, id = app.connection().id; return { current: () => captured === generation && id === app.connection().id, request: async (path: string, method?: string, body?: unknown) => { if (captured !== generation || id !== app.connection().id) throw new Error('host_operation_stale'); return body !== undefined ? request(path, method, body) : method !== undefined ? request(path, method) : request(path); } }; },
      },
      './projects-order-gesture': orderGesture,
+     './projects-order-touch': orderTouch,
      './projects-delete': deletion, './projects-attention': { ...attention, projectsAttention: attentionStore }, '../ui/src/lib/sessionChangeSummary': summary,
      './projects-attention-blocking': blocking, './projects-attention-indicator': {}, '../ui/src/mobile/projects/mobileSessionIndicator': indicator,
   };

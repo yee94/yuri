@@ -1,6 +1,6 @@
 import { CSSVariableGenerator } from '../ui/src/lib/theme/cssGenerator';
 import { guiPreferencesKey } from '../ui/src/lib/gui-plugins/preferences';
-import { nativeFullThemeCSS, type NativeAppearance } from './appearance-core';
+import { nativeFullThemeCSS, type NativeAppearance, type AppliedNativeAppearance, type AppearanceScope } from './appearance-core';
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { GUI_NATIVE_LABEL_KEYS, guiNativeLocale, nativeGuiRuntimeKey, validateGuiPluginNativeContext } from './gui-plugin-native-context';
@@ -9,11 +9,12 @@ import { bindGuiPluginPreview } from './gui-plugin-preview';
 /** Call once when constructing an operation owner, with the same native-issued
  * scope as its request sender. No settings/themes GET or local default palette. */
 export function captureGuiPluginNativeContext(input: {
-  expectedHost: RuntimeScope; appearance: NativeAppearance | null; systemMode: 'light' | 'dark';
+  expectedHost: RuntimeScope; appearance: (NativeAppearance & Pick<AppliedNativeAppearance, 'sourceHost'>) | null; appearanceScope: AppearanceScope; systemMode: 'light' | 'dark';
   locale: string; t: (key: I18nKey) => string;
 }) {
   const scope = runtimeScopeFrom(input.expectedHost);
-  if (!scope || !input.appearance) throw new Error('GUI_APPEARANCE_UNAVAILABLE');
+  const source = input.appearance?.sourceHost, expected = input.appearanceScope;
+  if (!scope || !input.appearance || !source || expected.hostID !== scope.hostID || source.hostID !== expected.hostID || source.generation !== expected.generation || source.url !== expected.url) throw new Error('GUI_APPEARANCE_UNAVAILABLE');
   const mode = input.appearance.mode === 'system' ? input.systemMode : input.appearance.mode;
   const generator = new CSSVariableGenerator();
   const themeCSS = nativeFullThemeCSS(input.appearance, mode, theme => generator.generate(theme));

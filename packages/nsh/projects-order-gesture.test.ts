@@ -48,12 +48,12 @@ const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(
 describe('production Projects drag closures', () => {
   it('routes a homepage session body touch to its group drag owner rather than a long-press menu', () => {
     const f = fixture('SessionRow');
-    const find = (node: Element): Element | undefined => node?.props?.testID === 'project-session-/a' ? node : node?.children?.flat(Infinity).map(child => find(child as Element)).find(Boolean);
+    const find = (node: Element): Element | undefined => node?.props?.testID === 'project-session-touch-plain-/a' ? node : node?.children?.flat(Infinity).map(child => find(child as Element)).find(Boolean);
     const body = find(f.tree)!;
     expect(body.props.onTouchStartCapture).toBeTypeOf('function');
     (body.props.onTouchStartCapture as (event: unknown) => void)({ pageX: 20, pageY: 30, touches: [{ identifier: 1 }] });
     expect(f.props.drag.start).toHaveBeenCalledWith('/a', expect.objectContaining({ pageY: 30 }));
-    const collect = (node: Element): Element[] => node ? [node, ...node.children.flat(Infinity).flatMap(child => collect(child as Element))] : [];
+    const collect = (node: Element): Element[] => node && typeof node === 'object' && node.props ? [node, ...node.children.flat(Infinity).flatMap(child => collect(child as Element))] : [];
     expect(collect(f.tree).some(node => typeof node.props.onLongPress === 'function')).toBe(false);
   });
   it('does not mount the extra homepage sorting Sheet or project move menu entries', () => {
@@ -72,22 +72,12 @@ describe('production Projects drag closures', () => {
     f.pan.onPanResponderGrant(); f.pan.onPanResponderRelease(null, g(300)); await settle();
     expect(f.commit).toHaveBeenCalledWith(f.props.project, '/a', '/b');
   });
-  it.each(['WorktreeRow', 'SessionOrderRow'])('%s discards a gesture from a retired Host generation', async name => {
+  it.each(['WorktreeRow'])('%s discards a gesture from a retired Host generation', async name => {
     const f = fixture(name);
     f.pan.onPanResponderGrant(); f.retire(); f.pan.onPanResponderRelease(null, g(300)); await settle();
     expect(f.commit).not.toHaveBeenCalled();
   });
-  it('does not commit a Sheet gesture after close', async () => {
-    const f = fixture('SessionOrderRow');
-    f.pan.onPanResponderGrant(); f.close(); f.pan.onPanResponderRelease(null, g(300)); await settle();
-    expect(f.commit).not.toHaveBeenCalled();
-  });
-  it('uses the Sheet row gap in collision geometry', async () => {
-    const f = fixture('SessionOrderRow', ['/a', '/b', '/c'], [28, 92, 156]);
-    f.pan.onPanResponderGrant(); f.pan.onPanResponderRelease(null, g(90)); await settle();
-    expect(f.commit).toHaveBeenCalledWith('/repo', '/a', '/b');
-  });
-  it.each(['WorktreeRow', 'SessionOrderRow'])('%s makes one measurement per row and at most one drop, never per move', async name => {
+  it.each(['WorktreeRow'])('%s makes one measurement per row and at most one drop, never per move', async name => {
     const ids = Array.from({ length: 500 }, (_, i) => `/tree-${i}`);
     const f = fixture(name, ids, ids.map((_, i) => 28 + i * 64));
     f.pan.onPanResponderGrant();
@@ -96,7 +86,7 @@ describe('production Projects drag closures', () => {
     f.pan.onPanResponderRelease(null, g(128)); f.pan.onPanResponderRelease(null, g(128)); await settle();
     expect(f.commit).toHaveBeenCalledOnce(); expect(f.measured).toHaveBeenCalledTimes(500);
   });
-  it.each(['WorktreeRow', 'SessionOrderRow'])('%s cancels on termination or unmount instead of committing late geometry', async name => {
+  it.each(['WorktreeRow'])('%s cancels on termination or unmount instead of committing late geometry', async name => {
     for (const dispose of [false, true]) {
       const f = fixture(name);
       f.pan.onPanResponderGrant(); f.pan.onPanResponderRelease(null, g(300));
@@ -104,12 +94,7 @@ describe('production Projects drag closures', () => {
       await settle(); expect(f.commit).not.toHaveBeenCalled();
     }
   });
-  it('cancels a Sheet gesture across close and reopen before measurement resolves', async () => {
-    const f = fixture('SessionOrderRow');
-    f.pan.onPanResponderGrant(); f.pan.onPanResponderRelease(null, g(300)); f.close(); f.reopen(); await settle();
-    expect(f.commit).not.toHaveBeenCalled();
-  });
-  it.each(['WorktreeRow', 'SessionOrderRow'])('%s rejects changed membership/order and missing geometry', async name => {
+  it.each(['WorktreeRow'])('%s rejects changed membership/order and missing geometry', async name => {
     const f = fixture(name); f.refs.delete('/b');
     f.pan.onPanResponderGrant(); f.pan.onPanResponderRelease(null, g(300)); await settle();
     expect(f.commit).not.toHaveBeenCalled();
