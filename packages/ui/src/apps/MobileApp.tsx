@@ -18,6 +18,7 @@ import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { MobileOtaUpdateNotice } from '@/components/update/MobileOtaUpdateNotice';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { YuriLogo } from '@/components/ui/YuriLogo';
 import { MobileConnectionWelcome } from './MobileConnectionWelcome';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
@@ -31,6 +32,7 @@ import { SettingsView } from '@/components/views/SettingsView';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { MobileSurfaceHeader } from '@/components/ui/MobileSurfaceHeader';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { getMobileWindowMotionController, MOBILE_SESSIONS_WINDOW_ID } from '@/components/ui/MobileWindowMotionRegistry';
 import { MobileSessionStatusBar } from '@/components/chat/MobileSessionStatusBar';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
@@ -111,7 +113,7 @@ import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { mobileBackNavigationCoordinator, useMobileNavigationDriver } from '@/mobile/mobileBackNavigation';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { autoConnectLastInstance, connectionDisplayUrl, getAutoConnectTargetLabel, isActiveRuntimeConnection, reprobeActiveConnection, useMobileConnection, type UseMobileConnection } from './mobileConnections';
-import { MobileConnectionMethodDivider, MobilePairingLinkForm } from './MobilePairingLinkForm';
+import { MobilePairingLinkForm } from './MobilePairingLinkForm';
 import { isQrScanSupported, scanConnectionQr } from './mobileQrScan';
 import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from './runtimeEndpointReset';
 import { useAppFontEffects } from './useAppFontEffects';
@@ -1120,6 +1122,9 @@ const MobileInstancesSurface: React.FC<{
   const [url, setUrl] = React.useState('');
   const [label, setLabel] = React.useState('');
   const [clientToken, setClientToken] = React.useState('');
+  const [pairingLink, setPairingLink] = React.useState('');
+  const [addOpen, setAddOpen] = React.useState(false);
+  const addSheetId = React.useId();
   const [password, setPassword] = React.useState('');
   const [isScanning, setIsScanning] = React.useState(false);
   const qrScanSupported = React.useMemo(() => isQrScanSupported(), []);
@@ -1128,7 +1133,11 @@ const MobileInstancesSurface: React.FC<{
   const [formOpen, setFormOpen] = React.useState(false);
   // Which row is being connected to, for the per-row spinner.
   const [connectingId, setConnectingId] = React.useState<string | null>(null);
-  const handleConnected = useEvent(onConnect);
+  const handleConnected = useEvent(() => {
+    setAddOpen(false);
+    setPairingLink('');
+    onConnect();
+  });
 
   React.useEffect(
     () => subscribeConnected(handleConnected),
@@ -1146,6 +1155,14 @@ const MobileInstancesSurface: React.FC<{
     setClientToken('');
     setError(null);
     setFormOpen(false);
+    setAddOpen(false);
+  });
+
+  const closeAddSheet = useEvent(() => {
+    if (isBusy || isScanning) return;
+    setAddOpen(false);
+    setFormOpen(false);
+    setError(null);
   });
 
   const saveInstance = useEvent((event: React.FormEvent) => {
@@ -1182,6 +1199,7 @@ const MobileInstancesSurface: React.FC<{
           if (result.label) setLabel(result.label);
           if (result.clientToken) setClientToken(result.clientToken);
           setFormOpen(true);
+          setAddOpen(true);
           break;
         case 'pairing':
           await conn.redeemPairingConnection(result.pairing);
@@ -1280,6 +1298,57 @@ const MobileInstancesSurface: React.FC<{
       </div>
     );
   }
+
+  const manualForm = (
+    <form className="flex flex-col gap-3" onSubmit={saveInstance}>
+      {!isRelayOnlyEditing ? (
+        <label className="block space-y-1.5">
+          <span className="block typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
+          <Input
+            {...mobileInputKeyboardProps}
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder={t('mobile.connect.url.placeholder')}
+            type="url"
+            inputMode="url"
+            autoCapitalize="none"
+            disabled={isBusy || isScanning}
+            className="w-full text-[16px]"
+          />
+        </label>
+      ) : null}
+      <label className="block space-y-1.5">
+        <span className="block typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
+        <Input
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder={t('mobile.instances.label.placeholder')}
+          autoComplete="off"
+          autoCapitalize="words"
+          autoCorrect="off"
+          spellCheck={false}
+          disabled={isBusy || isScanning}
+          className="w-full text-[16px]"
+        />
+      </label>
+      <label className="block space-y-1.5">
+        <span className="block typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
+        <Input
+          {...mobileInputKeyboardProps}
+          value={clientToken}
+          onChange={(event) => setClientToken(event.target.value)}
+          placeholder={t('mobile.connect.token.placeholder')}
+          autoCapitalize="none"
+          disabled={isBusy || isScanning}
+          className="w-full text-[16px]"
+        />
+      </label>
+      {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+      <Button type="submit" size="lg" className="w-full" disabled={isBusy || isScanning}>
+        {editingConnection ? t('mobile.instances.saveEdit') : t('mobile.instances.saveNew')}
+      </Button>
+    </form>
+  );
 
   return (
     <div className="yuri-settings-page-content">
@@ -1394,107 +1463,92 @@ const MobileInstancesSurface: React.FC<{
         )}
       </SettingsGroup>
 
-      {/* QR pairing is the primary path; the manual form stays hidden until
-          asked for (or until a row's edit button opens it). */}
+      {/* Connection entry stays behind an explicit add action; saved-instance
+          editing retains its existing inline editor. */}
       <SettingsGroup
         label={editingConnection ? t('mobile.instances.editTitle') : t('mobile.instances.addTitle')}
-        cardClassName={!formOpen && !editingConnection ? '!bg-background' : undefined}
+        actions={editingConnection ? (
+          <Button type="button" variant="ghost" size="xs" onClick={resetForm} disabled={isBusy || isScanning}>
+            {t('mobile.instances.cancelEdit')}
+          </Button>
+        ) : undefined}
       >
-        {!formOpen && !editingConnection ? (
-          <div className="yuri-settings-group-row flex flex-col items-stretch gap-2">
-              {qrScanSupported ? (
-                <Button
-                  type="button"
-                  size="lg"
-                  className="h-12 w-full"
-                  onClick={() => void handleScanInstance()}
-                  disabled={isScanning}
-                >
-                  <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
-                  {t('mobile.connect.scanQr')}
-                </Button>
-              ) : null}
+        {!editingConnection ? (
+          <div className="yuri-settings-group-row flex flex-col gap-3">
+            {qrScanSupported ? (
               <Button
                 type="button"
-                variant="ghost"
                 size="lg"
-                className="h-12 w-full"
-                onClick={() => { setError(null); setFormOpen(true); }}
+                className="w-full"
+                onClick={() => void handleScanInstance()}
+                disabled={isBusy || isScanning}
               >
-                <Icon name="add" className="size-[18px]" />
-                {t('mobile.instances.addManual')}
+                <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
+                {t('mobile.connect.scanQr')}
               </Button>
-              {error ? <p className="px-1 text-center typography-small text-[var(--status-error)]">{error}</p> : null}
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="lg"
+              className="w-full"
+              disabled={isBusy || isScanning}
+              onClick={() => { setError(null); setFormOpen(false); setAddOpen(true); }}
+            >
+              {t('mobile.instances.addManual')}
+            </Button>
+            {error && !addOpen ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
           </div>
         ) : (
           <div className="yuri-settings-group-row flex flex-col gap-3">
-              <div className="flex min-h-8 items-center justify-end px-1">
-                <Button type="button" variant="ghost" size="xs" onClick={resetForm}>
-                  {t('mobile.instances.cancelEdit')}
-                </Button>
-              </div>
-              <form className="flex flex-col gap-3" onSubmit={saveInstance}>
-                {!isRelayOnlyEditing ? (
-                  <label className="block space-y-1.5">
-                    <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
-                    <input
-                      {...mobileInputKeyboardProps}
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      placeholder={t('mobile.connect.url.placeholder')}
-                      type="url"
-                      inputMode="url"
-                      autoCapitalize="none"
-                      className={inputClass}
-                    />
-                  </label>
-                ) : null}
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
-                  <input
-                    value={label}
-                    onChange={(event) => setLabel(event.target.value)}
-                    placeholder={t('mobile.instances.label.placeholder')}
-                    autoComplete="off"
-                    autoCapitalize="words"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className={inputClass}
-                  />
-                </label>
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
-                  <input
-                    {...mobileInputKeyboardProps}
-                    value={clientToken}
-                    onChange={(event) => setClientToken(event.target.value)}
-                    placeholder={t('mobile.connect.token.placeholder')}
-                    autoCapitalize="none"
-                    className={inputClass}
-                  />
-                  <p className="px-1 typography-micro text-muted-foreground">{t('mobile.connect.token.hint')}</p>
-                </label>
-                <Button type="submit" size="lg" className="mt-1 h-12 w-full">
-                  {editingConnection ? t('mobile.instances.saveEdit') : t('mobile.instances.saveNew')}
-                </Button>
-              </form>
-              {/* Pairing link is available when adding (not while editing an existing row). */}
-              {!editingConnection ? (
-                <>
-                  <MobileConnectionMethodDivider label={t('mobile.connect.link.divider')} />
-                  <MobilePairingLinkForm
-                    disabled={isBusy || isScanning}
-                    isBusy={isBusy}
-                    inputClassName={inputClass}
-                    onRedeem={handlePairingLinkRedeem}
-                    onInvalid={handlePairingLinkInvalid}
-                  />
-                </>
-              ) : null}
-              {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
+            {manualForm}
           </div>
         )}
       </SettingsGroup>
+
+      <MobileResizableSheet
+        id={`mobile-instance-add-${addSheetId}`}
+        open={addOpen}
+        onOpenChange={(open) => { if (!open) closeAddSheet(); }}
+        fitContent
+        title={<h2 className="truncate typography-ui-label font-semibold">{t(formOpen ? 'mobile.instances.addTitle' : 'mobile.connect.link.useLink')}</h2>}
+        ariaLabel={t('mobile.instances.addTitle')}
+        closeAriaLabel={t('mobile.surface.closeAria')}
+        resizeAriaLabel={t('mobile.connect.options.resize')}
+      >
+        <ScrollableOverlay className="px-5 py-5" disableHorizontal fillContainer={false}>
+          <div className="flex flex-col gap-5">
+            {formOpen ? (
+              <>
+                {manualForm}
+                <Button variant="ghost" disabled={isBusy || isScanning} onClick={() => { setFormOpen(false); setError(null); }}>
+                  {t('mobile.connect.link.useLink')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="typography-small text-muted-foreground">{t('mobile.connect.link.help')}</p>
+                <MobilePairingLinkForm
+                  value={pairingLink}
+                  onValueChange={(value) => { setPairingLink(value); setError(null); }}
+                  showPasteButton
+                  disabled={isBusy || isScanning}
+                  isBusy={isBusy}
+                  inputClassName="min-w-0 flex-1 text-[16px]"
+                  buttonVariant="default"
+                  buttonClassName="yuri-welcome-primary w-full"
+                  error={error}
+                  onRedeem={handlePairingLinkRedeem}
+                  onInvalid={handlePairingLinkInvalid}
+                />
+                <Button variant="ghost" disabled={isBusy || isScanning} onClick={() => { setFormOpen(true); setError(null); }}>
+                  {t('mobile.connect.manual.toggle')}
+                </Button>
+              </>
+            )}
+          </div>
+        </ScrollableOverlay>
+      </MobileResizableSheet>
     </div>
   );
 };
