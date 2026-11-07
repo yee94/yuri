@@ -6,7 +6,7 @@ import { SidebarBackgroundTasks } from './SidebarBackgroundTasks';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { historyImportMessages } from '@/lib/i18n/messages/history-import';
 
-const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
+const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, local: true, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
   listeners: new Set<() => void>(), renders: vi.fn() }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeGeneration: () => fixture.generation, getRuntimeTransportIdentity: () => fixture.transport, getRuntimeKey: () => fixture.transport,
@@ -18,7 +18,7 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { loca
   const message = key === 'backgroundTasks.downloaded' || key === 'backgroundTasks.downloadedUnknownTotal' ? historyImportMessages.en[key] : key;
   return message.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
 } }; } }));
-vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => true }));
+vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => fixture.local }));
 vi.mock('@/stores/useUpdateStore', async () => {
   const { create } = await import('zustand');
   return { useUpdateStore: create(() => ({ downloading: false, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
@@ -40,7 +40,7 @@ const render = async () => {
 };
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
-  fixture.transport = 'host-one'; fixture.generation = 1; fixture.listeners.clear();
+  fixture.transport = 'host-one'; fixture.generation = 1; fixture.local = true; fixture.listeners.clear();
   fixture.refresh.mockReset().mockResolvedValue({ projects: [] }); fixture.move.mockReset(); fixture.open.mockReset(); fixture.renders.mockReset();
   useUpdateStore.setState({ downloading: false, downloadError: null, downloadVersion: null, progress: null });
   vi.mocked(useUpdateStore.getState().downloadUpdate).mockReset().mockResolvedValue(undefined);
@@ -240,6 +240,30 @@ test('only download failures create a client task and retry delegates to the upd
   await act(async () => (document.querySelector('[data-background-task="client-update"] button') as HTMLButtonElement).click()); await tick();
   expect(useUpdateStore.getState().downloadUpdate).toHaveBeenCalledOnce();
   expect(host.querySelector('[role="progressbar"]')?.className).not.toContain('text-[var(--status-error)]');
+});
+
+test('a successful remote retry clears only the remote task, keeping an independent same-version client download untouched', async () => {
+  fixture.local = false;
+  const operation = { id: 'remote-update', planId: 'remote-plan', version: '2.0.0', channel: 'beta', kind: 'cli-package',
+    status: 'failed', progress: 42, error: 'update_interrupted' };
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' }), operation));
+  useUpdateStore.setState({ downloading: true, downloadVersion: operation.version, progress: { downloaded: 40, total: 100 } });
+  const clientUpdate = useUpdateStore.getState();
+  await render();
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+  await act(async () => host.querySelector('button')!.click()); await tick();
+  fixture.fetch.mockResolvedValueOnce(Response.json({ ...hostUpdate(), currentVersion: operation.version, channel: 'beta', update: null,
+    operation: { ...operation, status: 'succeeded', progress: 100, error: null } }));
+
+  await act(async () => (document.querySelector('[data-background-task="remote-update"] button') as HTMLButtonElement).click()); await tick();
+
+  expect(document.querySelector('[data-background-task="remote-update"]')).toBeNull();
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector('[data-background-task="client-update"]')).not.toBeNull();
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+  expect(useUpdateStore.getState()).toBe(clientUpdate);
+  expect(useUpdateStore.getState().downloadUpdate).not.toHaveBeenCalled();
+  expect(fixture.fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
 });
 
 test('phase progress owns its denominator; unknown totals never display fabricated percentages', async () => {

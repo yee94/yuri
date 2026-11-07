@@ -49,6 +49,9 @@ instead of fabricating a new selection; they follow the same Continue→Remove f
 Index recovery reuses durable checkpoints. Host update recovery fetches a fresh
 plan for the failed operation's exact version/channel/kind; an unavailable or
 changed plan is a visible failure, never an implicit update to a newer release.
+An already-active matching operation resumes observation; a matching succeeded
+operation with the target running version removes only that Host's stale task.
+Neither path calls the local client updater, even when both target the same version.
 Client downloads reuse their owning updater with `resume: true`, without applying
 or restarting the client. Check-only failures do not invent download tasks.
 The old update footer button hides its duplicate download indicator while this

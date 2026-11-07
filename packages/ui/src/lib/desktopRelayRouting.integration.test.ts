@@ -9,7 +9,7 @@ vi.mock('./relay/tunnel-client', () => ({ createRelayTunnelClient: mocks.createT
 
 import { restoreDesktopRelayRuntime, refreshDesktopHostCandidates } from './desktopRelayRestore';
 import { switchDesktopHost } from './desktopHostSwitch';
-import { getRuntimeKey, switchRuntimeEndpoint } from './runtime-switch';
+import { getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity, switchRuntimeEndpoint } from './runtime-switch';
 import { getActiveRelayTunnel, deactivateRelayTunnel } from './relay/runtime-tunnel';
 import { runtimeFetch } from './runtime-fetch';
 import { opencodeClient } from './opencode/client';
@@ -18,6 +18,9 @@ import { readRuntimeScopedItem } from './runtimeScopedStorage';
 import { resolveTranscriptDurableRuntimeKind } from '../sync/transcript-durable-store-runtime';
 import type { DesktopHost } from './desktopHosts';
 import type { RelayTunnelClient } from './relay/tunnel-client';
+import { hostUpdateQueryOptions, refreshHostUpdateSnapshot, resumeHostUpdate, startHostUpdate, type HostUpdateSnapshot } from '../queries/hostUpdateQueries';
+import { queryClient } from './queryRuntime';
+import { useUpdateStore } from '../stores/useUpdateStore';
 
 const localOrigin = 'http://127.0.0.1:57123';
 const directory = '/remote/worktrees/project/feature';
@@ -167,6 +170,52 @@ describe.each(['packaged', 'HMR'])('remote-computer worktree routing in %s UI', 
     expect(getRuntimeKey()).toBe(`host:${host.id}`);
     expect(getActiveRelayTunnel()).toBeNull();
     expect(nativeFetch.mock.calls.some(([input]) => inputUrl(input).pathname === '/auth/session')).toBe(true);
+  });
+
+  it.each([
+    { hostKind: 'cli', kind: 'cli-package' },
+    { hostKind: 'electron', kind: 'ota' },
+    { hostKind: 'electron', kind: 'installer' },
+  ] as const)('reconciles the Relay $hostKind/$kind update without changing the local client updater or invoking its native commands', async ({ hostKind, kind }) => {
+    await restoreDesktopRelayRuntime(host.id);
+    const transport = getRuntimeTransportIdentity();
+    const generation = getRuntimeGeneration();
+    const localUpdate = useUpdateStore.getState();
+    const operation = { id: 'remote-update', planId: 'remote-plan', version: '2.0.1-beta.1', channel: 'beta' as const,
+      kind, status: 'restarting' as const, progress: 100, error: null };
+    let remote: HostUpdateSnapshot = { serverId: host.relay!.serverId, host: hostKind, currentVersion: '2.0.0-beta.1', channel: 'beta',
+      supported: true, reason: null, checkError: null, operation: null,
+      update: { version: operation.version, kind: operation.kind, planId: operation.planId, rollback: false, restartRequired: true, releaseNotes: null } };
+    const fetchOther = tunnelFetch.getMockImplementation()!;
+    let restarting = false;
+    tunnelFetch.mockImplementation(async (input, init) => {
+      if (inputUrl(input).pathname !== '/api/system/update') return fetchOther(input, init);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-remote-token');
+      if (restarting) throw new Error('Host restarting');
+      if (init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({ version: operation.version, channel: 'beta', planId: operation.planId, allowDowngrade: false });
+        remote = { ...remote, update: null, operation };
+        return Response.json({ operation }, { status: 202 });
+      }
+      return Response.json(remote);
+    });
+
+    const plan = await refreshHostUpdateSnapshot(transport, generation, 'beta');
+    await startHostUpdate(plan, transport, generation);
+    restarting = true;
+    await expect(refreshHostUpdateSnapshot(transport, generation, 'beta')).rejects.toThrow('Host restarting');
+    restarting = false;
+    remote = { ...remote, currentVersion: operation.version, operation: { ...operation, status: 'succeeded' } };
+    const staleFailure = { ...operation, status: 'failed' as const, error: 'update_interrupted' };
+    queryClient.setQueryData(hostUpdateQueryOptions(transport, generation).queryKey, { ...remote, operation: staleFailure });
+
+    await expect(resumeHostUpdate(staleFailure, transport, generation)).resolves.toMatchObject({ id: operation.id, status: 'succeeded' });
+
+    expect(queryClient.getQueryData<HostUpdateSnapshot>(hostUpdateQueryOptions(transport, generation).queryKey)?.operation?.status).toBe('succeeded');
+    expect(useUpdateStore.getState()).toBe(localUpdate);
+    expect(invoke.mock.calls.some(([command]) => /desktop_(?:check_for_updates|download_and_install_update|restart)/.test(command))).toBe(false);
+    expect(nativeFetch.mock.calls.some(([input]) => inputUrl(input).pathname === '/api/system/update')).toBe(false);
+    expect(tunnelFetch.mock.calls.filter(([input, init]) => inputUrl(input).pathname === '/api/system/update' && init?.method === 'POST')).toHaveLength(1);
   });
 
   it('restores a healthy paired transport without SSH preparation', async () => {

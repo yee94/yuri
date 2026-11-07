@@ -5,6 +5,12 @@ Continue re-fetches the original channel and requires an exact version/artifact
 kind match before submitting a fresh plan. It never replays expired plan IDs or
 silently substitutes the channel's newest release. Existing operation persistence,
 admission serialization and fresh artifact validation remain authoritative.
+If the same operation (ID, version, channel and artifact kind) is already active,
+Continue observes it instead of submitting again. Confirmed success also requires
+the Host's running version to match; it reconciles the stale background snapshot
+without requiring a now-absent update plan. These reads and task updates stay on
+the captured remote runtime and never change the local client updater or invoke
+its native check/download/restart commands.
 
 `GET /api/system/update?channel=stable|beta` returns the **serving Host's**
 identity/version, supported capability, selected/query channel, optional update
