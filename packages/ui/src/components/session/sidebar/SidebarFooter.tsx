@@ -83,7 +83,7 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
           {downloaded ? (
             <>
               <Icon name="restart" className={`size-3.5 ${restarting ? 'motion-safe:animate-spin' : ''}`} />
-              <span className="truncate">{t(restarting ? 'updateDialog.status.updating' : 'sessions.sidebar.footer.actions.restartUpdate')}</span>
+              <span className="truncate text-[10px] font-normal text-muted-foreground/60">{t(restarting ? 'updateDialog.status.updating' : 'sessions.sidebar.footer.actions.restartUpdate')}</span>
             </>
           ) : downloading ? (
             <svg

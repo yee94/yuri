@@ -66,6 +66,7 @@ describe('SidebarFooter update button', () => {
     expect(button().querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
     expect(button().className).toContain('bg-[var(--surface-muted)]');
     expect(button().className).not.toContain('size-7');
+    expect(button().querySelector('span')?.className).toBe('truncate text-[10px] font-normal text-muted-foreground/60');
 
     await act(async () => button().click());
     await act(async () => button().click());

@@ -55,6 +55,7 @@ The old update footer button hides its duplicate download indicator while this
 area is mounted. After the client reports `downloaded`, the footer shows a compact
 shared neutral solid Button with the restart icon and visible “Restart to update”
 label (“重启更新” in Simplified Chinese), rather than an icon-only download button.
+The label matches background-task triggers: 10px, normal weight, muted foreground at 60% opacity.
 Clicking delegates directly to the existing restart mutation, never the details
 dialog; pending restart disables repeat clicks and shows the updating label.
 Runtime generation changes remount the observers and clear completion tracking.
