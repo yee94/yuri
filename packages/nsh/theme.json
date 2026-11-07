@@ -1,0 +1,46 @@
+{
+  "name": "Yuri Native",
+  "cssVars": {
+    "theme": { "radius": "12px" },
+    "light": {
+      "background": "#f8f8f8",
+      "foreground": "#212121",
+      "card": "#f1f1f1",
+      "card-foreground": "#212121",
+      "primary": "#212121",
+      "primary-foreground": "#f8f8f8",
+      "secondary": "#ebebeb",
+      "secondary-foreground": "#212121",
+      "muted": "#ebebeb",
+      "muted-foreground": "#302c2a",
+      "accent": "#ebebeb",
+      "accent-foreground": "#212121",
+      "border": "#c1c0c0",
+      "input": "#c1c0c0",
+      "ring": "#054dfd",
+      "destructive": "#fc533a",
+      "success": "#12c905",
+      "chat-user": "#ebebeb"
+    },
+    "dark": {
+      "background": "#121212",
+      "foreground": "#f1ece8",
+      "card": "#151414",
+      "card-foreground": "#f1ece8",
+      "primary": "#f1ece8",
+      "primary-foreground": "#121212",
+      "secondary": "#1b1b1a",
+      "secondary-foreground": "#f1ece8",
+      "muted": "#1b1b1a",
+      "muted-foreground": "#cdc8c5",
+      "accent": "#282727",
+      "accent-foreground": "#f1ece8",
+      "border": "#4d4c4a",
+      "input": "#4d4c4a",
+      "ring": "#1456f7",
+      "destructive": "#fc533a",
+      "success": "#12c905",
+      "chat-user": "#202020"
+    }
+  }
+}

@@ -43,6 +43,7 @@ import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback';
 import { isIPadApp } from '@/lib/platform';
 import { parseRoute, updateBrowserURL } from '@/lib/router';
 import { openScheduledTask } from '@/lib/scheduledTaskNavigation';
+import { formatCompactRunDuration, resolveRunDurationMs } from '@/lib/scheduledTaskRunDuration';
 
 const scheduleTimes = (task: ScheduledTask): string[] => {
   const raw = Array.isArray(task.schedule.times)
@@ -157,45 +158,6 @@ const formatRunDateTime = (value: number): string => new Intl.DateTimeFormat(get
   hour: '2-digit',
   minute: '2-digit',
 }).format(new Date(value));
-
-/** Prefer wall-clock span when finished; live elapsed while running. */
-const resolveRunDurationMs = (run: ScheduledTaskRun, nowMs: number): number | null => {
-  if (run.status === 'running') {
-    return Math.max(0, nowMs - run.startedAt);
-  }
-  if (typeof run.finishedAt === 'number' && Number.isFinite(run.finishedAt)) {
-    const wallMs = Math.max(0, run.finishedAt - run.startedAt);
-    if (typeof run.durationMs === 'number' && Number.isFinite(run.durationMs) && run.durationMs >= 0) {
-      // Prefer the longer span so a short dispatch sample never under-reports
-      // a later finishAt from state/history convergence.
-      return Math.max(run.durationMs, wallMs);
-    }
-    return wallMs;
-  }
-  if (typeof run.durationMs === 'number' && Number.isFinite(run.durationMs) && run.durationMs >= 0) {
-    return run.durationMs;
-  }
-  return null;
-};
-
-/**
- * Compact wall-clock duration beside status (e.g. 12s, 2m 50s, 1h 2m).
- * Units are symbols shared with goal-strip duration; no prose labels.
- */
-const formatCompactRunDuration = (durationMs: number | null): string | null => {
-  if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return null;
-  if (durationMs < 1_000) return '<1s';
-  const totalSeconds = Math.floor(durationMs / 1_000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (totalMinutes < 60) {
-    return seconds > 0 ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`;
-  }
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-};
 
 type StatusTone = 'success' | 'error' | 'warning' | 'muted';
 

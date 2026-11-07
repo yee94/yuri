@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node"]
+  },
+  "include": [
+    "settings-quota-production.test.ts",
+    "settings-quota-production-recovery.test.ts",
+    "settings-quota-credentials.tsx",
+    "tests/settings-quota-production-scenarios.ts",
+    "tests/settings-quota-production-runner.mjs"
+  ],
+  "exclude": []
+}

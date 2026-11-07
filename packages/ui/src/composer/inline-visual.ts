@@ -1,4 +1,4 @@
-import { DRAFT_COMPOSER_TRIGGER_ICON_SLOT } from '@/sync/input-draft-types';
+import { DRAFT_COMPOSER_TRIGGER_ICON_SLOT } from '../sync/input-draft-types';
 
 /**
  * Metric-safe Composer chip visuals for the textarea highlight overlay.

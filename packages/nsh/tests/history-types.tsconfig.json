@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["../state.ts", "../history-messages.ts", "../history-rows.ts", "../history-scroll.ts"],
+  "exclude": []
+}

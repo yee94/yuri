@@ -11,6 +11,7 @@ export default defineConfig({
       'packages/vscode',
       'packages/electron',
       'packages/mobile',
+      'packages/nsh',
       'packages/relay-server',
       'deploy/update-service',
     ],

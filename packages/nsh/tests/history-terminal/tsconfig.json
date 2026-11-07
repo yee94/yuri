@@ -1,0 +1,14 @@
+{
+  "extends": "../../.nsh/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "nsh": ["../../.nsh/types/nsh/index.d.ts"],
+      "nsh/*": ["../../.nsh/types/nsh/*.d.ts"],
+      "*": ["../../.nsh/types/*.d.ts"],
+      "@/*": ["../../../ui/src/*"]
+    }
+  },
+  "include": ["../../history-terminal-fixture.tsx", "./scenario.ts", "./verdict.ts", "./footer-natural.ts", "./footer-release.ts", "./sync-verdict.ts"],
+  "exclude": []
+}

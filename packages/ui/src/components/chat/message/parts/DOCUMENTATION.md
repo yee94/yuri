@@ -6,6 +6,21 @@ Sorted compaction Activity uses localized Compacting / Compaction complete label
 
 This folder contains renderers for chat message parts (text, tools, reasoning, placeholders) and shared tool presentation helpers.
 
+NSH consumes the same pure turn/activity, process/Skill grouping and header identity
+helpers. `reasoningPresentation.ts` owns reasoning cleanup, the 80-character plain
+Markdown preview, initial expansion and automatic-expansion reconciliation for
+both React and Native. These helpers must not import React, browser stores,
+transport or Node runtime modules. The Native dependency-boundary test enforces
+that closure; `nativeProjectionParity.test.ts` compares raw-message prefixes
+against the Web projection. Rendering/animation and scroll geometry still require
+separate UIKit/Web evidence.
+
+`activityHeaderModel.ts` owns child-session avatar deduplication and slim-message
+ID selection for both renderers. The import-free `lib/slimActivityPart.ts`
+predicate is also used by Native exact reads, so Chat state does not pull task
+rendering helpers into its runtime dependency closure. Native's queue belongs to
+the Chat owner; React keeps using its existing transcript materialization owner.
+
 Tool grouping operates on visible Activity items: hidden reasoning and empty Thought placeholders do not split adjacent tools. Nonempty visible reasoning, narration, questions and other visible boundaries still retain their original positions. The source transcript and materialization inputs keep the original parts.
 
 The flat/live MessageBody path applies the same invisible-reasoning filter before collecting consecutive tools. Error status does not start a new group: successful and failed process tools remain adjacent in source order. `MessageList.contentRetention.test.tsx` exercises both live/sorted modes with empty and hidden Thought between successful and failed calls.
@@ -22,7 +37,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - **Skill tools** (`skill`) -> consecutive calls collapse into `SkillToolGroup` ("Load Skill" plus original names on one line, including a lone skill so later names can flip-animate)
   - **Other static tools** -> single `StaticToolRow` in `ProgressiveGroup.tsx` (no consecutive merge)
   - **Expandable leftovers** (task / question / todowrite / todoread) -> `ToolPart.tsx`. Todo calls, like Skill calls, stay outside the process fold and its call counts; each retains its own expandable task-list row in source order and splits surrounding process runs.
-- Shared tool icon mapping is centralized in `toolPresentation.tsx` (`getToolIcon`).
+- Shared tool artwork and native size mapping live in the import-type-only `toolIconModel.ts`; `toolPresentation.tsx` (`getToolIcon`) renders the React node, retaining the custom Todo progress mark. NSH consumes the same mapping without importing React.
 
 ## Which file controls what
 

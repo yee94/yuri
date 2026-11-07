@@ -1,5 +1,26 @@
 # UI Stores
 
+## Framework-neutral Settings types
+
+Quota model selection shares the import-free `lib/quota/model-selection-core.js`
+semantics with Native: an absent provider key inherits defaults, while an explicit
+empty array selects no models. `applyDefaultSelections` does not re-add models or
+write preferences for an existing empty selection. Host persistence and response
+sanitization preserve that explicit empty array.
+
+Session retention selection and visibility now share the import-free
+`lib/session-retention-policy.ts` owner with the NSH client. `globalSessions.ts`
+preserves its visibility/system-ownership exports; the React cleanup hook imports
+the same recent-five/cutoff builder. Native adds live/ancestor safety at its
+controller boundary; full-catalog authority and lifecycle remain runtime-owned.
+
+`lib/mcp-config-types.ts` owns the structural `McpDraft` / `McpScope` types;
+`useMcpConfigStore.ts` re-exports them for existing consumers. Pure MCP import
+helpers import the type-only owner directly, never the Zustand store.
+`lib/opencode/plugin-runtime-types.ts` similarly owns plugin inventory shapes;
+`lib/opencode/plugins.ts` preserves its existing type exports while pure plugin
+matching and Native adapters avoid the browser SDK/runtime owner.
+
 Provider Settings uses two transient selections: `__add_provider__` for the
 provider grid and `__custom_provider__` for a new custom draft. Catalog refresh and
 directory snapshot reconciliation preserve both in memory; persistence strips both

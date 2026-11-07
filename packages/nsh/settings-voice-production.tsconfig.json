@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node"]
+  },
+  "include": [
+    "settings-voice-production.test.ts",
+    "settings-voice-confirm-production.test.ts",
+    "tests/settings-voice-production-scenarios.ts",
+    "tests/settings-voice-production-runner.mjs"
+  ],
+  "exclude": []
+}

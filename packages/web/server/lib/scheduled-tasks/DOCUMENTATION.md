@@ -398,6 +398,20 @@ Every actual run (timer or manual):
 
 SSE events keep the existing `yuri:scheduled-task-ran` shape.
 
+Notification admission is separate from this list tip. Both actual
+`notifyTaskRun` callback paths now carry the real history run ID as `runID`.
+The direct path marks `resultOwner:'unowned'` only when no result handler exists;
+the review/recovery path marks it only after the handler explicitly returns
+`false`. A handler returning true takes over and bypasses generic notification;
+unknown handler results or history-finalize failure with a handler do not claim
+unowned authority. Existing legacy notification behavior is retained for those
+unknown cases, without new safe admission. The notification runtime additionally
+requires `reason:'scheduled'`, terminal success/error and a valid runID before
+publishing `yuri:notification-admitted` with the schedule proof documented in
+`notifications/DOCUMENTATION.md`. Manual runs never produce that admission, even
+if the callback is used for a recovered/manual result. A timestamp, session tip,
+missing run or busy→idle cannot replace the ID/ownership decision.
+
 ### Session create delivery
 
 `session.create` is one shot unless the official client error proves the

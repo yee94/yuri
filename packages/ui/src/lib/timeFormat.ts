@@ -1,5 +1,6 @@
 import { getCurrentIntlLocale } from '@/lib/i18n';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
+import { formatTimeForLocale } from './time-format-core';
 
 type TimePrecision = 'minute' | 'second';
 
@@ -14,17 +15,7 @@ export const formatTimeForPreference = (
   preference: TimeFormatPreference,
   options: { precision?: TimePrecision; hour?: 'numeric' | '2-digit'; fallback?: string } = {},
 ): string => {
-  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) {
-    return options.fallback ?? '';
-  }
-
-  return date.toLocaleTimeString(getCurrentIntlLocale(), {
-    hour: options.hour ?? 'numeric',
-    minute: '2-digit',
-    second: options.precision === 'second' ? '2-digit' : undefined,
-    hour12: getHour12Option(preference),
-  });
+  return formatTimeForLocale(timestamp, preference, getCurrentIntlLocale(), options);
 };
 
 export const formatDateTimeForPreference = (

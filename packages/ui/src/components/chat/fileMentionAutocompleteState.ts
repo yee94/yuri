@@ -1,22 +1,22 @@
 import type { Session } from '@/lib/opencode/v2-types';
 import fuzzysort from 'fuzzysort';
-import { scoreMentionTitle, scoreSessionMentionId } from '@/lib/composer-autocomplete/mention-rank';
-import type { ProjectFileSearchHit } from '@/lib/opencode/client';
-import { isNpmScopedPackageMention, rankFileMentionSearch, type FileMentionSearchHit } from '@/lib/search/fileMentionSearch';
+import { scoreMentionTitle, scoreSessionMentionId } from '../../lib/composer-autocomplete/mention-rank';
+import type { ProjectFileSearchHit } from '../../lib/search/projectFileSearchTypes';
+import { isNpmScopedPackageMention, rankFileMentionSearch, type FileMentionSearchHit } from '../../lib/search/fileMentionSearch';
 import {
   findLongestConfirmedSpacedMention,
   looksLikePastedFileReference,
   readSpacedPastedFileMention,
-} from '@/lib/messages/references/spacedFileMention';
+} from '../../lib/messages/references/spacedFileMention';
 
-export { looksLikePastedFileReference } from '@/lib/messages/references/spacedFileMention';
+export { looksLikePastedFileReference } from '../../lib/messages/references/spacedFileMention';
 
 export {
   isTestFileMentionPath,
   parseFileMentionQuery,
   resolveFileMentionSearchQuery,
   type FileMentionQueryIntent,
-} from '@/lib/search/fileMentionSearch';
+} from '../../lib/search/fileMentionSearch';
 
 export type FileMentionAutocompleteInputSource = 'manual' | 'paste';
 

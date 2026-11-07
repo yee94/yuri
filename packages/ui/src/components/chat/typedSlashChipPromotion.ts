@@ -1,4 +1,4 @@
-import { COMPOSER_TRIGGER_ICON_SLOT } from '@/composer/inline-visual';
+import { COMPOSER_TRIGGER_ICON_SLOT } from '../../composer/inline-visual';
 
 export type TypedSlashChipToken = {
   /** Absolute start of the `/` token in `text`. */

@@ -1,5 +1,6 @@
 import { useEvent } from '@reactuses/core';
 import { useState, useEffect } from 'react';
+import { getProviderLogoCandidates } from '../lib/providerBrand';
 
 type LogoSource = 'local' | 'none';
 
@@ -16,57 +17,9 @@ const localLogoModules = import.meta.glob<string>('../assets/provider-logos/*.sv
 
 const LOCAL_PROVIDER_LOGO_MAP = new Map<string, string>();
 const PRELOADED_LOGO_SRCS = new Set<string>();
+const AVAILABLE_PROVIDER_LOGOS = new Set<string>();
 
-const LOGO_ALIAS = new Map<string, string>([
-    ['codex', 'openai'],
-    ['chatgpt', 'openai'],
-    ['claude', 'anthropic'],
-    ['gemini', 'google'],
-    ['evroc-ai', 'evroc'],
-    ['evrocai', 'evroc'],
-    ['ollama-cloud', 'ollama'],
-    ['opencode-go', 'opencode'],
-    ['grok', 'xai'],
-    ['supergrok', 'xai'],
-    ['zcode', 'zai-coding-plan'],
-    ['wafer-ai', 'wafer.ai'],
-    ['wafer', 'wafer.ai'],
-]);
-
-const normalizeProviderId = (providerId: string | null | undefined) => {
-    return (providerId ?? '')
-        .toLowerCase()
-        .trim()
-        .replace(/^models\./, '')
-        .replace(/^provider\./, '')
-        .replace(/\s+/g, '-');
-};
-
-const buildLogoCandidates = (providerId: string | null | undefined) => {
-    const fallback = providerId?.toLowerCase().includes('magpie') ? ['magpie'] : [];
-    let brandId = providerId;
-    const magpie = providerId?.match(/^magpie:[^:]+:(.+)$/i);
-    if (magpie) {
-        try { brandId = decodeURIComponent(magpie[1]); }
-        catch { return fallback; }
-    }
-    const normalized = normalizeProviderId(brandId);
-    if (!normalized) {
-        return fallback;
-    }
-
-    const compact = normalized.replace(/[^a-z0-9_\-./:]/g, '');
-    const primary = compact.split(/[/:]/)[0] || compact;
-    const candidates = [LOGO_ALIAS.get(compact), LOGO_ALIAS.get(primary), compact, primary]
-        .filter((value): value is string => Boolean(value && value.length > 0));
-
-    for (const keyword of normalized.split(/[^a-z0-9]+/)) {
-        const brand = LOGO_ALIAS.get(keyword) ?? keyword;
-        if (LOCAL_PROVIDER_LOGO_MAP.has(brand)) candidates.push(brand);
-    }
-
-    return [...new Set(candidates.filter((candidate) => candidate !== 'magpie')), ...fallback];
-};
+const buildLogoCandidates = (providerId: string | null | undefined) => getProviderLogoCandidates(providerId, AVAILABLE_PROVIDER_LOGOS);
 
 const resolveProviderLogoSrc = (providerId: string | null | undefined): string | null => {
     const candidates = buildLogoCandidates(providerId);
@@ -99,6 +52,7 @@ for (const [path, url] of Object.entries(localLogoModules)) {
     const match = path.match(/provider-logos\/([^/]+)\.svg$/i);
     if (match?.[1] && url) {
         LOCAL_PROVIDER_LOGO_MAP.set(match[1].toLowerCase(), url);
+        AVAILABLE_PROVIDER_LOGOS.add(match[1].toLowerCase());
     }
 }
 

@@ -1,5 +1,5 @@
 import type { IconName } from "@/components/icon/icons";
-import type { I18nKey } from "@/lib/i18n";
+import type { I18nKey } from "./i18n/messages/en";
 
 // A draft starter is a reference to an existing command or skill, pinned to the
 // onboarding/draft welcome screen as a one-click chip. Scope (global vs project)

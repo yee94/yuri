@@ -1,5 +1,5 @@
 import type { Part } from '@/lib/opencode/v2-types';
-import { stripSystemReminders } from '@/lib/systemReminder';
+import { stripSystemReminders } from '../../../lib/systemReminder';
 
 type PartWithText = Part & { text?: string; content?: string; value?: string };
 

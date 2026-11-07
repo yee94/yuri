@@ -1,0 +1,13 @@
+{
+  "extends": "../../.nsh/history-uikit/project/.nsh/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "nsh": ["../../.nsh/history-uikit/project/.nsh/types/nsh/index.d.ts"],
+      "nsh/*": ["../../.nsh/history-uikit/project/.nsh/types/nsh/*.d.ts"],
+      "*": ["../../.nsh/history-uikit/project/.nsh/types/*.d.ts"],
+      "@/*": ["../../../ui/src/*"]
+    }
+  },
+  "include": ["../../history-uikit-fixture.tsx", "./scenario.ts"]
+}

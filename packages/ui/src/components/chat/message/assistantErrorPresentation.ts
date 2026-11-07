@@ -1,6 +1,6 @@
 import type { IconName } from '@/components/icon/icons';
-import type { I18nKey } from '@/lib/i18n';
-import { isLikelyProviderAuthFailure } from '@/lib/messages/providerAuthError';
+import type { I18nKey } from '../../../lib/i18n/messages/en';
+import { isLikelyProviderAuthFailure } from '../../../lib/messages/providerAuthError';
 
 export type AssistantErrorVariant = 'error' | 'info' | 'muted';
 

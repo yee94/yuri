@@ -4,6 +4,8 @@ export {
   setGitHubAuth,
   activateGitHubAuth,
   clearGitHubAuth,
+  removeGitHubAuth,
+  isGitHubAuthDisconnected,
   getGitHubClientId,
   getGitHubScopes,
   GH_CLI_ACCOUNT_ID,

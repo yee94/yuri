@@ -1,7 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { activityTaskAvatarSeeds, slimActivityMessageIds } from './activityHeaderModel';
+import { isSlimActivityPart } from '../../../../lib/slimActivityPart';
+import type { TurnActivityRecord } from '../../lib/turns/types';
+
+const taskActivity = (id: string, status: string, sessionID?: string): TurnActivityRecord => ({
+    id, turnId: 'turn', messageId: 'message', partIndex: 0, kind: 'tool',
+    part: { id, sessionID: 'session', messageID: 'message', callID: id, type: 'tool', tool: 'task', state: { status, input: {}, metadata: { sessionID } } },
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const progressiveGroupSource = readFileSync(join(__dirname, 'ProgressiveGroup.tsx'), 'utf-8');
@@ -359,12 +367,9 @@ describe('progressive activity presentation', () => {
     });
 
     test('keeps task agent avatars and status-specific counts in active and completed headers', () => {
-        expect(progressiveGroupSource).toContain('const seed = readTaskToolSessionId(part) || taskId;');
-        expect(progressiveGroupSource).toContain('const all = new Set<string>();');
-        expect(progressiveGroupSource).toContain('const active = new Set<string>();');
-        expect(progressiveGroupSource).toContain('all.add(seed);');
-        expect(progressiveGroupSource).toContain('active.add(seed);');
-        expect(progressiveGroupSource).toContain('return { active: [...active], all: [...all] };');
+        expect(progressiveGroupSource).toContain('return activityTaskAvatarSeeds(parts);');
+        expect(activityTaskAvatarSeeds([taskActivity('one', 'completed', 'child'), taskActivity('resume', 'running', 'child'), taskActivity('two', 'completed', 'other')]))
+            .toEqual({ active: ['child'], all: ['child', 'other'] });
         expect(progressiveGroupSource).toContain('{displayedTaskAvatarSeeds.length > 0 ? (');
         expect(progressiveGroupSource).toContain('<AgentAvatar');
         expect(progressiveGroupSource).toContain('inline-flex shrink-0 items-center gap-0.5');
@@ -395,7 +400,8 @@ describe('progressive activity presentation', () => {
     });
 
     test('materializes slim activity messages once when the user expands the disclosure', () => {
-        expect(progressiveGroupSource).toContain("part.slim === true && (part.type === 'tool' || part.type === 'reasoning' || part.type === 'file')");
+        for (const type of ['tool', 'reasoning', 'file']) expect(isSlimActivityPart({ type, slim: true })).toBe(true);
+        expect(isSlimActivityPart({ type: 'text', slim: true })).toBe(false);
         expect(progressiveGroupSource).toContain('const materializationFlightsRef = React.useRef(new Map<string, Promise<void>>())');
         expect(progressiveGroupSource).toContain('if (materializationFlightsRef.current.has(targetMessageId)) continue;');
         expect(progressiveGroupSource).toContain('materializeTranscriptMessage(\n                effectiveDirectory,\n                targetSessionId,\n                targetMessageId,\n                { priority: autoSkipFailed ? \'background\' : \'user\' },\n            )');
@@ -470,8 +476,11 @@ describe('progressive activity presentation', () => {
     });
 
     test('keeps non-slim activity messages on the existing render path', () => {
-        expect(progressiveGroupSource).toContain('if (isSlimMaterializablePart(activity) && activity.messageId)');
-        expect(progressiveGroupSource).toContain("part.slim === true");
+        const activity = taskActivity('tool', 'completed');
+        expect(slimActivityMessageIds([activity])).toEqual([]);
+        const slim = { ...activity, part: { ...activity.part, slim: true } };
+        expect(slimActivityMessageIds([slim, slim, activity])).toEqual(['message']);
+        expect(progressiveGroupSource).toContain('return slimActivityMessageIds(parts);');
         expect(progressiveGroupSource).not.toContain("part.type === 'text' || part.type === 'tool'");
     });
 
@@ -488,10 +497,8 @@ describe('progressive activity presentation', () => {
     });
 
     test('summarizes active task agents while retaining every completed participant', () => {
-        expect(progressiveGroupSource).toContain('if (!isTaskToolName(part.tool)) continue;');
-        expect(progressiveGroupSource).toContain("stateRecord.status === 'pending' || stateRecord.status === 'running'");
-        expect(progressiveGroupSource).toContain('const taskId = typeof part.id === \'string\' ? part.id.trim() : \'\'');
-        expect(progressiveGroupSource).toContain('return { active: [...active], all: [...all] };');
+        expect(activityTaskAvatarSeeds([taskActivity('fallback', 'pending'), taskActivity('completed', 'completed', 'child'), taskActivity('failed', 'error', 'other')]))
+            .toEqual({ active: ['fallback'], all: ['fallback', 'child', 'other'] });
         expect(progressiveGroupSource).toContain('const displayedTaskAvatarSeeds = isActive ? taskAvatarSeeds.active : taskAvatarSeeds.all;');
         expect(progressiveGroupSource).toContain('displayedTaskAvatarSeeds.slice(0, isMobile ? 2 : 3)');
         expect(progressiveGroupSource).toContain('<AgentAvatar');

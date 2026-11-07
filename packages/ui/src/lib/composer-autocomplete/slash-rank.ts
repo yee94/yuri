@@ -1,4 +1,4 @@
-import { scoreByFuzzyQuery } from '@/lib/search/fuzzySearch';
+import { scoreByFuzzyQuery } from '../search/fuzzySearch';
 
 export type RankableSlashCommand = {
   name: string;

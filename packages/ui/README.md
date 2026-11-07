@@ -3,6 +3,10 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+Provider 品牌候选顺序由无运行时依赖的 `src/lib/providerBrand.ts` 所有；Web 的
+`useProviderLogo` 与 NSH 的原生图片适配器共用 alias/Magpie 解码规则，各自提供实际
+artwork 目录。Native 不导入 React Hook 或 `import.meta.glob`。
+
 ## Tests
 
 The desktop header shows a neutral connection glyph when more than one instance
@@ -237,6 +241,8 @@ new URLs or new protocol defaults.
 ## Runtime contract integration
 
 Mobile remote desktop lives in `src/mobile/RemoteDesktopPanel.tsx`, with transient connection/gesture ownership in `src/lib/remote-desktop/` and runtime-scoped capability Query state in `src/queries/remoteDesktopQueries.ts`. It uses the existing runtime fetch/auth/socket path for direct and Relay connections. The connected Host owns capture and input; the client never falls back to its local computer. See `../web/server/lib/remote-desktop/DOCUMENTATION.md` for supported platforms, interaction, resource limits and acceptance gates.
+
+The shared input contract lives in `src/lib/remote-desktop/input.ts`. Gesture helpers import this data-only module, not the browser connection implementation, so native consumers do not pull DOM or Relay transports into their type-checking tree. `connection.ts` retains its type export for existing browser callers.
 
 The panel forwards zoom/Fit state transitions to the session connection without React state or per-frame traffic. `connection.ts` sends the bounded `view.zoomed` control only after the Host advertises `ready.zoomQuality: true`; old/non-advertising Hosts receive no unknown commands. The latest state is retained through startup, and connection closure/runtime switching rejects later control. New Hosts prioritize source-resolution detail while zoomed and restore normal adaptive quality on Fit, without reconnecting or resetting local zoom when encoded dimensions change at the same aspect ratio.
 

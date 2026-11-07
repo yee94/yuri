@@ -247,6 +247,7 @@ export const createTunnelHost = ({
         body: requestBody,
         duplex: hasBody ? 'half' : undefined,
         signal: stream.abort.signal,
+        redirect: 'manual',
       });
     } catch (error) {
       if (streams.get(streamId) === stream) {

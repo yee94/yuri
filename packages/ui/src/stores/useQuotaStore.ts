@@ -6,6 +6,7 @@ import { QUOTA_PROVIDERS } from '@/lib/quota';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { getDefaultModels } from '@/lib/quota/model-families';
+import { defaultUsageSelectedModels } from '@/lib/quota/model-selection-core';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { fetchQuotaProvider, isProviderResult, queryClient, queryKeys } from '@/lib/queryRuntime';
@@ -403,16 +404,17 @@ export const useQuotaStore = create<QuotaStore>()(
       applyDefaultSelections: (providerId, availableModels) => {
         const state = get();
         // Only apply if no prior selections exist
-        if ((state.selectedModels[providerId]?.length ?? 0) > 0) return;
+        if (Object.prototype.hasOwnProperty.call(state.selectedModels, providerId)) return;
 
         const defaults = getDefaultModels(providerId as QuotaProviderId, availableModels);
-        if (defaults.length === 0) return;
+        const patch = defaultUsageSelectedModels(state.selectedModels, providerId, defaults);
+        if (!patch) return;
 
-        set((s) => ({
-          selectedModels: { ...s.selectedModels, [providerId]: defaults },
+        set(() => ({
+          selectedModels: patch.usageSelectedModels,
         }));
         // Persist
-        void updateDesktopSettings({ usageSelectedModels: get().selectedModels });
+        void updateDesktopSettings(patch);
       },
     }),
     { name: 'quota-store' }

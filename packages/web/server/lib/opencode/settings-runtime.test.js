@@ -6,6 +6,7 @@ import path from 'path';
 import { createProjectIdFromPath } from '../projects/project-id.js';
 import { createSettingsRuntime } from './settings-runtime.js';
 import { createSettingsNormalizationRuntime } from './settings-normalization-runtime.js';
+import { createSettingsHelpers } from './settings-helpers.js';
 
 const createRuntime = async (overrides = {}) => {
   const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'yuri-settings-runtime-'));
@@ -36,6 +37,45 @@ const createRuntime = async (overrides = {}) => {
 };
 
 describe('settings runtime', () => {
+  const preferenceHelpers = () => createSettingsHelpers({
+    normalizePathForPersistence: value => value,
+    normalizeDirectoryPath: value => value,
+    sanitizeTypographySizesPartial: () => undefined,
+    normalizeStringArray: values => Array.isArray(values) ? values.filter(value => typeof value === 'string') : [],
+    sanitizeModelRefs: () => undefined,
+    sanitizeSkillCatalogs: () => undefined,
+    sanitizeProjects: values => Array.isArray(values) ? values : [],
+  });
+  it('durably round-trips cleanup actions and explicit empty quota selections through the actual sanitizer and merge', async () => {
+    const helpers = preferenceHelpers();
+    const { runtime, settingsFilePath, cleanup } = await createRuntime(helpers);
+    try {
+      await runtime.persistSettings({ usageSelectedModels: { google: ['model-one'], claude: ['model-two'] }, sessionRetentionAction: 'archive', autoDeleteEnabled: false });
+      const patch = { usageSelectedModels: { google: [], claude: ['model-two'] }, sessionRetentionAction: 'delete' };
+      expect(await runtime.persistSettings(patch)).toMatchObject(patch);
+      expect(JSON.parse(await fsPromises.readFile(settingsFilePath, 'utf8'))).toMatchObject({ ...patch, autoDeleteEnabled: false });
+      expect(helpers.formatSettingsResponse(await runtime.readSettingsFromDiskStrict())).toMatchObject(patch);
+      await runtime.persistSettings({ sessionRetentionAction: 'invalid', usageSelectedModels: { google: [null, 3, ''] } });
+      expect(helpers.formatSettingsResponse(await runtime.readSettingsFromDiskMigrated())).toMatchObject(patch);
+    } finally { await cleanup(); }
+  });
+  it('a failed preference replacement preserves the previously persisted cleanup action and empty selections', async () => {
+    let fail = false;
+    const helpers = preferenceHelpers();
+    const { runtime, settingsFilePath, cleanup } = await createRuntime({ ...helpers, fsPromises: { ...fsPromises, rename: async (...args) => {
+      if (fail) throw Object.assign(new Error('Synthetic preference write failure'), { code: 'EIO' });
+      return fsPromises.rename(...args);
+    } } });
+    try {
+      const prior = { sessionRetentionAction: 'archive', usageSelectedModels: { google: [] }, autoDeleteEnabled: false };
+      await runtime.persistSettings(prior);
+      const bytes = await fsPromises.readFile(settingsFilePath, 'utf8');
+      fail = true;
+      await expect(runtime.persistSettings({ sessionRetentionAction: 'delete', usageSelectedModels: { google: ['new-model'] } })).rejects.toThrow('Synthetic preference write failure');
+      expect(await fsPromises.readFile(settingsFilePath, 'utf8')).toBe(bytes);
+      expect(helpers.formatSettingsResponse(await runtime.readSettingsFromDiskStrict())).toMatchObject(prior);
+    } finally { await cleanup(); }
+  });
   it.each(['read-first', 'write-first', 'functional-write-first'])(
     'keeps a fresh home-directory bootstrap out of the project registry (%s)', async (order) => {
       const { runtime, tempRoot, cleanup } = await createRuntime({

@@ -1,0 +1,9 @@
+{
+  "name": "Remote desktop synthetic fixture",
+  "id": "example.yuri.remote-desktop-fixture",
+  "version": "0.1.0",
+  "theme": "../../theme.json",
+  "capabilities": {
+    "host": ["runtime.request", "remoteDesktop.open", "remoteDesktop.close", "remoteDesktop.input", "remoteDesktop.view", "remoteDesktop.ack"]
+  }
+}

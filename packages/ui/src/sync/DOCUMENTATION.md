@@ -62,6 +62,17 @@ policy's false/true transitions.
 
 ## Per-request history message budget
 
+`context-usage-projection.ts` owns the pure native-message normalizer and identity
+helpers. `session-projection-api.ts` re-exports their existing public names and
+retains HTTP, pagination and reconciliation. The NSH context overview consumes
+the same normalizer without importing browser transport; this extraction does
+not change Web projection, cursor or reconciliation semantics.
+
+The data-only compaction card types and predicates live in `session-compaction.ts`.
+`session-projection-api.ts` re-exports the existing public names unchanged. Pure
+turn/display consumers import the data module directly, so Native reuse cannot
+pull the browser `runtimeFetch` transport into its projection dependency closure.
+
 `fetchTranscriptPreviousPage(directory, sessionID, pageSize?)` forwards an optional native message count through the repository and InfiniteQuery controller to the production projection API's `limit`. PC post-paint warmup and load-earlier requests use 50 messages per page; mobile history keeps the default native page size of 20. This override is distinct from the legacy turn budget, which native projection does not consume. Concurrent previous-page callers share the active flight and its original budget. The controller restores its normal query options after success or failure; transport-page cache keys include the effective limit, while canonical transcript identity remains runtime/directory/session scoped. A large page is merged atomically through the same pagination and viewport-preservation path, retaining unchanged message and part references.
 
 ## Durable transcript partition
@@ -243,6 +254,8 @@ An authoritative refresh repairs previously ID-sorted in-memory or durable-seede
 ## OpenCode 2 shell, form replies, and stream timing
 
 Tool execution timing is server-owned: native tool `time.ran` / `time.completed` project to `state.time.start` / `state.time.end`. Live `session.tool.called` and success/failure events use their envelope creation clocks for the same fields; progress preserves them. Missing clocks remain unknown, never the time a row mounts. Shell elapsed labels therefore survive session re-entry and freeze on authoritative completion. Regression coverage: `ToolPart.background.test.tsx` exercises GET projection, live events and real row remounts.
+
+`session-tool-content.ts` owns the pure output/clock leaves shared by this HTTP projection and the NSH native renderer. An actual `state.content` array is authoritative over legacy `state.output`, including an empty array; only text leaves become display output. Finite `time.ran/completed` values retain zero, while absent/invalid clocks remain unknown. This module has no React, runtime-fetch or transport dependency; sharing it does not make native QuickJS import the browser projection transport.
 
 ### Interrupt acknowledgement versus execution settlement
 

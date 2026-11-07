@@ -1,5 +1,5 @@
-import { LONG_PRESS_MS, TAP_MAX_MS, isDoubleTap } from '@/lib/touch-gestures/tap';
-import type { DesktopInput } from './connection';
+import { LONG_PRESS_MS, TAP_MAX_MS, isDoubleTap } from '../touch-gestures/tap';
+import type { DesktopInput } from './input';
 
 type Point = { x: number; y: number };
 export type DesktopViewport = { width: number; height: number; remoteWidth: number; remoteHeight: number };

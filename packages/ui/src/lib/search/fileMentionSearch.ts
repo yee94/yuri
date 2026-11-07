@@ -1,4 +1,4 @@
-import { scoreTextAgainstQuery } from '@/lib/search/fuzzySearch';
+import { scoreTextAgainstQuery } from './fuzzySearch';
 
 export type FileMentionSearchHit = {
   relativePath: string;

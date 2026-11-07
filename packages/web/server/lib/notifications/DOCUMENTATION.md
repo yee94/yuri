@@ -65,7 +65,7 @@ active/paused/cleared or malformed snapshots do not. Ordinary per-turn completio
 suppression reads native Goal RPC, never legacy `yuri.goal` metadata. No Host Goal
 auditor, token budget, objective file or continuation loop remains.
 
-Ordinary completion means the whole root-session family has stopped. An assistant `finish: stop`, `session.idle`, or `session.execution.succeeded` is only a candidate. Before fanout, the barrier reads successful process-wide `session.active` membership and resolves active IDs' authoritative parent chains, including nested descendants and idle intermediate parents. It never depends on focused UI, loaded transcripts, or a cached tool's apparent completion. A candidate root remains pending while it or any descendant runs; child terminals recheck the pending root rather than sending a separate child notification. Metadata lookup concurrency is capped at four per check, with per-check parent-read deduplication and the Host's existing identity cache.
+Ordinary completion means the whole root-session family has stopped. An assistant `finish: stop`, `session.idle`, or `session.execution.succeeded` is only a candidate. Before fanout, the barrier reads successful process-wide `session.active` membership and resolves active IDs' authoritative parent chains, including nested descendants and idle intermediate parents. It never depends on focused UI, loaded transcripts, or a cached tool's apparent completion. A candidate root remains pending while it or any descendant runs; child terminals recheck the pending root without a separate legacy child push. The dedicated safe admission below can notify explicitly enabled subtasks after the same barrier checks their subtree. Metadata lookup concurrency is capped at four per check, with per-check parent-read deduplication and the Host's existing identity cache.
 
 Failed/malformed activity or unknown/cyclic ancestry defers completion rather than treating it as empty. While candidates exist, a single two-second retry timer recovers failed reads and missed child terminal events; no candidates means no polling. Execution/retry/step starts invalidate in-flight eligibility, and a new root run cancels its older candidate. Parent failures, deletion and user interruption cancel success. Event revisions fence stale reads and notification-template enrichment. Successful handling deduplicates terminal events for that root until a new execution starts, replacing the old five-second cooldown so a legitimate short next task can notify. Pending/dedup state is in-memory for the runtime lifetime; historical completions are not replayed after Host restart. `dispose()` clears completion retries and question/permission timers; VS Code also resets its gate on runtime switches.
 
@@ -76,7 +76,7 @@ Desktop, UI SSE, web-push, APNs and completion-triggered Live Activity end all p
 - Returned API:
   - `maybeSendPushForTrigger(payload)`
   - `resolveLiveActivitySessionCandidate(sessionId)` — sidebar candidate for a new Live Activity refresh row: `{ title, visible }` under the same suppression rules as ordinary push. Cache-first across any cached directory, then the directory-less OpenCode session endpoint; a missing meta resolves as not-visible.
-  - `sendScheduledTaskRunNotification({ projectID, taskID, taskName, status, sessionId?, reason, errorMessage? })` — scheduled-tasks runtime callback when a scheduled (non-manual) run settles. Gated by `notifyOnScheduledTasks`; manual runs always skip. Desktop/UI SSE carry the task name (plus error text on failure); push follows the generic contract (`task_complete`/`task_error` scenario titles, task name as APNs body, `scheduled-<projectID>-<taskID>` collapse tag).
+  - `sendScheduledTaskRunNotification({ projectID, taskID, taskName, status, sessionId?, reason, errorMessage?, runID?, resultOwner? })` — scheduled-tasks runtime callback when a scheduled (non-manual) run settles. Gated by `notifyOnScheduledTasks`; manual runs always skip. Desktop/UI SSE carry the task name (plus error text on failure); push follows the generic contract (`task_complete`/`task_error` scenario titles, task name as APNs body, `scheduled-<projectID>-<taskID>` collapse tag). Safe admission additionally requires the real runID, `reason: 'scheduled'` and `resultOwner: 'unowned'`; legacy callers without these retain their old payload behavior but do not fabricate proof.
 - Owns:
   - top-level completion/question/permission trigger routing; completion is the sole task-status notification. Ordinary push is limited to sidebar-visible root sessions. Child/subagent sessions, Assistant bindings (`yuri.assistant.assistantID` unless `assigned.from === 'contact'`), scheduled-task sessions, small-model system sessions (`metadata.yuri.smallModel.purpose`), LLM gateway throwaway sessions (`metadata.yuri.llm.purpose`), and `smartfetch-secondary` titles are suppressed. Contact-assigned workers stay visible and still notify.
   - per-event settings gates: `notifyOnCompletion` (ready), `notifyOnQuestion` (question), `notifyOnPermission` (permission — independent of the question toggle), `notifyOnAssistants` (contact turns), `notifyOnGoals` (goal settle push), `notifyOnScheduledTasks` (scheduled task runs); all default to enabled via the settings migration.
@@ -86,6 +86,49 @@ Desktop, UI SSE, web-push, APNs and completion-triggered Live Activity end all p
   - template resolution and fallback behavior
   - native notification fanout and web push payload fanout
   - push always fans out to every subscribed surface; another client's visibility never suppresses delivery
+
+### Content-free notification admission
+
+`admission-event.js` and its declaration define a shared exact-field validator and
+length-prefixed namespaced event key, consumed by Server, Web `yuriEvents.ts` and
+NSH. The owning runtime injects `publishNotificationAdmission`; the emitter sends
+`{type:'yuri:notification-admitted', properties:{v:1,kind,eventID,target,source}}`
+over the existing authenticated global/Yuri SSE fanout, never a new stream.
+`kind` is completion/subtask/error/question/permission/goal/schedule/assistant;
+`target` is exactly `{kind:'session'|'schedule'|'assistant',id}`. Source is exactly:
+
+- session: `{type:'session',sessionID,directory,parentID,boundaryID}`; successful
+  authoritative Session metadata supplies directory and parent, never UI/history.
+  Only subtask carries a non-null parent. Completion/subtask require explicit
+  runner success with real event.id, not idle or a message finish. One existing
+  family gate uses `rootsOnly:false,deduplicate:false`; the legacy ledger retains
+  once-per-execution Web/Live Activity behavior. Native Goal read failure defers
+  admission rather than becoming no-goal success. Prompts use existing debounce
+  and permission auto-accept decisions; replies/restarts fence late reads.
+- schedule: `{type:'schedule',projectID,taskID,runID,trigger:'scheduled',
+  resultOwner:'unowned',status:'success'|'error'}`; only after the scheduler's real
+  ownership decision. Manual, takeover, unknown owner or missing runID cannot
+  produce this event. The existing list invalidation tip is unchanged.
+- Assistant: `{type:'assistant',assistantID,turnID,status:'complete'|'error',
+  publication:'published'}`; `sendContactTurnNotification` receives the service's
+  real turnID at its existing notification callsite. Silent review never invokes
+  that callsite. A raw contact-turn-end alone is not publication authority.
+
+No body/title/error text, template, credential or URL is added to this envelope;
+extra fields and mismatched target/proof are rejected. Raw IDs remain safe ASCII
+up to 128; full event key is at most 384, with oversize rejected, not truncated.
+The event proves admission, not OS display or successful APNs delivery. Existing
+notification/contact/scheduler payloads and their consumers remain unchanged.
+
+The safe seen window, session pending decisions and non-session publication retry
+window are each capped at 256; per-session version fences at 4096. Identity/read
+or publication failure retains safe pending proof, not user content, and does not
+mark success. `retryNotificationAdmissions()` / the existing `server.connected`
+path retry independently; dispose rejects late results. No extra completion
+timer, child stream or UI polling is added. An expired in-memory window is not a
+durable delivery guarantee. NSH's admitted-only consumer is implemented but its
+production root/native recovery wiring remains separate; see
+`packages/nsh/notification-INTEGRATION.md` for exact integration and test limits.
 
 ### Push runtime API (push-runtime.js)
 - `createPushRuntime(dependencies)`: creates runtime for web push and UI visibility state.
@@ -122,6 +165,7 @@ Desktop, UI SSE, web-push, APNs and completion-triggered Live Activity end all p
   - `writeSseEvent(res, payload)` — best-effort SSE write with backpressure: when `res.write` returns `false`, the client is marked paused and further writes are skipped until `drain`; buffered bytes above `SSE_CLIENT_MAX_BUFFERED_BYTES` (2 MiB, aligned with relay-server) destroy the response. Authoritative data remains HTTP pull.
   - `emitDesktopNotification(payload)`
   - `broadcastUiNotification(payload)`
+  - `publishNotificationAdmission(admission)` — validates the exact content-free proof and publishes the dedicated event through existing global/Yuri clients; it is not an OS/APNs acknowledgment.
 - Exported constant: `SSE_CLIENT_MAX_BUFFERED_BYTES`
 
 ### Template runtime API (template-runtime.js)

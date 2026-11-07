@@ -1,0 +1,10 @@
+{
+  "name": "Context usage production navigation fixture",
+  "id": "example.yuri.context-production",
+  "version": "0.1.0",
+  "theme": "../../theme.json",
+  "capabilities": {
+    "clipboard": true,
+    "host": ["connection.list", "runtime.request", "runtime.stream", "runtime.stop", "appearance.reset", "appearance.apply", "notification.configure", "native.diagnostics.status", "speech.prepare", "speech.stop", "speech.release", "context.production.delta", "context.production.failHistory", "context.production.audit"]
+  }
+}

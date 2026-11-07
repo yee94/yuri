@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import {
     todoToolScrollOptions,
 } from '../../statusBarPopover';
 import { readTaskTagSessionIdFromOutput } from './taskSessionIdParser';
+import { getToolIcon } from './toolPresentation';
 import {
     getToolExpandedContentClassName,
     getToolScrollableSectionPaddingClassName,
@@ -25,7 +26,6 @@ const mobileChangesSurfaceSource = readFileSync(join(__dirname, '../../../../app
 const diffViewSource = readFileSync(join(__dirname, '../../../views/DiffView.tsx'), 'utf-8');
 const contextPanelSource = readFileSync(join(__dirname, '../../../layout/ContextPanel.tsx'), 'utf-8');
 const progressiveGroupSource = readFileSync(join(__dirname, 'ProgressiveGroup.tsx'), 'utf-8');
-const toolPresentationSource = readFileSync(join(__dirname, 'toolPresentation.tsx'), 'utf-8');
 
 describe('edit slim line counts', () => {
     test('prefers metadata additions/deletions over parsing a dropped patch', () => {
@@ -35,9 +35,9 @@ describe('edit slim line counts', () => {
 
 describe('editing tool icon size', () => {
     test('keeps edit and write icons slightly smaller than the 14px tool row slot', () => {
-        expect(toolPresentationSource).toContain("const editIconClass = 'h-[13px] w-[13px] flex-shrink-0'");
-        expect(toolPresentationSource).toContain('<Icon name="pencil" className={editIconClass} />');
-        expect(toolPresentationSource).toContain('<Icon name="file-edit" className={editIconClass} />');
+        expect(getToolIcon('edit').props).toMatchObject({ name: 'pencil', className: 'h-[13px] w-[13px] flex-shrink-0' });
+        expect(getToolIcon('write').props).toMatchObject({ name: 'file-edit', className: 'h-[13px] w-[13px] flex-shrink-0' });
+        expect(getToolIcon('read').props).toMatchObject({ name: 'file-text', className: 'h-3.5 w-3.5 flex-shrink-0' });
     });
 });
 

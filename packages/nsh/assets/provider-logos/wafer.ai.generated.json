@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "generator": "packages/nsh/scripts/generate-provider-raster.mjs",
+  "source": "packages/ui/src/assets/provider-logos/wafer.ai.svg",
+  "sourceSha256": "cc2284dd7ec54a096f260b96b81eb8d45677bcba92d36e93b183d1f9c32ded56",
+  "output": "packages/nsh/assets/provider-logos/wafer.ai.png",
+  "outputSha256": "0ea3f1cc96d0771be732e822a5844a0972c3f29eb68db96e54ee5d2238659050",
+  "bytes": 2004,
+  "pixelWidth": 93,
+  "pixelHeight": 92,
+  "svgViewport": [
+    24,
+    24
+  ]
+}

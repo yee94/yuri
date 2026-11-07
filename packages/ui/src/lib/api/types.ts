@@ -1112,6 +1112,7 @@ export type GitHubIssueCommentsResult = {
 
 export type GitHubAuthStatus = {
   connected: boolean;
+  capabilities?: { exactAccountRemoval: boolean; deviceFlowCancellation: boolean };
   user?: GitHubUserSummary | null;
   scope?: string;
   accounts?: GitHubAuthAccount[];
@@ -1131,6 +1132,11 @@ type GitHubAuthAccount = {
   source?: 'oauth' | 'gh-cli';
 };
 
+export type GitHubAuthSelection = { source: 'oauth' | 'gh-cli'; accountId: string };
+export type GitHubAuthRemoval = { selection: GitHubAuthSelection; expectedCurrent?: GitHubAuthSelection | null };
+export type GitHubAuthRemovalResult = { success: true; removed: true; selection: GitHubAuthSelection; disconnected: boolean };
+export type GitHubDeviceFlowCancel = { cancelled: boolean; status: 'cancelled' | 'complete' | 'unavailable' | 'unknown'; providerRevoked: false };
+
 export type GitHubDeviceFlowStart = {
   deviceCode: string;
   userCode: string;
@@ -1139,6 +1145,7 @@ export type GitHubDeviceFlowStart = {
   expiresIn: number;
   interval: number;
   scope?: string;
+  cancellable?: boolean;
 };
 
 export type GitHubDeviceFlowComplete =

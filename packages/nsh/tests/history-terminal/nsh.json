@@ -1,0 +1,10 @@
+{
+  "name": "History Terminal Fixture",
+  "id": "com.yee94.yuri.nsh.history-terminal",
+  "version": "0.1.0",
+  "build": 6,
+  "appearance": "system",
+  "capabilities": {
+    "host": ["terminal.record", "terminal.capture"]
+  }
+}

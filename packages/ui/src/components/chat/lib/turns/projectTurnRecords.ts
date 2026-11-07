@@ -1,5 +1,5 @@
 import { isCompactionCommandMessage } from '../messageDisplayNormalization';
-import { isSessionCompactionCard } from '@/sync/session-projection-api';
+import { isSessionCompactionCard } from '../../../../sync/session-compaction';
 import { countContinuationToolParts, hasConfirmedFinalBody } from './assistantMessageLifecycle';
 import { projectTurnActivity } from './projectTurnActivity';
 import { projectTurnIndexes } from './projectTurnIndexes';

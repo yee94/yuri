@@ -1,0 +1,9 @@
+{
+  "name": "Bot context production navigation fixture",
+  "id": "example.yuri.bot-context-production",
+  "version": "0.1.0",
+  "theme": "../../theme.json",
+  "capabilities": {
+    "host": ["connection.list", "runtime.request", "runtime.stream", "runtime.stop", "appearance.reset", "appearance.apply"]
+  }
+}

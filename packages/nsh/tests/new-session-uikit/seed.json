@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "home": "/fixture/home",
+  "projects": [
+    { "id": "fixture-project", "name": "Native drafting and architecture review workspace", "path": "/fixture/project" },
+    { "id": "other-project", "name": "Independent second project for draft isolation", "path": "/fixture/other" }
+  ],
+  "settings": {
+    "favoriteModels": [{ "providerID": "fixture", "modelID": "gpt-model", "variant": "high" }],
+    "recentModels": [{ "providerID": "fixture", "modelID": "claude-model" }],
+    "draftStarters": [
+      { "type": "command", "name": "explore" },
+      { "type": "command", "name": "catch-up" },
+      { "type": "command", "name": "weigh" },
+      { "type": "command", "name": "debug" },
+      { "type": "command", "name": "review" },
+      { "type": "command", "name": "review-accessibility-and-keyboard-navigation" },
+      { "type": "command", "name": "compare-two-long-implementation-proposals" }
+    ],
+    "fixtureUnrelatedSetting": { "retain": true }
+  },
+  "projectConfigs": {
+    "/fixture/project": {
+      "projectPath": "/fixture/project",
+      "fixtureRetain": { "version": 7 },
+      "draftStarters": [
+        { "type": "command", "name": "inspect-project-specific-release-readiness" },
+        { "type": "skill", "name": "review-variable-width-wrapping-and-touch-targets" }
+      ]
+    },
+    "/fixture/other": { "projectPath": "/fixture/other", "draftStarters": [] }
+  },
+  "commands": [
+    { "name": "review-accessibility-and-keyboard-navigation", "scope": "user", "description": "Synthetic user command with a deliberately long label" },
+    { "name": "compare-two-long-implementation-proposals", "scope": "user", "description": "Synthetic comparison command" },
+    { "name": "inspect-project-specific-release-readiness", "scope": "project", "description": "Synthetic project command" },
+    { "name": "add-another-global-review-command", "scope": "user", "description": "Unpinned user command for plus-sheet testing" },
+    { "name": "add-another-project-only-review-command", "scope": "project", "description": "Unpinned project command for plus-sheet testing" }
+  ],
+  "skills": [
+    { "name": "review-variable-width-wrapping-and-touch-targets", "scope": "project", "source": "agents", "path": "/fixture/project/.agents/skills/review-variable-width-wrapping-and-touch-targets/SKILL.md", "description": "Synthetic pinned project skill" },
+    { "name": "fixture-review", "scope": "project", "source": "agents", "path": "/fixture/project/.agents/skills/fixture-review/SKILL.md", "description": "Synthetic unpinned project skill" }
+  ],
+  "agents": [
+    { "name": "build", "mode": "primary", "description": "Build fixture: a deliberately long description to check native wrapping without changing selection or invoking a model." },
+    { "name": "plan", "mode": "primary", "description": "Plan fixture: discuss architecture, alternatives, trade-offs, accessibility, and implementation details. This catalog is synthetic and never invokes any provider." },
+    { "name": "review-architecture-with-a-deliberately-long-primary-agent-name", "mode": "all", "description": "Long custom primary Agent name for Sheet truncation and cycle-label verification." },
+    { "name": "explore", "mode": "subagent", "description": "Must not appear in the primary picker or cycle." }
+  ],
+  "providers": [
+    {
+      "id": "fixture", "name": "Synthetic provider with a deliberately long descriptive organization name",
+      "models": {
+        "gpt-model": { "id": "gpt-model", "name": "GPT synthetic reasoning model with a long display name", "variants": { "low": {}, "high": {} }, "limit": { "context": 128000 }, "capabilities": { "toolcall": true, "reasoning": true } },
+        "claude-model": { "id": "claude-model", "name": "Claude synthetic alternative for favorite-without-selecting verification", "variants": { "high": {} }, "limit": { "context": 200000 }, "capabilities": { "toolcall": true } }
+      }
+    },
+    {
+      "id": "fixture-secondary", "name": "Second synthetic provider — longer multilingual label for native layout 合成目录",
+      "models": {
+        "long-context-review-model": { "id": "long-context-review-model", "name": "A very long synthetic model name for checking row wrapping, accessory stars, and thinking controls", "variants": { "balanced": {}, "extended": {} }, "limit": { "context": 1000000 }, "capabilities": { "toolcall": true, "reasoning": true } }
+      }
+    }
+  ]
+}

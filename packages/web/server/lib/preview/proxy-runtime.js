@@ -1212,7 +1212,7 @@ export const createPreviewProxyRuntime = ({
     sweepTimer.unref?.();
   };
 
-  const createTarget = (origin, ttlMs) => {
+  const createTarget = (origin, ttlMs, nativeClientId = null) => {
     const id = crypto.randomBytes(16).toString('hex');
     const token = crypto.randomBytes(16).toString('hex');
     const createdAt = now();
@@ -1223,6 +1223,7 @@ export const createPreviewProxyRuntime = ({
       token,
       createdAt,
       expiresAt,
+      nativeClientId,
     });
     return { id, token, expiresAt };
   };
@@ -1245,7 +1246,9 @@ export const createPreviewProxyRuntime = ({
     }
 
     const cookies = parseCookieHeader(req.headers?.cookie);
-    const token = parsed.searchParams.get(TOKEN_QUERY_PARAM) || cookies.get(TOKEN_COOKIE_NAME) || '';
+    const token = entry.nativeClientId
+      ? req.headers?.['x-yuri-preview-token'] || ''
+      : parsed.searchParams.get(TOKEN_QUERY_PARAM) || cookies.get(TOKEN_COOKIE_NAME) || '';
     if (!token || token !== entry.token) {
       return { ok: false, status: 403, error: 'Preview token missing' };
     }
@@ -1312,6 +1315,28 @@ export const createPreviewProxyRuntime = ({
   }) => {
     ensureSweeper();
 
+    // This is a bearer-only native protocol, not another trusted Web Origin.
+    // Browsers, owner cookies and scoped URL tokens cannot opt into it.
+    const nativeClient = async (req, res) => {
+      const headers = req.headers || {};
+      if (headers['x-yuri-native-preview'] !== '1'
+        || Object.keys(headers).some((name) => name === 'origin' || name === 'cookie' || name === 'referer')
+        || typeof headers.authorization !== 'string' || !/^Bearer [^\s]+$/i.test(headers.authorization)) return null;
+      const relayStamped = typeof headers['x-yuri-relay-connection'] === 'string' && headers['x-yuri-relay-connection'].length > 0;
+      const fetchHeaders = Object.keys(headers).filter((name) => name.startsWith('sec-fetch-'));
+      // Node fetch in the existing Host HTTP dispatcher adds this one field.
+      // A relay-looking header is NOT permission: recheck the real pairing gate.
+      if (fetchHeaders.length && !(relayStamped && fetchHeaders.length === 1 && headers['sec-fetch-mode'] === 'cors')) return null;
+      if (relayStamped && !await uiAuthController?.authorizeRelayRequest?.(req)) return null;
+      const auth = await uiAuthController?.resolveAuthContext?.(req, res, { allowClientAuth: true, allowUrlToken: false });
+      return auth?.type === 'client' && auth.clientId && auth.client?.id === auth.clientId ? auth.clientId : null;
+    };
+    const isNativeTargetRequest = (req) => {
+      const pathname = new URL(req.originalUrl || req.url || '', 'http://localhost').pathname;
+      const id = pathname.match(/^\/api\/preview\/proxy\/([a-f0-9]{16,64})(?:\/|$)/)?.[1];
+      return Boolean(id && targets.get(id)?.nativeClientId);
+    };
+
     const injectPreviewBridge = (bodyText, targetOrigin, bridgeNonce) => {
       if (typeof bodyText !== 'string' || bodyText.includes(PREVIEW_BRIDGE_SCRIPT_ID)) {
         return bodyText;
@@ -1350,7 +1375,15 @@ export const createPreviewProxyRuntime = ({
 
     app.post('/api/preview/targets', express.json(), async (req, res) => {
       try {
-        if (uiAuthController?.enabled) {
+        const native = req.headers['x-yuri-native-preview'] !== undefined;
+        let nativeClientId = null;
+        if (native) {
+          nativeClientId = await nativeClient(req, res);
+          if (!nativeClientId) return res.status(403).json({ error: 'Native device authentication required' });
+          if (req.body?.allowExternal !== false || req.body?.ttlMs !== 300_000) {
+            return res.status(400).json({ error: 'Invalid native preview scope' });
+          }
+        } else if (uiAuthController?.enabled) {
           const sessionToken = await uiAuthController?.ensureSessionToken?.(req, res);
           if (!sessionToken) {
             return res.status(401).json({ error: 'UI authentication required' });
@@ -1366,6 +1399,16 @@ export const createPreviewProxyRuntime = ({
         if (!rawUrl) {
           return res.status(400).json({ error: 'url is required' });
         }
+        if (native) {
+          if (req.body.url !== rawUrl || !URL.canParse(rawUrl)) return res.status(400).json({ error: 'Invalid native preview URL' });
+          const parsed = new URL(rawUrl);
+          if (rawUrl.length > 8192 || /[\\\u0000-\u0020\u007f]/.test(rawUrl)
+            || !/^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::[0-9]{1,5})?(?:[/?#]|$)/i.test(rawUrl)
+            || parsed.username || parsed.password
+            || [...parsed.searchParams.keys()].some((key) => /^(?:oc_client_token|yuri_client_token|yuri_url_token|yuri_preview_token|authorization|access_token|token)$/i.test(key))) {
+            return res.status(400).json({ error: 'Invalid native preview URL' });
+          }
+        }
 
         const ttlMs = typeof req.body?.ttlMs === 'number' ? req.body.ttlMs : DEFAULT_TARGET_TTL_MS;
         const allowExternal = req.body?.allowExternal === true;
@@ -1376,16 +1419,17 @@ export const createPreviewProxyRuntime = ({
           return res.status(400).json({ error: normalized.error });
         }
 
-        const target = createTarget(normalized.origin, ttlMs);
+        const target = createTarget(normalized.origin, ttlMs, nativeClientId);
         const cookiePath = `/api/preview/proxy/${target.id}`;
         const secure = Boolean(req.secure);
-        res.setHeader('Set-Cookie', buildCookie({
+        if (!native) res.setHeader('Set-Cookie', buildCookie({
           name: TOKEN_COOKIE_NAME,
           value: target.token,
           path: cookiePath,
           maxAgeSeconds: Math.round((target.expiresAt - now()) / 1000),
           secure,
         }));
+        res.setHeader('Cache-Control', 'no-store');
 
         return res.json({
           id: target.id,
@@ -1417,6 +1461,7 @@ export const createPreviewProxyRuntime = ({
       //     contains the full path.
       pathFilter: (pathname, req) => {
         const target = req?.originalUrl || pathname || req?.url || '';
+        if (req.headers?.upgrade && isNativeTargetRequest(req)) return false;
         return target.startsWith('/api/preview/proxy/');
       },
       router: (req) => {
@@ -1448,6 +1493,8 @@ export const createPreviewProxyRuntime = ({
           proxyReq.removeHeader('cookie');
           proxyReq.removeHeader('authorization');
           proxyReq.removeHeader('x-yuri-ui-session');
+          proxyReq.removeHeader('x-yuri-native-preview');
+          proxyReq.removeHeader('x-yuri-preview-token');
           proxyReq.setHeader('accept-encoding', 'identity');
         },
         proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
@@ -1548,15 +1595,26 @@ export const createPreviewProxyRuntime = ({
       },
     });
 
-    app.use('/api/preview/proxy', (req, res, next) => {
+    app.use('/api/preview/proxy', async (req, res, next) => {
       const resolved = resolveTargetFromRequest(req);
       if (!resolved.ok) {
         return res.status(resolved.status).json({ error: resolved.error });
+      }
+      if (resolved.entry.nativeClientId) {
+        try {
+          if (req.method !== 'GET' || await nativeClient(req, res) !== resolved.entry.nativeClientId) {
+            return res.status(403).json({ error: 'Native preview owner required' });
+          }
+        } catch { return res.status(403).json({ error: 'Native preview owner required' }); }
       }
       next();
     }, proxy);
 
     server.on('upgrade', (req, socket, head) => {
+      if (isNativeTargetRequest(req)) {
+        rejectWebSocketUpgrade(socket, 403, 'Native preview sockets unavailable');
+        return;
+      }
       const resolved = resolveTargetFromRequest(req);
       if (!resolved.ok) {
         return;

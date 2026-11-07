@@ -1,6 +1,8 @@
 import { ClientError, isPermissionNotFoundError, OpenCode } from "@opencode/client";
 import type { OpenCodeClient as RawOpenCodeClient } from "@opencode/client";
 import type { FilesAPI } from "../api/types";
+import type { ProjectFileSearchHit } from "../search/projectFileSearchTypes";
+export type { ProjectFileSearchHit } from "../search/projectFileSearchTypes";
 // OpenCodeClient from v2-types is the shimmed callable-session.message surface.
 import { getDesktopHomeDirectory } from "../desktop";
 import { readInstanceScopedItem } from "../instanceScopedStorage";
@@ -332,15 +334,6 @@ type FilesystemEntry = {
   isDirectory: boolean;
   isFile: boolean;
   isSymbolicLink?: boolean;
-};
-
-export type ProjectFileSearchHit = {
-  name: string;
-  path: string;
-  relativePath: string;
-  extension?: string;
-  /** True when the hit came from a directory-only search. */
-  isDirectory?: boolean;
 };
 
 type AgentPartInputLite = {

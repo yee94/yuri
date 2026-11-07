@@ -7,13 +7,14 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useMcpStore } from '@/stores/useMcpStore';
+import type { McpDraft } from '../lib/mcp-config-types';
 import {
   readMcpConfigsSnapshot,
   refreshMcpConfigsQuery,
   refreshMcpStatusQuery,
 } from '@/queries/mcpQueries';
 
-export type McpScope = 'user' | 'project';
+export type { McpDraft, McpScope } from '../lib/mcp-config-types';
 
 type McpMutationResult = {
   ok: boolean;
@@ -67,23 +68,6 @@ interface McpRemoteConfig {
 }
 
 export type McpServerConfig = (McpLocalConfig | McpRemoteConfig) & { name: string };
-
-export interface McpDraft {
-  name: string;
-  scope: McpScope;
-  type: 'local' | 'remote';
-  command: string[];
-  url: string;
-  environment: Array<{ key: string; value: string }>;
-  headers: Array<{ key: string; value: string }>;
-  oauthEnabled: boolean;
-  oauthClientId: string;
-  oauthClientSecret: string;
-  oauthScope: string;
-  oauthRedirectUri: string;
-  timeout: string;
-  enabled: boolean;
-}
 
 // ============== HELPERS ==============
 

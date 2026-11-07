@@ -2,6 +2,8 @@ import type { OpenCodeClient, Session, SessionInfo } from '@/lib/opencode/v2-typ
 import { projectSession } from "@/lib/opencode/v2-types";
 import { retry } from "@/sync/retry";
 import { stripSessionListDetails } from "@/sync/sanitize";
+import { isVisibleGlobalSession } from '@/lib/session-retention-policy';
+export { isVisibleGlobalSession, isSystemOwnedSession } from '@/lib/session-retention-policy';
 
 export type GlobalSessionRecord = Session & {
     project?: {
@@ -9,63 +11,6 @@ export type GlobalSessionRecord = Session & {
         name?: string;
         worktree?: string;
     } | null;
-};
-
-const HIDDEN_SESSION_TITLES = new Set(['smartfetch-secondary']);
-const BACKGROUND_SESSION_TITLE = /^\[(?:Scheduled|Assistant|yuri-llm)\]/;
-
-const nonEmptySystemID = (value: unknown): value is string =>
-    typeof value === 'string' && value.length > 0;
-
-/**
- * System sessions are isolated by authoritative Yuri metadata only.
- * Title prefixes are human-facing labels and never participate in this check.
- */
-export const isSystemOwnedSession = (
-    session: { metadata?: Session['metadata'] | Record<string, unknown> | null },
-): boolean => {
-    const metadata = session.metadata;
-    if (!metadata || typeof metadata !== 'object') return false;
-    const yuri = (metadata as { yuri?: unknown }).yuri;
-    if (!yuri || typeof yuri !== 'object') return false;
-    const record = yuri as {
-        assistant?: { assistantID?: unknown };
-        assigned?: { from?: unknown };
-        scheduledTask?: { taskID?: unknown };
-        smallModel?: { purpose?: unknown };
-        llm?: { purpose?: unknown };
-    };
-    if (record.assigned?.from === 'contact') return false;
-    if (nonEmptySystemID(record.assistant?.assistantID)) return true;
-    if (nonEmptySystemID(record.scheduledTask?.taskID)) return true;
-    if (nonEmptySystemID(record.smallModel?.purpose)) return true;
-    if (nonEmptySystemID(record.llm?.purpose)) return true;
-    return false;
-};
-
-const getSessionParentID = (
-    session: { parentID?: string | null },
-): string | null => {
-    const parentID = session.parentID;
-    return typeof parentID === 'string' && parentID.trim() ? parentID : null;
-};
-
-export const isVisibleGlobalSession = (
-    session: Pick<Session, 'title'> & {
-        parentID?: string | null;
-        metadata?: Session['metadata'] | Record<string, unknown> | null;
-    },
-    options: { includeChildren?: boolean } = {},
-): boolean => {
-    if (session.title && HIDDEN_SESSION_TITLES.has(session.title)) return false;
-    if (session.title && BACKGROUND_SESSION_TITLE.test(session.title)) return false;
-    // Subagent/child sessions never belong in the sidebar root catalog. They
-    // load only when the user expands a parent tree node; promoting orphans
-    // (parent archived, system-owned, or simply missing from this list) is how
-    // scheduled-task subagents used to leak into the project list.
-    if (!options.includeChildren && getSessionParentID(session)) return false;
-    if (isSystemOwnedSession(session)) return false;
-    return true;
 };
 
 const sessionUpdatedAt = (session: { time?: { updated?: number } }): number => {

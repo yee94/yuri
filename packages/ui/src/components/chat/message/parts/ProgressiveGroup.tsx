@@ -39,8 +39,9 @@ import { useSessionSurface } from '../../SessionSurfaceContext';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useI18n } from '@/lib/i18n';
 import { AgentAvatar } from '../../AgentAvatar';
-import { isTaskToolName, readTaskToolSessionId } from './taskToolModel';
 import { formatActivityDuration } from './formatActivityDuration';
+import { activityTaskAvatarSeeds, slimActivityMessageIds } from './activityHeaderModel';
+import { isSlimActivityPart } from '@/lib/slimActivityPart';
 import { Button } from '@/components/ui/button';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import {
@@ -77,18 +78,11 @@ interface ProgressiveGroupProps {
 type MaterializationStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 const isSlimMaterializablePart = (activity: TurnActivityPart): boolean => {
-    const part = activity.part as Part & { slim?: unknown };
-    return part.slim === true && (part.type === 'tool' || part.type === 'reasoning' || part.type === 'file');
+    return isSlimActivityPart(activity.part);
 };
 
 const getSlimActivityMessageIds = (parts: TurnActivityPart[]): string[] => {
-    const ids = new Set<string>();
-    for (const activity of parts) {
-        if (isSlimMaterializablePart(activity) && activity.messageId) {
-            ids.add(activity.messageId);
-        }
-    }
-    return [...ids];
+    return slimActivityMessageIds(parts);
 };
 
 const hasMaterializedActivityOutput = (
@@ -425,29 +419,7 @@ type AggregatedRow =
 
 /** Collect task identity seeds so header faces match task rows and work status. */
 const getTaskAvatarSeeds = (parts: TurnActivityPart[]): { active: string[]; all: string[] } => {
-    const active = new Set<string>();
-    const all = new Set<string>();
-
-    for (const activity of parts) {
-        if (activity.kind !== 'tool') continue;
-        const part = activity.part as ToolPartType;
-        if (!isTaskToolName(part.tool)) continue;
-
-        const taskId = typeof part.id === 'string' ? part.id.trim() : '';
-        if (!taskId) continue;
-
-        const state = part.state as unknown;
-        if (!state || typeof state !== 'object') continue;
-        const stateRecord = state as Record<string, unknown>;
-
-        const seed = readTaskToolSessionId(part) || taskId;
-        all.add(seed);
-        if (stateRecord.status === 'pending' || stateRecord.status === 'running') {
-            active.add(seed);
-        }
-    }
-
-    return { active: [...active], all: [...all] };
+    return activityTaskAvatarSeeds(parts);
 };
 
 interface ExpandableToolRowProps {

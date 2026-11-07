@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import { getGitHubAuth, isGhCliActive, isGhCliDisabled } from './auth.js';
+import { getGitHubAuthContext } from './auth.js';
 import { getGhCliToken } from './gh-cli-credential.js';
 
 // Per-request timeout for every GitHub call. Octokit v22 uses native fetch,
@@ -23,9 +23,15 @@ export function createOctokit(token) {
 }
 
 export function getOctokitOrNull() {
-  const auth = getGitHubAuth();
-  const ghToken = !isGhCliDisabled() ? getGhCliToken() : null;
-  const token = isGhCliActive() ? ghToken || auth?.accessToken : auth?.accessToken || ghToken;
+  const context = getGitHubAuthContext();
+  if (context.explicit) {
+    if (context.selection === null) return null;
+    const token = context.selection.source === 'oauth' ? context.auth?.accessToken : !context.ghCliDisabled ? getGhCliToken() : null;
+    return token ? createOctokit(token) : null;
+  }
+  const auth = context.auth;
+  const ghToken = !context.ghCliDisabled ? getGhCliToken() : null;
+  const token = context.ghCliActive ? ghToken || auth?.accessToken : auth?.accessToken || ghToken;
   if (!token) {
     return null;
   }

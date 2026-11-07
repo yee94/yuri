@@ -1,5 +1,5 @@
 import type { ToolPart } from '@/lib/opencode/v2-types';
-import { getRelativeFilePath, toAbsoluteFilePath } from '@/lib/path-utils';
+import { getRelativeFilePath, toAbsoluteFilePath } from '../../lib/path-utils';
 
 export interface ChangedFile {
     path: string;

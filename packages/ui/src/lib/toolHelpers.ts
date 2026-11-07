@@ -1,4 +1,4 @@
-import type { I18nKey } from '@/lib/i18n';
+import type { I18nKey } from './i18n/messages/en';
 
 export interface ToolMetadata {
   displayName: string;

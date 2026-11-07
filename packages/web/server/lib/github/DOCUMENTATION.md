@@ -11,6 +11,7 @@
 - `packages/web/server/lib/github/routes.js`: Express route registration for `/api/github/*` endpoints.
 - `packages/web/server/lib/github/auth.js`: auth storage, multi-account support, client id, scope config.
 - `packages/web/server/lib/github/device-flow.js`: OAuth device flow.
+- `packages/web/server/lib/github/device-flow-sessions.js`: bounded Host-local admission, cancellation and token-free completion receipts for that handshake.
 - `packages/web/server/lib/github/octokit.js`: Octokit factory for the current auth.
 - `packages/web/server/lib/github/repo/index.js`: remote URL parsing and directory-to-repo resolution.
 - `packages/web/server/lib/github/pr-status.js`: PR lookup across remotes, forks, and upstreams.
@@ -26,6 +27,8 @@
 - `setGitHubAuth({ accessToken, scope, tokenType, user, accountId })`: save or update account.
 - `activateGitHubAuth(accountId)`: switch active account.
 - `clearGitHubAuth()`: clear current account.
+- `removeGitHubAuth({ selection, expectedCurrent? })`: atomically admit an exact OAuth removal without selecting a replacement.
+- `isGitHubAuthDisconnected()`: explicit no-account selection, distinct from legacy implicit CLI fallback.
 - `getGitHubClientId()`: resolve client id.
 - `getGitHubScopes()`: resolve scopes.
 - `GITHUB_AUTH_FILE`: auth file path.
@@ -46,11 +49,36 @@
 
 ## Auth storage and config
 
-- Auth storage: `~/.config/yuri/github-auth.json`
-- Writes are atomic and file mode is `0o600`.
+- Auth storage: `github-auth.json` in `YURI_DATA_DIR`, defaulting to `~/.config/yuri`.
+- The canonical format is `{ version: 2, accounts: [...], selection }`. Selection is `{ source: 'oauth' | 'gh-cli', accountId }` or explicit `null`. Legacy single-entry and array formats remain readable and migrate on mutation, not on GET.
+- Accounts and selection share one atomic file replacement. Writers request file mode `0o600` and share the short synchronous `.github-auth.lock`; contention fails closed. A crash-left lock is not automatically stolen. Read/parse errors are failures, not empty account lists.
+- `settings.json` keeps the existing `ghCliDisabled` preference and `ghCliActive` compatibility mirror; the mirror cannot override a v2 selection. New OAuth and explicit OAuth activation clear CLI ownership. Explicit unavailable CLI or explicit `null` never falls back to another account in Octokit.
+- Ordinary mirror-write failure restores the previous auth/settings records. Uncertain rollback retains the admission lock, blocking auth reads and further mutations until storage is repaired. This is not a crash-recovery service or an interlock with older non-cooperating writers.
 - Client ID resolution order: `YURI_GITHUB_CLIENT_ID` -> `settings.json` -> default.
 - Scope resolution order: `YURI_GITHUB_SCOPES` -> `settings.json` -> default.
-- Account id resolution order: explicit `accountId` -> user login -> user id -> token prefix.
+- New account id resolution: explicit `accountId` -> user login -> user id; no identity means reject, never derive a newly saved identity from token text. Legacy token-derived ids remain readable for compatibility.
+- `getGitHubAuthContext()` (from `auth.js`) captures one selection for Octokit. GET status and stale 401 handlers never clear or switch stored accounts.
+
+## Exact removal and old clients
+
+- `GET /api/github/auth/status` declares `capabilities: { exactAccountRemoval: true, deviceFlowCancellation: true }`. Native must not send selectors to a legacy Host that could ignore them.
+- Body-less `DELETE /api/github/auth` retains the existing Web behavior: remove the current OAuth record, promote the next remaining record, and retain legacy implicit CLI fallback when no OAuth remains. An empty object is also the legacy request shape. Existing Web and VS Code API signatures are unchanged.
+- An exact DELETE uses `{ selection: { source, accountId }, expectedCurrent?: { source, accountId } | null }`. Extra keys, malformed fields and CLI deletion are rejected with 400, missing OAuth targets with 404, and a mismatched expected current selection with 409. Validation and replacement run under the same auth writer lock; preflight GET is not the atomic admission.
+- Exact removal of the selected OAuth writes `selection: null`, without selecting another OAuth or CLI account. Removing an inactive OAuth preserves the current selection. `expectedCurrent: null` means require no stored selection; omitting it skips that comparison. The response echoes `{ success: true, removed: true, selection, disconnected }`.
+- This deletes local OAuth storage only. It does not remove system CLI credentials or revoke a GitHub-side token. CLI activation remains the old id-only API with reserved id `gh-cli`; Native refuses ambiguous/reserved OAuth activation rather than guessing the source.
+
+## Device-flow lifecycle
+
+- `/auth/start` keeps the existing fields and adds `cancellable: true`. `/auth/complete` still accepts `deviceCode` and the legacy `device_code` alias, with the existing pending/slow-down/denied/expired statuses.
+- The process-local ledger stores code hashes, bounded lifecycle state and token-free completion receipts, never access tokens. It admits at most 128 codes, at most 30 minutes per lease, and retains terminal receipts through expiry plus 60 seconds. A repeated acknowledged completion returns its receipt rather than exchanging or writing again.
+- `POST /api/github/auth/cancel` strictly accepts `{ deviceCode }`. A confirmed `{ cancelled: true, status: 'cancelled', providerRevoked: false }` blocks later Host credential persistence, including responses arriving after provider exchange or user lookup. Final admission and auth commit are synchronous with no intervening await.
+- Completed, unavailable and uncertain-commit leases return `cancelled: false` with `status: 'complete' | 'unavailable' | 'unknown'`. No response claims third-party revocation; cancellation does not physically abort an already sent provider request.
+- Unknown transport/write outcomes are not permission to replay credential writes. Host restart or another process loses the ledger: unissued completion codes return 410 and must restart authorization, not exchange speculatively. Multi-instance affinity and durable device-flow receipts are not implemented.
+- These routes inherit the existing `/api` auth gate from `opencode/core-routes.js`; cancellation adds no authentication exception or URL-token route.
+
+## Focused offline regression tests
+
+`auth.test.js` mocks filesystem storage in memory; `auth-routes.test.js` invokes real handlers without listeners and mocks provider/CLI access. `device-flow-sessions.test.js`, `octokit-selection.test.js`, `gh-cli-credential.test.js` and `packages/web/src/api/github.test.ts` cover lifecycle admission, captured source choice, subprocess options and old Web request shapes. These tests do not establish real OAuth, disk durability, CLI, Host or native-platform correctness.
 
 ## PR integration overview
 

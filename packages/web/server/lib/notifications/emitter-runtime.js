@@ -1,4 +1,5 @@
 import { createNativeNotificationStream } from './native-stream.js';
+import { notificationAdmission } from './admission-event.js';
 
 // Align with relay-server per-connection queue cap (2 MiB).
 export const SSE_CLIENT_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -181,6 +182,17 @@ export const createNotificationEmitterRuntime = (dependencies) => {
   };
 
   return {
+    publishNotificationAdmission(input) {
+      const properties = notificationAdmission(input);
+      if (!properties) return false;
+      const event = { type: 'yuri:notification-admitted', properties };
+      const broadcast = getBroadcastGlobalUiEvent?.();
+      if (broadcast) { try { broadcast(event); } catch { /* Other delivery channels remain independent. */ } }
+      for (const client of dependencies.getYuriEventClients?.() ?? []) {
+        try { writeSseEvent(client, event); } catch { /* Closed subscriber. */ }
+      }
+      return true;
+    },
     connectNativeNotifications: nativeStream.connect,
     publishNativeNotification: nativeStream.publish,
     writeSseEvent,

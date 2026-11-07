@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "lib": ["ES2023", "DOM", "DOM.Iterable"] },
+  "include": ["../remote-desktop.tsx", "../remote-desktop-core.ts", "../remote-desktop-geometry.ts", "remote-desktop/fixture.tsx", "remote-desktop/image-probe.tsx"],
+  "exclude": ["../*.test.ts", "../vitest.config.ts"]
+}

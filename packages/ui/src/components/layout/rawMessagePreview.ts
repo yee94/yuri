@@ -1,5 +1,5 @@
 import type { Part } from '@/lib/opencode/v2-types';
-import type { TimeFormatPreference } from '@/stores/useUIStore';
+import type { DisplayTimePreference as TimeFormatPreference } from '../../lib/time-format-core';
 
 /**
  * Helpers for the Raw Messages preview row in the context sidebar.

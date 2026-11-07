@@ -24,6 +24,7 @@ If these sources materially conflict, stop and resolve the conflict instead of s
 - `packages/electron`: native desktop shell and privileged Electron boundary.
 - `packages/vscode`: extension host, webview, and runtime bridge.
 - `packages/mobile`: Capacitor iOS/Android shell; bundles the mobile web surface and connects to an existing Yuri server.
+- `packages/nsh`: experimental NSH native client, iOS first; native signals own its UI/sync state and Swift owns credentials and transport. Read `packages/nsh/DOCUMENTATION.md` before changes; shared React Hook/store rules apply to `packages/ui`, not this client.
 - `packages/docs`: product documentation; not a Bun workspace.
 
 Shared UI calls official OpenCode APIs through `@opencode-ai/sdk/v2`. Yuri-owned capabilities use `RuntimeAPIs`, `runtimeFetch`, and shared browser/realtime transport helpers. Server-side upstream integrations may use their owning runtime modules.

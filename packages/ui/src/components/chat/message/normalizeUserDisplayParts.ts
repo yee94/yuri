@@ -1,6 +1,6 @@
 import type { Part } from '@/lib/opencode/v2-types';
-import { stripSessionMentionInstruction } from '@/composer/delivery';
-import { stripSystemReminders } from '@/lib/systemReminder';
+import { stripSessionMentionInstruction } from '../../../composer/session-mention-display';
+import { stripSystemReminders } from '../../../lib/systemReminder';
 import { isCodeSelectionFilePart } from '../attachmentCitations';
 import { isEmptyTextPart } from './partUtils';
 

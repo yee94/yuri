@@ -1,3 +1,5 @@
 # Search helpers
 
 `fuzzySearch.ts` owns generic substring/fuzzy scoring. `fileMentionSearch.ts` owns `@` mention path ranking: query intent (`.ext` → files, `foo/` → directories), source-over-test, and dropping unmatched candidates. Chat autocomplete merges server hits and recent files through `rankFileMentionSearch`. Agent and skill `@` rows are jointly name-ranked by `composer-autocomplete/rows.ts` using OpenCode TUI's fuzzysort rules; skill descriptions provide lower-priority recall after name matches.
+
+`projectFileSearchTypes.ts` owns the framework-neutral `ProjectFileSearchHit` result shape. Pure autocomplete consumers import it here; `opencode/client.ts` uses and re-exports the same type for existing client consumers. Type-only consumers must not import the Web client implementation, whose transitive dependencies include browser state and React context.

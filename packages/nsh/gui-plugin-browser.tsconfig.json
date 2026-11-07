@@ -1,0 +1,10 @@
+{
+  "extends": "../ui/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "files": ["../ui/src/types/desktop.d.ts"],
+  "include": ["gui-plugin-*.ts", "gui-plugin-*.tsx"]
+}

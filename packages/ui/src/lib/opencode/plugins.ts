@@ -7,20 +7,9 @@
 
 import type { PluginInfo } from '@opencode/client';
 import { opencodeClient } from './client';
+import type { PluginRuntimeInfo, PluginRuntimeSource, PluginRuntimeState } from './plugin-runtime-types';
 
-export type PluginRuntimeSource =
-  /** `target` is the config string verbatim (no implicit `@latest`). */
-  | { kind: 'package'; target: string; version: string | null; outdated: boolean; updating: boolean }
-  /** A loaded plugin reports its entrypoint file; one that failed to load reports the configured path. */
-  | { kind: 'local'; path: string }
-  | { kind: 'builtin' };
-
-export type PluginRuntimeState = { kind: 'active' } | { kind: 'failed'; error: string; ref: string | null };
-
-export interface PluginRuntimeInfo {
-  source: PluginRuntimeSource;
-  state: PluginRuntimeState;
-}
+export type { PluginRuntimeInfo, PluginRuntimeSource, PluginRuntimeState } from './plugin-runtime-types';
 
 const locationOf = (directory: string | null): { location: { directory: string } } | undefined => {
   const trimmed = directory?.trim();

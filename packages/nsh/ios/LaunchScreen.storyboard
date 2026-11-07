@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="24500" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="YuriLaunchController">
+    <device id="retina6_12" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="24500"/>
+        <capability name="Named colors" minToolsVersion="9.0"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="YuriLaunchScene">
+            <objects>
+                <viewController id="YuriLaunchController" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="YuriLaunchView">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" alignment="center" spacing="20" translatesAutoresizingMaskIntoConstraints="NO" id="YuriLaunchStack">
+                                <rect key="frame" x="140.5" y="343" width="112" height="166"/>
+                                <subviews>
+                                    <imageView userInteractionEnabled="NO" contentMode="scaleAspectFit" image="YuriMark" translatesAutoresizingMaskIntoConstraints="NO" id="YuriLaunchMark">
+                                        <rect key="frame" x="8" y="0.0" width="96" height="96"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" constant="96" id="YuriMarkWidth"/>
+                                            <constraint firstAttribute="height" constant="96" id="YuriMarkHeight"/>
+                                        </constraints>
+                                    </imageView>
+                                    <imageView userInteractionEnabled="NO" contentMode="scaleAspectFit" image="YuriWordmark" translatesAutoresizingMaskIntoConstraints="NO" id="YuriLaunchWordmark">
+                                        <rect key="frame" x="0.0" y="116" width="112" height="50"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" constant="112" id="YuriWordmarkWidth"/>
+                                            <constraint firstAttribute="height" constant="50" id="YuriWordmarkHeight"/>
+                                        </constraints>
+                                    </imageView>
+                                </subviews>
+                            </stackView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="YuriLaunchSafeArea"/>
+                        <color key="backgroundColor" name="YuriLaunchBackground"/>
+                        <constraints>
+                            <constraint firstItem="YuriLaunchStack" firstAttribute="centerX" secondItem="YuriLaunchView" secondAttribute="centerX" id="YuriBrandCenterX"/>
+                            <constraint firstItem="YuriLaunchStack" firstAttribute="centerY" secondItem="YuriLaunchView" secondAttribute="centerY" id="YuriBrandCenterY"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="YuriLaunchResponder" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="YuriMark" width="96" height="96"/>
+        <image name="YuriWordmark" width="112" height="50"/>
+        <namedColor name="YuriLaunchBackground">
+            <color red="0.9725490196" green="0.9725490196" blue="0.9725490196" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+    </resources>
+</document>

@@ -419,6 +419,9 @@ export const createSettingsHelpers = (dependencies) => {
       const normalizedDays = Math.max(1, Math.min(365, Math.round(candidate.autoDeleteAfterDays)));
       result.autoDeleteAfterDays = normalizedDays;
     }
+    if (candidate.sessionRetentionAction === 'archive' || candidate.sessionRetentionAction === 'delete') {
+      result.sessionRetentionAction = candidate.sessionRetentionAction;
+    }
 
     const typography = sanitizeTypographySizesPartial(candidate.typographySizes);
     if (typography) {
@@ -704,7 +707,7 @@ export const createSettingsHelpers = (dependencies) => {
       for (const [providerId, models] of Object.entries(candidate.usageSelectedModels)) {
         if (typeof providerId === 'string' && Array.isArray(models)) {
           const validModels = models.filter((m) => typeof m === 'string' && m.length > 0);
-          if (validModels.length > 0) {
+          if (validModels.length > 0 || models.length === 0) {
             sanitized[providerId] = validModels;
           }
         }

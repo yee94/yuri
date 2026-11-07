@@ -3,13 +3,8 @@ import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { openRuntimeWebSocket } from '@/lib/relay/runtime-socket';
 import type { RelayTunnelWebSocket } from '@/lib/relay/tunnel-client';
-
-export type DesktopInput =
-  | { type: 'pointer'; action: 'down' | 'up' | 'move' | 'click' | 'right'; x: number; y: number }
-  | { type: 'scroll'; dx: number; dy: number }
-  | { type: 'text'; text: string }
-  | { type: 'key'; key: string }
-  | { type: 'release' };
+import type { DesktopInput } from './input';
+export type { DesktopInput } from './input';
 
 type DesktopConnectionOptions = {
   transport: string; generation: number;

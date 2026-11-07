@@ -1,5 +1,5 @@
-import { getFileMentionAutocompleteQuery } from '@/components/chat/fileMentionAutocompleteState';
-import { stripLeadingSlashCommandSlot } from '@/components/chat/typedSlashChipPromotion';
+import { getFileMentionAutocompleteQuery } from '../../components/chat/fileMentionAutocompleteState';
+import { stripLeadingSlashCommandSlot } from '../../components/chat/typedSlashChipPromotion';
 
 import type {
   ComposerAutocompleteInputMode,

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 
 import { getAgentColor } from '@/lib/agentColors';
 import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
-import { resolveAgentAvatarColors, type AvatarColorSet } from '@/lib/generatedAvatar';
+import { agentAvatarThemeTokens, resolveAgentAvatarColors, type AvatarColorSet } from '@/lib/agentAvatarPalette';
 
 /**
  * Each Agent owns a computed accent token (see `getAgentColor`). This resolves
@@ -13,16 +13,7 @@ export const useAgentAvatarPalette = (agentName: string | undefined): AvatarColo
   const accentVar = getAgentColor(agentName).var;
   const colors = useOptionalThemeSystem()?.currentTheme.colors;
   return useMemo(() => {
-    const tokens: Record<string, string> = colors ? {
-      '--status-success': colors.status.success,
-      '--status-info': colors.status.info,
-      '--status-warning': colors.status.warning,
-      '--syntax-keyword': colors.syntax.base.keyword,
-      '--syntax-type': colors.syntax.base.type,
-      '--syntax-function': colors.syntax.base.function,
-      '--syntax-number': colors.syntax.base.number,
-      '--syntax-variable': colors.syntax.base.variable,
-    } : {};
+    const tokens = agentAvatarThemeTokens(colors);
     return resolveAgentAvatarColors(accentVar, (token) => tokens[token] ?? '');
   }, [accentVar, colors]);
 };

@@ -1142,6 +1142,7 @@ export const createScheduledTasksRuntime = (deps) => {
       if (!handled) {
         await notifyTaskRun?.({
           projectID: run.projectId, taskID: run.taskId, taskName: run.taskName,
+          runID: run.id, resultOwner: handled === false ? 'unowned' : undefined,
           status: run.status, reason: run.trigger,
           ...(run.sessionId ? { sessionId: run.sessionId } : {}),
           ...(run.error ? { errorMessage: run.error } : {}),
@@ -1460,6 +1461,8 @@ export const createScheduledTasksRuntime = (deps) => {
             taskName,
             status,
             reason,
+            runID,
+            resultOwner: taskResultHandler ? undefined : 'unowned',
             ...(sessionID ? { sessionId: sessionID } : {}),
             ...(status === 'error' ? { errorMessage } : {}),
           });

@@ -10,8 +10,9 @@ import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { parseDraftComposerDocument, parseDraftMentions, type DraftComposerDocument, type DraftMention } from '@/sync/input-draft-types';
 import { serializeComposerDocument } from '@/composer/document';
 import { describeComposerDocumentResources } from '@/composer/extensions';
+import { DEFAULT_FOLLOW_UP_BEHAVIOR, normalizeFollowUpBehavior, type FollowUpBehavior } from '@/lib/followUpBehavior';
 
-export type FollowUpBehavior = 'steer' | 'queue';
+export { DEFAULT_FOLLOW_UP_BEHAVIOR, isFollowUpBehavior, normalizeFollowUpBehavior, type FollowUpBehavior } from '@/lib/followUpBehavior';
 export type QueueItemStatus = 'queued' | 'sending' | 'retrying' | 'reconciling' | 'unresolved' | 'failed';
 type QueueFailureKind = 'pre-dispatch' | 'ambiguous-dispatch' | 'definitive';
 export type QueueDeliveryTarget = { kind: 'primary' } | { kind: 'assistant'; assistantID: string };
@@ -50,13 +51,6 @@ const EMPTY_QUEUE: QueueItem[] = [];
 export type QueueRecoveryPayload = { content: string; composerDocument?: DraftComposerDocument; composerMentions?: DraftMention[]; attachments?: AttachedFile[]; sendConfig?: QueuedMessage['sendConfig'] };
 export type QueueFailure = { kind: QueueFailureKind; recovery: QueueRecoveryPayload };
 const RECONCILIATION_DEADLINE_MS = 30_000;
-export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
-export const isFollowUpBehavior = (value: unknown): value is FollowUpBehavior => value === 'steer' || value === 'queue';
-export const normalizeFollowUpBehavior = (value: unknown, legacyQueueModeEnabled?: boolean | null): FollowUpBehavior => {
-  if (value === 'immediate') return 'steer';
-  if (isFollowUpBehavior(value)) return value;
-  return legacyQueueModeEnabled === false ? 'steer' : 'queue';
-};
 
 export interface QueuedMessage {
   id: string; queueItemID?: string; operationID?: string; messageID?: string; content: string; composerDocument?: DraftComposerDocument; composerMentions?: DraftMention[]; attachments?: AttachedFile[]; createdAt: number;

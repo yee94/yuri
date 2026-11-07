@@ -1,4 +1,4 @@
-import type { McpDraft } from '@/stores/useMcpConfigStore';
+import type { McpDraft } from '../../../lib/mcp-config-types';
 
 export interface ImportedMcpResult {
   readonly ok: true;

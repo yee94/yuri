@@ -1,4 +1,4 @@
-import { countUnicodeCodePoints } from "@/lib/unicodeMetrics"
+import { countUnicodeCodePoints } from "../lib/unicodeMetrics"
 
 export type DraftOwner =
   | { kind: "session"; ownerID: string }

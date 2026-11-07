@@ -1,0 +1,13 @@
+await app.waitFor('id:remote-desktop-image-probe');
+await app.waitFor('id:probe-jpeg-image');
+await app.waitFor('id:probe-png-image');
+await app.waitFor('id:probe-broken-image');
+await app.wait(1000);
+await app.press('id:probe-get-size');
+console.log('[remote-image-probe-before-size-result] ' + JSON.stringify(app.texts()));
+await app.waitUntil(() => app.texts().some(value => value.startsWith('getSize:error:')));
+console.log('[remote-image-probe] ' + JSON.stringify(app.texts()));
+expect(app.texts().join('\n')).toMatch(/jpeg:start=\d+;load=0;error=0;end=\d+/);
+expect(app.texts().join('\n')).toMatch(/png:start=\d+;load=0;error=0;end=\d+/);
+expect(app.texts().join('\n')).toMatch(/broken:start=\d+;load=0;error=0;end=\d+/);
+expect(app.texts().join('\n')).toMatch(/getSize:error:.*headless.*images/);

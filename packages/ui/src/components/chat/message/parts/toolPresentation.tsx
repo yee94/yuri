@@ -2,71 +2,13 @@ import React from 'react';
 import { Icon } from "@/components/icon/Icon";
 import { TodoProgressMark } from '@/components/chat/todo/TodoList';
 import { cn } from '@/lib/utils';
+import { toolIconSpec } from './toolIconModel';
 
 export const getToolIcon = (toolName: string) => {
     const iconClass = 'h-3.5 w-3.5 flex-shrink-0';
-    const editIconClass = 'h-[13px] w-[13px] flex-shrink-0';
-    const tool = toolName.toLowerCase();
-
-    if (tool === 'edit' || tool === 'multiedit' || tool === 'apply_patch' || tool === 'patch' || tool === 'str_replace' || tool === 'str_replace_based_edit_tool') {
-        return <Icon name="pencil" className={editIconClass} />;
-    }
-    if (tool === 'write' || tool === 'create' || tool === 'file_write') {
-        return <Icon name="file-edit" className={editIconClass} />;
-    }
-    if (tool === 'read' || tool === 'view' || tool === 'file_read' || tool === 'cat') {
-        return <Icon name="file-text" className={iconClass} />;
-    }
-    if (tool === 'bash' || tool === 'shell' || tool === 'cmd' || tool === 'terminal') {
-        return <Icon name="terminal-box" className={iconClass} />;
-    }
-    if (tool === 'execute') {
-        return <Icon name="code-box" className={iconClass} />;
-    }
-    if (tool === 'list' || tool === 'ls' || tool === 'dir' || tool === 'list_files') {
-        return <Icon name="folder-6" className={iconClass} />;
-    }
-    if (tool === 'search' || tool === 'grep' || tool === 'find' || tool === 'ripgrep') {
-        return <Icon name="menu-search" className={iconClass} />;
-    }
-    if (tool === 'glob') {
-        return <Icon name="file-search" className={iconClass} />;
-    }
-    if (tool === 'fetch' || tool === 'curl' || tool === 'wget' || tool === 'webfetch' || tool === 'browser') {
-        return <Icon name="global" className={iconClass} />;
-    }
-    if (
-        tool === 'web-search' ||
-        tool === 'websearch' ||
-        tool === 'search_web' ||
-        tool === 'codesearch' ||
-        tool === 'google' ||
-        tool === 'bing' ||
-        tool === 'duckduckgo' ||
-        tool === 'perplexity'
-    ) {
-        return <Icon name="global" className={iconClass} />;
-    }
-    if (tool === 'todowrite' || tool === 'todoread') {
+    const spec = toolIconSpec(toolName);
+    if (spec.todo) {
         return <TodoProgressMark className={cn('size-3.5 text-current', iconClass)} />;
     }
-    if (tool === 'structuredoutput' || tool === 'structured_output') {
-        return <Icon name="list-check-2" className={iconClass} />;
-    }
-    if (tool === 'skill') {
-        return <Icon name="book" className={iconClass} />;
-    }
-    if (tool === 'task' || tool === 'subagent') {
-        return <Icon name="ai-agent" className={iconClass} />;
-    }
-    if (tool === 'question') {
-        return <Icon name="survey" className={iconClass} />;
-    }
-    if (tool === 'lsp') {
-        return <Icon name="scan-2" className={iconClass} />;
-    }
-    if (tool.startsWith('git')) {
-        return <Icon name="git-branch" className={iconClass} />;
-    }
-    return <Icon name="tools" className={iconClass} />;
+    return <Icon name={spec.name} className={spec.size === 13 ? 'h-[13px] w-[13px] flex-shrink-0' : iconClass} />;
 };

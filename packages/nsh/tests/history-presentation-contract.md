@@ -1,0 +1,15 @@
+# History presentation pre-flush seam
+
+`createChat(target, { beforeHistoryPresentationFlush(next) })` is optional and data-only. It runs synchronously inside the existing history writer's batch, **before** that batch's signal writes. It receives projected final facts, not getters whose behavior depends on deferred batch reads. Callback exceptions cannot interrupt adoption. No listener means no presentation facts/scope construction or boundary scan.
+
+The complete footer predicate is `more || !!historyError || boundaryMissing || repairPending || hasGap`. `readError` and `resolved` are independent authority facts. Only `authority === 'successful-history'` may admit a new terminal footprint. `presentation` (including retry error-clear), `failure` and `reset` must not create one. Failed session-boundary reads cannot grant successful-history even if the independent message page succeeds. Unrelated status failure does not erase successful message authority.
+
+The scope includes Native Host identity, JS Host generation, mounted Chat owner, history generation, target kind/id and target directory. UI must also check its actual page/lifecycle gate and experimental enablement. History generations/reset invalidate measurement tickets and prior holds. Retirement/disposal cannot call an obsolete UI owner. Same-Host operation-lane resumption preserves the callback and mounted owner but publishes a new Host/history generation on the next valid adoption.
+
+Covered writers: main page adoption; staged sliding-tail gap and eventual adoption; committed-history repair and failure; staged/cleared revert; known/missing/anonymous committed boundaries; older retry error clear and failure; malformed/cyclic pages; structural stream insertion with a missing boundary; contact reset. Ordinary same-ID tokens, input and exact-fill do not publish footer state. `snapshotCommitted` and the Context message observer retain their separate, post-message-commit semantics.
+
+## Minimal application integration (not implemented here)
+
+Create the existing footer helper/signals before `createChat`. In the callback, feed the supplied scope and complete facts to the helper, using successful-history authority only on that exact source, then synchronously set the footprint signal. Do not access a not-yet-assigned `chat` from the creation callback. Natural-height/ref tickets, List offset samples, lifecycle resets and enablement remain the UI owner's responsibility. No `await`, ViewRef, measure request, scroll command, inset or offset writer belongs in this callback.
+
+`history-presentation.test.ts` uses actual `createChat` plus dependency-tracked signal/batch observers; each visible flush must contain both final facts and the corresponding UI footprint/rows. Its numerical footprint is a synthetic unit-test marker, not a production height. These pure tests do not validate NSH engine batching, UIKit release, real Host 53pt displacement, or production enablement. Production experiment remains the main owner's measurement decision.

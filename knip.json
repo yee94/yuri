@@ -69,6 +69,11 @@
         "scripts/**/*.{js,cjs,mjs}"
       ]
     },
+    "packages/nsh": {
+      "entry": ["App.tsx", "*.test.ts", "scripts/*.mjs", "tests/**/*.{js,mjs}"],
+      "project": ["*.{ts,tsx}", "scripts/*.mjs", "tests/**/*.{js,mjs}"],
+      "ignoreDependencies": ["nsh"]
+    },
     "packages/vscode": {
       "entry": [
         "src/**/*.{test,spec}.{js,cjs,mjs,ts,tsx}",

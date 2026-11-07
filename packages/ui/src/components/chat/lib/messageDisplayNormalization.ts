@@ -1,7 +1,7 @@
 import type { Part } from '@/lib/opencode/v2-types';
 
-import { filterSyntheticParts } from '@/lib/messages/synthetic';
-import { isSessionCompactionCard } from '@/sync/session-projection-api';
+import { filterSyntheticParts } from '../../../lib/messages/synthetic';
+import { isSessionCompactionCard } from '../../../sync/session-compaction';
 import { normalizeParts } from '../message/partUtils';
 import type { ChatMessageEntry } from './turns/types';
 

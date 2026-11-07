@@ -424,6 +424,7 @@ const notificationEmitterRuntime = createNotificationEmitterRuntime({
   desktopNotifyPrefix: DESKTOP_NOTIFY_PREFIX,
   getUiNotificationClients: () => uiNotificationClients,
   getBroadcastGlobalUiEvent: () => broadcastGlobalUiEvent,
+  getYuriEventClients: () => uiYuriEventClients,
 });
 
 const writeSseEvent = (...args) => notificationEmitterRuntime.writeSseEvent(...args);
@@ -723,6 +724,7 @@ const notificationTriggerRuntime = createNotificationTriggerRuntime({
   sendPushToAllUiSessions,
   sendApnsToAllUiSessions,
   sendNativeNotification: notificationEmitterRuntime.publishNativeNotification,
+  publishNotificationAdmission: notificationEmitterRuntime.publishNotificationAdmission,
   sendLiveActivityEnd,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,

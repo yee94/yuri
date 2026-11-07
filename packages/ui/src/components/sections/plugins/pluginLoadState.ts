@@ -7,7 +7,7 @@
  * are different targets and no `@latest` is implied.
  */
 
-import type { PluginRuntimeInfo } from '@/lib/opencode/plugins';
+import type { PluginRuntimeInfo } from '../../../lib/opencode/plugin-runtime-types';
 
 export type PluginRuntimeTarget =
   | { kind: 'package'; target: string }

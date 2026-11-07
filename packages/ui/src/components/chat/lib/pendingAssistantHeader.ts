@@ -1,4 +1,4 @@
-import { getProviderModelDisplayName } from '@/lib/modelDisplay';
+import { getProviderModelDisplayName } from '../../../lib/modelDisplay';
 
 type UserMessageHeaderIdentity = {
     agentName?: string;

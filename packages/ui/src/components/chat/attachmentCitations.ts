@@ -2,18 +2,18 @@ import {
     attachmentCitationDisplay,
     COMPOSER_TRIGGER_ICON_SLOT,
     stripComposerTriggerIconSlot,
-} from '@/composer/inline-visual';
+} from '../../composer/inline-visual';
 import {
     findAttachmentCitationRanges,
     type CitationRange,
-} from '@/composer/inline-attachment-sync';
+} from '../../composer/inline-attachment-sync';
 
 export {
     findAttachmentCitationRanges,
     isInlineAttachmentCitation,
     removeAttachmentCitations,
     type CitationRange,
-} from '@/composer/inline-attachment-sync';
+} from '../../composer/inline-attachment-sync';
 
 export interface ImageAttachmentCandidate {
     name: string;

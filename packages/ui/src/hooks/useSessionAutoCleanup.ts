@@ -1,56 +1,13 @@
 import React from 'react';
-import type { Session } from '@/lib/opencode/v2-types';
 import { opencodeClient } from '@/lib/opencode/client';
 import { ensureFullGlobalSessionsLoaded, useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { getAllSyncSessions } from '@/sync/sync-refs';
 import { useUIStore } from '@/stores/useUIStore';
+import { buildAutoDeleteCandidates, RETENTION_DAY_MS, RETENTION_KEEP_RECENT } from '@/lib/session-retention-policy';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const AUTO_DELETE_KEEP_RECENT = 5;
-const AUTO_DELETE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-const getSessionLastActivity = (session: Session): number => {
-  return session.time?.updated ?? session.time?.created ?? 0;
-};
-
-type BuildAutoDeleteCandidatesOptions = {
-  sessions: Session[];
-  currentSessionId: string | null;
-  cutoffDays: number;
-  keepRecent?: number;
-  now?: number;
-};
-
-const buildAutoDeleteCandidates = ({
-  sessions,
-  currentSessionId,
-  cutoffDays,
-  keepRecent = AUTO_DELETE_KEEP_RECENT,
-  now = Date.now(),
-}: BuildAutoDeleteCandidatesOptions): string[] => {
-  if (!Array.isArray(sessions) || cutoffDays <= 0) {
-    return [];
-  }
-
-  const cutoffTime = now - cutoffDays * DAY_MS;
-  const sorted = [...sessions].sort(
-    (a, b) => getSessionLastActivity(b) - getSessionLastActivity(a)
-  );
-  const protectedIds = new Set(sorted.slice(0, keepRecent).map((session) => session.id));
-
-  return sorted
-    .filter((session) => {
-      if (!session?.id) return false;
-      if (protectedIds.has(session.id)) return false;
-      if (session.id === currentSessionId) return false;
-      if (session.share) return false;
-      const lastActivity = getSessionLastActivity(session);
-      if (!lastActivity) return false;
-      return lastActivity < cutoffTime;
-    })
-    .map((session) => session.id);
-};
+const AUTO_DELETE_KEEP_RECENT = RETENTION_KEEP_RECENT;
+const AUTO_DELETE_INTERVAL_MS = RETENTION_DAY_MS;
 
 type CleanupResult = {
   completedIds: string[];

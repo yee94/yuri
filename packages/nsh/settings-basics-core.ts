@@ -1,0 +1,60 @@
+import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
+
+type SettingsBasicField = { key: string; title: I18nKey; kind: 'boolean' | 'text' | 'number' | 'multiline' | 'secret'; options?: readonly string[]; local?: boolean; managed?: boolean; min?: number; max?: number };
+export const settingsBasicSections: readonly { page: 'sessions' | 'notifications' | 'behavior' | 'voice'; fields: readonly SettingsBasicField[] }[] = [
+  { page: 'sessions', fields: [
+    { key: 'showDeletionDialog', title: 'settings.yuri.defaults.field.showDeletionDialog', kind: 'boolean' },
+    { key: 'smallModelUseDefault', title: 'settings.yuri.defaults.smallModel.useDefault', kind: 'boolean' },
+    { key: 'smallModelOverride', title: 'settings.yuri.defaults.smallModel.overrideModel', kind: 'text' },
+  ] },
+  { page: 'notifications', fields: [
+    { key: 'nativeNotificationsEnabled', title: 'settings.notifications.page.delivery.enableLabel', kind: 'boolean' },
+    { key: 'notificationMode', title: 'settings.notifications.page.delivery.focusedLabel', kind: 'text', options: ['always', 'hidden-only'] },
+    { key: 'notifyOnCompletion', title: 'settings.notifications.page.events.completionLabel', kind: 'boolean' },
+    { key: 'notifyOnSubtasks', title: 'settings.notifications.page.events.subtaskLabel', kind: 'boolean' },
+    { key: 'notifyOnError', title: 'settings.notifications.page.events.errorLabel', kind: 'boolean' },
+    { key: 'notifyOnQuestion', title: 'settings.notifications.page.events.questionLabel', kind: 'boolean' },
+    { key: 'notifyOnPermission', title: 'settings.notifications.page.events.permissionLabel', kind: 'boolean' },
+    { key: 'notifyOnScheduledTasks', title: 'settings.notifications.page.events.scheduledTasksLabel', kind: 'boolean' },
+    { key: 'notifyOnAssistants', title: 'settings.notifications.page.events.assistantsLabel', kind: 'boolean' },
+    { key: 'notifyOnGoals', title: 'settings.notifications.page.events.goalsLabel', kind: 'boolean' },
+  ] },
+  { page: 'behavior', fields: [
+    { key: 'responseStyleEnabled', title: 'settings.behavior.page.responseStyle.enableAria', kind: 'boolean' },
+    { key: 'responseStylePreset', title: 'settings.behavior.page.responseStyle.preset', kind: 'text', options: ['concise', 'detailed', 'mentor', 'pushback', 'noFiller', 'matchEnergy', 'warmPeer', 'custom'] },
+    { key: 'responseStyleCustomInstructions', title: 'settings.behavior.page.responseStyle.customPlaceholder', kind: 'multiline' },
+  ] },
+  { page: 'voice', fields: [
+    { key: 'dictationEnabled', title: 'settings.voice.page.field.enableVoiceInput', kind: 'boolean' },
+    { key: 'sttProvider', title: 'settings.voice.page.section.speechRecognition', kind: 'text', options: ['volcengine', 'local', 'openai-compatible'] },
+    { key: 'sttServerUrl', title: 'settings.voice.page.field.serverUrl', kind: 'text' },
+    { key: 'sttModel', title: 'settings.voice.page.field.model', kind: 'text' },
+    { key: 'sttLocalModel', title: 'settings.voice.page.field.model', kind: 'text', managed: true },
+    { key: 'localTtsVoiceId', title: 'settings.voice.page.field.voice', kind: 'number', min: 0, max: 10, managed: true },
+    { key: 'sttLanguage', title: 'settings.voice.page.field.language', kind: 'text' },
+    { key: 'sttApiKey', title: 'settings.voice.page.field.apiKey', kind: 'secret' },
+    { key: 'apiKey', title: 'settings.voice.volcengine.name', kind: 'secret' },
+    { key: 'asrResourceId', title: 'settings.voice.volcengine.asrResource', kind: 'text' },
+    { key: 'asrContext', title: 'settings.voice.volcengine.asrContext', kind: 'multiline' },
+    { key: 'voiceProvider', title: 'settings.voice.page.section.playbackAndSummary', kind: 'text', options: ['volcengine', 'local', 'openai', 'openai-compatible', 'browser', 'say'] },
+    { key: 'openaiCompatibleUrl', title: 'settings.voice.page.field.serverUrl', kind: 'text' },
+    { key: 'openaiCompatibleTtsModel', title: 'settings.voice.page.field.model', kind: 'text' },
+    { key: 'openaiCompatibleVoice', title: 'settings.voice.page.field.voice', kind: 'text' },
+    { key: 'openaiVoice', title: 'settings.voice.page.field.voice', kind: 'text' },
+    { key: 'openaiApiKey', title: 'settings.voice.page.field.apiKey', kind: 'secret' },
+    { key: 'openaiCompatibleApiKey', title: 'settings.voice.page.field.apiKey', kind: 'secret' },
+    { key: 'voice', title: 'settings.voice.volcengine.speaker', kind: 'text' },
+    { key: 'resourceId', title: 'settings.voice.volcengine.resource', kind: 'text' },
+    { key: 'speechRate', title: 'settings.voice.page.field.speechRate', kind: 'number' },
+    { key: 'speechPitch', title: 'settings.voice.page.field.speechPitch', kind: 'number' },
+    { key: 'speechVolume', title: 'settings.voice.page.field.speechVolume', kind: 'number' },
+    { key: 'showMessageTTSButtons', title: 'settings.voice.page.field.messageReadAloudButton', kind: 'boolean' },
+    { key: 'ttsInputMode', title: 'settings.voice.page.field.ttsInputMode', kind: 'text', options: ['final', 'sanitized', 'raw', 'summarized'] },
+    { key: 'summarizeMessageTTS', title: 'settings.voice.page.field.summarizeBeforePlayback', kind: 'boolean' },
+    { key: 'summarizeVoiceConversation', title: 'settings.voice.page.field.summarizeVoiceModeResponses', kind: 'boolean' },
+    { key: 'summarizeCharacterThreshold', title: 'settings.voice.page.field.summarizationThreshold', kind: 'number' },
+    { key: 'summarizeMaxLength', title: 'settings.voice.page.field.summaryMaxLength', kind: 'number' },
+  ] },
+];
+export const settingsBasicFields = (page: string) => settingsBasicSections.find(section => section.page === page)?.fields || [];
+export const settingsBasicTarget = (page: string, field: SettingsBasicField) => `${page}.${field.key}`;

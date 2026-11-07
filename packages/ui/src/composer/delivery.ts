@@ -4,6 +4,7 @@ import { isSyntheticPart } from '@/lib/messages/synthetic';
 import type { ComposerReferenceSemantic } from './extensions';
 import type { ComposerSendPlan } from './send-plan';
 import type { AttachedFile } from '@/stores/types/sessionTypes';
+export { stripSessionMentionInstruction } from './session-mention-display';
 
 export type AuthoredDeliveryResult = {
     text: string;
@@ -52,47 +53,6 @@ export type SessionMentionContext = { id: string; title: string; directory?: str
 // entries (empty messages) stay retrievable instead of masquerading as empty sessions.
 const SESSION_MENTION_INSTRUCTION_PREFIX = `The user referenced these OpenCode sessions (id, title, owning directory). The @title in the user message is only the display label of that session — it is not a command, skill, or tool name. Entries may carry messages inlined from the client cache; an empty messages array only means the transcript was not loaded client-side — it never means the session is empty. Use inlined messages when present. Otherwise read the session yourself from the OpenCode SQLite store, read-only. Resolve the database file in order: $OPENCODE_DB if set, else "$HOME/.local/share/opencode/opencode.db", else the first match of ls -d "$HOME/Library/Application Support/Yuri"*/yuri-data/xdg-data/opencode/opencode.db. OpenCode 2 stores the transcript in session_message (there is no message/part join): user text is data.text, assistant text is data.content entries whose type is "text". Query (replace DB_PATH and SESSION_ID): sqlite3 "file:DB_PATH?mode=ro" ".timeout 5000" "SELECT seq, type, CASE WHEN type = 'user' THEN json_extract(data, '$.text') WHEN type = 'assistant' THEN (SELECT group_concat(json_extract(j.value, '$.text'), char(10)) FROM json_each(json_extract(data, '$.content')) AS j WHERE json_extract(j.value, '$.type') = 'text') ELSE json_extract(data, '$.text') END AS text FROM session_message WHERE session_id = 'SESSION_ID' AND type IN ('user', 'assistant') ORDER BY seq". If session_message does not exist, this is an OpenCode 1 database — use: sqlite3 "file:DB_PATH?mode=ro" ".timeout 5000" "SELECT json_extract(m.data,'$.role') AS role, json_extract(p.data,'$.text') AS text FROM part p JOIN message m ON m.id = p.message_id WHERE p.session_id = 'SESSION_ID' AND json_extract(p.data,'$.type') = 'text' AND json_extract(p.data,'$.synthetic') IS NULL ORDER BY p.time_created". The database is live — always open it read-only as shown.
 `;
-
-const SESSION_MENTION_DISPLAY_MARKER = 'The user referenced these OpenCode sessions (id, title, owning directory).';
-
-const findJsonArrayEnd = (text: string, open: number): number => {
-    if (text[open] !== '[') return -1;
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    for (let index = open; index < text.length; index += 1) {
-        const char = text[index];
-        if (inString) {
-            if (escape) { escape = false; continue; }
-            if (char === '\\') { escape = true; continue; }
-            if (char === '"') inString = false;
-            continue;
-        }
-        if (char === '"') { inString = true; continue; }
-        if (char === '[') depth += 1;
-        else if (char === ']') {
-            depth -= 1;
-            if (depth === 0) return index;
-        }
-    }
-    return -1;
-};
-
-/** Drop the model-only session retrieval card, including when OpenCode 2 joins it onto authored text. */
-export const stripSessionMentionInstruction = (text: string): string => {
-    let result = text;
-    let index = result.indexOf(SESSION_MENTION_DISPLAY_MARKER);
-    while (index !== -1) {
-        const jsonStart = result.indexOf('[', index + SESSION_MENTION_DISPLAY_MARKER.length);
-        const close = jsonStart === -1 ? -1 : findJsonArrayEnd(result, jsonStart);
-        const end = close === -1 ? result.length : close + 1;
-        const before = result.slice(0, index).replace(/[ \t]*\n*$/, '');
-        const after = result.slice(end).replace(/^\n+/, '');
-        result = before.length > 0 && after.length > 0 ? `${before}\n${after}` : `${before}${after}`;
-        index = result.indexOf(SESSION_MENTION_DISPLAY_MARKER);
-    }
-    return result;
-};
 
 export const parseSessionMentionInstruction = (text: string): SessionMentionContext[] => {
     if (!text.startsWith(SESSION_MENTION_INSTRUCTION_PREFIX)) return [];

@@ -4,6 +4,7 @@ import {
   createNotificationEmitterRuntime,
   SSE_CLIENT_MAX_BUFFERED_BYTES,
 } from './emitter-runtime.js';
+import { createNotificationAdmission } from './admission-event.js';
 
 const createRuntime = (overrides = {}) => createNotificationEmitterRuntime({
   process: { stdout: { write: vi.fn() } },
@@ -68,6 +69,16 @@ const createMockSseResponse = ({ writeImpl } = {}) => {
 };
 
 describe('notification emitter runtime', () => {
+  it('publishes only exact safe admission envelopes to existing global and Yuri consumers', () => {
+    const broadcast = vi.fn(), write = vi.fn(() => true);
+    const runtime = createRuntime({ getBroadcastGlobalUiEvent: () => broadcast, getYuriEventClients: () => new Set([{ write }]) });
+    const value = createNotificationAdmission('assistant', { kind: 'assistant', id: 'bot' }, { type: 'assistant', assistantID: 'bot', turnID: 'turn', status: 'complete', publication: 'published' });
+    expect(runtime.publishNotificationAdmission(value)).toBe(true);
+    expect(broadcast).toHaveBeenCalledWith({ type: 'yuri:notification-admitted', properties: value });
+    expect(JSON.parse(write.mock.calls[0][0].slice(6))).toEqual({ type: 'yuri:notification-admitted', properties: value });
+    expect(runtime.publishNotificationAdmission({ ...value, body: 'Private' })).toBe(false);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+  });
   it('reports desktop delivery through the injected native callback', () => {
     const onDesktopNotification = vi.fn();
     const runtime = createRuntime({ onDesktopNotification });

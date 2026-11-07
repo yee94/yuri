@@ -23,6 +23,20 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 describe('relay admission before loopback access', () => {
+  it('returns redirects to the client without following a credential-bearing loopback request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 302, headers: { location: 'https://example.invalid/elsewhere' } }));
+    const frames = [];
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'redirect-test', getLocalPort: () => 9,
+      sendFrame: frame => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
+    try {
+      await host.handleFrame(encodeTunnelFrame(TunnelFrameType.HttpRequest, 1, encodeJsonPayload({ method: 'GET', path: '/api/fs/serve/fixture.png', query: '', headers: { authorization: 'Bearer test-paired-client' } })));
+      await waitFor(() => frames.some(frame => frame.frameType === TunnelFrameType.StreamEnd));
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:9/api/fs/serve/fixture.png', expect.objectContaining({ redirect: 'manual' }));
+      const head = JSON.parse(textDecoder.decode(frames.find(frame => frame.frameType === TunnelFrameType.HttpResponse).payload));
+      expect(head.status).toBe(302);
+      expect(head.headers.location).toBe('https://example.invalid/elsewhere');
+    } finally { host.close(); fetchMock.mockRestore(); }
+  });
   it('denies HTTP and WebSocket traffic without an authorization provider', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
     const dial = vi.fn(() => new FakeWebSocket('unused'));

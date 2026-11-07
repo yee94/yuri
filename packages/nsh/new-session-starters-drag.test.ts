@@ -1,0 +1,180 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as helpers from './new-session-ui-helpers';
+import * as picker from './chat-models-helpers';
+import * as model from './model';
+
+type Node = { type: string; props: Record<string, any>; children: unknown[] };
+const root = path.dirname(fileURLToPath(import.meta.url));
+const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set(next: T) { value = next; } }); };
+const flush = async () => { for (let index = 0; index < 100; index++) await Promise.resolve(); };
+const event = (x: number, y: number, fingers = 1) => ({ pageX: x, pageY: y, touches: Array.from({ length: fingers }, (_, index) => ({ identifier: index, pageX: x, pageY: y })) });
+const call = (node: Node, name: string, value?: unknown) => { if (typeof node.props[name] !== 'function') throw new Error(`Missing production callback ${name}`); return node.props[name](value); };
+
+/** Full production Starters JSX/controller; only native widgets and measurement are ports. */
+async function fixture(options: { project?: helpers.DraftStarterRef[]; commands?: model.Row[]; skills?: model.Row[] } = {}) {
+  vi.useFakeTimers();
+  const source = ts.createSourceFile('new-session-page.tsx', readFileSync(path.join(root, 'new-session-page.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declaration = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'NativeNewSessionStarters')!;
+  const effects: Array<() => void> = [], cleanups: Array<() => void> = [];
+  const active = signal(true), visible = signal(true), submit = vi.fn(), gesture = vi.fn();
+  let settings = { draftStarters: [{ type: 'command', name: 'explore' }, { type: 'command', name: 'weigh' }, { type: 'command', name: 'review-accessibility-and-keyboard-navigation' }] };
+  let projectConfig = { projectPath: '/fixture/project', keep: { version: 7 }, draftStarters: options.project ?? [] };
+  const request = vi.fn(async (url: string, method = 'GET', body?: any) => {
+    if (url === '/api/config/settings') { if (method === 'PUT') settings = { ...settings, ...body }; return settings; }
+    if (url === '/api/fs/home') return { home: '/fixture/home' };
+    if (url.startsWith('/api/fs/read?')) return JSON.stringify(projectConfig);
+    if (url === '/api/fs/mkdir') return { success: true };
+    if (url === '/api/fs/write') { projectConfig = JSON.parse(body.content); return { success: true }; }
+    if (url.startsWith('/api/config/commands/metadata?')) return { commands: [{ name: 'review-accessibility-and-keyboard-navigation', scope: 'user' }, ...(options.commands ?? [])] };
+    if (url.startsWith('/api/config/skills?')) return { skills: options.skills ?? [] };
+    throw new Error(`Unexpected synthetic route ${method} ${url}`);
+  });
+  const h = (type: string, props: Record<string, unknown> | null, ...children: unknown[]): Node => {
+    const observed = { ...props };
+    for (const key of ['when', 'of', 'style', 'open', 'disabled']) if (typeof observed[key] === 'function') Object.defineProperty(observed, key, { get: observed[key] as () => unknown });
+    return { type, props: observed, children };
+  };
+  const observe: ts.TransformerFactory<ts.SourceFile> = context => syntax => {
+    const visit: ts.Visitor = node => {
+      if (ts.isJsxAttribute(node) && ['when', 'of', 'style', 'open', 'disabled'].includes(node.name.getText()) && node.initializer && ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+        return ts.factory.updateJsxAttribute(node, node.name, ts.factory.createJsxExpression(undefined, ts.factory.createArrowFunction(undefined, undefined, [], undefined, ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken), node.initializer.expression)));
+      }
+      return ts.visitEachChild(node, visit, context);
+    };
+    return ts.visitNode(syntax, visit) as ts.SourceFile;
+  };
+  const ports = { ...helpers, ...picker, ...model, signal, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), effect: (work: () => void) => { effects.push(work); work(); }, cleanup: (work: () => void) => cleanups.push(work),
+    captureHostRequest: () => request, t: (key: string) => key, token: (key: string) => key, h, Fragment: 'Fragment', If: 'If', Each: 'Each', View: 'View', Text: 'Text', Input: 'Input', Scroll: 'Scroll', Button: 'Button', Icon: 'Icon',
+    NativeNewSessionInputAX: 'InputAX', NativeNewSessionModal: 'ModalBoundary', Keyboard: { dismiss: vi.fn() }, windowSize: () => ({ width: 390, height: 844 }), safeArea: () => ({ top: 0, bottom: 0 }), action: '',
+  };
+  const js = ts.transpileModule(declaration.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React, jsxFactory: 'h', jsxFragmentFactory: 'Fragment' }, transformers: { before: [observe] } }).outputText;
+  const create = new Function(...Object.keys(ports), `${js}; return NativeNewSessionStarters;`)(...Object.values(ports));
+  const tree: Node = create({ owner: { project: { id: 'fixture', path: '/fixture/project' }, directory: '/fixture/project', current: () => true }, active, visible, onSubmit: submit, onGestureActiveChange: gesture });
+  const instances = new WeakMap<Node, Map<unknown, unknown>>();
+  const nodes = (value: unknown): Node[] => {
+    if (Array.isArray(value)) return value.flatMap(nodes);
+    if (!value || typeof value !== 'object' || !('type' in value)) return [];
+    const node = value as Node;
+    if (node.type === 'If') return nodes(node.props.when ? node.children : node.props.else);
+    if (node.type === 'Each') {
+      let cache = instances.get(node); if (!cache) { cache = new Map(); instances.set(node, cache); }
+      return (node.props.of ?? []).flatMap((item: any) => { const key = item?.id ?? item; if (!cache!.has(key)) cache!.set(key, (node.children[0] as (item: () => unknown) => unknown)(() => item)); return nodes(cache!.get(key)); });
+    }
+    return [node, ...nodes(node.children)];
+  };
+  const all = () => nodes(tree);
+  const find = (id: string) => { const node = all().find(node => node.props.testID === id); if (!node) throw new Error(`Missing production ID ${id}`); return node; };
+  const contains = (node: Node, id: string) => nodes(node).some(child => child.props.testID === id);
+  const chip = (name: string) => find(`new-session-preset-${name}`);
+  const wrapper = (name: string) => { const node = all().find(node => node.props.onTouchStartCapture && contains(node, `new-session-preset-${name}`)); if (!node) throw new Error(`Missing touch wrapper ${name}`); return node; };
+  await flush();
+  const measures: Array<ReturnType<typeof vi.fn>> = [];
+  const geometry = (name: string, x: number, y: number, width: number) => {
+    const measure = vi.fn(async () => ({ pagePosition: { x, y }, bounds: { size: { width, height: 28 } } })); measures.push(measure);
+    call(wrapper(name), 'ref', { measure }); return measure;
+  };
+  for (const [name, x, y, width] of [['explore', 20, 425, 90], ['weigh', 120, 425, 130], ['review-accessibility-and-keyboard-navigation', 30, 475, 290]] as const) geometry(name, x, y, width);
+  const trash = all().find(node => node.props.ref && !node.props.onTouchStartCapture && contains(node, 'new-session-presets-add'))!;
+  call(trash, 'ref', { measure: async () => ({ pagePosition: { x: 354, y: 382 }, bounds: { size: { width: 24, height: 28 } } }) });
+  const layout = all().find(node => node.props.onLayout)!;
+  call(layout, 'onLayout', { bounds: { size: { width: 350, height: 84 } } });
+  return { all, find, chip, wrapper, layout, geometry, measures, submit, request, gesture, active, visible, settings: () => settings, projectConfig: () => projectConfig, effects: () => effects.forEach(work => work()), dispose: () => cleanups.splice(0).forEach(work => work()) };
+}
+afterEach(() => vi.useRealTimers());
+
+describe('homepage chips drag regression (actual production callbacks; synthetic geometry, not UIKit)', () => {
+  it('keeps the ordinary short tap as one submit without any preset write', async () => {
+    const f = await fixture(), source = f.wrapper('explore');
+    call(source, 'onTouchStartCapture', event(65, 439)); call(f.chip('explore'), 'onPressDown');
+    await vi.advanceTimersByTimeAsync(100); call(source, 'onTouchEndCapture', event(65, 439, 0)); call(f.chip('explore'), 'onPress');
+    expect(f.submit).toHaveBeenCalledTimes(1); expect(f.submit.mock.calls[0]![0].id).toBe('global:command:explore');
+    expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0); f.dispose();
+  });
+
+  it('does not clip a lifted chip when the collapsed single row is dragged downward across wrapped rows', async () => {
+    const f = await fixture(), source = f.wrapper('explore');
+    const clip = f.all().find(node => node.props.style?.maxHeight === 28 && node.props.style?.overflow === 'hidden')!;
+    expect(clip).toBeDefined();
+    call(source, 'onTouchStartCapture', event(65, 439)); await vi.advanceTimersByTimeAsync(200);
+    call(source, 'onResponderMove', event(100, 500));
+    expect(clip.props.style.overflow).not.toBe('hidden');
+    expect(clip.props.style.maxHeight).toBe(28);
+    const offrow = f.wrapper('review-accessibility-and-keyboard-navigation');
+    expect(offrow.props.style).toMatchObject({ opacity: 0, pointerEvents: 'none' });
+    expect(f.submit).not.toHaveBeenCalled(); expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0); f.dispose();
+  });
+
+  it('cancels a held gesture when the plus sheet opens, and rejects retained chip callbacks beneath it', async () => {
+    const f = await fixture(), source = f.wrapper('explore'), chip = f.chip('explore'), add = f.find('new-session-presets-add');
+    call(source, 'onTouchStartCapture', event(65, 439)); call(chip, 'onPressDown');
+    call(add, 'onPress'); f.effects(); await vi.advanceTimersByTimeAsync(250);
+    expect(f.gesture.mock.calls.at(-1)).toEqual([false]);
+    expect(f.all().some(node => node.props.testID === 'new-session-presets-trash')).toBe(false);
+    call(source, 'onTouchEndCapture', event(65, 439, 0)); call(chip, 'onPress'); expect(f.submit).not.toHaveBeenCalled(); f.dispose();
+  });
+
+  it('cannot rearm a cancelled multi-touch gesture through a later native pressDown', async () => {
+    const f = await fixture(), source = f.wrapper('explore'), chip = f.chip('explore');
+    call(source, 'onTouchStartCapture', event(65, 439, 2)); call(chip, 'onPressDown');
+    call(source, 'onTouchEndCapture', event(65, 439, 0)); call(chip, 'onPress');
+    expect(f.submit).not.toHaveBeenCalled(); expect(f.gesture.mock.calls.at(-1)?.[0]).not.toBe(true); f.dispose();
+  });
+
+  it('cancels frozen geometry on a real chips width reflow instead of persisting an obsolete target', async () => {
+    const f = await fixture(), source = f.wrapper('explore');
+    call(source, 'onTouchStartCapture', event(65, 439)); await vi.advanceTimersByTimeAsync(200);
+    call(source, 'onResponderMove', event(185, 439));
+    call(f.layout, 'onLayout', { bounds: { size: { width: 250, height: 112 } } });
+    expect(f.gesture.mock.calls.at(-1)).toEqual([false]);
+    call(source, 'onResponderRelease', event(185, 439, 0)); await flush();
+    expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0); expect(f.submit).not.toHaveBeenCalled(); f.dispose();
+  });
+
+  it('translates unequal-width neighbors across rows and persists only the global order once on release', async () => {
+    const f = await fixture(); call(f.find('new-session-presets-expand'), 'onPress');
+    const source = f.wrapper('explore'), next = f.wrapper('weigh'), last = f.wrapper('review-accessibility-and-keyboard-navigation');
+    call(source, 'onTouchStartCapture', event(65, 439)); await vi.advanceTimersByTimeAsync(200);
+    call(source, 'onResponderMove', event(145, 489));
+    expect(next.props.style.transform).toEqual([{ translateX: -100 }, { translateY: 0 }]);
+    expect(last.props.style.transform).toEqual([{ translateX: 90 }, { translateY: -50 }]);
+    expect(source.props.style.transform).toEqual([{ translateX: 80 }, { translateY: 50 }]);
+    expect(source.props.style.transform.every((value: object) => Object.keys(value).every(key => key.startsWith('translate')))).toBe(true);
+    const reads = f.request.mock.calls.length;
+    for (let index = 0; index < 100; index++) call(source, 'onResponderMove', event(145 + index % 3, 489));
+    expect(f.request).toHaveBeenCalledTimes(reads); f.measures.forEach(measure => expect(measure).toHaveBeenCalledTimes(1));
+    expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0);
+    call(source, 'onResponderRelease'); call(source, 'onTouchEndCapture'); call(f.chip('explore'), 'onPress'); await flush();
+    expect(f.settings().draftStarters.map(ref => ref.name)).toEqual(['weigh', 'review-accessibility-and-keyboard-navigation', 'explore']);
+    expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(1); expect(f.submit).not.toHaveBeenCalled(); f.dispose();
+  });
+
+  it.each(['reorder', 'trash', 'cross-group'] as const)('keeps a project command/skill %s within its own source and preserves unrelated config', async intent => {
+    const f = await fixture({ project: [{ type: 'command', name: 'local-command' }, { type: 'skill', name: 'local-skill' }], commands: [{ name: 'local-command', scope: 'project' }], skills: [{ name: 'local-skill', scope: 'project' }] });
+    f.geometry('local-command', 20, 525, 220); f.geometry('skill-local-skill', 20, 575, 72);
+    call(f.layout, 'onLayout', { bounds: { size: { width: 350, height: 178 } } }); call(f.find('new-session-presets-expand'), 'onPress');
+    const source = f.wrapper('skill-local-skill'), globals = f.settings().draftStarters;
+    call(source, 'onTouchStartCapture', event(56, 589)); await vi.advanceTimersByTimeAsync(200);
+    const target = intent === 'reorder' ? event(130, 539) : intent === 'trash' ? event(366, 396) : event(65, 439);
+    call(source, 'onResponderMove', target); call(source, 'onResponderRelease'); call(source, 'onTouchEndCapture'); call(f.chip('skill-local-skill'), 'onPress'); await flush();
+    expect(f.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0); expect(f.settings().draftStarters).toBe(globals);
+    expect(f.projectConfig()).toMatchObject({ projectPath: '/fixture/project', keep: { version: 7 } });
+    expect(f.projectConfig().draftStarters.map(ref => ref.name)).toEqual(intent === 'reorder' ? ['local-skill', 'local-command'] : intent === 'trash' ? ['local-command'] : ['local-command', 'local-skill']);
+    expect(f.request.mock.calls.filter(([url]) => url === '/api/fs/write')).toHaveLength(intent === 'cross-group' ? 0 : 1); expect(f.submit).not.toHaveBeenCalled(); f.dispose();
+  });
+
+  it('keeps exact 200ms/6pt sensor boundaries and requires a fresh single-touch start after cancellation', async () => {
+    const f = await fixture(), source = f.wrapper('explore'), chip = f.chip('explore');
+    call(source, 'onTouchStartCapture', event(65, 439)); call(chip, 'onPressDown'); call(source, 'onTouchMoveCapture', event(71, 439));
+    await vi.advanceTimersByTimeAsync(199); expect(source.props.onMoveShouldSetResponderCapture()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(source.props.onMoveShouldSetResponderCapture()).toBe(true);
+    call(source, 'onResponderTerminate'); call(chip, 'onPressDown'); call(chip, 'onPress'); expect(f.submit).not.toHaveBeenCalled();
+    call(source, 'onTouchStartCapture', event(65, 439)); call(chip, 'onPressDown'); call(source, 'onTouchMoveCapture', event(71.1, 439));
+    await vi.advanceTimersByTimeAsync(200); expect(source.props.onMoveShouldSetResponderCapture()).toBe(false); call(chip, 'onPress'); expect(f.submit).not.toHaveBeenCalled();
+    call(source, 'onTouchStartCapture', event(65, 439)); call(chip, 'onPressDown'); call(source, 'onTouchEndCapture', event(65, 439, 0)); call(chip, 'onPress');
+    expect(f.submit).toHaveBeenCalledTimes(1); f.dispose();
+  });
+});

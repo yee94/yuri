@@ -39,6 +39,21 @@ const createTestHelpersWithRealSanitizers = () => {
 };
 
 describe('settings helpers', () => {
+  it('round-trips retention actions without accepting unknown cleanup modes', () => {
+    const helpers = createTestHelpers();
+    for (const sessionRetentionAction of ['archive', 'delete']) {
+      const saved = helpers.sanitizeSettingsUpdate({ sessionRetentionAction, autoDeleteEnabled: false, autoDeleteAfterDays: 30 });
+      expect(helpers.formatSettingsResponse(saved)).toMatchObject({ sessionRetentionAction, autoDeleteEnabled: false, autoDeleteAfterDays: 30 });
+    }
+    for (const sessionRetentionAction of ['', 'remove', null, [], {}, true]) expect(helpers.sanitizeSettingsUpdate({ sessionRetentionAction })).not.toHaveProperty('sessionRetentionAction');
+  });
+  it('preserves an explicit empty provider model selection through settings read-back', () => {
+    const helpers = createTestHelpers();
+    for (const usageSelectedModels of [{ gemini: [] }, { gemini: [], other: ['kept'] }]) {
+      expect(helpers.formatSettingsResponse(helpers.sanitizeSettingsUpdate({ usageSelectedModels }))).toMatchObject({ usageSelectedModels });
+    }
+    expect(helpers.sanitizeSettingsUpdate({ usageSelectedModels: { invalid: 'not-an-array', filtered: [null, 2, ''] } })).not.toHaveProperty('usageSelectedModels');
+  });
   it('ignores retired editor toolbar preferences in updates and stored settings', () => {
     const helpers = createTestHelpers();
     for (const expandedEditorToolbar of [true, false, null, {}, 'invalid']) {

@@ -1,3 +1,5 @@
+import { createDeviceFlowSessions } from './device-flow-sessions.js';
+
 const PR_STATUS_CACHE_TTL_MS = 90_000;
 const PR_STATUS_CACHE_MAX_ENTRIES = 200;
 // Upper bound for resolving a single PR status. resolveGitHubPrStatus makes many
@@ -57,6 +59,8 @@ function setPrStatusCache(key, data, fetchedAt) {
 }
 
 export function registerGitHubRoutes(app) {
+  const deviceFlows = createDeviceFlowSessions();
+  const authCapabilities = { exactAccountRemoval: true, deviceFlowCancellation: true };
   let githubLibraries = null;
   const getGitHubLibraries = async () => {
     if (!githubLibraries) {
@@ -95,7 +99,7 @@ export function registerGitHubRoutes(app) {
 
   app.get('/api/github/auth/status', async (_req, res) => {
     try {
-      const { getGitHubAuth, getOctokitOrNull, clearGitHubAuth, getGitHubAuthAccounts, GH_CLI_ACCOUNT_ID, isGhCliActive, isGhCliDisabled, setGhCliActive } = await getGitHubLibraries();
+      const { getGitHubAuth, getOctokitOrNull, getGitHubAuthAccounts, GH_CLI_ACCOUNT_ID, isGhCliActive, isGhCliDisabled, isGitHubAuthDisconnected } = await getGitHubLibraries();
       const { getGhCliToken } = await import('./gh-cli-credential.js');
 
       const auth = getGitHubAuth();
@@ -114,11 +118,7 @@ export function registerGitHubRoutes(app) {
           ghCliUser = null;
         }
       }
-      if (ghCliActive && !ghCliUser) {
-        setGhCliActive(false);
-      }
-
-      const ghCliCurrent = ghToken !== null && !ghCliDisabled && Boolean(ghCliUser) && (ghCliActive || !usingOwnToken);
+      const ghCliCurrent = !isGitHubAuthDisconnected() && ghToken !== null && !ghCliDisabled && Boolean(ghCliUser) && (ghCliActive || !usingOwnToken);
       if (ghCliUser) {
         accounts = accounts
           .map((account) => ({ ...account, current: ghCliCurrent ? false : Boolean(account.current) }))
@@ -139,7 +139,7 @@ export function registerGitHubRoutes(app) {
 
       const octokit = getOctokitOrNull();
       if (!octokit) {
-        return res.json({ connected: false, accounts, ghCli: buildGhCli() });
+        return res.json({ connected: false, accounts, ghCli: buildGhCli(), capabilities: authCapabilities });
       }
 
       let user = null;
@@ -147,8 +147,7 @@ export function registerGitHubRoutes(app) {
         user = await getGitHubUserSummary(octokit);
       } catch (error) {
         if (isGitHubAuthInvalid(error)) {
-          if (usingOwnToken) clearGitHubAuth();
-          return res.json({ connected: false, accounts: getGitHubAuthAccounts(), ghCli: buildGhCli() });
+          return res.json({ connected: false, accounts: getGitHubAuthAccounts(), ghCli: buildGhCli(), capabilities: authCapabilities });
         }
       }
 
@@ -156,6 +155,7 @@ export function registerGitHubRoutes(app) {
       const mergedUser = user || fallback;
       return res.json({
         connected: true,
+        capabilities: authCapabilities,
         user: mergedUser,
         scope: ghCliCurrent ? undefined : auth?.scope,
         accounts,
@@ -197,6 +197,7 @@ export function registerGitHubRoutes(app) {
         clientId,
         scope,
       });
+      deviceFlows.issue(payload.device_code, payload.expires_in);
 
       return res.json({
         deviceCode: payload.device_code,
@@ -205,15 +206,16 @@ export function registerGitHubRoutes(app) {
         verificationUriComplete: payload.verification_uri_complete,
         expiresIn: payload.expires_in,
         interval: payload.interval,
+        cancellable: true,
         scope,
       });
     } catch (error) {
-      console.error('Failed to start GitHub device flow:', error);
-      return res.status(500).json({ error: error.message || 'Failed to start GitHub device flow' });
+      return res.status(error.status === 429 ? 429 : 500).json({ error: 'Failed to start GitHub device flow' });
     }
   });
 
   app.post('/api/github/auth/complete', async (req, res) => {
+    let flight;
     try {
       const { getGitHubClientId, exchangeDeviceCode, setGitHubAuth, getGitHubAuthAccounts } = await getGitHubLibraries();
       const clientId = getGitHubClientId();
@@ -231,47 +233,60 @@ export function registerGitHubRoutes(app) {
         return res.status(400).json({ error: 'deviceCode is required' });
       }
 
+      flight = deviceFlows.begin(deviceCode);
+      if (flight.result) return res.json(flight.result);
       const payload = await exchangeDeviceCode({ clientId, deviceCode });
+      if (!deviceFlows.current(flight)) return res.json(deviceFlows.commit(flight, () => null));
 
       if (payload?.error) {
-        return res.json({
+        if (!['authorization_pending', 'slow_down', 'expired_token', 'access_denied'].includes(payload.error)) throw new Error('GitHub authorization failed');
+        return res.json(deviceFlows.pending(flight, {
           connected: false,
           status: payload.error,
-          error: payload.error_description || payload.error,
-        });
+          error: payload.error,
+        }));
       }
 
       const accessToken = payload?.access_token;
       if (!accessToken) {
-        return res.status(500).json({ error: 'Missing access_token from GitHub' });
+        throw new Error('Missing GitHub authorization result');
       }
 
       const { createOctokit } = await import('./octokit.js');
       const octokit = createOctokit(accessToken);
       const user = await getGitHubUserSummary(octokit);
 
-      setGitHubAuth({
-        accessToken,
-        scope: typeof payload.scope === 'string' ? payload.scope : '',
-        tokenType: typeof payload.token_type === 'string' ? payload.token_type : 'bearer',
-        user,
-      });
+      return res.json(deviceFlows.commit(flight, () => {
+        setGitHubAuth({
+          accessToken,
+          scope: typeof payload.scope === 'string' ? payload.scope : '',
+          tokenType: typeof payload.token_type === 'string' ? payload.token_type : 'bearer',
+          user,
+        });
 
-      return res.json({
-        connected: true,
-        user,
-        scope: typeof payload.scope === 'string' ? payload.scope : '',
-        accounts: getGitHubAuthAccounts(),
-      });
+        return {
+          connected: true,
+          user,
+          scope: typeof payload.scope === 'string' ? payload.scope : '',
+          accounts: getGitHubAuthAccounts(),
+        };
+      }));
     } catch (error) {
-      console.error('Failed to complete GitHub device flow:', error);
-      return res.status(500).json({ error: error.message || 'Failed to complete GitHub device flow' });
+      if (flight && !flight.result) deviceFlows.fail(flight);
+      return res.status([409, 410].includes(error.status) ? error.status : 500).json({ error: 'Failed to complete GitHub device flow' });
     }
+  });
+
+  app.post('/api/github/auth/cancel', (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'deviceCode' || typeof body.deviceCode !== 'string' || !body.deviceCode.trim()) return res.status(400).json({ error: 'deviceCode is required' });
+    try { return res.json(deviceFlows.cancel(body.deviceCode)); }
+    catch { return res.status(400).json({ error: 'Invalid GitHub device flow' }); }
   });
 
   app.post('/api/github/auth/activate', async (req, res) => {
     try {
-      const { activateGitHubAuth, getGitHubAuth, getOctokitOrNull, clearGitHubAuth, getGitHubAuthAccounts, GH_CLI_ACCOUNT_ID, isGhCliDisabled, setGhCliActive } = await getGitHubLibraries();
+      const { activateGitHubAuth, getGitHubAuth, getOctokitOrNull, getGitHubAuthAccounts, GH_CLI_ACCOUNT_ID, isGhCliDisabled, setGhCliActive } = await getGitHubLibraries();
       const accountId = typeof req.body?.accountId === 'string' ? req.body.accountId : '';
       if (!accountId) {
         return res.status(400).json({ error: 'accountId is required' });
@@ -342,7 +357,6 @@ export function registerGitHubRoutes(app) {
         user = await getGitHubUserSummary(octokit);
       } catch (error) {
         if (isGitHubAuthInvalid(error)) {
-          clearGitHubAuth();
           return res.json({ connected: false, accounts: getGitHubAuthAccounts() });
         }
       }
@@ -365,20 +379,20 @@ export function registerGitHubRoutes(app) {
     }
   });
 
-  app.delete('/api/github/auth', async (_req, res) => {
+  app.delete('/api/github/auth', async (req, res) => {
     try {
-      const { clearGitHubAuth } = await getGitHubLibraries();
+      const { clearGitHubAuth, removeGitHubAuth } = await getGitHubLibraries();
+      if (req.body !== undefined && !(req.body && !Array.isArray(req.body) && typeof req.body === 'object' && Object.keys(req.body).length === 0)) return res.json(removeGitHubAuth(req.body));
       const removed = clearGitHubAuth();
       return res.json({ success: true, removed });
     } catch (error) {
-      console.error('Failed to disconnect GitHub:', error);
-      return res.status(500).json({ error: error.message || 'Failed to disconnect GitHub' });
+      return res.status([400, 404, 409].includes(error.status) ? error.status : 500).json({ error: 'Failed to disconnect GitHub', ...(typeof error.code === 'string' && error.code.startsWith('github_') ? { code: error.code } : {}) });
     }
   });
 
   app.get('/api/github/me', async (_req, res) => {
     try {
-      const { getOctokitOrNull, clearGitHubAuth } = await getGitHubLibraries();
+      const { getOctokitOrNull } = await getGitHubLibraries();
       const octokit = getOctokitOrNull();
       if (!octokit) {
         return res.status(401).json({ error: 'GitHub not connected' });
@@ -388,7 +402,6 @@ export function registerGitHubRoutes(app) {
         user = await getGitHubUserSummary(octokit);
       } catch (error) {
         if (isGitHubAuthInvalid(error)) {
-          clearGitHubAuth();
           return res.status(401).json({ error: 'GitHub token expired or revoked' });
         }
         throw error;
@@ -584,8 +597,6 @@ export function registerGitHubRoutes(app) {
       });
     } catch (error) {
       if (error?.status === 401) {
-        const { clearGitHubAuth } = await getGitHubLibraries();
-        clearGitHubAuth();
         return res.json({ connected: false });
       }
       // Transient failures — a rate limit, or the overall resolve timeout
@@ -1442,8 +1453,6 @@ export function registerGitHubRoutes(app) {
       return res.json({ connected: true, repo, prs: allPrs, page: effectivePage, hasMore: anyHasMore });
     } catch (error) {
       if (error?.status === 401) {
-        const { clearGitHubAuth } = await getGitHubLibraries();
-        clearGitHubAuth();
         return res.json({ connected: false });
       }
       console.error('Failed to list GitHub pull requests:', error);
@@ -1786,8 +1795,6 @@ export function registerGitHubRoutes(app) {
       });
     } catch (error) {
       if (error?.status === 401) {
-        const { clearGitHubAuth } = await getGitHubLibraries();
-        clearGitHubAuth();
         return res.json({ connected: false });
       }
       console.error('Failed to load GitHub PR context:', error);

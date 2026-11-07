@@ -4,8 +4,14 @@ import {
   parseYuriEventEnvelope,
   subscribeYuriEvents,
 } from './yuriEvents';
+import { createNotificationAdmission } from '../../../web/server/lib/notifications/admission-event.js';
 
 describe('parseYuriEventEnvelope', () => {
+  test('accepts content-free admission with exact domain proof without changing legacy events', () => {
+    const admission = createNotificationAdmission('schedule', { kind: 'schedule', id: 'task' }, { type: 'schedule', projectID: 'project', taskID: 'task', runID: 'run', trigger: 'scheduled', resultOwner: 'unowned', status: 'success' });
+    expect(parseYuriEventEnvelope({ type: 'yuri:notification-admitted', properties: admission })).toEqual({ type: 'notification-admitted', admission });
+    for (const invalid of [{ ...admission, text: 'Private' }, { ...admission, eventID: 'invented' }, { ...admission, source: { ...admission!.source, trigger: 'manual' } }]) expect(parseYuriEventEnvelope({ type: 'yuri:notification-admitted', properties: invalid })).toBeNull();
+  });
   test('parses the session-order invalidation tip', () => {
     expect(parseYuriEventEnvelope({ type: 'yuri:session-order-changed', properties: { occurredAt: 2 } }))
       .toEqual({ type: 'session-order-changed', occurredAt: 2 });

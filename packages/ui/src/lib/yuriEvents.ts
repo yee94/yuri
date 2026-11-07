@@ -1,5 +1,6 @@
 import { consumeRuntimeSse } from './runtime-sse';
 import { subscribeRuntimeEndpointChanged } from './runtime-switch';
+import { notificationAdmission, type NotificationAdmission } from '../../../web/server/lib/notifications/admission-event.js';
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -70,6 +71,7 @@ export type ContactTurnEndEvent = {
   occurredAt: number;
 };
 export type YuriEvent =
+  | { type: 'notification-admitted'; admission: NotificationAdmission }
   | { type: 'session-order-changed'; occurredAt: number }
   | { type: 'project-order-changed'; occurredAt: number }
   | { type: 'speech-settings-changed'; occurredAt: number }
@@ -184,6 +186,10 @@ const parseEnvelope = (raw: string): { type: string; properties: unknown } | nul
 };
 
 export const parseYuriEventEnvelope = (envelope: { type: string; properties: unknown }): YuriEvent | null => {
+  if (envelope.type === 'yuri:notification-admitted') {
+    const admission = notificationAdmission(envelope.properties);
+    return admission ? { type: 'notification-admitted', admission } : null;
+  }
   if (envelope.type === 'yuri:event-stream-ready') {
     return envelope.properties === undefined || envelope.properties === null || (typeof envelope.properties === 'object' && !Array.isArray(envelope.properties))
       ? { type: 'event-stream-ready' }

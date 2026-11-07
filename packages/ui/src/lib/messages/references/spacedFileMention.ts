@@ -1,4 +1,4 @@
-import { isNpmScopedPackageMention } from '@/lib/search/fileMentionSearch';
+import { isNpmScopedPackageMention } from '../../search/fileMentionSearch';
 
 const FILE_EXTENSION_PATTERN = /\.[a-z0-9]{1,8}$/i;
 

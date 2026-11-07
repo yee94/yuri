@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "include": [
+    "../state.ts",
+    "../runtime.ts",
+    "../runtime-scope.ts",
+    "../history-presentation.ts",
+    "../runtime-scope.test.ts",
+    "../runtime-scope-state.test.ts",
+    "../history-presentation.test.ts",
+    "../notification-catalog-state.test.ts",
+    "../../ui/src/types/desktop.d.ts"
+  ],
+  "exclude": []
+}

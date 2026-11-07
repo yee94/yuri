@@ -1,0 +1,117 @@
+import { expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { notificationEventFields } from './notification-preferences-core';
+import { settingsBasicFields } from './settings-basics-core';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
+it('registers exactly the controlled live and v1 launch handlers/capabilities and links the production Apple framework', () => {
+  const expected = ['notification.status', 'notification.request', 'notification.openSettings', 'notification.configure', 'notification.live', 'notification.test', 'notification.launch.peek', 'notification.launch.claim', 'notification.launch.ack'];
+  const config = JSON.parse(read('nsh.json'));
+  expect(config.capabilities.host.filter((name: string) => name.startsWith('notification.')).sort()).toEqual([...expected].sort());
+  expect(config.capabilities.host).toContain('native.diagnostics.export');
+  expect([...read('ios/NotificationBridge.swift').matchAll(/app\?\.handle\("(notification\.[^"]+)"/g)].map(match => match[1]).sort()).toEqual([...expected].sort());
+  const build = read('scripts/build-ios.mjs');
+  expect(build).toContain("'UserNotifications'"); expect(build).toContain("readdir(path.join(packageRoot, 'ios'))");
+  expect(build).not.toContain('aps-environment');
+});
+it('retains all prior main owners and tears down through RuntimeBridge.stop, not share-sheet loss of activity', () => {
+  const main = read('ios/main.swift');
+  expect(main).toContain('private var notifications: NotificationBridge?');
+  expect(main).toContain('self.notifications = notifications');
+  expect(main).toContain('return NotificationHostScope(hostID: selected.id, isCurrent: transport.isCurrent, authorizationID: selected.authorizationID)');
+  expect(main.indexOf('NotificationLaunchDelegate.shared.install()')).toBeLessThan(main.indexOf('window.rootViewController = YuriController()'));
+  expect(main).not.toContain('surface.send("notification.route"');
+  expect(main.indexOf('NotificationBridge(app: surface')).toBeLessThan(main.indexOf('surface.loadBundle'));
+  for (const owner of ['resources', 'resourceWebPreview', 'speech', 'remoteDesktop', 'diagnostics', 'notifications']) {
+    expect(main).toContain(`weak ${owner}`); expect(main).toContain(`${owner}?.invalidate()`);
+  }
+  expect(main).toContain('try appearance?.invalidate()'); expect(main).toContain('self.diagnostics = diagnostics');
+  expect(main).toContain('func applicationWillTerminate'); expect(main).toContain('func shutdown()'); expect(main).toContain('bridge?.stop()');
+  expect(main).toMatch(/deinit\s*\{[\s\S]*?Task \{ @MainActor in Self\.shutdown/);
+  expect(main).not.toMatch(/willResignActive|MainActor\.assumeIsolated|nonisolated\(unsafe\)/);
+  expect(main).toMatch(/func suspendResourcePreview\(\)\s*\{[^}]*resourceWebPreview\?\.invalidate\(\)/);
+});
+it('replaces only the Basic notification branch, puts confirmed-save controls first and preserves all eight Host flags', () => {
+  const basics = read('settings-basics.tsx'), page = read('notification-settings.tsx');
+  expect(basics).toContain("if (props.page === 'notifications') return <SettingsNotifications target={props.target} active={props.active} />");
+  expect(basics).toContain("if (props.page === 'about') return <SettingsAbout");
+  expect(basics).not.toMatch(/settings-notifications-focused|notificationTemplates|update\('notificationMode'/);
+  expect(page.indexOf('testID="notification-settings-header"')).toBeLessThan(page.indexOf('<SettingsNativeNotifications'));
+  expect(page).toContain('permissionBusy() || state().syncPending');
+  expect(page).toContain('read: nativeNotificationSettings.read, write: nativeNotificationSettings.write, synchronize: nativeNotificationSettings.synchronize');
+  expect(page).not.toMatch(/SettingsInput|notificationTemplates|setNotificationMode/);
+  expect(page).toContain("t('settings.notifications.native.policy')");
+  const flags = settingsBasicFields('notifications').filter(field => field.key !== 'notificationMode' && field.key !== 'nativeNotificationsEnabled');
+  expect(notificationEventFields).toEqual(flags.map(field => ({ key: field.key, title: field.title })));
+});
+it('keeps permission gating and native suppression in the actual production paths', () => {
+  const ui = read('notification.tsx'), swift = read('ios/NotificationBridge.swift');
+  expect(ui.indexOf('requestNotificationEnable(call)')).toBeLessThan(ui.indexOf('if (notificationAuthorized(nextStatus)) await props.onEnabledChange(true)'));
+  expect(ui).toContain('(!status() && !props.enabled)'); expect(ui).toContain('!notificationAuthorized(status()!)');
+  expect(swift).toContain('test || (enabled && !active)');
+  expect(swift).toContain('guard shouldPresent(entry) else'); expect(swift).toContain('let entry = entries[receipt], shouldPresent(entry)');
+  expect(swift).toContain('"backgroundPush": false'); expect(swift).not.toMatch(/registerForRemoteNotifications|beginBackgroundTask/);
+  expect(swift).toContain('scope.isCurrent(), configuration == next, !lease.isEmpty');
+});
+it('uses only the existing global source callback, cheap-gates token traffic and does not invent a settings tip', () => {
+  const state = read('state.ts'), rootSource = read('notification-root.tsx'), pure = read('notification-root-core.ts');
+  expect(state).toContain('export function observeRuntime(onChange: () => void, onEvent?:');
+  expect(state).toContain('if (onEvent && !switching)');
+  expect(state).toContain("if (!event || !runtimeReady() || lifecycle() !== 'active') return");
+  expect(state).toContain('attentionSource.accept(key, event)'); expect(state).toContain('const changed = catalogDomains(event)');
+  expect(state.slice(state.indexOf('export function createChat'))).not.toContain('notification.');
+  expect(rootSource).not.toMatch(/host\.on\(['"]runtime\.event|setInterval|setTimeout|runtime\.stream/);
+  expect(pure).toContain("event.key !== 'global'");
+  expect(pure).toContain('createNotificationGlobalAdmission('); expect(pure).toContain('admitted.onEvent(event, scope)');
+  expect(pure).not.toMatch(/notificationGlobalAuthority|spokenTurns|sessionTerminalNotification/);
+  const admitted = read('notification-global-admission.ts'), resolver = read('notification-session-live.ts');
+  expect(admitted.indexOf("event.type !== 'yuri:notification-admitted'")).toBeLessThan(admitted.indexOf('pending.set(admission.eventID'));
+  expect(resolver).toContain('if (source !== next)'); expect(resolver).toContain('matches.length !== 1');
+  expect(rootSource.match(/host\.on\('notification\.route'/g)).toHaveLength(1);
+  expect(rootSource).toContain('controller.route(value)');
+  expect(pure).toContain('await input.catalogReady!(valid)');
+  expect(pure).toContain('createNotificationLaunchTransport(');
+  expect(pure).toContain('validateRoute: input.transport.delivery.route');
+  expect(pure).toContain('launch.isCurrent(record.receipt)');
+  const launch = read('notification-launch-transport.ts');
+  expect(launch).toContain('notificationRecoveryRecord(value?.record)');
+  expect(launch).toContain('input.validateRoute(route)');
+  expect(pure).not.toMatch(/event\.type === ['"]yuri:(settings|config)-changed/);
+  expect(read('appearance.tsx')).toContain('Host appearance currently has no settings revision tip');
+});
+it('mounts a single root in the production app and resolves real catalog identities without guessing', () => {
+  const app = read('application.tsx');
+  expect(app.match(/createNativeNotificationRoot<Route>\(/g)).toHaveLength(1);
+  expect(app.match(/observeRuntime\(/g)).toHaveLength(1);
+  expect(app.match(/notifications\.onEvent\(event, scope\)/g)).toHaveLength(1);
+  expect(app).toContain('<NotificationFeedback />');
+  expect(app).toContain('sessions: () => app.sessions()');
+  expect(app).toContain("text(record(item.task).id) === identity.id");
+  expect(app).toContain('assistantChatTarget(bot)');
+  expect(app).not.toMatch(/host\.on\(['"]notification\.route|host\.on\(['"]runtime\.event/);
+});
+it('grounds prompt/Goal/contact adapters and scheduler exclusions in current Server contracts, not guessed event names', () => {
+  const trigger = read('../web/server/lib/notifications/runtime.js');
+  const service = read('../web/server/lib/assistants/service.js');
+  const harness = read('../web/server/lib/assistants/harness.js');
+  const index = read('../web/server/index.js');
+  const yuri = read('../ui/src/lib/yuriEvents.ts');
+  expect(trigger).toContain("payload.type === 'question.asked' || payload.type === 'form.created'");
+  expect(trigger).toContain("payload.type === 'permission.asked'");
+  expect(trigger).toContain("payload.type === 'rpc.opencode.goal.changed'");
+  expect(trigger).toContain("parsed.value.goal?.status !== 'complete'");
+  for (const flag of ['notifyOnQuestion', 'notifyOnPermission', 'notifyOnGoals', 'notifyOnAssistants', 'notifyOnScheduledTasks']) expect(trigger).toContain(`settings.${flag} === false`);
+  expect(harness).toContain('onBubbleDelta?.(index, bubble, true)');
+  expect(harness).toContain('onBubbleDelta: allowSilent ? null : onBubbleDelta');
+  const silent = service.slice(service.indexOf('if (generated?.silent === true)'), service.indexOf('const resetThisTurn', service.indexOf('if (generated?.silent === true)')));
+  expect(silent).toContain("emitContactTurnEvent('yuri:contact-turn-end', { assistantID, turnID, status: 'complete' })");
+  expect(silent).not.toContain('notifyContactTurn(');
+  const scheduleEvent = index.slice(index.indexOf('emitTaskRunEvent: (event) =>'), index.indexOf('notifyTaskRun: (event) =>'));
+  for (const field of ['projectId: event.projectID', 'taskId: event.taskID', 'ranAt: event.ranAt', 'status: event.status']) expect(scheduleEvent).toContain(field);
+  expect(scheduleEvent).not.toMatch(/runID|runId|reason|trigger|assistant|silent/);
+  expect(trigger).toContain("if (reason === 'manual') return");
+  expect(yuri).toContain("type: 'contact-turn-end'"); expect(yuri).toContain("type: 'scheduled-task-ran'");
+});

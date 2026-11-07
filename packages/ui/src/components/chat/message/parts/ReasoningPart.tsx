@@ -13,6 +13,7 @@ import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
 import type { StreamPhase } from '../types';
 import { TOOL_ROW_INTERACTIVE_CHROME_CLASS } from './toolRowChrome';
+import { cleanReasoningText, getReasoningSummary, initialReasoningExpansion, reconcileReasoningExpansion, type ReasoningExpansionState } from './reasoningPresentation';
 import {
     emitStreamingHapticEvent,
     evaluateVisiblePartHaptic,
@@ -29,63 +30,8 @@ type PartWithSession = Part & { sessionID?: string };
 
 type ReasoningVariant = 'thinking' | 'justification';
 
-const cleanReasoningText = (text: string): string => {
-    if (typeof text !== 'string' || text.trim().length === 0) {
-        return '';
-    }
-
-    return text
-        .split('\n')
-        .map((line: string) => line.replace(/^>\s?/, '').trimEnd())
-        .filter((line: string) => line.trim().length > 0)
-        .join('\n')
-        .trim();
-};
-
-const SUMMARY_MAX_CHARS = 80;
 const EXPANDED_CONTENT_UNMOUNT_DELAY_MS = 200;
 const EXPANDED_CONTENT_TRANSITION = { duration: 0.2, ease: 'easeOut' as const };
-
-/** Strip common markdown syntax so the header preview reads as plain text. */
-const stripMarkdown = (text: string): string =>
-    text
-        // Empty HTML comments are frequently appended by model tool wrappers.
-        .replace(/<!--\s*-->/g, '')
-        // Fenced code blocks → keep inner text on one line
-        .replace(/```[\w]*\n?([\s\S]*?)```/g, (_, inner: string) => inner.trim())
-        // Inline code
-        .replace(/`([^`]+)`/g, '$1')
-        // Bold + italic (*** / __)
-        .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
-        .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
-        // Headings (# ## ###)
-        .replace(/^#{1,6}\s+/gm, '')
-        // Links [label](url) → label
-        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-        // Blockquote markers
-        .replace(/^>\s?/gm, '')
-        // Horizontal rules
-        .replace(/^[-*_]{3,}\s*$/gm, '')
-        // Remaining leading/trailing punctuation from stripped markers
-        .trim();
-
-const getReasoningSummary = (text: string): string => {
-    if (!text) {
-        return '';
-    }
-
-    // Strip markdown, then collapse all whitespace runs into single spaces.
-    const flat = stripMarkdown(text).replace(/\s+/g, ' ').trim();
-
-    if (flat.length <= SUMMARY_MAX_CHARS) {
-        return flat;
-    }
-
-    // Cut at a word boundary before the limit, then append ellipsis.
-    const cut = flat.lastIndexOf(' ', SUMMARY_MAX_CHARS);
-    const end = cut > 0 ? cut : SUMMARY_MAX_CHARS;
-    return `${flat.substring(0, end).trimEnd()}…`;
-};
 
 type ReasoningTimelineBlockProps = {
     text: string;
@@ -98,11 +44,6 @@ type ReasoningTimelineBlockProps = {
     actions?: React.ReactNode;
     /** Override the initial expanded state. Defaults to `isStreaming`. */
     defaultExpanded?: boolean;
-};
-
-type ExpansionState = {
-    expanded: boolean;
-    source: 'auto' | 'user';
 };
 
 export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
@@ -119,12 +60,7 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
     const isMobile = useUIStore((state) => state.isMobile);
     const hasEnded = typeof time?.end === 'number';
     const canAutoExpand = isStreaming && !hasEnded;
-    const [expansion, setExpansion] = React.useState<ExpansionState>(() => {
-        if (defaultExpanded === true) {
-            return { expanded: true, source: 'user' };
-        }
-        return { expanded: canAutoExpand, source: 'auto' };
-    });
+    const [expansion, setExpansion] = React.useState<ReasoningExpansionState>(() => initialReasoningExpansion(defaultExpanded, canAutoExpand));
     const isExpanded = expansion.expanded;
     const [shouldRenderExpandedContent, setShouldRenderExpandedContent] = React.useState(defaultExpanded === true || canAutoExpand);
     const contentId = React.useId();
@@ -156,15 +92,7 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
     });
 
     React.useLayoutEffect(() => {
-        setExpansion((prev) => {
-            if (prev.source === 'user') {
-                return prev;
-            }
-            if (prev.expanded || !canAutoExpand) {
-                return prev;
-            }
-            return { expanded: true, source: 'auto' };
-        });
+        setExpansion((prev) => reconcileReasoningExpansion(prev, canAutoExpand));
     }, [canAutoExpand]);
 
     React.useEffect(() => {
