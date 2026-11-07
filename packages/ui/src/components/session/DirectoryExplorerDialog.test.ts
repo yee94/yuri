@@ -41,7 +41,7 @@ describe('DirectoryExplorerDialog mobile layout', () => {
 describe('DirectoryExplorerDialog surface', () => {
   test('shares the search glass surface without nesting a directory card', () => {
     expect(componentSource).toContain('presentation="picker"');
-    expect(componentSource).toContain('outerClassName="yuri-directory-results"');
+    expect(componentSource).toContain('outerClassName="yuri-directory-results overflow-clip"');
     expect(componentSource).not.toContain('shadow-sm');
     expect(componentSource).not.toContain('DialogDescription');
     expect(componentSource).toContain('<Kbd variant="hint"');

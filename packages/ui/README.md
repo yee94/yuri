@@ -161,6 +161,8 @@ actions. Mobile omits keyboard hints and retains the controlled shared
 resizable sheet and 44px folder-navigation targets. Browsing, hidden folders,
 quick add, create/add, native folder selection and clone/identity behavior share
 the existing handlers across both layouts.
+The results frame uses `overflow-clip`, leaving the inner directory list as the
+only scroll owner even when touch-mode CSS rewrites `overflow-hidden` to auto.
 
 ## Assistant avatars
 

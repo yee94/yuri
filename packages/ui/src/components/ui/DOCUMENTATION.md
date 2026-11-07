@@ -471,6 +471,10 @@ Global search previews at most five rows per non-empty result group while a quer
 
 Desktop search has a responsive 56rem maximum width for excerpts. Native/hosted mobile uses the independent search push page; responsive web uses an opaque full-viewport search surface with the same back header, safe-area padding and keyboard viewport sizing. Neither mobile presentation uses the compact floating search card.
 
+The mobile search header sizes its back column from the actual button and leaves
+an explicit 8px gap before the field. The field uses the same density-scaled
+2.5rem height as `Button mobileIcon`, retaining the 36px touch minimum.
+
 `DialogContent` owns both the popup surface and its backdrop. Feature-specific dialog treatments pass popup styling through `className` and backdrop styling through `overlayClassName`; this keeps blur and dimming local to the owning dialog without changing every modal surface.
 
 Both the popup and backdrop are Electron `app-region-no-drag` regions. Portal rendering and z-index alone do not exclude the underlying window drag region; dialogs opened over draggable startup/upgrade screens must retain pointer interaction across the entire popup and backdrop.

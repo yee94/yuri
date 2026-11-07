@@ -2,6 +2,9 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, expect, test, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const searchSessions = vi.hoisted(() => vi.fn(async (_query: string) => [
   { id: 'session-1', title: 'Recent conversation', time: { updated: 1 } },
@@ -141,6 +144,10 @@ test('opening search only consumes startup GUI contributions and never requests 
 test('page presentation has a focused search header and results without dialog chrome', async () => {
   const host = document.createElement('div');
   document.body.append(host);
+  const stylesheet = document.createElement('style');
+  stylesheet.textContent = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'command-palette.css'), 'utf8');
+  document.head.append(stylesheet);
+  const previousFontSize = document.documentElement.style.fontSize;
   const root = createRoot(host);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onBack = vi.fn();
@@ -165,6 +172,12 @@ test('page presentation has a focused search header and results without dialog c
     expect(time.previousElementSibling?.textContent).toBe('Recent conversation');
     expect(input.closest('[data-slot="command-input-field"]')?.className).toContain('yuri-mobile-glass-control');
     expect(input.closest('[data-slot="command-input-field"]')?.className).not.toContain('ring-');
+    const navigation = host.querySelector<HTMLElement>('.yuri-mobile-detail-navigation-content')!;
+    expect(getComputedStyle(navigation).gridTemplateColumns).toBe('auto minmax(0, 1fr)');
+    expect(getComputedStyle(navigation).columnGap).toBe('0.5rem');
+    document.documentElement.style.fontSize = '20px';
+    expect(getComputedStyle(input.closest('[data-slot="command-input-field"]')!).height).toBe('50px');
+    expect(getComputedStyle(input).height).toBe('50px');
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
     expect(host.querySelector('[data-slot="dialog-close"]')).toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="header.actions.backAria"]')!.click());
@@ -173,6 +186,8 @@ test('page presentation has a focused search header and results without dialog c
     await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
     client.clear();
     host.remove();
+    stylesheet.remove();
+    document.documentElement.style.fontSize = previousFontSize;
   }
 });
 

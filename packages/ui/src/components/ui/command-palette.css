@@ -117,7 +117,8 @@
 }
 
 .yuri-global-search-page .yuri-mobile-detail-navigation-content {
-  grid-template-columns: 2.75rem minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.5rem;
 }
 
 .yuri-global-search-page .yuri-mobile-detail-navigation-content > :nth-child(2) {
@@ -139,7 +140,8 @@
 
 .yuri-global-search-page [data-slot='command-input-field'],
 .yuri-global-search-page [data-slot='command-input'] {
-  height: 40px;
+  height: 2.5rem;
+  min-height: 36px;
   font-size: 16px;
 }
 

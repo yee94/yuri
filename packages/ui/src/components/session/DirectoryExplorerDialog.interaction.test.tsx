@@ -163,6 +163,10 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     await mount();
     expect(container.querySelectorAll('[data-directory-row]')).toHaveLength(30);
     expect(container.querySelector('.yuri-directory-list .yuri-directory-footer')).toBeNull();
+    const frame = container.querySelector('.yuri-directory-results')!;
+    expect(frame.classList.contains('overflow-clip')).toBe(true);
+    expect(frame.classList.contains('overflow-hidden')).toBe(false);
+    expect(container.querySelector('.yuri-directory-list')?.classList.contains('overflow-y-auto')).toBe(true);
     if (process.env.YURI_TEST_EVIDENCE_DIR) writeFileSync(join(process.env.YURI_TEST_EVIDENCE_DIR, `directory-${mobile ? 'mobile' : 'desktop'}-long.html`), container.innerHTML);
     await act(async () => { button('directoryExplorerDialog.actions.cloneRepository').click(); });
     expect(container.querySelectorAll('[data-directory-row]')).toHaveLength(30);
