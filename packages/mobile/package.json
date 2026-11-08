@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/mobile",
-  "version": "0.2.34",
+  "version": "0.2.35-beta.1",
   "private": true,
   "type": "module",
   "scripts": {

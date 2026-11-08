@@ -789,6 +789,17 @@
   box-shadow: none;
 }
 
+/* A list without a label row starts directly under the project header; a top
+   edge there reads as a stray divider between the header and the first row. */
+.yuri-mobile-project-groups
+  > .yuri-mobile-labeled-surface-group:not(
+    :has(> .yuri-mobile-labeled-surface-group-label)
+  ) {
+  border-block-start-width: 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
 .yuri-mobile-labeled-surface-group-label {
   min-width: 0;
   box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);
