@@ -1407,7 +1407,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                                     : activityStatusLabel}
                                 <Icon
                                     name={effectivelyExpanded ? 'arrow-down-s' : 'arrow-right-s'}
-                                    className="size-3.5 shrink-0 opacity-0 group-hover/tool:opacity-70 group-focus-visible/tool:opacity-70"
+                                    className="size-3.5 shrink-0 opacity-70"
                                 />
                             </span>
                         ) : <><span
