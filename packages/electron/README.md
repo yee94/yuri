@@ -117,7 +117,7 @@ relaunch/install. See `../web/server/lib/host-update/DOCUMENTATION.md` for plans
 beta/rollback, durable status, authorization and CLI support limits. This native
 injection requires a new desktop installer; UI OTA alone cannot add it.
 
-When the shared OTA decision requires a new shell, `desktop-installer.mjs` uses `electron-updater` to download the complete installer in-app and calls `quitAndInstall` after the normal server shutdown. The generic feed is pinned to that exact GitHub release's `full*.yml`, never to a mutable latest feed. Beta eligibility and explicit stable downgrade permission come from the shared decision. Downloads do not install automatically on ordinary quit, and changing the selected update invalidates the install action.
+When the shared OTA decision requires a new shell, `desktop-installer.mjs` uses `electron-updater` to download the complete installer in-app and calls `quitAndInstall` after the normal server shutdown. The generic feed is pinned to that exact GitHub release's `full*.yml`, never to a mutable latest feed. Beta eligibility and explicit stable downgrade permission come from the shared decision. Downloads do not install automatically on ordinary quit, and changing the selected update invalidates the install action. One updater serves every window: concurrent checks and downloads coalesce onto the in-flight operation instead of rejecting with an "in progress" error, and a check issued during a download reports the live download state. A failed or superseded operation releases the shared state so the next attempt retries.
 
 OTA recovery is manual: clear `userData/ota` or install a newer shell version. Reinstalling the same shell version alone preserves the OTA selection and does not clear a failed bundle.
 

@@ -793,17 +793,6 @@
   box-shadow: none;
 }
 
-/* A list without a label row starts directly under the project header; a top
-   edge there reads as a stray divider between the header and the first row. */
-.yuri-mobile-project-groups
-  > .yuri-mobile-labeled-surface-group:not(
-    :has(> .yuri-mobile-labeled-surface-group-label)
-  ) {
-  border-block-start-width: 0;
-  border-start-start-radius: 0;
-  border-start-end-radius: 0;
-}
-
 .yuri-mobile-labeled-surface-group-label {
   min-width: 0;
   box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);
@@ -968,8 +957,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:last-child,
-.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:last-child {
+.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])),
+.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])) {
   --yuri-mobile-session-radius-end-end: calc(
     var(--yuri-mobile-inset-radius) - 1px
   );
@@ -978,7 +967,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-session-row:not(:last-child) {
+/* DnD accessibility nodes follow the rows; only another row needs a divider. */
+.yuri-mobile-session-row:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row]) {
   box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);
 }
 
@@ -3123,6 +3113,16 @@ button.yuri-mobile-schedule-assistant::before {
   :root.mobile-pointer:not(.desktop-runtime) [data-page-scroll-lock="true"] {
     overflow: hidden !important;
     overscroll-behavior: none;
+  }
+
+  /* Temporary experiment: keep the transcript's authored clipping instead of
+     turning every `.overflow-hidden` wrapper inside it into its own scrollport.
+     Nested scroll views absorb short reverse drags while the transcript is
+     still decelerating, so the reverse gesture never reaches the outer scroller. */
+  :root.mobile-pointer:not(.desktop-runtime)
+    .yuri-chat-scroll-content .overflow-hidden {
+    overflow: hidden !important;
+    -webkit-overflow-scrolling: auto;
   }
 
   /* Composer clip shells must stay clippers. The generic rewrite above

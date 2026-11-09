@@ -365,19 +365,23 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
         const desktopInfo = await checkForDesktopUpdates(channelOverride);
         if (checkGeneration !== updateCheckGeneration || useUIStore.getState().otaChannelOverride !== channelOverride) return null;
         const alreadyDownloaded = desktopInfo?.downloaded === true;
+        // Another window may own the running download; mirror it here.
+        const downloadingElsewhere = !alreadyDownloaded && desktopInfo?.downloading === true;
         set({
           checking: false,
           available: desktopInfo?.available ?? false,
           // Main may already have queued the resource bundle in another window.
           downloaded: alreadyDownloaded,
           // A queued bundle is ready for the next launch.
-          ...(alreadyDownloaded ? { downloading: false, progress: null, downloadError: null } : {}),
+          ...(alreadyDownloaded
+            ? { downloading: false, progress: null, downloadError: null }
+            : downloadingElsewhere ? { downloading: true, progress: desktopInfo?.progress ?? null } : {}),
           info: desktopInfo,
           error: null,
           lastChecked: Date.now(),
           nextCheckInSec: desktopInfo?.nextSuggestedCheckInSec ?? null,
           otaDecision: desktopInfo?.otaDecision ?? null,
-          otaPhase: alreadyDownloaded ? 'pending_restart' : desktopInfo?.inAppApply ? 'available' : 'idle',
+          otaPhase: alreadyDownloaded ? 'pending_restart' : downloadingElsewhere ? 'downloading' : desktopInfo?.inAppApply ? 'available' : 'idle',
           lastOtaChannelOverride: channelOverride,
         });
 
