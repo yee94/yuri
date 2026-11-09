@@ -42,6 +42,7 @@ const compiled = ts.transpileModule(`const renderBranch = () => { ${branches} };
 }).outputText;
 const createRender = new Function(...bindings, `${compiled}\nreturn renderBranch;`);
 const Empty = () => null;
+const Passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
 const Composer = () => <textarea defaultValue="loading draft" autoFocus />;
 const host = document.createElement('div');
 let root: ReturnType<typeof createRoot>;
@@ -65,6 +66,7 @@ const render = async (overrides: Record<string, unknown>) => {
         t: (key: string) => key,
         ChatViewport: Empty, Skeleton: Empty, DesktopComposerEdgeFade: Empty,
         TimelineDialog: Empty, TranscriptScrollControls: Empty,
+        TranscriptSearch: Passthrough,
         ChatEmptyState: Empty, Icon: Empty, Button: Empty,
         ...overrides,
     };

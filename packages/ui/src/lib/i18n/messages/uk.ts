@@ -3,6 +3,11 @@ import { settingsDict } from './uk.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': 'Пошук у завантаженій розмові',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': 'Попередній збіг (Shift+Enter)',
+  'chat.find.next': 'Наступний збіг (Enter)',
+  'chat.find.close': 'Закрити пошук (Esc)',
   'settings.remoteInstances.openLocalManager': 'Керувати екземплярами в локальному вікні',
   ...tourMessages.uk,
   'settings.switch.off': 'Вимк.',

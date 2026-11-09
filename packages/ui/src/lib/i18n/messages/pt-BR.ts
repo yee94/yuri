@@ -3,6 +3,11 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': 'Pesquisar na conversa carregada',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': 'Ocorrência anterior (Shift+Enter)',
+  'chat.find.next': 'Próxima ocorrência (Enter)',
+  'chat.find.close': 'Fechar pesquisa (Esc)',
   'settings.remoteInstances.openLocalManager': 'Gerenciar instâncias em uma janela local',
   ...tourMessages['pt-BR'],
   'settings.switch.off': 'Deslig.',

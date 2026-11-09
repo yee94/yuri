@@ -16,6 +16,55 @@
   color: var(--foreground);
 }
 
+::highlight(yuri-transcript-find) {
+  background-color: var(--chat-findMatch, Mark);
+  color: var(--chat-findMatchForeground, MarkText);
+}
+
+::highlight(yuri-transcript-find-active) {
+  background-color: var(--chat-findActiveMatch, var(--primary-base));
+  color: var(--chat-findActiveMatchForeground, var(--primary-foreground));
+  text-decoration: underline;
+  text-decoration-thickness: 0.12em;
+}
+
+.yuri-transcript-find [data-slot="input"],
+.yuri-transcript-find [data-slot="input"]:hover,
+.yuri-transcript-find [data-slot="input"]:focus {
+  height: 2.5rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  font-size: var(--font-size-ui, 0.875rem);
+}
+
+.yuri-transcript-find:focus-within {
+  border-color: var(--interactive-border-hover);
+}
+
+.yuri-transcript-find-close {
+  border-left: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-transcript-find-navigation {
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-transcript-find [data-slot="button"] {
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-transcript-find [data-slot="button"]:hover {
+  color: var(--surface-foreground);
+}
+
+.yuri-transcript-find [data-slot="button"]:disabled {
+  opacity: 0.3;
+}
+
 [data-speech-active="true"] {
   color: var(--foreground);
 }

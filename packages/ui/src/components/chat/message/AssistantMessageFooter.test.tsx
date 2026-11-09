@@ -16,7 +16,8 @@ test.each([false, true])('shared footer keeps optional metadata, action and trai
             activity={<span data-background>Background</span>} trailing={<span data-changes>Changes</span>} />));
         const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
         expect(footer.style.containerName).toBe('message-footer');
-        expect(footer.className).toContain(isMobile ? 'mt-3' : 'mt-1.5');
+        expect(footer.className).toContain(isMobile ? 'mt-1.5' : 'mt-2.5');
+        expect(footer.className).toContain(isMobile ? 'mb-0.5' : 'mb-2');
         expect(footer.firstElementChild?.getAttribute('data-message-action-group')).toBe('true');
         expect(footer.textContent).toBe('Copy20 tok/s1.3sBackground2026-11-03 10:30Changes');
         await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} actions={<button>Copy</button>} />));
@@ -24,6 +25,8 @@ test.each([false, true])('shared footer keeps optional metadata, action and trai
         expect(footer.querySelector('[data-message-time]')).toBeNull();
         await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} tps="20 tok/s" interrupted />));
         expect(footer.getAttribute('data-message-tps')).toBe('interrupted');
+        expect(footer.className).toContain(isMobile ? 'mt-3' : 'mt-1.5');
+        expect(footer.className).toContain('mb-0.5');
         expect(footer.querySelector('[data-message-action-group]')).toBeNull();
         expect(footer.textContent).toBe('20 tok/s');
     } finally {

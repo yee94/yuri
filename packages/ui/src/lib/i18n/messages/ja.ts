@@ -3,6 +3,11 @@ import { settingsDict } from './ja.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': '読み込み済みの会話を検索',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': '前の一致（Shift+Enter）',
+  'chat.find.next': '次の一致（Enter）',
+  'chat.find.close': '検索を閉じる（Esc）',
   'settings.remoteInstances.openLocalManager': 'ローカルウィンドウでインスタンスを管理',
   ...tourMessages.ja,
   'settings.switch.off': 'オフ',

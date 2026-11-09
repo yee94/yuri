@@ -1,5 +1,7 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
+import { TranscriptSearchContext } from '../../TranscriptSearchContext';
+import { searchPartKey } from '../../lib/transcriptSearch';
 import { cn } from '@/lib/utils';
 import type { Part } from '@/lib/opencode/v2-types';
 import type { AgentMentionInfo } from '../types';
@@ -55,6 +57,8 @@ const hasActiveSelectionInElement = (element: HTMLElement): boolean => {
 };
 
 const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMention, messageParts }) => {
+    const searchTarget = React.useContext(TranscriptSearchContext);
+    const isSearchTarget = searchTarget?.messageId === messageId && searchTarget.partId === part.id;
     const partWithText = part as PartWithText;
     const rawText = partWithText.text;
     const storedText = typeof rawText === 'string' ? rawText : partWithText.content || partWithText.value || '';
@@ -72,7 +76,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
     const skills = React.useMemo(() => skillsQuery.data ?? [], [skillsQuery.data]);
     const openContextFile = useUIStore((state) => state.openContextFile);
     const { t } = useI18n();
-    const isCollapsed = collapsibleUserMessages && !isExpanded;
+    const isCollapsed = collapsibleUserMessages && !isExpanded && !isSearchTarget;
     const textRef = React.useRef<HTMLDivElement | null>(null);
     const skillByName = React.useMemo(() => new Map(skills.map((skill) => [skill.name, skill])), [skills]);
     const citationHints = React.useMemo(
@@ -270,6 +274,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
         <div
             className="relative"
             key={part.id || `${messageId}-user-text`}
+            data-transcript-search-part={searchPartKey(messageId, part.id)}
             data-user-message-clamp={clampOverflow ? 'true' : undefined}
         >
             {collapsibleUserMessages && isExpanded && (

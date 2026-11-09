@@ -15,6 +15,10 @@ import { getTranscriptRepository, unbindTranscriptRepository } from '@/sync/tran
 import { normalizeSessionProjectionMessage, reconcileFetched } from '@/sync/session-projection-api';
 import { mergeSessionTranscript, shareSessionTranscriptData } from '@/sync/transcript-merge';
 
+vi.mock('motion/mini', () => ({
+    animate: () => ({ stop() {}, then() {} }),
+}));
+
 vi.hoisted(() => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input instanceof Request ? input.url : input);

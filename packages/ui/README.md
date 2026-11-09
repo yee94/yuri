@@ -323,9 +323,12 @@ preview and its nested rail, while the panel close action hides it without delet
 An additional close shortcut on an already-empty preview closes the panel, not
 the OS window. The session overflow menu omits the redundant Changes panel entry;
 Git changes remain available in the preview's Git rail.
-The preview toolbar owns its always-visible joined Git/Files icon group
-(one rounded outline with internal dividers), expand and
-close actions. The preview's expand/restore button uses paired diagonal arrows and
+The preview toolbar owns its always-visible Git/Files icon controls, expand and
+close actions. Git/Files stay joined in one 28px-high outline with internal dividers.
+The group uses the primary header's `rounded-md`, `border-border/40` and transparent
+base; dividers use the same border token. Segments retain shared hover/selection
+tokens and inset keyboard focus. The primary header is unchanged.
+The preview's expand/restore button uses paired diagonal arrows and
 toggles the same full-workspace preview used when dragging leaves less than 350px
 for the conversation. Both use normal layout flow, identical spacing, the restore
 icon and an active resize handle. Dragging right can restore either fullscreen

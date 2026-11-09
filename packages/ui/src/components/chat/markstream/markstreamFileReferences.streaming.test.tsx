@@ -17,6 +17,16 @@ vi.mock('markstream-react', async (importOriginal) => {
     },
   };
 });
+vi.mock('motion/mini', () => ({
+  animate: () => ({ stop() {}, then() {} }),
+}));
+vi.mock('./MotionStreamText', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./MotionStreamText')>();
+  return { MotionStreamText: (props: React.ComponentProps<typeof actual.MotionStreamText>) => {
+    textRenders(props.node.content);
+    return <actual.MotionStreamText {...props} />;
+  } };
+});
 
 test('disabled file references do not invalidate settled text during 50 stream updates', async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,19 +83,16 @@ test('only appended streaming text fades; history, blocks and disabled animation
   try {
     await render('Live');
     const settled = container.querySelector('.node-content');
-    expect(container.querySelector('.text-node-stream-delta')).toBeNull();
+    expect(container.querySelector('[data-motion-stream-chunk]')).toBeNull();
     await render('Live appended');
-    expect(container.querySelector('.text-node-stream-delta')?.textContent).toBe(' appended');
+    expect([...container.querySelectorAll('[data-motion-stream-chunk]')].map((node) => node.textContent).join('')).toBe(' appended');
     expect(container.querySelector('.fade-node')).toBeNull();
     expect(container.querySelector('.node-content')).toBe(settled);
     await render('Live appended complete', false);
     expect(container.textContent).toContain('Live appended complete');
-    await act(async () => {
-      container.querySelector('.text-node-stream-delta')?.dispatchEvent(new Event('animationend', { bubbles: true }));
-    });
-    expect(container.querySelector('.text-node-stream-delta')).toBeNull();
+    expect(container.querySelector('[data-motion-stream-chunk]')).toBeNull();
     await render('Live appended complete disabled', true, true);
-    expect(container.querySelector('.text-node-stream-delta')).toBeNull();
+    expect(container.querySelector('[data-motion-stream-chunk]')).toBeNull();
   } finally {
     await act(async () => root.unmount());
     setCustomComponents({});

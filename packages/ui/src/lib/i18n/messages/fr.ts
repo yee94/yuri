@@ -2,6 +2,11 @@ import { settingsDict } from './fr.settings';
 import { tourMessages } from './tour';
 
 export const dict = {
+  'chat.find.label': 'Rechercher dans la conversation chargée',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': 'Occurrence précédente (Maj+Entrée)',
+  'chat.find.next': 'Occurrence suivante (Entrée)',
+  'chat.find.close': 'Fermer la recherche (Échap)',
   'settings.remoteInstances.openLocalManager': 'Gérer les instances dans une fenêtre locale',
   ...tourMessages.fr,
   'settings.switch.off': 'Désact.',

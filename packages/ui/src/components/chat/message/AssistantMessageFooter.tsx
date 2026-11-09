@@ -61,7 +61,10 @@ export const AssistantMessageFooter = React.memo(function AssistantMessageFooter
     trailing?: React.ReactNode;
     interrupted?: boolean;
 }) {
-    return <div className={isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS}
+    // Settled chrome replaces the live status footprint: desktop needs 10px
+    // more space shared above/below, mobile 6px less above. Intermediate TPS rows do not replace it.
+    return <div className={cn(isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS,
+        !interrupted && (isMobile ? 'mt-1.5' : 'mt-2.5 mb-2'))}
         data-message-footer="true" data-message-tps={interrupted ? 'interrupted' : undefined} style={MESSAGE_FOOTER_CONTAINER_STYLE}>
         {actions ? <div className={MESSAGE_ACTION_GROUP_CLASS} data-message-action-group="true">{actions}</div> : null}
         {(tps || duration || timestamp || activity) ? <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>

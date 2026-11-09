@@ -1,12 +1,76 @@
 # Chat components
 
+## Find in loaded conversation
+
+`TranscriptSearch` handles Cmd/Ctrl+F on the active chat surface, Enter /
+Shift+Enter to cycle occurrences, and Escape to close and restore prior focus.
+It searches available user/assistant text, including folded intermediate replies,
+not tool output, reasoning, attachments, unloaded pages or unmaterialized slim
+content. Common Markdown formatting and link destinations are excluded from the
+text index. Custom rendered cards/math/reference chips may differ from the plain
+Markdown projection; these are not a full rendered-document search contract.
+
+Find state and query-result caches belong to the mounted session view. Closed
+find does not scan messages. An active query weakly caches results by immutable
+part-array identity so streaming updates do not rescan settled history. Display
+text is weakly cached by immutable Part identity; neither cache retains source
+messages or survives their collection. Query changes discard the result cache.
+
+`MessageList` temporarily overrides only the target turn's expansion without
+changing the user's stored disclosure choices. User text also bypasses its clamp
+while targeted. The existing list scroll owner first reveals the virtual row,
+then cancels index correction before aligning the mounted text range. It never
+calls history loading or timeline reveal APIs. `ChatViewport` suppresses
+scroll-event history paging while a find target is active; explicit user upward
+intent / load-earlier controls remain independent. Mutation observation exists
+only during an active hit and rebuilds CSS Custom Highlights after Markdown
+hydration or row recycling; it never wraps or replaces React-owned DOM. Only the
+initial hit positions the viewport, and user pointer/scroll input cancels that
+pending positioning. Closing, session changes and unmount clean up observers,
+animation frames and highlights. Older renderers without CSS Custom Highlights
+retain navigation but do not paint text highlights. This is shared renderer
+behavior, not an Electron-only native find/IPC implementation.
+
+The compact two-row popup has one material owner, a borderless integrated input,
+quiet navigation at the lower left and a tabular result count at the lower right.
+There are no search-mode switches or explanatory chrome. Ordinary hits use the
+system `Mark` / `MarkText` colors (bright yellow with readable text in Chromium);
+the current hit uses the theme accent with an underline and higher highlight
+priority. Custom styles may override `--chat-findMatch`,
+`--chat-findMatchForeground`, `--chat-findActiveMatch`, and
+`--chat-findActiveMatchForeground` without changing layout.
+
 ## Streaming text fade
 
-`MarkstreamTextNode` enables the installed renderer's appended-text opacity fade
-only while assistant/reasoning text streams and `disableStreamAnimation` is false.
-Existing text stays opaque; whole-message/block entrance, typewriter batching and
-`smoothStreaming` remain disabled. Completion displays authoritative text
-immediately. The library's reduced-motion CSS disables the text animation.
+`MarkstreamTextNode` selects `MotionStreamText` for live assistant/reasoning text
+when `disableStreamAnimation` is false, retaining that leaf through completion.
+Motion mini animates only newly appended, inline four-grapheme groups for 160ms
+with at most 80ms stagger. Existing text stays opaque. Each leaf bounds its active
+tail to 24 groups; finished groups compact into ordinary text nodes. Completion,
+replacement, reduced-motion and unmount stop outstanding animations. No per-frame
+React updates or scroll writes are added. Static history retains the library text
+renderer; whole-message/block entrance, library fade, typewriter batching and
+`smoothStreaming` remain disabled. Completion displays authoritative text immediately.
+
+Code line-number gutters inherit the connected code's font family, font size and
+line height before insertion. Waiting for the deferred wrap measurement let the
+13px default gutter temporarily stretch a 12px code body at stream completion;
+the later geometry sync still aligns wrapped lines but no longer corrects a
+different initial font size.
+
+## Turn-completion spacing
+
+The settled `AssistantMessageFooter` replaces the transcript's live status row
+without changing the list's total height for a single-line footer. Its top margin
+is 10px on desktop and 6px on mobile; the bottom margin is 8px on desktop and 2px
+on mobile. Distributing the extra desktop space above and below the controls
+balances their distance from the body while accounting for the status wrapper's padding and
+collapsed margins as well as the message body's existing bottom spacing.
+Intermediate/interrupted TPS rows keep their original 6px/12px margins because
+they do not replace the live status. This is normal-flow spacing, not a delayed
+status removal, retained empty placeholder or extra scroll compensation. Verify
+the whole pin-reveal root and reading position at completion, not just Markdown
+height. Wrapped metadata/Changes controls can still legitimately add another row.
 
 ## Composer status popovers
 

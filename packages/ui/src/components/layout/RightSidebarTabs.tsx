@@ -75,12 +75,12 @@ export const RightSidebarToolbar: React.FC<{
   const tabs = visibleRightSidebarTabs({ hideGit: mainTab === 'git', showBrowser: shouldShowBrowserProviderRail(browserCatalog.data) });
   const activeTab = tabs.includes(preferredTab) ? preferredTab : tabs[0] ?? 'files';
   return (
-    <div role="group" aria-label={t('header.actions.toggleRightSidebarAria')} className="inline-flex items-center overflow-hidden rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-muted)]/50 divide-x divide-[var(--interactive-border)]">
+    <div role="group" aria-label={t('header.actions.toggleRightSidebarAria')} className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border/40 divide-x divide-border/40">
       {tabs.map((tab) => {
         const selected = (railVisible ?? isOpen) && activeTab === tab;
         const label = t(tab === 'git' ? 'layout.rightSidebar.git' : tab === 'files' ? 'contextPanel.actions.toggleFileTree' : 'layout.rightSidebar.browser');
         return <Button key={tab} type="button" variant="ghost" size="icon"
-          className={cn('size-7 !rounded-none focus-visible:z-10 focus-visible:ring-inset', selected && 'bg-interactive-selection text-interactive-selection-foreground')}
+          className={cn('h-full w-7 !rounded-none text-muted-foreground hover:text-foreground focus-visible:z-10 focus-visible:ring-inset', selected && 'bg-interactive-selection text-interactive-selection-foreground')}
           aria-pressed={selected} aria-label={label} title={label}
           onClick={() => { setTab(tab); setOpen(!selected); }}>
           <Icon name={tab === 'git' ? 'git-branch' : tab === 'files' ? 'list-unordered' : 'global'} className="size-4" />

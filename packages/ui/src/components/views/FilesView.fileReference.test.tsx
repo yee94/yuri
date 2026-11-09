@@ -795,9 +795,17 @@ describe('file reference failure lifecycle', () => {
     expect(panel.querySelector('aside')?.classList.contains('[--layout-chrome-divider:color-mix(in_srgb,var(--surface-foreground)_8%,var(--background))]')).toBe(true);
     expect(panel.querySelector('[aria-label="layout.rightSidebar.git"]')?.getAttribute('aria-pressed')).toBe('true');
     const buttonGroup = panel.querySelector('[role="group"]')!;
-    expect(buttonGroup.classList.contains('divide-x')).toBe(true);
-    expect(buttonGroup.classList.contains('overflow-hidden')).toBe(true);
-    expect([...buttonGroup.querySelectorAll('button')].every((button) => button.classList.contains('!rounded-none'))).toBe(true);
+    for (const token of ['h-7', 'rounded-md', 'border', 'border-border/40', 'divide-x', 'divide-border/40', 'overflow-hidden']) {
+      expect(buttonGroup.classList.contains(token)).toBe(true);
+    }
+    expect(buttonGroup.classList.contains('gap-1')).toBe(false);
+    expect(buttonGroup.className).not.toContain('bg-');
+    for (const button of buttonGroup.querySelectorAll('button')) {
+      for (const token of ['h-full', 'w-7', '!rounded-none', 'hover:bg-interactive-hover', 'focus-visible:ring-inset']) {
+        expect(button.classList.contains(token)).toBe(true);
+      }
+      expect(button.classList.contains('border')).toBe(false);
+    }
     await clickButton('contextPanel.actions.toggleFileTree');
     expect(panel.querySelector('[data-testid="sidebar-explorer"]')).not.toBeNull();
     expect(useUIStore.getState().rightSidebarTab).toBe('files');

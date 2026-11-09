@@ -134,7 +134,8 @@ describe('Btw side conversation panel', () => {
       sessionId: scope.sessionId, directory: '/repo', openSourceSession }}><BtwPanel scope={scope} foot={foot} /></SessionSurfaceContext.Provider>));
     const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
     expect(footer.style.containerName).toBe('message-footer');
-    expect(footer.className).toContain(foot === 'page' ? 'mt-3' : 'mt-1.5');
+    expect(footer.className).toContain(foot === 'page' ? 'mt-1.5' : 'mt-2.5');
+    expect(footer.className).toContain(foot === 'page' ? 'mb-0.5' : 'mb-2');
     expect(footer.textContent).toContain('1.3s');
     expect(footer.querySelector('[data-message-time]')?.textContent).toBe(formatAbsoluteMessageTimestamp(completedAt));
     expect(footer.querySelector('use[href="#yuri-pulse"]')).toBeNull();

@@ -3,6 +3,11 @@ import { settingsDict } from './ko.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': '불러온 대화 검색',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': '이전 결과 (Shift+Enter)',
+  'chat.find.next': '다음 결과 (Enter)',
+  'chat.find.close': '검색 닫기 (Esc)',
   'settings.remoteInstances.openLocalManager': '로컬 창에서 인스턴스 관리',
   ...tourMessages.ko,
   'settings.switch.off': '끄기',

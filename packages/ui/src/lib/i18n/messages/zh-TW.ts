@@ -3,6 +3,11 @@ import { settingsDict } from './zh-TW.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': '搜尋已載入的對話',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': '上一個結果（Shift+Enter）',
+  'chat.find.next': '下一個結果（Enter）',
+  'chat.find.close': '關閉搜尋（Esc）',
   'settings.remoteInstances.openLocalManager': '在本機視窗管理執行個體',
   ...tourMessages['zh-TW'],
   'settings.switch.off': '關閉',

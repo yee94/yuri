@@ -3,6 +3,11 @@ import { settingsDict } from './zh-CN.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'chat.find.label': '搜索已加载的对话',
+  'chat.find.count': '{current} / {total}',
+  'chat.find.previous': '上一个结果（Shift+Enter）',
+  'chat.find.next': '下一个结果（Enter）',
+  'chat.find.close': '关闭搜索（Esc）',
   'settings.remoteInstances.openLocalManager': '在本机窗口管理实例',
   ...tourMessages['zh-CN'],
   'settings.switch.off': '关闭',

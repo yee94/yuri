@@ -123,6 +123,13 @@ const createCodeLineNumbers = (pre: HTMLPreElement): HTMLDivElement => {
   gutter.setAttribute('aria-hidden', 'true');
   gutter.className = 'min-w-8 shrink-0 select-none border-r border-border/50 pr-3 text-right font-mono text-[13px] text-muted-foreground/45';
 
+  // A newly inserted gutter participates in flex sizing before the two-frame
+  // wrap measurement. Its default 13px font must not stretch a 12px code body.
+  const codeStyle = window.getComputedStyle(pre.querySelector('code') ?? pre);
+  gutter.style.fontFamily = codeStyle.fontFamily;
+  gutter.style.fontSize = codeStyle.fontSize;
+  gutter.style.lineHeight = `${Number.parseFloat(codeStyle.lineHeight) || 20}px`;
+
   const text = pre.textContent ?? '';
   const lineCount = Math.max(1, text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length);
   for (let index = 1; index <= lineCount; index += 1) {
