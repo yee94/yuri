@@ -248,7 +248,7 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
 
   const pluginHeaderActions = (
     <div className="flex shrink-0 items-center gap-1">
-      <Button
+      {availableUpdates.length > 0 || isUpdatingAll ? <Button
         type="button"
         size="xs"
         data-settings-item="plugins.updateAll"
@@ -260,7 +260,7 @@ export const PluginsSidebar: React.FC<PluginsSidebarProps> = ({
       >
         {isUpdatingAll ? <Icon name="loader-4" className="size-3 animate-spin" aria-hidden /> : null}
         {t('settings.plugins.sidebar.actions.updateAll')}
-      </Button>
+      </Button> : null}
       <Button
         data-settings-item="plugins.create"
         type="button"
