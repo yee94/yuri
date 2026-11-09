@@ -45,6 +45,10 @@ const pairing: PairingConnectionPayload = {
   candidates: [{ type: 'lan', url: 'https://host.example' }],
 };
 const link = encodePairingConnectionPayload(pairing);
+const savedDirect = {
+  id: 'saved-direct', label: 'Saved device', lastUsedAt: 1,
+  candidates: [{ kind: 'direct' as const, url: 'http://10.0.0.2:64780' }],
+};
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let conn: UseMobileConnection;
@@ -54,8 +58,15 @@ const render = async () => {
 const button = (key: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent?.trim() === key)!;
 const click = async (element: HTMLElement) => { expect(element).toBeTruthy(); await act(async () => element.click()); };
 const submit = async () => { await act(async () => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); };
-const openAdd = async () => { await click(button('mobile.instances.addManual')); };
+const openAdd = async () => { await click(button('mobile.connect.link.useLink')); };
 const paste = async () => { await click(document.querySelector('[aria-label="mobile.connect.link.paste"]')!); };
+const typeInto = async (input: HTMLInputElement, value: string) => {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+  await act(async () => {
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -78,22 +89,23 @@ afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); document.getElementById('mobile-overlay-root')?.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
-test('instance list shows only add actions; address addition opens the welcome-style pairing sheet', async () => {
+test('the add section mirrors the welcome screen: scan or connection link, never a raw address form', async () => {
   await render();
   expect(document.querySelector('input')).toBeNull();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(button('mobile.connect.scanQr')).toBeTruthy();
-  expect(button('mobile.instances.addManual')).toBeTruthy();
+  expect(button('mobile.connect.link.useLink')).toBeTruthy();
+  expect(button('mobile.instances.addManual')).toBeUndefined();
   await openAdd();
   const sheet = document.querySelector('[role="dialog"]')!;
   expect(sheet).not.toBeNull();
   expect(sheet.querySelectorAll('input')).toHaveLength(1);
   expect(sheet.querySelector('input')?.getAttribute('aria-label')).toBe('mobile.connect.link.label');
   expect(sheet.textContent).toContain('mobile.connect.link.help');
+  expect(sheet.textContent).not.toContain('mobile.connect.manual.toggle');
+  expect(sheet.textContent).not.toContain('mobile.connect.token.hint');
   expect(host.querySelector('input')).toBeNull();
   expect(button('mobile.connect.connectButton').disabled).toBe(true);
-  expect(sheet.textContent).not.toContain('mobile.connect.link.divider');
-  expect(sheet.textContent).not.toContain('mobile.connect.token.hint');
 });
 
 test('clipboard paste waits for explicit Connect and uses the welcome redemption path', async () => {
@@ -106,16 +118,10 @@ test('clipboard paste waits for explicit Connect and uses the welcome redemption
   expect(conn.saveConnection).not.toHaveBeenCalled();
 });
 
-test('manual entry stays inside the sheet, and returning or closing preserves the pairing draft', async () => {
+test('closing the sheet keeps the pairing draft for the next attempt', async () => {
   vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue(link);
   await render(); await openAdd(); await paste();
-  await click(button('mobile.connect.manual.toggle'));
-  expect(document.querySelector('[role="dialog"]')?.querySelectorAll('input')).toHaveLength(3);
-  expect(document.querySelector('[aria-label="mobile.connect.link.label"]')).toBeNull();
-  expect(host.querySelector('input')).toBeNull();
   expect(conn.setError).toHaveBeenLastCalledWith(null);
-  await click(button('mobile.connect.link.useLink'));
-  expect(document.querySelector<HTMLInputElement>('input')?.value).toBe(link);
   await click(document.querySelector('[aria-label="mobile.surface.closeAria"]')!);
   expect(document.querySelector('input')).toBeNull();
   await openAdd();
@@ -134,13 +140,12 @@ test('clipboard denial and invalid links stay actionable without connecting', as
   expect(conn.redeemPairingConnection).not.toHaveBeenCalled();
 });
 
-test('busy pairing disables clipboard, scan, manual entry and repeated submissions', async () => {
+test('busy pairing disables clipboard, scan, the link entry and repeated submissions', async () => {
   vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue(link);
   await render(); await openAdd(); await paste();
   conn.isBusy = true; await render();
   expect(button('mobile.connect.scanQr').disabled).toBe(true);
-  expect(button('mobile.instances.addManual').disabled).toBe(true);
-  expect(button('mobile.connect.manual.toggle').disabled).toBe(true);
+  expect(button('mobile.connect.link.useLink').disabled).toBe(true);
   expect(document.querySelector<HTMLInputElement>('input')?.disabled).toBe(true);
   expect(document.querySelector<HTMLButtonElement>('[aria-label="mobile.connect.link.paste"]')?.disabled).toBe(true);
   await click(document.querySelector('[aria-label="mobile.surface.closeAria"]')!);
@@ -149,37 +154,84 @@ test('busy pairing disables clipboard, scan, manual entry and repeated submissio
   expect(conn.redeemPairingConnection).not.toHaveBeenCalled();
 });
 
-test('scanning retains pairing redemption and legacy address review', async () => {
+test('scanning redeems pairing codes and connects legacy address codes directly', async () => {
   scan.mockResolvedValueOnce({ status: 'pairing', pairing });
   await render(); await click(button('mobile.connect.scanQr'));
   expect(conn.redeemPairingConnection).toHaveBeenCalledWith(pairing);
-  scan.mockResolvedValueOnce({ status: 'ok', url: 'https://legacy.example', label: 'Legacy' });
+  scan.mockResolvedValueOnce({ status: 'ok', url: 'https://legacy.example', label: 'Legacy', clientToken: 'legacy-token' });
   await click(button('mobile.connect.scanQr'));
-  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-  expect(document.querySelector<HTMLInputElement>('input[type="url"]')?.value).toBe('https://legacy.example');
+  expect(conn.connect).toHaveBeenCalledWith({ url: 'https://legacy.example', label: 'Legacy', clientToken: 'legacy-token' });
   expect(conn.saveConnection).not.toHaveBeenCalled();
-  await submit();
-  expect(conn.saveConnection).toHaveBeenCalledWith({ id: undefined, url: 'https://legacy.example', label: 'Legacy', clientToken: '' });
-});
-
-test('editing a saved relay-only instance preserves its identity without offering another pairing form', async () => {
-  conn.connections = [{ id: 'saved-relay', label: 'Saved device', lastUsedAt: 1, candidates: [{ kind: 'relay', relay: { serverId: 'fixture-server', relayUrl: 'wss://relay.example', hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'fixture-x', y: 'fixture-y' } } }] }];
-  await render(); await click(host.querySelector('[aria-label="mobile.instances.edit"]')!);
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(host.querySelector('input[type="url"]')).toBeNull();
-  expect(host.querySelector('[aria-label="mobile.connect.link.label"]')).toBeNull();
-  await submit();
-  expect(conn.saveConnection).toHaveBeenCalledWith({ id: 'saved-relay', label: 'Saved device', url: '', clientToken: '' });
 });
 
-test('pairing and manual entry remain available without native QR support', async () => {
+test('scan failures report next to the add actions', async () => {
+  scan.mockResolvedValueOnce({ status: 'invalid' });
+  await render(); await click(button('mobile.connect.scanQr'));
+  expect(conn.setError).toHaveBeenCalledWith('mobile.connect.scan.invalid');
+  conn.error = 'mobile.connect.scan.invalid'; await render();
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('mobile.connect.scan.invalid');
+});
+
+test('editing opens a sheet that only renames, without exposing transport fields or tokens', async () => {
+  conn.connections = [savedDirect];
+  await render(); await click(host.querySelector('[aria-label="mobile.instances.edit"]')!);
+  const sheet = document.querySelector('[role="dialog"]')!;
+  expect(sheet).not.toBeNull();
+  expect(sheet.textContent).toContain('mobile.instances.label.label');
+  expect(sheet.textContent).not.toContain('mobile.instances.editTitle');
+  expect(sheet.querySelector('input[type="url"]')).toBeNull();
+  expect(sheet.querySelector('[aria-label="mobile.connect.link.label"]')).toBeNull();
+  const fields = sheet.querySelectorAll('input');
+  expect(fields).toHaveLength(1);
+  expect(fields[0].value).toBe('Saved device');
+  await typeInto(fields[0], 'Renamed device');
+  await submit();
+  expect(conn.renameConnection).toHaveBeenCalledWith('saved-direct', 'Renamed device');
+  expect(conn.saveConnection).not.toHaveBeenCalled();
+});
+
+test('renaming requires a non-empty name', async () => {
+  conn.connections = [savedDirect];
+  await render(); await click(host.querySelector('[aria-label="mobile.instances.edit"]')!);
+  const input = document.querySelector('[role="dialog"] input') as HTMLInputElement;
+  await typeInto(input, '   ');
+  expect(button('mobile.instances.saveEdit').disabled).toBe(true);
+  await submit();
+  expect(conn.renameConnection).not.toHaveBeenCalled();
+});
+
+test('closing the edit sheet abandons the draft', async () => {
+  conn.connections = [savedDirect];
+  await render(); await click(host.querySelector('[aria-label="mobile.instances.edit"]')!);
+  const input = document.querySelector('[role="dialog"] input') as HTMLInputElement;
+  await typeInto(input, 'Draft name');
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  await click(host.querySelector('[aria-label="mobile.instances.edit"]')!);
+  expect((document.querySelector('[role="dialog"] input') as HTMLInputElement).value).toBe('Saved device');
+});
+
+test('a failed connection is reported under the instance that failed', async () => {
+  conn.connections = [savedDirect];
+  await render();
+  await click(host.querySelector('[aria-label="desktopHostSwitcher.actions.switchToAria"]')!);
+  expect(conn.connect).toHaveBeenCalled();
+  conn.error = 'mobile.connect.error.unreachable'; await render();
+  const alerts = host.querySelectorAll('[role="alert"]');
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0].textContent).toBe('mobile.connect.error.unreachable');
+});
+
+test('pairing entry remains available without native QR support', async () => {
   qrSupported = false; await render();
   expect(button('mobile.connect.scanQr')).toBeUndefined();
+  expect(button('mobile.connect.link.useLink')).toBeTruthy();
   expect(document.querySelector('input')).toBeNull();
   await openAdd();
   expect(document.querySelector('[aria-label="mobile.connect.link.label"]')).not.toBeNull();
-  await click(button('mobile.connect.manual.toggle'));
-  expect(document.querySelector('[role="dialog"]')?.querySelectorAll('input')).toHaveLength(3);
 });
 
 test('successful connection closes the add sheet and clears its one-time link draft', async () => {
