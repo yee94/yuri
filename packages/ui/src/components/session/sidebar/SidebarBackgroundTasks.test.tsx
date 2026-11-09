@@ -87,6 +87,59 @@ test('task details dismiss with Escape and return focus to the compact trigger',
   expect(document.activeElement).toBe(trigger);
 });
 
+test.skip('the real background-download popup blocks sidebar text when native vibrancy is active', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloading: true, progress: { downloaded: 154_600_000, total: 272_900_000 } });
+  await render();
+  await act(async () => host.querySelector('button')!.click());
+  await tick(200);
+  const popup = document.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(popup.textContent).toContain('154.6 / 272.9 MB');
+  const material = popup.cloneNode(true) as HTMLElement;
+  material.removeAttribute('data-starting-style');
+  material.style.cssText = 'position:absolute;left:60px;top:60px;width:288px;opacity:1;transform:none;transition:none';
+  vi.useRealTimers();
+  const { readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } = await import('../../ui/chromeCdpHarness');
+  const source = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const evidence = evidenceRoot();
+  const chrome = await openChromeSession({ width: 800, height: 600 });
+  try {
+    const css = await compileProductionCssAsync(source);
+    const themeVars = (name: string) => {
+      const theme = JSON.parse(readFileSync(join(source, `lib/theme/themes/${name}.json`), 'utf8'));
+      return Object.entries(theme.colors.surface).map(([key, value]) => `--surface-${key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`)}:${value}`).join(';');
+    };
+    const html = join(evidence, 'background-download.html');
+    writeFileSync(html, `<!doctype html><html data-yuri-vibrancy><head><style>${css}
+      :root{${themeVars('carbonfox-light')}}html.dark{${themeVars('cursor-dark')}}
+      body{background:var(--surface-background);color:var(--surface-foreground)}</style></head><body>
+      <div id="sidebar-text" style="position:absolute;left:70px;top:80px;font-size:28px">Project titles<br>Other conversations</div>
+      ${material.outerHTML}</body></html>`);
+    const page = await openPageSession(chrome, { width: 800, height: 600, standalone: false });
+    await page.navigateFile(html);
+    for (const dark of [false, true]) {
+      await page.evaluate(`document.documentElement.classList.toggle('dark',${dark})`);
+      for (const desktop of [false, true]) {
+        await page.evaluate(`document.documentElement.classList.toggle('desktop-runtime',${desktop})`);
+        const fill = await page.evaluate<string>(`getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor`);
+        expect(fill).toBe(dark ? 'rgb(20, 20, 20)' : 'rgb(244, 244, 247)');
+      }
+      const clip = { x: 90, y: 90, width: 200, height: 40, scale: 1 };
+      const before = await page.send('Page.captureScreenshot', { format: 'png', clip });
+      await page.evaluate(`document.getElementById('sidebar-text').style.visibility='hidden'`);
+      const after = await page.send('Page.captureScreenshot', { format: 'png', clip });
+      expect(after.data).toBe(before.data);
+      await page.evaluate(`document.getElementById('sidebar-text').style.visibility='visible'`);
+    }
+  } finally {
+    await chrome.close();
+    if (!keepEvidence()) rmSync(evidence, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test('a single task keeps just its ring and short label, with no visible percent', async () => {
   fixture.fetch.mockImplementation(async (url: string) => response(url, job(), index({ phase: 'ready' })));
   await render();

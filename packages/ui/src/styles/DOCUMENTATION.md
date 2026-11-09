@@ -317,9 +317,11 @@ Phone conversation headers (session chat and Assistant) share `--yuri-mobile-hea
 and saturation on every runtime. Desktop pickers/composer catalogs retain
 `--yuri-overlay-translucent-fill` at 22%; anchored popups instead use
 `--yuri-popup-fill` at 50% of the theme elevated surface to suppress background
-text interference while retaining frost. Desktop Electron windows with macOS
-vibrancy raise that token to 92% for every popup surface, because the frosted
-sidebar behind an anchored menu otherwise shows through as competing text.
+text interference while retaining frost. Electron windows marked with
+`data-yuri-vibrancy` use the solid theme elevated fill for every popup surface:
+the sidebar behind an anchored menu must not show through as competing text.
+That native material marker alone owns the override, without an additional
+`desktop-runtime` device-class gate. Blur, rim and shadow are preserved.
 Popup-only
 `--yuri-popup-edge` and `--yuri-popup-shadow` provide a fine theme-foreground rim
 and short contact elevation instead of the large overlay's 48px shadow. Light

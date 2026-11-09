@@ -93,10 +93,10 @@ test.skip('popup glass has a readable theme fill, real menu blur and an opaque a
       })`);
       expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([128, 128]);
       await page.evaluate(`document.documentElement.setAttribute('data-yuri-vibrancy','')`);
-      expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([128, 128]);
+      expect((await inspectSessionMenus()).map(menu => menu.alpha)).toEqual([255, 255]);
       await page.evaluate(`document.documentElement.classList.add('desktop-runtime')`);
       const vibrantSessionMenus = await inspectSessionMenus();
-      expect(vibrantSessionMenus.map(menu => menu.alpha)).toEqual([235, 235]);
+      expect(vibrantSessionMenus.map(menu => menu.alpha)).toEqual([255, 255]);
       expect(vibrantSessionMenus.every(menu => menu.blur.includes('blur(20px)'))).toBe(true);
       expect((await page.evaluate<{ menuFill: string }>('window.inspectGlass()')).menuFill).not.toBe(normal.menuFill);
       await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });

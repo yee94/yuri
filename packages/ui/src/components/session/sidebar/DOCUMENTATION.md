@@ -81,8 +81,9 @@ retain their existing behavior independently of the sidebar menu.
 
 Session right-click menus and their portaled submenus use
 `yuri-session-context-menu`. With Electron window vibrancy active, every shared
-popup surface raises its fill to 92% of the theme elevated surface so underlying
-session titles cannot compete with menu labels. Session menus inherit that rule
+popup surface uses the solid theme elevated fill so underlying session titles
+cannot compete with menu labels. The native `data-yuri-vibrancy` marker is the
+only material gate, independent of device-class initialization. Session menus inherit that rule
 through `yuri-popup-surface`; non-vibrant runtimes retain the shared 50% fill, and
 reduced-transparency mode remains opaque.
 
@@ -105,6 +106,9 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   The private `SidebarUpdateButton` owns update subscriptions and ring rendering;
   progress does not rerender the footer or device shortcut. Hidden update buttons
   are unmounted. Ring animation uses CSS without Effects or timers.
+  The downloaded/restarting action keeps the compact icon-and-label layout but
+  uses the same transparent resting `Button variant="ghost"` as other footer
+  controls; hover/press feedback and the single-restart guard remain intact.
 
 - Leading New / Schedule / Assistant navigation rows use explicit `px-2` so
   `Button`'s direct-SVG padding rule cannot shift the Assistant row when its icon

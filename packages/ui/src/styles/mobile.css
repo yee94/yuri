@@ -505,12 +505,10 @@
   box-shadow: var(--yuri-popup-shadow);
 }
 
-/* Electron vibrancy frosts the sidebar (and the window) behind anchored
-   popups. The shared 50% fill then lets list titles bleed into menus, so every
-   popup over a vibrant desktop window uses a denser theme fill — native
-   menu-bar weight — while keeping its frost, rim and shadow. */
-:root.desktop-runtime[data-yuri-vibrancy] .yuri-popup-surface {
-  --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+/* Native vibrancy is the material gate, independent of device classification.
+   Use a solid theme fill so sidebar titles cannot bleed through portaled popups. */
+:root[data-yuri-vibrancy] .yuri-popup-surface {
+  --yuri-popup-fill: var(--surface-elevated);
 }
 
 .yuri-popup-surface .yuri-popup-separator {

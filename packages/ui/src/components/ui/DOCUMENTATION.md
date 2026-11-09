@@ -209,10 +209,10 @@ the modifier owns the shared translucent fill, foreground, fine edge and short
 shadow through `--yuri-popup-fill`, `--yuri-popup-edge` and `--yuri-popup-shadow`
 in `styles/mobile.css`. The fill uses 50% of the theme elevated surface for
 readability, independently of picker-dialog translucency; popup shadows are
-deliberately shorter and lighter. When Electron macOS vibrancy is active on a
-desktop runtime, every popup surface raises that fill to 92% so the frosted
-sidebar behind it cannot bleed list titles into menu labels; the frost, rim and
-shadow stay. Theme
+deliberately shorter and lighter. When `data-yuri-vibrancy` marks an Electron
+macOS window, every popup surface uses the solid theme elevated fill so sidebar
+text cannot bleed through. The material gate does not additionally depend on
+device-class initialization; blur, rim and shadow remain unchanged. Theme
 surface colors remain authoritative. Avoid default inline opaque backgrounds
 or copied shadow utilities on popup roots. Explicit caller styles still win.
 

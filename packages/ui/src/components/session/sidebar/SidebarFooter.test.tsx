@@ -64,7 +64,8 @@ describe('SidebarFooter update button', () => {
 
     expect(button().textContent).toBe('sessions.sidebar.footer.actions.restartUpdate');
     expect(button().querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
-    expect(button().className).toContain('bg-[var(--surface-muted)]');
+    expect(button().className).not.toContain('bg-[var(--surface-muted)]');
+    expect(button().className).toContain('hover:bg-interactive-hover');
     expect(button().className).not.toContain('size-7');
     expect(button().querySelector('span')?.className).toBe('truncate text-[10px] font-normal text-muted-foreground/60');
 

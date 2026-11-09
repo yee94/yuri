@@ -72,7 +72,7 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant={downloaded ? "default" : "ghost"}
+          variant="ghost"
           size={downloaded ? "xs" : "icon"}
           className={downloaded ? "ml-auto min-w-0 shrink gap-1.5 disabled:opacity-100" : `ml-auto ${footerIconButtonClassName} disabled:opacity-100`}
           onClick={handleClick}
