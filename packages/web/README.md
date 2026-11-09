@@ -65,6 +65,12 @@ use a separate Yuri data directory and test WeChat account. `YURI_WEIXIN_ENABLED
 disables the channel in any environment. Merely isolating data does not bypass
 WeChat's single-entry binding restriction.
 
+Scheduled-task execution is also disabled in development and Electron dev,
+including manual runs, history/result recovery and task-state synchronization.
+The development Host does not open the scheduled-task run-history database or
+hand production results to Bots. Saved production tasks and Bot bindings are
+left unchanged; no production message is redirected into development.
+
 Enterprise Bot channels (WeCom AI Bot, Feishu and DingTalk Stream) likewise default
 to disabled in development. `YURI_CHANNELS_ENABLED=1` enables their shared runtime
 for isolated test Bots; `0` disables it in any environment. Each saved Bot's message

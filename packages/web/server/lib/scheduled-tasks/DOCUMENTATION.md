@@ -10,6 +10,18 @@ Server-owned scheduled task runtime and routes for Yuri-only automation.
 - This module is Yuri feature logic; it is intentionally separate from OpenCode proxy/runtime internals.
 - Prompt and goal execution preserve hash-prefixed text literally; no snippet discovery or expansion occurs before dispatch.
 
+## Development isolation
+
+`NODE_ENV=development` or `YURI_ELECTRON_DEV=1/true` disables the scheduler at
+the owning runtime boundary. The Host does not open the task-run history store
+in this mode. Startup, result/history recovery and upstream session events do
+no work; no timers, worker sessions, task-state writes, result handoffs or
+notifications are created. Manual runs return an explicit disabled failure,
+and per-project synchronization rejects rather than claiming success.
+Production execution and saved task configuration remain unchanged. This does
+not change the independent Bot-channel development isolation or its opt-in test
+configuration; production messages must not be admitted by a default dev Host.
+
 ## Assistant result handoff
 
 `setTaskResultHandler(handler)` installs the Host's assistant result consumer and

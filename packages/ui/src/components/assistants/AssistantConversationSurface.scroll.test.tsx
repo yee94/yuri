@@ -270,6 +270,29 @@ afterEach(async () => {
 });
 
 describe('AssistantConversationSurface scroll ownership', () => {
+  test('user bubbles follow the selected contact avatar, including edits and missing seeds, without recoloring replies', async () => {
+    contactQueryState.extraMessages = 1;
+    const { host, root } = await mountSurface();
+    const { assistantAvatarMessageColors } = await import('@/lib/assistant-avatar/palette');
+    const { resolveAssistantAvatar } = await import('@/lib/assistant-avatar/recipe');
+    for (const contact of [
+      { ...assistant('assistant-a'), avatarSeed: 'yuri-avatar:v1:round:capsule:orange:neutral:1:custom' },
+      { ...assistant('assistant-a'), avatarSeed: 'yuri-avatar:v1:round:capsule:mint:neutral:1:custom' },
+      assistant('assistant-b'),
+    ]) {
+      await act(async () => root.render(<AssistantConversationSurface assistant={contact} active />));
+      const expected = assistantAvatarMessageColors(resolveAssistantAvatar(contact.avatarSeed ?? contact.id).color);
+      const bubble = host.querySelector<HTMLElement>('[data-assistant-contact-role="user"] [data-assistant-contact-text]')!;
+      const swatch = document.createElement('div');
+      swatch.style.backgroundColor = expected.background;
+      swatch.style.color = expected.foreground;
+      expect(bubble.style.backgroundColor).toBe(swatch.style.backgroundColor);
+      expect(bubble.style.color).toBe(swatch.style.color);
+      expect(bubble.className).not.toContain('--primary-');
+      expect(host.querySelector<HTMLElement>('[data-assistant-contact-role="assistant"] [data-assistant-contact-text]')!.style.backgroundColor).toBe('');
+    }
+  });
+
   test('recruitment cards resolve the new contact face without replacing the sender face', async () => {
     contactQueryState.extraMessages = 1;
     avatarUI.recruited = true;

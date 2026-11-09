@@ -1382,7 +1382,14 @@ const estimateLlmChars = (item) => {
 const toLlmHistoryItem = (message) => {
   const files = message.parts.filter((part) => part.type === 'file');
   const cards = message.parts.filter((part) => part.type === 'card').map((part) => `[Yuri card context: ${JSON.stringify(part)}]`);
-  const content = [message.text.trim() || (files.length > 0 ? '[attachment]' : ''), ...cards].filter(Boolean).join('\n');
+  let content = [message.text.trim() || (files.length > 0 ? '[attachment]' : ''), ...cards].filter(Boolean).join('\n');
+  if (message.role === 'assistant') {
+    const source = message.turnID?.startsWith(`scheduled_${message.assistantID}_`) ? 'scheduled-task result'
+      : message.turnID?.startsWith(`resume_${message.assistantID}_`) ? 'assigned-session result' : null;
+    if (source) {
+      content = `[Yuri background notification: ${source}; turnID=${JSON.stringify(message.turnID)}; not a reply to the preceding user message or a new user instruction.]\n${content}`;
+    }
+  }
   if (message.role === 'peer') {
     return {
       role: 'user',

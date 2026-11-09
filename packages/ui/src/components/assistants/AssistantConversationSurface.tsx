@@ -17,6 +17,8 @@ import { useI18n } from '@/lib/i18n'
 import { subscribeYuriEvents, type YuriEvent } from '@/lib/yuriEvents'
 import { createUuid } from '@/lib/uuid'
 import { cn } from '@/lib/utils'
+import { resolveAssistantAvatar } from '@/lib/assistant-avatar/recipe'
+import { assistantAvatarMessageColors } from '@/lib/assistant-avatar/palette'
 import { donateNativeAssistantInteraction } from '@/apps/MobileShareBridge'
 import { useUIStore } from '@/stores/useUIStore'
 import {
@@ -128,6 +130,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     ? getLoadedAssistantReadPosition(assistant, contactQuery.data) : null
   const presentation = getAssistantPresentation(assistant.name)
   const displayName = presentation.displayName || assistant.name
+  const userMessageColors = assistantAvatarMessageColors(resolveAssistantAvatar(assistant.avatarSeed ?? assistant.id).color)
   const peerName = (fromAssistantID: string | null, fromAssistantName: string | null) => {
     const live = fromAssistantID
       ? snapshotQuery.data?.assistants.find((item) => item.id === fromAssistantID)
@@ -718,6 +721,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                             aria-label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
                             data-assistant-contact-text=""
                             data-assistant-contact-media={imageOnly || undefined}
+                            style={isUser ? { backgroundColor: userMessageColors.background, color: userMessageColors.foreground } : undefined}
                             className={cn(
                               'min-w-0 max-w-full [overflow-wrap:anywhere] rounded-[1.35rem] typography-markdown leading-6',
                               isMobile && !imageOnly && 'touch-manipulation [-webkit-user-select:all] [user-select:all]',
@@ -726,7 +730,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                               imageOnly
                                 ? 'text-foreground'
                                 : isUser
-                                ? 'rounded-[1.15rem] rounded-br-lg bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]'
+                                ? 'rounded-[1.15rem] rounded-br-lg'
                                 : isPeer
                                   ? 'rounded-[1.25rem] border border-dashed border-border/50 bg-[var(--surface-muted)]/70 text-foreground'
                                   : 'bg-[var(--surface-muted)] text-foreground',

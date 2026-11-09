@@ -94,7 +94,7 @@ import {
   projectSessionLifecyclePayload,
   projectSessionWithStoredMap,
 } from './lib/session-metadata/session-projection.js';
-import { createScheduledTasksRuntime } from './lib/scheduled-tasks/runtime.js';
+import { createScheduledTasksRuntime, isScheduledTasksRuntimeEnabled } from './lib/scheduled-tasks/runtime.js';
 import { createScheduledTaskRunHistoryStore } from './lib/scheduled-tasks/run-history-store.js';
 import { createServerStartupRuntime } from './lib/opencode/server-startup-runtime.js';
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
@@ -1185,9 +1185,9 @@ const waitForAgentPresence = (...args) => openCodeLifecycleRuntime.waitForAgentP
 const refreshOpenCodeAfterConfigChange = (...args) => openCodeLifecycleRuntime.refreshOpenCodeAfterConfigChange(...args);
 const startHealthMonitoring = () => openCodeLifecycleRuntime.startHealthMonitoring(HEALTH_CHECK_INTERVAL);
 const triggerHealthCheck = () => openCodeLifecycleRuntime.triggerHealthCheck();
-const scheduledTaskRunHistoryStore = createScheduledTaskRunHistoryStore({
+const scheduledTaskRunHistoryStore = isScheduledTasksRuntimeEnabled() ? createScheduledTaskRunHistoryStore({
   dbPath: path.join(YURI_DATA_DIR, 'scheduled-task-runs.sqlite'),
-});
+}) : null;
 const scheduledTasksRuntime = createScheduledTasksRuntime({
   projectConfigRuntime,
   listProjects: async () => {

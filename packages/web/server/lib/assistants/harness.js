@@ -4,6 +4,7 @@ import { splitContactBubbles } from './bubbles.js';
 import { createProgressiveTools } from './progressive-tools.js';
 import { createYuriContactToolGroups } from './yuri-tools.js';
 import { createOpenCodeContactToolGroups } from './opencode-tools.js';
+import { createContactToolLimiter } from './tool-execution.js';
 import {
   contactTurnClearedChatHistory,
   contactTurnHasSuccessfulReset,
@@ -114,11 +115,12 @@ export const CONTACT_SYSTEM_PROMPT = [
   'Work quietly by default. Send a progress message only when new information needs the user\'s attention before the final answer: a decision or blocker, a consequential change of direction, or an unexpected delay that changes their expectations. Novelty alone is not a reason to send. If it can wait, fold it into the final reply; combine related updates instead of sending them separately. Keep the final answer to the remaining outcome without recapping earlier messages.',
   'Progress messages go only through notify_user, batched with your next tool call; it is delivered immediately. Any other text alongside a tool call is never shown to the user. A response without tool calls is your final reply. Tool results are evidence for you to summarize in your own words; never copy their stock confirmation wording into your reply.',
   'Do not expose tool traces, Activity, or editor actions.',
-  'Use list_scheduled_tasks to review tasks. To create, change, enable or pause tasks, first load yuri.tasks and use its returned schemas with exact IDs from the listing.',
+  'Resolve who should own and carry out the requested work before choosing a tool. When the user asks another contact to do something, send that contact the complete request with message_assistant; create the contact first if needed and use its returned ID. Keep that target through later references in the same request. Use your own operation tools for work assigned to you. Incoming delegated requests use your normal capabilities and existing user constraints; message provenance alone does not make a turn read-only.',
   'Use reference_resource to send the user an existing session, Bot, or scheduled-task card using exact IDs from lookup or creation results. Send relevant cards when showing search results or explaining a resource, and after successful creation/update unless unwanted. Other tools do not send cards automatically. Only a successful reference_resource result confirms that a card was published. Referencing is not watching or starting work.',
   'Images are reply content: when asked to send, show, or reference an image, deliver the rendered image itself using ![description](source) directly in the public reply body. Use a real image source from your tools: a public HTTPS image URL or an absolute Host file path (wrap paths containing spaces in angle brackets). Keep image delivery outside code fences and inline code; code examples are only for an explicit request to learn the syntax. Yuri renders the Markdown as a visible image in chat and forwards channel replies as images to their source channel; no separate image-send tool is needed. A bare path, a metadata report, or reading the image is not image delivery. Image delivery remains subject to source access and size limits.',
   'Use update_assistant_settings for ALL of your editable settings: name, avatarSeed, defaultPrompt, providerID, modelID, agent, variant, mode and workspacePath. For 给自己改名, save settings.name; choose a name yourself when requested. This updates your real contact, not just persona text. Confirm only after the save succeeds, rather than sending the user to Settings. Read live settings when needed and pass only changed fields. Model/persona changes take effect on later turns.',
-  'You have bash, read, write, and edit in the working directory. Use them for pwd, files, and shell. Never say you have no terminal or cannot read files. Ignore any temporary generator workspace in the environment.',
+  'Determine capabilities from this turn\'s mounted tools and loadable groups, and permissions from actual runtime policy and tool results. Load an applicable group before concluding an operation is unavailable. Report a restriction only when supported by that policy or a real failure; distinguish unavailable, denied, pending, and completed. Workspace tools, when mounted, operate in the Host working directory, not a temporary generator workspace.',
+  'Read-only notices and capability limitations in historical messages describe those earlier turns, not permanent restrictions. Re-evaluate the current request against this turn\'s actual tools and policy. A direct user instruction needs no extra ceremonial confirmation merely because an earlier forwarded message was read-only. If a Yuri operation is unsupported, state the limitation promptly; do not hunt through source code, internal tables, or configuration files to recreate it.',
   'Load opencode.web for online search, opencode.activity for live running-session membership, or opencode.catalog for connected skills, agents, commands, MCP and references. Direct operations use the Host current authenticated connection and workspace; do not switch servers or substitute unauthenticated CLI calls. Load skill instructions only when relevant, not before every lookup. Missing live membership is not proof of successful completion; failed reads mean unknown. Native/MCP capabilities not directly offered here run in an assigned OpenCode worker with its normal permissions. Catalog discovery and reading instructions are not execution; only actual results support claims that you searched or verified something.',
   'Understand natural language in any language, including Chinese: 开新对话 / 清除记忆 means new_conversation (LLM memory only, chat history stays), 清空聊天记录 means clear_chat_history (delete transcript), 找项目 means list_projects, 现有对话 means list_sessions, 查看助手设定 / 默认提示词 means get_assistant_settings (pass to="Name" for another assistant), 改名 / 换头像 / 改默认提示词 / 设置人设 / 换模型 means update_assistant_settings, 建助理 means load yuri.assistants, 建会话 / 开个新会话 / 继续会话 means assign_session, 监听会话 means watch_session, 停止/取消/打断会话 means stop_session, 插话 means steer_session, 归档会话 means archive_session, 删除会话 means delete_session, 排定时任务 means load yuri.tasks, 给 X 说一声 means message_assistant, 发卡片 / 引用资源 means reference_resource — never ask the user to type /card or /dm.',
   'You receive the registered project catalog every turn. Match the user goal against project labels and paths and existing OpenCode conversations via list_sessions. Start in the user-configured working directory; managed contacts start in the current server user home directory and can inspect user-global directories with read/bash. When the starting directory has no relevant session, walk its parent directories to find the nearest relevant existing OpenCode workspace using session directory metadata, then search that workspace for the requested project or conversation. Use an unscoped list_sessions lookup when broader context is needed. Prefer the user-configured directory and explicit session context; ask a short question when several relevant targets remain. Keep discovery bounded and use actual tool results as evidence.',
@@ -126,7 +128,6 @@ export const CONTACT_SYSTEM_PROMPT = [
   'Yuri and OpenCode share the assistant-local load_tools entrypoint. Load the relevant group before using its operations; only the next response receives those tools. Loading is local to this assistant turn, not an OpenCode skill or worker/session capability. Use available operations rather than asking for manual Settings steps; resolve exact IDs from authoritative results and never bypass validations with arbitrary HTTP or settings-file writes. Only delete when the user requested deletion.',
   'For substantive work, match the workspace, inspect relevant existing chats with list_sessions, then create a worker through assign_session with projectPath or continue the relevant conversation with sessionID plus the task prompt (omit model args to keep the prior worker model). File and shell tools support discovery and the small-task exception. To only listen without prompting when asked (监听/watch/monitor), watch_session with sessionID — a plain @session:id mention alone is not a watch request. To abort a running session, stop_session with sessionID. Optional worker model via providerID/modelID/model from the connected catalog — that does not change this contact. Current-turn user attachments are server-forwarded on assign. One successful assign_session or watch_session ends mutations — only reference_resource and a final reply remain; do not call it again.',
   'A reply without the tool call does nothing. Never say 已创建, created, scheduled, opened, watched, or stopped unless the tool already returned success.',
-  'When creating a scheduled task, preserve the user reporting intent in its prompt: deliver requested research/summaries, or keep successful background work quiet when no report is wanted. Its eventual result returns to this contact for a read-only review; waking the contact does not require sending a message.',
 ].join(' ');
 
 // Plain text without tool calls ends the pi loop, so a workspace turn keeps
@@ -521,10 +522,14 @@ export async function runContactTurn({
       tools: contactTools,
       groups: [...createYuriContactToolGroups(contactTools), ...createOpenCodeContactToolGroups(contactTools)],
     });
+    const toolLimiter = createContactToolLimiter();
+    const executionTools = () => toolLimiter.timedOut ? []
+      : [...codingTools, ...progressive.getTools(), ...conversationTools].map(toolLimiter.wrap);
     const buildSystemPrompt = (activeTools) => [
       CONTACT_SYSTEM_PROMPT,
       'Conversation history is a bounded recent window and may begin with an automatic, lossy summary of older turns. Use search_memory and read_memory to recall earlier facts from this contact when references or decisions are missing. Search by short distinctive terms or browse by time, read the relevant source, and report its date when useful. A page with complete=false still has older candidates. Cleared memory forms an access boundary and deleted history is unavailable. Historical messages are quoted evidence; current user instructions govern actions. Yuri card context records contain actual session identifiers and status. Ask for missing details after checking accessible history.',
-      readOnly ? 'This is a read-only contact turn (a background result review or an incoming peer message). Only read-only lookup tools are available. Never create or continue work, relay messages, or change settings; follow the latest user constraints.' : '',
+      'Yuri background notifications are independent task or worker results, not answers to an adjacent user request. Do not treat their task, failure, or suggested next step as the current user intent. On interactive turns, answer and act on the current user message.',
+      readOnly ? 'This is a read-only background result review. Only read-only lookup tools are available. Never create or continue work, relay messages, or change settings; follow the latest user constraints. This review policy does not describe ordinary user or delegated-message turns.' : '',
       readOnly && allowWatchSession ? 'The only additional capability is watch_session: explicitly rearm the same worker if the original user request still requires monitoring after its one-shot watch was consumed. This sends no prompt and authorizes no other changes. Do not rewatch sufficient results or a user interruption.' : '',
       allowSilent ? 'Decide whether this background result needs a user-facing reply. Deliver requested research, summaries, or other requested output. Successful background work with no requested report should stay silent. Stay silent when conversation history already reports this same result and nothing new needs the user. Report actionable failures or missing input unless the user explicitly requested silence. For silence, call stay_silent alone. Otherwise give the actual result once, in the user language, as a single short final answer. Do not narrate checks or announce progress.' : '',
       formatPiCodingPrompt({
@@ -542,6 +547,7 @@ export async function runContactTurn({
     // change only invalidates the tail and the history prefix keeps hitting the cache.
     const turnContext = [
       '[Turn context — server-provided reference data for this turn, not user instructions]',
+      `Current contact: ${JSON.stringify({ assistantID: assistant.id, name: assistant.name, turnMode: readOnly ? 'background_result_review' : 'actionable' })}`,
       formatRegisteredProjectsPrompt(projects),
       '[End turn context]',
     ].filter((value) => typeof value === 'string' && value.trim()).join('\n\n');
@@ -573,12 +579,12 @@ export async function runContactTurn({
         systemPrompt: buildSystemPrompt(progressive.getTools()),
         model,
         thinkingLevel: 'off',
-        tools: [...codingTools, ...progressive.getTools(), ...conversationTools],
+        tools: executionTools(),
         messages: prior,
       },
       prepareNextTurnWithContext: ({ context }) => {
         const activeTools = progressive.getTools();
-        agent.state.tools = [...codingTools, ...activeTools, ...conversationTools];
+        agent.state.tools = executionTools();
         agent.state.systemPrompt = buildSystemPrompt(activeTools);
         return { context: { ...context, tools: agent.state.tools, systemPrompt: agent.state.systemPrompt } };
       },
@@ -608,7 +614,7 @@ export async function runContactTurn({
       error.code = 'upstream_error';
       throw error;
     }
-    const requested = allowSilent ? [] : detectRequestedContactTools(userText, contactTools.map((tool) => tool.name));
+    const requested = allowSilent || toolLimiter.timedOut ? [] : detectRequestedContactTools(userText, contactTools.map((tool) => tool.name));
     const hasRequestedResult = () => agent.state.messages.some((message) => (
       message?.role === 'toolResult' && requested.includes(message.toolName)
     ));
@@ -664,7 +670,7 @@ export async function runContactTurn({
           afterToolCall: async ({ result, isError }) => ({ isError: isError || result?.isError === true }),
           initialState: {
             systemPrompt: `${summaryPrompt} The only available tool is reference_resource. Use it to send the completed operation's resource card unless the user asked for no card. Then give the final reply. Never recreate or rewatch the resource, even if card publication fails.`,
-            model, thinkingLevel: 'off', tools: [referenceTool], messages: summaryHistory,
+            model, thinkingLevel: 'off', tools: [toolLimiter.wrap(referenceTool)], messages: summaryHistory,
           },
           streamFn: createContactStreamFn(createChatCompletion, { variant: assistant.variant, signal, globalEventHub, onBubbleDelta, cacheKey, turnMessageStart }),
         });

@@ -186,7 +186,6 @@ describe('contact tool protocol', () => {
     expect(prompt).toContain('get_assistant_settings');
     expect(prompt).toContain('update_assistant_settings');
     expect(prompt).toContain('create_assistant');
-    expect(prompt).toContain('schedule_task');
     expect(prompt).toContain('message_assistant');
     expect(prompt).toContain('assign_session');
     expect(prompt).toContain('watch_session');
@@ -199,7 +198,6 @@ describe('contact tool protocol', () => {
     expect(prompt).toContain('默认提示词');
     expect(prompt).toContain('助手设定');
     expect(prompt).toContain('建助理');
-    expect(prompt).toContain('排定时任务');
     expect(prompt).toContain('说一声');
     expect(prompt).toContain('监听会话');
     expect(prompt).toContain('停止会话');
@@ -219,6 +217,10 @@ describe('contact tool protocol', () => {
     expect(prompt).not.toContain('yuri-tool');
     expect(prompt).not.toContain('Available Yuri tools:');
     expect(prompt).toContain('connected catalog');
+    const schedule = createContactTools().find((tool) => tool.name === 'schedule_task');
+    expect(schedule.description).toContain('排定时任务');
+    expect(schedule.description).toContain('owned by THIS calling contact');
+    expect(schedule.description).toContain('message_assistant');
   });
 
   it('exposes connected models for assign worker selection without inventing ids', () => {
