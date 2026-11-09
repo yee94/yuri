@@ -1376,9 +1376,9 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                             // Locked-open live headers are not a disclosure control — drop chip hover/cursor.
                             !disclosureLockedOpen && TOOL_ROW_INTERACTIVE_CHROME_CLASS,
                             disclosureLockedOpen && `yuri-tool-row -mx-2 ${TOOL_ROW_CHIP_GEOMETRY_CLASS} cursor-default`,
-                            // Mobile only: drop chip pr so the chevron has no dead trailing slot.
+                            // Mobile trailing chevrons need no dead slot; elapsed summaries retain the content inset.
                             // Desktop keeps px-2 so hover wash padding matches left (symmetric rounded chip).
-                            isMobile && 'pr-0',
+                            isMobile && (isElapsedHeader ? 'pr-2' : 'pr-0'),
                         )}
                         data-mobile-press-feedback={disclosureLockedOpen ? undefined : 'soft'}
                         onClick={disclosureLockedOpen ? undefined : handleToggle}

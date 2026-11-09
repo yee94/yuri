@@ -2814,6 +2814,7 @@ export const dict: Record<I18nKey, string> = {
   'desktopHostSwitcher.header.currentColon': '当前：',
   'desktopHostSwitcher.header.currentDefaultColon': '当前默认：',
   'desktopHostSwitcher.status.connected': '已连接',
+  'desktopHostSwitcher.pairing.reconnectHint': "在另一台电脑上获取新的连接链接。",
   'desktopHostSwitcher.status.authRequired': '需要认证',
   'desktopHostSwitcher.status.checking': '检查中',
   'desktopHostSwitcher.status.updateRecommended': '建议更新',

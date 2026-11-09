@@ -292,6 +292,14 @@ describe.each(['packaged', 'HMR'])('remote-computer worktree routing in %s UI', 
     expect(window.__YURI_DESKTOP_BOOT_OUTCOME__).toMatchObject({ target: 'remote', status: 'unreachable' });
   });
 
+  it('restores a rejected pairing to re-pairing recovery without switching runtimes', async () => {
+    tunnelFetch.mockResolvedValue(new Response('{}', { status: 403 }));
+    await expect(restoreDesktopRelayRuntime(host.id)).rejects.toThrow();
+    expect(window.__YURI_DESKTOP_BOOT_OUTCOME__).toMatchObject({ target: 'remote', status: 'pairing-expired', hostId: host.id });
+    expect(getRuntimeKey()).toBe('local');
+    expect(invoke.mock.calls.filter(([command]) => command === 'desktop_host_prepare')).toHaveLength(1);
+  });
+
   it('discards SSH recovery completion after the user selects another runtime', async () => {
     tunnelFetch.mockRejectedValue(new Error('Offline'));
     let finish!: (value: DesktopHost) => void;

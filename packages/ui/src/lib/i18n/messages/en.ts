@@ -2849,6 +2849,7 @@ export const dict = {
   'desktopHostSwitcher.header.currentColon': 'Current:',
   'desktopHostSwitcher.header.currentDefaultColon': 'Current default:',
   'desktopHostSwitcher.status.connected': 'Connected',
+  'desktopHostSwitcher.pairing.reconnectHint': "Get a new connection link from the other computer.",
   'desktopHostSwitcher.status.authRequired': 'Auth required',
   'desktopHostSwitcher.status.checking': 'Checking',
   'desktopHostSwitcher.status.updateRecommended': 'Update recommended',

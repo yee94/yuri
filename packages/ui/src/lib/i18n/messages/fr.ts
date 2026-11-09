@@ -2555,6 +2555,7 @@ export const dict = {
   'desktopHostSwitcher.header.currentColon': 'Actuel:',
   'desktopHostSwitcher.header.currentDefaultColon': 'Valeur par défaut actuelle :',
   'desktopHostSwitcher.status.connected': 'Connecté',
+  'desktopHostSwitcher.pairing.reconnectHint': "Obtenez un nouveau lien de connexion sur l’autre ordinateur.",
   'desktopHostSwitcher.status.authRequired': 'Authentification requise',
   'desktopHostSwitcher.status.wrongService': 'Mauvais service',
   'desktopHostSwitcher.status.unreachable': 'Injoignable',

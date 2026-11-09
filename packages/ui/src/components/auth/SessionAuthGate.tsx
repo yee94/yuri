@@ -17,7 +17,8 @@ import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
 import { getActiveRelayDescriptor, getRuntimeApiBaseUrl, getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
-import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+import { desktopHostsGet, desktopHostsSet, desktopOpenLocalHostSettings, getDesktopHostApiUrl, isPairedDesktopHost, normalizeHostUrl } from '@/lib/desktopHosts';
+import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import { resolveStatusCheckFailureState, type GateState } from './sessionAuthGateState';
 import {
   authenticateWithPasskey,
@@ -161,6 +162,20 @@ const issueDesktopClientToken = async (): Promise<string> => {
 
 const shouldUseDesktopShellPasswordLogin = (): boolean => {
   return isDesktopShell() && !isLocalDesktopRuntime();
+};
+
+const activePairedDesktopHost = async () => {
+  if (!isDesktopShell()) return null;
+  const runtimeKey = getRuntimeKey();
+  const boot = getInjectedBootOutcome();
+  const hostId = runtimeKey.startsWith('host:') ? runtimeKey.slice(5)
+    : boot?.target === 'remote' && boot.status === 'ok' && sameOrigin(boot.url, getRuntimeApiBaseUrl()) ? boot.hostId : null;
+  if (!hostId) return null;
+  const config = await desktopHostsGet().catch(() => null);
+  if (getRuntimeKey() !== runtimeKey || !config) return undefined;
+  const host = config?.hosts.find((item) => item.id === hostId);
+  if (!host) return undefined;
+  return host && isPairedDesktopHost(host) ? host : null;
 };
 
 type DesktopPasswordLoginResult = {
@@ -447,7 +462,27 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           setRetryAfter(undefined);
           return;
         }
-        if (response.status === 401) {
+        if (response.status === 401 || (response.status === 403 && isDesktopShell())) {
+          const runtimeKey = getRuntimeKey();
+          const host = await activePairedDesktopHost();
+          if (getRuntimeKey() !== runtimeKey) return;
+          if (host === undefined) {
+            resetTransientRetry();
+            setState('error');
+            return;
+          }
+          if (host) {
+            resetTransientRetry();
+            setIsTunnelLocked(false);
+            setState('pairing-expired');
+            setRetryAfter(undefined);
+            return;
+          }
+          if (response.status === 403) {
+            if (scheduleTransientRetry()) return;
+            setState('error');
+            return;
+          }
           let data: { tunnelLocked?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
           try {
             data = JSON.parse(responseText);
@@ -481,6 +516,15 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
       setIsTunnelLocked(false);
     } catch (error) {
       console.warn('Failed to check session status:', error);
+      const runtimeKey = getRuntimeKey();
+      const pairedHost = await activePairedDesktopHost();
+      if (getRuntimeKey() !== runtimeKey) return;
+      if (pairedHost || pairedHost === undefined) {
+        if (scheduleTransientRetry()) return;
+        setState('error');
+        setIsTunnelLocked(false);
+        return;
+      }
       if (resolveStatusCheckFailureState({ shouldUseDesktopShellPasswordLogin: shouldUseDesktopShellPasswordLogin() }) === 'locked') {
         setState('locked');
         setRetryAfter(undefined);
@@ -557,7 +601,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   }, [checkStatus, resetTransientRetry, skipAuth]);
 
   React.useEffect(() => {
-    if (!skipAuth && state === 'locked') {
+    if (!skipAuth && (state === 'locked' || state === 'pairing-expired')) {
       hasResyncedRef.current = false;
       setSettingsReady(false);
     }
@@ -846,6 +890,24 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
 
   if (state === 'rate-limited') {
     return <ErrorScreen onRetry={() => void checkStatus()} errorType="rate-limit" retryAfter={retryAfter} />;
+  }
+
+  if (state === 'pairing-expired') {
+    return (
+      <AuthShell>
+        <div className="flex w-full max-w-xs flex-col items-center gap-6 text-center">
+          <Icon name="computer" className="size-8 text-muted-foreground" />
+          <div className="space-y-2">
+            <h1 className="text-xl font-semibold">{t('mobile.connect.pairing.expired')}</h1>
+            <p className="typography-meta text-muted-foreground">{t('desktopHostSwitcher.pairing.reconnectHint')}</p>
+          </div>
+          <Button type="button" className="w-full" onClick={() => { void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle'))); }}>
+            {t('settings.remoteInstances.openLocalManager')}
+          </Button>
+          <DesktopHostSwitcherInline />
+        </div>
+      </AuthShell>
+    );
   }
 
   if (state === 'locked') {

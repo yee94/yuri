@@ -2014,6 +2014,7 @@ export const dict: Record<I18nKey, string> = {
   'desktopHostSwitcher.state.instanceUnreachable': 'Instancja niedostępna',
   'desktopHostSwitcher.state.limitedOnPage': 'Przełącznik instancji jest ograniczony na tej stronie. Użyj Lokalnej, aby odzyskać dostęp.',
   'desktopHostSwitcher.state.loading': 'Ładowanie...',
+  'desktopHostSwitcher.pairing.reconnectHint': "Uzyskaj nowy link do połączenia na drugim komputerze.",
   'desktopHostSwitcher.status.authRequired': 'Wymagane uwierzytelnienie',
   'desktopHostSwitcher.status.connected': 'Połączono',
   'desktopHostSwitcher.status.checking': 'Sprawdzanie',

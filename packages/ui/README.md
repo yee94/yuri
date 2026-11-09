@@ -274,6 +274,10 @@ direct-only Hosts keep the shell-selected endpoint and adopt the stable saved
 `host:<id>` runtime key so an SSH forward's changed port does not lose UI context.
 Local windows do not reconnect another window's default remote Host. Web, VS Code
 and mobile do not participate in this native window-restore flow.
+Rejected credentials for a paired desktop Host show pairing-expired guidance
+and open local instance management to import a fresh connection link or remove
+the saved Host. Switch failures and Relay startup recovery preserve that signal;
+network failures and ordinary password-protected connections remain distinct.
 
 All runtime owners must agree on `__YURI_*`, `yuri:*`, `/api/yuri`, `Yuri*` native
 plugins, `yuri-ui` / `yuri-asset` schemes and `yuri_url_token` / `yuri_preview_token`

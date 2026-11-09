@@ -6,6 +6,7 @@ import {
   desktopHostsSet,
   desktopPrepareHost,
   getDesktopHostApiUrl,
+  isPairedDesktopHost,
   normalizeHostUrl,
   probeRelayDesktopHost,
   type DesktopHost,
@@ -200,6 +201,8 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
     return;
   }
 
+  let rejectedToken: string | null = null;
+  let retryCompleted = false;
   const selectTransport = async (candidate: DesktopHost): Promise<boolean> => {
     const directUrl = candidate.apiUrl || !candidate.relay ? normalizeHostUrl(getDesktopHostApiUrl(candidate)) : null;
     if (directUrl) {
@@ -214,6 +217,7 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), DIRECT_PROBE_HEADSTART_MS); }),
       ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
       if (!canRestore()) return false;
+      if (winner?.status === 'auth' && isPairedDesktopHost(candidate)) rejectedToken = candidate.clientToken || null;
       if (winner && isDirectTransportUsable(winner.status)) {
         switchRuntimeEndpoint({ apiBaseUrl: directUrl, clientToken: candidate.clientToken || null, requestHeaders: candidate.requestHeaders || null, runtimeKey });
         return true;
@@ -226,6 +230,7 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
       probe.tunnel?.close();
       return false;
     }
+    if (probe.status === 'auth' && isPairedDesktopHost(candidate)) rejectedToken = candidate.clientToken || null;
     if (probe.status !== 'ok' || !probe.tunnel) return false;
     adoptRelayTunnel(candidate.relay, probe.tunnel);
     switchRuntimeEndpoint({ apiBaseUrl: desktopRelayApiBaseUrl(), clientToken: candidate.clientToken || null, runtimeKey, relay: candidate.relay });
@@ -242,10 +247,11 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
     host = await desktopPrepareHost(host);
     if (!canRestore()) return;
     if (await selectTransport(host) || !canRestore()) return;
+    retryCompleted = true;
     throw new Error('Remote instance is unreachable after initialization');
   } catch (error) {
     if (canRestore()) {
-      window.__YURI_DESKTOP_BOOT_OUTCOME__ = { target: 'remote', status: 'unreachable', hostId, url: getDesktopHostApiUrl(host) };
+      window.__YURI_DESKTOP_BOOT_OUTCOME__ = { target: 'remote', status: retryCompleted && rejectedToken && rejectedToken === host.clientToken ? 'pairing-expired' : 'unreachable', hostId, url: getDesktopHostApiUrl(host) };
     }
     throw error;
   }

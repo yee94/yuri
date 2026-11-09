@@ -2848,6 +2848,7 @@ export const dict: Record<I18nKey, string> = {
   'desktopHostSwitcher.header.currentColon': '현재:',
   'desktopHostSwitcher.header.currentDefaultColon': '현재 기본값:',
   'desktopHostSwitcher.status.connected': '연결됨',
+  'desktopHostSwitcher.pairing.reconnectHint': "다른 컴퓨터에서 새 연결 링크를 받으세요.",
   'desktopHostSwitcher.status.authRequired': '인증 필요',
   'desktopHostSwitcher.status.checking': '확인 중',
   'desktopHostSwitcher.status.updateRecommended': '업데이트 권장',

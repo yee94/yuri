@@ -2814,6 +2814,7 @@ export const dict: Record<I18nKey, string> = {
   "desktopHostSwitcher.header.currentColon": "Atual:",
   "desktopHostSwitcher.header.currentDefaultColon": "Padrão atual:",
   "desktopHostSwitcher.status.connected": "Conectado",
+  'desktopHostSwitcher.pairing.reconnectHint': "Obtenha um novo link de conexão no outro computador.",
   "desktopHostSwitcher.status.authRequired": "Autenticação obrigatória",
   "desktopHostSwitcher.status.checking": "Verificando",
   "desktopHostSwitcher.status.updateRecommended": "Atualização recomendada",

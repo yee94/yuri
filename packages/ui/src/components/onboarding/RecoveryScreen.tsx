@@ -3,8 +3,10 @@ import { isDesktopShell, restartDesktopApp } from '@/lib/desktop';
 import { DesktopConnectionRecovery, type RecoveryVariant } from './DesktopConnectionRecovery';
 import { RemoteConnectionForm } from './RemoteConnectionForm';
 import { resolveRecoveryNextStep } from './desktopRecoveryRouting';
-import { desktopHostsGet, desktopHostsSet } from '@/lib/desktopHosts';
+import { desktopHostsGet, desktopHostsSet, desktopOpenLocalHostSettings } from '@/lib/desktopHosts';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { toast } from '@/components/ui';
+import { useI18n } from '@/lib/i18n';
 
 type RecoveryScreenProps = {
   /** Recovery variant */
@@ -41,6 +43,7 @@ export function RecoveryScreen({
   onEnterLocalSetup,
   isRetrying = false,
 }: RecoveryScreenProps) {
+  const { t } = useI18n();
   // Persist the user's first choice (local or remote)
   const persistFirstChoice = React.useCallback(async (choice: 'local' | 'remote') => {
     if (!isDesktopShell()) return;
@@ -87,10 +90,14 @@ export function RecoveryScreen({
 
   const handleRecoveryUseRemote = React.useCallback(() => {
     const step = resolveRecoveryNextStep(variant, 'use-remote');
+    if (step.kind === 'local-host-settings') {
+      void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle')));
+      return;
+    }
     if (step.kind === 'remote-form') {
       onChooseRemote?.();
     }
-  }, [variant, onChooseRemote]);
+  }, [variant, onChooseRemote, t]);
 
   // Recovery mode — show recovery component first; only switch to remote form on explicit user action
   if (showRemoteForm) {

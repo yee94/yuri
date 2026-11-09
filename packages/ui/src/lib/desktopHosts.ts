@@ -59,6 +59,9 @@ export type DesktopHost = {
   source?: DesktopHostSource;
 };
 
+export const isPairedDesktopHost = (host: DesktopHost): boolean =>
+  Boolean(host.clientToken && (host.source === DESKTOP_HOST_SOURCE_CONNECT_LINK || host.relay));
+
 /**
  * Whether a persisted desktop host should appear in the host switcher.
  * Hidden hosts stay on disk; this is display-only.

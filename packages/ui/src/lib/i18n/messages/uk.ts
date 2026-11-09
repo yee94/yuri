@@ -2814,6 +2814,7 @@ export const dict: Record<I18nKey, string> = {
   "desktopHostSwitcher.header.currentColon": "поточний:",
   "desktopHostSwitcher.header.currentDefaultColon": "Поточне значення за умовчанням:",
   "desktopHostSwitcher.status.connected": "Підключено",
+  'desktopHostSwitcher.pairing.reconnectHint': "Отримайте нове посилання для підключення на іншому комп’ютері.",
   "desktopHostSwitcher.status.authRequired": "Потрібна авторизація",
   "desktopHostSwitcher.status.checking": "Перевірка",
   "desktopHostSwitcher.status.updateRecommended": "Рекомендовано оновити",

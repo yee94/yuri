@@ -2818,6 +2818,7 @@ export const dict: Record<I18nKey, string> = {
   'desktopHostSwitcher.header.currentColon': '目前：',
   'desktopHostSwitcher.header.currentDefaultColon': '目前預設：',
   'desktopHostSwitcher.status.connected': '已連線',
+  'desktopHostSwitcher.pairing.reconnectHint': "在另一台電腦上取得新的連線連結。",
   'desktopHostSwitcher.status.authRequired': '需要認證',
   'desktopHostSwitcher.status.wrongService': '服務不符',
   'desktopHostSwitcher.status.unreachable': '無法連線',
