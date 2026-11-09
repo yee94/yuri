@@ -3,6 +3,8 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.sidebar.session.menu.markUnread': 'Marcar como não lido',
+  'sessions.sidebar.session.menu.markUnreadFailed': 'Não foi possível marcar como não lido. Tente novamente.',
   'chat.find.label': 'Pesquisar na conversa carregada',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': 'Ocorrência anterior (Shift+Enter)',

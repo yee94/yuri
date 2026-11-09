@@ -5,18 +5,19 @@ import { ProviderLogo } from './ProviderLogo';
 
 describe('provider logo contrast', () => {
     it.each(['cursor', 'codex', 'zcode', 'workbuddy'])(
-        'normalizes the %s quota mark before dark-mode inversion',
+        'paints the %s quota mark as a foreground mask',
         (brand) => {
             const container = document.createElement('div');
             container.innerHTML = renderToStaticMarkup(
                 <ProviderLogo providerId={`magpie:gateway:${brand}`} className="size-4 shrink-0" />,
             );
-            const image = container.querySelector('img');
-            expect(image).not.toBeNull();
-            expect(image?.classList.contains('brightness-0')).toBe(true);
-            expect(image?.classList.contains('dark:invert')).toBe(true);
-            expect(image?.classList.contains('size-4')).toBe(true);
-            expect(image?.getAttribute('alt')).toBe(`magpie:gateway:${brand} logo`);
+            const mark = container.querySelector('[role="img"]') as HTMLElement | null;
+            expect(mark).not.toBeNull();
+            expect(mark?.classList.contains('bg-foreground')).toBe(true);
+            expect(mark?.classList.contains('size-4')).toBe(true);
+            expect(mark?.getAttribute('aria-label')).toBe(`magpie:gateway:${brand} logo`);
+            expect(mark?.style.maskImage || mark?.getAttribute('style') || '').toMatch(/url\(/);
+            expect(container.querySelector('img')).toBeNull();
         },
     );
 
@@ -25,8 +26,8 @@ describe('provider logo contrast', () => {
         container.innerHTML = renderToStaticMarkup(
             <ProviderLogo providerId="unknown-provider" className="size-4 shrink-0" />,
         );
-        expect(container.querySelector('img')).toBeNull();
+        expect(container.querySelector('[role="img"]')).toBeNull();
         expect(container.querySelector('use')?.getAttribute('href')).toBe('#yuri-stack');
-        expect(container.querySelector('svg')?.classList.contains('brightness-0')).toBe(false);
+        expect(container.querySelector('svg')?.classList.contains('bg-foreground')).toBe(false);
     });
 });

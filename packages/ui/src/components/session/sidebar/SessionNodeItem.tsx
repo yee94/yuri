@@ -35,7 +35,7 @@ import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './se
 import type { SessionNode } from './types';
 import { formatSessionCompactDateLabel, formatSessionDateLabel, normalizePath, renderHighlightedText, SIDEBAR_ROW_ACTIVE_CLASS, SIDEBAR_ROW_HOVER_CLASS, getSidebarRowPaddingLeft } from './utils';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
-import { useSessionUnseenCount } from '@/sync/notification-store';
+import { markSessionUnread, useSessionUnseenCount } from '@/sync/notification-store';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
 import { useI18n } from '@/lib/i18n';
 import { useShiftKeyHeld } from '@/hooks/useShiftKeyHeld';
@@ -1068,6 +1068,12 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         {isPinnedSession ? <Icon name="unpin" className="mr-1 h-4 w-4" /> : <Icon name="pushpin" className="mr-1 h-4 w-4" />}
         {isPinnedSession ? t('sessions.sidebar.session.menu.unpin') : t('sessions.sidebar.session.menu.pin')}
       </Item>
+      {!isSubtaskSession ? (
+        <Item onClick={() => { void markSessionUnread(session.id, sessionDirectory || undefined).catch(() => toast.error(t('sessions.sidebar.session.menu.markUnreadFailed'))); }} className="[&>svg]:mr-1">
+          <Icon name="checkbox-blank-circle-fill" className="mr-1 h-4 w-4" />
+          {t('sessions.sidebar.session.menu.markUnread')}
+        </Item>
+      ) : null}
       {isSessionSharingAvailable() && !resolvedSession.share ? (
         <Item onClick={() => handleShareSession(resolvedSession)} className="[&>svg]:mr-1">
           <Icon name="share-2" className="mr-1 h-4 w-4" />

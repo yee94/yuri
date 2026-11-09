@@ -31,6 +31,7 @@ vi.hoisted(() => {
 import { SessionNodeItem } from './SessionNodeItem';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
+import { resetSessionUnreadProjection, useNotificationStore } from '@/sync/notification-store';
 
 const noop = () => {};
 const session = { id: 'ses_title', title: 'Original title', directory: '/repo', time: { created: 1, updated: 2 } } as Session;
@@ -113,6 +114,21 @@ test('AI title admission alone does not show title loading', async () => {
   await act(async () => button!.click());
   expect(requestTitle).toHaveBeenCalledWith(session.id);
   expect(container.querySelector('.animate-text-shimmer')).toBeNull();
+});
+
+test('right-click mark unread invokes the notification action without opening the session', async () => {
+  resetSessionUnreadProjection();
+  root = createRoot(container);
+  await act(async () => root.render(<Harness editing={false} />));
+  await act(async () => {
+    container.querySelector('[data-session-row]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 20, clientY: 20 }));
+  });
+  const action = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    .find(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'));
+  expect(action).toBeDefined();
+  await act(async () => action!.click());
+  expect(useNotificationStore.getState().sessionUnseenCount(session.id)).toBe(1);
+  await act(async () => resetSessionUnreadProjection());
 });
 
 test('indexed child availability survives a live session snapshot without hasChildren and loads only on expansion', async () => {

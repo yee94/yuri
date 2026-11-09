@@ -714,6 +714,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.rename.smartTitle': '智能生成标题',
   'sessions.sidebar.session.menu.unpin': '取消置顶',
   'sessions.sidebar.session.menu.pin': '置顶',
+  'sessions.sidebar.session.menu.markUnread': '标记为未读',
+  'sessions.sidebar.session.menu.markUnreadFailed': '标记未读失败，请重试。',
   'sessions.sidebar.session.pin.error': '置顶会话失败',
   'sessions.sidebar.session.unpin.error': '取消置顶失败',
   'sessions.sidebar.session.menu.share': '分享',

@@ -79,6 +79,12 @@ Session menus no longer offer opening a conversation in the side panel. The
 Electron Mini Chat Window action remains available; subtask and review panels
 retain their existing behavior independently of the sidebar menu.
 
+Root session context menus also offer **Mark as unread** (including an already
+selected session). The action shares the notification store's server-backed
+attention projection and reports failed writes without changing the existing
+badge. Manual reminders remain unread through remote snapshot refreshes until
+the conversation is subsequently opened/refocused. Child sessions omit the action.
+
 Session right-click menus and their portaled submenus use
 `yuri-session-context-menu`. With Electron window vibrancy active, every shared
 popup surface uses the solid theme elevated fill so underlying session titles

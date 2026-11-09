@@ -7,6 +7,14 @@
 
 import { create } from "zustand"
 import type { OpenCodeErrorSummary } from "./session-error-log"
+import type { SessionUnreadEntry } from '@/queries/sessionUnreadQueries'
+
+type ReadSync = {
+  read: (sessionId: string) => void
+  unread: (sessionId: string) => Promise<void>
+}
+let readSync: ReadSync | null = null
+let serverUnread: Record<string, SessionUnreadEntry> | null = null
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +76,7 @@ function buildIndex(list: Notification[]): NotificationIndex {
 
   for (const n of list) {
     if (n.viewed) continue
+    if (serverUnread && n.session) continue
 
     if (n.session) {
       index.session.unseenCount[n.session] = (index.session.unseenCount[n.session] ?? 0) + 1
@@ -76,6 +85,18 @@ function buildIndex(list: Notification[]): NotificationIndex {
     if (n.directory) {
       index.project.unseenCount[n.directory] = (index.project.unseenCount[n.directory] ?? 0) + 1
       if (n.type === "error") index.project.unseenHasError[n.directory] = true
+    }
+  }
+
+  if (serverUnread) {
+    for (const [id, row] of Object.entries(serverUnread)) {
+      if (row.unreadCount === 0) continue
+      index.session.unseenCount[id] = row.unreadCount
+      if (row.hasError) index.session.unseenHasError[id] = true
+      if (row.directory) {
+        index.project.unseenCount[row.directory] = (index.project.unseenCount[row.directory] ?? 0) + row.unreadCount
+        if (row.hasError) index.project.unseenHasError[row.directory] = true
+      }
     }
   }
 
@@ -117,6 +138,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   markSessionViewed: (sessionId) => {
     const current = get()
+    readSync?.read(sessionId)
     const count = current.index.session.unseenCount[sessionId] ?? 0
     if (count === 0) return
 
@@ -128,6 +150,9 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   markProjectViewed: (directory) => {
     const current = get()
+    if (serverUnread) {
+      for (const [id, row] of Object.entries(serverUnread)) if (row.directory === directory && row.unreadCount > 0) readSync?.read(id)
+    }
     const count = current.index.project.unseenCount[directory] ?? 0
     if (count === 0) return
 
@@ -153,6 +178,29 @@ export function appendNotification(notification: Notification) {
 
 export function markSessionViewed(sessionId: string) {
   useNotificationStore.getState().markSessionViewed(sessionId)
+}
+
+/** Query owns the snapshot; this store keeps the existing narrow badge selectors. */
+export function applySessionUnreadSnapshot(sessions: Record<string, SessionUnreadEntry>) {
+  if (serverUnread === sessions) return
+  serverUnread = sessions
+  useNotificationStore.setState({ index: buildIndex(useNotificationStore.getState().list) })
+}
+
+export function installSessionReadSync(sync: ReadSync) {
+  readSync = sync
+  return () => { if (readSync === sync) readSync = null }
+}
+
+export function resetSessionUnreadProjection() {
+  serverUnread = null
+  useNotificationStore.setState({ list: [], index: buildIndex([]) })
+}
+
+export async function markSessionUnread(sessionId: string, directory?: string) {
+  if (readSync) return readSync.unread(sessionId)
+  if (useNotificationStore.getState().sessionUnseenCount(sessionId) > 0) return
+  appendNotification({ session: sessionId, directory, time: Date.now(), viewed: false, type: 'turn-complete' })
 }
 
 /**

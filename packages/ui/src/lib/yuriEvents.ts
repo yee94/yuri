@@ -70,6 +70,7 @@ export type ContactTurnEndEvent = {
   occurredAt: number;
 };
 export type YuriEvent =
+  | { type: 'session-unread-changed'; revision: number; occurredAt: number }
   | { type: 'session-order-changed'; occurredAt: number }
   | { type: 'project-order-changed'; occurredAt: number }
   | { type: 'speech-settings-changed'; occurredAt: number }
@@ -85,6 +86,7 @@ export type YuriEvent =
   | ContactTurnEndEvent;
 /** Domains that carry a monotonic server revision tip. */
 type YuriRevisionEventType =
+  | 'session-unread-changed'
   | 'session-index-changed'
   | 'message-queue-changed'
   | 'assistants-changed';
@@ -102,7 +104,7 @@ const listeners = new Set<Listener>();
 /** In-memory latest tip per revision domain — closes GET→subscribe gaps. Not persisted. */
 const latestRevisionByDomain = new Map<YuriRevisionEventType, number>();
 const isRevisionEventType = (type: string): type is YuriRevisionEventType =>
-  type === 'session-index-changed' || type === 'message-queue-changed' || type === 'assistants-changed';
+  type === 'session-unread-changed' || type === 'session-index-changed' || type === 'message-queue-changed' || type === 'assistants-changed';
 const clearRevisionWatermarks = () => {
   latestRevisionByDomain.clear();
 };
@@ -247,6 +249,14 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
     if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return null;
     if (typeof occurredAt !== 'number' || !Number.isFinite(occurredAt)) return null;
     return { type: 'message-queue-changed', revision, occurredAt };
+  }
+
+  if (envelope.type === 'yuri:session-unread-changed') {
+    const revision = parsed?.revision;
+    const occurredAt = parsed?.occurredAt;
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return null;
+    if (typeof occurredAt !== 'number' || !Number.isFinite(occurredAt)) return null;
+    return { type: 'session-unread-changed', revision, occurredAt };
   }
 
   if (envelope.type === 'yuri:speech-settings-changed') {

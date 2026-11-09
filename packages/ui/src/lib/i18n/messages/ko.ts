@@ -714,6 +714,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.rename.smartTitle': '제목 자동 생성',
   'sessions.sidebar.session.menu.unpin': '고정 해제',
   'sessions.sidebar.session.menu.pin': '고정',
+  'sessions.sidebar.session.menu.markUnread': '읽지 않음으로 표시',
+  'sessions.sidebar.session.menu.markUnreadFailed': '읽지 않음으로 표시하지 못했습니다. 다시 시도해 주세요.',
   'sessions.sidebar.session.pin.error': '세션 고정에 실패했습니다',
   'sessions.sidebar.session.unpin.error': '세션 고정 해제에 실패했습니다',
   'sessions.sidebar.session.menu.share': '공유',

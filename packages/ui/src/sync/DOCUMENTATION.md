@@ -152,6 +152,23 @@ One weakly keyed reader per runtime child-store manager shares the projection ac
 
 ## Viewed-session terminal reconciliation
 
+`session-unread-sync.ts` mounts with the SyncProvider. A runtime-scoped TanStack
+Query observer owns the Host unread snapshot and projects it into the existing
+notification store's narrow session/project badge indexes (sidebar, switcher,
+tray/dock and widget share the same projection). Local live notifications retain
+their error details but never double-count Host attention. Initial GET, revision
+tips and stream-ready recovery converge without per-session polling or transcript
+reads; tips received during a GET force a trailing read. Failed refreshes keep the
+last authoritative snapshot. Transport/generation fences reject stale responses,
+and runtime switches clear the old projection.
+
+Opening/refocusing a session acknowledges its observed row revision. A completion
+received while a session is visibly focused is acknowledged by the same path.
+Explicit manual unread markers are not auto-acknowledged by background snapshots;
+they remain until a subsequent open/refocus action. Read and manual-unread changes
+apply only after confirmed server success, so failed mutations leave attention
+intact. Standalone VS Code retains local-only state without issuing Host routes.
+
 Successful top-level turn completion also emits the existing directory-scoped `sessionEvents.requestGitRefresh` hint, refreshing mounted Changes/Diff consumers through their runtime Git API. This is independent of window focus and targets the completed session's directory. The native succeeded event and its trailing legacy idle share the completion deduplication gate; streaming events do not trigger extra Git reads.
 
 Turn-complete and error notifications use the same viewed-session gate: the matching active directory/session in a focused window, or an externally registered viewed session, is already read on receipt. Background or other-session completions remain unread. `session.execution.succeeded` and its legacy `session.idle` fallback share this rule and retain completion deduplication. Regression coverage: `session-execution-failed.test.ts`.

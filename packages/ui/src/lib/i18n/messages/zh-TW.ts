@@ -727,6 +727,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.rename.smartTitle': '智慧生成標題',
   'sessions.sidebar.session.menu.unpin': '取消釘選',
   'sessions.sidebar.session.menu.pin': '釘選',
+  'sessions.sidebar.session.menu.markUnread': '標記為未讀',
+  'sessions.sidebar.session.menu.markUnreadFailed': '標記未讀失敗，請重試。',
   'sessions.sidebar.session.pin.error': '釘選會話失敗',
   'sessions.sidebar.session.unpin.error': '取消釘選失敗',
   'sessions.sidebar.session.menu.share': '分享',
