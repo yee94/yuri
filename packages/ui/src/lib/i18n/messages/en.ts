@@ -200,6 +200,8 @@ export const dict = {
   'mobile.connect.unlockButton': 'Unlock and connect',
   'mobile.connect.cancelPassword': 'Use another server',
   'mobile.connect.connecting': 'Connecting...',
+  'mobile.connect.pairing.expired': "Pairing expired",
+  'mobile.connect.pairing.reconnectHint': "Open the pairing QR code on your computer.",
   'mobile.connect.scanQr': 'Scan QR code',
   'mobile.connect.welcome.scanHint': 'On your computer, open «Add a device» to show a QR code, then scan it here.',
   'mobile.connect.advanced': 'Advanced',

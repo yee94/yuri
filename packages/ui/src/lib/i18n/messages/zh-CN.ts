@@ -201,6 +201,8 @@ export const dict: Record<I18nKey, string> = {
   'mobile.connect.unlockButton': '解锁并连接',
   'mobile.connect.cancelPassword': '使用其他服务器',
   'mobile.connect.connecting': '连接中...',
+  'mobile.connect.pairing.expired': "配对已失效",
+  'mobile.connect.pairing.reconnectHint': "在电脑上打开配对二维码。",
   'mobile.connect.scanQr': '扫描二维码',
   'mobile.connect.welcome.scanHint': '在电脑上打开「添加设备」显示二维码，然后在这里扫描。',
   'mobile.connect.advanced': '高级',

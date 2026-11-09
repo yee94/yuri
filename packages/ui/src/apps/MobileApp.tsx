@@ -1257,6 +1257,29 @@ const MobileInstancesSurface: React.FC<{
   const inputClass = 'h-12 w-full rounded-[16px] border border-border/70 bg-surface-elevated px-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20';
 
   if (pendingConnection) {
+    if (pendingConnection.reason === 'pairing') {
+      return (
+        <div className="yuri-settings-page-content">
+          <SettingsGroup label={t('mobile.connect.pairing.expired')} itemId="instances.manage">
+            <div className="yuri-settings-group-row flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <Icon name="computer" className="size-6 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 flex-1 truncate typography-ui-label">{pendingConnection.label}</p>
+                {connections.some((item) => item.id === pendingConnection.id) ? (
+                  <Button variant="ghost" size="icon" disabled={isBusy || isScanning} aria-label={t('mobile.instances.deleteAria', { label: pendingConnection.label })} onClick={() => { setConfirmingDeleteId(pendingConnection.id); cancelPasswordPrompt(); }}>
+                    <Icon name="delete-bin" className="size-5" />
+                  </Button>
+                ) : null}
+              </div>
+              <p className="typography-small text-muted-foreground">{t('mobile.connect.pairing.reconnectHint')}</p>
+              {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+              {qrScanSupported ? <Button size="lg" disabled={isBusy || isScanning} onClick={() => void handleScanInstance()}><Icon name="scan-2" className="size-5" />{t('mobile.connect.scanQr')}</Button> : null}
+              <Button variant={qrScanSupported ? 'ghost' : 'default'} size="lg" disabled={isBusy || isScanning} onClick={() => { cancelPasswordPrompt(); setAddOpen(true); }}>{t('mobile.connect.link.useLink')}</Button>
+            </div>
+          </SettingsGroup>
+        </div>
+      );
+    }
     return (
       <div className="yuri-settings-page-content">
         <SettingsGroup

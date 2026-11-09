@@ -209,6 +209,8 @@ export const dict: Record<I18nKey, string> = {
   "mobile.connect.unlockButton": "Розблокувати і підключити",
   "mobile.connect.cancelPassword": "Інший сервер",
   "mobile.connect.connecting": "Підключення...",
+  'mobile.connect.pairing.expired': "Сполучення недійсне",
+  'mobile.connect.pairing.reconnectHint': "Відкрийте QR-код сполучення на комп’ютері.",
   "mobile.connect.scanQr": "Сканувати QR-код",
   "mobile.connect.welcome.scanHint": "На компʼютері відкрийте «Додати пристрій», щоб показати QR-код, і відскануйте його тут.",
   "mobile.connect.advanced": "Додатково",

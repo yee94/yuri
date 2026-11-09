@@ -108,6 +108,31 @@ test('the add section mirrors the welcome screen: scan or connection link, never
   expect(button('mobile.connect.connectButton').disabled).toBe(true);
 });
 
+test('a rejected pairing shows recovery actions instead of a password field', async () => {
+  conn.pendingConnection = { ...savedDirect, reason: 'pairing' };
+  await render();
+  expect(host.textContent).toContain('mobile.connect.pairing.expired');
+  expect(host.textContent).toContain('mobile.connect.pairing.reconnectHint');
+  expect(host.querySelector('input[type="password"]')).toBeNull();
+  expect(button('mobile.connect.scanQr')).toBeTruthy();
+  await click(button('mobile.connect.link.useLink'));
+  expect(conn.cancelPassword).toHaveBeenCalledTimes(1);
+});
+
+test('a rejected saved device opens its existing delete confirmation', async () => {
+  conn.connections = [savedDirect];
+  conn.pendingConnection = { ...savedDirect, reason: 'pairing' };
+  vi.mocked(conn.removeConnection).mockResolvedValue(savedDirect);
+  await render();
+  await click(document.querySelector<HTMLElement>('[aria-label="mobile.instances.deleteAria"]')!);
+  expect(conn.cancelPassword).toHaveBeenCalledTimes(1);
+  expect(conn.removeConnection).not.toHaveBeenCalled();
+  conn.pendingConnection = null;
+  await render();
+  await click(document.querySelector<HTMLElement>('[aria-label="mobile.instances.confirmDeleteAria"]')!);
+  expect(conn.removeConnection).toHaveBeenCalledWith(savedDirect.id);
+});
+
 test('clipboard paste waits for explicit Connect and uses the welcome redemption path', async () => {
   vi.spyOn(navigator.clipboard, 'readText').mockResolvedValue(link);
   await render(); await openAdd(); await paste();

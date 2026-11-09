@@ -2994,6 +2994,8 @@ export const dict = {
   'mobile.connect.unlockButton': 'Déverrouiller et se connecter',
   'mobile.connect.cancelPassword': 'Utiliser un autre serveur',
   'mobile.connect.connecting': 'Connexion...',
+  'mobile.connect.pairing.expired': "Association expirée",
+  'mobile.connect.pairing.reconnectHint': "Ouvrez le QR code d’association sur votre ordinateur.",
   'mobile.connect.scanQr': 'Scanner le code QR',
   'mobile.connect.welcome.scanHint': 'Sur votre ordinateur, ouvrez « Ajouter un appareil » pour afficher un code QR, puis scannez-le ici.',
   'mobile.connect.advanced': 'Avancé',

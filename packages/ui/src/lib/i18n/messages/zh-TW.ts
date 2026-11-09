@@ -201,6 +201,8 @@ export const dict: Record<I18nKey, string> = {
   'mobile.connect.unlockButton': '解鎖並連線',
   'mobile.connect.cancelPassword': '使用其他伺服器',
   'mobile.connect.connecting': '連線中...',
+  'mobile.connect.pairing.expired': "配對已失效",
+  'mobile.connect.pairing.reconnectHint': "在電腦上開啟配對 QR 碼。",
   'mobile.connect.scanQr': '掃描 QR code',
   'mobile.connect.welcome.scanHint': '在電腦上開啟「新增裝置」顯示 QR 代碼，然後在這裡掃描。',
   'mobile.connect.advanced': '進階',

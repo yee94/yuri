@@ -201,6 +201,8 @@ export const dict: Record<I18nKey, string> = {
   'mobile.connect.unlockButton': '잠금 해제 후 연결',
   'mobile.connect.cancelPassword': '다른 서버 사용',
   'mobile.connect.connecting': '연결 중...',
+  'mobile.connect.pairing.expired': "페어링이 만료됨",
+  'mobile.connect.pairing.reconnectHint': "컴퓨터에서 페어링 QR 코드를 여세요.",
   'mobile.connect.scanQr': 'QR 코드 스캔',
   'mobile.connect.welcome.scanHint': '컴퓨터에서 「기기 추가」를 열어 QR 코드를 표시한 뒤 여기에서 스캔하세요.',
   'mobile.connect.advanced': '고급',

@@ -311,6 +311,10 @@ Saved-device connection failures in mobile history appear only as a solid error
 icon to the left of the overflow menu, without inline error details or retry copy.
 Tapping the icon retries that device immediately through the shared connection
 controller and replaces the error affordance with the row's connecting state.
+When a saved bearer credential is rejected, mobile shows a short pairing-expired
+recovery with QR scanning or a pairing link instead of a password prompt. A new
+password challenge without a saved credential remains available. Network and
+server failures do not count as a rejected pairing.
 
 ## Desktop conversation width
 

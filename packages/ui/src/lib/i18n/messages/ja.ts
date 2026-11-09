@@ -201,6 +201,8 @@ export const dict: Record<I18nKey, string> = {
   'mobile.connect.link.label': 'ペアリングリンク',
   'mobile.connect.link.placeholder': 'yuri://connect リンクを貼り付け',
   'mobile.connect.link.invalid': 'このペアリングリンクは無効か、有効期限が切れています。',
+  'mobile.connect.pairing.expired': "ペアリングが無効になりました",
+  'mobile.connect.pairing.reconnectHint': "パソコンでペアリング用 QR コードを開いてください。",
   'mobile.connect.scanQr': 'QR コードをスキャン',
   'mobile.connect.welcome.scanHint': 'コンピュータで「デバイスを追加」を開いてQRコードを表示し、ここでスキャンしてください。',
   'mobile.connect.advanced': '詳細設定',
