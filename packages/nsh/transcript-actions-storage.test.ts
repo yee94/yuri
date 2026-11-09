@@ -27,7 +27,7 @@ function fixture(write?: (key: string, value: string) => Promise<void>) {
   const source = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const fn = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'createNativeTranscriptHistory')!;
   const output = ts.transpileModule(fn.getText(source).replace(/^export /, ''), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React } }).outputText;
-  const ports = { ...backup, createTranscriptActions, nativeRevertFrom, inNativeSessionActionStorageLane, record, signal, captureHostRequest: () => send, lifecycle: () => 'active', cleanup: () => {}, effect: (work: () => void) => work(), t: (value: string) => value,
+  const ports = { ...backup, createTranscriptActions, nativeRevertFrom, inNativeSessionActionStorageLane, record, signal, captureHostRequest: () => send, lifecycle: () => 'active', cleanup: () => {}, effect: (work: () => void) => work(), untracked: <T>(work: () => T) => work(), t: (value: string) => value,
     Storage: { getItem: async (name: string) => stored.get(name) ?? null, setItem: async (name: string, value: string) => { if (write) await write(name, value); stored.set(name, value); } } };
   const make = new Function(...Object.keys(ports), `${output}; return createNativeTranscriptHistory;`)(...Object.values(ports));
   const history = make({ chat, target, current: () => true, key: 'history-storage-contract', storageKey: 'legacy-subset-caller', onOpenChat: vi.fn() });

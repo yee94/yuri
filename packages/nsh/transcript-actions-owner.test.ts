@@ -24,7 +24,7 @@ import type { ScopedReferenceDocument } from './composer-references';
 
 const ownerModule = {} as typeof import('./transcript-actions');
 const imports: Record<string, unknown> = { nsh, 'nsh/base': {}, './model': model, './runtime': runtime, './state': { captureHostRequest: () => h.send }, './i18n': { t: (key: string) => key },
-  './transcript-actions-core': core, './transcript-actions-backup': backup, './transcript-history-operation': historyOperation, './Icon': {}, './transcript-tools-turn': {}, './transcript-time': {}, './speech': {}, './appearance': {}, './chat-preferences-core': {} };
+  './transcript-actions-core': core, './transcript-actions-backup': backup, './transcript-history-operation': historyOperation, './transcript-actions-storage': { inNativeSessionActionStorageLane: <T>(_key: string, work: () => Promise<T>) => work() }, './Icon': {}, './transcript-tools-turn': {}, './transcript-time': {}, './speech': {}, './appearance': {}, './chat-preferences-core': {} };
 const source = ts.transpileModule(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'transcript-actions.tsx'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React, jsxFactory: 'jsx' },
 }).outputText;

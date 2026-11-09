@@ -53,6 +53,7 @@ export function desktopChatReadOnlyDraft(host: string, target: ChatTarget): Retu
     setDocument: rejectDesktopChatWrite, setDraftText: rejectDesktopChatWrite, insertReference: rejectDesktopChatWrite,
     stageContext: async () => ({ status: 'blocked' }), status: frozenSignal('ready'), error: frozenSignal(''), ready,
     whenReady: () => ready, restore: () => ready, retry: () => ready, flush: () => ready, close: () => ready,
+    checkpoint: async () => { throw new Error('chat_read_only'); },
     revision: () => 0, draftRevision: () => 0, matches: () => false, matchesDocument: () => false,
   };
 }
