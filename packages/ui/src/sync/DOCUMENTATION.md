@@ -1,5 +1,16 @@
 # Sync architecture, event handling & store update rules
 
+## Prompt client provenance
+
+`postSessionPrompt` declares `metadata.client.id: "yuri"` on each actual user
+prompt, for both steer and queue delivery. Existing diagnostic metadata is
+preserved without mutating the caller's object; retries retain the same input
+id and declaration. This shared boundary covers web, desktop, VS Code and mobile
+transports. Merely opening a session does not relabel it. OpenCode persists this
+application-defined metadata in its native inbox events, where telemetry can
+read it without changing HTTP User-Agent, execution Agent or model selection.
+The declaration is for observability, not authentication or proof of identity.
+
 `vcs.branch.updated` invalidates the exact runtime/directory Git branch Query
 before child-store lookup. Mounted branch selectors and Assistant Session cards
 therefore share a fresh directory snapshot even when no Location child exists.
