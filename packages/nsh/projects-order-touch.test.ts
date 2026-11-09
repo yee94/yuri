@@ -50,7 +50,7 @@ describe('homepage body hold-to-sort production owner', () => {
     f.drag.move('s0', touch(100));
     expect(f.last()?.over).toBe('s1'); expect(f.last()?.shifts.get('s1')).toBe(-60);
     f.drag.finish('s0', touch(100, 20, 0)); f.drag.finish('s0', touch(100, 20, 0));
-    expect(f.commit).toHaveBeenCalledExactlyOnceWith('s0', 's1');
+    expect(f.commit).toHaveBeenCalledExactlyOnceWith('s0', 's1', ['s0', 's1', 's2']);
     expect(f.drag.consumeClick('s0')).toBe(true); expect(f.drag.consumeClick('s0')).toBe(false); expect(f.locked()).toBe(false);
   });
   it('does not shift dimensions or recompute sibling shifts until the closest target changes', async () => {
@@ -101,6 +101,15 @@ describe('homepage body hold-to-sort production owner', () => {
     await vi.advanceTimersByTimeAsync(160); expect(f.scrollTo).toHaveBeenCalledOnce();
     f.offset(f.scrollTo.mock.calls[0]![0]); await vi.advanceTimersByTimeAsync(16); expect(f.scrollTo).toHaveBeenCalledTimes(2);
     f.drag.cancel();
+  });
+  it('includes the final adopted scroll ACK in collision even before the next frame timer', async () => {
+    const f = fixture(); await f.hold(); f.drag.move('s0', touch(100)); expect(f.last()?.over).toBe('s1');
+    f.offset(100); f.drag.finish('s0', touch(100, 20, 0));
+    expect(f.commit).toHaveBeenCalledExactlyOnceWith('s0', 's2', ['s0', 's1', 's2']);
+  });
+  it('includes the release coordinate when the final move callback was coalesced', async () => {
+    const f = fixture(); await f.hold(); f.drag.move('s0', touch(30)); f.drag.finish('s0', touch(100, 20, 0));
+    expect(f.commit).toHaveBeenCalledExactlyOnceWith('s0', 's1', ['s0', 's1', 's2']);
   });
   it('clamps top and bottom autoscroll and does not run an idle hold loop', async () => {
     const f = fixture(); f.max(0); await f.hold(); f.drag.move('s0', touch(190)); await vi.advanceTimersByTimeAsync(64);

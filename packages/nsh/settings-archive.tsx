@@ -1,6 +1,7 @@
 import { Scroll, signal, Text, View } from 'nsh';
 import { Button, TextView } from 'nsh/base';
 import { t } from './i18n';
+import { nativeCodeTextViewStyles, nativeDensity } from './appearance';
 import { messagesFrom, record, text, type Message, type Row } from './model';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
 import { SettingsFeedback, SettingsGroup, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
@@ -51,7 +52,7 @@ export function SettingsArchive(props: SettingsCallbacks & SettingsRoute) {
     }, operation);
   }
   const projects = () => [...new Set(sessions().map(directory))];
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <SettingsFeedback state={state} retry={() => { void load(); }} />
     <If when={!props.entity}>
       <Each of={projects().filter(project => selectedProject() === null || selectedProject() === project)}>{project => <SettingsGroup title={project() || t('settings.yuri.archivedSessions.otherProjects')}>
@@ -66,7 +67,7 @@ export function SettingsArchive(props: SettingsCallbacks & SettingsRoute) {
       <Text class="text-xl font-semibold text-foreground">{text(selected().title)}</Text>
       <Button class={settingsAction} disabled={state.busy() || !state.ready()} onPress={() => { void restore(selected()); }}><Text class="text-foreground">{t('settings.yuri.archivedSessions.actions.restore')}</Text></Button>
       <If when={!!messageCursor()}><Button class={settingsAction} disabled={state.busy()} onPress={() => { void load(true); }}><Text class="text-foreground">{t('sessions.scheduledTasks.history.loadMore')}</Text></Button></If>
-      <Each of={messages()}>{message => <SettingsGroup title={message().role}><TextView markdown={message().text} class="text-foreground" selectable /><If when={!!message().reasoning}><TextView markdown={message().reasoning} class="text-muted-foreground" selectable /></If><Each of={message().tools}>{tool => <Text class="text-sm text-muted-foreground">{text(tool().tool)} · {text(tool().status)}</Text>}</Each></SettingsGroup>}</Each>
+      <Each of={messages()}>{message => <SettingsGroup title={message().role}><TextView markdown={message().text} class="text-foreground" styles={nativeCodeTextViewStyles()} selectable /><If when={!!message().reasoning}><TextView markdown={message().reasoning} class="text-muted-foreground" styles={nativeCodeTextViewStyles()} selectable /></If><Each of={message().tools}>{tool => <Text class="text-sm text-muted-foreground">{text(tool().tool)} · {text(tool().status)}</Text>}</Each></SettingsGroup>}</Each>
     </If>
   </Scroll>;
 }

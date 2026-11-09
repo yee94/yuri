@@ -4,7 +4,7 @@ import { createNativeHistoryRows } from './history-rows';
 import { createNativeHistoryScroll } from './history-scroll';
 import { createNativeHistoryFooter } from './history-footer';
 import { authority, createHistoryTerminalScenario, marker, TOTAL_PAGES, type Journal, type Probe, type TerminalSnapshot } from './tests/history-terminal/scenario';
-import { createNaturalFooterReader } from './tests/history-terminal/footer-natural';
+import { createNaturalFooterReader } from './history-footer-natural';
 import { releaseFooterSynchronously } from './tests/history-terminal/footer-release';
 
 // Debug-only UI. Body is a real, naturally sized TextView, NOT NativeTranscriptBody.
@@ -190,14 +190,19 @@ mount(() => {
         })().catch(error => status.set(String(error)));
       }} onLoadMore={historyScroll.onLoadMore}
       loadMoreThreshold={0.5} onLoadMoreAtStart={historyScroll.onLoadMoreAtStart}
-      footer={() => { let layoutSource: ((height: number) => boolean) | undefined; const key = contentKey(snapshot()); return <View testID="terminal-footer" style={{ minHeight: footerState().minHeight || undefined }}>
+      footer={() => { const key = contentKey(snapshot()), source = natural.captureSource(footerScope, key); return <View testID="terminal-footer" style={{ minHeight: footerState().minHeight || undefined }}>
         <View testID="terminal-footer-natural" class="gap-2" style={{ flexShrink: 0 }} ref={ref => {
-          footerRef = ref; natural.attach(ref);
-          layoutSource = natural.captureLayout(ref, footerScope, key);
+          const owned = source.current();
+          if (!source.ref(ref)) {
+            if (owned) { footerRef = null; footer.invalidateMeasurement(); }
+            return;
+          }
+          footerRef = ref;
+          if (!ref) footer.invalidateMeasurement();
           if (footerNeedsActiveRead) void confirmFooterHeight('footer-attached-active-ref-height').catch(error => status.set(String(error)));
         }}
         onLayout={event => {
-          const height = event.bounds.size.height, admitted = layoutSource?.(height) ?? false;
+          const height = event.bounds.size.height, admitted = source.onLayout(event);
           recordFooter('footer-layout', { measurement: { source: 'natural.onLayout', scope: footerScope, contentKey: key, height, admitted } });
         }}>
         <If when={snapshot()!.more}><Button testID="history-load-older" class={action} disabled={snapshot()!.footerEnabled && snapshot()!.loading} onPress={() => { void run('page', 'footer-button'); }}><Text class="text-muted-foreground">{snapshot()!.footerEnabled && snapshot()!.loading ? '加载中…' : '载入较早记录'}</Text></Button></If>

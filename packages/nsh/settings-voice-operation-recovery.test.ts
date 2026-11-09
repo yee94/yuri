@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeLayoutDensity } from './native-density';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,10 @@ import * as recognition from './settings-voice-recognition';
 import * as scopeCore from './runtime-scope';
 import { speechDefaults, speechSecretFields } from '../ui/src/lib/voice/speechSettings';
 import * as collectionCore from './settings-collections-core';
+import * as collectionOperations from './settings-collection-operations';
+import * as collectionJSONC from './settings-collection-jsonc';
+import * as collectionScope from './settings-collection-scope';
+import { prepareCollectionSearchTarget } from './settings-search-core';
 import * as projectSettings from './project-settings';
 import * as projectCore from './settings-projects-core';
 import * as voiceModels from './settings-voice-models-core';
@@ -94,11 +99,19 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
     nsh: { signal: source, effect, untracked, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native, on }, Scroll: 'Scroll', Text: 'Text', View: 'View' },
     'nsh/base': Object.fromEntries(['AlertDialog', 'Button', 'Input', 'Select', 'Switch', 'Progress', 'Radio', 'RadioGroup', 'TextView', 'Sheet', 'NavPage'].map(key => [key, key])),
     './native-select': { NativeSelect: 'Select' },
+    './appearance': { nativeCodeTextViewStyles: () => ({}), nativeDensity: () => nativeLayoutDensity(100) },
+    './native-editor-style': { nativeEditorTextStyle: () => ({}) },
     './native-sheet': { NativeSheet: 'Sheet' },
     './i18n': { t: (key: string) => key }, './model': model, './settings-protocol': protocol,
     './runtime-scope': scopeCore, './settings-basics-core': basicCore,
     './settings-voice-confirm': confirmation, './settings-voice-recognition': recognition,
     './settings-collections-core': collectionCore, './project-settings': projectSettings,
+    './settings-collection-operations': collectionOperations,
+    './settings-collection-jsonc': collectionJSONC, './settings-collection-scope': collectionScope,
+    './settings-collection-kv': { SettingsCollectionKV: 'SettingsCollectionKV' },
+    './settings-collection-picker': { SettingsCollectionPicker: 'SettingsCollectionPicker' },
+    './settings-collection-plugins': { SettingsCollectionPlugins: 'SettingsCollectionPlugins' },
+    './settings-collection-directory': { SettingsCollectionDirectory: 'SettingsCollectionDirectory' },
     './settings-projects-core': projectCore, './settings-voice-models-core': voiceModels,
     './Icon': { Icon: 'Icon' }, './settings-permissions': { SettingsPermissions: 'SettingsPermissions', SettingsSavedPermissions: 'SettingsSavedPermissions' },
     './settings-skill-files': { SettingsSkillFiles: 'SettingsSkillFiles' }, './settings-mcp-live': { SettingsMcpLive: 'SettingsMcpLive' },
@@ -113,11 +126,12 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
     './settings-usage': { SettingsUsage: 'SettingsUsage' }, './settings-archive': { SettingsArchive: 'SettingsArchive' },
     './settings-magic-prompts': { SettingsMagicPrompts: 'SettingsMagicPrompts' }, './settings-projects': { SettingsProjectsPage: 'SettingsProjectsPage' },
     '../ui/src/lib/voice/speechSettings': { speechDefaults },
-    './settings-search-core': { createSettingsTargetNavigation: () => ({ onScroll() {}, reveal() {} }) },
+    './settings-search-core': { prepareCollectionSearchTarget, createSettingsTargetNavigation: () => ({ onScroll() {}, reveal() {} }) },
     './notification-settings': { SettingsNotifications: 'SettingsNotifications' },
     './settings-retention': { SettingsSessionRetentionSection: 'SettingsSessionRetentionSection' },
     './settings-voice-models': { SettingsVoiceModels: 'SettingsVoiceModels' }, './settings-voice-test': { SettingsVoiceTests: 'SettingsVoiceTests' },
     './settings-target': { SettingsTarget: 'SettingsTarget' }, './settings-defaults': { SettingsDefaults: 'SettingsDefaults' },
+    './settings-sessions': { SettingsSessions: 'SettingsSessions' }, './settings-voice-catalog': { SettingsVoiceCatalog: 'SettingsVoiceCatalog' },
     './settings-preferences': { SettingsPreferences: 'SettingsPreferences' }, './settings-about': { SettingsAbout: 'SettingsAbout' },
   };
   const lazy: ts.TransformerFactory<ts.SourceFile> = context => file => {
@@ -366,12 +380,12 @@ const press = (page: Awaited<ReturnType<typeof fixture>>, label: string) => {
 };
 
 describe('persistent Settings page operation recovery (pure production callbacks)', () => {
-  it('an unknown custom Provider create cannot allocate a second instance after resume and Save retry', async () => {
-    const reply = deferred<unknown>(); let created = false;
+  it.each([true, false])('an unknown custom Provider create cannot allocate a second instance after resume and Save retry; same stable identity=%s', async sameIdentity => {
+    const reply = deferred<unknown>(); let created = false, providerId = '';
     const page = await fixture({ surface: 'providers', props: { page: 'providers', create: true, directory: '/actual/worktree' }, respond: async (path, method, body) => {
-      if (method === 'POST') { expect(path).toBe('/api/config/providers/custom'); expect(Object.keys(body as object).sort()).toEqual(['apiKey', 'config', 'directory']); created = true; return reply.promise; }
+      if (method === 'POST') { expect(path).toBe('/api/config/providers/custom'); expect(Object.keys(body as object).sort()).toEqual(['apiKey', 'config', 'directory', 'providerId']); providerId = String((body as { providerId: unknown }).providerId); expect(typeof (body as { providerId: unknown }).providerId).toBe('string'); expect(providerId.length).toBeGreaterThan(0); created = true; return reply.promise; }
       expect(path).toBe('/api/config/catalog/providers?directory=%2Factual%2Fworktree');
-      return { schemaVersion: 1, providers: created ? [{ id: 'server-generated-id', name: 'Provider Name', models: {} }] : [] };
+      return { schemaVersion: 1, providers: created ? [{ id: sameIdentity ? providerId : 'different-server-id', name: 'Provider Name', models: {} }] : [] };
     } });
     const change = (title: string, value: string) => {
       const node = page.nodes().find(node => node.props.title === title);
@@ -381,11 +395,11 @@ describe('persistent Settings page operation recovery (pure production callbacks
     change('settings.providers.custom.name', 'Provider Name'); change('settings.providers.custom.baseURL', 'https://provider.invalid/v1'); change('settings.voice.page.field.apiKey', 'synthetic-key');
     press(page, 'settings.providers.custom.addModel'); change('settings.providers.custom.modelId', 'model-id'); press(page, 'settings.plugins.page.action.save'); await flush();
     press(page, 'settings.plugins.page.action.save'); await flush(); expect(created).toBe(true);
-    await page.suspend(); await page.resume(); reply.resolve({ providerId: 'server-generated-id' }); await flush();
+    await page.suspend(); await page.resume(); reply.resolve({ providerId: sameIdentity ? providerId : 'different-server-id' }); await flush();
     press(page, 'settings.plugins.page.action.save'); await flush();
     expect(page.calls.filter(call => call.input.method === 'POST')).toHaveLength(1);
     expect(page.calls.at(-1)?.input.method).toBe('GET');
-    expect(page.nodes().find(node => node.props.title === 'settings.voice.page.field.apiKey')?.props.value).toBe('synthetic-key');
+    expect(page.nodes().find(node => node.props.title === 'settings.voice.page.field.apiKey')?.props.value).toBe(sameIdentity ? '' : 'synthetic-key');
     page.dispose();
   });
   it('collection editor retains a long dirty template and same Scroll, then saves on the confirmed replacement scope', async () => {

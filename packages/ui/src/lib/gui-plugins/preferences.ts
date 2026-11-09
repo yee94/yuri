@@ -1,6 +1,6 @@
-import { instanceScopedStorageKey } from '@/lib/instanceScopedStorage';
+import { instanceScopedStorageKeyForRuntime } from '../instanceScopedStorageKey';
 
-export const guiPreferencesKey = (runtimeKey: string) => instanceScopedStorageKey('gui-plugins.disabled', runtimeKey);
+export const guiPreferencesKey = (runtimeKey: string) => instanceScopedStorageKeyForRuntime('gui-plugins.disabled', runtimeKey);
 
 export function readDisabledPlugins(storage: Pick<Storage, 'getItem'>, key: string): readonly string[] {
   const text = storage.getItem(key);

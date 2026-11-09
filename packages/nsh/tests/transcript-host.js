@@ -1,5 +1,5 @@
 /** Fixture-only history mutations. Never touches a real Host or user history. */
-import { createHost as baseHost } from './host.js';
+import { assertFixtureRequestScope, createHost as baseHost } from './host.js';
 export function createHost(options = {}) {
   const base = baseHost();
   let revert = null;
@@ -40,6 +40,7 @@ export function createHost(options = {}) {
         assistantFontFamilies: { light: input.fonts.assistantLight, dark: input.fonts.assistantDark }, unsupportedFonts: [], systemColorScheme: 'dark' };
     }
     if (name !== 'runtime.request') return base.call(name, input);
+    assertFixtureRequestScope(input, base.call('connection.list', {}).runtimeScope);
     const { path, method, body } = input;
     if (path === '/api/config/settings' || path === '/api/config/themes') {
       if (method !== 'GET') throw new Error('Unsafe transcript appearance request');

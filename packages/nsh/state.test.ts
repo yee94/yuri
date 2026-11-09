@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 
 const harness = vi.hoisted(() => ({
   listeners: new Map<string, Set<(payload: unknown) => void>>(), cleanups: [] as Array<() => void>,
   effects: [] as Array<() => void | (() => void)>, disposers: [] as Array<() => void>,
-  lifecycle: 'active', call: vi.fn(), storage: new Map<string, string>(), getItem: vi.fn(), setItem: vi.fn(),
+  lifecycle: 'active', locale: 'en-US', call: vi.fn(), storage: new Map<string, string>(), getItem: vi.fn(), setItem: vi.fn(),
 }));
 vi.mock('nsh', () => ({
   batch: <T>(work: () => T) => work(),
   Storage: { getItem: harness.getItem, setItem: harness.setItem },
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   lifecycle: () => harness.lifecycle,
+  locale: () => harness.locale,
   untracked: <T>(work: () => T) => work(),
   effect: (work: () => void | (() => void)) => { harness.effects.push(work); const stop = work(); if (stop) harness.disposers.push(stop); },
   cleanup: (work: () => void) => harness.cleanups.push(work),
@@ -22,14 +24,16 @@ vi.mock('nsh', () => ({
   },
 }));
 const emit = (type: string, body: Record<string, unknown>, key = 'chat') => {
-  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key, data: JSON.stringify({ type, data: body }) });
+  if (type === 'server.connected') for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(harness.call, key), type: 'reconnected' });
+  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(harness.call, key), data: JSON.stringify({ type, data: body }) });
 };
 const flush = async () => { for (let count = 0; count < 40; count++) await Promise.resolve(); };
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 const target = { kind: 'session' as const, id: 's', title: 'Session', directory: '/repo' };
 let handle: (path: string, method: string, body: unknown) => unknown;
 beforeEach(() => {
-  vi.resetModules(); vi.useFakeTimers(); harness.lifecycle = 'active';
+  vi.resetModules(); vi.useFakeTimers(); harness.lifecycle = 'active'; harness.locale = 'en-US';
+  resetIssuedStreams(harness.call);
   harness.listeners.clear(); harness.cleanups = []; harness.effects = []; harness.disposers = [];
   harness.storage.clear();
   harness.getItem.mockReset().mockImplementation(async (key: string) => harness.storage.get(key) ?? null);
@@ -46,6 +50,7 @@ beforeEach(() => {
     return null;
   };
   harness.call.mockReset().mockImplementation(async (name, input) => {
+    if (name === 'runtime.stream') captureIssuedStream(harness.call, input);
     if (name === 'connection.list') return { connections: [{ id: 'one', url: 'https://host.example', label: 'Host', lastUsedAt: 0 }], selected: 'one', runtimeScope: { hostID: 'one', lease: 'one-lease' } };
     if (name === 'runtime.request') return { status: 200, body: await handle(input.path, input.method, input.body) };
     return true;
@@ -53,6 +58,220 @@ beforeEach(() => {
 });
 afterEach(() => { harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); vi.useRealTimers(); });
 const requests = () => harness.call.mock.calls.filter(([name]) => name === 'runtime.request').map(([, input]) => input);
+
+describe('production root error ownership', () => {
+  it('renders only localized safe summaries and never grants retry to an unknown mutation outcome', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    await state.run(async () => { throw new Error('HTTP 500 https://private.example /host/path bearer=secret stack'); });
+    expect(state.app.error()).toBe('The operation could not complete. Try again, or close this notice and recover from the original page.');
+    expect(state.rootErrorFeedback()?.retry).toBeUndefined();
+    state.rootErrorActions.dismiss(state.rootErrorFeedback()!.id);
+    expect(state.rootErrorFeedback()?.visible).toBe(false);
+    harness.locale = 'zh-CN';
+    state.report(Object.assign(new Error("nsh/host: 'connection.list' not granted: add it to capabilities.host /host/private bearer=secret"), { code: 'ERR_ACCESS_DENIED' }));
+    expect(state.app.error()).toBe('此版本缺少所需权限。请更新应用后重试。');
+    expect(state.rootErrorFeedback()?.retry).toBeUndefined();
+  }, 20_000);
+  it('captures original recovery; another successful action does not clear the failure', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const recover = vi.fn(async () => {});
+    await state.run(async () => { throw new Error('read failed'); }, { retry: recover });
+    await state.run(async () => {});
+    expect(state.rootErrorFeedback()?.retry).toBe(recover);
+    await state.rootErrorActions.retry(state.rootErrorFeedback()!.id);
+    expect(recover).toHaveBeenCalledTimes(1); expect(state.app.error()).toBe('');
+  });
+  it('rejects stale same-Host lease and A→B→A failures before they can replace a new notice', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    let reject!: (error: unknown) => void;
+    const old = state.run(() => new Promise((_resolve, no) => { reject = no; }));
+    state.app.runtimeScope.set({ hostID: 'one', lease: 'two-lease' });
+    await state.run(async () => { throw new Error('current failure'); });
+    const latest = state.rootErrorFeedback(); reject(new Error('late old lease')); await old;
+    expect(state.rootErrorFeedback()).toBe(latest);
+    const aba = state.run(() => new Promise((_resolve, no) => { reject = no; }));
+    state.app.runtimeScope.set({ hostID: 'two', lease: 'two' });
+    state.app.runtimeScope.set({ hostID: 'one', lease: 'third-lease' });
+    reject(new Error('late A')); await aba; expect(state.rootErrorFeedback()).toBe(latest);
+  });
+  it('captures page-operation lifetime at dispatch and rejects a callback after hide/reopen', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    let generation = 1, reject!: (error: unknown) => void;
+    const stop = state.registerFeedbackPageOwner(() => { const captured = generation; return () => captured === generation; });
+    const pending = state.run(() => new Promise((_resolve, no) => { reject = no; }));
+    generation += 2; reject(new Error('old page')); await pending;
+    expect(state.rootErrorFeedback()).toBeNull(); stop();
+  });
+  it('a new captured attachment retirement failure replaces a closed notice and retries only its exact old cleanup', async () => {
+    const state = await import('./state'), { createAttachmentPick } = await import('./attachment-pick'); await state.loadConnections();
+    state.report(new Error('old failure')); const old = state.rootErrorFeedback()!; state.rootErrorActions.dismiss(old.id);
+    const scope = state.app.runtimeScope()!, pending = deferred<unknown>(); let fails = true;
+    const call = vi.fn(async (name: string, _body: Record<string, unknown>) => {
+      if (name === 'runtime.pickAttachment') return pending.promise;
+      if (name === 'runtime.cancelAttachment') { if (fails) throw new Error('private retirement stack'); return true; }
+      throw new Error('Unexpected attachment call');
+    });
+    const picker = createAttachmentPick({ target: { kind: 'session', id: 's' }, current: () => true, call, busy: () => {},
+      failed: (phase, failure, retirement) => { if (phase === 'cancel' && retirement) state.reportOwnedError(failure, retirement, 'chat.attachments.retirementPending'); } });
+    const flight = picker.pick({ scope, current: () => true }, 'files'); await flush();
+    picker.dispose(); await flush();
+    const next = state.rootErrorFeedback()!;
+    expect(next.id).not.toBe(old.id); expect(next.visible).toBe(true);
+    expect(next.message).toBe('Attachment retirement is unconfirmed. Tap Attach again to retry. No files were deleted.');
+    expect(next.retry).toBeTypeOf('function'); fails = false;
+    await state.rootErrorActions.retry(next.id);
+    const cancels = call.mock.calls.filter(([name]) => name === 'runtime.cancelAttachment');
+    expect(cancels).toHaveLength(2); expect(cancels[1][1]).toEqual(cancels[0][1]); expect(cancels[1][1].expectedHost).toEqual(scope);
+    expect(state.rootErrorFeedback()).toBeNull(); pending.resolve(null); await flight;
+  });
+  it('retirement reporting never captures a replacement Host or lease at failure time', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const scope = state.app.runtimeScope()!, retry = vi.fn(async () => {}), owner = { scope, current: () => true, retry };
+    state.app.runtimeScope.set({ hostID: 'other', lease: 'B' });
+    state.report(new Error('new Host failure')); const latest = state.rootErrorFeedback();
+    state.reportOwnedError(new Error('old cleanup failure'), owner, 'chat.attachments.retirementPending');
+    expect(state.rootErrorFeedback()).toBe(latest);
+    state.app.runtimeScope.set({ hostID: scope.hostID, lease: 'A-new' });
+    state.reportOwnedError(new Error('old cleanup failure'), owner, 'chat.attachments.retirementPending');
+    expect(state.rootErrorFeedback()).toBe(latest); expect(retry).not.toHaveBeenCalled();
+  });
+});
+
+describe('production contact attachment pipeline', () => {
+  const botTarget = { kind: 'assistant' as const, id: 'bot', title: 'Bot', directory: '' };
+  const descriptor = (mime: string, filename: string) => ({ type: 'file' as const, attachmentID: `att_${filename.replace(/\W/g, '_')}`, sha256: 'a'.repeat(64), size: 12, mime, filename, generation: 1 });
+  it.each([['image/png', 'photo.png'], ['application/pdf', 'report.pdf']])('adopts %s picker descriptor, persists/remounts, sends exact parts and reads contact preview', async (mime, filename) => {
+    const state = await import('./state'); await state.loadConnections();
+    const first = state.createChat(botTarget); await first.draftReady; await first.load(false, ['messages']);
+    const picked = descriptor(mime, filename), selection = first.captureAttachment();
+    expect(selection.adopt(picked)).toBe(true);
+    first.setDraftText('inspect'); await first.flushDraft();
+    const chat = state.createChat(botTarget); await chat.draftReady;
+    expect(chat.attachments()).toEqual(first.attachments());
+    const file = chat.attachments()[0]!;
+    expect(file.kind).toBe('contact'); expect(file.uri).toBeUndefined();
+    const { bindContactAttachmentRead } = await import('./resources-request');
+    const call = vi.fn(async () => ({ lease: 'preview', kind: 'image', size: 12 }));
+    await bindContactAttachmentRead(state.app.runtimeScope(), call)(file, 'read-1');
+    expect(call).toHaveBeenCalledWith('resources.read', expect.objectContaining({ source: { kind: 'contact', assistantID: 'bot', descriptor: picked }, expectedHost: state.app.runtimeScope(), requestId: 'read-1' }));
+    const normal = handle;
+    handle = (path, method, body) => path.endsWith('/bot/messages') && method === 'POST' ? { admitted: true, messageID: (body as { messageID: string }).messageID } : normal(path, method, body);
+    const { compileNativePrompt } = await import('./composer');
+    const sent = await chat.send({ prepare: input => compileNativePrompt(input, async () => { throw new Error('unexpected compiler GET'); }) });
+    expect(sent, chat.error()).toBe(true);
+    const posts = requests().filter(input => input.method === 'POST');
+    expect(posts).toHaveLength(1); expect(posts[0].body.parts).toEqual([{ type: 'text', text: 'inspect' }, picked]);
+    expect(JSON.stringify(posts[0].body)).not.toMatch(/file:\/\/|hostID|attachment_upload|"uri"/);
+    expect(chat.attachments()).toEqual([]);
+  });
+  it('unknown send only reconciles, preserves descriptor on read failure/empty, and does not POST twice', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await chat.load(false, ['messages']);
+    chat.captureAttachment().adopt(descriptor('image/png', 'photo.png'));
+    const normal = handle;
+    handle = (path, method, body) => { if (method === 'POST') throw new Error('lost ACK'); return normal(path, method, body); };
+    expect(await chat.send()).toBe(false); expect(chat.pendingSend()?.uncertain).toBe(true);
+    const remount = state.createChat(botTarget); await remount.draftReady;
+    const before = remount.attachments();
+    handle = (path, method, body) => { if (path.includes('/contact/messages')) throw new Error('read failed'); return normal(path, method, body); };
+    expect(await remount.retrySend()).toBe(false); expect(remount.attachments()).toEqual(before);
+    handle = normal; expect(await remount.retrySend()).toBe(false);
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(1);
+    expect(remount.pendingSend()?.files).toEqual(before);
+  });
+  it('rejects cross assistant/Host and stale adoption without touching another draft', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await chat.load(false, ['messages']);
+    const selection = chat.captureAttachment();
+    const other = state.createChat({ ...botTarget, id: 'other' }); await other.draftReady; other.setDraftText('keep'); await other.flushDraft();
+    await state.loadConnections({ forceReconnect: true });
+    expect(selection.adopt(descriptor('text/plain', 'a.txt'))).toBe(false);
+    expect(other.draft()).toBe('keep'); expect(chat.attachments()).toEqual([]);
+  });
+  it('unknown receipt recovery keeps newer text and attachments while clearing only the admitted snapshot', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await chat.load(false, ['messages']);
+    chat.setDraftText('original'); chat.captureAttachment().adopt(descriptor('image/png', 'old.png'));
+    const normal = handle;
+    handle = (path, method, body) => { if (method === 'POST') throw new Error('lost ACK'); return normal(path, method, body); };
+    expect(await chat.send()).toBe(false); const pending = chat.pendingSend()!;
+    chat.setDraftText('newer'); chat.captureAttachment().adopt(descriptor('application/pdf', 'new.pdf'));
+    const newer = chat.attachments().find(file => file.name === 'new.pdf');
+    handle = (path, method, body) => path.includes('/contact/messages?messageID=') ? { messages: [{ messageID: pending.id, ordinal: 1, role: 'user', parts: [{ type: 'text', text: 'original' }] }], complete: true, generation: 1, revision: 1 } : normal(path, method, body);
+    expect(await chat.recoverPendingSend()).toBe(true);
+    expect(chat.pendingSend()).toBeNull(); expect(chat.draft()).toBe('newer'); expect(chat.attachments()).toEqual([newer]);
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(1);
+  });
+  it('actual capture requires authoritative contact generation and rejects later text ABA, reset, and duplicate adoption', async () => {
+    const normal = handle;
+    let available = false, generation = 3;
+    handle = (path, method, body) => {
+      if (path.includes('/contact/messages')) { if (!available) throw new Error('unknown generation'); return { messages: [], complete: true, generation, revision: 1 }; }
+      return normal(path, method, body);
+    };
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await flush();
+    await expect(chat.captureAttachment().prepare()).rejects.toThrow('capture_stale');
+    available = true; await chat.load(false, ['messages']);
+    const selected = chat.captureAttachment(), context = await selected.prepare();
+    expect(context.contactGeneration).toBe(3); expect(context.draftRevision).toBeGreaterThanOrEqual(0);
+    chat.setDraftText('later'); chat.setDraftText('');
+    expect(selected.adopt({ ...descriptor('text/plain', 'edit.txt'), generation: 3 })).toBe(false);
+    const reset = chat.captureAttachment(); await reset.prepare(); generation = 4; await chat.load(false, ['messages']);
+    expect(reset.adopt({ ...descriptor('text/plain', 'reset.txt'), generation: 3 })).toBe(false);
+    const current = chat.captureAttachment(); await current.prepare();
+    const raw = { ...descriptor('text/plain', 'current.txt'), generation: 4 };
+    expect(current.adopt(raw)).toBe(true); expect(current.adopt(raw)).toBe(false); expect(chat.attachments()).toHaveLength(1);
+  });
+  it('actual page-operation A-B-A and native late ACK cannot append to the original or replacement draft', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await chat.load(false, ['messages']);
+    const { createPageOperations } = await import('./page-operations'); let visible = true;
+    const pages = createPageOperations(() => visible), update = harness.effects.at(-1)!;
+    const lane = pages.capture(), selection = chat.captureAttachment(lane);
+    const { createAttachmentPick } = await import('./attachment-pick'), ack = deferred<unknown>();
+    const call = vi.fn(async (name: string) => name === 'runtime.pendingAttachments' ? [] : name === 'runtime.pickAttachment' ? ack.promise : null);
+    const picker = createAttachmentPick({ target: botTarget, current: () => pages.current(), call, busy: () => {}, failed: () => {} });
+    const flight = picker.pick(lane, 'files', selection); await flush();
+    visible = false; update(); visible = true; update();
+    expect(lane.current()).toBe(false); expect(pages.capture()).not.toBe(lane);
+    ack.resolve(descriptor('text/plain', 'late.txt')); expect(await flight).toBe(false);
+    expect(chat.attachments()).toEqual([]); expect(call.mock.calls.filter(([name]) => name === 'runtime.cancelAttachment')).toHaveLength(1);
+  });
+  it('explicit cold recovery adopts only the same durable checkpoint; newer edits keep their draft and reject recovery', async () => {
+    const state = await import('./state'); await state.loadConnections(); const first = state.createChat(botTarget); await first.draftReady; await first.load(false, ['messages']);
+    first.setDraftText('persisted'); const old = first.captureAttachment(), saved = await old.prepare(); old.retire();
+    const second = state.createChat(botTarget); await second.draftReady; await second.load(false, ['messages']);
+    const recovered = second.captureAttachment(); expect((await recovered.prepare()).draftRevision).toBe(saved.draftRevision);
+    expect(recovered.recover(descriptor('text/plain', 'restored.txt'), saved.draftRevision)).toBe(true); await recovered.commit();
+    expect(second.attachments()).toHaveLength(1);
+    const changed = second.captureAttachment(); await changed.prepare(); second.setDraftText('new edit');
+    expect(changed.recover(descriptor('text/plain', 'wrong.txt'), saved.draftRevision)).toBe(false);
+    expect(second.draft()).toBe('new edit'); expect(second.attachments()).toHaveLength(1);
+  });
+  it('production picker recovery uses the actual durable adopter, persists before ACK and never opens another picker', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const first = state.createChat(botTarget); await first.draftReady; await first.load(false, ['messages']); first.setDraftText('original');
+    const saved = await first.captureAttachment().prepare();
+    const second = state.createChat(botTarget); await second.draftReady; await second.load(false, ['messages']);
+    const lane = state.captureHostOperation(), selected = second.captureAttachment(lane), raw = descriptor('text/plain', 'recover.txt');
+    const { createAttachmentPick } = await import('./attachment-pick');
+    const call = vi.fn(async (name: string) => {
+      if (name === 'runtime.pendingAttachments') return [{ requestId: 'original_request', assistantID: 'bot', uploadID: 'original_upload', generation: 1, draftRevision: saved.draftRevision, phase: 'unknown' }];
+      if (name === 'runtime.reconcileAttachment') return raw;
+      if (name === 'runtime.acknowledgeAttachment') expect([...harness.storage.values()].some(value => value.includes(raw.attachmentID))).toBe(true);
+      return null;
+    });
+    const picker = createAttachmentPick({ target: botTarget, current: () => lane.current(), call, busy: () => {}, failed: () => {} });
+    expect(await picker.pick(lane, 'images', selected)).toBe(true);
+    expect(call.mock.calls.map(([name]) => name)).toEqual(['runtime.pendingAttachments', 'runtime.reconcileAttachment', 'runtime.acknowledgeAttachment']);
+    expect(second.attachments()).toHaveLength(1); expect(second.draft()).toBe('original');
+  });
+  it('captured Host A-B-A never reauthorizes an older attachment adopter', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(botTarget); await chat.draftReady; await chat.load(false, ['messages']);
+    const selected = chat.captureAttachment(state.captureHostOperation()); await selected.prepare();
+    const originalCall = harness.call.getMockImplementation()!;
+    let host = 'other', lease = 'other-lease';
+    harness.call.mockImplementation(async (name, input) => name === 'connection.list' ? { selected: host, connections: [{ id: host, url: 'https://host.example', label: 'Fixture' }], runtimeScope: { hostID: host, lease } } : originalCall(name, input));
+    await state.loadConnections(); host = 'one'; lease = 'one-new-lease'; await state.loadConnections();
+    expect(selected.adopt(descriptor('text/plain', 'aba.txt'))).toBe(false); expect(chat.attachments()).toEqual([]);
+  });
+});
 
 describe('root Projects attention observer', () => {
   it('1000-session root: 50 token events and draft events do zero identity lookups, index scans or requests', async () => {
@@ -85,7 +304,7 @@ describe('root Projects attention observer', () => {
     state.app.sessions.set([{ id: 's', title: 'Root', directory: '/repo', updated: 1 }, { id: 'child', title: 'Child', directory: '/repo', updated: 2, parentID: 's' }]);
     state.observeRuntime(vi.fn()); const scope = JSON.stringify([state.epoch(), state.app.connection()?.id]);
     await flush(); expect(requests()).toEqual([expect.objectContaining({ path: '/api/debug/location', method: 'GET' })]); harness.call.mockClear();
-    emit('session.execution.failed', { sessionID: 's' }, 'chat');
+    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.execution.failed', data: { sessionID: 's' } }) });
     harness.lifecycle = 'inactive'; emit('session.execution.failed', { sessionID: 's' }, 'global');
     expect(projectsAttention.snapshot(scope).unseenBySession).toEqual({});
     harness.lifecycle = 'active';
@@ -412,6 +631,159 @@ describe('native chat authority and lifecycle', () => {
     expect(chat.queueEdit()).toBeNull(); expect(chat.inbox()).toEqual([]);
     expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
   });
+  it('reconciles a lost queue-edit DELETE acknowledgement before retrying the mutation', async () => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    const file = { uri: 'attachment://queue', name: 'queued.txt', mime: 'text/plain' };
+    const item = { id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text', files: [file] } };
+    let queued = true, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [item] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') {
+        deletes++;
+        if (!queued) throw Object.assign(new Error('already removed'), { status: 404 });
+        queued = false; throw new Error('lost DELETE acknowledgement');
+      }
+      if (path.includes('/message/q?')) throw Object.assign(new Error('not found'), { status: 404 });
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    expect(await chat.editInbox('q')).toBe(false);
+    expect(chat.queueEdit()).toMatchObject({ id: 'q', text: 'queued text', files: [file] });
+    expect(await chat.send()).toBe(false);
+    expect(await chat.editInbox('q')).toBe(true);
+    expect(deletes).toBe(1); expect(chat.queueEdit()).toBeNull();
+    expect(chat.draft()).toBe('queued text'); expect(chat.attachments()).toEqual([file]);
+    expect(chat.inbox()).toEqual([]); expect(chat.queueError()).toBe('');
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
+  it.each([false, true])('queue-edit retry detects promoted input without DELETE or resend (later edit=%s)', async laterEdit => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    let queued = true, delivered = false, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text' } }] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') {
+        deletes++; queued = false; delivered = true; throw new Error('lost DELETE acknowledgement');
+      }
+      if (path.includes('/message/q?')) {
+        if (delivered) return { data: { id: 'q', type: 'user', text: 'queued text' } };
+        throw Object.assign(new Error('not found'), { status: 404 });
+      }
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    expect(await chat.editInbox('q')).toBe(false);
+    if (laterEdit) chat.setDraftText('Later unrelated edit');
+    expect(await chat.editInbox('q')).toBe(false);
+    expect(deletes).toBe(1); expect(chat.inbox()).toEqual([]);
+    expect(chat.draft()).toBe(laterEdit ? 'Later unrelated edit' : '');
+    if (laterEdit) expect(chat.queueEdit()?.id).toBe('q');
+    else expect(chat.queueEdit()).toBeNull();
+    expect(await chat.send()).toBe(false);
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
+  it.each(['message', 'inbox'])('queue-edit retry retains unknown authority on %s read failure, then reconciles with GET only', async failedRead => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    let queued = true, unreadable = false, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) {
+        if (unreadable && failedRead === 'inbox') throw Object.assign(new Error('read unavailable'), { status: 503 });
+        return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text' } }] : [];
+      }
+      if (path.includes('/inbox/q?') && method === 'DELETE') { deletes++; queued = false; throw new Error('lost DELETE acknowledgement'); }
+      if (path.includes('/message/q?')) {
+        const failed = unreadable && failedRead === 'message';
+        throw Object.assign(new Error(failed ? 'read unavailable' : 'not found'), { status: failed ? 503 : 404 });
+      }
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    expect(await chat.editInbox('q')).toBe(false); unreadable = true;
+    expect(await chat.editInbox('q')).toBe(false);
+    expect(chat.queueEdit()?.id).toBe('q'); expect(chat.draft()).toBe('queued text');
+    expect(chat.queueError()).toBe('read unavailable'); expect(await chat.send()).toBe(false);
+    unreadable = false; expect(await chat.editInbox('q')).toBe(true);
+    expect(chat.queueEdit()).toBeNull(); expect(deletes).toBe(1);
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
+  it('queue-edit retry may DELETE again only when both reads confirm the same input is still pending', async () => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    let queued = true, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text' } }] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') {
+        deletes++; if (deletes === 1) throw new Error('DELETE unavailable');
+        queued = false; return null;
+      }
+      if (path.includes('/message/q?')) throw Object.assign(new Error('not found'), { status: 404 });
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    expect(await chat.editInbox('q')).toBe(false);
+    expect(await chat.editInbox('q')).toBe(true);
+    expect(deletes).toBe(2); expect(chat.queueEdit()).toBeNull(); expect(chat.error()).toBe('');
+    expect(chat.draft()).toBe('queued text');
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
+  it('queue-edit recovery does not adopt a late read after the runtime lease changes', async () => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    let queued = true, deletes = 0;
+    const gate = deferred<unknown>(); let gateRead = false;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text' } }] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') { deletes++; queued = false; throw new Error('lost DELETE acknowledgement'); }
+      if (path.includes('/message/q?')) {
+        if (gateRead) return gate.promise;
+        throw Object.assign(new Error('not found'), { status: 404 });
+      }
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    expect(await chat.editInbox('q')).toBe(false); gateRead = true;
+    const retry = chat.editInbox('q'); await flush();
+    state.app.runtimeScope.set({ hostID: 'one', lease: 'replacement-lease' });
+    gate.resolve({ data: { id: 'q', type: 'user', text: 'queued text' } });
+    expect(await retry).toBe(false);
+    expect(chat.queueEdit()?.id).toBe('q'); expect(chat.draft()).toBe('queued text');
+    expect(deletes).toBe(1); expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
+  it('queue-edit retry cannot DELETE until its recovery record is durably stored', async () => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    let queued = true, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text' } }] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') { deletes++; queued = false; return null; }
+      if (path.includes('/message/q?')) throw Object.assign(new Error('not found'), { status: 404 });
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await chat.draftReady; await flush();
+    harness.setItem.mockRejectedValue(new Error('storage unavailable'));
+    expect(await chat.editInbox('q')).toBe(false); expect(deletes).toBe(0);
+    expect(await chat.editInbox('q')).toBe(false); expect(deletes).toBe(0);
+    expect(chat.queueEdit()?.id).toBe('q'); expect(chat.draft()).toBe('queued text');
+    harness.setItem.mockImplementation(async (key: string, value: string) => { harness.storage.set(key, value); });
+    expect(await chat.editInbox('q')).toBe(true); expect(deletes).toBe(1);
+    expect(chat.queueEdit()).toBeNull(); expect(chat.draft()).toBe('queued text');
+  });
+  it('cold queue-edit recovery confirms a lost DELETE with GET only and preserves the attachment draft', async () => {
+    let state = await import('./state'); await state.loadConnections(); const normal = handle;
+    const file = { uri: 'attachment://queue', name: 'queued.txt', mime: 'text/plain' };
+    let queued = true, deletes = 0;
+    handle = (path, method, body) => {
+      if (path.includes('/inbox?')) return queued ? [{ id: 'q', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queued text', files: [file] } }] : [];
+      if (path.includes('/inbox/q?') && method === 'DELETE') { deletes++; queued = false; throw new Error('lost DELETE acknowledgement'); }
+      if (path.includes('/message/q?')) throw Object.assign(new Error('not found'), { status: 404 });
+      return normal(path, method, body);
+    };
+    const first = state.createChat(target); await first.draftReady; await flush();
+    expect(await first.editInbox('q')).toBe(false); await first.flushDraft();
+    harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop());
+    harness.disposers = []; harness.cleanups = []; harness.listeners.clear();
+    vi.resetModules(); state = await import('./state'); await state.loadConnections();
+    const restored = state.createChat(target); await restored.draftReady; await flush();
+    expect(restored.queueEdit()).toBeNull(); expect(deletes).toBe(1);
+    expect(restored.draft()).toBe('queued text'); expect(restored.attachments()).toEqual([file]);
+    expect(requests().filter(input => input.method === 'POST')).toHaveLength(0);
+  });
   it('detects consumption during queue editing and never turns the consumed item into a sendable duplicate', async () => {
     const state = await import('./state'); await state.loadConnections(); const normal = handle;
     let queued = true;
@@ -485,9 +857,9 @@ describe('native chat authority and lifecycle', () => {
     expect(chat.retry()).not.toBeNull();
     emit('session.reasoning.delta', { sessionID: 's', assistantMessageID: 'm', ordinal: 0, delta: 'resumed' });
     expect(chat.retry()).toBeNull(); expect(chat.busy()).toBe(true);
-    for (const listener of harness.listeners.get('runtime.disconnected') ?? []) listener({ key: 'chat' });
+    for (const listener of harness.listeners.get('runtime.disconnected') ?? []) listener(issuedStream(harness.call));
     expect(chat.streamState()).toBe('disconnected'); expect(chat.busy()).toBe(true);
-    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ type: 'reconnected', key: 'chat' });
+    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(harness.call), type: 'reconnected' });
     await vi.advanceTimersByTimeAsync(120); expect(chat.streamState()).toBe('live'); expect(chat.busy()).toBe(false);
   });
   it('routes registered slash commands to native command, never prompt, including while busy', async () => {
@@ -533,7 +905,7 @@ describe('native chat authority and lifecycle', () => {
     emit('session.step.started', { sessionID: 's', assistantMessageID: 'new' });
     emit('session.text.started', { sessionID: 's', assistantMessageID: 'new', ordinal: 0 });
     for (let count = 0; count < 100; count++) emit('session.text.delta', { sessionID: 's', assistantMessageID: 'new', ordinal: 0, delta: 'a' });
-    const payload = { key: 'chat', data: JSON.stringify({ id: 'evt_once', created: 10, type: 'session.text.delta', data: { sessionID: 's', assistantMessageID: 'new', ordinal: 0, delta: 'b' } }) };
+    const payload = { ...issuedStream(harness.call), data: JSON.stringify({ id: 'evt_once', created: 10, type: 'session.text.delta', data: { sessionID: 's', assistantMessageID: 'new', ordinal: 0, delta: 'b' } }) };
     for (let count = 0; count < 2; count++) for (const listener of harness.listeners.get('runtime.event') ?? []) listener(payload);
     emit('session.reasoning.delta', { sessionID: 's', assistantMessageID: 'new', ordinal: 0, delta: 'think' });
     emit('session.tool.input.started', { sessionID: 's', assistantMessageID: 'new', id: 'call_z', name: 'shell' });
@@ -547,6 +919,7 @@ describe('native chat authority and lifecycle', () => {
   });
   it('protects live native content from stale GET completion and repairs it on terminal authority', async () => {
     const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
+    emit('server.connected', {}); await vi.advanceTimersByTimeAsync(120);
     const late = deferred<unknown>(), normal = handle;
     handle = (path, method, body) => path.includes('/message?') ? late.promise : normal(path, method, body);
     const read = chat.load();
@@ -598,16 +971,17 @@ describe('native chat authority and lifecycle', () => {
     for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ type: 'reconnected', key: 'global' });
     expect(harness.call).not.toHaveBeenCalled();
   });
-  it('preserves busy across chat disconnect and rejects stale snapshot/events until reconnect', async () => {
+  it('preserves busy across chat disconnect and rejects unissued stale frames until ready compensation', async () => {
     const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
     emit('session.execution.started', { sessionID: 's' }); expect(chat.busy()).toBe(true);
     const late = deferred<unknown>(), normal = handle;
     handle = (path, method, body) => path === '/api/session/active' ? late.promise : normal(path, method, body);
     const read = chat.load();
-    for (const listener of harness.listeners.get('runtime.disconnected') ?? []) listener({ key: 'chat' });
+    for (const listener of harness.listeners.get('runtime.disconnected') ?? []) listener(issuedStream(harness.call));
     late.resolve({}); await read;
-    emit('session.idle', { sessionID: 's' }); expect(chat.busy()).toBe(true);
-    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ type: 'reconnected', key: 'chat' });
+    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.idle', data: { sessionID: 's' } }) });
+    expect(chat.busy()).toBe(true);
+    for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(harness.call), type: 'reconnected' });
     await vi.advanceTimersByTimeAsync(120); expect(chat.busy()).toBe(false);
   });
   it('reselecting the current connection never stops or replaces live streams', async () => {
@@ -671,7 +1045,7 @@ describe('native chat authority and lifecycle', () => {
   });
   it('ignores 100 unrelated stream events and coalesces relevant events at 120ms', async () => {
     const state = await import('./state'); await state.loadConnections();
-    const chat = state.createChat(target); await flush(); harness.call.mockClear();
+    const chat = state.createChat(target); await flush(); emit('server.connected', {}); await vi.advanceTimersByTimeAsync(120); harness.call.mockClear();
     for (let count = 0; count < 100; count++) emit('message.updated', { info: { sessionID: 'other' } });
     await vi.advanceTimersByTimeAsync(120); expect(requests()).toHaveLength(0);
     for (let count = 0; count < 100; count++) emit('message.updated', { info: { sessionID: 's' } });
@@ -774,7 +1148,9 @@ describe('native chat authority and lifecycle', () => {
     await chat.load(); expect(chat.messages()).toEqual([]);
   });
   it('keeps newer contact stream text when an older GET resolves', async () => {
-    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat({ ...target, kind: 'assistant', id: 'bot' }); await flush();
+    const state = await import('./state'); await state.loadConnections();
+    await harness.call('runtime.stream', { key: 'global', path: '/api/yuri/events', expectedHost: state.app.runtimeScope() });
+    const chat = state.createChat({ ...target, kind: 'assistant', id: 'bot' }); await flush();
     const late = deferred<unknown>(), normal = handle;
     handle = (path, method, body) => path.includes('/contact/messages') ? late.promise : normal(path, method, body);
     const read = chat.load();

@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { useEvent, useEventListener } from '@reactuses/core';
 
 import { isMobileOverlayFocusRestoreSuppressed } from '@/lib/mobileOverlayFocusRestore';
 import { cn } from '@/lib/utils';
@@ -103,6 +104,21 @@ export const MobileWindowMotion: React.FC<MobileWindowMotionProps> = ({
   const isPreview = mode === 'interactive-present';
   const topId = React.useSyncExternalStore(mobileWindowStack.subscribe, mobileWindowStack.getSnapshot, mobileWindowStack.getSnapshot);
   const isTop = active && !isPreview && topId === id;
+  const syncVisualViewport = useEvent(() => {
+    const root = scrimRef.current;
+    if (!root) return;
+    const viewport = window.visualViewport;
+    const browser = isTop && !document.documentElement.classList.contains('yuri-capacitor-app');
+    const top = browser && viewport ? `${viewport.offsetTop}px` : '';
+    const height = browser && viewport ? `${viewport.height}px` : '';
+    const bottom = browser && viewport ? 'auto' : '';
+    if (root.style.top !== top) root.style.top = top;
+    if (root.style.height !== height) root.style.height = height;
+    if (root.style.bottom !== bottom) root.style.bottom = bottom;
+  });
+  useEventListener('resize', syncVisualViewport, () => isTop ? window.visualViewport : null);
+  useEventListener('scroll', syncVisualViewport, () => isTop ? window.visualViewport : null);
+  React.useLayoutEffect(() => { syncVisualViewport(); }, [isTop, mounted, syncVisualViewport]);
   const dismissGestureRef = useMobileWindowMotionDismissGesture({
     motionId: id,
     edge,

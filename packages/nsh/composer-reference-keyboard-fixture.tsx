@@ -2,22 +2,24 @@ import { keymap, lifecycle, mount, signal, Text, View, type InputRef } from 'nsh
 import { Button, Input } from 'nsh/base';
 import { createNativeReferenceKeyboard } from './composer-reference-keyboard-native';
 import { NativeReferencePicker } from './composer-references-controls';
-import { app, createChat, loadConnections } from './state';
-import { request } from './runtime';
+import { captureHostOperation, createChat } from './state';
+import { native } from './runtime';
+import { settingsEngineFixtureBoot } from './settings-engine-fixture-boot';
 
-function Fixture() {
+function Fixture(props: { active: boolean }) {
   const chat = createChat({ kind: 'session', id: 'reference-chat', title: 'References', directory: '/workspace' });
-  const active = signal(true), host = signal('fixture'), fallback = signal('none'), calls = signal(0);
+  const active = signal(true), host = signal('fixture'), fallback = signal('none'), calls = signal(0), audit = signal('');
   let input: InputRef | undefined;
   keymap.bind(Object.fromEntries(['up', 'down', 'enter', 'tab', 'escape', 'mod+down', 'shift+tab', 'alt+enter'].map(key => [key, () => fallback.set(key)])), { when: 'always', repeat: true });
-  const keyboard = createNativeReferenceKeyboard({ active: () => active() && chat.active() && lifecycle() === 'active', text: chat.draft,
+  const keyboard = createNativeReferenceKeyboard({ active: () => props.active && active() && chat.active() && lifecycle() === 'active', text: chat.draft,
     scope: () => ({ ...chat.referenceScope, host: host() }),
     insert: (candidate, start, end) => chat.insertReference({ ...candidate, scope: chat.referenceScope }, start, end),
   });
   const search = async (path: string) => {
+    const operation = captureHostOperation();
+    if (!operation.current()) throw new Error('Keyboard fixture operation retired');
     calls.set(calls() + 1);
-    if (path.startsWith('/api/fs/find?') && path.includes('type=file')) return { data: Array.from({ length: 12 }, (_, i) => ({ path: `src/file-${String(i).padStart(2, '0')}.ts`, type: 'file' })) };
-    return request(path);
+    return operation.request(path);
   };
   const selection = (start: number, end = start) => { input?.focus(); input?.setSelection(start, end); keyboard.onSelectionChange({ start, end }); };
   return <View>
@@ -37,7 +39,8 @@ function Fixture() {
     <Button testID="page" onPress={() => { active.set(!active()); keyboard.refresh(); }}><Text>Page</Text></Button>
     <Button testID="host" onPress={() => { host.set('next-host'); keyboard.refresh(); }}><Text>Host</Text></Button>
     <Input testID="other-input" />
+    <Button testID="reference-keyboard-audit" onPress={() => { void native<{ mutations: number; sends: number }>('referenceKeyboard.fixture.audit').then(value => audit.set(`keyboard-audit:${value.mutations}:${value.sends}`)); }}><Text>Inspect synthetic keyboard writes</Text></Button><Text>{audit()}</Text>
   </View>;
 }
-function App() { void loadConnections(); return <If when={!!app.connection()}><Fixture /></If>; }
+function App() { const boot = settingsEngineFixtureBoot(); return <If when={boot.mounted()}><Fixture active={boot.active()} /></If>; }
 mount(App);

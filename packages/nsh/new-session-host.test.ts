@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { appearanceFromSettings } from './appearance-core';
 
-type Request = { path: string; method?: string; body?: Record<string, unknown> };
-type Host = { call: (name: string, input: Request) => unknown };
+type Request = { path: string; method?: string; body?: Record<string, unknown>; expectedHost?: { hostID: string; lease: string } };
+type Host = { call: (name: string, input: Request | Record<string, unknown>) => unknown };
 const directory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tests');
 
 /** Match the QuickJS Host's missing browser URL APIs, without starting any engine. */
@@ -28,6 +29,7 @@ function isolatedModule(file: string): Record<string, unknown> {
   return load(file);
 }
 const isolatedHost = (file: string) => (isolatedModule(file).createHost as () => Host)();
+const scopeFor = (host: Host) => (host.call('connection.list', { path: '' }) as { runtimeScope: { hostID: string; lease: string } }).runtimeScope;
 const read = (host: Host, resource: string) => {
   const result = host.call('runtime.request', { path: resource, method: 'GET' });
   if (!result || typeof result !== 'object' || !('body' in result) || !('status' in result)) throw new Error('Invalid fixture response');
@@ -35,6 +37,44 @@ const read = (host: Host, resource: string) => {
 };
 
 describe('new-session fake Host without browser URL globals', () => {
+  it('attachment bridge accepts only exact pick/cancel fields and the original request/scope, with no Host writes', () => {
+    const host = isolatedHost('new-session-host.js'), expectedHost = scopeFor(host);
+    const pick = { kind: 'files', requestId: 'fixture-pick-1', expectedHost };
+    expect(host.call('runtime.pickAttachment', pick)).toEqual({ uri: 'attachment://fixture/note', name: 'fixture-note.txt', mime: 'text/plain' });
+    const cancel = { requestId: pick.requestId, expectedHost };
+    expect(host.call('runtime.cancelAttachment', cancel)).toBe(true);
+    expect(host.call('runtime.cancelAttachment', cancel)).toBe(true);
+    for (const invalid of [{ ...pick, requestId: '' }, { ...pick, requestId: 'x'.repeat(129) }, { ...pick, requestId: 'new', assistantID: 'bot' }, { kind: 'files' }]) expect(() => host.call('runtime.pickAttachment', invalid)).toThrow('attachment pick');
+    for (const invalid of [{ ...cancel, requestId: 'another-pick' }, { ...cancel, expectedHost: { ...expectedHost, lease: 'fresh-lease' } }, { ...cancel, kind: 'files' }, { requestId: pick.requestId }]) expect(() => host.call('runtime.cancelAttachment', invalid)).toThrow('attachment cancellation');
+    expect(read(host, '/__fixture/new-session/stats').body).toMatchObject({ creates: 0, prompts: [], settingsWrites: [], projectWrites: [] });
+  });
+  it.each(['new-session-host.js', 'new-session-production-host.js'])('%s rejects absent/stale captured mutation scope before writing', file => {
+    const host = isolatedHost(file), scope = scopeFor(host);
+    const input = { path: '/api/session', method: 'POST', body: { location: { directory: '/fixture/project' } } };
+    expect(() => host.call('runtime.request', input)).toThrow('Missing new-session fixture scope');
+    for (const expectedHost of [{ ...scope, lease: 'retired-lease' }, { ...scope, hostID: 'another-host' }]) {
+      expect(() => host.call('runtime.request', { ...input, expectedHost })).toThrow('Stale new-session fixture scope');
+      expect(() => host.call('runtime.request', { path: '/api/config/settings', expectedHost })).toThrow('Stale new-session fixture scope');
+    }
+    expect(read(host, '/__fixture/new-session/stats').body).toMatchObject({ creates: 0, prompts: [], settingsWrites: [] });
+    expect(host.call('runtime.request', { ...input, expectedHost: scope })).toMatchObject({ status: 200, body: { data: { id: 'ses_draft_1' } } });
+  });
+  it.each(['new-session-host.js', 'new-session-production-host.js'])('%s round-trips the actual canonical appearance contract and rejects stale/reset-invalid apply', async file => {
+    const host = isolatedHost(file), scope = scopeFor(host);
+    expect(read(host, '/api/config/themes').body).toEqual({ themes: [] });
+    const appearance = await appearanceFromSettings(read(host, '/api/config/settings').body, async () => read(host, '/api/config/themes').body);
+    const { revision } = host.call('appearance.reset', { hostID: scope.hostID }) as { revision: number };
+    const input = { hostID: scope.hostID, revision, mode: appearance.mode, cssVars: appearance.cssVars, fonts: appearance.fonts };
+    const applied = host.call('appearance.apply', input);
+    expect(applied).toEqual({ uiFontFamily: appearance.fonts.ui, monoFontFamily: appearance.fonts.mono,
+      assistantFontFamilies: { light: appearance.fonts.assistantLight, dark: appearance.fonts.assistantDark }, unsupportedFonts: [], systemColorScheme: 'light' });
+    expect(() => host.call('appearance.apply', { ...input, hostID: 'another-host' })).toThrow('appearance apply');
+    expect(() => host.call('appearance.apply', { ...input, revision: revision - 1 })).toThrow('appearance apply');
+    expect(() => host.call('appearance.apply', { ...input, fonts: {} })).toThrow('appearance apply');
+    expect(() => host.call('appearance.reset', { hostID: 'another-host' })).toThrow('appearance reset');
+    host.call('appearance.reset', { hostID: null });
+    expect(() => host.call('appearance.apply', input)).toThrow('appearance apply');
+  });
   it('serves the exact model catalog and preference requests used by the real picker', () => {
     const host = isolatedHost('new-session-host.js');
     expect(read(host, '/api/config/catalog/providers?directory=%2Ffixture%2Fproject').body).toMatchObject({ providers: [{ models: { 'gpt-model': { variants: { low: {}, high: {} } } } }] });
@@ -44,23 +84,23 @@ describe('new-session fake Host without browser URL globals', () => {
 
   it('loses creation only once and preserves the exact target for recovery/configuration/admission', () => {
     const host = isolatedHost('new-session-host.js'); read(host, '/__fixture/new-session/lose-create');
-    expect(() => host.call('runtime.request', { path: '/api/session', method: 'POST', body: { location: { directory: '/fixture/project' } } })).toThrow('lost session creation response');
+    expect(() => host.call('runtime.request', { path: '/api/session', method: 'POST', expectedHost: scopeFor(host), body: { location: { directory: '/fixture/project' } } })).toThrow('lost session creation response');
     const target = '/api/session/ses_draft_1', scope = '?directory=%2Ffixture%2Fproject';
     expect(read(host, '/api/yuri/session-index').body).toMatchObject({ directories: [{ sessions: [{ id: 'ses_draft_1' }] }] });
     expect(read(host, `${target}${scope}`).body).toMatchObject({ data: { location: { directory: '/fixture/project' } } });
     expect(read(host, `${target}/message${scope}&limit=1`).body).toEqual({ data: [] });
     expect(read(host, `${target}/inbox${scope}`).body).toEqual([]);
-    host.call('runtime.request', { path: `${target}/model${scope}`, method: 'POST', body: { model: { providerID: 'fixture', id: 'gpt-model', variant: 'high' } } });
-    host.call('runtime.request', { path: `${target}/agent${scope}`, method: 'POST', body: { agent: 'plan' } });
+    host.call('runtime.request', { path: `${target}/model${scope}`, method: 'POST', expectedHost: scopeFor(host), body: { model: { providerID: 'fixture', id: 'gpt-model', variant: 'high' } } });
+    host.call('runtime.request', { path: `${target}/agent${scope}`, method: 'POST', expectedHost: scopeFor(host), body: { agent: 'plan' } });
     expect(read(host, `${target}${scope}`).body).toMatchObject({ data: { agent: 'plan', model: { providerID: 'fixture', id: 'gpt-model', variant: 'high' } } });
-    host.call('runtime.request', { path: `${target}/prompt${scope}`, method: 'POST', body: { id: 'stable-input', text: 'Captured draft', delivery: 'steer' } });
+    host.call('runtime.request', { path: `${target}/prompt${scope}`, method: 'POST', expectedHost: scopeFor(host), body: { id: 'stable-input', text: 'Captured draft', delivery: 'steer' } });
     expect(read(host, `${target}/inbox${scope}`).body).toMatchObject([{ id: 'stable-input' }]);
     expect(read(host, '/__fixture/new-session/stats').body).toMatchObject({ creates: 1, prompts: [{ id: 'stable-input' }] });
   });
 
   it('serves production Projects and exposes a real write audit with no browser globals', () => {
     const host = isolatedHost('new-session-production-host.js');
-    expect(host.call('connection.list', { path: '' })).toMatchObject({ selected: 'new-session-production' });
+    expect(host.call('connection.list', { path: '' })).toMatchObject({ selected: 'new-session-production', runtimeScope: { hostID: 'new-session-production', lease: 'new-session-production-lease' } });
     expect(read(host, '/api/config/settings').body).toMatchObject({ projects: [{ path: '/fixture/project' }] });
     expect(read(host, '/api/yuri/message-queue/worktrees/order?projectDirectory=%2Ffixture%2Fproject').body).toMatchObject({ projectDirectory: '/fixture/project' });
     expect(read(host, '/api/git/check?directory=%2Ffixture%2Fproject').body).toMatchObject({ isGitRepository: false });
@@ -101,7 +141,7 @@ describe('new-session fake Host without browser URL globals', () => {
   it('rejects wrong methods and scope, and unknown routes remain errors rather than blanket 404 success', () => {
     const host = isolatedHost('new-session-host.js');
     expect(() => host.call('runtime.request', { path: '/__fixture/new-session/lose-create', method: 'POST' })).toThrow();
-    host.call('runtime.request', { path: '/api/session', method: 'POST', body: { location: { directory: '/fixture/project' } } });
+    host.call('runtime.request', { path: '/api/session', method: 'POST', expectedHost: scopeFor(host), body: { location: { directory: '/fixture/project' } } });
     expect(() => read(host, '/api/session/ses_draft_1/prompt?directory=%2Ffixture%2Fproject')).toThrow();
     expect(() => host.call('runtime.request', { path: '/api/session/ses_draft_1/prompt', method: 'POST', body: { id: 'missing-scope', text: 'must not enter' } })).toThrow();
     expect(() => host.call('runtime.request', { path: '/api/session/ses_draft_1/prompt?directory=%2Fother', method: 'POST', body: { id: 'wrong-host-scope', text: 'must not enter' } })).toThrow();

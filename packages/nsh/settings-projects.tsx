@@ -1,6 +1,7 @@
 import { effect, Scroll, signal, Text, untracked, View } from 'nsh';
 import { AlertDialog, Button, NavPage } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import { Icon } from './Icon';
 import { projectsFrom, record, text, type Row } from './model';
@@ -178,7 +179,7 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
   }
   const none = () => ({ value: '', title: t('settings.projects.page.field.none') });
   const modelOptions = () => [none(), ...models(), ...(value('defaultModel') && !models().some(item => item.value === value('defaultModel')) ? [{ value: value('defaultModel'), title: value('defaultModel') }] : [])];
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settingsEntity}>
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
     <If when={!editing}>
       <Button testID="settings-project-refresh" class={settingsAction} disabled={state.busy()} accessibilityLabel={t('sidebarFilesTree.actions.refreshTitle')} onPress={() => { void load(); }}><Icon name="refresh" /></Button>

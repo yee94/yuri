@@ -1,6 +1,38 @@
 import { messageFrom, record, text, type Attachment, type ChatTarget, type Message, type Row } from './model';
 import { query, type request, sessionPath } from './runtime';
 import { resolveNativeForkBoundary } from '../ui/src/sync/session-fork-boundary';
+import { resolveRevertUndoTarget, resolveRevertRedoTarget } from '../ui/src/sync/conversation-order';
+
+export type NativeSessionHistorySnapshot = {
+  messages: readonly Message[]; revert: NativeRevert | null; more: boolean; ready: boolean;
+  /** Changes even for marker A → B → A. Pagination does not change it. */
+  revision: number; cursor: string | null;
+};
+export type NativeSessionHistoryReceipt = { action: 'undo' | 'redo' | 'fork'; status: 'pending' | 'unknown' };
+export type NativeSessionHistoryAdapter = {
+  refresh: () => Promise<void>;
+  snapshot: () => NativeSessionHistorySnapshot;
+  loadOlder: () => Promise<void>;
+  receipt: () => NativeSessionHistoryReceipt | null;
+  setReceipt: (receipt: NativeSessionHistoryReceipt | null) => void | Promise<void>;
+};
+
+/** Partial history never proves that a turn is absent. IDs carry no rank. */
+export function nativeSessionHistoryStep(action: 'undo' | 'redo', snapshot: NativeSessionHistorySnapshot): { kind: 'older' | 'none' | 'clear' } | { kind: 'stage'; messageID: string } {
+  if (!snapshot.ready) throw new Error('Session history authority is unknown');
+  const marker = snapshot.revert?.messageID;
+  if (action === 'redo' && !marker) return { kind: 'none' };
+  if (marker && !snapshot.messages.some(message => message.id === marker)) {
+    if (snapshot.more) return { kind: 'older' };
+    throw new Error('Session revert boundary is unavailable');
+  }
+  // Native display gives shell/synthetic rows a user-like bubble; they are not authored user turns.
+  const conversation = snapshot.messages.map(message => ({ id: message.id, role: text(message.projectionInfo?.nativeType) ? message.projectionInfo?.nativeType === 'user' ? 'user' : 'assistant' : message.role }));
+  const message = action === 'undo' ? resolveRevertUndoTarget(conversation, marker) : resolveRevertRedoTarget(conversation, marker!);
+  if (message) return { kind: 'stage', messageID: message.id };
+  if (action === 'undo' && snapshot.more) return { kind: 'older' };
+  return { kind: action === 'redo' ? 'clear' : 'none' };
+}
 
 export type NativeEditDraft = { target: ChatTarget; messageID: string; text: string; files: Attachment[] };
 export type NativeRevert = { messageID: string; files?: Row[] };
@@ -23,6 +55,7 @@ export type TranscriptActionOptions = {
   onRevert?: (revert: NativeRevert | null) => void;
   /** Refresh authority, never optimistically remove history on a failed request. */
   onChanged?: () => void | Promise<void>;
+  sessionHistory?: NativeSessionHistoryAdapter;
 };
 const mutations = new Set<string>();
 
@@ -98,9 +131,65 @@ export function createTranscriptActions(options: TranscriptActionOptions) {
       return value;
     } catch (failure) { await reconcileFailure(); throw failure; }
   }
+  async function sessionAction(action: 'undo' | 'redo' | 'fork') {
+    const history = options.sessionHistory;
+    if (!history) throw new Error('Session history adapter unavailable');
+    await mutation(async () => {
+      if (history.receipt()) throw new Error('Session history result is pending or unknown; do not replay');
+      await idle();
+      await history.refresh(); assertCurrent();
+      if (history.receipt()) throw new Error('Session history result is pending or unknown; do not replay');
+      let snapshot = history.snapshot();
+      const revision = snapshot.revision;
+      const stable = () => { assertCurrent(); if (history.snapshot().revision !== revision) throw new Error('Session history changed'); };
+      let step: ReturnType<typeof nativeSessionHistoryStep> = { kind: 'none' };
+      if (action !== 'fork') {
+        const visited = new Set<string | null>();
+        for (;;) {
+          stable(); step = nativeSessionHistoryStep(action, snapshot);
+          if (step.kind !== 'older') break;
+          if (!snapshot.cursor || visited.has(snapshot.cursor)) throw new Error('Session history cursor did not advance');
+          visited.add(snapshot.cursor);
+          await history.loadOlder(); stable(); snapshot = history.snapshot();
+        }
+        if (step.kind === 'none') return;
+      } else if (!snapshot.ready) throw new Error('Session history authority is unknown');
+      await idle(); stable();
+      await history.setReceipt({ action, status: 'pending' });
+      stable();
+      let acknowledged = false;
+      try {
+        if (action === 'fork') {
+          // No boundary means the entire current session, including its real tail.
+          const value = record(await request(path('fork'), 'POST', {}));
+          stable();
+          const forked = record(value.data ?? value);
+          if (!text(forked.id)) throw new Error('Invalid fork acknowledgement');
+          acknowledged = true; await history.setReceipt(null); stable();
+          options.onOpenChat?.({ kind: 'session', id: text(forked.id), directory: text(forked.directory) || target.directory, title: text(forked.title) || target.title });
+        } else {
+          const value = step.kind === 'stage'
+            ? nativeRevertFrom(await request(path('revert/stage'), 'POST', { messageID: step.messageID, files: true }))
+            : (await request(path('revert'), 'DELETE'), null);
+          stable();
+          if (step.kind === 'stage' && value?.messageID !== step.messageID) throw new Error('Invalid revert acknowledgement');
+          acknowledged = true; await history.setReceipt(null); stable();
+          options.onRevert?.(value);
+          await options.onChanged?.();
+        }
+      } catch (failure) {
+        if (!acknowledged) await history.setReceipt({ action, status: 'unknown' });
+        if (current()) options.onUncertain?.();
+        throw failure;
+      }
+    });
+  }
   return {
     current,
     pending: () => mutations.has(lock),
+    undoTurn: () => sessionAction('undo'),
+    redoTurn: () => sessionAction('redo'),
+    forkSession: () => sessionAction('fork'),
     /** Stage first, preserve the source; a new send commits through the chat owner. */
     async edit() {
       await mutation(async () => {
@@ -145,8 +234,10 @@ export function createTranscriptActions(options: TranscriptActionOptions) {
       });
     },
     async fork() {
+      assertCurrent();
+      const message = scope.message();
+      if (!message?.id) throw new Error('Selected message is unavailable');
       await mutation(async () => {
-        const { message } = await selected();
         let rows: Array<{ id: string; type: string; finish?: string; status?: string }> = [];
         let cursor = '', found = false;
         const seen = new Set<string>();

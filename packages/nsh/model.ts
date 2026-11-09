@@ -7,18 +7,23 @@ export const list = (value: unknown): Row[] => Array.isArray(value) ? value.map(
 export const unwrap = (value: unknown): unknown => record(value).data ?? value;
 export const nameOf = (path: string): string => path.replace(/\/$/, '').split('/').pop() || path;
 export const id = (): string => `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
-export type Connection = { id: string; label: string; url: string; lastUsedAt: number; authorizationID?: string };
+export type Connection = { id: string; label: string; url: string; lastUsedAt: number; authorizationID?: string; transportID?: string };
 export type Project = { id: string; name: string; path: string };
 export type Session = { id: string; title: string; directory: string; updated: number; parentID?: string };
 export type ChatTarget = { kind: 'session' | 'assistant'; id: string; title: string; directory: string };
 export type Message = { id: string; role: string; text: string; reasoning: string; tools: Row[]; cards: Row[]; files: Row[]; error: string; ordinal?: number; content?: Row[]; projectionInfo?: Row; modelID?: string; providerID?: string; modelName?: string; variant?: string; agent?: string; finish?: string; time?: { created?: number; streamed?: number; completed?: number }; tokens?: { output?: number; reasoning?: number }; contextRaw?: Row; contextOrigin?: 'projection' | 'stream'; contextLive?: boolean; contextContent?: readonly Row[] };
 export type MessagePage = { messages: Message[]; cursor: string | null; complete: boolean; generation?: number; revision?: number };
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
-export type Attachment = { uri: string; name: string; mime: string };
+/** Missing kind is the persisted v1 session form. Never infer contact from URI. */
+export type SessionAttachment = { kind?: 'session'; uri: string; name: string; mime: string };
+export type ContactAttachmentDescriptor = { type: 'file'; attachmentID: string; sha256: string; size: number; mime: string; filename?: string; generation?: number };
+export type ContactAttachment = ContactAttachmentDescriptor & { kind: 'contact'; hostID: string; assistantID: string; name: string; uri?: never };
+export type Attachment = SessionAttachment | ContactAttachment;
+export type CompiledFile = { kind?: 'session'; uri: string; name?: string } | ContactAttachment;
 export type SlashCommand = { name: string; text: string };
 export type CompiledSubmission = {
   text: string;
-  files?: Array<{ uri: string; name?: string }>;
+  files?: CompiledFile[];
   agents?: Array<{ name: string }>;
   skills?: Array<{ id: string }>;
   metadata?: Row;

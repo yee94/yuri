@@ -58,6 +58,8 @@ describe('native resource contracts', () => {
     expect(RESOURCE_BINARY_LIMIT).toBe(26_214_400);
     expect(RESOURCE_TEXT_LIMIT).toBe(1_000_000);
     expect(resourceKind('/fixture/image.png', '', true)).toBe('image');
+    expect(resourceKind('/fixture/image.SVG', '', true)).toBe('svg');
+    expect(resourceKind('/fixture/opaque', 'image/svg+xml')).toBe('svg');
     expect(resourceKind('/fixture/file.pdf', '', true)).toBe('pdf');
     expect(resourceCanPreview({ kind: 'image', lease: 'legacy', size: 512 })).toBe(true);
     expect(resourceCanPreview({ kind: 'pdf', preview: 'unsupported', lease: 'opaque', size: 512 })).toBe(false);

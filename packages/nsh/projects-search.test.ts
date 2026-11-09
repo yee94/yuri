@@ -3,26 +3,49 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as model from './model';
 import * as core from './projects-search-core';
+import { createProjectsScopeVM } from './tests/projects-scope-vm';
 
 const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'projects-search.tsx'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2023 } }).outputText;
-const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set(next: T) { value = next; } }); };
 const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-let module: typeof import('./projects-search'), generation: number;
+let module: typeof import('./projects-search'), scope: ReturnType<typeof createProjectsScopeVM>;
 let handle: (path: string) => unknown, request: ReturnType<typeof vi.fn>;
 const session = { id: 's', title: 'Title', location: { directory: '/remote' }, time: { updated: 1 } };
 const message = { sessionID: 's', messageID: 'm', title: 'Title', directory: '/remote', role: 'assistant', snippet: 'Body hit', createdAt: 1 };
 beforeEach(() => {
-  generation = 1;
   handle = path => path.startsWith('/api/session?') ? { data: [session], cursor: {} } : path.includes('content-search') ? { hits: [message] } : { data: [{ path: 'src/file.ts' }] };
   request = vi.fn(async (path: string) => handle(path));
-  const exports = {}, imports: Record<string, unknown> = { nsh: { signal, cleanup: () => {} }, 'nsh/base': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model, './runtime': { request }, './state': { epoch: () => generation }, './projects-search-core': core };
+  scope = createProjectsScopeVM(async (name, input) => { if (name !== 'runtime.request') throw new Error(name); return { status: 200, body: await request(input.path as string) }; });
+  const exports = {}, imports: Record<string, unknown> = { nsh: scope.native, 'nsh/base': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model, './state': scope.state, './page-operations': scope.operations, './projects-search-core': core };
   vm.runInNewContext(compiled, { exports, require: (id: string) => { if (!(id in imports)) throw new Error(id); return imports[id]; }, console }); module = exports as typeof module;
 });
+afterEach(() => scope?.dispose());
 describe('native global project search (no NSH engine)', () => {
+  it('uses the captured production request lease and cannot dispatch while root readiness is withdrawn', async () => {
+    const controller = module.createProjectsSearchController(() => '/repo');
+    scope.context.runtimeReady.set(false); scope.flush(); await controller.search('body');
+    expect(request).not.toHaveBeenCalled(); expect(controller.current()).toBe(false);
+    scope.context.runtimeReady.set(true); scope.flush(); await controller.search('body');
+    expect(request).toHaveBeenCalledTimes(3); expect(controller.current()).toBe(true);
+    const lane = scope.state.captureHostOperation();
+    scope.state.app.runtimeScope.set({ hostID: 'projects-fixture', lease: 'replacement-lease' });
+    await expect(lane.request('/api/session?parentID=null&limit=30&order=desc')).rejects.toThrow('host_operation_stale');
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+  it('rejects late old-Host results and permanently retires the old display even when that Host is selected again', async () => {
+    const controller = module.createProjectsSearchController(() => '/repo'), late = deferred(); handle = () => late.promise;
+    const work = controller.search('old'); expect(request).toHaveBeenCalledTimes(3);
+    const previous = scope.state.app.connection(), lease = scope.state.app.runtimeScope();
+    scope.state.app.connection.set({ ...previous, id: 'other-host' });
+    scope.state.app.runtimeScope.set({ hostID: 'other-host', lease: 'other-lease' }); scope.advanceGeneration(); scope.flush();
+    late.resolve({ data: [session], hits: [message] }); await work;
+    expect(controller.sessions()).toEqual([]); expect(controller.messages()).toEqual([]); expect(controller.files()).toEqual([]);
+    scope.state.app.connection.set(previous); scope.state.app.runtimeScope.set(lease); scope.advanceGeneration(); scope.flush();
+    await controller.search('old'); expect(request).toHaveBeenCalledTimes(3); expect(controller.current()).toBe(false);
+  });
   it('searches sessions and content globally and files only in the explicit Focus', async () => {
     const controller = module.createProjectsSearchController(() => '/focused project'); await controller.search(' body ');
     expect(request.mock.calls.map(([path]) => path)).toEqual(['/api/session?parentID=null&limit=30&order=desc&search=body', '/api/yuri/content-search?q=body&limit=30', '/api/fs/find?location%5Bdirectory%5D=%2Ffocused%20project&query=body&limit=40&type=file']);
@@ -60,16 +83,18 @@ describe('native global project search (no NSH engine)', () => {
     const controller = module.createProjectsSearchController(() => '/repo'); await controller.search('body');
     handle = () => { throw new Error('offline'); }; await controller.search('new');
     expect(controller.sessions()).toEqual([]); expect(controller.messages()).toEqual([]); expect(controller.files()).toEqual([]);
-    generation++; await controller.search('new'); expect(controller.sessions()).toEqual([]);
+    scope.advanceGeneration(); await controller.search('new'); expect(controller.sessions()).toEqual([]);
+    scope.flush();
     const late = deferred(); handle = () => late.promise;
-    const work = controller.search('last'); controller.dispose(); late.resolve({ data: [session], hits: [message] }); await work;
+    const before = request.mock.calls.length;
+    const work = controller.search('last'); expect(request.mock.calls.length - before).toBe(3); controller.dispose(); late.resolve({ data: [session], hits: [message] }); await work;
     expect(controller.sessions()).toEqual([]); expect(controller.messages()).toEqual([]);
   });
   it('ignores stale queries, cancelled queries, old Host results and an old Focus file response', async () => {
     const controller = module.createProjectsSearchController(() => '/repo'), late = deferred(); handle = () => late.promise;
     const old = controller.search('old'); controller.cancel();
     late.resolve({ data: [session], hits: [message] }); await old; expect(controller.sessions()).toEqual([]); expect(controller.messages()).toEqual([]);
-    const second = deferred(); handle = () => second.promise; const work = controller.search('another'); generation++;
+    const second = deferred(); handle = () => second.promise; const work = controller.search('another'); scope.advanceGeneration();
     second.resolve({ data: [session], hits: [message] }); await work; expect(controller.sessions()).toEqual([]);
     let focus = '/repo'; const scoped = module.createProjectsSearchController(() => focus), file = deferred();
     handle = path => path.includes('/fs/find') ? file.promise : path.includes('content-search') ? { hits: [] } : { data: [] };

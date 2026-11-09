@@ -12,12 +12,12 @@ export function createSelectKeyboard(options: {
     highlighted = rows[index]?.value ?? null;
     options.focus(highlighted, index);
   }
-  function sync() {
+  function sync(reset = false) {
     const rows = options.items();
-    if (rows !== source) {
+    if (rows !== source || reset) {
       source = rows;
-      const retained = rows.findIndex(row => row.value === highlighted && !row.disabled);
-      const selected = rows.findIndex(row => row.value === options.selected() && !row.disabled);
+      const retained = reset ? -1 : rows.findIndex(row => row.value === highlighted && !row.disabled);
+      const selected = reset ? -1 : rows.findIndex(row => row.value === options.selected() && !row.disabled);
       focus(rows, retained >= 0 ? retained : selected >= 0 ? selected : rows.findIndex(row => !row.disabled));
     }
     return rows;

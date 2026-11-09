@@ -1,7 +1,7 @@
 import { cleanup, colorScheme, computed, effect, lifecycle, locale, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
 import { Button, Progress, Switch } from 'nsh/base';
 import { language, t } from './i18n';
-import { nativeAppearance, nativeTimeFormat } from './appearance';
+import { nativeAppearance, nativeTimeFormat, nativeDensity } from './appearance';
 import { Icon } from './Icon';
 import { HeaderProviderLogo } from './chat-header-provider-logo';
 import { formatTimeForLocale } from '../ui/src/lib/time-format-core';
@@ -87,7 +87,7 @@ export function SettingsUsage(props: SettingsCallbacks & SettingsRoute & { direc
     if (!visible) return;
   });
   cleanup(() => owner.dispose());
-  return <Scroll testID="usage-scroll" ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll testID="usage-scroll" ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <Button testID="usage-refresh" class={settingsAction} disabled={state().refreshing || state().writing || props.active === false || lifecycle() !== 'active'} onPress={() => { void owner.refresh(); }}><Text class="text-foreground">{t('settings.usage.sidebar.actions.refreshTitle')}</Text></Button>
     <If when={state().settingsFailed}><Text testID="usage-settings-error" class="text-sm text-destructive">{t('settings.usage.page.state.refreshFailedTitle')}</Text></If>
     <If when={state().preferenceFailed}><Text testID="usage-preference-error" class="text-sm text-destructive">{t('settings.usage.page.state.preferenceUnconfirmed')}</Text></If>

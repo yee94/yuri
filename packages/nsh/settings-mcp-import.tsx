@@ -1,5 +1,6 @@
 import { Clipboard, keyboardFrame, safeArea, Scroll, signal, Text, windowSize } from 'nsh';
 import { Button } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { NativeSheet as Sheet } from './native-sheet';
 import { t } from './i18n';
 import type { Row } from './model';
@@ -22,7 +23,7 @@ export function SettingsMcpImport(props: { name: string; disabled: boolean; onOp
   return <>
     <Button testID="mcp-import-open" class={settingsAction} disabled={props.disabled} onPress={begin}><Text class="text-foreground">{t('settings.mcp.page.server.importJson')}</Text></Button>
     <Sheet open={open()} closeOnSwipe closeOnBackdropPress closeOnEscape onOpenChange={event => { if (!event.open && state.current()) close(); }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: Math.max(0, Math.min(windowSize().height * 0.85, windowSize().height - safeArea().top - keyboardFrame().height - 12)), marginBottom: keyboardFrame().height }} backdropClass="bg-background/50">
-      <Scroll testID="mcp-import-sheet" class="flex-1" contentClass="p-5 gap-4 pb-10"><If when={open()}><SettingsGroup title={t('settings.mcp.page.importDialog.title')}>
+      <Scroll testID="mcp-import-sheet" class="flex-1" contentClass="p-5 gap-4 pb-10" contentStyle={nativeDensity().pages.sheetEditor}><If when={open()}><SettingsGroup title={t('settings.mcp.page.importDialog.title')}>
         <Text class="text-sm text-muted-foreground">{t('settings.mcp.page.importDialog.description')}</Text>
         <SettingsInput testID="mcp-import-source" title={t('settings.mcp.page.importDialog.title')} multiline value={source()} disabled={props.disabled} onChange={next => { revision++; source.set(next); error.set(''); }} />
         <If when={!!error()}><Text class="text-destructive">{t('settings.nsh.collections.importInvalid', { reason: error() })}</Text></If>

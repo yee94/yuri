@@ -623,7 +623,7 @@ Reply language follows the user's latest substantive message and conversation co
   `X-Content-SHA256`, `X-Content-Size`, `Content-Type`, optional `X-Attachment-Filename` (encodeURIComponent).
   The shared runtime CORS allowlist includes these upload headers for packaged desktop/mobile and cross-origin development clients; auth and allowed-origin checks remain unchanged.
   Relay uses the same upload through `runtimeFetch`, carrying raw bytes and integrity headers over the encrypted tunnel. The compiled-Relay E2E covers authenticated image/JSON uploads, Unicode filenames, idempotent retry, byte-exact download and descriptor admission; missing/invalid client credentials remain rejected.
-  Returns `{ type:'file', attachmentID, sha256, size, mime, filename? }` — never a filesystem path.
+  Returns `{ type:'file', attachmentID, sha256, size, mime, filename?, generation }` — never a filesystem path.
   Same uploadID + same content is idempotent; different content → `idempotency_conflict` (409).
 - **Download (frozen):** `GET …/contact/attachments/:attachmentID` runtime-auth, opaque ID scoped to
   assistant + live `generation`. Body is raw bytes with `Content-Type`, `Content-Length`, `ETag`,
@@ -636,6 +636,165 @@ Reply language follows the user's latest substantive message and conversation co
 - Clear-memory keeps attachment rows; clear-chat bumps generation so external GETs fail while in-flight
   materialize (owned read) may still complete for the running turn.
 - Legacy data-URL migration: batch 20 / 50 MiB, write disk first, CAS-replace `part_json`; failure keeps old JSON.
+
+### Contact upload receipt and retirement HTTP contract
+
+This is a Yuri Host-owned contract, shared by all clients that connect to this Host;
+it does not add an OpenCode endpoint, a client store, a task scheduler or a polling loop.
+Native picker/policy wiring is a separate consumer and is not implemented here.
+
+**Capture authority before presenting a picker.** Reuse
+`GET /api/yuri/assistants/:assistantID/contact/messages?limit=1`, whose existing
+top-level `generation` is the authoritative contact transcript generation, including
+an empty transcript. A failed read is not generation zero. Clients must require a
+nonnegative JSON safe integer (not a string, boolean, array, null or fraction), capture
+it alongside the exact Host/lease, assistant and page operation, and retain that same
+value across selection, upload, receipt reconciliation and retirement. Runtime lease
+and contact generation fence different lifetimes. Do not refresh the generation to
+make an old picker intent pass. A reset after this GET is rejected by PUT CAS.
+
+| Operation | Request | Success |
+| --- | --- | --- |
+| Receipt-aware upload | `PUT …/contact/attachments/:uploadID?generation=G`, raw bytes, `Accept: application/vnd.yuri.contact-upload+json` | **201**, authoritative descriptor with numeric `generation: G` |
+| Exact receipt | `GET …/contact/attachments/uploads/:uploadID?generation=G` | **200** for `inflight`, `committed` or `retired`; **404** with `state: 'not_found'` for no row |
+| Exact retirement | `DELETE …/contact/attachments/uploads/:uploadID`, JSON `{ generation: G, descriptor: D_OR_NULL }` | **200**, durable `state: 'retired'` receipt plus retention fields |
+| Existing content download | `GET …/contact/attachments/:attachmentID` | **200** raw bytes; distinct from receipt JSON |
+
+All routes retain the existing Host authentication/allowed-origin boundary. Upload
+integrity headers remain `Content-Type`, `X-Content-SHA256`, `X-Content-Size` and optional
+`X-Attachment-Filename` (encodeURIComponent). Generation CAS is a **query parameter**
+on PUT/receipt GET and a **JSON number** on DELETE, not a new header or an ETag guess.
+The protocol marker uses the already allowed `Accept` header; no new CORS header is
+needed. The marker is recognized within comma-separated Accept values and parameters.
+Receipt-aware PUT without a generation is **400**, never a legacy fallback.
+Receipt-aware integrity headers must be single strings; size must be a positive canonical
+decimal within the byte cap, and any supplied encoded filename must decode to a valid name.
+Arrays/booleans, empty/noncanonical/unsafe sizes and invalid filenames fail validation
+before reserving an upload or consuming its body. Legacy header normalization is retained.
+
+Generation query values must be a single canonical decimal nonnegative safe integer
+(`0` or a nonzero digit followed by digits). Empty, duplicate/array/object, boolean,
+negative, fractional and unsafe values fail **400 `validation_error`**. DELETE requires
+a nonnegative safe integer JSON number and an explicit `descriptor` property; missing,
+string/boolean/array/null generations and unknown body fields are invalid. `descriptor`
+is either the complete authoritative descriptor (including generation and optional
+filename exactly as returned) or explicit null when the upload outcome is unknown.
+A provided descriptor must match **all** canonical fields; extra fields are rejected.
+It is a compare-and-swap assertion, never a hash-based selector. Clients must validate
+the descriptor's type/opaque ID/hash/MIME/filename/size and numeric generation; the
+server rebuilds descriptors only from committed ownership rows. Send accepts the
+new generation metadata after safe-integer validation, checks it against the row,
+and continues to accept old descriptors without that field.
+
+Receipt bodies have this shape (JSON numbers, descriptor null before commit):
+
+```json
+{
+  "assistantID": "assistant_a",
+  "uploadID": "upload_a",
+  "generation": 3,
+  "currentGeneration": 3,
+  "state": "committed",
+  "descriptor": {
+    "type": "file",
+    "attachmentID": "att_opaque",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 42,
+    "mime": "text/plain",
+    "filename": "note.txt",
+    "generation": 3
+  }
+}
+```
+
+- `generation` is the exact captured/requested generation of this upload;
+  `currentGeneration` is the current Host contact generation at read time. An old
+  generation's receipt remains readable for cleanup; it does **not** authorize a
+  new send. Receipt query for an existing upload of another generation is
+  **409 `contact_generation_conflict`**, not a different upload lookup.
+- `not_found` (**404**) returns the same envelope with null descriptor. It means no
+  ownership/reservation is currently visible; a delayed request can still arrive.
+  It is **not** a cancellation ACK. Failed reads remain errors, not `not_found`.
+- `inflight` (**200**) means a durable reservation exists without committed object
+  metadata. It may be executing, or may have survived a Host interruption; no timeout
+  or lease heuristic changes it to failure. The only follow-ups are GET reconciliation
+  or exact retirement, never automatic upload replay or descriptor construction.
+- `committed` (**200**) is an authoritative descriptor; a lost PUT ACK can be resolved
+  with GET alone. Adoption additionally requires the consumer's original Host, lease,
+  page operation and current contact generation. A late ACK cannot undo retirement.
+- `retired` (**200**) is a durable prohibition on committing this upload or using it
+  for a **new** admission. Descriptor is null if no object was committed, otherwise
+  it retains the committed descriptor for exact identity checks.
+
+Retirement additionally returns `newAdmissionAllowed: false`,
+`ownershipRetained: boolean` and `bytesDeleted: false`. `ownershipRetained` means an
+existing committed ownership row/object reference is retained; it is not a claim that
+a turn references it. Retirement does not physically delete the row or any bytes and
+does not claim disk cleanup. Original picker/provider files, session temporary files
+and shared content-addressed objects are never removed. Two uploadIDs with the same
+hash have independent ownership/retirement and can safely share the same object.
+
+DELETE is idempotent for the exact assistant/uploadID/generation and matching optional
+descriptor assertion. Explicit null can retire an unknown or already committed upload
+using the exact uploadID/generation; a supplied descriptor must match that upload.
+DELETE may retire a captured old generation after reset but rejects future generations.
+A retirement on a missing upload creates a tombstone **in the existing ownership table**;
+PUT can never overwrite it, even if DELETE won before PUT admission or during body/store.
+UploadIDs are unique per assistant for their entire retained lifetime, across generations;
+clients must not reuse a retired ID in another generation. Tombstones are not expired.
+
+Persistence uses the existing `(assistant_id, upload_id)` unique index and an additive,
+idempotent `retired_at INTEGER` migration in `ensureContactAttachmentSchema`; old rows
+remain committed with null retirement time. An empty `relative_path` is a reservation
+(retired_at null) or a pre-commit retirement fence (retired_at set), never an attachment
+descriptor. New reservations record expected integrity metadata before consuming bytes.
+Reservation, retirement and final publication each use `BEGIN IMMEDIATE`; final publication
+rechecks exact generation, row identity, MIME/hash/size and retirement. A definite failed
+handler removes only its own uncommitted, unretired reservation; object bytes are retained.
+A process interruption may leave inflight, which requires GET/retirement as above.
+No async/network/disk operation runs inside these SQLite transactions. Reads and writes
+use indexed exact lookups; there are no catalog scans or background cleanup jobs.
+
+New send admission rechecks ownership inside its existing transaction after all awaited
+preparation, so retirement cannot race between preparation and admission. Already-admitted
+turns keep owned reads/materialization (including after reset); same-messageID replay
+of an existing reference remains a receipt replay, not a second turn. Content download
+for retained objects remains available in the live generation, including retired uploads;
+reset still makes external old-generation content GET return 404. This preserves existing
+reference reads without granting retired descriptors to a new intent.
+
+Compatibility is explicit: old PUTs without the receipt-aware Accept marker may omit
+generation; they bind the current generation **at handler entry**, preserving existing
+Web/channel/Native clients. If any client supplies generation it is always checked,
+never ignored or coerced. This legacy form cannot fence a reset before request arrival;
+new clients **must** send both the receipt-aware marker and their captured generation.
+Clients must first require this exact receipt protocol on the selected Host: a receipt
+probe for their unique uploadID must return a validated envelope (including the explicit
+404 `not_found` envelope). An older Host's generic 404 or unsupported route is not this
+contract and must not trigger a fallback to legacy PUT. Native consumption of this probe
+and the picker-before-authority ordering remain separate integration work.
+Same committed uploadID + hash/size/MIME still returns the same descriptor; a duplicate
+while reserved returns **409 `attachment_upload_inflight`**, without another write.
+Existing body rejection still permits a later explicit legacy retry after its own failed
+reservation was removed. Older server binaries that ignore retirement must not share/open
+the migrated database; server downgrade is not a supported retirement-preserving path.
+
+Other errors use the existing `{ ok:false, error, message }` envelope:
+**400 `validation_error`** for malformed authority/CAS; **409 `contact_generation_conflict`**
+for stale/future or foreign-generation ownership; **409 `idempotency_conflict`** for content,
+MIME or descriptor identity mismatch; **409 `attachment_retired`** for PUT of a retired ID;
+**409 `attachment_upload_inflight`** for duplicate pending PUT. Existing authentication,
+assistant availability, byte-budget, integrity and storage errors retain their error codes.
+Receipt and retirement responses are `Cache-Control: private, no-store`.
+
+Focused evidence: `contact-attachments.receipt.test.js` uses temporary SQLite/files and
+real stream/storeBytes seams for reset-before/during, reservation/reopen, lost ACK,
+pre-commit DELETE, same-hash isolation, INSERT collision and failed-write rollback.
+`contact-attachments.routes.test.js` runs production Express routes/body middleware with
+in-memory IncomingMessage/ServerResponse (no listener, socket connection, Host or engine)
+and covers separate receipt/content routes, raw JSON upload, malformed authority/CAS,
+legacy compatibility, admitted-reference retention and retirement during admission await.
+These are not Native lifecycle, real transport/auth/CORS/Relay, device or load-test evidence.
 
 **Inter-assistant DM (read-only recipient reply)**
 

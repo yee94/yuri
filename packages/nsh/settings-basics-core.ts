@@ -37,6 +37,8 @@ export const settingsBasicSections: readonly { page: 'sessions' | 'notifications
     { key: 'asrResourceId', title: 'settings.voice.volcengine.asrResource', kind: 'text' },
     { key: 'asrContext', title: 'settings.voice.volcengine.asrContext', kind: 'multiline' },
     { key: 'voiceProvider', title: 'settings.voice.page.section.playbackAndSummary', kind: 'text', options: ['volcengine', 'local', 'openai', 'openai-compatible', 'browser', 'say'] },
+    { key: 'sayVoice', title: 'settings.voice.page.field.voice', kind: 'text', managed: true },
+    { key: 'browserVoice', title: 'settings.voice.page.field.voice', kind: 'text', managed: true },
     { key: 'openaiCompatibleUrl', title: 'settings.voice.page.field.serverUrl', kind: 'text' },
     { key: 'openaiCompatibleTtsModel', title: 'settings.voice.page.field.model', kind: 'text' },
     { key: 'openaiCompatibleVoice', title: 'settings.voice.page.field.voice', kind: 'text' },

@@ -51,12 +51,13 @@ import {
   text,
   unwrap,
   type ChatTarget,
-  type Attachment,
+  type ContactAttachment,
   type Project,
   type Row,
 } from "./model";
-import { assistantPath, native, query, request, sessionPath } from "./runtime";
+import { assistantPath, connectionSnapshotFrom, native, query, request, sessionPath } from "./runtime";
 import { createPageOperations } from './page-operations';
+import { attachmentFrom } from './attachments';
 import {
   app,
   createChat,
@@ -68,6 +69,8 @@ import {
   observeRuntime,
   refresh,
   report,
+  reportOwnedError,
+  registerFeedbackPageOwner,
   run,
   runtimeLifecycle,
   switchConnection,
@@ -85,30 +88,40 @@ import { ChatModels } from './chat-models';
 import { ChatHeaderActions, NativeChatHeader, type ChatHeaderOption } from './chat-header';
 import { compileNativePrompt, magicCommand } from './composer';
 import { NativeCommandSuggestions } from './composer-controls';
+import { NativeComposerPress } from './native-composer-press';
 import { nativeComposerSurface } from './composer-surface';
-import { shouldSubmitCommandOnSelection } from './composer-commands-model';
-import { ResourcePreview, ResourcesBrowser, resolveResourceLink } from './resources';
+import { NativeInputMetadata } from './native-input-metadata';
+import { NativeComposerSpellcheck } from './native-composer-spellcheck';
+import { createChatComposerCommands } from './chat-composer-commands';
+import { isNativeBtwCommand, type NativeCommandIntent } from './composer-command-router';
+import { createNativeBtwOwner, NativeBtwSheet } from './chat-btw';
+import { NativeChatTimeline } from './chat-timeline';
+import { ContactAttachmentPreview, resolveResourceLink } from './resources';
+import { ResourceFilesPage, ResourcePreviewPage } from './resource-navigation';
+import { createResourceConnectionClear } from './resource-retirement';
 import { bindResourceWebPreview, resourceWebPreviewIntent } from './resource-web-preview';
-import type { RuntimeScope } from './runtime-scope';
+import { sameRuntimeScope, type RuntimeScope } from './runtime-scope';
 import { resourcePath, resourceWithin } from './resources-model';
 import { NativeChatQueue, NativeDraftFeedback } from './chat-queue';
+import { NativeChatMcp } from './chat-mcp';
 import { NativeChangesSheet, NativeComposerChanges } from './chat-changes';
 import type { ChangesSource } from './chat-changes-model';
 import { NativeComposerSelection } from './chat-composer-selection';
 import { NativeComposerSend } from './composer-send';
+import { nativeDensity } from './appearance';
 import { NativeReferencePicker } from './composer-references-controls';
 import { createNativeReferenceKeyboard } from './composer-reference-keyboard-native';
-import { nativeAppearance, nativeChatTextStyle } from './appearance';
+import { nativeAppearance, nativeChatTextStyle, nativeCodeTextViewStyles } from './appearance';
 import { createNativeTranscriptHistory, NativeMessageActions } from './transcript-actions';
 import { NativeTranscriptBody } from './transcript-body';
 import { createNativeHistoryRows } from './history-rows';
 import { createNativeHistoryScroll } from './history-scroll';
 import { createNativeHistoryFocus, type NativeHistoryFocusState } from './history-focus';
-import { createNativeHistoryFooter } from './history-footer';
-import type { NativeHistoryPresentation } from './history-presentation';
+import { createNativeHistoryFooterController } from './history-footer-controller';
 import { createNativePendingHeaders, nativeTurnHeaderMessage, nativeTurnPresentation, nativeUserActionsVisible } from './transcript-tools-turn-model';
 import { createNativeTurnModelNames, NativeTurnError, NativeTurnHeader } from './transcript-tools-turn';
 import { ProjectsHome, ProjectDetail, type ProjectsNavigation } from './projects';
+import { ProjectsHomeSheet, type ProjectHomeSheetIntent } from './projects-home-sheet';
 import { ProjectDirectoryPage } from './projects-directory';
 import { ProjectsSearchPage, type ProjectSearchCommand } from './projects-search';
 import { NativeSessionSwitcherPage } from './session-switcher';
@@ -123,6 +136,11 @@ import { createNativeRetentionOwner } from './settings-retention';
 import type { RetentionController } from './settings-retention-controller';
 import { NativeAppearanceSync } from './appearance';
 import { NativeAppearanceFeedback } from './appearance-feedback';
+import { NativeFeedbackLayer } from './error-notice';
+import { NativeRootErrorFeedback, rootErrorVisible } from './root-error-feedback';
+import { NativeDeviceChatPreferences } from './device-chat-preferences-root';
+import { deviceChatPreferences } from './settings-preferences-device';
+import { createAttachmentPick } from './attachment-pick';
 import { createNativeSpeech, NativeSpeechSettingsError } from './speech';
 import { createNativeAutoRead } from './native-auto-read';
 import { NativeRemoteDesktopPage } from './remote-desktop';
@@ -160,9 +178,10 @@ type Route =
   | { kind: 'remote-desktop' }
   | { kind: 'project-search'; directory?: string }
   | { kind: 'session-switcher'; source?: ChatTarget }
-  | { kind: "files"; directory: string; path: string; registering?: boolean }
+  | { kind: "files"; directory: string; path: string; registering?: boolean; sessionId?: string }
   | { kind: "preview"; title: string; content: string }
-  | { kind: 'resource-preview'; directory: string; path: string; targetLine?: number; expectedHost?: RuntimeScope | null; tourOwner?: TourOwner }
+  | { kind: 'resource-preview'; directory: string; path: string; targetLine?: number; expectedHost?: RuntimeScope | null; tourOwner?: TourOwner; sessionId?: string }
+  | { kind: 'contact-attachment-preview'; file: ContactAttachment; expectedHost: RuntimeScope }
   | { kind: "task"; item: Row }
   | { kind: "bot-editor"; bot?: Row; defaultContext?: BotDefaultContext }
   | { kind: 'assistant-details'; bot: Row }
@@ -176,6 +195,7 @@ type Route =
   | { kind: "task-editor"; item?: Row; creationContext?: TaskEditorCreationContext }
   | { kind: "models"; target: ChatTarget };
 const nav = createNavStack<Route>([{ kind: "root" }]);
+const resourceConnectionClear = createResourceConnectionClear(nav);
 const tourProgress = createSetupTourProgress(Storage);
 const tourHistoryOwners = new Map<string, ReturnType<typeof createNativeHistoryImport>>();
 const tourOwners = new Set<TourOwner>();
@@ -247,7 +267,15 @@ const openChat = (target: ChatTarget, options?: { messageID?: string }) => nav.p
 function openResourceFile(path: string, directory: string, targetLine?: number) {
   const root = resourcePath(directory), absolute = resourcePath(path.startsWith('/') ? path : root + '/' + path);
   if (!resourceWithin(absolute, root)) throw new Error(t('mobile.files.error.readUnavailable'));
-  nav.push({ kind: 'resource-preview', directory: root, path: absolute, targetLine });
+  const source = nav.routes().at(-1);
+  const sessionId = source?.kind === 'chat' && source.target.kind === 'session' && resourcePath(source.target.directory) === root ? source.target.id
+    : (source?.kind === 'resource-preview' || source?.kind === 'files') && resourcePath(source.directory) === root ? source.sessionId : undefined;
+  nav.push({ kind: 'resource-preview', directory: root, path: absolute, targetLine, ...(sessionId ? { sessionId } : {}) });
+}
+function replaceCollectionDirectory(directory: string | undefined, route: SettingsRoute) {
+  const source = nav.routes().at(-1);
+  if (source?.kind !== 'settings' || source.route.page !== route.page) return;
+  nav.replace({ ...source, route: { ...route, directory } });
 }
 const settingsCallbacks: SettingsCallbacks = {
   onOpen: route => {
@@ -262,6 +290,7 @@ const settingsCallbacks: SettingsCallbacks = {
     nav.push({ kind: 'settings', route: { ...route, ...(directory ? { directory } : {}) }, ...(tourOwner ? { tourOwner } : {}) });
   },
   onBack: () => nav.pop(),
+  onCollectionDirectory: replaceCollectionDirectory,
   onConnect: () => nav.push({ kind: 'connect' }),
   onEditConnection: (id, mode) => nav.push({ kind: 'connection-editor', id, mode }),
   onAssistants: () => settingsCallbacks.onOpen({ page: 'assistants' }),
@@ -347,6 +376,7 @@ function Connect(props: { link?: string; edit?: ConnectionEditorMutation }) {
         token: credential(),
         label: label(),
       });
+      snapshot.connections = connectionSnapshotFrom(snapshot).connections;
       link.set("");
       password.set("");
       credential.set("");
@@ -750,6 +780,7 @@ function SchedulePage(props: { item: Row }) {
         <Group title={t("sessions.scheduledTasks.editor.prompt.label")}>
           <TextView
             markdown={text(record(task().execution).prompt)}
+            styles={nativeCodeTextViewStyles()}
             selectable
             class="text-foreground"
           />
@@ -979,17 +1010,26 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   const operations = createPageOperations(() => nav.routes().at(-1) === props.route);
   const current = operations.displayCurrent;
   const footerExperiment = signal(false);
-  const footer = createNativeHistoryFooter(value => footerState.set(value));
+  const footer = createNativeHistoryFooterController({
+    current: () => current() && nav.routes().at(-1) === props.route && lifecycle() === 'active',
+    changed: value => footerState.set(value),
+  });
   const footerState = signal(footer.snapshot());
-  function beforeHistoryPresentationFlush(next: NativeHistoryPresentation) {
-    footer.update({ scope: JSON.stringify(next.scope), active: current() && nav.routes().at(-1) === props.route && lifecycle() === 'active',
-      enabled: footerExperiment(), visible: next.more || !!next.historyError || next.boundaryMissing || next.repairPending || next.hasGap,
-      readError: !!next.readError, contentKey: JSON.stringify([next.more, next.historyError, next.boundaryMissing, next.repairPending, next.hasGap]),
-    }, next.authority === 'successful-history' ? 'successful-history' : 'presentation');
-  }
-  operations.onRetire(() => footer.reset());
-  cleanup(footer.reset);
-  const chat = createChat(props.target, { followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush });
+  cleanup(footer.dispose);
+  const chat = createChat(props.target, { deviceChatPreferences, messageStreamTransport: () => nativeAppearance.current()?.messageStreamTransport ?? null, followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush: footer.beforeHistoryPresentationFlush });
+  effect(() => {
+    current(); nav.routes(); lifecycle();
+    untracked(footer.syncActivity);
+  });
+  effect(() => {
+    const enabled = footerExperiment();
+    untracked(() => { footer.setEnabled(enabled); });
+  });
+  effect(() => {
+    const appearance = nativeAppearance.current();
+    const contentKey = JSON.stringify([chat.olderLoading(), language(), windowSize().width, appearance?.fontSize, appearance?.fonts]);
+    untracked(() => footer.setContentKey(contentKey));
+  });
   mountedChats.set(props.route, chat);
   cleanup(() => mountedChats.delete(props.route));
   const admissionState = signal<NewSessionAdmissionState>(props.handoff ? 'idle' : 'complete');
@@ -1017,6 +1057,9 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   });
   const projectHistoryRows = createNativeHistoryRows();
   const bodyRows = computed(() => projectHistoryRows(chat.visibleMessages()));
+  // NSH matches List items by ===; keyExtractor only labels viewability tokens.
+  const bodyRowKeys = computed(() => bodyRows().map(row => row.key));
+  const bodyRowsByKey = computed(() => new Map(bodyRows().map(row => [row.key, row])));
   const transcriptRef = signal<ListRef | null>(null);
   const focusState = signal<Readonly<NativeHistoryFocusState> | null>(null);
   const focusScope = () => JSON.stringify([app.connection()?.id, epoch(), props.target.kind, props.target.directory, props.target.id, chat.historyGeneration()]);
@@ -1056,6 +1099,14 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   const pendingHeaders = computed(() => projectPendingHeaders(bodyRows(), chat.busy(), chat.streamingMessageIDs().size > 0));
   const activityChoices = signal<Record<string, boolean>>({});
   const headerSelection = signal<Row>({});
+  const changesGenerationContext = () => {
+    const selection = headerSelection(), model = record(selection.model);
+    return {
+      ...(props.target.kind === 'session' ? { sessionID: props.target.id } : {}),
+      preferredProviderID: text(model.providerID) || text(selection.providerID) || undefined,
+      preferredModelID: text(model.id) || text(model.modelID) || text(selection.modelID) || undefined,
+    };
+  };
   function turnHeader(row: ReturnType<typeof projectHistoryRows>[number]) {
     const selection = headerSelection(), model = record(selection.model);
     const selected = { providerId: text(model.providerID) || text(selection.providerID), modelId: text(model.id) || text(model.modelID) || text(selection.modelID) };
@@ -1065,7 +1116,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
     current: () => current() && chat.active() && lifecycle() === 'active',
     loading: () => chat.loading() || chat.olderLoading(),
     more: chat.more, error: chat.historyError, loadOlder: chat.loadOlder,
-    loadLatest: () => chat.load(false, ['messages']),
+    loadLatest: () => { footerEvents().onLatest(); return chat.load(false, ['messages']); },
   });
   effect(() => { if (!chat.active() || lifecycle() !== 'active') historyScroll.reset(); });
   cleanup(historyScroll.reset);
@@ -1074,6 +1125,30 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
     attaching = signal(false);
   const chromeState = signal(createChatChromeState()), editorFocused = signal(false), composerHeight = signal(160);
   const chrome = createNativeChatChrome(value => chromeState.set(value));
+  let footerEventGeneration = -1, footerEventSource: ReturnType<typeof footer.captureEvents> | undefined;
+  const footerEvents = computed(() => {
+    const generation = footerState().eventGeneration;
+    return untracked(() => {
+      if (!footerEventSource || generation !== footerEventGeneration) {
+        footerEventGeneration = generation;
+        footerEventSource = footer.captureEvents();
+      }
+      return footerEventSource;
+    });
+  });
+  const listHistoryEvents = computed(() => {
+    const events = footerEvents(), generation = footerState().eventGeneration;
+    const admitted = () => generation === footerState().eventGeneration && current() && chat.active() && lifecycle() === 'active';
+    return {
+      onScrollDragStart: (event: Parameters<typeof historyScroll.onScrollDragStart>[0]) => { if (!admitted()) return; events.onScrollDragStart(event); historyScroll.onScrollDragStart(event); chrome.begin(event); },
+      onScroll: (event: Parameters<typeof historyScroll.onScroll>[0]) => { if (!admitted()) return; events.onScroll(event); historyScroll.onScroll(event); chrome.scroll(event); },
+      onScrollEnd: (event: Parameters<typeof events.onScrollEnd>[0]) => { if (!admitted()) return; events.onScrollEnd(event); historyScroll.onScrollEnd(); chrome.end(); },
+      onScrollDragEnd: () => { if (admitted()) chrome.release(); },
+      onMomentumEnd: () => { if (admitted()) chrome.end(); },
+      onLoadMore: () => { if (admitted()) historyScroll.onLoadMore(); },
+      onLoadMoreAtStart: () => { if (admitted()) historyScroll.onLoadMoreAtStart(); },
+    };
+  });
   let editor: InputRef | undefined;
   cleanup(chrome.dispose);
   effect(() => { if (!current() || !chat.active() || lifecycle() !== 'active') untracked(chrome.reset); });
@@ -1096,38 +1171,82 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
     if (!chat.active() || lifecycle() !== 'active') { goalPanel.set(false); statusPopovers.close(); }
   });
   const modelPicker = signal<'model' | 'agent' | null>(null);
+  const timelineOpen = signal(false);
+  const btw = signal<(ReturnType<typeof createNativeBtwOwner> & { operation: NonNullable<ReturnType<typeof operations.operation>> }) | null>(null);
+  const btwOperation = computed(() => {
+    const operation = operations.operation(), runtime = app.runtimeScope();
+    const active = props.target.kind === 'session' && chat.active() && lifecycle() === 'active' && nav.routes().at(-1) === props.route;
+    return active && operation?.current() && runtime && sameRuntimeScope(operation.scope, runtime) ? operation : null;
+  });
+  effect(() => {
+    const operation = btwOperation();
+    if (!operation?.scope) { untracked(() => timelineOpen.set(false)); return; }
+    untracked(() => timelineOpen.set(false));
+    const capturedRuntime = Object.freeze({ ...operation.scope });
+    const binding = createNativeBtwOwner({ runtime: capturedRuntime, sessionID: props.target.id, directory: props.target.directory },
+      () => operation === operations.operation() && operation.current() && sameRuntimeScope(capturedRuntime, app.runtimeScope()) && chat.active() && lifecycle() === 'active' && nav.routes().at(-1) === props.route);
+    untracked(() => btw.set({ ...binding, operation }));
+    cleanup(binding.owner.retire);
+  });
+  const commandContext = () => ({ hasSession: props.target.kind === 'session', hasMessages: chat.messages().length > 0, hasNewDraft: false });
+  const commandRouter = createChatComposerCommands({
+    read: () => {
+      const operation = operations.operation();
+      if (props.target.kind !== 'session' || !operation?.current() || !chat.active() || lifecycle() !== 'active' || nav.routes().at(-1) !== props.route || chat.draftStatus() !== 'ready' || admissionState() !== 'complete') return null;
+      return { owner: operation, revision: chat.draftRevision(), document: chat.referenceDocument(), inputMode: inputMode(), context: commandContext() };
+    },
+    write: (document, expected) => operations.operation() === expected.owner && chat.draftRevision() === expected.revision && chat.setReferenceDocument(document, expected.document),
+    btw: () => { const binding = btw(); return binding?.operation === operations.operation() && binding.operation.current() ? binding.owner : null; },
+    openNewDraft: openNewSessionDraft,
+    openModel: () => { Keyboard.dismiss(); openSelection(); },
+    openTimeline: () => timelineOpen.set(true),
+    actions: {
+      undo: intent => runLocalCommand(intent, history.sessionActions.undo),
+      redo: intent => runLocalCommand(intent, history.sessionActions.redo),
+      fork: intent => runLocalCommand(intent, history.sessionActions.fork),
+      compact: intent => runLocalCommand(intent, chat.compact, true),
+    },
+    notify: key => chat.error.set(t(key)),
+  });
+  function runLocalCommand(intent: NativeCommandIntent, work: () => Promise<boolean | void>, compact = false) {
+    if (!intent.current()) return;
+    const failed = (failure?: unknown) => {
+      if (!intent.current()) return;
+      if (failure instanceof Error) chat.error.set(failure.message);
+      else if (!chat.error()) chat.error.set(t(compact ? 'chat.chatInput.toast.compactFailed' : 'miniChat.actions.failed'));
+    };
+    try { void work().then(accepted => { if (accepted === false) failed(); }).catch(failed); }
+    catch (failure) { failed(failure); }
+  }
   const changesSource = signal<ChangesSource | null>(null);
+  const mcpPanel = signal(false);
+  effect(() => { if (!chat.active() || lifecycle() !== 'active') mcpPanel.set(false); });
   effect(() => { if (!chat.active() || lifecycle() !== 'active') changesSource.set(null); });
   const composerAnchor = signal<ViewRef | null>(null);
   const referenceKeyboard = createNativeReferenceKeyboard({
     active: () => props.target.kind === 'session' && current() && chat.active() && lifecycle() === 'active' && inputMode() === 'normal' && !recording(),
     scope: () => chat.referenceScope, text: chat.draft,
     insert: (candidate, start, end) => chat.insertReference(candidate, start, end),
-    chooseCommand: (command, submit, context) => {
-      if (!current() || !chat.active()) return false;
-      if (shouldSubmitCommandOnSelection(command, submit)) {
-        chat.setDraftText(context.text.slice(context.end)); Keyboard.dismiss(); openSelection();
-      } else {
-        chat.setDraftText(`/${command.name} ${context.text.slice(context.end)}`);
-      }
-    },
+    chooseCommand: commandRouter.choose,
+    commandOwner: operations.operation,
+    commandActions: () => ['new', 'undo', 'redo', 'fork', 'compact', 'model', 'btw'],
   });
   const referenceTrigger = referenceKeyboard.trigger;
   const dismissReferences = referenceKeyboard.dismiss;
   effect(() => {
-    const pinned = editorFocused() || keyboardFrame().height > 0 || recording() || attaching() || !!modelPicker() || goalPanel() || !!changesSource();
+    const pinned = editorFocused() || keyboardFrame().height > 0 || recording() || attaching() || !!modelPicker() || goalPanel() || !!changesSource() || mcpPanel() || timelineOpen() || btw()?.state().open === true;
     untracked(() => chrome.pin(pinned));
   });
   function editCompactDraft() { if (current() && chat.active()) { chrome.expand(); editor?.focus(); } }
+  function resumeLatest() { if (current() && chat.active()) { chrome.expand(); transcriptRef()?.scrollToIndex({ index: 0, animated: true, viewPosition: 1 }); } }
+  const btwDraft = () => props.target.kind === 'session' && isNativeBtwCommand(chat.draft(), inputMode());
   function sendDisabled() {
-    return chat.sending() || admissionState() !== 'complete' || chat.historyBusy() || chat.historyRepairPending() || chat.draftStatus() !== 'ready' || !!chat.queueEdit() || recording() || attaching() || (!chat.draft().trim() && !chat.attachments().length);
+    if (btwDraft()) return !operations.current() || !chat.active() || lifecycle() !== 'active' || admissionState() !== 'complete' || chat.draftStatus() !== 'ready' || recording() || attaching();
+    return !chat.canSend() || chat.sending() || admissionState() !== 'complete' || chat.historyBusy() || chat.historyRepairPending() || chat.draftStatus() !== 'ready' || !!chat.queueEdit() || recording() || attaching() || (!chat.draft().trim() && !chat.attachments().length);
   }
   function sendDraft() {
     const lane = operations.operation(); if (!lane?.current()) return;
-    if (props.target.kind === 'session' && inputMode() === 'normal' && /^\/model(?:\s|$)/i.test(chat.draft().trim())) {
-      chat.setDraftText(chat.draft().trimStart().replace(/^\/model\s*/i, ''));
-      Keyboard.dismiss(); openSelection(); return;
-    }
+    if (props.target.kind === 'session' && commandRouter.submit() !== 'pass') return;
     void chat.send({
       inputMode: inputMode(),
       ...(props.target.kind === 'session' && inputMode() === 'normal' && (magicCommand(chat.draft()) || chat.references().length) ? { prepare: input => compileNativePrompt(input, lane.request) } : {}),
@@ -1194,18 +1313,39 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
     if (!chat.active() || lifecycle() !== "active") endSpeech();
   });
   cleanup(endSpeech);
-  operations.onRetire(() => { endSpeech(); speechStarting = false; attaching.set(false); });
+  const attachmentPicker = createAttachmentPick({ target: props.target, current: () => current() && chat.active() && lifecycle() === 'active', call: native,
+    busy: attaching.set,
+    failed: (phase, failure, retirement) => {
+      const code = String(failure ?? '');
+      const message = t(code.includes('attachment_original_authorization_unavailable') ? 'chat.attachments.originalAuthorizationUnavailable'
+        : code.includes('attachment_upload_pending_capacity') ? 'chat.attachments.pendingCapacity'
+        : code.includes('attachment_receipt_storage_failed') ? 'chat.attachments.receiptStorageFailed'
+        : /attachment_(capture|upload)_not_dispatched/.test(code) ? 'chat.attachments.notDispatched'
+        : phase === 'cancel' ? 'chat.attachments.retirementPending'
+        : /attachment_upload_unknown|networkConnectionLost|lost ACK/.test(code) ? 'chat.attachments.receiptPending' : 'common.unavailable');
+      if (current() && chat.active()) chat.error.set(message);
+      if (phase === 'cancel' && retirement) reportOwnedError(failure, retirement, 'chat.attachments.retirementPending');
+    } });
+  effect(() => { chat.active(); lifecycle(); operations.operation(); untracked(attachmentPicker.sync); });
+  cleanup(attachmentPicker.dispose);
+  operations.onRetire(() => { endSpeech(); speechStarting = false; void attachmentPicker.cancel(); });
   async function attach(kind: "files" | "images", lane = operations.capture()) {
-    if (attaching() || !lane.current()) return;
-    attaching.set(true);
-    await run(async () => {
-      const file = await native<Attachment | null>("runtime.pickAttachment", {
-        kind,
-      });
-      if (file && lane.current())
-        chat.attachments.set([...chat.attachments(), file]);
-    });
-    if (lane.current()) attaching.set(false);
+    if (attaching() || !lane.current() || !chat.active()) return;
+    const selection = chat.captureAttachment(lane);
+    if (!selection.expectedHost || !sameRuntimeScope(selection.expectedHost, lane.scope) || selection.target.kind !== props.target.kind || selection.target.id !== props.target.id) {
+      selection.retire(); chat.error.set(t('common.unavailable')); return;
+    }
+    await attachmentPicker.pick(lane, kind, selection);
+  }
+  function previewAttachment(file: ContactAttachment) {
+    if (!current() || !chat.active()) return;
+    const lane = operations.operation();
+    if (!lane?.current() || !lane.scope || props.target.kind !== 'assistant' || file.hostID !== lane.scope.hostID || file.assistantID !== props.target.id || !chat.attachments().includes(file)) return;
+    try {
+      const snapshot = attachmentFrom(file, { hostID: lane.scope.hostID, target: props.target });
+      if (snapshot.kind !== 'contact') return;
+      nav.push({ kind: 'contact-attachment-preview', file: Object.freeze(snapshot), expectedHost: Object.freeze({ ...lane.scope }) });
+    } catch { chat.error.set(t('common.unavailable')); }
   }
   function openSelection() {
     if (props.target.kind === 'assistant') {
@@ -1215,16 +1355,19 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       else report(new Error(t('common.unavailable')));
     } else modelPicker.set('model');
   }
+  function openNewSessionDraft() {
+    nav.push({ kind: 'new-session', project: app.projects().find(project => resourceWithin(props.target.directory, project.path)), directory: props.target.directory });
+  }
   async function openOptions(action: ChatHeaderOption) {
     if (!current() || !chat.active()) return;
     if (action === 'new-session') {
-      nav.push({ kind: 'new-session', project: app.projects().find(project => resourceWithin(props.target.directory, project.path)), directory: props.target.directory });
+      openNewSessionDraft();
     }
     if (action === 'selection') openSelection();
-    if (action === 'files') nav.push({ kind: 'files', directory: props.target.directory, path: props.target.directory });
+    if (action === 'files') nav.push({ kind: 'files', directory: props.target.directory, path: props.target.directory, ...(props.target.kind === 'session' ? { sessionId: props.target.id } : {}) });
     if (action === 'changes') { modelPicker.set(null); changesSource.set({ kind: 'workspace', directory: props.target.directory }); }
     if (action === 'remote-desktop') nav.push({ kind: 'remote-desktop' });
-    if (action === 'mcp') nav.push({ kind: 'settings', route: { page: 'mcp', directory: props.target.directory } });
+    if (action === 'mcp') { statusPopovers.close(); modelPicker.set(null); changesSource.set(null); mcpPanel.set(true); }
     if (action === 'refresh') await chat.load();
     if (action === 'auto-read') await autoRead.toggle();
   }
@@ -1242,6 +1385,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       <NativeChatHeaderCollapse progress={chromeState().swap.progress} duration={chromeState().swap.phase === 'snapping' ? 240 : 0}
         active={current() && chat.active() && lifecycle() === 'active'} accessible={false} accessibilityElementsHidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }} />
       <NativeSpeechSettingsError speech={messageSpeech} />
+      <NativeChatMcp directory={props.target.directory} active={chat.active()} open={mcpPanel()} onOpenChange={value => mcpPanel.set(value)} onCreate={() => { if (current() && chat.active()) nav.push({ kind: 'settings', route: { page: 'mcp', directory: props.target.directory, create: true } }); }} />
       <If when={chat.error()}>
         <Text class="px-4 py-2 text-destructive">{chat.error()}</Text>
       </If>
@@ -1274,32 +1418,37 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         testID="transcript"
         ref={value => transcriptRef.set(value)}
         class="flex-1"
-        contentStyle={{ paddingHorizontal: 12, paddingTop: 26, gap: 20 }}
+        contentStyle={nativeDensity().chat.transcript}
         header={() => <View testID="transcript-composer-inset" style={{ height: composerHeight() + 16 }} />}
         inverted
-        onScrollDragStart={event => { historyScroll.onScrollDragStart(event); chrome.begin(event); }}
-        onScroll={event => { historyScroll.onScroll(event); chrome.scroll(event); }}
-        onScrollDragEnd={chrome.release}
-        onScrollEnd={() => { historyScroll.onScrollEnd(); chrome.end(); }}
-        onMomentumEnd={chrome.end}
-        onLoadMore={historyScroll.onLoadMore}
+        onScrollDragStart={listHistoryEvents().onScrollDragStart}
+        onScroll={listHistoryEvents().onScroll}
+        onScrollDragEnd={listHistoryEvents().onScrollDragEnd}
+        onScrollEnd={listHistoryEvents().onScrollEnd}
+        onMomentumEnd={listHistoryEvents().onMomentumEnd}
+        onLoadMore={listHistoryEvents().onLoadMore}
         loadMoreThreshold={0.5}
-        onLoadMoreAtStart={historyScroll.onLoadMoreAtStart}
-        footer={() => <View class="gap-2" style={{ minHeight: footerState().minHeight }}>
+        onLoadMoreAtStart={listHistoryEvents().onLoadMoreAtStart}
+        footer={() => <View style={{ minHeight: footerState().minHeight }}>
+          <Each of={[footerState().naturalGeneration]} key={generation => String(generation)}>{() => {
+            const natural = footer.captureNatural();
+            return <View class="gap-2" ref={value => { if (natural.ref(value) && value) void natural.confirm(); }} onLayout={natural.onLayout}>
           <If when={chat.more()}><Button testID="history-load-older" class={quiet} disabled={chat.loading() || chat.olderLoading()} onPress={() => { void chat.loadOlder(); }}><Text class="text-muted-foreground">{t(chat.olderLoading() ? 'common.loading' : chat.historyError() ? 'chat.questionDelegate.retry' : 'chat.history.loadOlder')}</Text></Button></If>
           <If when={chat.historyError()}><Text testID="history-page-error" class="text-sm text-destructive">{chat.historyError()}</Text></If>
           <If when={chat.historyBoundaryMissing() || chat.historyRepairPending() || chat.hasGap()}><Button testID="history-refresh" class={quiet} disabled={chat.loading() || chat.historyBusy()} onPress={() => { void chat.load(false, ['messages']); }}><Text class="text-muted-foreground">{t('mobile.chat.syncingMessages')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
+            </View>;
+          }}</Each>
         </View>}
-        each={bodyRows()}
-        keyExtractor={(row) => row.key}
+        each={bodyRowKeys()}
+        keyExtractor={key => key}
         keyboardDismissMode="interactive"
       >
-        {(row) => {
+        {key => <If when={bodyRowsByKey().get(key())}>{(row) => {
           const item = () => row().tail;
           return (
           <View class={item().role === 'user' ? 'pt-2' : 'gap-2'}>
             <If when={row().head.role === 'assistant' && !!turns().get(row().head.id)?.header}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
-            <NativeTranscriptBody row={row()} live={chat.busy()} activityMaterialization={chat.activityMaterialization} autoRead={autoRead} autoReadScope={autoReadScope()} streaming={chat.streamingMessageIDs().has(row().tail.id)} collapsibleUserMessages={nativeAppearance.current()?.collapsibleUserMessages} renderCard={card => <ResourceCard card={card} />} target={props.target} current={() => current() && chat.active() && lifecycle() === 'active'}
+            <NativeTranscriptBody row={row()} live={chat.busy()} activityMaterialization={chat.activityMaterialization} autoRead={autoRead} autoReadScope={autoReadScope()} streaming={chat.streamingMessageIDs().has(row().tail.id)} collapsibleUserMessages={deviceChatPreferences()?.collapsibleUserMessages ?? null} renderCard={card => <ResourceCard card={card} />} target={props.target} current={() => current() && chat.active() && lifecycle() === 'active'}
               activityChoice={activityChoices()[row().turn?.turnId ?? row().key]} onToggleActivity={(turnID, expanded) => {
                 const present = new Set(bodyRows().map(entry => entry.turn?.turnId ?? entry.key));
                 activityChoices.set({ ...Object.fromEntries(Object.entries(activityChoices()).filter(([key]) => present.has(key))), [turnID]: expanded });
@@ -1316,7 +1465,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
             <NativeTurnError row={row()} />
             <If when={nativeUserActionsVisible(row()) || !!turns().get(item().id)?.footer}><NativeMessageActions history={history} message={item} speech={messageSpeech} tps={turns().get(item().id)?.tps} duration={turns().get(item().id)?.duration} /></If>
           </View>
-        ); }}
+        ); }}</If>}
       </List>
       </If>
       <history.Indicator />
@@ -1329,42 +1478,41 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         <If when={props.target.kind === 'session'}><Button testID="compact-attach" class="size-8 items-center justify-center" disabled={attaching()} accessibilityLabel={t('chat.chatInput.actions.addAttachment')} onPress={chooseAttachment}><Icon name="attachment-2" size={20} /></Button></If>
         <Button testID="compact-edit" class="flex-1 min-w-0 min-h-11 justify-center" accessibilityLabel={t('chat.chatInput.placeholder.chatCompact')} onPress={editCompactDraft}><Text class={chat.draft().trim() ? 'text-foreground' : 'text-muted-foreground'} style={{ numberOfLines: 1, fontSize: 14 }}>{chat.draft().trim() || t('chat.chatInput.placeholder.chatCompact')}</Text></Button>
         <Button testID="compact-dictation" class="size-8 items-center justify-center" accessibilityLabel={t('chat.dictation.start')} onPress={() => { void run(dictate); }}><Icon name={recording() ? 'stop' : 'mic'} /></Button>
-        <Button testID="compact-latest" class="size-8 items-center justify-center" accessibilityLabel={t('chat.scrollToBottom.aria')} onPress={() => { if (current() && chat.active()) { chrome.expand(); transcriptRef()?.scrollToIndex({ index: 0, animated: true, viewPosition: 1 }); } }}><Icon name="arrow-down-s" size={20} /></Button>
-        <NativeComposerSend testIDPrefix="compact-" canAbort={chat.busy()} hasContent={!!chat.draft().trim() || chat.attachments().length > 0} onStop={() => { void run(chat.stop); }} inFlight={chat.sending()} disabled={sendDisabled()} onPress={sendDraft} />
+        <Button testID="compact-latest" class="size-8 items-center justify-center" accessibilityLabel={t('chat.scrollToBottom.aria')} onPress={resumeLatest}><Icon name="arrow-down-s" size={20} /></Button>
+        <NativeComposerSend testIDPrefix="compact-" canAbort={chat.busy()} hasContent={!!chat.draft().trim() || chat.attachments().length > 0} onStop={() => { void run(chat.stop); }} inFlight={chat.sending() && !btwDraft()} disabled={sendDisabled()} onPress={sendDraft} />
       </>}>
       <View>
-      <View accessibilityElementsHidden={chromeState().dock >= 1} style={{ opacity: 1 - chromeState().dock, pointerEvents: chromeState().dock >= 1 ? 'none' : 'auto' }}><NativeChatQueue chat={chat} /></View>
       <View
         style={{
-          paddingBottom:
-            keyboardFrame().height > 0
-              ? keyboardFrame().height
-              : safeArea().bottom + 16,
-          transitionProperty: "all",
-          transitionDuration: keyboardFrame().duration,
+          ...nativeDensity().chat.composerOuter,
+          paddingBottom: keyboardFrame().height > 0
+            ? 'calc(env(keyboard-inset-height) + 12px)'
+            : 'calc(env(safe-area-inset-bottom) + 16px)',
         }}
         class="px-3 pt-2"
       >
         <If when={props.target.kind === 'session'}>
-          <View accessibilityElementsHidden={chromeState().dock >= 1} style={{ opacity: 1 - chromeState().dock, pointerEvents: chromeState().dock >= 1 ? 'none' : 'auto' }}><NativeGoalRow owner={chat.goal} enabled={goalEnabled()} active={chat.active()} open={goalPanel()} onOpenChange={open => { if (open) statusPopovers.close(); goalPanel.set(open); }} />
-          <View class="flex-row items-center justify-between">
-            <NativeComposerChanges directory={props.target.directory} active={chat.active()} expanded={statusPopovers.opened() === 'changes'} onExpandedChange={open => statusPopovers.changes(open)} onOpenPreview={(path, line) => { statusPopovers.close(); void run(async () => openResourceFile(path, props.target.directory, line)); }} />
+          <View accessibilityElementsHidden={chromeState().dock >= 1} style={{ opacity: 1 - chromeState().dock, pointerEvents: chromeState().dock >= 1 ? 'none' : 'auto' }}><View testID="composer-status-row" class="flex-row items-center gap-2 px-3 py-0.5" style={nativeDensity().chat.status}>
+            <View class="flex-1 min-w-0"><NativeComposerChanges directory={props.target.directory} active={chat.active()} expanded={statusPopovers.opened() === 'changes'} onExpandedChange={open => statusPopovers.changes(open)} generationContext={changesGenerationContext()} diffLayoutPreference={nativeAppearance.current()?.diffLayoutPreference ?? null} onOpenPreview={(path, line) => { statusPopovers.close(); void run(async () => openResourceFile(path, props.target.directory, line)); }} /></View>
             <NativeComposerTasks todos={chat.tasks()} liveWorking={chat.busy()} active={chat.active()} expanded={statusPopovers.opened() === 'tasks'} onExpandedChange={open => statusPopovers.tasks(open)} />
           </View></View>
         </If>
+        <View accessibilityElementsHidden={chromeState().dock >= 1} style={{ opacity: 1 - chromeState().dock, pointerEvents: chromeState().dock >= 1 ? 'none' : 'auto' }}><NativeChatQueue chat={chat} trailingVisible={props.target.kind === 'session' && goalEnabled() && (!!chat.goal.state().goal || !!chat.goal.state().readError || !!chat.goal.state().actionError)} trailing={<NativeGoalRow owner={chat.goal} enabled={goalEnabled()} active={chat.active()} open={goalPanel()} onOpenChange={open => { if (open) statusPopovers.close(); goalPanel.set(open); }} />} /></View>
         <View
           testID="composer-glass"
           ref={view => composerAnchor.set(view)}
-          style={nativeComposerSurface}
+          style={{ ...nativeComposerSurface, ...nativeDensity().chat.composerSurface }}
           class="px-3 pt-1 pb-1"
         >
           <NativeDraftFeedback chat={chat} />
           <Each of={chat.attachments()}>
             {(attachment) => (
               <View class="flex-row gap-2 items-center">
-                <Text class="text-sm text-foreground flex-1">
-                  {attachment().name}
-                </Text>
+                <If when={attachment().kind === 'contact'} else={<Text class="text-sm text-foreground flex-1">{attachment().name}</Text>}>
+                  <Button class={`${quiet} flex-1`} onPress={() => { const file = attachment(); if (file.kind === 'contact') previewAttachment(file); }}>
+                    <Text class="text-sm text-foreground">{attachment().name}</Text>
+                  </Button>
+                </If>
                 <Button
                   class={quiet}
                   accessibilityLabel={t("chat.chatInput.actions.attachCancel")}
@@ -1381,12 +1529,16 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
               </View>
             )}
           </Each>
+          <NativeInputMetadata ownerID="composer-glass" inputID="composer" label={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} active={chat.active() && lifecycle() === 'active'} />
+          <NativeComposerSpellcheck ownerID="composer-glass" inputID="composer" />
+          <NativeComposerPress ownerID="composer-glass" inputID="composer" />
           <Input
             testID="composer"
+            accessibilityLabel={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
             class="text-foreground min-h-[52px] max-h-36 py-[10px]"
-            style={{ ...nativeChatTextStyle('composer'), backgroundColor: 'transparent', borderWidth: 0 }}
+            style={{ ...nativeChatTextStyle('composer'), ...nativeDensity().chat.input, backgroundColor: 'transparent', borderWidth: 0 }}
             multiline
-            readonly={recording()}
+            readonly={recording() || !chat.canSend()}
             value={chat.draft()}
             ref={node => { editor = node; referenceKeyboard.ref(node); }}
             selectedRange={referenceKeyboard.selectedRange()}
@@ -1405,7 +1557,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
             }}
             placeholder={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
           />
-          <View class="min-h-10 flex-row gap-2 items-center">
+          <View class="min-h-10 flex-row gap-2 items-center" style={{ ...nativeDensity().chat.actions, gap: 8 * nativeDensity().scale }}>
             <If when={props.target.kind === "session"}>
               <Button
                 class="size-8 rounded-full items-center justify-center active:bg-accent disabled:opacity-40"
@@ -1445,7 +1597,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
               canAbort={chat.busy()}
               hasContent={!!chat.draft().trim() || chat.attachments().length > 0}
               onStop={() => { void run(chat.stop); }}
-              inFlight={chat.sending()}
+              inFlight={chat.sending() && !btwDraft()}
               disabled={sendDisabled()}
               onPress={sendDraft}
             />
@@ -1453,7 +1605,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         </View>
         <If when={!!referenceKeyboard.commandTrigger() && !!composerAnchor()}>
           <Overlay testID="composer-command-panel" anchor={composerAnchor()} placement="top" align="start" offset={8} margin={12} style={{ width: windowSize().width - 24 }} onPressOutside={dismissReferences} onCancel={dismissReferences}>
-            <NativeCommandSuggestions scope={chat.referenceScope} keyboard={referenceKeyboard} commands={chat.commands()} loadCommands={chat.loadCommands} maxHeight={Math.min(320, Math.max(0, windowSize().height - safeArea().top - safeArea().bottom) * .4)} />
+            <NativeCommandSuggestions scope={chat.referenceScope} keyboard={referenceKeyboard} commands={chat.commands()} loadCommands={chat.loadCommands} context={commandContext()} maxHeight={Math.min(320, Math.max(0, windowSize().height - safeArea().top - safeArea().bottom) * .4)} />
           </Overlay>
         </If>
         <If when={!!referenceTrigger() && !!composerAnchor()}>
@@ -1464,7 +1616,9 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       </View>
       </View>
       </NativeComposerChrome>
-      <If when={!!changesSource()}><NativeChangesSheet source={changesSource()!} open active={chat.active()} onClose={() => changesSource.set(null)} onOpenPreview={(path, line) => { void run(async () => { changesSource.set(null); openResourceFile(path, props.target.directory, line); }); }} /></If>
+      <If when={props.target.kind === 'session'}><NativeChatTimeline open={timelineOpen()} operation={operations.operation()} onOpenChange={value => timelineOpen.set(value)} messages={chat.messages} messagesResolved={chat.messagesResolved} focusedMessageID={() => focusState()?.messageID ?? props.messageID ?? null} more={chat.more} olderLoading={chat.olderLoading} historyError={chat.historyError} loadOlder={chat.loadOlder} focusMessage={messageFocus.focus} resumeLatest={resumeLatest} messageOptions={history.props} /></If>
+      <If when={!!btw()}><NativeBtwSheet owner={btw()!.owner} state={btw()!.state} active={btw()?.operation === operations.operation() && operations.current() && chat.active() && lifecycle() === 'active' && nav.routes().at(-1) === props.route} /></If>
+      <If when={!!changesSource()}><NativeChangesSheet source={changesSource()!} open active={chat.active()} generationContext={changesGenerationContext()} diffLayoutPreference={nativeAppearance.current()?.diffLayoutPreference ?? null} onClose={() => changesSource.set(null)} onOpenPreview={(path, line) => { void run(async () => { changesSource.set(null); openResourceFile(path, props.target.directory, line); }); }} /></If>
     </NavPage>
   );
 }
@@ -1555,6 +1709,7 @@ function ResourceCard(props: { card: Row }) {
           markdown={
             text(props.card.summary) || text(record(props.card.error).message)
           }
+          styles={nativeCodeTextViewStyles()}
           class="text-foreground"
           selectable
         />
@@ -1689,7 +1844,9 @@ function ConnectionEditorPage(props: { route: Extract<Route, { kind: 'connection
 function SettingsOperationPage(props: { route: Extract<Route, { kind: 'settings' }> }) {
   const operations = createPageOperations(() => nav.routes().at(-1) === props.route);
   return <SettingsPage {...settingsCallbacks} {...props.route.route} active={nav.routes().at(-1) === props.route} retention={retentionController()}
-    operationToken={operations.operation()} />;
+    operationToken={operations.operation()} onCollectionDirectory={(directory, route) => {
+      if (nav.routes().at(-1) === props.route && operations.displayCurrent()) replaceCollectionDirectory(directory, route);
+    }} />;
 }
 
 function SettingsQuotaOperationPage(props: { route: Extract<Route, { kind: 'settings-quota' }> }) {
@@ -1780,7 +1937,22 @@ function SetupTourDetailRoutePage(props: { route: Extract<Route, { kind: 'setup-
     onComplete={() => props.route.owner.controller.completeVoice()} />;
 }
 
+function ProjectsHomeSurface(props: { active: boolean; bottomInset?: number }) {
+  const sheet = signal<ProjectHomeSheetIntent | null>(null);
+  const open = (intent: ProjectHomeSheetIntent) => { if (props.active && !sheet()) sheet.set(intent); };
+  return <>
+    <ProjectsHome {...projectsNavigation} active={props.active} bottomInset={props.bottomInset}
+      onOpenProject={project => open({ kind: 'worktrees', project })}
+      onEditProject={project => open({ kind: 'edit', project })}
+      onAddProject={() => open({ kind: 'directory' })}
+      onNewWorktree={project => open({ kind: 'new-worktree', project })}
+      instanceOptions={app.connections().map(connection => ({ id: connection.id, label: connection.label, active: connection.id === app.connection()?.id, disabled: false }))} />
+    <If when={!!sheet()}><ProjectsHomeSheet intent={sheet()!} active={props.active} navigation={projectsNavigation} onReplace={intent => sheet.set(intent)} onClosed={() => sheet.set(null)} /></If>
+  </>;
+}
+
 function Home() {
+  const tabBarHeight = signal(0);
   return (
     <NavPage
       title="Yuri"
@@ -1816,18 +1988,18 @@ function Home() {
             </Text>
           </View></If>
           <Each of={app.connection() ? [app.connection()!] : []} key={connection => JSON.stringify([connection.id, connection.url, connection.authorizationID])}>{() => <>
-          <If when={app.tab() === 0}>
-            <ProjectsHome {...projectsNavigation} instanceOptions={app.connections().map(connection => ({ id: connection.id, label: connection.label, active: connection.id === app.connection()?.id, disabled: false }))} />
+          <View class="flex-1 flex-col" style={{ display: app.tab() === 0 ? 'flex' : 'none' }}>
+            <ProjectsHomeSurface bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 0} />
             <If when={!!tourHistoryMonitor()}><View class="px-5 pb-2"><NativeHistoryImportTaskEntry controller={tourHistoryMonitor()!} active={nav.routes().length === 1 && app.tab() === 0} onOpen={() => { const history = tourHistoryMonitor(); if (history?.current()) nav.push({ kind: 'history-import-tasks', history }); }} /></View></If>
-          </If>
+          </View>
           <If when={app.tab() === 1}>
-            <AssistantHome active={nav.routes().length === 1 && app.tab() === 1} onOpenChat={openChat} onCreate={() => openBotEditor()} onEdit={bot => nav.push({ kind: 'assistant-details', bot })} onOpenSettings={() => nav.push({ kind: 'settings', route: { page: 'assistants' } })} />
+            <AssistantHome bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 1} onOpenChat={openChat} onCreate={() => openBotEditor()} onEdit={bot => nav.push({ kind: 'assistant-details', bot })} onOpenSettings={() => nav.push({ kind: 'settings', route: { page: 'assistants' } })} />
           </If>
           <If when={app.tab() === 2}>
-            <ScheduledHome active={nav.routes().length === 1 && app.tab() === 2} onOpenAssistant={openChat} onCreate={() => openTaskEditor()} onEdit={item => openTaskEditor(item)} onOpenTask={item => nav.push({ kind: 'task', item })} onOpenSession={openChat} />
+            <ScheduledHome bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 2} onOpenAssistant={openChat} onCreate={() => openTaskEditor()} onEdit={item => openTaskEditor(item)} onOpenTask={item => nav.push({ kind: 'task', item })} onOpenSession={openChat} />
           </If>
           <If when={app.tab() === 3}>
-            <SettingsHome {...settingsCallbacks} />
+            <SettingsHome {...settingsCallbacks} bottomInset={tabBarHeight()} />
           </If>
           </>}</Each>
         </View>
@@ -1835,6 +2007,8 @@ function Home() {
       </View>
       <TabBar
         testID="main-tabs"
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
+        onLayout={event => { const height = event.bounds.size.height; if (height > 0 && height !== tabBarHeight()) tabBarHeight.set(height); }}
         selectedIndex={app.tab()}
         onChange={(e) => app.tab.set(e.index)}
         items={[
@@ -1861,7 +2035,7 @@ function NativeRetentionRoot(props: { hostID: string; generation: number }) {
   return <></>;
 }
 
-export function YuriNativeApp() {
+export function YuriNativeApp(props: { startupFeedback?: JSX.Element; startupFeedbackVisible?: boolean } = {}) {
   cleanup(keymap.bind('mod+p', () => untracked(() => {
     if (lifecycle() !== 'active' || !app.connection()) return;
     const top = nav.routes().at(-1);
@@ -1882,11 +2056,18 @@ export function YuriNativeApp() {
     if (top?.kind === 'session-switcher') nav.pop();
     else if (top?.kind === 'chat') nav.push({ kind: 'session-switcher', source: top.target });
   })));
-  void run(async () => {
+  let feedbackPageGeneration = 0;
+  effect(() => { nav.routes().at(-1); feedbackPageGeneration++; });
+  cleanup(registerFeedbackPageOwner(() => {
+    const page = nav.routes().at(-1), captured = feedbackPageGeneration;
+    return () => nav.routes().at(-1) === page && captured === feedbackPageGeneration;
+  }));
+  const initializeRoot = async () => {
     // Host appearance is authoritative; legacy unscoped Storage `appearance` must not override it.
     language.set((await Storage.getItem("language")) || "system");
     await loadConnections();
-  });
+  };
+  void run(initializeRoot, { retry: initializeRoot, current: () => true });
   runtimeLifecycle();
   const notifications = createNativeNotificationRoot<Route>({
     scope: nativeNotificationScope,
@@ -1915,7 +2096,7 @@ export function YuriNativeApp() {
   const NotificationFeedback = notifications.Feedback;
   const diagnostics = createNativeAboutDiagnosticsRoot();
   observeRuntime(() => {
-    void run(refresh);
+    void run(refresh, { retry: refresh, current: () => true });
   }, (event, scope) => {
     notifications.onEvent(event, scope);
     diagnostics.onEvent(event, scope);
@@ -1939,7 +2120,7 @@ export function YuriNativeApp() {
   let previous: string | undefined;
   effect(() => {
     const selected = app.connection()?.id;
-    if (previous && selected !== previous) nav.popToRoot();
+    if (previous && selected !== previous) untracked(() => resourceConnectionClear.clear());
     previous = selected;
   });
   return (
@@ -1947,32 +2128,17 @@ export function YuriNativeApp() {
       <Each of={app.connection() ? [app.connection()!] : []} key={connection => JSON.stringify([connection.id, connection.url, connection.authorizationID])}>{() => <NativeSetupTourOwners />}</Each>
       <Each of={app.connection() ? [{ hostID: app.connection()!.id, generation: epoch() }] : []} key={scope => JSON.stringify([scope.hostID, scope.generation])}>{scope => <NativeRetentionRoot hostID={scope().hostID} generation={scope().generation} />}</Each>
       <NativeAppearanceSync />
-      <NativeAppearanceFeedback />
+      <NativeDeviceChatPreferences />
       <NotificationFeedback />
-      <If when={app.error()}>
-        <View class="pt-[env(safe-area-inset-top)] px-4 py-2 bg-card">
-          <Text class="text-sm text-destructive">{app.error()}</Text>
-          <Button
-            class={quiet}
-            onPress={() => {
-              void run(refresh);
-            }}
-          >
-            <Text class="text-foreground">
-              {t("chat.questionDelegate.retry")}
-            </Text>
-          </Button>
-        </View>
-      </If>
       <NavStack state={nav} class="flex-1">
         {(route) => {
           if (route.kind === "root") return <Home />;
           if (route.kind === "connect") return <Connect link={route.link} edit={route.edit} />;
           if (route.kind === 'connection-editor') return <ConnectionEditorPage route={route} />;
           if (route.kind === "project")
-            return <ProjectDetail project={route.project} initialCreateWorktree={route.createWorktree} {...projectsNavigation} />;
+            return <ProjectDetail project={route.project} initialCreateWorktree={route.createWorktree} {...projectsNavigation} active={nav.routes().at(-1) === route} />;
           if (route.kind === 'project-directory') return <ProjectDirectoryPage onAdded={(project, options) => { if (!options.openDraft) return; nav.replace({ kind: 'new-session', project }); }} />;
-          if (route.kind === 'new-session') return <NativeNewSessionPage project={route.project} directory={route.directory} active={nav.routes().at(-1) === route} onSelection={(directory, selection, agent) => botCreationContext.update(directory, selection, agent)} onOpenChat={(target, handoff) => nav.replace({ kind: 'chat', target, handoff })} />;
+          if (route.kind === 'new-session') return <NativeNewSessionPage project={route.project} directory={route.directory} deviceChatPreferences={deviceChatPreferences} active={nav.routes().at(-1) === route} onSelection={(directory, selection, agent) => botCreationContext.update(directory, selection, agent)} onOpenChat={(target, handoff) => nav.replace({ kind: 'chat', target, handoff })} />;
           if (route.kind === 'remote-desktop') return <NavPage title={t('remoteDesktop.title')} headerVisible={false} class="flex-1 bg-background"><NativeRemoteDesktopPage scopeKey={`${epoch()}:${app.connection()?.id ?? ''}`} active={nav.routes().at(-1) === route} onClose={() => nav.pop()} /></NavPage>;
           if (route.kind === 'project-search') return <ProjectsSearchPage commands={projectSearchCommands(route.directory)} projects={app.projects()} focusDirectory={route.directory} onOpenProject={project => { nav.pop(); nav.push({ kind: 'new-session', project, directory: project.path }); }} onOpenChat={(target, options) => { nav.pop(); openChat(target, options); }} onOpenFile={(directory, path) => { void run(async () => { nav.pop(); openResourceFile(path, directory); }); }} />;
           if (route.kind === 'session-switcher') return <NativeSessionSwitcherPage currentTarget={route.source} current={pageScope()} onClose={() => nav.pop()} navigation={{ ...projectsNavigation, onOpenSearch: () => nav.push({ kind: 'project-search', directory: route.source?.directory }) }} />;
@@ -2012,6 +2178,7 @@ export function YuriNativeApp() {
                 item={route.item}
                 creationContext={route.creationContext}
                 active={nav.routes().at(-1) === route}
+                onOpenSession={openChat}
                 syncPendingDescription={t('sessions.scheduledTasks.editor.toast.schedulerSyncPending')}
                 onDone={() => {
                   if (
@@ -2030,15 +2197,16 @@ export function YuriNativeApp() {
               />
             );
           if (route.kind === "models") return <ChatModels target={route.target} onDone={() => nav.pop()} />;
+          if (route.kind === 'contact-attachment-preview') return <NavPage title={route.file.name} headerBackTitle="" class="flex-1 bg-background"><View class="flex-1 p-4"><ContactAttachmentPreview file={route.file} expectedHost={route.expectedHost} active={nav.routes().at(-1) === route} onClose={() => { if (nav.routes().at(-1) === route) nav.pop(); }} /></View></NavPage>;
           if (route.kind === "files")
-            if (!route.registering) return <NavPage title={t('mobile.menu.files')} class="flex-1 bg-background"><ResourcesBrowser directory={route.directory} path={route.path} active={nav.routes().at(-1) === route} onClose={() => nav.pop()} /></NavPage>;
-          if (route.kind === 'resource-preview') return <NavPage title={nameOf(route.path)} headerBackTitle="" class="flex-1 bg-background"><View class="flex-1 p-4"><ResourcePreview directory={route.directory} path={route.path} targetLine={route.targetLine} expectedHost={route.expectedHost} active={nav.routes().at(-1) === route} onOpen={path => { void run(async () => {
+            if (!route.registering) return <ResourceFilesPage title={t('mobile.menu.files')} directory={route.directory} path={route.path} sessionId={route.sessionId} active={nav.routes().at(-1) === route} connectionExit={owner => resourceConnectionClear.register(route, owner)} onClose={() => { if (nav.routes().at(-1) === route) nav.pop(); }} />;
+          if (route.kind === 'resource-preview') return <ResourcePreviewPage title={nameOf(route.path)} directory={route.directory} path={route.path} sessionId={route.sessionId} targetLine={route.targetLine} expectedHost={route.expectedHost} active={nav.routes().at(-1) === route} connectionExit={owner => resourceConnectionClear.register(route, owner)} onClose={() => { if (nav.routes().at(-1) === route) nav.pop(); }} onOpen={path => { void run(async () => {
             if (route.expectedHost !== undefined) {
               const absolute = resourcePath(path.startsWith('/') ? path : route.directory + '/' + path);
               if (!resourceWithin(absolute, route.directory)) throw new Error(t('mobile.files.error.readUnavailable'));
               nav.push({ kind: 'resource-preview', directory: route.directory, path: absolute, expectedHost: route.expectedHost, tourOwner: route.tourOwner });
             } else openResourceFile(path, route.directory);
-          }); }} /></View></NavPage>;
+          }); }} />;
           if (route.kind === "files")
             return (
               <Files
@@ -2052,6 +2220,7 @@ export function YuriNativeApp() {
               <Scroll class="flex-1" contentClass="p-5">
                 <TextView
                   markdown={route.content}
+                  styles={nativeCodeTextViewStyles()}
                   selectable
                   class="text-foreground"
                 />
@@ -2062,8 +2231,9 @@ export function YuriNativeApp() {
       </NavStack>
       <Each of={projectChangesSource() ? [projectChangesSource()!] : []} key={source => source.directory}>{value => {
         const source = value();
-        return <NativeChangesSheet source={source} open active={lifecycle() === 'active'} onClose={() => projectChangesSource.set(null)} onOpenPreview={(path, line) => { void run(async () => openResourceFile(path, source.directory, line)); }} />;
+        return <NativeChangesSheet source={source} open active={lifecycle() === 'active'} diffLayoutPreference={nativeAppearance.current()?.diffLayoutPreference ?? null} onClose={() => projectChangesSource.set(null)} onOpenPreview={(path, line) => { void run(async () => openResourceFile(path, source.directory, line)); }} />;
       }}</Each>
+      <NativeFeedbackLayer layoutKey={nav.routes().at(-1)}>{props.startupFeedback}<NativeRootErrorFeedback suppressed={props.startupFeedbackVisible} /><NativeAppearanceFeedback suppressed={props.startupFeedbackVisible || rootErrorVisible()} /></NativeFeedbackLayer>
     </View>
   );
 }

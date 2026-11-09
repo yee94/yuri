@@ -65,3 +65,13 @@ it('connection snapshots preserve the actual matching lease; legacy missing scop
   expect(() => connectionSnapshotFrom({ ...base, selected: 'missing' })).toThrow();
   expect(() => connectionSnapshotFrom({ connections: {}, selected: null })).toThrow();
 });
+
+it('connection snapshots preserve only Native-issued transport IDs and never derive them from record identity, authorization, URL or lease', async () => {
+  const { connectionSnapshotFrom } = await import('./runtime');
+  const base = { connections: [{ id: 'A', url: 'https://fixture.example', authorizationID: 'authorization' }], selected: 'A', runtimeScope: { hostID: 'A', lease: 'one' } };
+  expect(connectionSnapshotFrom(base).connections[0]).not.toHaveProperty('transportID');
+  const value = { ...base, connections: [{ ...base.connections[0], transportID: 'opaque-route-A' }] };
+  expect(connectionSnapshotFrom(value).connections[0]?.transportID).toBe('opaque-route-A');
+  expect(connectionSnapshotFrom({ ...value, runtimeScope: { hostID: 'A', lease: 'two' } }).connections[0]?.transportID).toBe('opaque-route-A');
+  for (const transportID of [null, 1, '', ' ', 'a/b', 'https://fixture.example', 'x'.repeat(129), '秘密']) expect(() => connectionSnapshotFrom({ ...base, connections: [{ ...base.connections[0], transportID }] })).toThrow('Invalid connection transport identity');
+});

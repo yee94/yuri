@@ -5,8 +5,8 @@ export function createHost() {
   const primaryID = 'connection-editor-primary', directory = '/fixture/connection-editor';
   const originalURL = 'https://primary.example.invalid';
   const connections = [
-    { id: primaryID, label: 'Primary synthetic connection', url: originalURL, transport: 'direct', lastUsedAt: 100 },
-    { id: 'connection-editor-secondary', label: 'Other synthetic connection', url: 'https://secondary.example.invalid', transport: 'direct', lastUsedAt: 50 },
+    { id: primaryID, label: 'Primary synthetic connection', url: originalURL, transport: 'direct', transportID: 'synthetic-primary-transport', lastUsedAt: 100 },
+    { id: 'connection-editor-secondary', label: 'Other synthetic connection', url: 'https://secondary.example.invalid', transport: 'direct', transportID: 'synthetic-secondary-transport', lastUsedAt: 50 },
   ];
   const nativeCounts = {}, requests = [], rejected = [], expectedFailures = [], reauthorizations = [], notificationConfigurations = [];
   const versions = new Map(connections.map(connection => [connection.id, 0]));
@@ -64,7 +64,7 @@ export function createHost() {
             input.url !== 'https://replacement.example.invalid' || input.label !== 'Reauthorized secondary' || input.password !== '' || input.token !== '') throw new Error('Unexpected connection-editor fixture reauthorization');
         if (input.version !== 'synthetic-version-' + versions.get(input.id)) return expected('connection_editor_stale');
         const index = connections.findIndex(connection => connection.id === input.id);
-        connections[index] = { ...connections[index], label: input.label, url: input.url };
+        connections[index] = { ...connections[index], label: input.label, url: input.url, transportID: 'synthetic-replacement-transport' };
         versions.set(input.id, versions.get(input.id) + 1);
         reauthorizations.push({ id: input.id, version: input.version, label: input.label, url: input.url });
         // Intentionally absent runtimeInvalidated: exercise !== true and pop(2)
@@ -83,12 +83,12 @@ export function createHost() {
         return { lease: notificationLease };
       }
       if (name === 'runtime.stream') {
-        keys(input, ['path', 'key']);
+        keys(input, ['path', 'key', 'expectedHost', 'ownerID', 'mode'], ['path', 'key']);
         if (!(input.key === 'global' && input.path === '/api/yuri/events') && !(input.key === 'chat' && input.path === '/api/event?directory=%2Ffixture%2Fconnection-editor')) throw new Error('Unexpected connection-editor fixture stream');
         return true;
       }
       if (name === 'runtime.stop') {
-        keys(input, ['key'], []);
+        keys(input, ['key', 'expectedHost', 'ownerID'], []);
         if ('key' in input && !['global', 'chat'].includes(input.key)) throw new Error('Unexpected connection-editor fixture stop');
         return true;
       }

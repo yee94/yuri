@@ -1,5 +1,6 @@
 import { Scroll, signal, Text, View } from 'nsh';
 import { Button } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
 import { SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime } from './settings-controls';
@@ -14,7 +15,7 @@ export function SettingsMagicPrompts(props: SettingsCallbacks & SettingsRoute) {
   const entry = magicPromptGroups.flatMap(group => [...group.entries]).find(item => item.id === props.entity);
   const disabled = () => !!snapshot().busy;
   void editor.load();
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <If when={snapshot().busy === 'load'}><Text class="text-muted-foreground">{t('settings.magicPrompts.page.loading.text')}</Text></If>
     <If when={!!snapshot().error}><View class="gap-2"><Text class="text-sm text-destructive">{t(snapshot().error!)}</Text><If when={!!snapshot().detail}><Text class="text-xs text-destructive">{snapshot().detail}</Text></If><If when={!snapshot().ready}><Button class={settingsAction} disabled={disabled()} onPress={() => { void editor.load(); }}><Text class="text-foreground">{t('settings.voice.volcengine.retry')}</Text></Button></If></View></If>
     <If when={!!snapshot().notice}><Text class="text-sm text-muted-foreground">{t(snapshot().notice!)}</Text></If>

@@ -55,28 +55,38 @@ function NativeTaskProgress(props: { summary: TasksSummary; active: boolean }) {
 /** Controlled phone overlay: parent shares its owner with Changes; closed means zero list rows. */
 export function NativeComposerTasks(props: { todos: readonly NativeTask[]; liveWorking: boolean; active: boolean; expanded: boolean; onExpandedChange: (open: boolean) => void }) {
   const summary = computed(() => summarizeTasks(props.todos, props.liveWorking));
+  const maximumHeight = computed(() => Math.min(352, windowSize().height * .5));
   const anchor = signal<ViewRef | null>(null);
   return <If when={summary().show}>
-    <View ref={ref => anchor.set(ref)} accessibilityState={{ expanded: props.expanded }}><Button testID="composer-tasks" class="min-h-6 px-3 flex-row items-center gap-1" accessibilityLabel={t('chat.statusRow.summary.activeLeft', { active: summary().active, left: summary().left })} onPress={() => { if (props.active) props.onExpandedChange(!props.expanded); }}>
+    <View ref={ref => anchor.set(ref)} style={{ flexShrink: 0 }} accessibilityState={{ expanded: props.expanded }}><Button testID="composer-tasks" class="min-h-7 flex-row items-center gap-1" hitSlop={4} accessibilityLabel={t('chat.statusRow.summary.activeLeft', { active: summary().active, left: summary().left })} onPress={() => { if (props.active) props.onExpandedChange(!props.expanded); }}>
       <NativeTaskProgress summary={summary()} active={props.active} /><Text class="text-xs text-muted-foreground">{t('chat.statusRow.tasksTitle')}</Text><Text class="text-xs text-muted-foreground">{summary().completed}/{summary().total}</Text><Icon name={props.expanded ? 'arrow-up-s' : 'arrow-down-s'} size={12} />
     </Button></View>
     <If when={props.expanded && props.active && !!anchor()}><Overlay anchor={anchor()} placement="top" align="end" offset={8} margin={12} style={{ width: windowSize().width - 24 }} onPressOutside={() => props.onExpandedChange(false)} onCancel={() => props.onExpandedChange(false)} testID="composer-tasks-popover" class="bg-card rounded-2xl border border-border/30 p-2 gap-2">
       <View class="px-1 flex-row items-center gap-2"><NativeTaskProgress summary={summary()} active={props.active} /><Text class="flex-1 text-xs text-foreground">{t('chat.workStatus.todos.title')}</Text><NativeTaskCount completed={summary().completed} total={summary().total} /></View>
-      <NativeTaskList summary={summary()} />
+      <NativeTaskList summary={summary()} maximumHeight={maximumHeight()} />
     </Overlay></If>
   </If>;
 }
 
-function NativeTaskList(props: { summary: TasksSummary }) {
+function NativeTaskList(props: { summary: TasksSummary; maximumHeight: number }) {
   const rows = computed(() => props.summary.rows());
+  const heights = signal<Record<string, number>>({});
+  const keys = computed(() => rows().map(row => row.key));
+  const byKey = computed(() => new Map(rows().map(row => [row.key, row])));
+  const height = computed(() => Math.min(rows().reduce((sum, row) => sum + (heights()[row.key] ?? 48), 0), props.maximumHeight));
+  function measured(key: string, height: number) {
+    if (height <= 0 || heights()[key] === height) return;
+    const next = Object.fromEntries(rows().map(row => [row.key, heights()[row.key] ?? 48]));
+    heights.set({ ...next, [key]: height });
+  }
   let list: ListRef | undefined, centered = false;
   function center() {
     if (centered || !list || props.summary.activeIndex < 0) return;
     centered = true;
     list.scrollToIndex({ index: props.summary.activeIndex, animated: false, viewPosition: .5 });
   }
-  return <List testID="composer-tasks-list" ref={ref => { list = ref; }} onLayout={center} each={rows()} keyExtractor={row => row.key} style={{ maxHeight: Math.min(352, windowSize().height * .5), height: Math.min(rows().length * 48, 352, windowSize().height * .5) }}>
-    {row => <NativeTaskRow row={row()} />}
+  return <List testID="composer-tasks-list" ref={ref => { list = ref; }} onLayout={center} each={keys()} keyExtractor={key => key} style={{ height: height() }}>
+    {key => <If when={byKey().get(key())}>{row => <View onLayout={event => measured(key(), event.bounds.size.height)}><NativeTaskRow row={row()} /></View>}</If>}
   </List>;
 }
 
@@ -84,6 +94,6 @@ function NativeTaskRow(props: { row: ReturnType<TasksSummary['rows']>[number] })
   const motion = createMotion({ enter: { keyframes: [{ translateY: -4, opacity: 0 }, { translateY: 0, opacity: 1 }], duration: 240, easing: [0.22, 1, 0.36, 1] } });
   cleanup(motion.stop);
   return <View testID={`composer-task-${props.row.key}`} class="px-1 py-1 flex-row items-start gap-2" style={motion.style} accessibilityLabel={`${t(labels[props.row.status])}: ${props.row.todo.content}`} accessibilityState={{ selected: props.row.current }}>
-    <View class="pt-0.5"><Each of={[props.row.status]} key={status => status}>{status => <NativeTaskGlyph status={status()} />}</Each></View><Text class={props.row.status === 'in_progress' ? 'flex-1 text-xs text-foreground' : props.row.status === 'completed' || props.row.status === 'cancelled' ? 'flex-1 text-xs text-muted-foreground line-through' : 'flex-1 text-xs text-muted-foreground'} style={{ numberOfLines: 3, opacity: props.row.status === 'completed' || props.row.status === 'cancelled' ? .6 : 1 }}>{props.row.todo.content}</Text>
+    <View class="pt-0.5"><Each of={[props.row.status]} key={status => status}>{status => <NativeTaskGlyph status={status()} />}</Each></View><Text class={props.row.status === 'in_progress' ? 'flex-1 text-sm text-foreground' : props.row.status === 'completed' || props.row.status === 'cancelled' ? 'flex-1 text-sm text-muted-foreground line-through' : 'flex-1 text-sm text-muted-foreground'} style={{ numberOfLines: 3, opacity: props.row.status === 'completed' || props.row.status === 'cancelled' ? .6 : 1 }}>{props.row.todo.content}</Text>
   </View>;
 }

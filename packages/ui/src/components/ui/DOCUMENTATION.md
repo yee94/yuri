@@ -418,6 +418,27 @@ Modes are `standard`, `interactive-present`, and `interactive-dismiss`. Each int
 
 Initial focus uses a separate, visually hidden `tabIndex=-1` anchor inside each surface, never a focusable wrapper around its controls. iOS WebKit can retarget taps on a `<details>` menu's buttons to a tabindex-bearing ancestor before `click`, preventing plugin export actions from starting. The anchor preserves non-input initial focus and restoration without making the content shell a touch/focus target. `MobileWindowMotion.focus.test.tsx` guards this DOM boundary; real iOS touch validation is still required.
 
+The top browser Motion window bounds its portal scrim to `visualViewport.offsetTop`
+and `visualViewport.height`, including Safari keyboard resize and viewport panning.
+`useEventListener` owns resize/scroll subscriptions only while that window is top;
+unchanged geometry performs no style writes and events do not rerender input children.
+Focus, marked text, sheet snap selection and field scroll ownership remain untouched.
+Missing visualViewport retains the normal fixed viewport. Capacitor remains exclusively
+owned by its existing native keyboard-inset CSS; it does not apply browser geometry as
+a second inset. The field form in `NewWorktreeDialog` omits decorative scroll fades so
+a focused input/caret is not faded at the keyboard-bounded scroll edge.
+Its private `MobileWorktreeFields` reveals only the current input when it exceeds
+the field scroller's bounds (including 8px breathing room). Focus, container resize
+and visualViewport resize/scroll coalesce into one rAF; an already visible input
+causes no scroll. Native `scrollIntoView(nearest, instant)` and input scroll margins
+own the reveal, without direct scrollTop writes, refocusing or draft changes.
+It runs only while open and stack-top, cancels pending work on deactivation/unmount,
+and does not subscribe to typing or manual field-scroller scroll events. Unfocused
+fields can remain partially outside the scroller; this is not a whole-form fit rule.
+P06's complete UIKit / iOS Safari evidence and remaining platform limits are recorded
+in `packages/nsh/PROJECTS-SESSION-ACCEPTANCE.md` batches K–M; component tests alone do not
+certify every Motion consumer, pinch zoom, floating keyboard or mobile runtime.
+
 Frame updates use one rAF to coalesce input. Interaction frames avoid root CSS variables, global DOM queries, layout reads, and per-frame React state. Sheet layouts derive from their edge. WAAPI owns settling, interruption reads the active computed progress, and reduced-motion completes synchronously. Capacitor Motion surfaces disable keyboard-bottom transitions while interaction or settlement owns compositor opacity.
 
 `MobileWindowMotionRegistry` provides a narrow imperative bridge and unregisters controllers when the component unmounts or its id changes. Controller lifetime remains independent from surface presence. The mobile Sessions sheet is the current first caller and starts its header-swipe preview with `begin('present')`. Future callers may use the registry for local gesture ownership while keeping presence, modal state, and visual-frame ownership inside `MobileWindowMotion`.

@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const storage = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
+const preferenceEffects = vi.hoisted(() => [] as Array<() => void>);
 vi.mock('nsh', () => ({
   batch: <T>(work: () => T) => work(),
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   untracked: <T>(work: () => T) => work(),
+  effect: (work: () => void) => { preferenceEffects.push(work); work(); },
   Storage: { getItem: storage.get, setItem: storage.set },
 }));
 const target = { kind: 'session' as const, id: 'session', title: 'Test', directory: '/workspace' };
@@ -16,6 +18,7 @@ let directory: string, stores: Store[];
 const pathFor = (key: string) => join(directory, Buffer.from(key).toString('base64url') + '.json');
 beforeEach(async () => {
   vi.resetModules(); vi.useFakeTimers(); stores = [];
+  preferenceEffects.length = 0;
   directory = await mkdtemp(join(tmpdir(), 'nsh-draft-storage-'));
   storage.get.mockReset().mockImplementation(async (key: string) => { try { return await readFile(pathFor(key), 'utf8'); } catch (failure) { if ((failure as NodeJS.ErrnoException).code === 'ENOENT') return null; throw failure; } });
   storage.set.mockReset().mockImplementation(async (key: string, value: string) => { await writeFile(pathFor(key), value); });
@@ -24,6 +27,103 @@ afterEach(async () => { await Promise.allSettled(stores.map(store => store.close
 async function open(host = 'host', chat = target) { const { openDraft } = await import('./drafts'); const store = openDraft(host, chat); stores.push(store); return store; }
 
 describe('native durable draft storage boundary', () => {
+  it('contact descriptors and compiled pending snapshots roundtrip with exact host/assistant ownership', async () => {
+    const { openDraft } = await import('./drafts');
+    const { pickedAttachmentFrom } = await import('./attachments');
+    const bot = { kind: 'assistant' as const, id: 'bot', title: 'Bot', directory: '' };
+    const file = pickedAttachmentFrom({ type: 'file', attachmentID: 'att_image', sha256: 'a'.repeat(64), size: 12, mime: 'image/png', filename: 'a.png' }, { hostID: 'host', target: bot });
+    const first = openDraft('host', bot); stores.push(first); await first.ready;
+    first.draft.set('inspect'); first.attachments.set([file]);
+    first.pendingSend.set({ id: 'pending', text: 'inspect', files: [file], delivery: 'steer', uncertain: true, compiled: { text: 'inspect', files: [file] }, references: first.document() });
+    await first.close();
+    const restored = openDraft('host', bot); stores.push(restored); await restored.ready;
+    expect(restored.attachments()).toEqual([file]); expect(restored.pendingSend()?.compiled?.files).toEqual([file]);
+    restored.draft.set('newer edit'); restored.attachments.set([{ ...file, attachmentID: 'att_new' }]);
+    expect(restored.matches('inspect', [file])).toBe(false); await restored.flush();
+    const other = openDraft('host', { ...bot, id: 'other' }); stores.push(other); await other.ready; expect(other.attachments()).toEqual([]);
+    const host = openDraft('other-host', bot); stores.push(host); await host.ready; expect(host.attachments()).toEqual([]);
+    const saved = JSON.parse(await readFile(pathFor(restored.key), 'utf8')); saved.attachments[0].assistantID = 'other';
+    await writeFile(pathFor(restored.key), JSON.stringify(saved));
+    const invalid = openDraft('host', bot); stores.push(invalid); await expect(invalid.ready).rejects.toThrow('owner_mismatch');
+    expect(invalid.status()).toBe('error'); invalid.draft.set('keep input');
+    await expect(invalid.flush()).rejects.toThrow(); expect(invalid.draft()).toBe('keep input');
+  });
+  it('malformed contact-like legacy draft is not reinterpreted as valid session URI', async () => {
+    const first = await open(); await first.ready; first.draft.set('saved'); first.attachments.set([{ uri: 'file:///host/a', name: 'a', mime: 'text/plain' }]); await first.close();
+    const raw = JSON.parse(await readFile(pathFor(first.key), 'utf8')); raw.attachments[0].attachmentID = 'att_smuggled';
+    const original = JSON.stringify(raw); await writeFile(pathFor(first.key), original);
+    const next = await open(); await expect(next.ready).rejects.toThrow('invalid_session_attachment');
+    await expect(next.flush()).rejects.toThrow(); expect(await readFile(pathFor(first.key), 'utf8')).toBe(original);
+  });
+  async function policyStore(getter: () => boolean | null, host = 'host') {
+    const { openDraft } = await import('./drafts'); const store = openDraft(host, target, { persistChatDraft: getter }); stores.push(store); await store.ready; return store;
+  }
+  it('live getter publishes policy changes through the existing debounced lane without editor input or explicit flush', async () => {
+    let enabled = false; const store = await policyStore(() => enabled);
+    store.draft.set('current content'); await store.flush();
+    enabled = true; preferenceEffects.forEach(effect => effect()); await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe('current content'));
+    enabled = false; preferenceEffects.forEach(effect => effect()); await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe('')); expect(store.draft()).toBe('current content');
+    await store.close(); storage.set.mockClear(); enabled = true; preferenceEffects.forEach(effect => effect()); await vi.advanceTimersByTimeAsync(300);
+    expect(storage.set).not.toHaveBeenCalled();
+  });
+  it('disabled persistence suppresses ordinary restore/write but keeps operations and attachment references across restart', async () => {
+    const first = await open(); await first.ready;
+    first.insertReference({ kind: 'skill', value: 'review', label: 'Review' });
+    const document = first.document(), file = { uri: 'attachment://one', name: 'a', mime: 'text/plain' };
+    first.attachments.set([file]);
+    first.pendingSend.set({ id: 'pending', text: document.text, references: document, files: [file], delivery: 'queue', uncertain: true });
+    first.queueEdit.set({ id: 'editing', text: 'queued text', files: [file] });
+    await first.close(); vi.resetModules();
+    const second = await policyStore(() => false);
+    expect(second.draft()).toBe(''); expect(second.references()).toEqual([]);
+    second.draft.set('memory only'); await second.flush();
+    const saved = JSON.parse(await readFile(pathFor(second.key), 'utf8'));
+    expect(saved.draft).toBe(''); expect(saved.pendingSend.references).toEqual(document); expect(saved.attachments).toEqual([file]); expect(saved.queueEdit.id).toBe('editing');
+    storage.set.mockClear();
+    for (let i = 0; i < 200; i++) second.draft.set(`memory ${i}`);
+    await vi.advanceTimersByTimeAsync(300); await second.flush(); expect(storage.set).not.toHaveBeenCalled(); expect(second.draft()).toBe('memory 199');
+    await second.close(); vi.resetModules(); const third = await policyStore(() => false);
+    expect(third.draft()).toBe(''); expect(third.pendingSend()?.id).toBe('pending'); expect(third.queueEdit()?.id).toBe('editing'); expect(third.attachments()).toEqual([file]);
+  });
+  it.each([true, false])('unknown authority preserves old bytes and edited input before resolving %s', async enabled => {
+    const first = await open(); await first.ready; first.draft.set('old durable'); await first.close(); vi.resetModules();
+    let policy: boolean | null = null; const store = await policyStore(() => policy);
+    expect(store.draft()).toBe(''); store.draft.set('current memory'); await store.flush();
+    expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe('old durable');
+    policy = enabled; await store.flush(); expect(store.draft()).toBe('current memory');
+    expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe(enabled ? 'current memory' : '');
+    policy = true; await store.flush(); await store.close(); vi.resetModules();
+    const reopened = await policyStore(() => true); expect(reopened.draft()).toBe('current memory');
+    const other = await policyStore(() => true, 'another-host'); expect(other.draft()).toBe('');
+  });
+  it('unknown to true restores untouched ordinary data; false to true uses current content instead', async () => {
+    const first = await open(); await first.ready; first.draft.set('old durable'); await first.close(); vi.resetModules();
+    let policy: boolean | null = null; const store = await policyStore(() => policy);
+    policy = true; await store.flush(); expect(store.draft()).toBe('old durable');
+    policy = false; await store.flush(); expect(store.draft()).toBe('old durable');
+    store.draft.set('replacement'); policy = true; await store.flush();
+    expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe('replacement');
+  });
+  it('disabled cleanup write failure is explicit and retries CAS without losing pending data or memory', async () => {
+    const first = await open(); await first.ready; first.draft.set('saved'); await first.close(); vi.resetModules();
+    const store = await policyStore(() => false); store.draft.set('current');
+    storage.set.mockRejectedValueOnce(new Error('quota'));
+    await expect(store.flush()).rejects.toThrow('quota'); expect(store.status()).toBe('error');
+    expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe('saved'); expect(store.draft()).toBe('current');
+    await store.retry(); expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).draft).toBe(''); expect(store.draft()).toBe('current');
+    const raw = JSON.parse(await readFile(pathFor(store.key), 'utf8')); raw.revision++;
+    await writeFile(pathFor(store.key), JSON.stringify(raw)); store.pendingSend.set({ id: 'stable', text: 'operation', files: [], delivery: 'steer', uncertain: true });
+    await expect(store.flush()).rejects.toThrow('另一页面'); expect(store.pendingSend()?.id).toBe('stable');
+    await store.restore(); await store.retry(); expect(JSON.parse(await readFile(pathFor(store.key), 'utf8')).pendingSend.id).toBe('stable');
+  });
+  it('disabled persistence never overwrites corrupt storage', async () => {
+    const { draftKey, openDraft } = await import('./drafts'); const key = draftKey('host', target);
+    await writeFile(pathFor(key), '{broken'); const store = openDraft('host', target, { persistChatDraft: () => false }); stores.push(store);
+    store.draft.set('memory'); await expect(store.ready).rejects.toThrow(); await expect(store.flush()).rejects.toThrow();
+    expect(await readFile(pathFor(key), 'utf8')).toBe('{broken'); expect(store.draft()).toBe('memory');
+  });
   it('coalesces 200 input events without synchronous Storage calls or transcript work', async () => {
     const store = await open(); await store.ready; storage.get.mockClear(); storage.set.mockClear();
     for (let count = 0; count < 200; count++) store.draft.set(`input ${count}`);

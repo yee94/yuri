@@ -33,12 +33,15 @@ export function createNotificationRootController<Destination>(input: Notificatio
   let flight: Promise<void> | null = null, dirty = false, launchFlight: Promise<void> | null = null, launchDirty = false;
   let launchEpoch = 0;
   let pendingTap: string | null = null;
+  const failures = new Map<string, NonNullable<NotificationRootState['error']>>(), dismissed = new Set<string>();
   const set = (change: Partial<NotificationRootState>) => {
     if (!alive) return;
-    const next = { ...state, ...change };
+    const next = { ...state, ...change, error: [...failures].find(([source]) => !dismissed.has(source))?.[1] ?? null };
     if (Object.keys(next).every(key => next[key as keyof NotificationRootState] === state[key as keyof NotificationRootState])) return;
     state = next; input.changed(state);
   };
+  const failure = (source: string, error: NonNullable<NotificationRootState['error']>) => { failures.set(source, error); dismissed.delete(source); set({}); };
+  const resolved = (source: string) => { failures.delete(source); dismissed.delete(source); set({}); };
   const current = (scope: NotificationScope, turn = generation) => alive && active && turn === generation && same(scope, bound) && same(scope, input.scope());
   const ready = () => !!bound && current(bound) && state.ready && input.transport.delivery.ready() && same(input.transport.confirmed()?.scope ?? null, bound);
   const currentAuthorization = () => {
@@ -61,12 +64,12 @@ export function createNotificationRootController<Destination>(input: Notificatio
     resolve: async (admission, valid) => await identity(admission, valid) ? [{ ...admission.target }] : [],
     deliver: async (event, admission) => {
       if (!bound || !current(bound)) return 'stale';
-      if (!authorization || authorization !== currentAuthorization()) { set({ error: 'unsupported' }); return 'stale'; }
+      if (!authorization || authorization !== currentAuthorization()) { failure(`live:${event.eventID}`, 'unsupported'); return 'stale'; }
       const result = await input.transport.delivery.acceptLive(event, admission);
-      if (bound && current(bound) && result !== 'stale' && state.error === 'unavailable') set({ error: null });
       return result;
     },
-    error: error => set({ error }),
+    error: (error, eventID) => failure(`live:${eventID}`, error),
+    resolved: eventID => resolved(`live:${eventID}`),
   });
   const recoveryScope = () => ready() && bound && authorization && authorization === currentAuthorization()
     ? { connectionID: bound.hostID, generation: bound.generation, authorizationID: authorization } : null;
@@ -92,11 +95,12 @@ export function createNotificationRootController<Destination>(input: Notificatio
   async function recoverLaunch(explicit = false): Promise<void> {
     if (!ready()) { set({ recovery: 'waitingReady' }); return; }
     if (!authorization || authorization !== currentAuthorization() || !input.call || !input.catalogReady) {
-      set({ recovery: 'unsupported', ...(explicit ? { error: 'unsupported' as const } : {}) }); return;
+      set({ recovery: 'unsupported' }); if (explicit) failure('launch:authorization', 'unsupported'); return;
     }
     if (launchFlight) { launchDirty = true; return launchFlight; }
     const captured = { ...bound! }, turn = generation, binding = authorization, launchTurn = launchEpoch;
     const valid = () => current(captured, turn) && ready() && binding === currentAuthorization() && launchTurn === launchEpoch;
+    let failureSource = pendingTap ? `launch:${pendingTap}` : 'launch:read';
     const work = (async () => {
       try {
         // Readiness is awaited before claim. A partial/failed catalog is never empty success.
@@ -104,21 +108,28 @@ export function createNotificationRootController<Destination>(input: Notificatio
         if (!valid()) return;
         const record = await launch.peek();
         if (!valid()) return;
+        resolved('launch:read'); resolved('launch:authorization');
         if (record === null) { pendingTap = null; set({ recovery: 'idle' }); return; }
+        failureSource = `launch:${record.receipt}`;
         const now = (input.now ?? Date.now)();
         if (!record || record.connectionID !== captured.hostID || record.authorizationID !== binding
           || record.createdAt > now || record.expiresAt <= now || pendingTap && record.receipt !== pendingTap) {
-          set({ recovery: 'unavailable', error: 'unavailable' }); return;
+          set({ recovery: 'unavailable' }); failure(failureSource, 'unavailable'); return;
         }
         peeked = record;
         set({ recovery: 'resolving' });
         const result = await recovery.route({ v: 1, receipt: record.receipt });
         if (!valid()) return;
         if (result === 'opened') {
-          pendingTap = null; set({ recovery: 'opened', error: null });
-        } else if (result === 'unavailable') set({ recovery: 'unavailable', error: 'unavailable' });
+          pendingTap = null; resolved(failureSource); set({ recovery: 'opened' });
+        } else if (result === 'unavailable') { set({ recovery: 'unavailable' }); failure(failureSource, 'unavailable'); }
         else set({ recovery: 'waitingReady' });
-      } catch { if (valid()) set({ error: 'readFailed', recovery: 'unavailable' }); }
+      } catch (error) {
+        if (valid()) {
+          if (error instanceof Error && error.message === 'notification_catalog_incomplete') set({ recovery: 'waitingReady' });
+          else { failure(failureSource, 'readFailed'); set({ recovery: 'unavailable' }); }
+        }
+      }
     })();
     launchFlight = work;
     try { await work; } finally {
@@ -135,7 +146,7 @@ export function createNotificationRootController<Destination>(input: Notificatio
   }
   const off = input.transport.onConfirmed(value => {
     if (bound && current(bound) && same(value.scope, bound)) {
-      set({ ready: true, error: state.error === 'readFailed' ? null : state.error });
+      resolved('settings'); set({ ready: true });
       if (!flight) void retryReady();
     }
   });
@@ -148,8 +159,8 @@ export function createNotificationRootController<Destination>(input: Notificatio
         dirty = false; set({ refreshing: true });
         try {
           await input.transport.refresh();
-          if (current(captured, turn)) { set({ ready: true, error: state.error === 'readFailed' ? null : state.error }); await retryReady(); }
-        } catch (error) { if (current(captured, turn) && !(error instanceof Error && error.message === 'notification_stale')) set({ error: 'readFailed' }); }
+          if (current(captured, turn)) { resolved('settings'); set({ ready: true }); await retryReady(); }
+        } catch (error) { if (current(captured, turn) && !(error instanceof Error && error.message === 'notification_stale')) failure('settings', 'readFailed'); }
       } while (dirty && current(captured, turn));
       if (current(captured, turn)) set({ refreshing: false });
     })();
@@ -158,18 +169,20 @@ export function createNotificationRootController<Destination>(input: Notificatio
   }
   return {
     state: () => state, refresh,
-    recover() {
+    async recover() {
       pendingTap = null; launchEpoch++; launch.invalidate(); peeked = null;
+      if (ready()) await admitted.retry();
       return recoverLaunch(true);
     },
     async route(value: unknown) {
       const receipt = notificationRecoveryTap(value);
-      if (!receipt) { set({ error: 'unavailable' }); return; }
+      if (!receipt) { failure('launch:tap', 'unavailable'); return; }
+      resolved('launch:tap');
       if (pendingTap !== receipt) { launchEpoch++; launch.invalidate(); peeked = null; }
       pendingTap = receipt;
       await recoverLaunch(true);
     },
-    dismissUnavailable() { if (state.error === 'unavailable' || state.error === 'unsupported') set({ error: null }); },
+    dismissUnavailable() { for (const source of failures.keys()) dismissed.add(source); set({}); },
     bind(scope: NotificationScope | null, nextLanguage: NotificationLanguage, foreground: boolean) {
       if (!alive) return;
       const hostChanged = !same(scope, bound) && (scope !== null || bound !== null);
@@ -181,6 +194,7 @@ export function createNotificationRootController<Destination>(input: Notificatio
         generation++; bound = scope ? { ...scope } : null; language = nextLanguage; authorization = nextAuthorization;
         dirty = false; flight = null; launchFlight = null; launchDirty = false; peeked = null; launch.invalidate();
         admitted.retire(hostChanged || authChanged);
+        if (hostChanged || authChanged) { failures.clear(); dismissed.clear(); }
         if (hostChanged || authChanged) input.transport.invalidate(); else if (changed) input.transport.retireReads();
         set({ ready: !!input.transport.confirmed() && input.transport.delivery.ready(), refreshing: false, error: null, recovery: 'waitingReady' });
       }

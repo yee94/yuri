@@ -38,3 +38,25 @@ test('native resources navigate directories and render source and Markdown', () 
   expect(result.error, result.stdout + result.stderr).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
 }, 75_000);
+test('contact attachment preview keeps content on refresh failure and exposes a close action after lease expiry', () => {
+  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'resources-test-app.tsx', '--web-host', 'tests/resources-host.js'], {
+    cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: 'utf8', timeout: 60_000,
+    input: [
+      'await app.press("id:open-contact");',
+      'await app.waitFor("text:Contact resource fixture");',
+      'await app.press("text:Refresh files");',
+      'await app.waitFor("text:Error: Neutral fixture offline; retry available");',
+      'expect(app.shows("text:Contact resource fixture")).toBe(true);',
+      'await app.press("text:Refresh files");',
+      'await app.waitFor("text:Contact resource fixture");',
+      'await app.press("id:expire-contact");',
+      'await app.waitFor("text:This preview has expired. Go back and open the attachment again.");',
+      'expect(app.shows("text:Contact resource fixture")).toBe(false);',
+      'await app.press("text:Close");',
+      'expect(app.shows("text:This preview has expired. Go back and open the attachment again.")).toBe(false);',
+      'expect(app.texts().join("\\n")).not.toMatch(/Unexpected contact|Invalid native response/);',
+    ].join('\n'),
+  });
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 75_000);

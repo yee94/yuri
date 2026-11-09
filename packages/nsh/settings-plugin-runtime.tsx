@@ -1,6 +1,7 @@
 import { cleanup, Clipboard, effect, signal, Text, untracked, View } from 'nsh';
 import { Button, TextView } from 'nsh/base';
 import { t } from './i18n';
+import { nativeCodeTextViewStyles } from './appearance';
 import { text, type Row } from './model';
 import { SettingsFeedback, SettingsGroup, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { findRuntimeMatches, nativePluginRewrite, nativePluginTarget, readNativePluginInventory, readNativePluginRegistry, reloadNativePlugins, resolveEffectivePluginVersion, resolveLoadState, resolveUpdateFlag, updateNativePlugin, type PluginRuntimeInfo } from './settings-plugin-runtime-core';
@@ -44,7 +45,7 @@ export function SettingsPluginRuntime(props: { item: Row; directory?: string; di
     <If when={!!inventory() && !!target() && load().kind === 'notReported'}><Text class="text-muted-foreground">{t('settings.plugins.status.notReported.description')}</Text></If>
     <If when={!!failure()}>
       <Text class="text-destructive">{t('settings.plugins.status.failed.title')}</Text>
-      <TextView document={{ blocks: [{ type: 'codeBlock', code: expanded() ? failure()?.error || '' : (failure()?.error || '').split('\n').slice(0, 2).join('\n') }] }} selectable class="text-sm text-foreground" />
+      <TextView document={{ blocks: [{ type: 'codeBlock', code: expanded() ? failure()?.error || '' : (failure()?.error || '').split('\n').slice(0, 2).join('\n') }] }} selectable styles={nativeCodeTextViewStyles()} class="text-sm text-foreground" />
       <If when={!!failure()?.ref}><Text class="text-muted-foreground">{t('settings.plugins.status.failed.ref', { ref: failure()?.ref || '' })}</Text></If>
       <If when={(failure()?.error || '').split('\n').length > 2}><Button class={settingsAction} onPress={() => expanded.set(!expanded())}><Text class="text-foreground">{expanded() ? t('settings.plugins.status.failed.collapse') : t('settings.plugins.status.failed.expand', { count: (failure()?.error || '').split('\n').length })}</Text></Button></If>
       <Button testID="plugin-copy-error" class={settingsAction} onPress={() => { const operation = state.operation(), error = failure()?.error; if (operation?.current() && error) void Clipboard.writeText(error).then(() => { if (operation.current()) state.notice.set(t('settings.plugins.status.failed.copied')); }, () => { if (operation.current()) state.error.set(t('settings.plugins.status.failed.copyFailed')); }); }}><Text class="text-foreground">{t('settings.plugins.status.failed.copy')}</Text></Button>

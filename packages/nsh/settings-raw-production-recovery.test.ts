@@ -12,6 +12,7 @@ import * as credentialsCore from './settings-git-credentials-core';
 import * as aboutCore from './settings-about-core';
 import * as diagnostics from './settings-about-diagnostics';
 import * as model from './model';
+import { nativeLayoutDensity } from './native-density';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const flush = async () => { for (let index = 0; index < 150; index++) await Promise.resolve(); };
@@ -74,8 +75,10 @@ function fixture(page: 'github' | 'git-credentials' | 'about') {
   const openUrl = vi.fn(async () => ({ opened: true }));
   const answer = vi.fn(async (): Promise<{ action: string }> => ({ action: 'cancel' }));
   const modules: Record<string, unknown> = {
+    './appearance': { nativeDensity: () => nativeLayoutDensity() },
     nsh: { signal, effect, untracked, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native }, openUrl, Scroll: 'Scroll', Text: 'Text', View: 'View', Image: 'Image' },
     'nsh/base': { ...Object.fromEntries(['Button', 'Input', 'Select', 'Switch', 'Progress'].map(key => [key, key])), AlertDialog: { show: answer } },
+    './native-select': { NativeSelect: 'NativeSelect' },
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './settings-protocol': protocol,
     './runtime-scope': scopeCore, './model': model, './settings-github-core': githubCore, './settings-github-protocol': gitProtocol,
     './settings-git-credentials-core': credentialsCore, './settings-about-core': aboutCore, './settings-about-diagnostics': diagnostics,

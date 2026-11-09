@@ -1,11 +1,23 @@
 import { expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+function nativeShellDistribution() {
+  if (process.env.NSH_DIST) return path.resolve(process.env.NSH_DIST);
+  const binary = process.env.NSH_BIN || 'nsh';
+  const candidates = binary.includes('/') ? [path.resolve(binary)] : (process.env.PATH || '').split(path.delimiter).map(directory => path.join(directory, binary));
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return path.resolve(path.dirname(realpathSync(candidate)), '..');
+    } catch { /* Try the next PATH entry, as build-ios.mjs does. */ }
+  }
+  throw new Error('Cannot find NativeShell distribution; set NSH_DIST or NSH_BIN');
+}
 function run(args: string[]) {
   const result = spawnSync('xcrun', args, { encoding: 'utf8', timeout: 120_000 });
   expect(result.error, result.error?.message).toBeUndefined(); expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -44,46 +56,11 @@ it('typechecks the whole iOS bridge and isolated fixture with the real Apple SDK
     }`);
     run(['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temp, 'NativeShell.swiftmodule')]);
     run(['swiftc', ...flags, '-I', temp, '-typecheck', path.join(root, 'ios/NotificationBridge.swift'), path.join(root, 'tests/notification-uikit/main.swift')]);
-    const dependencies = path.join(temp, 'MainDependencies.swift');
-    writeFileSync(dependencies, `import UIKit
-import NativeShell
-struct SavedConnection { let id: String; let authorizationID: String? }
-final class ConnectionStore { var selected: SavedConnection?; init() throws {} }
-enum NativeFailure: Error { case message(String) }
-@MainActor struct ResourceTransport { let isCurrent: () -> Bool }
-@MainActor final class RuntimeBridge {
-  let store: ConnectionStore; var onInvalidate: (() -> Void)?
-  var onAuthorizationRetired: ((String, String) async throws -> Void)?
-  init(app: NshAppView, store: ConnectionStore) { self.store = store }
-  func resourceTransport(expectedHost: RuntimeHostScope? = nil) throws -> ResourceTransport { ResourceTransport(isCurrent: { true }) }
-  func resourceWebPreviewTransport(expectedHost: RuntimeHostScope? = nil) throws -> ResourceTransport { try resourceTransport(expectedHost: expectedHost) }
-  func remoteDesktopTransport() throws -> ResourceTransport { try resourceTransport() }
-  func setForeground(_ active: Bool) {}
-  func voiceRecognitionTransport(expectedHost: RuntimeHostScope) throws -> ResourceTransport { try resourceTransport() }
-  func terminalTransport(expectedHost: RuntimeHostScope) throws -> ResourceTransport { try resourceTransport(expectedHost: expectedHost) }
-  func retryAuthorizationRetirements() async {}
-  func stop() { onInvalidate?() }
-}
-@MainActor final class AppearanceBridge { init(app: NshAppView, selectedHost: @escaping () -> String?) {} func invalidate() throws {} }
-@MainActor struct ScheduleDateScope { let hostID: String; let isCurrent: () -> Bool }
-@MainActor final class ScheduleDateBridge { init(app: NshAppView, capture: @escaping () throws -> ScheduleDateScope) {} }
-@MainActor final class ResourceBridge { init(controller: UIViewController, capture: @escaping (RuntimeHostScope) throws -> ResourceTransport) throws {} func install(on app: NshAppView) {} func invalidate() {} }
-@MainActor final class ResourceWebPreviewBridge { init(controller: UIViewController, capture: @escaping (RuntimeHostScope) throws -> ResourceTransport) {} func install(on app: NshAppView) {} func invalidate() {} }
-@MainActor final class SpeechPlaybackBridge { init(app: NshAppView, capture: @escaping () throws -> ResourceTransport) {} func invalidate() {} }
-struct RuntimeHostScope {}
-@MainActor final class VoiceRecognitionBridge { init(app: NshAppView, capture: @escaping (RuntimeHostScope) throws -> ResourceTransport, beforeCapture: @escaping () -> Void) {} func invalidate() {} }
-@MainActor final class RemoteDesktopBridge { init(app: NshAppView, capture: @escaping () throws -> ResourceTransport) {} func invalidate() {} }
-@MainActor final class TerminalBridge { init(capture: @escaping (RuntimeHostScope) throws -> ResourceTransport, emit: @escaping ([String: Any]) -> Void) {} func register(app: NshAppView) {} func setForeground(_ active: Bool) {} func invalidate() {} }
-@MainActor final class NativeTerminalPreview { init(presenter: UIViewController, bridge: TerminalBridge, emit: @escaping ([String: Any]) -> Void) {} func register(app: NshAppView) {} func invalidate() {} }
-@MainActor final class AttachmentBridge { init(controller: UIViewController, runtime: RuntimeBridge) {} func pick(_ input: Any?) async throws -> Any? { nil } }
-@MainActor enum NavigationBridge { static func install(on app: NshAppView) {} }
-@MainActor enum NewSessionPickerOwners { static func install(on app: NshAppView) {} }
-@MainActor enum NativeSheetPresentation { static func install(on app: NshAppView) {} }
-@MainActor enum NativeDatePicker { static func install(on app: NshAppView) {} }
-@MainActor enum NativeChatHeaderCollapse { static func install(on app: NshAppView) {} }
-@MainActor final class QRScanner: UIViewController { var complete: ((String?) -> Void)? }
-`.replaceAll('} func', '}; func'));
-    run(['swiftc', ...flags, '-I', temp, '-typecheck', path.join(root, 'ios/NotificationBridge.swift'), path.join(root, 'ios/DiagnosticsBridge.swift'), dependencies, path.join(root, 'ios/main.swift')]);
+    const framework = path.join(nativeShellDistribution(), 'embed/ios/NativeShell.xcframework/ios-arm64-simulator');
+    // Match build-ios.mjs source ownership, including component extensions used by main.swift.
+    const sources = readdirSync(path.join(root, 'ios')).filter(name => name.endsWith('.swift')).sort().map(name => path.join(root, 'ios', name));
+    sources.push(path.join(root, '../mobile/ios/App/App/YuriViewExportRenderer.swift'));
+    run(['swiftc', ...flags, '-F', framework, '-typecheck', ...sources]);
     const source = readFileSync(path.join(root, 'ios/NotificationBridge.swift'), 'utf8');
     expect(source).not.toMatch(/URLSession|ConnectionStore|registerForRemoteNotifications|setMinimumBackgroundFetchInterval/);
     expect(source).toContain('content.userInfo = ["v": 1, "receipt": receipt]');

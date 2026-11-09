@@ -1,28 +1,54 @@
-import { cleanup, colorScheme, effect, host, lifecycle, setColorScheme, signal, untracked, type TextStyle, type ViewStyle } from 'nsh';
+import { cleanup, colorScheme, computed, effect, host, lifecycle, setColorScheme, signal, untracked, type TextStyle, type ViewStyle } from 'nsh';
 import type { SemanticTypographyKey } from '../ui/src/lib/typography';
 import { app, captureHostRequest, epoch } from './state';
-import { native } from './runtime';
+import { bindRequest, native } from './runtime';
 import { runtimeEventFrom } from './model';
 import { createNativeAppearanceSync, appearanceFromSettings, nativeAppearanceModePatch, nativeTypographyStyle, nativeFullThemeCSS, type AppliedNativeAppearance, type NativeAppearanceMode, type NativeTimeFormatPreference } from './appearance-core';
 import type { Theme } from '../ui/src/types/theme';
 import { settingsObject } from './settings-protocol';
 import { t } from './i18n';
+import { deviceAppearance, loadDeviceAppearance } from './device-appearance';
+import type { TextViewStyles } from 'nsh/base';
+import { nativeLayoutDensity } from './native-density';
+import { sameRuntimeScope } from './runtime-scope';
+import { adoptNativeFontEvent, nativeFontEvent, type NativeFontEvent } from './native-font-projection';
 
 export const nativeAppearance = {
   current: signal<AppliedNativeAppearance | null>(null),
   error: signal(''),
   saving: signal(false),
 };
-let refreshAppearance: (() => Promise<void>) | undefined;
+let refreshAppearance: ((afterCurrent?: () => boolean) => Promise<void>) | undefined;
 let activeSync: ReturnType<typeof createNativeAppearanceSync> | undefined;
 let writeRevision = 0;
 let mounted = false;
-export const refreshNativeAppearance = () => refreshAppearance?.() ?? Promise.resolve();
+let reconcileFontProjection: (() => void) | undefined;
+export const refreshNativeAppearance = (afterCurrent?: () => boolean) => refreshAppearance?.(afterCurrent) ?? Promise.resolve();
+export async function retryNativeAppearanceFonts(): Promise<void> {
+  const value = nativeAppearance.current(), connection = app.connection(), generation = epoch(), receipt = app.runtimeScope();
+  if (!value || !connection || !receipt || value.sourceHost?.hostID !== connection.id || value.sourceHost?.generation !== generation || lifecycle() !== 'active'
+    || value.fontRevision === undefined || value.fontTicket === undefined) return;
+  try {
+    const result = nativeFontEvent(await native('appearance.fonts.retry', { hostID: connection.id, fontRevision: value.fontRevision, fontTicket: value.fontTicket }));
+    if (!result || generation !== epoch() || !sameRuntimeScope(receipt, app.runtimeScope()) || lifecycle() !== 'active'
+      || nativeAppearance.current()?.fontTicket !== value.fontTicket) return;
+    // Retry creates a new ticket; adopt it only while the old selection is current.
+    const current = nativeAppearance.current();
+    if (current) {
+      nativeAppearance.current.set(adoptNativeFontEvent({ ...current, fontTicket: result.fontTicket }, result, app.connection()?.id, generation));
+      reconcileFontProjection?.();
+    }
+  } catch {
+    if (generation === epoch() && sameRuntimeScope(receipt, app.runtimeScope())) nativeAppearance.error.set('Native font retry failed');
+  }
+}
 /** Missing/unrecognized Host field is unknown; the formatter may explicitly choose locale-auto with `?? 'auto'`. */
 export const nativeTimeFormat = (): NativeTimeFormatPreference | null => nativeAppearance.current()?.timeFormatPreference ?? null;
 /** Read-only JS palette from the same Host snapshot; deliberately not part of the Swift override schema. */
 export const nativeAgentPaletteTokens = (): Readonly<Record<string, string>> => nativeAppearance.current()?.agentAvatarTokens[colorScheme()] ?? {};
 export const nativeToolPaletteTokens = () => nativeAppearance.current()?.toolTokens[colorScheme()];
+/** Same root snapshot and Host fence as typography; no independent settings read. */
+export const nativeDensity = computed(() => nativeLayoutDensity(nativeAppearance.current()?.padding));
 /** Pure read of the already applied canonical appearance; no preview GET or Host write. */
 export const nativeGuiThemeCSS = (generate: (theme: Theme) => string): string => nativeFullThemeCSS(nativeAppearance.current(), colorScheme(), generate);
 
@@ -67,9 +93,16 @@ export async function saveNativeAppearanceMode(mode: NativeAppearanceMode, isCur
 export function NativeAppearanceSync() {
   if (mounted) throw new Error('NativeAppearanceSync already mounted');
   mounted = true;
-  const createSync = (request: ReturnType<typeof captureHostRequest>) => createNativeAppearanceSync({
+  let pendingFonts: { event: NativeFontEvent; generation: number } | undefined;
+  reconcileFontProjection = () => {
+    if (pendingFonts?.generation === epoch() && lifecycle() === 'active') nativeAppearance.current.set(adoptNativeFontEvent(nativeAppearance.current(), pendingFonts.event, app.connection()?.id, epoch()));
+  };
+  const readers = (request: ReturnType<typeof captureHostRequest>) => ({
     readSettings: () => request('/api/config/settings'),
     readThemes: () => request('/api/config/themes'),
+  });
+  const createSync = (request: ReturnType<typeof captureHostRequest>) => createNativeAppearanceSync({
+    ...readers(request),
     reset: async scope => {
       const result = await native<{ revision: number }>('appearance.reset', { hostID: scope?.hostID ?? null });
       return result.revision;
@@ -78,42 +111,81 @@ export function NativeAppearanceSync() {
       hostID: scope.hostID, revision, mode: appearance.mode, cssVars: appearance.cssVars, fonts: appearance.fonts,
     }),
     changed: value => {
-      nativeAppearance.current.set(value);
+      let next: AppliedNativeAppearance | null = value ? { ...value, codeFontSize: deviceAppearance()?.codeFontSize ?? null } : null;
+      if (next && pendingFonts?.generation === epoch()) next = adoptNativeFontEvent(next, pendingFonts.event, app.connection()?.id, epoch());
+      if (!value) pendingFonts = undefined;
+      nativeAppearance.current.set(next);
       setColorScheme(value?.mode ?? 'system');
     },
     failed: message => nativeAppearance.error.set(message),
   });
-  refreshAppearance = () => activeSync?.refresh() ?? Promise.resolve();
-  const stopErrors = host.on('appearance.error', () => nativeAppearance.error.set('Native appearance reset failed'));
-  let scopeKey: string | undefined;
-  effect(() => {
-    const connection = app.connection(), active = lifecycle() === 'active';
-    const scope = connection ? { hostID: connection.id, url: connection.url, generation: epoch() } : null;
-    untracked(() => {
-      const nextKey = JSON.stringify(scope);
-      if (scopeKey !== nextKey) {
-        scopeKey = nextKey; writeRevision++; nativeAppearance.saving.set(false);
-        activeSync?.pause();
-        activeSync = createSync(captureHostRequest());
-        activeSync.setScope(scope);
-      }
-      else if (active) activeSync?.rebind();
-      if (!active) activeSync?.pause();
-    });
+  refreshAppearance = afterCurrent => {
     const sync = activeSync;
-    if (!active || !scope || !sync) return;
+    if (!afterCurrent) return sync?.refresh() ?? Promise.resolve();
+    if (!sync) return Promise.reject(new Error(t('chat.chatInput.toast.reloadFailed')));
+    return sync.refreshAfterCurrent(afterCurrent).catch(() => { throw new Error(t('chat.chatInput.toast.reloadFailed')); });
+  };
+  // One root subscription projects device typography into the existing appearance signal.
+  void loadDeviceAppearance().catch(() => {});
+  effect(() => {
+    const codeFontSize = deviceAppearance()?.codeFontSize ?? null;
+    untracked(() => {
+      const value = nativeAppearance.current();
+      if (value && value.codeFontSize !== codeFontSize) nativeAppearance.current.set({ ...value, codeFontSize });
+    });
+  });
+  const stopErrors = host.on('appearance.error', () => nativeAppearance.error.set('Native appearance reset failed'));
+  const stopFonts = host.on('appearance.fonts', payload => {
+    const event = nativeFontEvent(payload);
+    if (!event || lifecycle() !== 'active' || event.hostID !== app.connection()?.id || !app.runtimeScope()) return;
+    if (pendingFonts?.generation === epoch() && (event.fontRevision < pendingFonts.event.fontRevision
+      || event.fontRevision === pendingFonts.event.fontRevision && event.fontTicket < pendingFonts.event.fontTicket)) return;
+    pendingFonts = { event, generation: epoch() };
+    reconcileFontProjection?.();
+  });
+  let scopeKey: string | undefined;
+  let readerKey: string | undefined;
+  effect(() => {
+    const connection = app.connection(), active = lifecycle() === 'active', receipt = app.runtimeScope(), generation = epoch();
+    const scope = connection ? { hostID: connection.id, url: connection.url, generation } : null;
+    const admitted = active && !!scope && receipt?.hostID === scope.hostID;
+    untracked(() => {
+      const nextKey = JSON.stringify(connection ? [connection.id, connection.url, connection.authorizationID, connection.transportID] : null);
+      if (scopeKey !== nextKey) {
+        scopeKey = nextKey; readerKey = undefined;
+        activeSync?.setScope(null); activeSync = undefined;
+      }
+      const nextReaderKey = admitted ? JSON.stringify([receipt, generation]) : undefined;
+      if (!admitted || !scope || !receipt) {
+        readerKey = undefined; writeRevision++; nativeAppearance.saving.set(false); activeSync?.pause(); return;
+      }
+      if (!activeSync || readerKey !== nextReaderKey) {
+        writeRevision++; nativeAppearance.saving.set(false);
+        const request = bindRequest(receipt);
+        if (!activeSync) { activeSync = createSync(request); activeSync.setScope(scope); }
+        else activeSync.rebind(false, { scope, ...readers(request) });
+        readerKey = nextReaderKey;
+      }
+    });
+    const sync = activeSync, capturedReader = readerKey;
+    if (!admitted || !scope || !sync || !capturedReader) return;
+    const currentReader = () => {
+      const selected = app.connection();
+      return activeSync === sync && readerKey === capturedReader && lifecycle() === 'active' && generation === epoch() && sameRuntimeScope(receipt, app.runtimeScope())
+        && selected?.id === connection?.id && selected?.url === connection?.url && selected?.authorizationID === connection?.authorizationID && selected?.transportID === connection?.transportID;
+    };
     untracked(() => { void sync.refresh(); });
     // Host appearance currently has no settings revision tip. Foreground-only bounded revalidation.
-    const timer = setInterval(() => { void sync.refresh(); }, 30_000);
+    const timer = setInterval(() => { if (currentReader()) void sync.refresh(); }, 30_000);
     const stop = host.on('runtime.event', payload => {
       const event = runtimeEventFrom(payload);
-      if (event?.key === 'global' && event.type === 'reconnected') void sync.refresh();
+      if (currentReader() && event?.key === 'global' && event.type === 'reconnected') void sync.refresh();
     });
     return () => { clearInterval(timer); stop(); };
   });
   cleanup(() => {
     writeRevision++; nativeAppearance.saving.set(false);
-    mounted = false; refreshAppearance = undefined; stopErrors();
+    mounted = false; refreshAppearance = undefined; reconcileFontProjection = undefined; stopErrors(); stopFonts();
     activeSync?.setScope(null); activeSync = undefined;
   });
   return null;
@@ -134,4 +206,10 @@ export function nativeChatTextStyle(role: SemanticTypographyKey | 'user' | 'assi
 export function nativeChatSurfaceStyle(role: 'user' | 'assistant'): ViewStyle {
   const value = nativeAppearance.current();
   return value ? { backgroundColor: value.cssVars[colorScheme()][`chat-${role}`] } : {};
+}
+
+/** Code parts only: the caller retains its body typography, colors and metadata. */
+export function nativeCodeTextViewStyles(): TextViewStyles {
+  const code = nativeChatTextStyle('code');
+  return { code, codeBlockCode: { ...code, lineHeight: 20 * (code.fontSize ?? 13) / 13 } };
 }

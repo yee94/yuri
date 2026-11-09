@@ -75,7 +75,7 @@ describe.skipIf(Boolean(unavailable))(`native Relay ↔ repository JS Host${unav
     temporary = await mkdtemp(path.join(os.tmpdir(), 'yuri-nsh-relay-'));
     binary = path.join(temporary, 'relay-runner');
     await run('xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-warnings-as-errors',
-      path.join(directory, 'ios/RelayTunnel.swift'), path.join(fixtures, 'Runner.swift'), '-o', binary], 45_000);
+      path.join(directory, 'ios/RelayTunnel.swift'), path.join(directory, 'ios/SessionMessageStream.swift'), path.join(fixtures, 'Runner.swift'), '-o', binary], 45_000);
     server = launch('bun', [path.join(fixtures, 'fixture.mjs')]);
     const running = server;
     configURL = await new Promise<string>((resolve, reject) => {

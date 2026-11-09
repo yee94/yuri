@@ -1,7 +1,7 @@
 import { cleanup, effect, signal, Text, View } from 'nsh';
 import { AlertDialog, Button } from 'nsh/base';
 import { t } from './i18n';
-import { native } from './runtime';
+import { connectionSnapshotFrom, native } from './runtime';
 import { SettingsGroup, SettingsInput, settingsAction } from './settings-controls';
 import { connectionEditorDirty, connectionEditorFailureKey, connectionEditorInput, createConnectionEditor, createConnectionEditorLeaveGuard, type ConnectionEditorDescriptor, type ConnectionEditorMutation, type ConnectionEditorNavigation, type ConnectionEditorSnapshot } from './connection-editor-core';
 export type { ConnectionEditorNavigation } from './connection-editor-core';
@@ -43,7 +43,7 @@ export function NativeConnectionEditor(props: NativeConnectionEditorProps) {
     catch (failure) { if (current()) error.set(t(connectionEditorFailureKey(failure))); }
   }
   effect(() => { confirming(); props.onNavigation?.({ blocked: leave.blocked(), back: () => { void back(); } }); });
-  const editor = createConnectionEditor({ read: id => native('connection.editor', { id }), write: (method, input) => native(method, input), current });
+  const editor = createConnectionEditor({ read: id => native('connection.editor', { id }), write: async (method, input) => connectionSnapshotFrom(await native(method, input)), current });
   async function load() {
     if (busy() || !current()) return;
     busy.set(true); error.set('');

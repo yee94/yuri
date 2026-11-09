@@ -15,7 +15,7 @@ test('native Relay WebSocket admission accepts only exact desktop, dictation and
 @main struct Check {
   static func main() async throws {
     for path in ["/api/remote-desktop/ws", "/api/dictation/ws", "/api/terminal/ws"] { precondition(RelayTunnel.allowsWebSocketPath(path)) }
-    for path in ["/api/dictation/ws/", "/api/dictation/ws?extra=1", "/api/dictation/ws#fragment", "/api/dictation/%77s", "/api/dictation/../dictation/ws", "/api//dictation/ws", "https://example.invalid/api/dictation/ws", "/api/terminal/ws/", "/api/terminal/ws?extra=1", "/api/terminal/%77s", "/api/arbitrary/ws", ""] { precondition(!RelayTunnel.allowsWebSocketPath(path)) }
+    for path in ["/api/global/event/ws", "/api/dictation/ws/", "/api/dictation/ws?extra=1", "/api/dictation/ws#fragment", "/api/dictation/%77s", "/api/dictation/../dictation/ws", "/api//dictation/ws", "https://example.invalid/api/dictation/ws", "/api/terminal/ws/", "/api/terminal/ws?extra=1", "/api/terminal/%77s", "/api/arbitrary/ws", ""] { precondition(!RelayTunnel.allowsWebSocketPath(path)) }
     let original = NativeSocketInbox()
     try await original.didOpen()
     do {
@@ -35,7 +35,7 @@ test('native Relay WebSocket admission accepts only exact desktop, dictation and
     print("exact Relay path policy passed")
   }
 }`);
-    const compile = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-warnings-as-errors', '-parse-as-library', path.join(root, 'ios/RelayTunnel.swift'), program, '-o', binary], { encoding: 'utf8', timeout: 60_000 });
+    const compile = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-warnings-as-errors', '-parse-as-library', path.join(root, 'ios/RelayTunnel.swift'), path.join(root, 'ios/SessionMessageStream.swift'), program, '-o', binary], { encoding: 'utf8', timeout: 60_000 });
     expect(compile.status, compile.stdout + compile.stderr).toBe(0);
     const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 10_000 });
     expect(result.status, result.stdout + result.stderr).toBe(0);

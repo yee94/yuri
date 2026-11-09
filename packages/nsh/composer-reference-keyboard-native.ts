@@ -2,7 +2,7 @@ import { cleanup, computed, effect, keymap, signal, untracked, type InputRef } f
 import { sameReferenceScope, type ReferenceCandidate, type ReferenceScope } from './composer-references';
 import { createAutocompleteKeyboard, createReferenceKeyboard, type ReferenceKeyboardContext, type ReferenceKeyboardState } from './composer-reference-keyboard';
 import { resolveComposerAutocompleteTrigger } from '../ui/src/lib/composer-autocomplete/trigger';
-import { shouldSubmitCommandOnSelection, type NativeCommandRow, type NativeSlashCommand } from './composer-commands-model';
+import { shouldSubmitCommandOnSelection, type NativeCommandRow, type NativeSlashCommand, type NativeComposerAction } from './composer-commands-model';
 
 /** Native Input + keymap adapter shared by production Chat and the isolated headless fixture. */
 export function createNativeReferenceKeyboard(options: {
@@ -11,6 +11,8 @@ export function createNativeReferenceKeyboard(options: {
   text: () => string;
   insert: (candidate: ReferenceCandidate, start: number, end: number) => boolean;
   chooseCommand?: (command: NativeSlashCommand, submit: boolean, context: ReferenceKeyboardContext) => boolean | void;
+  commandActions?: () => readonly NativeComposerAction[];
+  commandOwner?: () => object | null;
 }) {
   const caret = signal<{ start: number; end: number } | null>(null), composing = signal(false), focused = signal(false);
   const dismissed = signal<string | null>(null), selectedRange = signal<{ start: number } | undefined>(undefined);
@@ -18,13 +20,15 @@ export function createNativeReferenceKeyboard(options: {
   const commandState = signal<{ rows: readonly NativeCommandRow[]; index: number; id?: string }>({ rows: [], index: 0 });
   let input: InputRef | undefined, unbind: (() => void) | undefined;
   let previousScope: ReferenceScope | undefined;
+  let previousCommandOwner: object | null | undefined;
   effect(() => {
-    const active = options.active(), scope = options.scope();
-    if (!active || (previousScope && !sameReferenceScope(previousScope, scope))) untracked(() => {
+    const active = options.active(), scope = options.scope(), owner = options.commandOwner?.();
+    if (!active || owner !== previousCommandOwner || (previousScope && !sameReferenceScope(previousScope, scope))) untracked(() => {
       caret.set(null); selectedRange.set(undefined); composing.set(false); focused.set(false); dismissed.set(null);
       unbind?.(); unbind = undefined;
     });
     previousScope = { ...scope };
+    previousCommandOwner = owner;
   });
   const autocomplete = computed(() => {
     const scope = options.scope();
@@ -53,14 +57,14 @@ export function createNativeReferenceKeyboard(options: {
     },
   });
   const commandCore = createAutocompleteKeyboard<NativeCommandRow>({
-    read: () => { const value = commandTrigger(); return value ? { ...value, scope: options.scope(), text: options.text(), editing: focused() } : null; },
+    read: () => { const value = commandTrigger(); return value ? { ...value, scope: options.scope(), text: options.text(), editing: focused(), owner: options.commandOwner?.() ?? undefined } : null; },
     publish: value => commandState.set(value), dismiss,
     id: row => row.presentation.id, scope: row => row.scope,
     validate: context => { const value = resolveComposerAutocompleteTrigger({ text: context.text, cursor: context.end }); return value?.kind === 'slash-command' && value.tokenStart === context.start && value.query === context.query; },
     choose: (row, context, submit) => {
       if (options.chooseCommand?.(row.command, submit, context) === false) return false;
       dismissed.set(options.text());
-      if (!shouldSubmitCommandOnSelection(row.command, submit)) {
+      if (!shouldSubmitCommandOnSelection(row.command, submit, options.commandActions?.())) {
         const next = context.end + options.text().length - context.text.length;
         caret.set({ start: next, end: next }); selectedRange.set({ start: next });
         input?.focus(); input?.setSelection(next); focused.set(true);

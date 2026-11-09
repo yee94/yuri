@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 
 const h = vi.hoisted(() => ({
   call: vi.fn(), cleanups: [] as Array<() => void>, effects: [] as Array<() => void | (() => void)>, disposers: [] as Array<() => void>,
@@ -21,21 +22,27 @@ const flush = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 const page = (ids: string[] = ['initial']) => ({ data: ids.map(id => ({ id, type: 'assistant', text: id })).reverse() });
 const emit = (type: string, data: Record<string, unknown> = {}, key = 'chat') => {
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key, data: JSON.stringify({ type, data: { sessionID: target.id, ...data } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call, key), data: JSON.stringify({ type, data: { sessionID: target.id, ...data } }) });
 };
 let read: (path: string) => unknown;
 beforeEach(() => {
+  resetIssuedStreams(h.call);
   vi.resetModules(); vi.useFakeTimers(); h.cleanups = []; h.effects = []; h.disposers = []; h.observers = []; h.listeners.clear(); h.depth = 0; h.pending = false; h.lifecycle = 'active';
   read = path => path.includes('/message?') ? page() : path.includes('/contact/messages') ? { messages: [{ id: 'contact-old', role: 'assistant', text: 'Old', ordinal: 1 }], generation: 1, revision: 1, complete: true }
     : path.startsWith('/api/session/authority-scope?') ? { id: target.id } : path === '/api/session/active' ? {} : path.endsWith('/assistants/snapshot') ? { assistants: [{ id: 'bot', working: false }] } : [];
   h.call.mockReset().mockImplementation(async (name, input) => {
+    if (name === 'runtime.stream') captureIssuedStream(h.call, input);
     if (name === 'connection.list') return { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', label: 'Fixture', url: 'https://fixture.example' }] };
     if (name === 'runtime.request') return { status: 200, body: await read(input.path) };
     return true;
   });
 });
 afterEach(() => { h.observers = []; h.disposers.forEach(stop => stop()); h.cleanups.forEach(stop => stop()); vi.useRealTimers(); });
-async function open(assistant = false) { const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(assistant ? { ...target, kind: 'assistant', id: 'bot' } : target); await flush(); return { state, chat }; }
+async function open(assistant = false) {
+  const state = await import('./state'); await state.loadConnections();
+  if (assistant) await h.call('runtime.stream', { key: 'global', path: '/api/yuri/events', expectedHost: state.app.runtimeScope() });
+  const chat = state.createChat(assistant ? { ...target, kind: 'assistant', id: 'bot' } : target); await flush(); return { state, chat };
+}
 function changes<T>(reader: () => T) { let previous = reader(); const values: T[] = []; h.observers.push(() => { const next = reader(); if (!Object.is(previous, next)) { values.push(next); previous = next; } }); return values; }
 
 it('keeps failed hydration unresolved despite live events, status success and finally; successful empty GET resolves', async () => {

@@ -10,6 +10,7 @@ import { searchFilesFrom, searchMessagesFrom, searchSessionsFrom } from './proje
 import * as core from './projects-search-core';
 import * as model from './model';
 import { withProjectsSearchFixture } from './tests/projects-search-runner.js';
+import { createProjectsScopeVM } from './tests/projects-scope-vm';
 
 type Host = { call(name: string, input: unknown): { status: number; body: unknown } };
 type Fixture = { directory: string; entry: string; host: string };
@@ -31,13 +32,14 @@ function isolatedHost() {
   return withProjectsSearchFixture(root, (fixture: Fixture) => (evaluateBundle(fixture.host).createHost as () => Host)());
 }
 const audit = (host: Host) => host.call('projectsSearch.fixture.audit', {}) as unknown as { calls: Array<{ path: string; query?: string; directory?: string }>; rejected: number };
-const request = (host: Host, path: string, method = 'GET') => host.call('runtime.request', { path, method });
+const expectedHost = { hostID: 'search-fixture', lease: 'projects-fixture-lease' };
+const request = (host: Host, path: string, method = 'GET') => host.call('runtime.request', { path, method, expectedHost });
 function controllerFor(host: Host, focus: () => string | undefined) {
   const source = ts.transpileModule(readFileSync(path.join(root, 'projects-search.tsx'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React } }).outputText;
-  const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set(next: T) { value = next; } }); };
+  const scope = createProjectsScopeVM((name, input) => host.call(name, input), 'search-fixture', host.call('connection.list', {}));
   const imports: Record<string, unknown> = {
-    nsh: { signal, cleanup() {} }, 'nsh/base': {}, './Icon': {}, './i18n': {}, './model': model, './projects-search-core': core,
-    './state': { epoch: () => 1 }, './runtime': { request: async (path: string) => { const response = request(host, path); if (response.status !== 200) throw new Error(`Fixture HTTP ${response.status}`); return response.body; } },
+    nsh: scope.native, 'nsh/base': {}, './Icon': {}, './i18n': {}, './model': model, './projects-search-core': core,
+    './state': scope.state, './page-operations': scope.operations,
   };
   const exports: Record<string, unknown> = {};
   vm.runInNewContext(source, { exports, require: (id: string) => { if (!(id in imports)) throw new Error('Unexpected controller dependency: ' + id); return imports[id]; } });
@@ -78,6 +80,17 @@ describe('search fixture standalone bundle (no engine, real Host, or browser URL
     expect(request(host, `/api/yuri/content-search?q=${encodeURIComponent(query)}&limit=30`).status).toBe(200);
     expect(audit(host).calls[0].query).toBe(query);
   });
+  it('rejects missing, forged and old Host leases before counting a search read', async () => {
+    const host = isolatedHost(), scope = createProjectsScopeVM((name, input) => host.call(name, input), 'search-fixture', host.call('connection.list', {}));
+    const lane = scope.state.captureHostOperation();
+    await lane.request('/api/session?parentID=null&limit=30&order=desc');
+    const before = audit(host).calls.length;
+    for (const forged of [undefined, { hostID: 'old-host', lease: 'projects-fixture-lease' }, { hostID: 'search-fixture', lease: 'old-lease' }]) {
+      expect(() => host.call('runtime.request', { path: '/api/session?parentID=null&limit=30&order=desc', method: 'GET', expectedHost: forged })).toThrow('Missing exact Projects fixture lease');
+    }
+    expect(audit(host).calls).toHaveLength(before); expect(audit(host).rejected).toBe(3);
+    scope.dispose();
+  });
   it.each([
     'https://fixture.invalid/api/session?parentID=null&limit=30&order=desc', '//fixture.invalid/api/session', '/api/session#fragment',
     '/api/session?parentID=null&limit=30&order=desc&directory=%2Fother', '/api/session?parentID=null&limit=30&order=desc&search=',
@@ -105,7 +118,7 @@ describe('search fixture standalone bundle (no engine, real Host, or browser URL
       expect(() => withProjectsSearchFixture(root, (fixture: Fixture) => {
         directory = fixture.directory; expect(paths.has(directory)).toBe(false); paths.add(directory);
         const config = JSON.parse(readFileSync(path.join(directory, 'nsh.json'), 'utf8'));
-        expect(config.capabilities.host).toEqual(['runtime.request', 'projectsSearch.fixture.audit']);
+        expect(config.capabilities.host).toEqual(['connection.list', 'runtime.request', 'projectsSearch.fixture.audit']);
         expect(path.dirname(fixture.host)).toBe(directory); expect(existsSync(fixture.host)).toBe(true);
         expect(readFileSync(path.join(directory, fixture.entry), 'utf8')).toBe(`import ${JSON.stringify(path.join(root, 'projects-search-fixture.tsx'))};\n`);
         throw new Error('Deliberate runner failure');

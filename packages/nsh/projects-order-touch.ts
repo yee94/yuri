@@ -18,7 +18,7 @@ export function createProjectsSessionDrag(options: {
   generation(): number;
   scroll: ProjectsOrderScroll;
   changed(value: ProjectsSessionDragProjection | null): void;
-  commit(active: string, over: string): void;
+  commit(active: string, over: string, visibleIDs: readonly string[]): void;
 }) {
   let serial = 0, disposed = false;
   let hold: ReturnType<typeof setTimeout> | undefined, tick: ReturnType<typeof setTimeout> | undefined;
@@ -122,15 +122,16 @@ export function createProjectsSessionDrag(options: {
       project(value);
       if (!tick && value.frames) tick = setTimeout(autoScroll, 16);
     },
-    finish(id: string, event?: Pick<Touch, 'identifier' | 'touches'>) {
+    finish(id: string, event?: Pick<Touch, 'identifier' | 'touches'> & Partial<Pick<Touch, 'pageY'>>) {
       const value = active;
       if (!value || id !== value.id) return;
       if (event && (event.identifier !== value.finger || event.touches.length > 0)) { cancel(); return; }
+      if (valid(value)) { if (typeof event?.pageY === 'number' && Number.isFinite(event.pageY)) value.latestY = event.pageY; project(value); }
       const ids = options.ids();
       const commit = valid(value) && value.frames && value.over && value.over !== value.id && ids.length === value.ids.length && ids.every((id, i) => id === value.ids[i]);
       const over = value.over;
       cancel(value.claimed);
-      if (commit && over) options.commit(value.id, over);
+      if (commit && over) options.commit(value.id, over, value.ids);
     },
     claimed: (id: string) => !!active && active.id === id && active.claimed && valid(active),
     consumeClick(id: string) { if (suppressed !== id) return false; suppressed = undefined; return true; },

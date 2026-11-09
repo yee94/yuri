@@ -55,6 +55,7 @@ import Foundation
         try records.commit(renamed) { committed = $0 }
         let restored = try JSONDecoder().decode(ConnectionEditorRecords.self, from: committed)
         require(restored.connections[1].label == "Renamed" && restored.connections.count == 3 && restored.selected == a.id, "Committed round-trip failed")
+        require(restored.connections.allSatisfy { $0.publicValue["transportID"] is String }, "Committed snapshot has no durable transport identity")
         expect(.stale) { _ = try records.editing(input(a.id)) }
         expect(.missing) { _ = try records.editing(input("removed")) }
         for label in ["", "   ", "a\nb", String(repeating: "x", count: 121), String(repeating: "😀", count: 61)] { expect(.invalid) { _ = try input(direct.id, label) } }

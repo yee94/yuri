@@ -11,7 +11,7 @@ async function renderer(autoAck = true) {
   const root = path.dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(path.join(root, 'ios/NativeTerminalPreview.swift'), 'utf8').split('static let bootstrap = #"""')[1].split('"""#')[0];
   const events: Record<string, unknown>[] = [], writes: string[] = [], scrolls: number[] = [], copies: string[] = [];
-  const state = { selection: '', bracketed: false, autoAck, onInput: undefined as ((value: Record<string, unknown>) => void) | undefined };
+  const state = { selection: '', bracketed: false, autoAck, fits: 0, constructions: 0, cols: 80, rows: 24, options: {} as Record<string, unknown>, onInput: undefined as ((value: Record<string, unknown>) => void) | undefined };
   const nodes = new Map<string, { value: string; listeners: Map<string, (event: Record<string, unknown>) => void>; focus: () => void; blur: () => void; setAttribute: () => void; addEventListener: (name: string, listener: (event: Record<string, unknown>) => void) => void }>();
   for (const id of ['terminal', 'input']) nodes.set(id, { value: '', listeners: new Map(), focus() {}, blur() {}, setAttribute() {}, addEventListener(name, listener) { this.listeners.set(name, listener); } });
   const documentListeners = new Map<string, (value: unknown) => void>();
@@ -28,8 +28,12 @@ async function renderer(autoAck = true) {
     execCommand: (name: string) => { expect(name).toBe('copy'); documentListeners.get('copy')?.({ preventDefault() {}, clipboardData: { setData: (_type: string, text: string) => copies.push(text) } }); return true; },
   }, WebAssembly: { compile: async () => ({}), instantiate: async () => ({}) }, atob: () => '', Uint8Array,
     ResizeObserver: class { observe() {} disconnect() {} },
-    GhosttyWeb: { Ghostty: class {}, FitAddon: class { fit() {} }, Terminal: class {
-      cols = 80; rows = 24; loadAddon() {} open() {} onData() {} reset() {} dispose() {}
+    GhosttyWeb: { Ghostty: class {}, FitAddon: class { fit() {
+      state.fits++; state.cols = Math.floor(1040 / Number(state.options.fontSize)); state.rows = Math.floor(624 / (Number(state.options.fontSize) * 2));
+    } }, Terminal: class {
+      options: Record<string, unknown>;
+      constructor(options: Record<string, unknown>) { this.options = options; state.options = options; state.constructions++; }
+      get cols() { return state.cols; } get rows() { return state.rows; } loadAddon() {} open() {} onData() {} reset() {} dispose() {}
       onScroll() {} onSelectionChange() {} hasSelection() { return !!state.selection; } getSelection() { return state.selection; }
       hasBracketedPaste() { return state.bracketed; }
       getViewportY() { return scrolls.reduce((a, b) => a + b, 0); }
@@ -46,8 +50,47 @@ async function renderer(autoAck = true) {
   };
   const inputs = () => events.filter(value => value.type === 'input');
   const settle = (value: Record<string, unknown>, status: string) => (window.terminalInputResult as (value: unknown) => void)({ key: value.key, receipt: value.receipt, status });
-  return { state, events, writes, scrolls, copies, nodes, input, fire, render, inputs, settle };
+  return { state, events, writes, scrolls, copies, nodes, input, fire, render, inputs, settle, fontPreferences: window.terminalFontPreferences as (value: unknown) => void };
 }
+
+it('production font preferences update the existing terminal without changing composing input, output, or receipts', async () => {
+  const f = await renderer(false); f.render({ type: 'render', key: 'tab-a', live: true, serial: 1, chunks: [{ id: 1, data: 'prior output' }] });
+  f.input.value = 'pending'; f.fire('input');
+  f.fire('compositionstart'); f.input.value = '拼音未提交'; f.state.selection = 'selected output';
+  const writes = [...f.writes], events = [...f.events], fits = f.state.fits;
+  f.fontPreferences({ fontSize: 26, fontFamily: 'Mono' });
+  expect(f.state.options.fontSize).toBe(26); expect(f.state.constructions).toBe(1); expect(f.state.fits).toBe(fits + 1);
+  expect(f.input.value).toBe('拼音未提交'); expect(f.state.selection).toBe('selected output');
+  expect(f.writes).toEqual(writes); expect(f.events.filter(value => value.type !== 'resize')).toEqual(events.filter(value => value.type !== 'resize'));
+  f.fontPreferences({ fontSize: 26, fontFamily: 'Mono' }); expect(f.state.fits).toBe(fits + 1);
+  for (const size of [8, 53, NaN, '13']) expect(() => f.fontPreferences({ fontSize: size, fontFamily: 'Mono' })).toThrow();
+  expect(f.state.options.fontSize).toBe(26);
+  f.fire('input', { isComposing: true }); expect(f.inputs()).toHaveLength(1);
+  f.settle(f.inputs()[0], 'accepted'); f.fire('compositionend');
+  expect(f.inputs().at(-1)?.data).toBe('拼音未提交');
+});
+
+it('font 13→26 emits exact post-fit geometry without a container ResizeObserver event; same preferences never fit or notify again', async () => {
+  const f = await renderer(); f.render({ type: 'render', key: 'tab-a', live: true, chunks: [] });
+  const fits = f.state.fits, events = f.events.length;
+  f.fontPreferences({ fontSize: 26, fontFamily: 'Mono' });
+  expect(f.state.fits).toBe(fits + 1);
+  expect(f.state).toMatchObject({ cols: 40, rows: 12 });
+  expect(f.events.slice(events)).toEqual([{ type: 'resize', key: 'tab-a', cols: 40, rows: 12 }]);
+  f.fontPreferences({ fontSize: 26, fontFamily: 'Mono' });
+  expect(f.state.fits).toBe(fits + 1); expect(f.events).toHaveLength(events + 1); expect(f.state.constructions).toBe(1);
+});
+
+it('touch callback maps the same 180px delta to 10 rows at 13pt and 5 rows at the current 26pt font', async () => {
+  const f = await renderer(); f.render({ type: 'render', key: 'tab-a', live: true, chunks: [] });
+  const terminal = f.nodes.get('terminal')!;
+  const touch = (type: string, clientY: number) => terminal.listeners.get(type)?.({ preventDefault() {}, stopPropagation() {}, pointerType: 'touch', pointerId: 1, clientX: 20, cancelable: true, clientY });
+  touch('pointerdown', 100); touch('pointermove', 55); touch('pointercancel', 55);
+  expect(f.scrolls).toEqual([10]);
+  f.fontPreferences({ fontSize: 26, fontFamily: 'Mono' });
+  touch('pointerdown', 100); touch('pointermove', 55); touch('pointercancel', 55);
+  expect(f.scrolls).toEqual([10, 5]); expect(f.inputs()).toHaveLength(0);
+});
 
 it('production bootstrap preserves IME commit, Ctrl input, output ACK and touch scrolling', async () => {
   const f = await renderer();

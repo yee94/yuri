@@ -6,6 +6,7 @@ import NativeShell
 /// construction, connection persistence and lifecycle fences remain production code.
 @MainActor struct RuntimeHostIO {
     let json: (URLRequest, SavedConnection) async throws -> (Int, Any)
+    var managementJSON: ((URLRequest, SavedConnection) async throws -> (Int, [String: String], [String: Any]))? = nil
 }
 
 struct SpeechResourceResponse {
@@ -37,44 +38,21 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
-@MainActor private final class SSEEvents {
-    private var line = Data()
-    private var eventLines: [String] = []
-    private var eventSize = 0
-    private var previousCR = false
-    let emit: (String) -> Void
-    init(emit: @escaping (String) -> Void) { self.emit = emit }
-    func consume(_ data: Data) throws { for byte in data { try consume(byte) } }
-    func consume(_ byte: UInt8) throws {
-        if previousCR && byte == 10 { previousCR = false; return }
-        previousCR = false
-        if byte == 10 || byte == 13 {
-            previousCR = byte == 13
-            guard let value = String(data: line, encoding: .utf8) else { throw NativeFailure.message("事件不是有效的 UTF-8 文本") }
-            if line.isEmpty {
-                if !eventLines.isEmpty { emit(eventLines.joined(separator: "\n")) }
-                eventLines.removeAll(keepingCapacity: true); eventSize = 0
-            } else if value.hasPrefix("data:") {
-                let content = value.dropFirst(5)
-                eventSize += line.count + 1
-                guard eventSize <= 2_000_000 else { throw NativeFailure.message("事件超过大小限制") }
-                eventLines.append(String(content.first == " " ? content.dropFirst() : content))
-            }
-            line.removeAll(keepingCapacity: true)
-        } else {
-            guard line.count < 2_000_000 else { throw NativeFailure.message("事件超过大小限制") }
-            line.append(byte)
-        }
-    }
-}
-
 @MainActor final class RuntimeBridge {
+    /// Synthetic I/O only; production admission/auth/registry stay on this owner.
+    struct SessionStreamIO {
+        let open: (URLRequest, RelayTunnel?, String?) async throws -> SessionStreamSocket
+        let sse: (URLRequest, RelayTunnel?, @escaping () -> Void, @escaping (Data) throws -> Void) async throws -> Void
+        var mint: ((URLRequest, RelayTunnel) async throws -> (Int, [String: String], Any))? = nil
+    }
+    var sessionStreamIO: SessionStreamIO?
     let store: ConnectionStore
     private weak var app: NshAppView?
     private let session: URLSession
     private var streams: [String: Task<Void, Never>] = [:]
     private var streamTokens: [String: UUID] = [:]
     private var streamScopes: [String: RuntimeHostScope] = [:]
+    private var chatStreamOwner: String?
     private var generation = 0
     private var connectionAttempt = 0
     private var tunnels: [String: RelayTunnel] = [:]
@@ -90,6 +68,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     private var terminalResources: [UUID: () -> Void] = [:]
     private let hostAuthority = RuntimeHostAuthority()
     private var runtimeRequests: [UUID: Task<(Int, Any), Error>] = [:]
+    private var passkeySessions: [String: PasskeyManagementSession] = [:]
     var onInvalidate: (() -> Void)?
     /// Native-only exact old authorization cleanup. Never fired for ordinary
     /// invalidation, rename/select, background, or an uncommitted store write.
@@ -151,21 +130,34 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         }
         app.handle("runtime.stream") { [weak self] input async throws -> Any? in
             guard let self else { return nil }
-            guard let body = input as? [String: Any], Set(body.keys) == ["path", "key", "expectedHost"] else { throw RuntimeHostScopeFailure.invalid }
+            guard let body = input as? [String: Any] else { throw RuntimeHostScopeFailure.invalid }
+            let chat = body["key"] as? String == "chat"
+            guard Set(body.keys) == (chat ? ["path", "key", "expectedHost", "mode", "ownerID"] : ["path", "key", "expectedHost"]) else { throw RuntimeHostScopeFailure.invalid }
             let path = try self.string(body, "path"), key = try self.string(body, "key")
             let expected = try RuntimeHostScope(body["expectedHost"])
             let admission = try self.admit(expected, required: true)
+            if chat {
+                guard let rawMode = body["mode"] as? String, let mode = SessionStreamMode(rawValue: rawMode),
+                      let ownerID = body["ownerID"] as? String, Self.validStreamOwner(ownerID) else { throw RuntimeHostScopeFailure.invalid }
+                try self.sessionStream(path: path, mode: mode, ownerID: ownerID, admission: admission); return true
+            }
             try self.stream(path: path, key: key, admission: admission); return true
         }
         app.handle("runtime.stop") { [weak self] input async throws -> Any? in
-            guard let self, let body = input as? [String: Any], Set(body.keys) == ["key", "expectedHost"],
+            guard let self, let body = input as? [String: Any],
                   let key = body["key"] as? String, ["global", "chat"].contains(key) else { throw RuntimeHostScopeFailure.invalid }
+            guard Set(body.keys) == (key == "chat" ? ["key", "expectedHost", "ownerID"] : ["key", "expectedHost"]) else { throw RuntimeHostScopeFailure.invalid }
             let expected = try RuntimeHostScope(body["expectedHost"])
+            if key == "chat" {
+                guard let ownerID = body["ownerID"] as? String, Self.validStreamOwner(ownerID) else { throw RuntimeHostScopeFailure.invalid }
+                guard self.chatStreamOwner == ownerID else { return true }
+            }
             // Cleanup never adopts current authority. An old scope can only
             // release the exact old stream, never a new Host/lease's same key.
             if self.streamScopes[key] == expected {
                 self.streamScopes.removeValue(forKey: key); self.streamTokens.removeValue(forKey: key)
                 self.streams.removeValue(forKey: key)?.cancel()
+                if key == "chat" { self.chatStreamOwner = nil }
             }
             return true
         }
@@ -187,9 +179,11 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         retireResources()
     }
     private func retireResources() {
+        let management = passkeySessions; passkeySessions.removeAll(); management.values.forEach { $0.retire() }
         let gui = guiResources; guiResources.removeAll(); gui.values.forEach { $0() }
         generation += 1; connectionAttempt += 1; streams.values.forEach { $0.cancel() }; streams.removeAll(); streamTokens.removeAll()
         streamScopes.removeAll()
+        chatStreamOwner = nil
         runtimeRequests.values.forEach { $0.cancel() }; runtimeRequests.removeAll()
         resourceTasks.values.forEach { $0.cancel() }; resourceTasks.removeAll()
         speechTasks.values.forEach { $0.cancel() }; speechTasks.removeAll()
@@ -349,8 +343,65 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         let expected = try args["expectedHost"].map { try RuntimeHostScope($0) }
         let admission = try admit(expected, required: method != "GET")
         let connection = admission.connection
+        if PasskeyWire.management(path, method) {
+            guard args["body"] == nil || args["body"] is [String: Any] else { throw PasskeyFailure.invalid }
+            let transport = try passkeyTransport(expectedHost: admission.expectedHost)
+            let (status, body) = try await transport.request(path, method, args["body"] as? [String: Any])
+            return ["status": status, "body": body]
+        }
         let (status, value) = try await scopedJSON(makeRequest(path, connection: connection, method: method, body: args["body"]), connection: connection, scope: admission.generation, expectedHost: admission.expectedHost)
         return ["status": status, "body": value]
+    }
+    /// Native management has a separate full UI-session cookie owner. Never
+    /// promote a client bearer, use Relay, or alter Host scope classification.
+    func passkeyTransport(expectedHost: RuntimeHostScope) throws -> PasskeyTransport {
+        let admission = try admit(expectedHost, required: true), connection = admission.connection
+        guard connection.relay == nil else { throw PasskeyFailure.locked }
+        let key = connection.id + "\n" + (connection.authorizationID ?? "legacy")
+        let current = { [weak self] in
+            guard let self else { return false }
+            return (try? self.checkHost(connection, generation: admission.generation, expected: expectedHost)) != nil
+        }
+        let owner: PasskeyManagementSession
+        if let existing = passkeySessions[key] { owner = existing }
+        else {
+            owner = PasskeyManagementSession(origin: connection.url, current: current) { [weak self] request in
+                guard let self, current() else { throw CancellationError() }
+                // The test seam sees the constructed request, including absence of
+                // paired-client Authorization. Production reads bounded JSON only.
+                if let io = self.hostIO {
+                    if let management = io.managementJSON { return try await management(request, connection) }
+                    let (status, body) = try await io.json(request, connection)
+                    guard let body = body as? [String: Any] else { throw PasskeyFailure.response }
+                    return (status, [:], body)
+                }
+                let (response, data) = try await Self.boundedBytes(request, session: self.session, limit: 1024 * 1024)
+                guard current(), response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.lowercased() == "application/json",
+                      let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw PasskeyFailure.response }
+                var headers: [String: String] = [:]
+                for (key, value) in response.allHeaderFields { if let key = key as? String { headers[key] = String(describing: value) } }
+                return (response.statusCode, headers, body)
+            }
+            passkeySessions[key] = owner
+        }
+        var cleaned = false
+        return PasskeyTransport(origin: connection.url, isCurrent: current, request: owner.request, bind: owner.bind, complete: owner.complete, cancel: owner.cancel, reset: { [weak self] in
+            guard let self else { throw CancellationError() }
+            if !cleaned {
+                guard owner.resetAcknowledged else { throw PasskeyFailure.reset }
+                // Before the first committed cleanup the captured lease must still be
+                // valid; retries never remove a newly authorized connection.
+                guard current() else { throw CancellationError() }
+                try self.store.remove(connection.id)
+                cleaned = true; owner.retire(); self.passkeySessions.removeValue(forKey: key)
+                self.stop()
+            }
+            if let authorization = connection.authorizationID {
+                let retirement = try AuthorizationRetirement(connectionID: connection.id, authorizationID: authorization)
+                await self.retireAuthorization(retirement)
+            }
+            guard !self.store.pendingAuthorizationRetirements.contains(where: { $0.connectionID == connection.id && $0.authorizationID == connection.authorizationID }) else { throw PasskeyFailure.cleanup }
+        }, onRetire: owner.observeRetirement)
     }
     /// Captured native admission, never the latest lease at dispatch time. All
     /// terminal HTTP/WS/SSE use this exact connection and its authorized Relay.
@@ -740,6 +791,15 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             guard let self else { return false }
             return (try? self.checkHost(admission.connection, generation: admission.generation, expected: admission.expectedHost)) != nil
         }
+        let capturedScheme = admission.connection.url.scheme?.lowercased()
+        let capturedHost = admission.connection.url.host?.lowercased()
+        let capturedPort = admission.connection.url.port ?? (capturedScheme == "https" ? 443 : 80)
+        let isHostResourceURL: (URL) -> Bool = { url in
+            guard current(), url.user == nil, url.password == nil,
+                  let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+                  let host = url.host?.lowercased(), scheme == capturedScheme, host == capturedHost else { return false }
+            return (url.port ?? (scheme == "https" ? 443 : 80)) == capturedPort
+        }
         let open: (RuntimeHostScope, GuiPluginPreviewRequest) async throws -> GuiPluginPreviewByteStream = { [weak self] expected, request in
             guard let self, expected == admission.expectedHost else { throw CancellationError() }
             return try await self.openGuiPlugin(request, admission: admission)
@@ -753,7 +813,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             let data = await buffer.value()
             guard current() else { throw CancellationError() }
             return GuiPluginPreviewResponse(status: stream.status, mime: stream.mime, data: data, headers: stream.headers)
-        }, openGui: open)
+        }, openGui: open, isHostResourceURL: isHostResourceURL)
     }
     private func openGuiPlugin(_ input: GuiPluginPreviewRequest, admission: HostAdmission) async throws -> GuiPluginPreviewByteStream {
         let check = { [self] in try checkHost(admission.connection, generation: admission.generation, expected: admission.expectedHost) }
@@ -904,7 +964,8 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             guard let self, current() else { throw CancellationError() }
             guard limit > 0, limit <= 25 * 1024 * 1024,
                   let parts = URLComponents(string: path),
-                  parts.path == "/api/fs/stat" || parts.path.hasPrefix("/api/fs/serve/") else { throw NativeFailure.message("无效的文件读取请求") }
+                  parts.path == "/api/fs/stat" || parts.path.hasPrefix("/api/fs/serve/") ||
+                  parts.query == nil && parts.percentEncodedPath.range(of: "^/api/yuri/assistants/[^/]+/contact/attachments/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", options: .regularExpression) != nil else { throw NativeFailure.message("无效的文件读取请求") }
             var request = try self.makeRequest(path, connection: connection)
             request.setValue("*/*", forHTTPHeaderField: "Accept")
             let ticket = UUID()
@@ -982,17 +1043,110 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         }
         return (response, data)
     }
-    func attachmentUploader() throws -> (Data, String, String) async throws -> [String: Any] {
-        try requireForeground()
-        guard let connection = store.selected else { throw NativeFailure.message("请先连接设备") }
-        let scope = generation
+    func contactAttachmentOperation(expectedHost: RuntimeHostScope, assistantID: String, expectedGeneration: Int, requestID: String, context: AttachmentDraftContext, journal: AttachmentReceiptJournal) async throws -> NativeAttachmentOperation {
+        let admission = try admit(expectedHost, required: true)
+        let connection = admission.connection
+        guard let authorizationID = connection.authorizationID, let transportID = connection.transportID, let connectionVersion = connection.editorVersion else { throw AttachmentUploadFailure.authorizationUnavailable }
+        let policy = try AttachmentUploadPolicy(assistantID: assistantID)
+        let current = { [weak self] in
+            guard let self else { return false }
+            return (try? self.checkHost(connection, generation: admission.generation, expected: admission.expectedHost)) != nil
+                && (try? self.store.attachmentConnection(connectionID: connection.id, transportID: transportID, authorizationID: authorizationID, version: connectionVersion)) != nil
+        }
+        let send: AttachmentUploadPolicy.Send = { [weak self] upload in
+            guard let self else { throw CancellationError() }
+            try self.checkHost(connection, generation: admission.generation, expected: admission.expectedHost)
+            _ = try self.store.attachmentConnection(connectionID: connection.id, transportID: transportID, authorizationID: authorizationID, version: connectionVersion)
+            var request = try self.makeRequest(upload.path, connection: connection, method: upload.method)
+            if !upload.data.isEmpty { request.httpBody = upload.data }
+            request.timeoutInterval = 120
+            for (key, value) in upload.headers { request.setValue(value, forHTTPHeaderField: key) }
+            let result = try await self.scopedJSON(request, connection: connection, scope: admission.generation, expectedHost: admission.expectedHost)
+            _ = try self.store.attachmentConnection(connectionID: connection.id, transportID: transportID, authorizationID: authorizationID, version: connectionVersion)
+            return result
+        }
+        try await policy.prepare(expectedGeneration: expectedGeneration, current: current, send: send)
+        let record = try AttachmentReceiptRecord(["requestID": requestID, "uploadID": policy.uploadID, "assistantID": assistantID, "generation": expectedGeneration,
+            "connectionID": connection.id, "transportID": transportID, "authorizationID": authorizationID, "connectionVersion": connectionVersion, "draftID": context.identity, "draftRevision": context.revision,
+            "pageOperation": context.pageOperation, "phase": "prepared", "descriptor": NSNull()])
+        try journal.insert(record)
+        policy.persist = { try journal.update(requestID: requestID, uploadID: policy.uploadID, phase: $0, descriptor: $1) }
+        // This closure is native-only and can issue only this policy's exact
+        // retirement. It keeps the original authenticated transport, never a new lease.
+        let cleanup: AttachmentUploadPolicy.Send = { [weak self] upload in
+            guard let self, upload.method == "DELETE" else { throw CancellationError() }
+            _ = try self.store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)
+            var request = try self.makeRequest(upload.path, connection: connection, method: "DELETE")
+            request.httpBody = upload.data
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            return try await self.json(request, connection: connection)
+        }
+        return NativeAttachmentOperation(upload: { data, name, mime in
+            do { return try await policy.upload(data, name: name, mime: mime, current: current, send: send) }
+            catch { if !policy.attempted { throw AttachmentUploadFailure.notDispatched }; throw error }
+        }, reconcile: { try await policy.reconcile(current: current, send: send) }, retire: {
+            if !policy.retired { try await policy.retire(send: cleanup) }
+            try journal.remove(requestID: requestID, uploadID: policy.uploadID)
+        }, acknowledge: {
+            // The original adopter already completed its CAS and durable write.
+            // Releasing that exact local receipt after page/lease retirement is
+            // not a new admission or a transport request.
+            try policy.acknowledge($0, current: {
+                (try? self.store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)) != nil
+            })
+            try journal.remove(requestID: requestID, uploadID: policy.uploadID)
+        }, dispatched: { policy.attempted })
+    }
+    /// Cold restoration never captures a PUT capability. Original credential
+    /// identity must resolve in Keychain for every GET/DELETE, including retry.
+    func validateAttachmentHost(_ expectedHost: RuntimeHostScope) throws { _ = try admit(expectedHost, required: true) }
+    func restoreAttachmentOperation(_ record: AttachmentReceiptRecord, expectedHost: RuntimeHostScope? = nil, journal: AttachmentReceiptJournal) throws -> NativeAttachmentOperation {
+        let admission = try expectedHost.map { try admit($0, required: true) }
+        if let admission, admission.connection.id != record.connectionID { throw AttachmentUploadFailure.authorizationUnavailable }
+        _ = try store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)
+        let policy = try AttachmentUploadPolicy(restoringAssistant: record.assistantID, uploadID: record.uploadID, generation: record.generation, descriptor: record.descriptor, phase: record.phase)
+        policy.persist = { try journal.update(requestID: record.requestID, uploadID: record.uploadID, phase: $0, descriptor: $1) }
+        let current = { [weak self] in
+            guard let self, let admission else { return false }
+            return (try? self.checkHost(admission.connection, generation: admission.generation, expected: admission.expectedHost)) != nil
+        }
+        let send: AttachmentUploadPolicy.Send = { [weak self] request in
+            guard let self, request.method == "GET" || request.method == "DELETE" else { throw AttachmentUploadFailure.invalid }
+            let connection = try self.store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)
+            var wire = try self.makeRequest(request.path, connection: connection, method: request.method)
+            if !request.data.isEmpty { wire.httpBody = request.data }
+            for (key, value) in request.headers { wire.setValue(value, forHTTPHeaderField: key) }
+            let result = try await self.json(wire, connection: connection)
+            _ = try self.store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)
+            return result
+        }
+        return NativeAttachmentOperation(upload: { _, _, _ in throw AttachmentUploadFailure.invalid }, reconcile: {
+            try await policy.reconcile(current: current, send: send)
+        }, retire: {
+            if !policy.retired { try await policy.retire(send: send) }
+            try journal.remove(requestID: record.requestID, uploadID: record.uploadID)
+        }, acknowledge: {
+            try policy.acknowledge($0, current: {
+                (try? self.store.attachmentConnection(connectionID: record.connectionID, transportID: record.transportID, authorizationID: record.authorizationID, version: record.connectionVersion)) != nil
+            })
+            try journal.remove(requestID: record.requestID, uploadID: record.uploadID)
+        })
+    }
+    func attachmentUploader(expectedHost: RuntimeHostScope? = nil, assistantID: String? = nil) throws -> (Data, String, String) async throws -> [String: Any] {
+        let admission = try admit(expectedHost, required: assistantID != nil)
+        let connection = admission.connection
+        let scope = admission.generation
+        if let assistantID {
+            _ = assistantID
+            throw AttachmentUploadFailure.invalid // contacts must capture/probe before picker presentation
+        }
         return { [weak self] data, name, mime in
             guard let self else { throw CancellationError() }
-            try self.checkHost(connection, generation: scope)
+            try self.checkHost(connection, generation: scope, expected: admission.expectedHost)
             guard !data.isEmpty, data.count <= 25 * 1024 * 1024 else { throw NativeFailure.message("附件须为非空文件，且不超过 25 MiB") }
             let digest = await Task.detached(priority: .userInitiated) { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }.value
             try Task.checkCancellation()
-            try self.checkHost(connection, generation: scope)
+            try self.checkHost(connection, generation: scope, expected: admission.expectedHost)
             let identifier = UUID().uuidString.lowercased()
             var request = try self.makeRequest("/api/fs/prompt-attachments/\(identifier)?storage=temporary", connection: connection, method: "PUT")
             request.httpBody = data
@@ -1003,9 +1157,9 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             request.setValue(mime, forHTTPHeaderField: "X-Yuri-Mime")
             let componentCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
             request.setValue(name.addingPercentEncoding(withAllowedCharacters: componentCharacters), forHTTPHeaderField: "X-Yuri-Filename")
-            let (status, body) = try await self.scopedJSON(request, connection: connection, scope: scope)
+            let (status, body) = try await self.scopedJSON(request, connection: connection, scope: scope, expectedHost: admission.expectedHost)
             try Task.checkCancellation()
-            try self.checkHost(connection, generation: scope)
+            try self.checkHost(connection, generation: scope, expected: admission.expectedHost)
             guard status == 200, let result = body as? [String: Any], result["success"] as? Bool == true,
                   let hostPath = result["path"] as? String,
                   result["sha256"] as? String == digest, result["size"] as? Int == data.count else { throw NativeFailure.message("附件上传失败 (\(status))，请重新选择文件重试") }
@@ -1073,10 +1227,8 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
                 var transport: RelayTunnel?
                 let endpoint: URL
                 if candidate["type"] as? String == "relay" {
-                    guard let address = candidate["relayUrl"] as? String, var components = URLComponents(string: address), let server = candidate["serverId"] as? String, let key = candidate["hostEncPubJwk"] as? [String: String] else { throw NativeFailure.message("无效的 Relay 配对信息") }
-                    components.scheme = components.scheme?.lowercased(); components.host = components.host?.lowercased()
-                    if (components.scheme == "wss" && components.port == 443) || (components.scheme == "ws" && components.port == 80) { components.port = nil }
-                    guard let canonical = components.string else { throw NativeFailure.message("无效的 Relay 地址") }
+                    guard let address = candidate["relayUrl"] as? String, let server = candidate["serverId"] as? String, let key = candidate["hostEncPubJwk"] as? [String: String] else { throw NativeFailure.message("无效的 Relay 配对信息") }
+                    let canonical = try RelayConfiguration.canonicalAddress(address)
                     configuration = RelayConfiguration(relayUrl: canonical, serverId: server, hostEncPubJwk: key)
                     transport = try RelayTunnel(relayUrl: canonical, serverId: server, hostEncPubJwk: key)
                     // This origin is a routing placeholder; Relay never opens an HTTP connection to it.
@@ -1135,7 +1287,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         return value
     }
     private func stream(path: String, key: String, admission: HostAdmission) throws {
-        guard ["global", "chat"].contains(key), path == "/api/yuri/events" || path.hasPrefix("/api/event?") else { throw NativeFailure.message("不支持的事件流") }
+        guard key == "global", path == "/api/yuri/events" else { throw NativeFailure.message("不支持的事件流") }
         let connection = admission.connection, scope = admission.generation, expected = admission.expectedHost
         try checkHost(connection, generation: scope, expected: expected)
         var request = try makeRequest(path, connection: connection)
@@ -1201,6 +1353,116 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
                 delay = min(delay * 2, 30)
             }
         }
+    }
+
+    private static func validStreamOwner(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 128 && value.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
+    }
+    private func sessionStream(path: String, mode: SessionStreamMode, ownerID: String, admission: HostAdmission) throws {
+        guard let parts = URLComponents(string: path), parts.scheme == nil, parts.host == nil, parts.fragment == nil,
+              parts.path == "/api/event", let items = parts.queryItems, items.count == 1,
+              items[0].name == "directory", let directory = items[0].value, !directory.isEmpty,
+              !directory.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw RuntimeHostScopeFailure.invalid }
+        let connection = admission.connection, scope = admission.generation, expected = admission.expectedHost
+        try checkHost(connection, generation: scope, expected: expected)
+        var request = try makeRequest(path, connection: connection)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept"); request.timeoutInterval = 3600
+        // Complete all synchronous validation before replacing the authorized stream.
+        guard connection.relay == nil || !connection.token.isEmpty else { throw RuntimeHostScopeFailure.unavailable }
+        streams.removeValue(forKey: "chat")?.cancel()
+        let ticket = UUID(); streamTokens["chat"] = ticket; streamScopes["chat"] = expected; chatStreamOwner = ownerID
+        let current = { [weak self] in
+            guard let self, self.streamTokens["chat"] == ticket, self.streamScopes["chat"] == expected, self.chatStreamOwner == ownerID else { return false }
+            return (try? self.checkHost(connection, generation: scope, expected: expected)) != nil
+        }
+        let transport = SessionStreamTransport(relay: connection.relay != nil, current: current, open: { [weak self] cursor in
+            guard let self, current() else { throw CancellationError() }
+            var ws = try self.makeRequest("/api/global/event/ws", connection: connection)
+            if let relay = connection.relay {
+                var mint = ws; mint.httpMethod = "POST"; mint.url = URL(string: "/auth/url-token", relativeTo: connection.url)!.absoluteURL; mint.timeoutInterval = 10
+                let tunnel = try self.tunnel(for: relay)
+                let started = ProcessInfo.processInfo.systemUptime
+                let minted: (Int, [String: String], Any)
+                if let io = self.sessionStreamIO?.mint { minted = try await io(mint, tunnel) }
+                else {
+                    guard self.sessionStreamIO == nil else { throw SessionStreamFailure.invalid }
+                    let buffer = ResourceBytesBuffer(limit: 64 * 1024)
+                    let response = try await tunnel.stream(path: "/auth/url-token", method: "POST", headers: mint.allHTTPHeaderFields ?? [:], timeout: 10,
+                        onResponse: { status, headers in
+                            guard status == 200 else { throw SessionStreamFailure.http(status) }
+                            guard headers.first(where: { $0.key.lowercased() == "content-type" })?.value.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json" else { throw SessionStreamFailure.invalid }
+                        }, onData: { try await buffer.receive($0) })
+                    minted = (response.status, response.headers, try JSONSerialization.jsonObject(with: await buffer.value()))
+                }
+                let receipt = try SessionMessageStream.urlToken(status: minted.0, headers: minted.1, body: minted.2, credential: connection.token, requestStartedAt: started, now: ProcessInfo.processInfo.systemUptime)
+                try Task.checkCancellation(); guard current() else { throw CancellationError() }
+                let token = try receipt.value(at: ProcessInfo.processInfo.systemUptime)
+                if let cursor, !cursor.isEmpty { var url = URLComponents(url: ws.url!, resolvingAgainstBaseURL: true)!; url.queryItems = [URLQueryItem(name: "lastEventId", value: cursor)]; ws.url = url.url }
+                if let io = self.sessionStreamIO {
+                    let socket = try await io.open(ws, tunnel, token)
+                    guard current(), !Task.isCancelled else { socket.close(); throw CancellationError() }
+                    return socket
+                }
+                let socket = try await tunnel.openSessionWebSocket(lastEventID: cursor, urlToken: token, validUntil: receipt.validUntil)
+                guard current(), !Task.isCancelled else { await socket.close(); throw CancellationError() }
+                return SessionStreamSocket(receive: {
+                    guard case .text(let text) = try await socket.receive() else { throw SessionStreamFailure.invalid }
+                    return text
+                }, close: { Task { await socket.close() } })
+            }
+            var url = URLComponents(url: ws.url!, resolvingAgainstBaseURL: true)!
+            url.scheme = connection.url.scheme == "https" ? "wss" : "ws"
+            if let cursor, !cursor.isEmpty { url.queryItems = [URLQueryItem(name: "lastEventId", value: cursor)] }
+            ws.url = url.url
+            ws.setValue(connection.url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")), forHTTPHeaderField: "Origin")
+            if let io = self.sessionStreamIO {
+                let socket = try await io.open(ws, nil, nil)
+                guard current(), !Task.isCancelled else { socket.close(); throw CancellationError() }
+                return socket
+            }
+            let socket = try await SessionMessageStreamDirect(request: ws).open()
+            guard current(), !Task.isCancelled else { socket.close(); throw CancellationError() }
+            return socket
+        }, sse: { [weak self] cursor, ready, event in
+            guard let self, current() else { throw CancellationError() }
+            var sse = request
+            if let cursor, !cursor.isEmpty { sse.setValue(cursor, forHTTPHeaderField: "Last-Event-ID") }
+            let parser = SSEEvents(event: event, activity: { try event("", nil) })
+            if let io = self.sessionStreamIO {
+                let tunnel = try connection.relay.map { try self.tunnel(for: $0) }
+                try await io.sse(sse, tunnel, {
+                    guard current(), !Task.isCancelled else { return }; ready()
+                }, { bytes in
+                    try Task.checkCancellation(); guard current() else { throw CancellationError() }; try parser.consume(bytes)
+                })
+                return
+            }
+            if let relay = connection.relay {
+                _ = try await self.tunnel(for: relay).stream(path: path, headers: sse.allHTTPHeaderFields ?? [:], onResponse: { status, headers in
+                    guard status == 200, headers.first(where: { $0.key.lowercased() == "content-type" })?.value.lowercased().contains("text/event-stream") == true else { throw SessionStreamFailure.http(status) }
+                    try await MainActor.run { try Task.checkCancellation(); guard current() else { throw CancellationError() }; ready() }
+                }, onData: { data in
+                    try await MainActor.run { try Task.checkCancellation(); guard current() else { throw CancellationError() }; try parser.consume(data) }
+                })
+            } else {
+                let (bytes, response) = try await self.session.bytes(for: sse)
+                defer { bytes.task.cancel() }
+                try Task.checkCancellation(); guard current() else { throw CancellationError() }
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200, http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true else { throw SessionStreamFailure.invalid }
+                ready()
+                for try await byte in bytes { try Task.checkCancellation(); guard current() else { throw CancellationError() }; try parser.consume(byte) }
+            }
+        })
+        let controller = SessionMessageStream(transport: transport) { [weak self] output in
+            guard let self, current() else { return }
+            var envelope: [String: Any] = ["key": "chat", "ownerID": ownerID, "expectedHost": expected.publicValue]
+            switch output {
+            case .event(let data): envelope["data"] = data; self.app?.send("runtime.event", envelope)
+            case .ready: envelope["type"] = "reconnected"; self.app?.send("runtime.event", envelope)
+            case .disconnected: self.app?.send("runtime.disconnected", envelope)
+            }
+        }
+        streams["chat"] = Task { await controller.run(mode: mode) }
     }
 }
 

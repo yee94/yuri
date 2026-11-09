@@ -46,6 +46,77 @@ describe('settings runtime', () => {
     sanitizeSkillCatalogs: () => undefined,
     sanitizeProjects: values => Array.isArray(values) ? values : [],
   });
+  it.each(['malformed', 'null', 'array', 'EACCES', 'EIO'])('preserves original settings bytes and rejects every read/merge path on %s until explicit recovery', async (failure) => {
+    let blocked = true;
+    let writes = 0;
+    let patchCalls = 0;
+    const ioError = Object.assign(new Error('Synthetic settings read failure'), { code: failure });
+    const helpers = preferenceHelpers();
+    const { runtime, settingsFilePath, tempRoot, cleanup } = await createRuntime({
+      ...helpers,
+      fsPromises: {
+        ...fsPromises,
+        readFile: async (...args) => {
+          if (blocked && args[0] === settingsFilePath && ['EACCES', 'EIO'].includes(failure)) throw ioError;
+          return fsPromises.readFile(...args);
+        },
+        writeFile: async (...args) => { writes += 1; return fsPromises.writeFile(...args); },
+      },
+    });
+    const validBytes = Buffer.from('{\n  "projects": [], "fontSize": 125, "reportUsage": false,\n  "retainedUnknown": {"text": "原件", "number": 7}\n}\n');
+    const originalBytes = failure === 'malformed' ? Buffer.from('{"fontSize":125,\n "retainedUnknown":"原件",')
+      : failure === 'null' ? Buffer.from('null\n') : failure === 'array' ? Buffer.from('[{"fontSize":125}]\n') : validBytes;
+    try {
+      await fsPromises.writeFile(settingsFilePath, originalBytes);
+      const actions = [
+        () => runtime.readSettingsFromDisk(),
+        () => runtime.readSettingsFromDiskStrict(),
+        () => runtime.readSettingsFromDiskMigrated(),
+        () => runtime.persistSettings({ reportUsage: true }),
+        () => runtime.persistSettings(() => { patchCalls += 1; return { reportUsage: true }; }),
+      ];
+      for (const action of actions) {
+        if (['EACCES', 'EIO'].includes(failure)) await expect(action()).rejects.toBe(ioError);
+        else await expect(action()).rejects.toThrow();
+        expect(await fsPromises.readFile(settingsFilePath)).toEqual(originalBytes);
+        expect(await fsPromises.readdir(tempRoot)).toEqual(['settings.json']);
+      }
+      expect(writes).toBe(0);
+      expect(patchCalls).toBe(0);
+
+      // Only the fixture owner repairs malformed bytes/restores access. Recovery
+      // re-reads disk and a new explicit locked update derives from that authority.
+      blocked = false;
+      if (!['EACCES', 'EIO'].includes(failure)) await fsPromises.writeFile(settingsFilePath, validBytes);
+      expect(await runtime.readSettingsFromDisk()).toMatchObject({ fontSize: 125, reportUsage: false });
+      expect(writes).toBe(0);
+      expect(await fsPromises.readFile(settingsFilePath)).toEqual(validBytes);
+      // The production GET uses the migrated reader. A successful retry may
+      // persist its existing migrations, but must not replay the failed patch.
+      expect(await runtime.readSettingsFromDiskMigrated()).toMatchObject({ fontSize: 125, reportUsage: false, retainedUnknown: { text: '原件', number: 7 } });
+      expect(writes).toBe(1);
+      expect(patchCalls).toBe(0);
+      await runtime.persistSettings(current => {
+        patchCalls += 1;
+        expect(current.fontSize).toBe(125);
+        expect(current.reportUsage).toBe(false);
+        expect(current.retainedUnknown).toEqual({ text: '原件', number: 7 });
+        return { reportUsage: true };
+      });
+      expect(patchCalls).toBe(1);
+      expect(await runtime.readSettingsFromDisk()).toMatchObject({ fontSize: 125, reportUsage: true, retainedUnknown: { text: '原件', number: 7 } });
+      expect(writes).toBe(2);
+    } finally { await cleanup(); }
+  });
+  it('retains authoritative missing-file defaults without creating a file on raw reads', async () => {
+    const { runtime, tempRoot, cleanup } = await createRuntime();
+    try {
+      expect(await runtime.readSettingsFromDisk()).toEqual({});
+      expect(await runtime.readSettingsFromDiskStrict()).toEqual({});
+      expect(await fsPromises.readdir(tempRoot)).toEqual([]);
+      expect(await runtime.persistSettings({ reportUsage: true })).toMatchObject({ reportUsage: true });
+    } finally { await cleanup(); }
+  });
   it('durably round-trips cleanup actions and explicit empty quota selections through the actual sanitizer and merge', async () => {
     const helpers = preferenceHelpers();
     const { runtime, settingsFilePath, cleanup } = await createRuntime(helpers);

@@ -1,4 +1,7 @@
 import { expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createNativeHistoryRows } from './history-rows';
 import type { Message } from './model';
 const message = (id: string, role = 'assistant'): Message => ({ id, role, text: id, reasoning: '', tools: [], cards: [], files: [], error: '' });
@@ -30,4 +33,29 @@ it('keeps a retained key with its real message if an enriched assistant run late
   const after = project([a, message('boundary', 'user'), b]);
   expect(after.map(row => row.key)).toEqual(['b', 'boundary', 'a']);
   expect(new Set(after.map(row => row.key)).size).toBe(after.length);
+});
+
+it('keeps the List item identity while eight older pages enrich one assistant group', () => {
+  const project = createNativeHistoryRows();
+  let messages = Array.from({ length: 20 }, (_, i) => message(`step-${200 + i}`));
+  const first = project(messages)[0];
+  for (let page = 1; page <= 8; page++) {
+    messages = [...Array.from({ length: 20 }, (_, i) => message(`step-${200 - page * 20 + i}`)), ...messages];
+    const rows = project(messages), keys = rows.map(row => row.key), byKey = new Map(rows.map(row => [row.key, row]));
+    expect(keys).toEqual([first.key]);
+    // A stable key does not make a replacement object the same NSH List item.
+    expect(rows[0]).not.toBe(first);
+    expect(byKey.get(keys[0])?.messages).toEqual(messages);
+    expect(byKey.get(keys[0])?.tail).toBe(first.tail);
+  }
+});
+
+it('production List matches primitive identities, not replacement grouped row objects', () => {
+  const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'application.tsx'), 'utf8');
+  expect(source).toContain('const bodyRowKeys = computed(() => bodyRows().map(row => row.key));');
+  expect(source).toContain('const bodyRowsByKey = computed(() => new Map(bodyRows().map(row => [row.key, row])));');
+  expect(source).toContain('each={bodyRowKeys()}');
+  expect(source).toContain('keyExtractor={key => key}');
+  expect(source).toContain('when={bodyRowsByKey().get(key())}');
+  expect(source).not.toContain('each={bodyRows()}');
 });

@@ -1,12 +1,17 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeLayoutDensity } from './native-density';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import * as model from './model';
 import * as protocol from './settings-protocol';
 import * as collections from './settings-collections-core';
+import * as collectionOperations from './settings-collection-operations';
+import * as collectionScope from './settings-collection-scope';
+import * as collectionJSONC from './settings-collection-jsonc';
+import * as settingsSearch from './settings-search-core';
 import * as defaults from './settings-defaults-core';
 import * as models from './chat-models-helpers';
 import * as retention from './settings-retention-controller';
@@ -44,10 +49,17 @@ function productionPages() {
     nsh: { signal: source, cleanup: (work: () => void) => cleanups.push(work), effect: (work: () => void) => work(), untracked: (work: () => unknown) => work(), lifecycle: () => 'active', Scroll: 'Scroll', Text: 'Text', View: 'View', Storage: { getItem: async () => null, setItem: async () => undefined } },
     'nsh/base': Object.fromEntries(['Button', 'Input', 'Switch', 'Select', 'TextView', 'AlertDialog'].map(key => [key, key])),
     './native-select': { NativeSelect: 'Select' },
+    './appearance': { nativeCodeTextViewStyles: () => ({}), nativeDensity: () => nativeLayoutDensity(100) },
+    './native-editor-style': { nativeEditorTextStyle: () => ({}) },
     './i18n': { t: (key: string) => key }, './model': model, './settings-protocol': protocol,
     './state': { captureHostRequest, epoch: () => generation, app: { connection: () => ({ id: connection }) } },
     './runtime-scope': runtimeScope,
     './Icon': { Icon: 'Icon' }, './settings-collections-core': collections,
+    './settings-collection-operations': collectionOperations, './settings-search-core': settingsSearch,
+    './settings-collection-scope': collectionScope, './settings-collection-jsonc': collectionJSONC,
+    './settings-collection-kv': { SettingsCollectionKV: 'SettingsCollectionKV' }, './settings-collection-picker': { SettingsCollectionPicker: 'SettingsCollectionPicker' },
+    './settings-collection-plugins': { SettingsCollectionPlugins: 'SettingsCollectionPlugins' }, './settings-collection-directory': { SettingsCollectionDirectory: 'SettingsCollectionDirectory' },
+    './native-sheet': { NativeSheet: 'NativeSheet' },
     './settings-defaults-core': defaults, './chat-models-helpers': models,
     './settings-integration-form': integrationForm, './settings-integration-fields': { SettingsIntegrationFields: 'SettingsIntegrationFields' },
     './settings-target': { SettingsTarget: 'SettingsTarget' },
@@ -173,6 +185,53 @@ describe('Settings constructor-captured request migration', () => {
     page.button('settings.plugins.page.action.save')(); await flush();
     expect(page.calls).toEqual([{ scope: page.scope(), path: '/api/config/commands/example?directory=%2Factual%2Fworktree', method: 'POST', body: { template: 'preserved draft', scope: 'user' } }]);
     expect(page.captureHostOperation).toHaveBeenCalledTimes(4);
+    page.dispose();
+  });
+
+  it('the real existing-Agent scope callback runs the production migration with captured directory and exact cleanup scope', async () => {
+    const page = productionPages(), source = '/actual/worktree/global/agent.md', target = '/actual/worktree/.opencode/agents/example.md';
+    const original = '---\ncustom:\n  retained: true\nnullable: null\n---\n\noriginal prompt\n';
+    const files = new Map([[source, original]]);
+    page.respond(async call => {
+      if (call.path.startsWith('/api/agent?')) return [{ name: 'example' }];
+      if (call.path.startsWith('/api/config/agents/metadata')) return { agents: { example: { scope: 'user' } } };
+      if (call.path.includes('/config?')) return { source: 'md', scope: 'user', config: { prompt: 'original prompt', custom: { retained: true }, nullable: null } };
+      if (call.path.startsWith('/api/fs/read')) { const path = new URL(call.path, 'https://fixture.invalid').searchParams.get('path')!; if (!files.has(path)) throw Object.assign(new Error('missing'), { status: 404 }); return files.get(path); }
+      if (call.path.startsWith('/api/fs/write')) { const body = call.body as { path: string; content: string }; files.set(body.path, body.content); return { success: true }; }
+      if (call.method === 'DELETE') { expect(call.body).toEqual({ scope: 'user' }); files.delete(source); return { success: true }; }
+      return { sources: { md: { exists: files.has(source), scope: 'user', path: source }, json: { exists: false }, userMd: { exists: files.has(source), path: source }, projectMd: { exists: files.has(target), path: target } } };
+    });
+    page.evaluate<typeof import('./settings-collections')>('settings-collections.tsx').SettingsCollection({ page: 'agents', entity: 'example', directory: '/actual/worktree', onOpen() {}, onBack() {} });
+    await flush();
+    page.input('settings.agents.page.field.scope')('project'); page.button('settings.plugins.page.action.save')(); await flush();
+    expect(files.get(target)).toBe(original); expect(files.has(source)).toBe(false);
+    const writes = page.calls.filter(call => call.path.startsWith('/api/fs/write') || call.method === 'DELETE');
+    expect(writes).toHaveLength(2);
+    expect(writes.every(call => call.scope?.hostID === 'A' && call.scope.lease === 'lease-1' && call.path.includes('directory=%2Factual%2Fworktree'))).toBe(true);
+    page.dispose();
+  });
+
+  it('the real copied-Command save preserves JSONC source text and unknown fields, and opening the draft writes nothing', async () => {
+    const page = productionPages();
+    const raw = '{\n// root note\n"command": {"original": {"template": "echo keep", /* extension note */ "custom": {"keep": true},},},\n"other": true,\n}\n';
+    let stored = raw;
+    page.respond(async call => {
+      if (call.path.startsWith('/api/config/commands')) return { sources: { md: { exists: false }, json: { exists: false } } };
+      if (call.path.startsWith('/api/fs/read')) return stored;
+      if (call.path.startsWith('/api/fs/write')) { stored = (call.body as { content: string }).content; return { success: true }; }
+      throw new Error('Unexpected copy request');
+    });
+    page.evaluate<typeof import('./settings-collections')>('settings-collections.tsx').SettingsCollection({
+      page: 'commands', create: true, directory: '/actual/worktree', onOpen() {}, onBack() {},
+      collectionDraft: { editor: { name: 'copied', scope: 'project', template: 'echo keep', custom: { keep: true } }, config: { template: 'echo keep', custom: { keep: true } }, jsonc: { name: 'original', section: 'command', scope: 'project', path: '/actual/worktree/opencode.jsonc', directory: '/actual/worktree', raw } },
+    });
+    await flush(); expect(page.calls).toEqual([]);
+    page.button('settings.plugins.page.action.save')(); await flush();
+    expect(stored).toContain('// root note'); expect(stored.match(/\/\* extension note \*\//g)).toHaveLength(2);
+    expect(collectionJSONC.parseCollectionJSONC(stored)).toMatchObject({ command: { original: { custom: { keep: true } }, copied: { custom: { keep: true }, template: 'echo keep' } }, other: true });
+    const writes = page.calls.filter(call => call.method !== 'GET');
+    expect(writes).toHaveLength(1); expect(writes[0].scope).toEqual(page.scope());
+    expect(writes[0].path).toBe('/api/fs/write?directory=%2Factual%2Fworktree');
     page.dispose();
   });
 

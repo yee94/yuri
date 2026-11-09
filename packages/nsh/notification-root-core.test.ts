@@ -62,6 +62,41 @@ function setup() {
 }
 const lives = (s: ReturnType<typeof setup>) => s.calls.filter(([name]) => name === 'notification.live').map(([, body]) => body!);
 
+it('keeps failed live A pending and retryable when launch receipt B opens and ACKs successfully', async () => {
+  const s = setup(); s.controller.bind(scope, 'en', true); await tick();
+  s.catalog([{ target: { kind: 'schedule', id: 'task' }, projectID: 'project' }, { target: { kind: 'schedule', id: 'task' }, projectID: 'other' }, { target: { kind: 'assistant', id: 'bot' } }]);
+  s.controller.onEvent(event(proof('schedule', 'ambiguous-A')), scope); await tick();
+  expect(s.controller.state().error).toBe('unavailable');
+  s.pending(protectedRecord(proof('assistant', 'receipt-B')));
+  await s.controller.route({ v: 1, receipt });
+  expect(s.opened).toEqual(['assistant:bot']); expect(s.calls.some(([name]) => name === 'notification.launch.ack')).toBe(true);
+  expect(s.controller.state().error).toBe('unavailable'); expect(lives(s)).toHaveLength(0);
+  s.catalog([{ target: { kind: 'schedule', id: 'task' }, projectID: 'project' }, { target: { kind: 'assistant', id: 'bot' } }]);
+  await s.controller.refresh();
+  expect(lives(s).map(body => body.eventID)).toEqual([proof('schedule', 'ambiguous-A').eventID]);
+  expect(s.controller.state().error).toBeNull(); s.controller.dispose();
+});
+
+it('a successful second live event clears only its own failure, never another pending live identity', async () => {
+  const s = setup(); s.controller.bind(scope, 'en', true); await tick();
+  s.catalog([{ target: { kind: 'schedule', id: 'task' }, projectID: 'project' }, { target: { kind: 'schedule', id: 'task' }, projectID: 'other' }]);
+  s.controller.onEvent(event(proof('schedule', 'A')), scope); await tick();
+  s.controller.onEvent(event(proof('completion', 'B')), scope); await tick();
+  expect(lives(s).map(body => body.kind)).toEqual(['completion']); expect(s.controller.state().error).toBe('unavailable');
+  s.catalog([{ target: { kind: 'schedule', id: 'task' }, projectID: 'project' }]);
+  await s.controller.refresh();
+  expect(lives(s).map(body => body.kind)).toEqual(['completion', 'schedule']); expect(s.controller.state().error).toBeNull(); s.controller.dispose();
+});
+
+it('successful live and receipt work cannot clear an unresolved settings-read failure', async () => {
+  const s = setup(); s.controller.bind(scope, 'en', true); await tick();
+  s.failRead(true); await s.controller.refresh(); expect(s.controller.state().error).toBe('readFailed');
+  s.controller.onEvent(event(proof('completion', 'B')), scope); await tick();
+  s.pending(protectedRecord(proof('assistant'))); await s.controller.route({ v: 1, receipt });
+  expect(lives(s)).toHaveLength(1); expect(s.opened).toEqual(['assistant:bot']); expect(s.controller.state().error).toBe('readFailed');
+  s.failRead(false); await s.controller.refresh(); expect(s.controller.state().error).toBeNull(); s.controller.dispose();
+});
+
 it('production controller uses only the admitted sink, does zero token/raw work, and forwards full exact proof through native live', async () => {
   const s = setup(); s.controller.bind(scope, 'en', true); await tick();
   expect(s.controller.state().ready).toBe(true); const before = s.counts();
@@ -147,6 +182,28 @@ it('waits for scope/configuration and actual catalog await before claim; cold op
   expect(s.opened).toEqual(['session:child:/project']);
   expect(s.calls.find(([name]) => name === 'notification.launch.claim')?.[1]).toEqual({ connectionID: 'host-a', receipt });
   expect(s.calls.find(([name]) => name === 'notification.launch.ack')?.[1]).toEqual({ connectionID: 'host-a', receipt, lease: 'lease-host-a-1', expectedRevision: 1 });
+});
+
+it('an incomplete catalog waits without misreporting a successful settings read as failed and never peeks or claims early', async () => {
+  const s = setup(); s.pending(protectedRecord());
+  s.catalogWait(async () => { throw new Error('notification_catalog_incomplete'); });
+  s.controller.bind(scope, 'en', true); await tick();
+  expect(s.controller.state()).toMatchObject({ ready: true, error: null, recovery: 'waitingReady' });
+  expect(s.calls.some(([name]) => name.startsWith('notification.launch.'))).toBe(false);
+  s.catalogWait(null); await s.controller.recover();
+  expect(s.opened).toHaveLength(1);
+  expect(s.controller.state()).toMatchObject({ recovery: 'opened', error: null });
+});
+
+it('retains admitted live work during incomplete catalogs and retries it only when the owner explicitly recovers', async () => {
+  const s = setup(); s.catalogWait(async () => { throw new Error('notification_catalog_incomplete'); });
+  s.controller.bind(scope, 'en', true); await tick();
+  s.controller.onEvent(event(proof()), scope); await tick();
+  expect(lives(s)).toHaveLength(0);
+  expect(s.controller.state()).toMatchObject({ ready: true, error: null, recovery: 'waitingReady' });
+  s.catalogWait(null); await s.controller.recover();
+  expect(lives(s)).toHaveLength(1);
+  await s.controller.recover(); expect(lives(s)).toHaveLength(1);
 });
 
 it('does not peek or claim with missing/legacy authorization, nor accept target-only launch or OS target overrides', async () => {

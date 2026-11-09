@@ -1,6 +1,20 @@
 export type DisplayTimePreference = 'auto' | '12h' | '24h';
 type TimeOptions = { precision?: 'minute' | 'second'; hour?: 'numeric' | '2-digit'; fallback?: string };
 
+/** Same short relative labels as MobileSessionsSheet. */
+export function formatRelativeShort(timestamp: number, locale?: string, now = Date.now()): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > 8_640_000_000_000_000 || !Number.isFinite(now)) return '';
+  const diffMs = now - timestamp;
+  if (diffMs < 60_000) return 'now';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(timestamp));
+}
+
 export function formatTimeForLocale(timestamp: number | Date, preference: DisplayTimePreference, locale: string, options: TimeOptions = {}): string {
   const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return options.fallback ?? '';

@@ -112,6 +112,25 @@ describe('Host-authoritative native appearance mapping', () => {
     expect((await appearanceFromSettings(settings, custom)).timeFormatPreference).toBeNull();
     expect((await appearanceFromSettings({ ...settings, timeFormatPreference: 'browser stale' }, custom)).timeFormatPreference).toBeNull();
   });
+  it('reads diff layout from a confirmed snapshot and preserves invalid values as unknown', async () => {
+    expect((await appearanceFromSettings(settings, custom)).diffLayoutPreference).toBe('inline');
+    for (const value of ['dynamic', 'inline', 'side-by-side']) {
+      expect((await appearanceFromSettings({ ...settings, diffLayoutPreference: value }, custom)).diffLayoutPreference).toBe(value);
+    }
+    for (const value of [null, false, 'split', {}, 0]) {
+      expect((await appearanceFromSettings({ ...settings, diffLayoutPreference: value }, custom)).diffLayoutPreference).toBeNull();
+    }
+  });
+  it('reads the real message transport whitelist only from a confirmed canonical snapshot', async () => {
+    expect((await appearanceFromSettings(settings, custom)).messageStreamTransport).toBe('auto');
+    for (const value of ['auto', 'ws', 'sse']) expect((await appearanceFromSettings({ ...settings, messageStreamTransport: value }, custom)).messageStreamTransport).toBe(value);
+    for (const value of [null, false, 'websocket', 'poll', 0, {}]) expect((await appearanceFromSettings({ ...settings, messageStreamTransport: value }, custom)).messageStreamTransport).toBeNull();
+  });
+  it('publishes validated calendar week preferences to the existing native date picker consumer', async () => {
+    expect((await appearanceFromSettings(settings, custom)).weekStartPreference).toBe('auto');
+    for (const value of ['auto', 'monday', 'sunday']) expect((await appearanceFromSettings({ ...settings, weekStartPreference: value }, custom)).weekStartPreference).toBe(value);
+    for (const value of [null, 1, false, 'Monday']) await expect(appearanceFromSettings({ ...settings, weekStartPreference: value }, custom)).rejects.toThrow('invalid-calendar-preferences');
+  });
   it('reads user-message collapse from the same snapshot, using Web default only after a successful settings read', async () => {
     expect((await appearanceFromSettings(settings, custom)).collapsibleUserMessages).toBe(true);
     expect((await appearanceFromSettings({ ...settings, collapsibleUserMessages: false }, custom)).collapsibleUserMessages).toBe(false);
@@ -131,6 +150,24 @@ describe('one root appearance synchronization lane', () => {
     return { sync, readSettings, reset, apply, current: () => current, error: () => error };
   }
   const one = { hostID: 'one', url: 'https://one.example', generation: 1 };
+  it('keeps confirmed diff layout on refresh failure and rejects an old Host layout after switching', async () => {
+    const h = harness(); h.sync.setScope(one);
+    h.readSettings.mockRejectedValueOnce(new Error('offline'));
+    await h.sync.refresh(); expect(h.current()).toBeNull();
+    h.readSettings.mockResolvedValueOnce({ ...settings, diffLayoutPreference: 'side-by-side' });
+    await h.sync.refresh(); const prior = h.current();
+    expect(prior?.diffLayoutPreference).toBe('side-by-side');
+    h.readSettings.mockRejectedValueOnce(new Error('offline'));
+    await h.sync.refresh(); expect(h.current()).toBe(prior);
+    const old = deferred<unknown>(); h.readSettings.mockReturnValueOnce(old.promise);
+    const pending = h.sync.refresh(); await flush();
+    h.sync.setScope({ ...one, hostID: 'two', generation: 2 });
+    expect(h.current()).toBeNull();
+    h.readSettings.mockResolvedValueOnce(settings); await h.sync.refresh();
+    expect(h.current()?.diffLayoutPreference).toBe('inline');
+    old.resolve({ ...settings, diffLayoutPreference: 'side-by-side' }); await pending;
+    expect(h.current()?.diffLayoutPreference).toBe('inline');
+  });
   it('keeps follow-up unknown before success, preserves confirmed values on failure and clears them across Hosts', async () => {
     const h = harness(); h.sync.setScope(one);
     const followUpBehavior = () => h.current()?.followUpBehavior ?? null;
@@ -162,6 +199,49 @@ describe('one root appearance synchronization lane', () => {
     h.readSettings.mockRejectedValueOnce(new Error('offline'));
     await h.sync.refresh(); expect(h.current()).toBe(previous); expect(h.error()).toBe('offline');
     await h.sync.refresh(); expect(h.error()).toBe(''); expect(h.current()).toBe(previous);
+  });
+  it('rebind replaces both same-Host readers, preserves canonical prior, retires the old barrier and keeps hold/resume reader ownership', async () => {
+    const h = harness(); h.sync.setScope(one); await h.sync.refresh();
+    const prior = h.current(), old = deferred<unknown>();
+    h.readSettings.mockReturnValueOnce(old.promise); const pending = h.sync.refresh(); await flush();
+    const barrier = h.sync.refreshAfterCurrent(() => true).then(() => 'accepted', () => 'retired');
+    const nextSettings = vi.fn(async (): Promise<unknown> => ({ ...settings, fontSize: 125 })), nextThemes = vi.fn(async () => ({ themes: [] }));
+    const scope = { ...one, generation: 2 };
+    h.sync.pause(); h.sync.rebind(false, { scope, readSettings: nextSettings, readThemes: nextThemes });
+    expect(h.current()).toBe(prior); await h.sync.refresh();
+    expect(h.current()?.fontSize).toBe(125); expect(h.current()?.sourceHost).toEqual(scope);
+    old.resolve({ ...settings, fontSize: 100 }); await pending;
+    expect(await barrier).toBe('retired'); expect(h.current()?.fontSize).toBe(125);
+    expect(h.readSettings).toHaveBeenCalledTimes(2);
+    const themeReads = nextThemes.mock.calls.length;
+    nextSettings.mockResolvedValueOnce({ ...settings, fontSize: 125, darkThemeId: 'synthetic-missing-theme' });
+    await h.sync.refresh(); expect(nextThemes).toHaveBeenCalledTimes(themeReads + 1); expect(h.current()?.fontSize).toBe(125);
+    const reads = nextSettings.mock.calls.length; await h.sync.hold(); await h.sync.refresh(); expect(nextSettings).toHaveBeenCalledTimes(reads);
+    h.sync.resume(); await h.sync.refresh(); expect(nextSettings).toHaveBeenCalledTimes(reads + 1);
+    expect(() => h.sync.rebind(false, { scope: { ...scope, hostID: 'other' }, readSettings: nextSettings, readThemes: nextThemes })).toThrow('reader Host changed');
+  });
+  it('confirmation joins an old delayed apply then coalesces 50 barriers into one fresh read without parallel native commits', async () => {
+    const h = harness(), old = deferred<typeof fonts>(); h.sync.setScope(one);
+    h.readSettings.mockResolvedValueOnce({ ...settings, fontSize: 100 }); h.apply.mockReturnValueOnce(old.promise);
+    const previous = h.sync.refresh(); await flush(); expect(h.apply).toHaveBeenCalledOnce();
+    h.readSettings.mockResolvedValueOnce({ ...settings, fontSize: 125 });
+    const confirmations = Array.from({ length: 50 }, () => h.sync.refreshAfterCurrent(() => true));
+    expect(h.sync.refresh()).toBe(previous); expect(h.readSettings).toHaveBeenCalledOnce();
+    old.resolve(fonts); await Promise.all(confirmations);
+    expect(h.readSettings).toHaveBeenCalledTimes(2); expect(h.apply).toHaveBeenCalledTimes(2);
+    expect(h.current()?.fontSize).toBe(125); expect(h.reset).toHaveBeenCalledOnce();
+  });
+  it.each(['scope', 'pause', 'hold', 'owner'] as const)('confirmation cannot cross %s retirement while joining an old flight', async boundary => {
+    const h = harness(), old = deferred<typeof fonts>(); h.sync.setScope(one); h.apply.mockReturnValueOnce(old.promise);
+    const previous = h.sync.refresh(); await flush(); let owner = true;
+    const confirmation = h.sync.refreshAfterCurrent(() => owner);
+    if (boundary === 'scope') h.sync.setScope({ ...one, hostID: 'two', generation: 2 });
+    else if (boundary === 'pause') h.sync.pause();
+    else if (boundary === 'hold') await h.sync.hold();
+    else owner = false;
+    old.resolve(fonts); await expect(confirmation).rejects.toThrow('confirmation retired'); await previous;
+    expect(h.readSettings).toHaveBeenCalledOnce();
+    if (boundary === 'hold') { await h.sync.refresh(); expect(h.readSettings).toHaveBeenCalledOnce(); h.sync.resume(); }
   });
   it('shares three chat preferences through the same snapshot without reads/scans for 200 input-adjacent evaluations', async () => {
     const h = harness(); h.sync.setScope(one); await h.sync.refresh();

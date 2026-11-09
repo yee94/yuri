@@ -7,13 +7,17 @@ import * as cron from '../features-cron';
 import * as scheduleDate from '../features-schedule-date';
 import * as botDefaults from '../features-bot-defaults';
 import * as taskDefaults from '../task-editor-defaults';
+import { createFeatureReceipt } from '../features-receipt';
+import * as calendar from '../features-calendar';
+import { pickerSheetHeight } from '../chat-models-helpers';
+import { nativeLayoutDensity } from '../native-density';
 
 type Row = Record<string, unknown>;
 type Element = { type: string | ((props: Row) => Element); props: Row; children: unknown[] };
 type Request = { path: string; method: string; body?: unknown };
 function signal<T>(value: T) {
   const read = () => value;
-  read.set = (next: T) => { value = next; };
+  read.set = function (this: unknown, next: T) { if (this !== read) throw new Error('not a live signal'); value = next; };
   return read;
 }
 
@@ -23,10 +27,27 @@ export function featureFixture(options: {
   request?: (call: Request) => Promise<unknown>;
   refresh?: () => Promise<void>;
   onNavigation?: (requestLeave: ((afterLeave?: () => void) => Promise<void>) | null) => void;
+  onOpenHistory?: (identity: { projectId: string; taskId: string }) => void;
   creationContext?: taskDefaults.TaskEditorCreationContext;
+  receipts?: Map<string, string>;
+  appearance?: Row;
+  active?: boolean;
+  receiptReady?: Promise<void>;
+  retireUISignals?: boolean;
+  windowHeight?: number;
+  safeArea?: { top: number; bottom: number };
 } = {}) {
   const calls: Request[] = [], order: string[] = [], dialogs: Row[] = [], cleanups: (() => void)[] = [];
+  let retired = false, retiredAccesses = 0;
+  const ownedSignal = <T>(initial: T) => {
+    const source = signal(initial);
+    const assertLive = () => { if (retired) { retiredAccesses++; throw new Error('retired editor signal'); } };
+    const read = () => { assertLive(); return source(); };
+    read.set = function (this: unknown, next: T) { assertLive(); if (this !== read) throw new Error('not a live signal'); source.set(next); };
+    return read;
+  };
   let generation = 1, done = 0, answer = 'cancel';
+  const receipts = options.receipts ?? new Map<string, string>();
   const app = {
     connection: signal({ id: 'fixture' }),
     projects: signal([{ id: 'project', path: '/first-project', name: 'First project' }]),
@@ -38,6 +59,7 @@ export function featureFixture(options: {
     if (options.request) return options.request(call);
     if (path.startsWith('/api/config/catalog/providers')) return { schemaVersion: 1, providers };
     if (path.startsWith('/api/agent')) return { data: [{ id: 'build', name: 'build' }] };
+    if (path === '/api/config/settings' && method === 'GET') return { weekStartPreference: 'auto' };
     if (method === 'PATCH' || method === 'PUT' || method === 'POST') {
       if (path.startsWith('/api/yuri/assistants')) return { id: 'bot', revision: 2 };
       return { task: model.record(body).task, schedulerSynced: true };
@@ -48,12 +70,25 @@ export function featureFixture(options: {
   const h = (type: Element['type'], props: Row | null, ...children: unknown[]): Element => ({ type, props: props ?? {}, children });
   const controls = Object.fromEntries(['AlertDialog', 'Button', 'DatePicker', 'Input', 'NavPage', 'Select', 'Switch', 'TimeField'].map(name => [name, name]));
   const imports: Record<string, unknown> = {
-    nsh: { cleanup: (callback: () => void) => cleanups.push(callback), effect: (run: () => void) => run(), locale: () => 'en', signal, computed: (read: () => unknown) => read, Text: 'Text', View: 'View', Scroll: 'Scroll' },
+    nsh: { cleanup: (callback: () => void) => cleanups.push(callback), effect: (run: () => void) => run(), lifecycle: () => 'active', locale: () => 'en', signal: ownedSignal, computed: (read: () => unknown) => read, safeArea: () => options.safeArea ?? { top: 0, bottom: 0 }, windowSize: () => ({ width: 390, height: options.windowHeight ?? 844 }), Text: 'Text', View: 'View', Scroll: 'Scroll' },
     'nsh/base': { ...controls, AlertDialog: { show: async (options: Row) => { dialogs.push(options); return { action: answer }; } } },
     './i18n': { t: (key: string) => key, language: () => 'en' },
     './model': model,
     './runtime': { request, native: async () => { throw new Error('No native date service in callback fixture'); }, query: (directory: string) => `directory=${encodeURIComponent(directory)}` },
-    './state': { app, epoch: () => generation, refresh: async () => { order.push('refresh'); await options.refresh?.(); } },
+    './state': { app, captureHostRequest: () => request, epoch: () => generation, refresh: async () => { order.push('refresh'); await options.refresh?.(); } },
+    './native-select': { NativeSelect: 'Select' },
+    './native-date-picker': { NativeDatePicker: 'DatePicker' },
+    './features-model-picker': { FeaturesModelPicker: 'FeaturesModelPicker' },
+    './appearance': { nativeAppearance: { current: () => options.appearance ?? null }, nativeDensity: () => nativeLayoutDensity(typeof options.appearance?.padding === 'number' ? options.appearance.padding : 100) },
+    './features-calendar': calendar,
+    './chat-models-helpers': { pickerSheetHeight },
+    './features-history': { FeaturesTaskHistory: 'FeaturesTaskHistory' },
+    './native-sheet': { NativeSheet: 'NativeSheet' },
+    './Icon': { Icon: 'Icon' },
+    './features-receipt': { openFeatureReceipt: (host: string, identity: string) => {
+      const key = `${host}:${identity}`, draft = signal(receipts.get(key) ?? '');
+      return createFeatureReceipt({ ready: options.receiptReady ?? Promise.resolve(), draft: Object.assign(draft, { update: (work: (previous: string) => string) => draft.set(work(draft())) }), flush: async () => { receipts.set(key, draft()); }, close: async () => {}, status: () => 'ready', retry: async () => {} });
+    } },
     './assistants-core': { admitAssistantMutation: async () => {} },
     './assistants-avatar': { AssistantAvatarPicker: 'AssistantAvatarPicker' },
     './schedules-state': { noteScheduledCatalogWrite: () => order.push('invalidate') },
@@ -70,9 +105,16 @@ export function featureFixture(options: {
     exports, require: (name: string) => { if (!(name in imports)) throw new Error(`Unmocked import ${name}`); return imports[name]; },
     h, If: 'If', Each: 'Each', Date, Intl, Set, Object, String, Promise, Error,
   }, { filename: 'features.tsx' });
-  const element = (kind: 'bot' | 'task') => exports[kind === 'bot' ? 'BotEditor' : 'TaskEditor']({
-    bot: options.bot, item: options.item, onDone: () => { done++; }, syncPendingDescription: 'SYNC_PENDING', onNavigation: options.onNavigation, creationContext: options.creationContext,
-  });
+  const element = (kind: 'bot' | 'task') => {
+    const page = exports[kind === 'bot' ? 'BotEditor' : 'TaskEditor']({
+      bot: options.bot, item: options.item, active: options.active, onDone: () => { done++; }, syncPendingDescription: 'SYNC_PENDING', onNavigation: options.onNavigation, onOpenHistory: options.onOpenHistory, creationContext: options.creationContext,
+    });
+    const header = page.props.headerRight as Element;
+    // Legacy callback tests press the primary header action. The real toolbar is
+    // retained, and header() below reaches the exact production overflow button.
+    if (header.type === 'View') header.props.onPress = find(header, node => node.props.testID === 'features-task-save').props.onPress;
+    return page;
+  };
   const nodes = (element: unknown): Element[] => {
     if (!element || typeof element !== 'object' || !('type' in element)) return [];
     const node = element as Element;
@@ -84,10 +126,12 @@ export function featureFixture(options: {
     return node;
   };
   return {
-    app, calls, order, dialogs, element, nodes, find, providers,
+    app, calls, order, dialogs, element, nodes, find, providers, receipts,
+    header: (root: Element, testID: string) => find(root.props.headerRight, node => node.props.testID === testID),
     setAnswer: (next: string) => { answer = next; },
     changeHost: () => { generation++; },
-    unmount: () => { cleanups.forEach(cleanup => cleanup()); },
+    unmount: () => { cleanups.forEach(cleanup => cleanup()); if (options.retireUISignals) retired = true; },
+    retiredAccesses: () => retiredAccesses,
     done: () => done,
     catalog: (root: Element) => find(root, node => typeof node.type === 'function' && node.type.name === 'CatalogFields').props.catalog as {
       load: (directory: string | null) => Promise<void>;
@@ -95,7 +139,7 @@ export function featureFixture(options: {
       loading: () => boolean; partial: () => boolean;
     },
     state: (root: Element) => find(root, node => typeof node.type === 'function' && node.type.name === 'Feedback').props.state as {
-      committed: () => boolean; busy: () => boolean; error: () => string; notice: () => string;
+      committed: () => boolean; uncertain: () => boolean; busy: () => boolean; error: () => string; notice: () => string;
       finish: () => Promise<void>; perform: (work: () => Promise<void>, allowCommitted?: boolean) => Promise<void>;
     },
   };
@@ -103,4 +147,4 @@ export function featureFixture(options: {
 
 export const bot = { id: 'bot', revision: 1, name: 'Bot', defaultPrompt: 'Prompt', workspacePath: null, managedWorkspacePath: '/managed', effectiveWorkspacePath: '/wrong-effective', providerID: 'provider', modelID: 'model', agent: 'do-not-clear', mode: 'continuous', variant: 'high' };
 export const item = { projectId: 'project', task: { id: 'task', name: 'Task', enabled: true, schedule: { kind: 'daily', times: ['09:00'], timezone: 'UTC' }, execution: { prompt: 'Do work', providerID: 'provider', modelID: 'model', agent: 'build', goalEnabled: true } } };
-export const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+export const settle = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };

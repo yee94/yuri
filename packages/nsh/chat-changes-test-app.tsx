@@ -2,6 +2,7 @@ import { mount, signal, Text, View } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { NativeChangesSheet, NativeComposerChanges } from './chat-changes';
 import { language } from './i18n';
+import { prepareChangesFixture } from './chat-changes-fixture-bootstrap';
 
 function ChangesFixture() {
   language.set('en');
@@ -12,7 +13,10 @@ function ChangesFixture() {
     <Button testID="changes-fixture-workspace" onPress={() => open.set(true)}><Text>Workspace fixture</Text></Button>
     <Button testID="changes-fixture-history" onPress={() => historical.set(true)}><Text>History fixture</Text></Button>
     <NativeChangesSheet source={{ kind: 'workspace', directory: '/fixture' }} open={open()} active onClose={() => open.set(false)} />
-    <NativeChangesSheet source={{ kind: 'turn', directory: '/fixture', sessionID: 's', messageID: 'm', path: 'history.ts', files: [{ path: 'history.ts', patch: '@@ -1 +1 @@\n-old\n+HISTORICAL_ONLY' }, { path: 'thin.ts' }] }} open={historical()} active onClose={() => historical.set(false)} />
+    <NativeChangesSheet source={{ kind: 'turn', directory: '/fixture', sessionID: 's', messageID: 'm', files: [{ path: 'history.ts', patch: '@@ -1 +1 @@\n-old\n+HISTORICAL_ONLY' }, { path: 'thin.ts' }] }} open={historical()} active onClose={() => historical.set(false)} />
   </View>;
 }
-mount(ChangesFixture);
+mount(() => {
+  const boot = prepareChangesFixture();
+  return <If when={boot.ready()} else={<Text testID="changes-fixture-boot">{boot.error() || 'Loading fixture connection'}</Text>}><ChangesFixture /></If>;
+});

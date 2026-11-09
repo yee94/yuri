@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NativeGoal } from './chat-goal-model';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 
 const harness = vi.hoisted(() => ({
   listeners: new Map<string, Set<(payload: unknown) => void>>(), cleanups: [] as Array<() => void>,
@@ -24,7 +25,9 @@ const initialGoal: NativeGoal = { id: 'g', objective: 'Verify everything', statu
 const deferred = <T>() => { let resolve!: (value: T) => void, reject!: (failure: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = async () => { for (let count = 0; count < 50; count++) await Promise.resolve(); };
 const emit = (type: string, body: Record<string, unknown> = {}, key = 'chat', directory?: string) => {
-  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key, data: JSON.stringify({ type, data: body, ...(directory ? { location: { directory } } : {}) }) });
+  const ticket = issuedStream(harness.call, key);
+  if (type === 'server.connected') for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...ticket, type: 'reconnected' });
+  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ ...ticket, data: JSON.stringify({ type, data: body, ...(directory ? { location: { directory } } : {}) }) });
 };
 const requests = () => harness.call.mock.calls.filter(([name]) => name === 'runtime.request').map(([, input]) => input);
 const commands = () => requests().filter(input => input.path.includes('/command?'));
@@ -32,6 +35,7 @@ const reads = () => requests().filter(input => input.path.startsWith('/api/rpc/o
 let handle: (path: string, method: string, body: unknown) => unknown;
 beforeEach(() => {
   vi.resetModules(); vi.useFakeTimers(); harness.lifecycle = 'active'; harness.writes = [];
+  resetIssuedStreams(harness.call);
   harness.listeners.clear(); harness.cleanups = []; harness.effects = []; harness.disposers = []; harness.storage.clear();
   harness.getItem.mockReset().mockImplementation(async (key: string) => harness.storage.get(key) ?? null);
   harness.setItem.mockReset().mockImplementation(async (key: string, value: string) => { harness.storage.set(key, value); });
@@ -44,6 +48,7 @@ beforeEach(() => {
     return null;
   };
   harness.call.mockReset().mockImplementation(async (name, input) => {
+    if (name === 'runtime.stream') captureIssuedStream(harness.call, input);
     if (name === 'connection.list') return { connections: [{ id: 'one', url: 'https://host.example', label: 'Host', lastUsedAt: 0 }], selected: 'one', runtimeScope: { hostID: 'one', lease: 'one-lease' } };
     if (name === 'runtime.request') return { status: input.method === 'POST' && input.path.includes('/command?') ? 204 : 200, body: await handle(input.path, input.method, input.body) };
     return true;
@@ -51,7 +56,9 @@ beforeEach(() => {
 });
 afterEach(() => { harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); vi.restoreAllMocks(); vi.useRealTimers(); });
 async function chatOwner(observe = false, dependencies: Parameters<(typeof import('./state'))['createChat']>[1] = {}) {
-  const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(scope, dependencies); await chat.draftReady; await flush();
+  const state = await import('./state'); await state.loadConnections();
+  await harness.call('runtime.stream', { key: 'global', path: '/api/yuri/events', expectedHost: state.app.runtimeScope() });
+  const chat = state.createChat(scope, dependencies); await chat.draftReady; await flush();
   if (observe) { chat.goal.observe(); await flush(); }
   return { state, chat };
 }
@@ -62,6 +69,123 @@ describe('production follow-up delivery snapshots', () => {
     const normal = handle;
     handle = (path, method, body) => path.includes('/prompt?') ? { id: (body as { id: string }).id, sessionID: 's' } : normal(path, method, body);
   }
+  describe('final write-ahead child admission', () => {
+    const modes = ['prompt', 'command', 'shell', 'goal'] as const;
+    async function scenario(mode: typeof modes[number], initialChild: boolean) {
+      let allowed = initialChild, child = initialChild;
+      const normal = handle;
+      let finalRead: (() => Promise<unknown>) | undefined;
+      handle = (path, method, body) => /^\/api\/session\/s\?/.test(path) ? finalRead ? finalRead() : { id: 's', ...(child ? { parentID: 'parent' } : {}) }
+        : path.startsWith('/api/command?') ? [{ name: 'custom' }]
+        : path.includes('/prompt?') ? { id: (body as { id: string }).id, sessionID: 's' } : normal(path, method, body);
+      const { chat } = await chatOwner(false, { deviceChatPreferences: () => ({ allowPromptingSubagentSessions: allowed, persistChatDraft: false }) });
+      const text = mode === 'command' ? '/custom original' : mode === 'shell' ? 'printf original' : mode === 'goal' ? '/goal Verify original' : 'Original prompt';
+      const files = mode === 'shell' ? [] : [{ uri: 'attachment://original', name: 'original.txt', mime: 'text/plain' }];
+      chat.setDraftText(text); chat.attachments.set(files);
+      return { chat, text, files, setAllowed: (value: boolean) => { allowed = value; }, setChild: () => { child = true; },
+        gateFinalRead: (read: () => Promise<unknown>) => { finalRead = read; },
+        start: () => mode === 'command' ? chat.command('custom', 'original') : chat.send(mode === 'shell' ? { inputMode: 'shell' } : {}),
+      };
+    }
+    const outbound = () => requests().filter(input => input.method === 'POST' && /\/(prompt|command|shell)\?/.test(input.path));
+    async function assertRetained(input: Awaited<ReturnType<typeof scenario>>, capturedID: string) {
+      expect(outbound()).toHaveLength(0);
+      expect(input.chat.error()).toBe('subagent-prompting-disabled');
+      expect(input.chat.sendAdmission()).toBe('subagent-prompting-disabled');
+      expect(input.chat.draft()).toBe(input.text); expect(input.chat.attachments()).toEqual(input.files);
+      expect(input.chat.pendingSend()).toMatchObject({ id: capturedID, text: input.text, files: input.files, uncertain: false });
+      const saved = JSON.parse(harness.storage.get(input.chat.referenceScope.draft)!);
+      expect(saved.draft).toBe(''); expect(saved.attachments).toEqual(input.files);
+      expect(saved.pendingSend).toMatchObject({ id: capturedID, text: input.text, files: input.files, uncertain: false });
+      input.setAllowed(true);
+      expect(await input.chat.retrySend()).toBe(true); expect(outbound()).toHaveLength(1);
+      expect(input.chat.pendingSend()).toBeNull();
+      if (input.text === 'Original prompt') expect(outbound()[0].body.id).toBe(capturedID);
+    }
+    it.each(modes)('final session GET changes parent to forbidden child before %s dispatch', async mode => {
+      const input = await scenario(mode, false), entered = deferred<void>(), gate = deferred<unknown>();
+      input.gateFinalRead(() => { entered.resolve(); return gate.promise; });
+      const flight = input.start(); await entered.promise;
+      const capturedID = input.chat.pendingSend()!.id;
+      input.setChild(); gate.resolve({ id: 's', parentID: 'parent' });
+      expect(await flight).toBe(false); await assertRetained(input, capturedID);
+    });
+    it.each(modes)('child preference becomes false during final session GET before %s dispatch', async mode => {
+      const input = await scenario(mode, true), entered = deferred<void>(), gate = deferred<unknown>();
+      input.gateFinalRead(() => { entered.resolve(); return gate.promise; });
+      const flight = input.start(); await entered.promise;
+      const capturedID = input.chat.pendingSend()!.id;
+      input.setAllowed(false); gate.resolve({ id: 's', parentID: 'parent' });
+      expect(await flight).toBe(false); await assertRetained(input, capturedID);
+    });
+    it.each(modes)('child preference becomes false during write-ahead Storage before %s dispatch', async mode => {
+      const input = await scenario(mode, true), entered = deferred<void>(), gate = deferred<void>();
+      const originalSet = harness.setItem.getMockImplementation()!;
+      let held = false;
+      harness.setItem.mockImplementation(async (key: string, json: string) => {
+        if (!held && key === input.chat.referenceScope.draft && JSON.parse(json).pendingSend?.uncertain === true) {
+          held = true; entered.resolve(); await gate.promise;
+        }
+        await originalSet(key, json);
+      });
+      const flight = input.start(); await entered.promise;
+      const capturedID = input.chat.pendingSend()!.id;
+      input.setAllowed(false); gate.resolve();
+      expect(await flight).toBe(false); await assertRetained(input, capturedID);
+    });
+  });
+  it.each([false, null])('blocks actual child prompt and command at unknown/disabled preference %s without altering input', async allowed => {
+    const normal = handle;
+    handle = (path, method, body) => /^\/api\/session\/s\?/.test(path) ? { id: 's', parentID: 'parent' } : normal(path, method, body);
+    let preference = allowed === null ? null : { allowPromptingSubagentSessions: allowed, persistChatDraft: true };
+    const { chat } = await chatOwner(false, { deviceChatPreferences: () => preference }); acceptPrompts();
+    chat.setDraftText('Keep this'); expect(chat.canSend()).toBe(false);
+    expect(chat.sendAdmission()).toBe(allowed === null ? 'subagent-preference-unknown' : 'subagent-prompting-disabled');
+    expect(await chat.send()).toBe(false); expect(await chat.command('review', 'args')).toBe(false);
+    expect(chat.draft()).toBe('Keep this'); expect(chat.pendingSend()).toBe(null); expect(prompts()).toHaveLength(0); expect(commands()).toHaveLength(0);
+    preference = { allowPromptingSubagentSessions: true, persistChatDraft: true };
+    expect(chat.canSend()).toBe(true); expect(await chat.send()).toBe(true); expect(prompts()).toHaveLength(1);
+    preference = { ...preference, allowPromptingSubagentSessions: false };
+    chat.setDraftText('Next'); expect(await chat.send()).toBe(false); expect(prompts()).toHaveLength(1);
+  });
+  it('uses parent session authority rather than message parents and allows parent prompts before preferences load', async () => {
+    const { chat } = await chatOwner(false, { deviceChatPreferences: () => null }); acceptPrompts();
+    chat.messages.set([{ id: 'reply', role: 'assistant', text: 'x', parentID: 'message-parent' }]);
+    expect(chat.canSend()).toBe(true); chat.setDraftText('Parent prompt'); expect(await chat.send()).toBe(true);
+  });
+  it('Bot admission does not depend on child-session preference or a session parent lookup', async () => {
+    const normal = handle;
+    handle = (path, method, body) => path.includes('/assistants/bot/') && method === 'POST' ? { admitted: true, messageID: (body as { messageID: string }).messageID }
+      : path === '/api/yuri/assistants/snapshot' ? { assistants: [{ id: 'bot', working: false }] }
+      : path.includes('/contact/messages') ? { messages: [], generation: 1, revision: 1, complete: true } : normal(path, method, body);
+    const state = await import('./state'); await state.loadConnections();
+    const chat = state.createChat({ ...scope, id: 'bot', kind: 'assistant' }, { deviceChatPreferences: () => null }); await chat.draftReady; await flush();
+    expect(chat.canSend()).toBe(true); chat.setDraftText('Bot input'); expect(await chat.send()).toBe(true);
+    expect(requests().some(input => input.method === 'POST' && input.path.includes('/assistants/bot/'))).toBe(true);
+    expect(requests().some(input => /^\/api\/session\/bot\?/.test(input.path))).toBe(false);
+  });
+  it('blocks outbound child dispatch if authority changes while preparing and never replays via retry', async () => {
+    const normal = handle;
+    handle = (path, method, body) => /^\/api\/session\/s\?/.test(path) ? { id: 's', parentID: 'parent' } : normal(path, method, body);
+    let allowed = true;
+    const { chat } = await chatOwner(false, { deviceChatPreferences: () => ({ allowPromptingSubagentSessions: allowed, persistChatDraft: false }) }); acceptPrompts();
+    chat.setDraftText('Captured'); const gate = deferred<import('./model').CompiledSubmission>();
+    const flight = chat.send({ prepare: () => gate.promise }); await flush(); allowed = false; gate.resolve({ text: 'Compiled' });
+    expect(await flight).toBe(false); expect(prompts()).toHaveLength(0); expect(chat.draft()).toBe('Captured'); expect(chat.pendingSend()?.uncertain).toBe(false);
+    expect(await chat.retrySend()).toBe(false); expect(prompts()).toHaveLength(0);
+    const saved = [...harness.storage.entries()].find(([key]) => key.includes('chat-draft'))!;
+    expect(JSON.parse(saved[1]).draft).toBe(''); expect(JSON.parse(saved[1]).pendingSend.text).toBe('Captured');
+  });
+  it('device draft preference reaches the actual Chat owner and null never writes ordinary input', async () => {
+    let preference: { allowPromptingSubagentSessions: boolean; persistChatDraft: boolean } | null = null;
+    const { chat } = await chatOwner(false, { deviceChatPreferences: () => preference });
+    chat.setDraftText('Live editor'); await chat.flushDraft(); expect(harness.storage.size).toBe(0);
+    preference = { allowPromptingSubagentSessions: false, persistChatDraft: false }; await chat.flushDraft();
+    expect(chat.draft()).toBe('Live editor');
+    const saved = () => JSON.parse([...harness.storage.entries()].find(([key]) => key.includes('chat-draft'))![1]);
+    expect(saved().draft).toBe(''); preference = { ...preference, persistChatDraft: true }; await chat.flushDraft();
+    expect(saved().draft).toBe('Live editor');
+  });
   it('100 text/status events and draft edits never read the preference or request settings', async () => {
     const followUpBehavior = vi.fn(() => 'steer' as const);
     const { chat } = await chatOwner(false, { followUpBehavior });

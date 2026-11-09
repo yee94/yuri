@@ -84,6 +84,40 @@ it('partial schedules preserve failed-project prior rows but never publish compl
   expect(state.app.tasks()).toEqual([{ projectId: 'good', task: { id: 'new' } }, { projectId: 'failed', task: { id: 'prior' } }]); expect(state.app.notificationCatalog().domains.tasks).toBe('failed');
 });
 
+it('one failed directory updates complete directories without a root error or false offline state, while notification readiness remains closed', async () => {
+  const state = await open(), normal = read;
+  const row = (id: string, updated: number) => ({ id, title: id, time: { updated } });
+  let partial = false;
+  read = path => path === paths.sessions ? { available: true, directories: [
+    { directory: '/good', sessions: [row(partial ? 'good-new' : 'good-old', 20)] },
+    { directory: '/failed', sessions: partial ? [] : [row('failed-prior', 10)] },
+  ], sync: { active: false, completed: partial ? 1 : 2, total: 2, completedDirectories: ['/good'], pendingDirectories: [], failedDirectories: partial ? ['/failed'] : [] } } : normal(path);
+  await state.refresh(); partial = true;
+  await state.run(state.refresh);
+  expect(state.app.error()).toBe('');
+  expect(state.app.sessions().map(row => row.id)).toEqual(['good-new', 'failed-prior']);
+  expect(state.app.online()).toBe(true);
+  expect(state.app.notificationCatalog()).toMatchObject({ complete: false, domains: { sessions: 'failed' }, sessionIssues: { failedDirectories: ['/failed'], pendingDirectories: [] } });
+  await expect(state.awaitNotificationCatalogReady(identity(state), () => true)).rejects.toThrow('notification_catalog_incomplete');
+  partial = false; await state.refresh();
+  expect(state.app.notificationCatalog().complete).toBe(true);
+  expect(state.app.notificationCatalog().sessionIssues).toBeUndefined();
+  expect(state.app.sessions().map(row => row.id)).toEqual(['good-old', 'failed-prior']);
+});
+
+it('cold partial catalogs expose last successful failed-directory rows as display seeds, never empty success or notification authority', async () => {
+  const state = await open(), normal = read;
+  read = path => path === paths.sessions ? { available: true, directories: [
+    { directory: '/good', sessions: [{ id: 'complete-row', time: { updated: 20 } }] },
+    { directory: '/failed', sessions: [{ id: 'saved-row', time: { updated: 10 } }] },
+  ], sync: { failedDirectories: ['/failed'], pendingDirectories: [], completed: 1, total: 2, active: false } } : normal(path);
+  await state.run(state.refresh);
+  expect(state.app.error()).toBe('');
+  expect(state.app.sessions().map(row => row.id)).toEqual(['complete-row', 'saved-row']);
+  expect(state.app.notificationCatalog().complete).toBe(false);
+  expect(state.app.notificationCatalog().domains.sessions).toBe('failed');
+});
+
 it.each([
   ['projects', { projects: [], complete: false }], ['projects', {}],
   ['sessions', { available: true, directories: [], sync: { active: true } }],

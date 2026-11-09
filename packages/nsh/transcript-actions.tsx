@@ -8,12 +8,13 @@ import type { PageOperation } from './page-operations';
 import { Icon } from './Icon';
 import { NativeTurnMetrics } from './transcript-tools-turn';
 import { NativeUserTimestamp } from './transcript-time';
-import { createTranscriptActions, nativeRevertFrom, type NativeEditDraft, type NativeRevert, type TranscriptScope } from './transcript-actions-core';
+import { createTranscriptActions, nativeRevertFrom, type NativeEditDraft, type NativeRevert, type TranscriptScope, type NativeSessionHistorySnapshot, type NativeSessionHistoryReceipt } from './transcript-actions-core';
 import { historyDraftBackupFrom, historyDraftBackupJSON, historyDraftSnapshot, replaceHistoryDraft, type HistoryDraftSnapshot } from './transcript-actions-backup';
 import type { ReferenceScope, ScopedReferenceDocument } from './composer-references';
 import { NativeSpeechAction, type NativeSpeech } from './speech';
 import { nativeAppearance } from './appearance';
 import { nativeAssistantTps } from './chat-preferences-core';
+import { inNativeSessionActionStorageLane } from './transcript-actions-storage';
 
 export type NativeMessageActionOptions = {
   send: typeof request;
@@ -108,6 +109,11 @@ type HistoryChat = {
   flushDraft: () => Promise<void>;
   refreshHistory?: (valid?: () => boolean) => Promise<NativeRevert | null>;
   readonly messageScope?: { generation: number };
+  prepareHistoryAction?: (valid: () => boolean) => Promise<void>;
+  historyActionSnapshot?: () => NativeSessionHistorySnapshot;
+  loadOlder?: () => Promise<void>;
+  /** createChat captures the complete durable Host/authorization/target tuple. */
+  readonly historyActionStorageKey?: string | null;
 };
 
 /** Page-owned recovery survives row removal/virtualization, never owns server history. */
@@ -118,6 +124,7 @@ export function createNativeTranscriptHistory(input: { chat: HistoryChat; target
   const saved = signal<HistoryDraftSnapshot[]>([]);
   const error = signal(''), pending = signal(false);
   const uncertain = signal(false);
+  const sessionReceipt = signal<NativeSessionHistoryReceipt | null>(null);
   const ready = signal(false);
   let alive = true;
   const current = () => alive && input.current() && chat.active() && lifecycle() === 'active';
@@ -137,6 +144,30 @@ export function createNativeTranscriptHistory(input: { chat: HistoryChat; target
   });
   cleanup(() => { alive = false; releaseHistory?.(); releaseHistory = undefined; });
   const backupKey = `nsh:history-draft:v1:${input.storageKey}`;
+  const receiptKey = `nsh:history-action:v1:${chat.historyActionStorageKey ?? input.storageKey}`;
+  const receiptReady = inNativeSessionActionStorageLane(receiptKey, () => Storage.getItem(receiptKey)).then(raw => {
+    if (!raw || raw === 'null') return;
+    const value = record(JSON.parse(raw));
+    if (!['undo', 'redo', 'fork'].includes(String(value.action)) || value.status !== 'unknown') throw new Error('Invalid session history receipt');
+    sessionReceipt.set({ action: value.action as NativeSessionHistoryReceipt['action'], status: 'unknown' });
+  });
+  // Keep a failed receipt read observable without creating an unhandled rejection.
+  void receiptReady.catch(failure => { if (input.current()) error.set(String(failure)); });
+  let receiptWrite = 0;
+  async function saveSessionReceipt(value: NativeSessionHistoryReceipt | null) {
+    const write = ++receiptWrite, previous = sessionReceipt();
+    if (value) sessionReceipt.set(value);
+    const work = inNativeSessionActionStorageLane(receiptKey, () => Storage.setItem(receiptKey, JSON.stringify(value ? { ...value, status: 'unknown' } : null)));
+    try {
+      // Persist unknown before issuing a non-idempotent write. A crash never grants replay.
+      await work;
+      if (write === receiptWrite) sessionReceipt.set(value);
+    } catch (failure) {
+      const retained = value ?? previous;
+      if (write === receiptWrite && retained) sessionReceipt.set({ ...retained, status: 'unknown' });
+      throw failure;
+    }
+  }
   void Storage.getItem(backupKey).then(raw => {
     if (!input.current()) return;
     saved.set(historyDraftBackupFrom(raw, chat.referenceScope));
@@ -172,6 +203,10 @@ export function createNativeTranscriptHistory(input: { chat: HistoryChat; target
     const onUncertain = () => { if (current()) uncertain.set(true); };
     return {
       target, message, scope: { ...scope, message }, send: request,
+      sessionHistory: chat.prepareHistoryAction && chat.historyActionSnapshot && chat.loadOlder ? {
+        refresh: async () => { await receiptReady; if (!current()) throw new Error('history_operation_stale'); await chat.prepareHistoryAction!(current); }, snapshot: chat.historyActionSnapshot,
+        loadOlder: chat.loadOlder, receipt: sessionReceipt, setReceipt: saveSessionReceipt,
+      } : undefined,
       canEditDraft: () => ready() && chat.draftStatus() === 'ready' && !chat.pendingSend() && !chat.queueEdit() && !saved().length,
       onEditDraft: async (draft: NativeEditDraft) => {
         if (chat.sending() || chat.pendingSend() || chat.queueEdit()) throw new Error('消息正在发送或有待恢复操作，未覆盖草稿');
@@ -250,5 +285,11 @@ export function createNativeTranscriptHistory(input: { chat: HistoryChat; target
       <If when={!!error()}><Text class="text-sm text-destructive">{error()}</Text></If>
     </View>;
   }
-  return { props, Indicator };
+  // Capture the page-operation at invocation, never manufacture a selected tail row.
+  const sessionActions = {
+    undo: () => createTranscriptActions(props(() => undefined as unknown as Message)).undoTurn(),
+    redo: () => createTranscriptActions(props(() => undefined as unknown as Message)).redoTurn(),
+    fork: () => createTranscriptActions(props(() => undefined as unknown as Message)).forkSession(),
+  };
+  return { props, Indicator, sessionActions, sessionReceipt };
 }

@@ -43,16 +43,26 @@ export function createNewSessionAdmission(input: {
     const work = (async () => {
       try {
         await source.ready;
+        await input.chat.draftReady;
         if (!current()) return;
         admitted ||= source.admission() === 'acknowledged';
         if (!admitted) {
-          const readOnly = reconcileOnly || replaced || source.admission() !== undefined;
-          if (!readOnly) await source.noteAdmission(input.handoff.receipt, 'unknown', operation);
+          const pending = input.chat.pendingSend(), phase = source.admission();
+          // Only the exact destination's durable not-dispatched journal can
+          // resume preparation. A source receipt alone never proves no dispatch.
+          const preparation = phase === 'preparing' && pending?.id === input.handoff.receipt.inputID
+            && pending.uncertain === false && input.chat.draftStatus() === 'ready';
+          const readOnly = reconcileOnly || pending?.uncertain === true || input.chat.draftStatus() !== 'ready'
+            || (replaced || phase !== undefined) && !preparation;
+          if (!readOnly) await source.noteAdmission(input.handoff.receipt, 'preparing', operation);
           if (!current()) { if (!disposed && captured === assigned && source.ownedScope()) input.changed('unconfirmed'); return; }
           const result = await (input.send ?? sendNewSessionHandoff)(input.chat, input.handoff.receipt, {}, operation.request,
             { operation, source, reconcileOnly: readOnly });
           if (!current()) { if (!disposed && captured === assigned && source.ownedScope()) input.changed('unconfirmed'); return; }
-          if (!result) { if (!disposed) input.changed('unconfirmed'); return; }
+          if (!result) {
+            if (input.chat.pendingSend()?.uncertain && source.admission() === 'preparing') await source.noteAdmission(input.handoff.receipt, 'unknown', operation);
+            if (!disposed) input.changed('unconfirmed'); return;
+          }
           await source.noteAdmission(input.handoff.receipt, 'acknowledged', operation);
           if (!current()) return;
           admitted = true;

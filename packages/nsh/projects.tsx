@@ -1,11 +1,11 @@
-import { cleanup, computed, effect, host, lifecycle, List, Overlay, PanResponder, Scroll, signal, Text, untracked, View, type ScrollRef, type ScrollEvent } from 'nsh';
+import { cleanup, colorScheme, computed, effect, host, lifecycle, List, Overlay, PanResponder, Scroll, signal, Text, token, untracked, View, type ScrollRef, type ScrollEvent, type ViewRef, type GestureResponderEvent } from 'nsh';
 import { AlertDialog, Button, Input, NavPage } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
 import { Icon } from './Icon';
 import { t } from './i18n';
 import { activeFrom, eventBusy, eventSessionID, list, messagesFrom, nameOf, projectsFrom, record, runtimeEventFrom, text, unwrap, type ChatTarget, type Project, type Session } from './model';
 import { query, sessionPath } from './runtime';
-import { app, captureHostRequest, createSession, epoch } from './state';
+import { app, captureHostRequest, createSession, epoch, refresh as refreshCatalog, run } from './state';
 import { createPageOperations } from './page-operations';
 import { createProjectsDeletes } from './projects-delete';
 import { projectsAttention, projectsInProgress } from './projects-attention';
@@ -13,10 +13,20 @@ import { readProjectsBlocking } from './projects-attention-blocking';
 import { ProjectsSessionIndicator } from './projects-attention-indicator';
 import { resolveMobileSessionIndicator } from '../ui/src/mobile/projects/mobileSessionIndicator';
 import { formatSessionChangeCounts, readSessionChangeSummary } from '../ui/src/lib/sessionChangeSummary';
-import { createProjectsOrderGesture, type ProjectsOrderGeometry } from './projects-order-gesture';
+import { formatRelativeShort as relative } from '../ui/src/lib/time-format-core';
+import { createProjectsOrderGesture, type ProjectsOrderGeometry, type ProjectsOrderGesturePhase } from './projects-order-gesture';
 import { createProjectsSessionDrag, type ProjectsSessionGeometry, type ProjectsSessionDragProjection, type ProjectsOrderScroll } from './projects-order-touch';
+import { projectHomeDivider, projectHomeDensityGeometry, projectHomeGeometry as geometry, projectHomeSurface, worktreeFormLayout } from './projects-presentation';
+import { nativeAppearance, nativeChatTextStyle, nativeDensity } from './appearance';
+import { nativeProjectHomeSummaries } from './projects-summary';
+import { WorktreeBranchPicker } from './projects-worktree-picker';
+import { buildProjectMenuItems } from '../ui/src/mobile/sessionMenuModel';
+import type { IconName } from '../ui/src/components/icon/icons';
+import { createWorktreeForm } from './projects-worktree-form';
+import { normalizeBranchName, slugifyWorktreeName } from '../ui/src/lib/worktrees/worktreeNames';
 
 export interface ProjectsNavigation {
+  active?: boolean;
   onOpenChat: (target: ChatTarget) => void;
   onOpenProject: (project: Project) => void;
   onOpenFiles: (directory: string) => void;
@@ -34,8 +44,8 @@ export interface ProjectsNavigation {
   activeProjectId?: string;
   instanceOptions?: Array<{ id: string; label: string; active: boolean; disabled: boolean }>;
 }
-export type ProjectsHomeProps = ProjectsNavigation;
-export type ProjectDetailProps = Omit<ProjectsNavigation, 'onOpenProject' | 'onAddProject'> & { project: Project; initialCreateWorktree?: boolean };
+export type ProjectsHomeProps = ProjectsNavigation & { bottomInset?: number };
+export type ProjectDetailProps = Omit<ProjectsNavigation, 'onOpenProject' | 'onAddProject'> & { project: Project; initialCreateWorktree?: boolean; sheet?: boolean; onSheetClose?: () => void; onPendingChange?: (pending: boolean) => void; onOrderGesture?: (phase: ProjectsOrderGesturePhase) => void };
 type ProjectSession = Session & { pinned: boolean; archived: boolean; activity?: number; created?: number; changes?: string };
 type OrderSnapshot = { revision: number; sessionOrderByScope: Record<string, string[]>; sessionOrderActivityByScope: Record<string, Record<string, number>> };
 type Page = { sessions: ProjectSession[]; cursor: string | null };
@@ -80,6 +90,8 @@ const quiet = 'min-h-11 px-3 py-2 rounded-xl active:bg-accent items-center justi
 const action = `${quiet} bg-secondary`;
 const field = 'min-h-12 rounded-xl bg-secondary px-3 py-3 text-foreground';
 const shell = 'rounded-3xl border border-border bg-card p-3 gap-2';
+const homeGeometry = computed(() => projectHomeDensityGeometry(nativeAppearance.current()?.padding));
+const homeGroupStyle = () => ({ borderWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark'), borderRadius: homeGeometry().groupRadius });
 const sessionCount = (count: number) => count === 1 ? t('mobile.sessions.project.sessionsSingle') : t('mobile.sessions.project.sessionsPlural', { count });
 
 function sessionFrom(value: unknown, directory = ''): ProjectSession {
@@ -127,11 +139,6 @@ export function projectPathHint(path: string) {
   const parts = normalized.split('/').filter(Boolean);
   return parts.length <= 1 ? normalized : parts.length === 2 ? parts[0]! : parts.slice(-3, -1).join('/');
 }
-function relative(timestamp: number) {
-  if (!timestamp) return '';
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
-  return minutes < 1 ? t('agentManager.sidebar.relativeTime.now') : minutes < 60 ? t('agentManager.sidebar.relativeTime.minutes', { count: minutes }) : minutes < 1440 ? t('agentManager.sidebar.relativeTime.hours', { count: Math.floor(minutes / 60) }) : t('agentManager.sidebar.relativeTime.days', { count: Math.floor(minutes / 1440) });
-}
 function merge(previous: ProjectSession[], next: ProjectSession[]) {
   const rows = new Map(previous.map(row => [row.id, row]));
   next.forEach(row => rows.set(row.id, row));
@@ -139,9 +146,21 @@ function merge(previous: ProjectSession[], next: ProjectSession[]) {
 }
 
 /** Page-owned authority: neither the twenty-row index nor failed reads mean a complete directory. */
-export function createProjectsController() {
-  const operations = createPageOperations();
+export function createProjectsController(active: () => boolean = () => true) {
+  const operations = createPageOperations(active);
   const buckets = signal<Record<string, Bucket>>({}), pins = signal<string[]>([]), running = signal<string[]>([]);
+  const visibleCounts = signal<Record<string, number>>({});
+  const visibleCount = (directory: string) => visibleCounts()[directory] ?? 3;
+  function showFewer(directory: string) {
+    if (current()) visibleCounts.set({ ...visibleCounts(), [directory]: 3 });
+  }
+  function showMore(directory: string) {
+    if (!current() || pending().includes(directory)) return;
+    const next = visibleCount(directory) + 7;
+    visibleCounts.set({ ...visibleCounts(), [directory]: next });
+    const bucket = buckets()[directory];
+    if ((byDirectory().get(directory)?.length ?? 0) < next && (!bucket || bucket.hasMore)) void loadDirectory(directory);
+  }
   const worktrees = signal<Record<string, Worktree[]>>({}), error = signal(''), loading = signal(false), pending = signal<string[]>([]);
   const branches = signal<string[]>([]);
   const treeOrders = signal<Record<string, WorktreeOrder>>({}), dirty = signal<Record<string, boolean>>({});
@@ -186,7 +205,7 @@ export function createProjectsController() {
     const valid = scope(), value = orderSnapshot(await request('/api/session-folders/order'));
     if (valid() && (!order() || value.revision >= order()!.revision)) order.set(value);
   }
-  async function reorder(scopeKey: string, activeID: string, overID: string) {
+  async function reorder(scopeKey: string, activeID: string, overID: string, visibleIDs?: readonly string[]) {
     const request = operations.capture().request;
     if (!current() || pending().includes(`order:${scopeKey}`) || activeID === overID) return;
     const valid = scope(); error.set(''); pending.set([...pending(), `order:${scopeKey}`]);
@@ -194,10 +213,14 @@ export function createProjectsController() {
       // Read the shared Host rank before writing so unloaded/hidden ranks are retained.
       await loadOrder(); if (!valid()) return;
       const rows = scopeKey === '__pinned__' ? orderedProjectSessions(sessions().filter(row => pins().includes(row.id)), scopeKey, order(), pins()) : byDirectory().get(scopeKey) ?? [];
-      const ids = rows.map(row => row.id), from = ids.indexOf(activeID), to = ids.indexOf(overID);
+      const visible = visibleIDs ? new Set(visibleIDs) : undefined;
+      const known = new Set(rows.map(row => row.id));
+      if (visibleIDs && visible && (visible.size !== visibleIDs.length || visibleIDs.some(id => !known.has(id)))) return;
+      const ids = rows.filter(row => !visible || visible.has(row.id)).map(row => row.id), from = ids.indexOf(activeID), to = ids.indexOf(overID);
       if (from < 0 || to < 0) return;
       ids.splice(from, 1); ids.splice(to, 0, activeID);
-      const hidden = (order()?.sessionOrderByScope[scopeKey] ?? []).filter(id => !ids.includes(id));
+      const visibleOrder = new Set(ids);
+      const hidden = (order()?.sessionOrderByScope[scopeKey] ?? []).filter(id => !visibleOrder.has(id));
       const activity = scopeKey === '__pinned__' ? {} : Object.fromEntries(rows.map(row => [row.id, row.activity ?? row.updated]));
       const result = orderSnapshot(await request('/api/session-folders/order', 'POST', { scopeKey, order: [...ids, ...hidden], activity, onlyIfAbsent: false }));
       if (valid() && (!order() || result.revision >= order()!.revision)) order.set(result);
@@ -343,8 +366,8 @@ export function createProjectsController() {
       const old = next[path];
       if (old?.loaded && head.length === 0 && directory.hasMore === true) continue;
       const boundary = head.length ? Math.min(...head.map(row => row.updated)) : 0;
-      const tail = old?.loaded ? old.sessions.filter(row => row.updated < boundary) : [];
-      next[path] = { sessions: old?.loaded ? merge(tail, head) : head, cursor: old?.cursor ?? null, loaded: old?.loaded ?? false, hasMore: old?.loaded ? old.hasMore : directory.hasMore === true };
+      const tail = old?.loaded && directory.hasMore === true ? old.sessions.filter(row => row.updated <= boundary) : [];
+      next[path] = { sessions: old?.loaded ? merge(tail, head) : head, cursor: directory.hasMore === true ? old?.cursor ?? null : null, loaded: old?.loaded ?? false, hasMore: old?.loaded && directory.hasMore === true ? old.hasMore : directory.hasMore === true };
     }
     buckets.set(next);
     if (Array.isArray(value.pinnedSessionIds)) pins.set(value.pinnedSessionIds.filter((id): id is string => typeof id === 'string'));
@@ -647,8 +670,9 @@ export function createProjectsController() {
     if (!current() || pending().includes('worktree')) return;
     const valid = scope();
     pending.set([...pending(), 'worktree']);
+    error.set('');
     try {
-      const body = { mode, ...(mode === 'new' ? { branchName: branch.trim() } : { existingBranch: branch.trim() }), worktreeName: folder.trim(), ...(mode === 'new' && startRef.trim() ? { startRef: startRef.trim() } : {}) };
+      const body = { mode, ...(mode === 'new' ? { branchName: normalizeBranchName(branch) } : { existingBranch: normalizeBranchName(branch) }), worktreeName: slugifyWorktreeName(folder), ...(mode === 'new' && startRef.trim() ? { startRef: startRef.trim() } : {}) };
       const validation = record(await request(`/api/git/worktrees/validate?${query(project.path)}`, 'POST', body));
       if (!valid()) return;
       if (validation.ok !== true) throw new Error(list(validation.errors).map(row => text(row.message)).join('\n') || t('session.newWorktree.error.createWorktreeFailed'));
@@ -681,18 +705,19 @@ export function createProjectsController() {
   });
   const dispose = () => { alive = false; searchRevision++; stop(); stopDeletes(); stopAttention(); if (timer) clearTimeout(timer); if (treeOrderTimer) clearTimeout(treeOrderTimer); };
   cleanup(dispose);
-  return { buckets, pins, running, worktrees, branches, order, treeOrders, dirty, remoteDeletes, orderedWorktrees, loadTreeOrder, reorderWorktree, loadWorktreeStatus, deleteRemote, undoRows, archiveFailures, deleteBatches, undoDelete, retryDelete: (id: string) => deletes.retry(id), attention, markViewed, notice, error, loading, pending, sessions, byDirectory, searchResults: () => searchResults().filter(row => !deletedIDs().has(row.id)), searchMore, searching, current, refresh, loadOrder, reorder, undoArchive, smartTitle, syncMessages, updateProjectCatalog, syncProject, loadDirectory, search, cancelSearch, loadWorktrees, loadBranches, loadRepository, removeWorktree, mutate, createWorktree, dispose };
+  return { buckets, visibleCount, showMore, showFewer, pins, running, worktrees, branches, order, treeOrders, dirty, remoteDeletes, orderedWorktrees, loadTreeOrder, reorderWorktree, loadWorktreeStatus, deleteRemote, undoRows, archiveFailures, deleteBatches, undoDelete, retryDelete: (id: string) => deletes.retry(id), attention, markViewed, notice, error, loading, pending, sessions, byDirectory, searchResults: () => searchResults().filter(row => !deletedIDs().has(row.id)), searchMore, searching, current, captureWorktreeOperation: () => operations.capture(), refresh, loadOrder, reorder, undoArchive, smartTitle, syncMessages, updateProjectCatalog, syncProject, loadDirectory, search, cancelSearch, loadWorktrees, loadBranches, loadRepository, removeWorktree, mutate, createWorktree, dispose };
 }
 type Controller = ReturnType<typeof createProjectsController>;
 
-function WorktreeRow(props: { project: Project; tree: Worktree; controller: Controller; geometry?: ProjectsOrderGeometry; expanded?: boolean; onSelect: () => void; onNewSession: () => void; onRemoved?: () => void }) {
-  const offset = signal(0), deleting = signal(false), local = signal(false), remote = signal(false), checked = signal(false), dragOffset = signal(0);
+function WorktreeRow(props: { project: Project; tree: Worktree; controller: Controller; geometry?: ProjectsOrderGeometry; scroll?: ProjectsScroll; onOrderGesture?: (phase: ProjectsOrderGesturePhase) => void; expanded?: boolean; onSelect: () => void; onNewSession: () => void; onRemoved?: () => void; home?: boolean }) {
+  const offset = signal(0), deleting = signal(false), local = signal(false), remote = signal(false), checked = signal(false), dragOffset = signal(0), dragX = signal(0);
+  let headerRef: ViewRef | undefined;
   let start = 0, suppress = false, checkRevision = 0;
   effect(() => { app.connection(); untracked(() => { checkRevision++; checked.set(false); deleting.set(false); offset.set(0); }); });
   const rows = () => props.controller.orderedWorktrees(props.project);
   const pending = () => props.controller.pending().includes(props.tree.path);
   const pan = PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => !pending() && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
+    onMoveShouldSetPanResponder: (_, g) => !props.scroll?.dragging() && !pending() && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy),
     onPanResponderGrant: () => { start = offset(); suppress = true; },
     onPanResponderMove: (_, g) => offset.set(Math.max(-112, Math.min(0, start + g.dx))),
     onPanResponderRelease: () => offset.set(offset() < -39 ? -112 : 0),
@@ -701,11 +726,13 @@ function WorktreeRow(props: { project: Project; tree: Worktree; controller: Cont
   const gesture = props.geometry ? createProjectsOrderGesture({
     id: props.tree.path, ids: () => rows().map(row => row.path), geometry: props.geometry,
     current: () => props.controller.current() && !props.controller.pending().includes(`tree-order:${props.project.path}`), generation: epoch,
-    offset: value => dragOffset.set(value), started: () => { suppress = true; },
+    offset: value => dragOffset.set(value), horizontal: value => dragX.set(value), started: () => { suppress = true; offset.set(0); },
+    claim: () => props.scroll?.drag.claim() ?? null, audit: props.onOrderGesture,
     commit: over => { void props.controller.reorderWorktree(props.project, props.tree.path, over); },
   }) : undefined;
-  const drag = gesture ? PanResponder.create(gesture.handlers) : undefined;
-  cleanup(() => { gesture?.cancel(); props.geometry?.delete(props.tree.path); });
+  const unregister = gesture ? props.scroll?.register(gesture.cancel) : undefined;
+  effect(() => { props.controller.current(); props.controller.pending(); props.controller.worktrees(); props.controller.treeOrders(); epoch(); untracked(() => gesture?.reconcile()); });
+  cleanup(() => { unregister?.(); gesture?.dispose(); if (props.geometry?.get(props.tree.path) === headerRef) props.geometry?.delete(props.tree.path); });
   const check = async () => { const revision = ++checkRevision; checked.set(false); const result = await props.controller.loadWorktreeStatus(props.tree); if (props.controller.current() && revision === checkRevision) checked.set(result === true); };
   const openDelete = () => { offset.set(0); local.set(false); remote.set(false); deleting.set(true); void check(); };
   const menu = async () => {
@@ -719,16 +746,16 @@ function WorktreeRow(props: { project: Project; tree: Worktree; controller: Cont
     if (result.action === 'new') props.onNewSession();
     if (result.action === 'delete') openDelete();
   };
-  return <View class="gap-1" style={{ transform: [{ translateY: dragOffset() }], zIndex: dragOffset() ? 1 : 0 }}>
+  return <View class="gap-1" style={{ transform: [{ translateX: dragX() }, { translateY: dragOffset() }], zIndex: dragOffset() || dragX() ? 1 : 0 }}>
     <View class="overflow-hidden rounded-xl">
       <If when={offset() < 0}><View class="absolute right-0 top-0 bottom-0 flex-row" style={{ width: 112 }}>
         <Button class="flex-1 bg-secondary items-center justify-center" onPress={() => { offset.set(0); props.onNewSession(); }} accessibilityLabel={t('mobile.sessions.newSessionAria')}><Icon name="add" size={18} /></Button>
         <Button class="flex-1 bg-muted items-center justify-center" disabled={pending()} onPress={openDelete} accessibilityLabel={t('mobile.projectEdit.deleteWorktreeAria', { label: props.tree.branch || props.tree.name })}><Icon name="delete-bin" size={18} /></Button>
       </View></If>
-      <View ref={node => props.geometry?.set(props.tree.path, node)} {...pan.panHandlers} class="flex-row items-center bg-card" style={{ transform: [{ translateX: offset() }], height: 56 }} onLongPress={() => { suppress = true; void menu(); }}>
-        <If when={!!drag}><View testID={`project-worktree-drag-${props.tree.path}`} {...drag?.panHandlers} class="min-w-11 min-h-11 items-center justify-center" accessibilityLabel={t('mobile.projectEdit.dragWorktreeAria', { label: props.tree.branch || props.tree.name })}><Icon name="drag-move-2" size={15} /></View></If>
-        <Button testID={`project-worktree-${props.tree.path}`} class={`flex-1 flex-row gap-2 ${quiet}`} onPress={() => { if (suppress) { suppress = false; return; } if (offset()) { offset.set(0); return; } props.onSelect(); }}><Icon name="git-branch" size={15} /><Text class="flex-1 text-sm text-foreground" style={{ numberOfLines: 1 }}>{props.tree.branch || props.tree.name}</Text><If when={props.expanded !== undefined}><Text class="text-xs text-muted-foreground">{sessionCount(props.controller.byDirectory().get(props.tree.path)?.length ?? 0)}</Text><Icon name={props.expanded ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></If></Button>
-        <Button class={quiet} accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void menu(); }}><Icon name="more-2" size={16} /></Button>
+      <View ref={node => { headerRef = node; props.geometry?.set(props.tree.path, node); }} {...pan.panHandlers} class={props.home ? 'flex-row items-center bg-transparent' : 'flex-row items-center bg-card'} style={{ transform: [{ translateX: offset() }], height: props.home ? homeGeometry().worktreeHeight : nativeDensity().forms.worktree.minHeight, ...(props.home && props.expanded ? { borderBottomWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark') } : {}) }}>
+        <If when={!!gesture}><View testID={`project-worktree-drag-${props.tree.path}`} {...gesture?.handlers} class="min-w-11 min-h-11 items-center justify-center" accessibilityLabel={t('mobile.projectEdit.dragWorktreeAria', { label: props.tree.branch || props.tree.name })}><Icon name="drag-move-2" size={15} /></View></If>
+        <View class="flex-1" onLongPress={() => { suppress = true; void menu(); }}><Button testID={`project-worktree-${props.tree.path}`} class={props.home ? 'flex-1 flex-row items-center gap-1.5 px-2.5 py-1.5' : `flex-1 flex-row gap-2 ${quiet}`} style={props.home ? { minHeight: homeGeometry().worktreeHeight, paddingHorizontal: 10 * nativeDensity().scale, paddingVertical: 6 * nativeDensity().scale, gap: 6 * nativeDensity().scale } : { ...nativeDensity().forms.quiet, ...nativeDensity().forms.inline }} onPress={() => { if (suppress) { suppress = false; return; } if (offset()) { offset.set(0); return; } props.onSelect(); }}><Icon name="git-branch" size={props.home ? 14 : 15} /><Text class="flex-1 text-foreground" style={{ numberOfLines: 1, fontSize: props.home ? 12 : 14 }}>{props.tree.branch || props.tree.name}</Text><If when={props.expanded !== undefined}><Text class="text-muted-foreground" style={{ fontSize: props.home ? 11 : 12 }}>{sessionCount(props.controller.byDirectory().get(props.tree.path)?.length ?? 0)}</Text><Icon name={props.expanded ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></If></Button></View>
+        <Button class={props.home ? 'w-9 h-9 items-center justify-center' : quiet} style={props.home ? { width: homeGeometry().action, height: homeGeometry().action } : nativeDensity().forms.quiet} accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void menu(); }}><Icon name="more-2" size={props.home ? 14 : 16} /></Button>
       </View>
     </View>
     <Sheet open={deleting()} closeOnSwipe={!pending()} closeOnBackdropPress={!pending()} closeOnEscape={!pending()} onOpenChange={event => { if (!pending()) { deleting.set(event.open); if (!event.open) checkRevision++; } }} popupClass="bg-background rounded-t-3xl p-5 gap-3">
@@ -738,9 +765,9 @@ function WorktreeRow(props: { project: Project; tree: Worktree; controller: Cont
       <If when={props.controller.byDirectory().get(props.tree.path)?.length}><Text class="text-sm text-muted-foreground">{t('mobile.projectEdit.deleteWorktreeArchiveNote', { count: props.controller.byDirectory().get(props.tree.path)?.length ?? 0 })}</Text></If>
       <If when={!!props.tree.branch.trim()}><View><Button class={quiet} disabled={pending()} onPress={() => local.set(!local())}><Text class="text-foreground">{t('mobile.projectEdit.deleteLocalBranch')}{local() ? ' ✓' : ''}</Text></Button><Button class={quiet} disabled={pending()} onPress={() => remote.set(!remote())}><Text class="text-foreground">{t('mobile.projectEdit.deleteRemoteBranch')}{remote() ? ' ✓' : ''}</Text></Button></View></If>
       <If when={props.controller.error()}><Text class="text-sm text-destructive">{props.controller.error()}</Text></If>
-      <If when={!checked()}><Button class={quiet} onPress={() => { void check(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
+      <If when={!checked()}><Button class={quiet} style={nativeDensity().forms.quiet} onPress={() => { void check(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
       <Button class={action} disabled={!checked() || pending()} onPress={() => { void (async () => { if (await props.controller.removeWorktree(props.project, props.tree, local(), remote())) { deleting.set(false); props.onRemoved?.(); } })(); }}><Text class="text-destructive">{t('mobile.projectEdit.deleteWorktreeConfirmButton')}</Text></Button>
-      <Button class={quiet} disabled={pending()} onPress={() => { checkRevision++; deleting.set(false); }}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
+      <Button class={quiet} style={nativeDensity().forms.quiet} disabled={pending()} onPress={() => { checkRevision++; deleting.set(false); }}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
     </Sheet>
   </View>;
 }
@@ -762,32 +789,42 @@ function ArchiveUndo(props: { controller: Controller; onOpenArchivedSessions?: (
 }
 function createProjectsScroll() {
   const dragging = signal(false);
-  let node: ScrollRef | undefined, offset = 0, maximum = 0;
+  const cancellations = new Set<() => void>();
+  const cancel = () => cancellations.forEach(stop => stop());
+  let node: ScrollRef | undefined, content: ViewRef | undefined, offset = 0, maximum = 0;
   const drag: ProjectsOrderScroll = {
-    viewport: async () => { const measured = await node?.measure(); return measured ? { top: measured.pagePosition.y, height: measured.bounds.size.height } : null; },
+    viewport: async () => { const [measured, body] = await Promise.all([node?.measure(), content?.measure()]); if (!measured || !body) return null; maximum = Math.max(0, body.bounds.size.height - measured.bounds.size.height); return { top: measured.pagePosition.y, height: measured.bounds.size.height }; },
     offset: () => offset, max: () => maximum,
     scrollTo: y => node?.scrollTo({ y, animated: false }),
     claim() { if (dragging()) return null; dragging.set(true); let released = false; return () => { if (!released) { released = true; dragging.set(false); } }; },
   };
-  return { drag, dragging, ref: (ref: ScrollRef) => { node = ref; }, onScroll: (event: ScrollEvent) => { offset = Math.max(0, event.offset.y); maximum = Math.max(0, event.contentSize.height - event.size.height); } };
+  return { drag, dragging, cancel, register(stop: () => void) { cancellations.add(stop); return () => { cancellations.delete(stop); }; },
+    ref: (ref: ScrollRef) => { node = ref; }, contentRef: (ref: ViewRef) => { content = ref; },
+    onTouchStartCapture: (event: GestureResponderEvent) => { if (event.touches.length > 1) cancel(); },
+    onScrollDragStart: cancel, onContentLayout: cancel,
+    onScroll: (event: ScrollEvent) => { offset = Math.max(0, event.offset.y); maximum = Math.max(0, event.contentSize.height - event.size.height); },
+  };
 }
 type ProjectsScroll = ReturnType<typeof createProjectsScroll>;
 
-function ProjectsSessionGroup(props: { controller: Controller; scope: string; rows: () => ProjectSession[]; scroll: ProjectsScroll; onOpen: ProjectsNavigation['onOpenChat']; subtitle?: (row: ProjectSession) => string }) {
+function ProjectsSessionGroup(props: { controller: Controller; scope: string; rows: () => ProjectSession[]; scroll: ProjectsScroll; onOpen: ProjectsNavigation['onOpenChat']; subtitle?: (row: ProjectSession) => string; home?: boolean }) {
+  const capturedScope = props.scope;
   const geometry: ProjectsSessionGeometry = new Map();
   const overlay = signal<ProjectsSessionDragProjection | null>(null), draggedID = signal<string | null>(null), shifts = signal<ReadonlyMap<string, number>>(new Map());
   const draggedTitle = computed(() => props.rows().find(row => row.id === draggedID())?.title ?? '');
+  const lastID = computed(() => props.rows().at(-1)?.id);
   const ids = () => props.rows().map(row => row.id);
-  const drag = createProjectsSessionDrag({ ids, geometry, scroll: props.scroll.drag, generation: epoch,
-    current: () => props.controller.current() && !props.controller.pending().includes(`order:${props.scope}`),
+  const current = () => props.scope === capturedScope && props.controller.current() && !props.controller.pending().includes(`order:${capturedScope}`);
+  const drag = createProjectsSessionDrag({ ids, geometry, scroll: props.scroll.drag, generation: epoch, current,
     changed(value) { overlay.set(value); if (draggedID() !== (value?.id ?? null)) draggedID.set(value?.id ?? null); if (shifts() !== value?.shifts) shifts.set(value?.shifts ?? new Map()); },
-    commit: (active, over) => { void props.controller.reorder(props.scope, active, over); },
+    commit: (active, over, visibleIDs) => { void props.controller.reorder(capturedScope, active, over, visibleIDs); },
   });
-  effect(() => { const members = ids(), current = props.controller.current(); epoch(); untracked(() => { const retained = new Set(members); for (const id of geometry.keys()) if (!retained.has(id)) geometry.delete(id); if (!current) drag.cancel(); else drag.reconcile(members); }); });
-  cleanup(() => { drag.dispose(); geometry.clear(); });
-  return <View testID={`projects-session-group-${props.scope}`} class="gap-1">
+  const unregister = props.scroll.register(drag.cancel);
+  effect(() => { const members = ids(), admitted = current(); epoch(); untracked(() => { const retained = new Set(members); for (const id of geometry.keys()) if (!retained.has(id)) geometry.delete(id); if (!admitted) drag.cancel(); else drag.reconcile(members); }); });
+  cleanup(() => { unregister(); drag.dispose(); geometry.clear(); });
+  return <View testID={`projects-session-group-${props.scope}`} class={props.home ? 'gap-0' : 'gap-1'} style={props.home ? undefined : nativeDensity().forms.rowGap}>
     <Each of={props.rows()}>{row => <View ref={ref => geometry.set(row().id, ref)} style={{ opacity: draggedID() === row().id ? .3 : 1, transform: [{ translateY: shifts().get(row().id) ?? 0 }], transitionProperty: 'transform', transitionDuration: draggedID() ? 200 : 0 }}>
-      <SessionRow row={row()} controller={props.controller} onOpen={props.onOpen} subtitle={props.subtitle?.(row())} drag={drag} dragScope={props.scope} />
+      <SessionRow row={row()} controller={props.controller} onOpen={props.onOpen} subtitle={props.subtitle?.(row())} drag={drag} dragScope={props.scope} dragActive={() => draggedID() === row().id} home={props.home} divider={row().id !== lastID()} />
     </View>}</Each>
     <If when={overlay() !== null}><Overlay testID={`projects-session-drag-overlay-${props.scope}`} onCancel={drag.cancel} style={{ position: 'absolute', top: overlay()?.y ?? 0, left: overlay()?.x ?? 0, width: overlay()?.width ?? 0, height: overlay()?.height ?? 0, pointerEvents: 'none' }}>
       <View class="flex-1 flex-row items-center gap-2 rounded-lg border border-border bg-card px-3"><Icon name="chat-thread" size={16} /><Text class="flex-1 text-sm text-foreground" style={{ numberOfLines: 1 }}>{draggedTitle()}</Text></View>
@@ -795,8 +832,9 @@ function ProjectsSessionGroup(props: { controller: Controller; scope: string; ro
   </View>;
 }
 
-function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen: (target: ChatTarget) => void; subtitle?: string; drag?: ReturnType<typeof createProjectsSessionDrag>; dragScope?: string }) {
+function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen: (target: ChatTarget) => void; subtitle?: string; drag?: ReturnType<typeof createProjectsSessionDrag>; dragScope?: string; dragActive?: () => boolean; home?: boolean; divider?: boolean }) {
   const offset = signal(0), renaming = signal(false), title = signal(props.row.title); let start = 0, swiped = false;
+  effect(() => { if (props.dragActive?.()) untracked(() => { offset.set(0); start = 0; swiped = true; }); });
   const indicator = () => resolveMobileSessionIndicator({ ...readProjectsBlocking(props.controller.attention().blockingByDirectory, props.row.directory, props.row.id), running: props.controller.running().includes(props.row.id), unread: (props.controller.attention().unseenBySession[props.row.id] ?? 0) > 0 });
   const pinLabel = () => t(props.controller.pins().includes(props.row.id) ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin');
   const pan = PanResponder.create({
@@ -828,55 +866,69 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
       if (confirmed.action === 'delete' && props.controller.current() && started === epoch()) void props.controller.mutate(props.row, 'delete');
     }
   }
-  return <View class="overflow-hidden rounded-xl">
+  return <View class={props.home ? 'overflow-hidden' : 'overflow-hidden rounded-xl'} style={props.home && props.divider ? { borderBottomWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark') } : undefined}>
     <If when={offset() < 0}><View class="absolute right-0 top-0 bottom-0 flex-row" style={{ width: 112 }}>
       <Button class="flex-1 bg-secondary items-center justify-center gap-1" disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('pin')}><Icon name="pushpin" size={17} /><Text class="text-xs text-foreground">{pinLabel()}</Text></Button>
       <Button class="flex-1 bg-muted items-center justify-center gap-1" disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('archive')}><Icon name="archive" size={17} /><Text class="text-xs text-destructive">{t('sessions.sidebar.bulkActions.archive')}</Text></Button>
     </View></If>
-    <View {...pan.panHandlers} class={`flex-row items-center min-h-12 ${props.controller.attention().currentSessionID === props.row.id ? 'bg-accent' : 'bg-card'}`} style={{ transform: [{ translateX: offset() }] }}>
+    <View {...pan.panHandlers} class={props.home ? 'flex-row items-center bg-transparent' : `flex-row items-center min-h-12 ${props.controller.attention().currentSessionID === props.row.id ? 'bg-accent' : 'bg-card'}`} style={{ transform: [{ translateX: offset() }], minHeight: props.home ? homeGeometry().rowHeight : nativeDensity().forms.session.minHeight }}>
       <View testID={`project-session-touch-${props.dragScope ?? 'plain'}-${props.row.id}`} class="flex-1"
         onTouchStartCapture={event => props.drag?.start(props.row.id, event)} onTouchMoveCapture={event => props.drag?.move(props.row.id, event)} onTouchEndCapture={event => props.drag?.finish(props.row.id, event)} onTouchCancelCapture={() => props.drag?.cancel()}
         onMoveShouldSetResponderCapture={() => props.drag?.claimed(props.row.id) ?? false} onResponderGrant={() => props.drag?.claimed(props.row.id) ?? false}
         onResponderMove={event => props.drag?.move(props.row.id, event)} onResponderRelease={event => props.drag?.finish(props.row.id, event)} onResponderTerminate={() => props.drag?.cancel()} onResponderTerminationRequest={() => !props.drag?.claimed(props.row.id)}>
-      <Button testID={`project-session-${props.row.id}`} class="flex-1 flex-row items-center gap-2 px-3 py-3 min-h-12" onPressDown={() => { if (!props.drag?.claimed(props.row.id)) swiped = false; }} onPress={() => {
-        if (props.drag?.consumeClick(props.row.id)) return;
+      <Button testID={`project-session-${props.row.id}`} class={props.home ? 'flex-1 flex-row items-center gap-2 bg-transparent' : 'flex-1 flex-row items-center gap-2 px-3 py-3 min-h-12'} style={props.home ? { minHeight: homeGeometry().rowHeight, paddingLeft: 16 * nativeDensity().scale, paddingRight: 2 * nativeDensity().scale, paddingVertical: 5 * nativeDensity().scale, gap: 8 * nativeDensity().scale } : nativeDensity().forms.session} onPressDown={() => { if (!props.drag?.claimed(props.row.id)) swiped = false; }} onPress={() => {
+        if (props.drag?.consumeClick(props.row.id)) { swiped = false; return; }
         if (swiped) { swiped = false; return; } if (offset()) { offset.set(0); return; } props.controller.markViewed(props.row.id); props.onOpen({ kind: 'session', ...props.row });
       }}>
         <ProjectsSessionIndicator indicator={indicator()} sessionID={props.row.id} />
-        <View class="flex-1 gap-1"><Text class={`text-sm font-medium ${props.controller.attention().currentSessionID === props.row.id ? 'text-primary' : 'text-foreground'}`} style={{ numberOfLines: 1 }}>{props.row.title || t('mobile.sessions.untitled')}</Text><If when={props.subtitle}><Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{props.subtitle}</Text></If><If when={props.row.changes}><Text class="text-xs text-muted-foreground">{props.row.changes}</Text></If></View>
-        <Text class="text-xs text-muted-foreground">{relative(props.row.updated)}</Text>
+        <View class="flex-1 gap-0.5" style={{ gap: 2 * nativeDensity().scale }}><View class="flex-row items-center gap-1.5" style={{ gap: 6 * nativeDensity().scale }}><Text class={props.home ? 'flex-1 text-foreground font-medium' : `text-sm font-medium ${props.controller.attention().currentSessionID === props.row.id ? 'text-primary' : 'text-foreground'}`} style={{ numberOfLines: 1, ...(props.home ? geometry.sessionTitle : {}) }}>{props.row.title || t('mobile.sessions.untitled')}</Text><If when={props.row.changes}><Text class="text-muted-foreground" style={props.home ? geometry.sessionMeta : { fontSize: 12 }}>{props.row.changes}</Text></If></View><If when={props.subtitle}><Text class="text-muted-foreground" style={{ numberOfLines: 1, ...(props.home ? geometry.sessionMeta : { fontSize: 12 }) }}>{props.subtitle}</Text></If></View>
+        <Text class="text-muted-foreground" style={props.home ? geometry.sessionMeta : { fontSize: 12 }}>{relative(props.row.updated)}</Text>
       </Button>
       </View>
-      <Button testID={`project-session-menu-${props.row.id}`} class="min-h-11 min-w-9 items-center justify-center" accessibilityLabel={t('sessions.sidebar.session.menu.label')} onPress={() => { void menu(); }}><Icon name="more-2" size={16} /></Button>
+      <Button testID={`project-session-menu-${props.row.id}`} class={props.home ? 'h-9 w-9 mr-1 items-center justify-center' : 'min-h-11 min-w-9 items-center justify-center'} style={props.home ? { width: homeGeometry().action, height: homeGeometry().action, marginRight: 4 * nativeDensity().scale } : undefined} accessibilityLabel={t('sessions.sidebar.session.menu.label')} onPress={() => { void menu(); }}><Icon name="more-2" size={props.home ? 14 : 16} /></Button>
     </View>
     <Sheet open={renaming()} closeOnSwipe={!props.controller.pending().includes(props.row.id)} closeOnEscape={!props.controller.pending().includes(props.row.id)} closeOnBackdropPress={!props.controller.pending().includes(props.row.id)} onOpenChange={event => { if (!props.controller.pending().includes(props.row.id)) renaming.set(event.open); }} popupClass="bg-background rounded-t-3xl p-5 gap-3">
       <Text class="text-lg font-semibold text-foreground">{t('sessions.sidebar.session.menu.rename')}</Text>
-      <Input class={field} value={title()} onChange={event => title.set(event.value)} accessibilityLabel={t('sessions.sidebar.session.menu.rename')} />
+      <Input class={field} style={nativeDensity().settings.field} value={title()} onChange={event => title.set(event.value)} accessibilityLabel={t('sessions.sidebar.session.menu.rename')} />
       <If when={props.controller.error()}><Text class="text-sm text-destructive">{props.controller.error()}</Text></If>
       <Button class={action} disabled={!title().trim() || props.controller.pending().includes(props.row.id)} onPress={() => { void (async () => { if (await props.controller.mutate(props.row, 'rename', title())) renaming.set(false); })(); }}><Text class="text-foreground">{t('sessions.sidebar.session.rename.save')}</Text></Button>
-      <Button class={quiet} disabled={props.controller.pending().includes(props.row.id)} onPress={() => { void (async () => { if (await props.controller.smartTitle(props.row)) renaming.set(false); })(); }}><Icon name="pencil-ai" size={18} /><Text class="text-foreground">{t('sessions.sidebar.session.rename.smartTitle')}</Text></Button>
-      <Button class={quiet} disabled={props.controller.pending().includes(props.row.id)} onPress={() => renaming.set(false)}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
+      <Button class={quiet} style={nativeDensity().forms.quiet} disabled={props.controller.pending().includes(props.row.id)} onPress={() => { void (async () => { if (await props.controller.smartTitle(props.row)) renaming.set(false); })(); }}><Icon name="pencil-ai" size={18} /><Text class="text-foreground">{t('sessions.sidebar.session.rename.smartTitle')}</Text></Button>
+      <Button class={quiet} style={nativeDensity().forms.quiet} disabled={props.controller.pending().includes(props.row.id)} onPress={() => renaming.set(false)}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
     </Sheet>
   </View>;
 }
 
-function DirectoryRows(props: { directory: string; controller: Controller; scroll: ProjectsScroll; onOpenChat: ProjectsNavigation['onOpenChat'] }) {
-  const count = signal(3);
+function DirectoryRows(props: { directory: string; controller: Controller; scroll: ProjectsScroll; onOpenChat: ProjectsNavigation['onOpenChat']; home?: boolean; embedded?: boolean }) {
+  const count = () => props.controller.visibleCount(props.directory);
   const rows = () => props.controller.byDirectory().get(props.directory) ?? [];
   const visible = () => rows().filter((row, index) => index < count() || props.controller.running().includes(row.id) || props.controller.attention().currentSessionID === row.id);
-  return <View class="gap-1">
-    <ProjectsSessionGroup controller={props.controller} scope={props.directory} rows={visible} scroll={props.scroll} onOpen={props.onOpenChat} />
-    <If when={count() > 3}><Button class={quiet} onPress={() => count.set(3)}><Text class="text-sm text-muted-foreground">{t('sessions.sidebar.group.showFewer')}</Text></Button></If>
-    <If when={rows().length > count() || props.controller.buckets()[props.directory]?.hasMore || !props.controller.buckets()[props.directory]?.loaded}>
-      <Button class={quiet} disabled={props.controller.pending().includes(props.directory)} onPress={() => { count.set(count() + 7); if (rows().length <= count()) void props.controller.loadDirectory(props.directory); }}><Text class="text-sm text-muted-foreground">{props.controller.pending().includes(props.directory) ? t('common.loading') : rows().length > count() ? t('mobile.sessions.showMore', { count: Math.min(7, rows().length - count()) }) : t('sessions.sidebar.group.showMore')}</Text></Button>
+  return <View class={props.home ? 'gap-0' : 'gap-1'} style={props.home ? !props.embedded ? homeGroupStyle() : undefined : nativeDensity().forms.rowGap}>
+    <Each of={[props.directory]}>{scope => <ProjectsSessionGroup controller={props.controller} scope={scope()} rows={visible} scroll={props.scroll} onOpen={props.onOpenChat} home={props.home} />}</Each>
+    <If when={count() > 3 && rows().length > 3}><Button testID={`projects-fewer-${props.directory}`} class={quiet} style={nativeDensity().forms.quiet} onPress={() => props.controller.showFewer(props.directory)}><Text class="text-sm text-muted-foreground">{t('sessions.sidebar.group.showFewer')}</Text></Button></If>
+    <If when={rows().length > count() || props.controller.buckets()[props.directory]?.hasMore || !props.controller.buckets()[props.directory]}>
+      <Button testID={`projects-more-${props.directory}`} class={quiet} style={nativeDensity().forms.quiet} disabled={props.controller.pending().includes(props.directory)} onPress={() => props.controller.showMore(props.directory)}><Text class="text-sm text-muted-foreground">{props.controller.pending().includes(props.directory) ? t('common.loading') : t('sessions.sidebar.group.showMore')}</Text></Button>
     </If>
   </View>;
 }
 
 export function ProjectsHome(props: ProjectsHomeProps) {
   const scroll = createProjectsScroll();
-  const controller = createProjectsController(), collapsed = signal<string[]>([]), expandedTrees = signal<string[]>([]), pinnedClosed = signal(false), searching = signal(false), term = signal(''), newChat = signal(false), newSessionPending = signal(false);
+  const controller = createProjectsController(() => props.active !== false), collapsed = signal<string[]>([]), expandedTrees = signal<string[]>([]), pinnedClosed = signal(false), searching = signal(false), term = signal(''), newChat = signal(false), newSessionPending = signal(false);
   let debounce: ReturnType<typeof setTimeout> | undefined;
+  type Option = { id: string; label: string; icon?: IconName; separated?: boolean; role?: string; disabled?: boolean; selected?: boolean };
+  const optionsOpen = signal(false), optionsTitle = signal(''), optionsRows = signal<Option[]>([]);
+  let optionResult: string | undefined, resolveOptions: ((result: { action?: string }) => void) | undefined;
+  function showOptions(title: string, actions: Option[]) {
+    if (resolveOptions || !controller.current()) return Promise.resolve<{ action?: string }>({});
+    optionsTitle.set(title); optionsRows.set(actions.filter(action => action.role !== 'cancel')); optionResult = undefined;
+    return new Promise<{ action?: string }>(resolve => { resolveOptions = resolve; optionsOpen.set(true); });
+  }
+  function finishOptions() {
+    const resolve = resolveOptions, action = optionResult; resolveOptions = undefined; optionResult = undefined; optionsRows.set([]);
+    resolve?.(controller.current() ? { action } : {});
+  }
+  cleanup(() => { const resolve = resolveOptions; resolveOptions = undefined; resolve?.({}); });
+  effect(() => { if (!controller.current()) untracked(() => { optionResult = undefined; optionsOpen.set(false); }); });
   effect(() => { if (controller.current()) untracked(() => { newSessionPending.set(false); void controller.refresh(); }); });
   effect(() => { const projects = app.projects(); if (!controller.current()) return; untracked(() => { void (async () => { for (let i = 0; i < projects.length && controller.current(); i += 2) await Promise.all(projects.slice(i, i + 2).map(project => controller.loadWorktrees(project))); })(); }); });
   cleanup(() => { if (debounce) clearTimeout(debounce); });
@@ -884,6 +936,7 @@ export function ProjectsHome(props: ProjectsHomeProps) {
   const pinnedRows = computed(() => orderedProjectSessions(controller.sessions().filter(row => controller.pins().includes(row.id)), '__pinned__', controller.order(), controller.pins()));
   const inProgressRows = computed(() => projectsInProgress(controller.sessions(), controller.pins(), controller.running(), controller.attention().unseenBySession));
   const special = computed(() => [...pinnedRows(), ...inProgressRows()]);
+  const projectSummaries = computed(() => nativeProjectHomeSummaries(app.projects(), controller.sessions(), controller.worktrees(), controller.buckets(), app.notificationCatalog().sessionIssues));
   const toggle = (project: Project) => collapsed.set(collapsed().includes(project.id) ? collapsed().filter(id => id !== project.id) : [...collapsed(), project.id]);
   const create = async (project: Project) => {
     if (newSessionPending() || !controller.current()) return;
@@ -897,85 +950,103 @@ export function ProjectsHome(props: ProjectsHomeProps) {
     const started = epoch();
     const gitRepository = await controller.loadRepository(project);
     if (!controller.current() || started !== epoch()) return;
-    const result = await AlertDialog.show({ title: project.name, presentation: 'actionSheet', actions: [
-      { id: 'new', label: t('mobile.sessions.startNewChat') }, ...(gitRepository === true ? [{ id: 'worktree', label: t('sessions.sidebar.project.actions.newWorktree') }] : []), { id: 'open', label: t('mobile.projectEdit.worktreesTitle') },
-      { id: 'files', label: t('mobile.menu.files') }, { id: 'changes', label: t('mobile.menu.changes') },
-      { id: 'sync', label: t('sessions.sidebar.project.actions.syncSessions') },
-      { id: 'edit', label: t('sessions.sidebar.project.actions.edit') }, { id: 'close', label: t('sessions.sidebar.project.actions.closeProject'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' },
-    ] });
+    const items = buildProjectMenuItems({
+      gitRepository: gitRepository === true,
+      onNewSession: () => { void create(project); },
+      onNewWorktree: () => { if (props.onNewWorktree) props.onNewWorktree(project); else props.onOpenProject(project); },
+      onSyncSessions: () => { void controller.syncProject(project); },
+      onEditProject: () => props.onEditProject(project),
+      onCloseProject: () => { void (async () => {
+        const result = await AlertDialog.show({ title: t('sessions.sidebar.project.actions.closeProject'), description: t('mobile.projects.closeConfirmMessage', { title: project.name }), actions: [{ id: 'close', label: t('mobile.sessions.confirmRemoveProject'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }] });
+        if (result.action === 'close' && controller.current() && started === epoch()) void controller.updateProjectCatalog('close', project.id);
+      })(); },
+      extraItems: [
+        { id: 'open', labelKey: 'mobile.projectEdit.worktreesTitle', icon: 'node-tree', separated: true, onClick: () => props.onOpenProject(project) },
+        { id: 'files', labelKey: 'mobile.menu.files', icon: 'folder', onClick: () => props.onOpenFiles(project.path) },
+        { id: 'changes', labelKey: 'mobile.menu.changes', icon: 'git-branch', onClick: () => props.onOpenChanges(project.path) },
+      ],
+    });
+    const result = await showOptions(project.name, items.map(item => ({ id: item.id, label: t(item.labelKey), icon: item.icon, separated: item.separated, role: item.destructive ? 'destructive' : undefined })));
     if (!controller.current() || started !== epoch()) return;
-    if (result.action === 'new') void create(project);
-    if (result.action === 'worktree') { if (props.onNewWorktree) props.onNewWorktree(project); else props.onOpenProject(project); }
-    if (result.action === 'open') props.onOpenProject(project);
-    if (result.action === 'files') props.onOpenFiles(project.path);
-    if (result.action === 'changes') props.onOpenChanges(project.path);
-    if (result.action === 'edit') props.onEditProject(project);
-    if (result.action === 'sync') void controller.syncProject(project);
-    if (result.action === 'close') {
-      const result = await AlertDialog.show({ title: t('sessions.sidebar.project.actions.closeProject'), description: t('mobile.projects.closeConfirmMessage', { title: project.name }), actions: [{ id: 'close', label: t('mobile.sessions.confirmRemoveProject'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }] });
-      if (result.action === 'close' && controller.current() && started === epoch()) void controller.updateProjectCatalog('close', project.id);
-    }
+    items.find(item => item.id === result.action)?.onClick();
   }
   async function addMenu() {
     const started = epoch();
-    const result = await AlertDialog.show({ title: t('mobile.projects.menu.label'), presentation: 'actionSheet', actions: [
+    const result = await showOptions(t('mobile.projects.menu.label'), [
       { id: 'chat', label: t('mobile.projects.menu.newChat') }, { id: 'project', label: t('mobile.projects.menu.newProject') },
       ...(props.onScanQr ? [{ id: 'scan', label: t('mobile.projects.menu.scanQr') }] : []),
       ...(props.onSwitchInstance ? [{ id: 'instance', label: t('mobile.projects.menu.switchInstance') }] : []),
       ...(props.onRemoteDesktop ? [{ id: 'desktop', label: t('remoteDesktop.title') }] : []),
       { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' },
-    ] });
+    ]);
     if (!controller.current() || started !== epoch()) return;
     if (result.action === 'chat') { if (props.onNewSession) props.onNewSession(); else newChat.set(true); }
     if (result.action === 'project') props.onAddProject();
     if (result.action === 'scan') props.onScanQr?.();
     if (result.action === 'desktop') props.onRemoteDesktop?.();
     if (result.action === 'instance') {
-      const options = props.instanceOptions?.filter(option => !option.active && !option.disabled);
-      if (!options?.length) { props.onSwitchInstance?.(); return; }
-      const selected = await AlertDialog.show({ title: t('mobile.projects.menu.switchInstance'), presentation: 'actionSheet', actions: [...options.map(option => ({ id: option.id, label: option.label })), { id: '__cancel__', label: t('gitView.common.cancel'), role: 'cancel' }] });
-      if (controller.current() && started === epoch() && options.some(option => option.id === selected.action)) props.onSwitchInstance?.(selected.action!);
+      const options = props.instanceOptions ?? [];
+      const selected = await showOptions(t('mobile.projects.menu.switchInstance'), options.map(option => ({ id: option.id, label: option.label, disabled: option.disabled || option.active, selected: option.active })));
+      if (controller.current() && started === epoch() && options.some(option => option.id === selected.action && !option.disabled && !option.active)) props.onSwitchInstance?.(selected.action!);
     }
   }
   return <View class="flex-1 bg-background">
-    <Scroll testID="projects-home-scroll" ref={scroll.ref} onScroll={scroll.onScroll} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentClass="px-4 pb-6 gap-5" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
-      <View class="flex-row items-center gap-3 pt-3 pb-1 px-1">
+    <Scroll testID="projects-home-scroll" ref={scroll.ref} onScroll={scroll.onScroll} onTouchStartCapture={scroll.onTouchStartCapture} onScrollDragStart={scroll.onScrollDragStart} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentStyle={{ paddingBottom: props.bottomInset ?? 0 }} refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
+      <View style={{ maxWidth: 452, width: '100%', alignSelf: 'center' }}>
+      <View ref={scroll.contentRef} onLayout={scroll.onContentLayout} class="pb-6" style={{ paddingHorizontal: homeGeometry().pageInset, paddingBottom: 24 * nativeDensity().scale, gap: homeGeometry().pageGap }}>
+      <View class="flex-row items-center gap-3 pt-3 pb-1 px-1" style={{ gap: 12 * nativeDensity().scale, paddingTop: 12 * nativeDensity().scale, paddingBottom: 4 * nativeDensity().scale, paddingHorizontal: 4 * nativeDensity().scale }}>
         <Text class="flex-1 text-3xl font-bold text-foreground">{t('mobile.sessions.section.projects')}</Text>
-        <Button testID="projects-open-search" class="w-10 h-10 rounded-full border border-border bg-secondary items-center justify-center" accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
-        <Button class="w-10 h-10 rounded-full bg-secondary items-center justify-center" accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
+        <Button testID="projects-open-search" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
+        <Button testID="projects-open-menu" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
       </View>
-      <If when={controller.error()}><View><Text class="text-sm text-destructive px-2">{controller.error()}</Text><Button class={quiet} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></View></If>
+       <If when={!!app.notificationCatalog().sessionIssues}><View testID="projects-catalog-partial" class="px-2 gap-2">
+         <Text class="text-sm text-muted-foreground">{t('mobile.sessions.catalogPartial')}</Text>
+         <Button testID="projects-catalog-retry" class={action} disabled={app.loading() || controller.loading() || !controller.current()} onPress={() => { if (controller.current()) void run(async () => { await refreshCatalog(); if (controller.current()) await controller.refresh(); }); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button>
+       </View></If>
+       <If when={controller.error()}><View><Text class="text-sm text-destructive px-2">{controller.error()}</Text><Button class={quiet} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></View></If>
       <If when={controller.notice()}><Text class="text-sm text-muted-foreground px-2">{controller.notice()}</Text></If>
-      <ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} />
-      <RemoteDeleteRetries controller={controller} />
-      <If when={special().length > 0}><View class={shell}>
-        <Button class="min-h-14 flex-row items-center gap-3 px-1" onPress={() => pinnedClosed.set(!pinnedClosed())}>
-          <View class="h-10 w-10 rounded-full bg-secondary border border-border items-center justify-center"><Icon name="pushpin" size={19} /></View>
-          <View class="flex-1 gap-1"><Text class="font-semibold text-foreground">{t('mobile.sessions.section.pinned')}</Text><Text class="text-xs text-muted-foreground">{sessionCount(special().length)}</Text></View><Icon name={pinnedClosed() ? 'arrow-right-s' : 'arrow-down-s'} size={15} />
+       <If when={controller.deleteBatches().length > 0 || controller.archiveFailures().length > 0 || controller.undoRows().length > 0}><ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} /></If>
+       <If when={controller.remoteDeletes().length > 0}><RemoteDeleteRetries controller={controller} /></If>
+      <If when={special().length > 0}><View testID="projects-pinned-card" style={projectHomeSurface}>
+        <Button class="flex-row items-center" style={{ minHeight: homeGeometry().headerHeight, padding: homeGeometry().headerInset, gap: homeGeometry().headerGap }} onPress={() => pinnedClosed.set(!pinnedClosed())}>
+          <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular' }}><Icon name="pushpin" size={homeGeometry().glyph} /></View>
+          <View class="flex-1 gap-1"><Text class="font-semibold text-foreground" style={geometry.title}>{t('mobile.sessions.section.pinned')}</Text><Text class="text-muted-foreground" style={geometry.meta}>{sessionCount(special().length)}</Text></View><Icon name={pinnedClosed() ? 'arrow-right-s' : 'arrow-down-s'} size={14} />
         </Button>
-        <If when={!pinnedClosed()}><View><ProjectsSessionGroup controller={controller} scope="__pinned__" rows={pinnedRows} scroll={scroll} onOpen={props.onOpenChat} subtitle={row => app.projects().find(project => project.path === row.directory)?.name || nameOf(row.directory)} /><Each of={inProgressRows()}>{row => <SessionRow row={row()} controller={controller} onOpen={props.onOpenChat} subtitle={app.projects().find(project => project.path === row().directory)?.name || nameOf(row().directory)} />}</Each></View></If>
+        <If when={!pinnedClosed()}><View style={{ paddingHorizontal: homeGeometry().groupsInset, paddingTop: homeGeometry().groupsTop, paddingBottom: homeGeometry().groupsBottom, gap: homeGeometry().groupGap }}>
+          <If when={pinnedRows().length > 0}><View style={homeGroupStyle()}><ProjectsSessionGroup controller={controller} scope="__pinned__" rows={pinnedRows} scroll={scroll} onOpen={props.onOpenChat} home subtitle={row => app.projects().find(project => project.path === row.directory)?.name || nameOf(row.directory)} /></View></If>
+          <If when={inProgressRows().length > 0}><View style={homeGroupStyle()}><Each of={inProgressRows()}>{(row, index) => <SessionRow row={row()} controller={controller} onOpen={props.onOpenChat} home divider={index() < inProgressRows().length - 1} subtitle={app.projects().find(project => project.path === row().directory)?.name || nameOf(row().directory)} />}</Each></View></If>
+        </View></If>
       </View></If>
-      <Each of={app.projects()}>{project => <View class={shell}>
-        <View class="flex-row items-center gap-1" onLongPress={() => { void projectMenu(project()); }}>
-          <Button class="flex-1 flex-row min-h-14 items-center gap-3 px-1" onPress={() => toggle(project())}>
-            <View class="w-10 h-10 rounded-full border border-border bg-secondary items-center justify-center"><Icon name="code-box" size={19} /></View>
-            <View class="flex-1 gap-1"><View class="flex-row items-center gap-2"><Text class="font-semibold text-foreground" style={{ numberOfLines: 1 }}>{project().name}</Text><If when={props.activeProjectId === project().id}><View class="w-2 h-2 rounded-full bg-ring" accessibilityLabel={t('mobile.sessions.activeProjectAria')} /></If></View>
-              <Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{[sessionCount(controller.byDirectory().get(project().path)?.length ?? 0) + (controller.buckets()[project().path]?.hasMore ? '+' : ''), relative(controller.byDirectory().get(project().path)?.[0]?.updated ?? 0), projectPathHint(project().path)].filter(Boolean).join(' · ')}</Text>
+      <Each of={app.projects()}>{project => {
+        let suppressToggle = false;
+        return <View testID={`projects-card-${project().id}`} style={projectHomeSurface}>
+        <View class="flex-row items-center" style={{ minHeight: homeGeometry().headerHeight }} onLongPress={() => { suppressToggle = true; void projectMenu(project()); }}>
+          <Button testID={`projects-toggle-${project().id}`} class="flex-1 flex-row items-center" style={{ minHeight: homeGeometry().headerHeight, padding: homeGeometry().headerInset, gap: homeGeometry().headerGap }} onPressDown={() => { suppressToggle = false; }} onPress={() => { if (suppressToggle) { suppressToggle = false; return; } toggle(project()); }}>
+            <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular' }}><Icon name="code-box" size={homeGeometry().glyph} /></View>
+            <View class="flex-1 gap-1"><View class="flex-row items-center gap-2"><Text class="flex-1 font-semibold text-foreground" style={{ ...geometry.title, numberOfLines: 1 }}>{project().name}</Text><If when={props.activeProjectId === project().id}><View class="w-2 h-2 rounded-full bg-success" accessibilityLabel={t('mobile.sessions.activeProjectAria')} /></If></View>
+              <Text class="text-muted-foreground" style={{ ...geometry.meta, numberOfLines: 1 }}>{[sessionCount(projectSummaries().get(project().id)?.count ?? 0) + (projectSummaries().get(project().id)?.partial ? '+' : ''), relative(projectSummaries().get(project().id)?.latest ?? 0), projectPathHint(project().path)].filter(Boolean).join(' · ')}</Text>
             </View><Icon name={collapsed().includes(project().id) ? 'arrow-right-s' : 'arrow-down-s'} size={14} />
           </Button>
-          <Button class="min-h-11 min-w-8 items-center justify-center" accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void projectMenu(project()); }}><Icon name="more-2" size={16} /></Button>
+          <Button testID={`projects-menu-${project().id}`} class="items-center justify-center mr-1" style={{ width: homeGeometry().action, height: homeGeometry().action, marginRight: 4 * nativeDensity().scale }} accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void projectMenu(project()); }}><Icon name="more-2" size={16} /></Button>
         </View>
-        <If when={!collapsed().includes(project().id)}><View class="gap-2"><DirectoryRows directory={project().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} />
-          <Each of={controller.orderedWorktrees(project())}>{tree => <View class="gap-1">
-            <WorktreeRow project={project()} tree={tree()} controller={controller} expanded={expandedTrees().includes(tree().path)} onSelect={() => { const open = !expandedTrees().includes(tree().path); expandedTrees.set(open ? [...expandedTrees(), tree().path] : expandedTrees().filter(path => path !== tree().path)); if (open) void controller.loadDirectory(tree().path); }} onNewSession={() => { void create({ ...project(), path: tree().path }); }} />
-            <If when={expandedTrees().includes(tree().path)}><DirectoryRows directory={tree().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} /></If>
+        <If when={!collapsed().includes(project().id)}><View style={{ paddingHorizontal: homeGeometry().groupsInset, paddingTop: homeGeometry().groupsTop, paddingBottom: homeGeometry().groupsBottom, gap: homeGeometry().groupGap }}><DirectoryRows directory={project().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} home />
+          <Each of={controller.orderedWorktrees(project())}>{tree => <View style={homeGroupStyle()}>
+            <WorktreeRow project={project()} tree={tree()} controller={controller} home expanded={expandedTrees().includes(tree().path)} onSelect={() => { const open = !expandedTrees().includes(tree().path); expandedTrees.set(open ? [...expandedTrees(), tree().path] : expandedTrees().filter(path => path !== tree().path)); if (open && !controller.buckets()[tree().path]?.loaded) void controller.loadDirectory(tree().path); }} onNewSession={() => { void create({ ...project(), path: tree().path }); }} />
+            <If when={expandedTrees().includes(tree().path)}><DirectoryRows directory={tree().path} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} home embedded /></If>
           </View>}</Each>
         </View></If>
-      </View>}</Each>
-      <If when={app.projects().length === 0}><View class="items-center gap-3 py-12"><Icon name="folder-add" size={36} /><Text class="text-lg text-foreground">{t('mobile.sessions.empty.noProjectsTitle')}</Text><Text class="text-sm text-muted-foreground">{t('mobile.sessions.empty.noProjectsDescription')}</Text><Button class={action} onPress={props.onAddProject}><Text class="text-foreground">{t('sessions.sidebar.header.actions.addProject')}</Text></Button></View></If>
+      </View>;
+      }}</Each>
+       <If when={app.projects().length === 0}><View class="items-center gap-3 py-12"><Icon name="folder-add" size={36} /><Text class="text-lg text-foreground">{t('mobile.sessions.empty.noProjectsTitle')}</Text><Text class="text-sm text-muted-foreground">{t('mobile.sessions.empty.noProjectsDescription')}</Text><Button class={action} onPress={props.onAddProject}><Text class="text-foreground">{t('sessions.sidebar.header.actions.addProject')}</Text></Button></View></If>
+       </View>
+      </View>
     </Scroll>
+    <Sheet testID="projects-action-options" open={optionsOpen()} onOpenChange={event => { if (!event.open) optionsOpen.set(false); }} onClose={finishOptions} detents={[.5, .9]} popupClass="bg-background px-5 pb-4 gap-3">
+      <View class="flex-row items-center gap-3" style={nativeDensity().forms.stack}><Text class="flex-1 text-lg font-semibold text-foreground">{optionsTitle()}</Text><Button testID="projects-action-options-close" class={quiet} style={nativeDensity().forms.quiet} accessibilityLabel={t('mobile.surface.closeAria')} onPress={() => optionsOpen.set(false)}><Icon name="close" size={20} /></Button></View>
+      <Scroll class="flex-1" contentClass="gap-1" contentStyle={nativeDensity().forms.rowGap}><Each of={optionsRows()}>{option => <Button testID={`projects-option-${option().id}`} class={`min-h-14 px-3 py-3 rounded-xl flex-row items-center gap-3 active:bg-accent disabled:opacity-40 ${option().separated ? 'mt-4' : ''}`} style={{ ...nativeDensity().forms.optionRow, marginTop: option().separated ? 16 * nativeDensity().scale : 0 }} disabled={option().disabled} onPress={() => { if (optionsOpen() && !option().disabled) { optionResult = option().id; optionsOpen.set(false); } }}><If when={option().icon}><View testID={`projects-option-icon-${option().icon}`}><Icon name={option().icon!} size={20} color={option().role === 'destructive' ? String(token('destructive')) : undefined} /></View></If><Text class={option().role === 'destructive' ? 'flex-1 text-base text-destructive' : 'flex-1 text-base text-foreground'}>{option().label}</Text><If when={option().selected}><Icon name="check" size={18} /></If></Button>}</Each></Scroll>
+    </Sheet>
     <Sheet open={searching()} onOpenChange={event => { if (!event.open) closeSearch(); }} closeOnSwipe popupClass="bg-background rounded-t-3xl p-4 gap-3" popupStyle={{ height: '85%' }}>
-      <View class="flex-row items-center gap-2"><Input testID="projects-search" class={`flex-1 ${field}`} value={term()} placeholder={t('mobile.sessions.search.placeholder')} onChange={event => { term.set(event.value); if (debounce) clearTimeout(debounce); debounce = setTimeout(() => { if (searching()) void controller.search(term()); }, 250); }} /><Button class={quiet} accessibilityLabel={t('mobile.surface.closeAria')} onPress={closeSearch}><Icon name="close" size={20} /></Button></View>
+      <View class="flex-row items-center gap-2" style={nativeDensity().forms.inline}><Input testID="projects-search" class={`flex-1 ${field}`} style={nativeDensity().settings.field} value={term()} placeholder={t('mobile.sessions.search.placeholder')} onChange={event => { term.set(event.value); if (debounce) clearTimeout(debounce); debounce = setTimeout(() => { if (searching()) void controller.search(term()); }, 250); }} /><Button class={quiet} style={nativeDensity().forms.quiet} accessibilityLabel={t('mobile.surface.closeAria')} onPress={closeSearch}><Icon name="close" size={20} /></Button></View>
       <If when={controller.error()}><Text class="text-destructive text-sm">{controller.error()}</Text></If>
       <If when={controller.notice()}><Text class="text-sm text-muted-foreground">{controller.notice()}</Text></If>
       <ArchiveUndo controller={controller} />
@@ -984,13 +1055,13 @@ export function ProjectsHome(props: ProjectsHomeProps) {
       </List>
       <If when={controller.searching()}><Text class="text-muted-foreground">{t('common.loading')}</Text></If>
       <If when={!controller.searching() && !controller.error() && controller.searchResults().length === 0}><Text class="text-muted-foreground">{t('mobile.sessions.empty.searchTitle')}</Text></If>
-      <If when={controller.error()}><Button class={quiet} onPress={() => { void controller.search(term()); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
+      <If when={controller.error()}><Button class={quiet} style={nativeDensity().forms.quiet} onPress={() => { void controller.search(term()); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
     </Sheet>
     <Sheet open={newChat()} onOpenChange={event => newChat.set(event.open)} closeOnSwipe popupClass="bg-background rounded-t-3xl p-5 gap-3">
       <Text class="text-xl font-semibold text-foreground">{t('mobile.sessions.section.otherProjects')}</Text>
       <If when={controller.error()}><Text class="text-sm text-destructive">{controller.error()}</Text></If>
       <Each of={app.projects()}>{project => <Button class={action} disabled={newSessionPending()} onPress={() => { void create(project()); }}><Text class="text-foreground">{project().name}</Text><Text class="text-xs text-muted-foreground">{project().path}</Text></Button>}</Each>
-      <Button class={quiet} onPress={() => newChat.set(false)}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
+      <Button class={quiet} style={nativeDensity().forms.quiet} onPress={() => newChat.set(false)}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
     </Sheet>
   </View>;
 }
@@ -998,10 +1069,15 @@ export function ProjectsHome(props: ProjectsHomeProps) {
 export function ProjectDetail(props: ProjectDetailProps) {
   const treeGeometry: ProjectsOrderGeometry = new Map();
   const scroll = createProjectsScroll();
-  const controller = createProjectsController(), directory = signal(props.project.path), creating = signal(props.initialCreateWorktree === true), branch = signal(''), folder = signal(''), source = signal('');
-  const mode = signal<'new' | 'existing'>('new');
+  const controller = createProjectsController(() => props.active !== false), directory = signal(props.project.path), creating = signal(props.initialCreateWorktree === true);
+  const connection = app.connection();
+  const form = createWorktreeForm({ directory: props.project.path, hostKey: JSON.stringify([connection?.id, connection?.url, connection?.authorizationID]), active: () => creating() && props.active !== false, current: controller.current, capture: controller.captureWorktreeOperation, worktrees: () => controller.worktrees()[props.project.path] });
+  const { branch, folder, source, mode, selectedBranch, selectedFolder } = form;
+  const worktreePending = () => controller.pending().includes('worktree') || form.submitting();
+  const worktreeEditingDisabled = () => worktreePending() || !!form.confirmedPath();
   const sessionPending = signal(false);
-  effect(() => { if (controller.current()) untracked(() => { void controller.refresh(); void controller.loadWorktrees(props.project); void controller.loadDirectory(directory(), true); if (creating()) void controller.loadBranches(props.project); }); });
+  effect(() => { props.onPendingChange?.(controller.pending().length > 0 || sessionPending() || form.submitting()); });
+  effect(() => { if (controller.current()) untracked(() => { void controller.refresh(); void controller.loadWorktrees(props.project); void controller.loadDirectory(directory(), true); }); });
   const select = (path: string) => { directory.set(path); void controller.loadDirectory(path); };
   async function create() {
     if (sessionPending() || !controller.current()) return;
@@ -1011,30 +1087,63 @@ export function ProjectDetail(props: ProjectDetailProps) {
     catch (failure) { if (controller.current() && started === epoch()) controller.error.set(String(failure)); }
     finally { if (controller.current() && started === epoch()) sessionPending.set(false); }
   }
-  return <NavPage title={props.project.name} headerBackTitle="" class="flex-1 bg-background" headerRight={<Button class={quiet} accessibilityLabel={t('mobile.sessions.newSessionAria')} disabled={sessionPending()} onPress={() => { void create(); }}><Icon name="add" /></Button>}>
-    <Scroll ref={scroll.ref} onScroll={scroll.onScroll} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentClass="p-4 gap-4" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); void controller.loadDirectory(directory(), true); void controller.loadWorktrees(props.project); }}>
+  const closeCreation = () => { if (worktreePending()) return; if (props.sheet && props.initialCreateWorktree) props.onSheetClose?.(); else creating.set(false); };
+  function openCreation() {
+    form.reset(); creating.set(true);
+  }
+  function branchPicker(kind: 'source' | 'existing') {
+    return <WorktreeBranchPicker kind={kind} form={form} disabled={worktreeEditingDisabled()} fieldClass={field} quietClass={quiet} />;
+  }
+  const formLayout = () => worktreeFormLayout(nativeDensity().scale);
+  const labelStyle = () => { const style = nativeChatTextStyle('uiLabel'); return { ...style, lineHeight: (style.fontSize ?? 13) * 1.5 }; };
+  const hintStyle = () => { const style = nativeChatTextStyle('micro'); return { ...style, lineHeight: (style.fontSize ?? 12) * 1.5 }; };
+  const inputStyle = () => { const style = nativeChatTextStyle('markdown'); return { ...formLayout().input, ...style, lineHeight: (style.fontSize ?? 15) * 1.5 }; };
+  function creationForm() {
+    return <View class="flex-1" style={{ minHeight: 0 }}>
+      <Scroll testID="projects-worktree-form-scroll" class="flex-1" style={{ minHeight: 0 }} contentStyle={formLayout().body}>
+        <If when={!props.sheet || !props.initialCreateWorktree}><Text class="font-semibold text-foreground" style={labelStyle()}>{t('session.newWorktree.title')}</Text></If>
+        <View class="flex-row rounded-lg bg-secondary" style={formLayout().modes}><Button testID="projects-worktree-mode-new" selected={mode() === 'new'} disabled={worktreeEditingDisabled()} class={`flex-1 flex-row items-center justify-center rounded-md ${quiet} selected:bg-accent`} style={formLayout().mode} onPress={() => mode.set('new')}><Icon name="git-branch" size={14} /><Text class="font-medium text-foreground" style={{ ...labelStyle(), fontSize: 14, lineHeight: 20 }}>{t('session.newWorktree.mode.newBranch')}</Text></Button><Button testID="projects-worktree-mode-existing" selected={mode() === 'existing'} disabled={worktreeEditingDisabled()} class={`flex-1 flex-row items-center justify-center rounded-md ${quiet} selected:bg-accent`} style={formLayout().mode} onPress={() => mode.set('existing')}><Icon name="git-repository" size={14} /><Text class="font-medium text-foreground" style={{ ...labelStyle(), fontSize: 14, lineHeight: 20 }}>{t('session.newWorktree.mode.existingBranch')}</Text></Button></View>
+        <View style={formLayout().fields}>
+          <If when={form.contextError()}><View style={formLayout().group}><Text testID="projects-worktree-context-error" class="text-destructive" style={labelStyle()}>{form.contextError()}</Text><Button testID="projects-worktree-context-retry" class={quiet} style={formLayout().control} disabled={worktreeEditingDisabled() || form.contextLoading()} onPress={() => { void form.prepare(); }}><Text class="text-foreground" style={labelStyle()}>{t('layout.browserProvider.retry')}</Text></Button></View></If>
+          <If when={mode() === 'new'} else={branchPicker('existing')}><View accessible={false} style={formLayout().group}><Text class="font-semibold text-foreground" style={labelStyle()}>{t('session.newWorktree.branchName')}</Text><Input testID="projects-worktree-branch" accessibilityLabel={t('session.newWorktree.branchName')} class="bg-card text-foreground" style={inputStyle()} hitSlop={formLayout().inputHitSlop} value={branch()} disabled={worktreeEditingDisabled()} onBlur={() => form.touched.set(true)} onChange={event => form.editBranch(event.value)} placeholder={t('session.newWorktree.branchNamePlaceholder')} autoCapitalize="none" autoCorrect={false} /><If when={form.errors().branch}><Text testID="projects-worktree-branch-error" class="text-destructive" style={labelStyle()}>{form.errors().branch}</Text></If></View></If>
+          <If when={mode() === 'existing' && !!form.errors().branch}><Text testID="projects-worktree-branch-error" class="text-destructive" style={labelStyle()}>{form.errors().branch}</Text></If>
+          <View accessible={false} style={formLayout().group}><View class="flex-row items-center" style={formLayout().inline}><Text class="flex-1 font-semibold text-foreground" style={labelStyle()}>{t('session.newWorktree.worktreeDirectory')}</Text><If when={mode() === 'new'}><Button testID="projects-worktree-reset-folder" class={`flex-row ${quiet}`} style={formLayout().reset} disabled={worktreeEditingDisabled() || !branch() || folder() === slugifyWorktreeName(branch())} accessibilityLabel={t('session.newWorktree.resetToMatchBranchName')} onPress={() => folder.set(slugifyWorktreeName(branch()))}><Icon name="refresh" size={12} /><Text class="text-muted-foreground" style={hintStyle()}>{t('session.newWorktree.actions.reset')}</Text></Button></If></View>
+            <Input testID="projects-worktree-folder" accessibilityLabel={t('session.newWorktree.worktreeDirectory')} class="bg-card text-foreground" style={inputStyle()} hitSlop={formLayout().inputHitSlop} value={selectedFolder()} disabled={worktreeEditingDisabled()} onBlur={() => form.touched.set(true)} onChange={event => form.editFolder(event.value)} placeholder={t('session.newWorktree.worktreeDirectoryPlaceholder')} autoCapitalize="none" autoCorrect={false} />
+            <If when={form.errors().folder}><Text testID="projects-worktree-folder-error" class="text-destructive" style={labelStyle()}>{form.errors().folder}</Text></If>
+          </View>
+          <If when={mode() === 'new'}><View style={formLayout().group}>{branchPicker('source')}<If when={!!source()}><Text testID="projects-worktree-source-hint" class="text-muted-foreground" style={hintStyle()}>{t('session.newWorktree.newBranchFromSource', { source: source() })}</Text></If></View></If>
+          <If when={form.errors().request}><Text testID="projects-worktree-validation-error" class="text-destructive" style={labelStyle()}>{form.errors().request}</Text></If>
+          <If when={form.errors().branch || form.errors().folder || form.errors().request}><Button testID="projects-worktree-validation-retry" class={quiet} style={formLayout().control} disabled={worktreePending()} onPress={form.retryValidation}><Text class="text-foreground" style={labelStyle()}>{t('layout.browserProvider.retry')}</Text></Button></If>
+          <If when={controller.error()}><Text class="text-destructive" style={labelStyle()}>{controller.error()}</Text></If>
+        </View>
+      </Scroll>
+      <View testID="projects-worktree-footer" class="border-t border-border/50" style={formLayout().footer}>
+        <If when={form.validating()}><Text testID="projects-worktree-validating" class="text-muted-foreground" style={{ ...labelStyle(), textAlign: 'center' }}>{t('common.loading')}</Text></If>
+        <View class="flex-row" style={formLayout().inline}>
+          <Button testID="projects-worktree-cancel" class={`flex-1 ${action}`} style={formLayout().control} disabled={worktreePending()} onPress={closeCreation}><Text class="font-medium text-foreground" style={labelStyle()}>{t('gitView.common.cancel')}</Text></Button>
+          <Button testID="projects-worktree-create" class={`flex-1 ${action}`} style={formLayout().control} disabled={!normalizeBranchName(selectedBranch()) || !slugifyWorktreeName(selectedFolder()) || worktreePending() || !form.ready() || form.validating() || !!form.errors().branch || !!form.errors().folder} onPress={() => { void (async () => { const path = await form.submit(() => controller.createWorktree(props.project, selectedBranch(), selectedFolder(), source(), mode())); if (path && controller.current()) { if (!props.sheet) creating.set(false); select(path); props.onWorktreeCreated?.(props.project, path); } })(); }}><Text class="font-medium text-foreground" style={labelStyle()}>{t(worktreePending() ? 'session.newWorktree.actions.creating' : form.confirmedPath() ? 'layout.browserProvider.retry' : 'session.newWorktree.actions.createWorktree')}</Text></Button>
+        </View>
+      </View>
+    </View>;
+  }
+  return <NavPage title={props.project.name} popOnSwipe={!scroll.dragging()} headerVisible={!props.sheet} headerBackTitle="" class="flex-1 bg-background" headerRight={<Button class={quiet} accessibilityLabel={t('mobile.sessions.newSessionAria')} disabled={sessionPending()} onPress={() => { void create(); }}><Icon name="add" /></Button>}>
+    <If when={!props.sheet || !creating()}>
+    <Scroll ref={scroll.ref} onScroll={scroll.onScroll} onTouchStartCapture={scroll.onTouchStartCapture} onScrollDragStart={scroll.onScrollDragStart} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); void controller.loadDirectory(directory(), true); void controller.loadWorktrees(props.project); }}>
+      <View ref={scroll.contentRef} onLayout={scroll.onContentLayout} class="p-4 gap-4" style={nativeDensity().pages.projectDetail}>
       <If when={controller.error()}><Text class="text-destructive text-sm">{controller.error()}</Text></If>
       <RemoteDeleteRetries controller={controller} />
       <ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} />
-      <View class="flex-row gap-2"><Button class={`flex-1 ${action}`} onPress={() => props.onOpenFiles(directory())}><Icon name="folder" size={17} /><Text class="text-foreground">{t('mobile.menu.files')}</Text></Button><Button class={`flex-1 ${action}`} onPress={() => props.onOpenChanges(directory())}><Icon name="git-branch" size={17} /><Text class="text-foreground">{t('mobile.menu.changes')}</Text></Button><Button class={action} onPress={() => props.onEditProject(props.project)}><Icon name="edit" size={17} /></Button></View>
-      <View class={shell}><Text class="text-sm font-semibold text-foreground">{t('mobile.projectEdit.worktreesTitle')}</Text>
-        <Button class={quiet} onPress={() => select(props.project.path)}><Text class="text-foreground">{t('mobile.sessions.mainWorkspace')}{directory() === props.project.path ? ' ✓' : ''}</Text><Text class="text-xs text-muted-foreground">{props.project.path}</Text></Button>
-        <Each of={controller.orderedWorktrees(props.project)}>{tree => <WorktreeRow project={props.project} tree={tree()} controller={controller} geometry={treeGeometry} onSelect={() => select(tree().path)} onNewSession={() => { select(tree().path); void create(); }} onRemoved={() => { if (directory() === tree().path) select(props.project.path); }} />}</Each>
-        <Button class={action} onPress={() => { creating.set(true); void controller.loadBranches(props.project); }}><Icon name="add" size={17} /><Text class="text-foreground">{t('session.newWorktree.actions.createWorktree')}</Text></Button>
+      <View class="flex-row gap-2" style={nativeDensity().forms.inline}><Button class={`flex-1 ${action}`} style={nativeDensity().forms.quiet} onPress={() => props.onOpenFiles(directory())}><Icon name="folder" size={17} /><Text class="text-foreground">{t('mobile.menu.files')}</Text></Button><Button class={`flex-1 ${action}`} style={nativeDensity().forms.quiet} onPress={() => props.onOpenChanges(directory())}><Icon name="git-branch" size={17} /><Text class="text-foreground">{t('mobile.menu.changes')}</Text></Button><Button class={action} style={nativeDensity().forms.quiet} onPress={() => props.onEditProject(props.project)}><Icon name="edit" size={17} /></Button></View>
+      <View class={shell} style={nativeDensity().forms.card}><Text class="text-sm font-semibold text-foreground">{t('mobile.projectEdit.worktreesTitle')}</Text>
+        <Button class={quiet} style={nativeDensity().forms.quiet} onPress={() => select(props.project.path)}><Text class="text-foreground">{t('mobile.sessions.mainWorkspace')}{directory() === props.project.path ? ' ✓' : ''}</Text><Text class="text-xs text-muted-foreground">{props.project.path}</Text></Button>
+        <Each of={controller.orderedWorktrees(props.project)}>{tree => <WorktreeRow project={props.project} tree={tree()} controller={controller} geometry={treeGeometry} scroll={scroll} onOrderGesture={props.onOrderGesture} onSelect={() => select(tree().path)} onNewSession={() => { select(tree().path); void create(); }} onRemoved={() => { if (directory() === tree().path) select(props.project.path); }} />}</Each>
+        <Button class={action} style={nativeDensity().forms.quiet} onPress={openCreation}><Icon name="add" size={17} /><Text class="text-foreground">{t('session.newWorktree.actions.createWorktree')}</Text></Button>
       </View>
-      <View class={shell}><DirectoryRows directory={directory()} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} /><Button class={action} disabled={sessionPending()} onPress={() => { void create(); }}><Text class="text-foreground">{t('mobile.sessions.startNewChat')}</Text></Button></View>
+      <View class={shell} style={nativeDensity().forms.card}><DirectoryRows directory={directory()} controller={controller} scroll={scroll} onOpenChat={props.onOpenChat} /><Button class={action} style={nativeDensity().forms.quiet} disabled={sessionPending()} onPress={() => { void create(); }}><Text class="text-foreground">{t('mobile.sessions.startNewChat')}</Text></Button></View>
+      </View>
     </Scroll>
-    <Sheet open={creating()} onOpenChange={event => { if (!controller.pending().includes('worktree')) creating.set(event.open); }} closeOnSwipe={!controller.pending().includes('worktree')} closeOnEscape={!controller.pending().includes('worktree')} closeOnBackdropPress={!controller.pending().includes('worktree')} popupClass="bg-background rounded-t-3xl p-5 gap-3">
-      <Text class="text-xl font-semibold text-foreground">{t('session.newWorktree.title')}</Text>
-      <View class="flex-row gap-2"><Button class={`flex-1 ${action}`} onPress={() => mode.set('new')}><Text class="text-foreground">{t('session.newWorktree.mode.newBranch')}{mode() === 'new' ? ' ✓' : ''}</Text></Button><Button class={`flex-1 ${action}`} onPress={() => mode.set('existing')}><Text class="text-foreground">{t('session.newWorktree.mode.existingBranch')}{mode() === 'existing' ? ' ✓' : ''}</Text></Button></View>
-      <Input class={field} value={branch()} onChange={event => branch.set(event.value)} placeholder={t('session.newWorktree.branchName')} autoCapitalize="none" autoCorrect={false} />
-      <Input class={field} value={folder()} onChange={event => folder.set(event.value)} placeholder={t('session.newWorktree.worktreeDirectory')} autoCapitalize="none" autoCorrect={false} />
-      <If when={mode() === 'new'}><Input class={field} value={source()} onChange={event => source.set(event.value)} placeholder={t('session.newWorktree.sourceBranch')} autoCapitalize="none" autoCorrect={false} /></If>
-      <List style={{ height: 160 }} each={controller.branches().filter(value => value.toLowerCase().includes((mode() === 'existing' ? branch() : source()).toLowerCase()))} keyExtractor={value => value}>{value => <Button class={quiet} onPress={() => mode() === 'existing' ? branch.set(value()) : source.set(value())}><Text class="text-foreground">{value()}</Text></Button>}</List>
-      <If when={controller.error()}><Text class="text-sm text-destructive">{controller.error()}</Text></If>
-      <Button class={action} disabled={!branch().trim() || !folder().trim() || controller.pending().includes('worktree')} onPress={() => { void (async () => { const path = await controller.createWorktree(props.project, branch(), folder(), source(), mode()); if (path && controller.current()) { creating.set(false); select(path); props.onWorktreeCreated?.(props.project, path); } })(); }}><Text class="text-foreground">{t(controller.pending().includes('worktree') ? 'session.newWorktree.actions.creating' : 'session.newWorktree.actions.createWorktree')}</Text></Button>
-      <Button class={quiet} disabled={controller.pending().includes('worktree')} onPress={() => { void controller.loadBranches(props.project); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button>
-      <Button class={quiet} disabled={controller.pending().includes('worktree')} onPress={() => creating.set(false)}><Text class="text-muted-foreground">{t('gitView.common.cancel')}</Text></Button>
-    </Sheet>
+    </If>
+    <If when={props.sheet && creating()}>{creationForm()}</If>
+    <If when={!props.sheet}><Sheet open={creating()} onOpenChange={event => { if (!controller.pending().includes('worktree')) creating.set(event.open); }} closeOnSwipe={!controller.pending().includes('worktree')} closeOnEscape={!controller.pending().includes('worktree')} closeOnBackdropPress={!controller.pending().includes('worktree')} popupClass="bg-background rounded-t-3xl p-5 gap-3">{creationForm()}</Sheet></If>
   </NavPage>;
 }

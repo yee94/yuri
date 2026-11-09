@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as helpers from './new-session-ui-helpers';
 import * as pickerHelpers from './chat-models-helpers';
 import * as model from './model';
+import { createAttachmentPick } from './attachment-pick';
+import { createNativeComposerCommandRouter } from './composer-command-router';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); };
@@ -20,7 +22,7 @@ function componentClosures(file: string, name: string, observations: string, por
   const output = ts.transpileModule(`function ${name}(props) { ${body}; return { ${observations} }; }`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React } }).outputText;
   return new Function(...Object.keys(ports), `${output}; return ${name};`)(...Object.values(ports));
 }
-const basePorts = { ...helpers, ...model, ...pickerHelpers, signal, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), effect: () => {}, cleanup: () => {}, t: (key: string) => key };
+const basePorts = { ...helpers, ...model, ...pickerHelpers, app: { runtimeScope: () => null }, signal, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), effect: () => {}, cleanup: () => {}, t: (key: string) => key };
 
 function starters() {
   let active = true, sameHost = true, settings: model.Row = { draftStarters: [{ type: 'command', name: 'explore' }, { type: 'command', name: 'weigh' }], keep: true };
@@ -39,7 +41,7 @@ function starters() {
     if (parsed.pathname === '/api/config/skills') return { skills: [{ name: 'plan', scope: 'project' }] };
     throw new Error('unexpected fixture request');
   });
-  const factory = componentClosures('new-session-page.tsx', 'NativeNewSessionStarters', 'load, loadCatalog, persist, startDrag, moveDrag, finishDrag, cancelDrag, global, project, items, options, refs, drag, error, loading, catalogBusy, saving', { ...basePorts, captureHostRequest: () => request });
+  const factory = componentClosures('new-session-page.tsx', 'NativeNewSessionStarters', 'load, loadCatalog, persist, startDrag, moveDrag, finishDrag, cancelDrag, layoutChip, global, project, items, options, refs, drag, error, loading, catalogBusy, saving', { ...basePorts, captureHostRequest: () => request });
   const api = factory({ owner: { project: { id: 'root', path: '/workspace/root' }, directory: '/workspace/root/worktree', current: () => sameHost }, active: () => active, visible: () => true, onSubmit: vi.fn() });
   return { api, request, files, location, settings: () => settings, setActive: (next: boolean) => { active = next; }, switchHost: () => { sameHost = false; }, handle: (next: typeof handler) => { handler = next; } };
 }
@@ -91,7 +93,7 @@ describe('native picker AX container props contract (source only, not UIKit)', (
     expect(propsOf(returned.whenFalse.openingElement.attributes, source, { tab: 'agent', t: (key: string) => key })).toEqual({ title: 'chat.modelControls.selectAgent', class: 'flex-1 bg-background' });
     expect(returned.whenFalse.children.filter(ts.isJsxExpression).map(child => child.getText(source))).toEqual(['{content}']);
   });
-  it('retains search, Agent, model, favorite and variant testIDs on the real Input/Button controls', () => {
+  it('retains search, Agent, model, favorite and variant testIDs on controls and the shared Sheet search', () => {
     const { source, declaration } = picker(), controls: Array<[string, string]> = [];
     const ports = { prefix: 'favorite', entry: { providerID: 'fixture', modelID: 'gpt-model' }, variant: () => 'low', agent: () => ({ name: 'build' }), group: () => ({ providerID: 'fixture' }), text: model.text };
     function visit(node: ts.Node) {
@@ -108,7 +110,7 @@ describe('native picker AX container props contract (source only, not UIKit)', (
       ['Button', 'new-session-favorite-model-fixture-gpt-model'],
       ['Button', 'new-session-effort-favorite-fixture-gpt-model'],
       ['Button', 'new-session-favorite-favorite-fixture-gpt-model'],
-      ['Input', 'new-session-selection-search'], ['Button', 'new-session-search-clear'], ['Button', 'new-session-catalog-retry'],
+      ['NativeSheetSearch', 'new-session-selection-search'], ['Button', 'new-session-catalog-retry'],
       ['Button', 'new-session-selection-default'], ['Button', 'new-session-provider-fixture'],
       ['Button', 'new-session-agent-build'],
     ]);
@@ -116,6 +118,23 @@ describe('native picker AX container props contract (source only, not UIKit)', (
 });
 
 describe('new-session composer selection notification (no native engine)', () => {
+  it.each(['model', 'agent'] as const)('loads %s when its native Sheet becomes interactive after mounting', async mode => {
+    let active = false;
+    const effects: Array<() => void> = [];
+    const reads = vi.fn();
+    const catalog = { load: vi.fn(async () => { if (active) reads(); }), dispose: vi.fn(), preferences: signal({}), agents: signal([]), providers: signal([]), busy: signal(false), error: signal(''), resolved: signal(false) };
+    const factory = componentClosures('new-session-models.tsx', 'NativeNewSessionModels', '', {
+      ...basePorts, effect: (work: () => void) => { effects.push(work); work(); }, createNewSessionCatalog: () => catalog,
+      captureHostRequest: () => vi.fn(), newSessionText: (key: string) => key,
+    });
+    factory({ owner: { directory: '/fixture/project', current: () => true, selection: () => ({}) }, mode, active: () => active });
+    await flush(); expect(reads).not.toHaveBeenCalled();
+    active = true; effects.forEach(work => work()); await flush();
+    expect(reads).toHaveBeenCalledOnce(); expect(catalog.load).toHaveBeenLastCalledWith(mode);
+    for (let index = 0; index < 50; index++) effects.forEach(work => work());
+    await flush(); expect(reads).toHaveBeenCalledOnce();
+  });
+
   it('forwards the optional callback unchanged at the production Page → Body boundary', () => {
     const source = ts.createSourceFile('new-session-page.tsx', readFileSync(path.join(directory, 'new-session-page.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const callbacks: string[] = [];
@@ -136,7 +155,7 @@ describe('new-session composer selection notification (no native engine)', () =>
     const readSelection = vi.fn(() => selection);
     const untracked = vi.fn((work: () => void) => work());
     const factory = componentClosures('new-session-page.tsx', 'NewSessionBody', '', {
-      ...basePorts, captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}),
+      ...basePorts, createAttachmentPick, createNativeComposerCommandRouter, native: () => { throw new Error('Notification must not pick attachments'); }, captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}),
     });
     factory({ ownership: { owner: { directory, current: () => currentHost, selection: readSelection, durable: { draft } } }, active: () => active, switching: () => switching, onSelection: publish });
     return { run: effects[0], dispose: cleanups[0], publish, request, draft, readSelection, untracked,
@@ -247,7 +266,10 @@ describe('production raw-touch drag closures (geometry fixture only)', () => {
   async function dragFixture() {
     const fixture = starters(); await fixture.api.load();
     const ids = fixture.api.items().map((item: helpers.StarterItem) => item.id);
-    for (const [id, x, width] of [[ids[0], 0, 80], [ids[1], 82, 100], [helpers.STARTER_TRASH, 220, 24]] as const) fixture.api.refs.set(id, { measure: async () => ({ pagePosition: { x, y: 0 }, bounds: { size: { width, height: 28 } } }) });
+    for (const [id, x, width] of [[ids[0], 0, 80], [ids[1], 82, 100], [helpers.STARTER_TRASH, 220, 24]] as const) {
+      fixture.api.refs.set(id, { measure: async () => ({ pagePosition: { x, y: 0 }, bounds: { size: { width, height: 28 } } }) });
+      if (id !== helpers.STARTER_TRASH) fixture.api.layoutChip(id, { origin: { x, y: 0 }, size: { width, height: 28 } });
+    }
     return fixture;
   }
   it('activates after a real 200ms hold, translates, and removes only the dropped source pin in the plus-slot trash', async () => {
@@ -282,7 +304,7 @@ describe('production favorite closures (no native engine)', () => {
     let current = true, settings: model.Row = { favoriteModels: [], recentModels: [{ providerID: 'p', modelID: 'other', variant: 'low' }], keep: true };
     let handler: ((method: string, body: unknown) => unknown) | undefined;
     const preferences = signal(settings), load = vi.fn(async () => { preferences.set(settings); });
-    const catalog = { load, dispose: () => {}, preferences, agents: signal([]), providers: signal([]), busy: signal(false), error: signal(''), resolved: signal(true) };
+    const catalog = { load, dispose: () => {}, preferences, setPreferences: preferences.set, agents: signal([]), providers: signal([]), busy: signal(false), error: signal(''), resolved: signal(true) };
     const select = vi.fn(async () => {}), selection = { agent: 'build', model: { providerID: 'p', id: 'current', variant: 'high' } };
     const request = vi.fn(async (_url: string, method = 'GET', body?: unknown) => {
       if (handler) return handler(method, body);

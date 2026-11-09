@@ -1,4 +1,5 @@
 import { cleanup, effect, lifecycle, Scroll, signal, Text, View, type ScrollRef } from 'nsh';
+import { nativeDensity } from './appearance';
 import { Button } from 'nsh/base';
 import { t } from './i18n';
 import { SettingsGroup, SettingsToggle, settingsAction, settingsLifetime } from './settings-controls';
@@ -29,7 +30,7 @@ export function SettingsNotifications(props: { target?: string; active?: boolean
     if (props.active === false || lifecycle() !== 'active' || loaded) return;
     loaded = true; void controller.refresh();
   });
-  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <View testID="notification-settings-header" class="flex-row justify-end">
       <Button testID="settings-notifications-save" class={settingsAction} disabled={blocked() || permissionBusy() || state().syncPending || !Object.keys(state().draft).length} onPress={() => { void controller.save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button>
     </View>

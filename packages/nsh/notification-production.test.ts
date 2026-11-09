@@ -30,7 +30,13 @@ it('retains all prior main owners and tears down through RuntimeBridge.stop, not
   }
   expect(main).toContain('try appearance?.invalidate()'); expect(main).toContain('self.diagnostics = diagnostics');
   expect(main).toContain('func applicationWillTerminate'); expect(main).toContain('func shutdown()'); expect(main).toContain('bridge?.stop()');
-  expect(main).toMatch(/deinit\s*\{[\s\S]*?Task \{ @MainActor in Self\.shutdown/);
+  const teardown = main.slice(main.indexOf('    deinit {'), main.indexOf('    private func confirmLinkIfReady'));
+  expect(teardown).toContain('pendingShutdown = shutdownTask');
+  expect(teardown).toMatch(/Task \{ @MainActor in\s+if let pendingShutdown \{ await pendingShutdown\.value; return \}\s+Self\.shutdown\(bridge: bridge, notifications: notifications/);
+  expect(teardown.indexOf('await passkeys?.close()')).toBeGreaterThan(teardown.indexOf('Self.shutdown('));
+  expect(teardown).not.toMatch(/\[weak self\]|self\./);
+  expect(main).toContain('guard shutdownTask == nil else { return }');
+  expect(main).toContain('shutdownTask = Task { @MainActor in await passkeys?.close() }');
   expect(main).not.toMatch(/willResignActive|MainActor\.assumeIsolated|nonisolated\(unsafe\)/);
   expect(main).toMatch(/func suspendResourcePreview\(\)\s*\{[^}]*resourceWebPreview\?\.invalidate\(\)/);
 });

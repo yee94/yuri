@@ -30,12 +30,13 @@ describe('Scheduled Task captured defaults', () => {
     (root.props.headerRight as { props: { onPress: () => void } }).props.onPress(); await settle();
     expect(f.calls.find(call => call.method === 'PUT')?.body).toMatchObject({ task: { name: 'New task', execution: { ...context.selection, prompt: 'Inspect @src/main.ts', goalEnabled: false } } });
   });
-  it('switches catalog scope without resetting tuple/prompt and retries failed save with unchanged draft', async () => {
+  it('switches catalog scope without resetting tuple/prompt and retries an explicit 4xx rejection with unchanged draft', async () => {
     let writes = 0;
     const f = featureFixture({ creationContext: context, request: async call => {
       if (call.path.startsWith('/api/config/catalog/providers')) return { schemaVersion: 1, providers: [] };
       if (call.path.startsWith('/api/agent')) return [];
-      if (++writes === 1) throw new Error('write offline');
+      if (call.path === '/api/config/settings') return { weekStartPreference: 'auto' };
+      if (++writes === 1) throw Object.assign(new Error('write rejected'), { status: 400 });
       return { task: (call.body as { task: unknown }).task, schedulerSynced: true };
     } });
     f.app.projects.set([{ id: 'project', path: '/root', name: 'Actual' }, { id: 'other', path: '/other', name: 'Other' }]);
@@ -46,10 +47,30 @@ describe('Scheduled Task captured defaults', () => {
     (project.props.onChange as (value: string) => void)('other'); await settle();
     expect(f.calls.some(call => call.path === '/api/config/catalog/providers?directory=%2Fother')).toBe(true);
     const press = (root.props.headerRight as { props: { onPress: () => void } }).props.onPress;
-    press(); await settle(); expect(f.state(root).error()).toBe('write offline');
+    press(); await settle(); expect(f.state(root).error()).toBe('write rejected');
     press(); await settle();
     const calls = f.calls.filter(call => call.method === 'PUT');
     expect(calls).toHaveLength(2); expect(calls[0].body).toEqual(calls[1].body);
     expect(calls[1]).toMatchObject({ path: '/api/projects/other/scheduled-tasks', body: { task: { execution: { ...context.selection, prompt: 'Keep full draft' } } } });
+  });
+  it('unknown network outcome keeps the full task receipt and verifies by GET instead of retrying PUT', async () => {
+    let stored: unknown;
+    const f = featureFixture({ creationContext: context, request: async call => {
+      if (call.path.startsWith('/api/config/catalog/providers')) return { schemaVersion: 1, providers: [] };
+      if (call.path.startsWith('/api/agent')) return [];
+      if (call.path === '/api/config/settings') return { weekStartPreference: 'auto' };
+      if (call.method === 'PUT') { stored = (call.body as { task: unknown }).task; throw new Error('write offline'); }
+      return { tasks: [stored] };
+    } });
+    const root = f.element('task'); await settle();
+    (f.find(root, node => node.props.testID === 'features-task-name').props.onChange as (event: { value: string }) => void)({ value: 'Keep task' });
+    (f.find(root, node => node.type === 'TaskEditorPrompt').props.onChange as (value: string) => void)('Keep full draft');
+    const press = (root.props.headerRight as { props: { onPress: () => void } }).props.onPress;
+    press(); await settle(); expect(f.state(root).error()).toBe('write offline');
+    press(); await settle();
+    expect(f.calls.filter(call => call.method === 'PUT')).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === 'GET' && call.path.endsWith('/scheduled-tasks'))).toHaveLength(1);
+    expect(stored).toMatchObject({ name: 'Keep task', execution: { ...context.selection, prompt: 'Keep full draft' } });
+    expect(f.done()).toBe(1);
   });
 });

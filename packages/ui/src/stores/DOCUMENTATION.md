@@ -64,6 +64,24 @@ Runtime reset or a newly captured runtime clears that revision fence. Persistent
 startup seeds do not advance it. Pending deletions and loaded pagination tails
 keep their existing ownership and filtering rules.
 
+Directory pagination records `loadedMore` only after the explicit load-more reader
+successfully adopts a page. A newer bounded index head with `hasMore:true` may
+preserve that reader's older tail and deeper/terminal pagination; neither a fixed
+20-row threshold nor an older cursor alone proves that the client paged. A confirmed
+complete head (`hasMore:false`) still replaces the directory and removes old tails,
+including successful empty results. Cold startup seeds do not acquire `loadedMore`.
+
+Failed/pending directories preserve confirmed rows and pagination; saved index rows
+may seed display without proving completeness. `sessionIndexSyncByDirectory.incomplete`
+tracks those states even when the directory has no snapshot row. An explicit completed
+directory clears that marker, but missing rows alone do not authorize empty replacement.
+Unchanged maps/rows continue to share references. Projects count suffixes derive from
+either remote pages or this local incompleteness, independent of visible row limits.
+The local retry calls `refreshSessionIndex()` through the existing runtime-scoped
+Query GET; it does not start a sync job or add polling. Transport errors preserve the
+projection and reject; late responses cannot cross a runtime reset. These shared store
+semantics apply to web, Electron, VS Code and mobile consumers, not just the card UI.
+
 Global snapshot/live-upsert signatures include the session model reference,
 including variant. Model-only changes are not recency-only ticks: they must reach
 Assistant session cards. Lightweight live updates that omit a model preserve the

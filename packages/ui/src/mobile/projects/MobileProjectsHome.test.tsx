@@ -82,6 +82,15 @@ describe('MobileProjectsHome session row isolation', () => {
 });
 
 describe('MobileProjectsHome workspace groups', () => {
+  test('marks a partial project count and shows the same localized catalog notice with a disabled pending retry', () => {
+    const html = renderToString(<I18nProvider><MobileProjectsHome {...props} projects={[{ ...projects[0], sessionCountPartial: true }]} catalogIncomplete catalogRetrying onRetryCatalog={noop} /></I18nProvider>);
+    expect(html.replace(/<[^>]*>/g, '')).toContain('2 sessions+');
+    expect(html).toContain('Some directories have not refreshed.');
+    expect(html).toMatch(/data-testid="projects-catalog-retry"[^>]*disabled/);
+    const complete = renderToString(<I18nProvider><MobileProjectsHome {...props} /></I18nProvider>);
+    expect(complete).not.toContain('projects-catalog-partial');
+    expect(complete.replace(/<[^>]*>/g, '')).not.toContain('2 sessions+');
+  });
   test('renders one global pinned project card before projects', () => {
     const html = renderToString(
       <I18nProvider>

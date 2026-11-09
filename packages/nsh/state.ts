@@ -1,20 +1,28 @@
-import { batch, cleanup, effect, host, lifecycle, signal, untracked } from 'nsh';
-import { assistantPath, bindRequest, connectionSnapshotFrom, connections, native, query, sessionPath, type ConnectionSnapshot } from './runtime';
+import { batch, cleanup, effect, host, lifecycle, signal, Storage, untracked } from 'nsh';
+import { assistantPath, bindRequest, connectionSnapshotFrom, connections, native, query, sessionPath, type ConnectionSnapshot, type NativeMessageStreamTransport } from './runtime';
 import { runtimeScopeFrom, sameRuntimeScope, type RuntimeScope } from './runtime-scope';
 import { openDraft, sameAttachment } from './drafts';
+import { contactSendParts, pickedAttachmentFrom, sessionFiles } from './attachments';
 import { inboxDraft } from './inbox';
 import { openNativeHistoryLane } from './transcript-actions-lane';
-import { nativeRevertFrom, type NativeRevert } from './transcript-actions-core';
+import { nativeRevertFrom, type NativeRevert, type NativeSessionHistorySnapshot } from './transcript-actions-core';
+import { createNativeCompactAction, type NativeCompactReceipt } from './transcript-actions-compaction';
+import { nativeSessionActionStorageKey, inNativeSessionActionStorageLane } from './transcript-actions-storage';
 import { compileNativePrompt } from './composer';
 import { mergeHistoryMessages, stableHistoryMessages } from './history-messages';
+import { createNativeHistoryCache, nativeHistoryCacheKey } from './history-cache';
+import { nativeCatalogCache } from './catalog-cache';
+import { sessionCatalogFrom, type SessionCatalogIssues } from './session-catalog';
 import type { NativeHistoryPresentation } from './history-presentation';
 import { createActivityMaterializer, materializedActivityMessage } from './transcript-materialization';
 import { createGoalController, createGoalTransport, planGoalSubmission, type GoalArmSnapshot, type GoalCommandResult } from './chat-goal-model';
 import { createTasksProjection, type NativeTask } from './chat-tasks-model';
 import { createProjectsAttentionSource, isProjectsAttentionEvent, projectsAttention } from './projects-attention';
 import { t } from './i18n';
+import { createErrorFeedback, feedbackErrorKey, type ErrorFeedback } from './error-feedback';
+import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { sameReferenceScope, validateNativeReferences, type ReferenceCandidate, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
-import { activeFrom, applySessionContent, eventBusy, eventSessionID, id, inboxFrom, isSessionContentEvent, list, mergeMessages, messagesFrom, projectsFrom, record, rowsFrom, runtimeEventFrom, sessionsFrom, slashCommand, text, unwrap, type Attachment, type ChatTarget, type CompiledSubmission, type Connection, type FormAnswer, type Message, type Project, type Row, type RuntimeEvent, type Session, type Submission } from './model';
+import { activeFrom, applySessionContent, eventBusy, eventSessionID, id, inboxFrom, isSessionContentEvent, list, mergeMessages, messagesFrom, projectsFrom, record, rowsFrom, runtimeEventFrom, slashCommand, text, unwrap, type Attachment, type ChatTarget, type CompiledSubmission, type Connection, type FormAnswer, type Message, type Project, type Row, type RuntimeEvent, type Session, type Submission } from './model';
 
 const notificationCatalogAuthority = signal<NotificationCatalogState>({ scope: null, refreshGeneration: 0, complete: false, domains: { projects: 'unknown', sessions: 'unknown', bots: 'unknown', tasks: 'unknown' }, error: null });
 const catalogSources: { projects?: readonly Project[]; sessions?: readonly Session[]; bots?: readonly Row[]; tasks?: readonly Row[] } = {};
@@ -47,6 +55,7 @@ type CatalogAuthorityScope = NotificationCatalogScope & Readonly<{ authorization
 export type NotificationCatalogState = Readonly<{
   scope: CatalogAuthorityScope | null; refreshGeneration: number; complete: boolean;
   domains: Readonly<Record<Domain, 'unknown' | 'pending' | 'complete' | 'failed'>>; error: string | null;
+  sessionIssues?: SessionCatalogIssues;
 }>;
 let catalogRefreshGeneration = 0;
 const catalogDomainRevisions: Record<Domain, number> = { projects: 0, sessions: 0, bots: 0, tasks: 0 };
@@ -108,10 +117,34 @@ export async function awaitNotificationCatalogReady(scope: NotificationCatalogSc
 }
 /** Root calls after adopting the foreground snapshot; does not remount Chat/UI/drafts. */
 export function resumeChatOperations() { let resumed = 0; for (const resume of chatOperationResumptions) if (resume()) resumed++; return resumed; }
-export const report = (error: unknown) => app.error.set(error instanceof Error ? error.message : String(error));
-export async function run(work: () => Promise<unknown>) {
-  app.error.set('');
-  try { return await work(); } catch (error) { report(error); }
+export const rootErrorFeedback = signal<ErrorFeedback | null>(null);
+export const rootErrorActions = createErrorFeedback({ read: rootErrorFeedback, write: value => { rootErrorFeedback.set(value); app.error.set(value?.message ?? ''); } });
+let captureFeedbackPage: (() => () => boolean) | undefined;
+export function registerFeedbackPageOwner(capture: () => () => boolean) {
+  captureFeedbackPage = capture;
+  return () => { if (captureFeedbackPage === capture) captureFeedbackPage = undefined; };
+}
+function feedbackOwner() {
+  const captured = generation, scope = app.runtimeScope(), connection = app.connection();
+  return () => captured === generation && sameRuntimeScope(scope, app.runtimeScope()) && connection === app.connection() && lifecycle() === 'active';
+}
+export const report = (error: unknown, options: { current?: () => boolean; retry?: () => Promise<unknown> } = {}) => rootErrorActions.publish(t(feedbackErrorKey(error)), options.current ?? feedbackOwner(), options.retry);
+/** Cleanup survives its page; admission still belongs to the original native lease and exact retirement owner. */
+export function reportOwnedError(error: unknown, owner: Readonly<{ scope: RuntimeScope | null; current: () => boolean; retry?: () => Promise<unknown> }>, messageKey?: I18nKey) {
+  const scope = runtimeScopeFrom(owner.scope);
+  const current = () => !!scope && sameRuntimeScope(scope, app.runtimeScope()) && lifecycle() === 'active' && owner.current();
+  rootErrorActions.publish(t(messageKey ?? feedbackErrorKey(error)), current, owner.retry);
+}
+export async function run(work: () => Promise<unknown>, options: { retry?: () => Promise<unknown>; current?: () => boolean } = {}) {
+  const owner = feedbackOwner(), page = options.current ?? captureFeedbackPage?.() ?? (() => true), current = () => owner() && page();
+  const previous = rootErrorFeedback();
+  try {
+    const result = await work();
+    if (current() && previous?.retry === work) rootErrorActions.resolve(previous.id);
+    return result;
+  } catch (error) {
+    rootErrorActions.publish(t(feedbackErrorKey(error)), current, options.retry);
+  }
 }
 /** Call with forceReconnect only after native connection.connect succeeds. */
 export async function loadConnections(options: { forceReconnect?: boolean } = {}) {
@@ -127,7 +160,9 @@ export async function loadConnections(options: { forceReconnect?: boolean } = {}
 }
 function retireRuntimeAuthority(reason: 'suspend' | 'host' = 'host') {
   batch(() => {
+    rootErrorActions.retire();
     generation++; connectionRead++;
+    if (reason === 'host') { historyCache.clearMemory(); nativeCatalogCache.clear(); }
     retireCatalog();
     chatAuthorityRetirements.forEach(retire => retire(reason));
     connectivityRevision++; globalDisconnected = false;
@@ -145,6 +180,8 @@ function adoptConnections(saved: ConnectionSnapshot) {
   const sameHostResume = reconnectPending && pendingRetirement === 'suspend' && !changed && !authorizationChanged;
   batch(() => {
     if (authorityChanged) {
+      rootErrorActions.retire();
+      if (!sameHostResume) { historyCache.clearMemory(); nativeCatalogCache.clear(); }
       if (!reconnectPending) { generation++; retireCatalog(); chatAuthorityRetirements.forEach(retire => retire()); }
       else if (changed || authorizationChanged) chatAuthorityRetirements.forEach(retire => retire('host'));
       connectivityRevision++; globalDisconnected = false; refreshFlight = undefined; dirtyDomains.clear();
@@ -193,8 +230,9 @@ export async function refresh() {
   const previousCatalog = app.notificationCatalog();
   const status: Record<Domain, 'unknown' | 'pending' | 'complete' | 'failed'> = sameCatalogScope(scope, previousCatalog.scope) ? { ...previousCatalog.domains } : { projects: 'unknown', sessions: 'unknown', bots: 'unknown', tasks: 'unknown' };
   const revisions = { ...catalogDomainRevisions };
+  let sessionIssues = sameCatalogScope(scope, previousCatalog.scope) ? previousCatalog.sessionIssues : undefined;
   selected.forEach(domain => { status[domain] = 'pending'; });
-  notificationCatalogAuthority.set({ scope, refreshGeneration: turn, complete: false, domains: { ...status }, error: null });
+  notificationCatalogAuthority.set({ scope, refreshGeneration: turn, complete: false, domains: { ...status }, error: null, ...(sessionIssues ? { sessionIssues } : {}) });
   const catalogCurrent = () => started === generation && !switching && runtimeReady() && turn === catalogRefreshGeneration && sameCatalogScope(scope, currentCatalogScope());
   app.loading.set(true);
   const flight = (async () => {
@@ -206,12 +244,12 @@ export async function refresh() {
         const value = projectsFrom(raw);
         if (started === generation && !switching) { app.projects.set(value); catalogSources.projects = value; }
       } else if (domain === 'sessions') {
-        const raw = record(await request('/api/yuri/session-index')), sync = record(raw.sync);
-        if (raw.partial === true || raw.complete === false || sync.active === true || typeof sync.completed === 'number' && typeof sync.total === 'number' && sync.completed < sync.total
-          || ['pendingDirectories', 'failedDirectories'].some(key => sync[key] !== undefined && (!Array.isArray(sync[key]) || sync[key].length > 0))
-          || !Array.isArray(raw.directories) || raw.directories.some(value => !text(record(value).directory) || !Array.isArray(record(value).sessions))) throw new Error('Incomplete sessions catalog');
-        const value = sessionsFrom(raw);
-        if (started === generation && !switching) { app.sessions.set(value); catalogSources.sessions = value; }
+        const raw = await request('/api/yuri/session-index');
+        if (catalogCurrent()) {
+          const value = sessionCatalogFrom(raw, app.sessions());
+          app.sessions.set(value.sessions); catalogSources.sessions = value.sessions; sessionIssues = value.issues;
+          if (!value.complete) { status.sessions = catalogDomainRevisions.sessions === revisions.sessions ? 'failed' : 'unknown'; return; }
+        }
       } else if (domain === 'bots') {
         const value = record(await request('/api/yuri/assistants/snapshot'));
         if (!Array.isArray(value.assistants) || value.partial === true || value.complete === false || value.assistants.some(item => !text(record(item).id))) throw new Error('Invalid assistants snapshot');
@@ -235,10 +273,11 @@ export async function refresh() {
     if (catalogCurrent()) {
       const failed = results.find(result => result.status === 'rejected');
       notificationCatalogAuthority.set({ scope, refreshGeneration: turn, complete: !dirtyDomains.size && domains.every(domain => status[domain] === 'complete'), domains: { ...status },
-        error: failed?.status === 'rejected' ? failed.reason instanceof Error ? failed.reason.message : String(failed.reason) : null });
+        error: failed?.status === 'rejected' ? failed.reason instanceof Error ? failed.reason.message : String(failed.reason) : null,
+        ...(sessionIssues ? { sessionIssues } : {}) });
     }
     if (connectivityAtStart === connectivityRevision && !globalDisconnected) {
-      app.online.set(results.every(result => result.status === 'fulfilled'));
+      app.online.set(results.some(result => result.status === 'fulfilled'));
     }
     const failed = results.find(result => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
@@ -248,7 +287,7 @@ export async function refresh() {
   finally {
     if (started === generation) {
       refreshFlight = undefined; app.loading.set(false);
-      if (dirtyDomains.size) void run(refresh);
+      if (dirtyDomains.size) void run(refresh, { retry: refresh, current: () => true });
     }
   }
 }
@@ -311,7 +350,10 @@ export function runtimeLifecycle() {
     const active = lifecycle() === 'active';
     untracked(() => {
       if (!active) { if (runtimeReady() || !reconnectPending) retireRuntimeAuthority('suspend'); return; }
-      if (!runtimeReady()) void loadConnections().then(() => { resumeChatOperations(); }).catch(report);
+      if (!runtimeReady()) {
+        const resume = async () => { await loadConnections(); resumeChatOperations(); };
+        void run(resume, { retry: resume, current: () => true });
+      }
     });
   });
   effect(() => {
@@ -333,10 +375,11 @@ export function runtimeLifecycle() {
       connectivityRevision++; globalDisconnected = false;
       app.online.set(false);
       domains.forEach(domain => dirtyDomains.add(domain));
-      void run(refresh);
+      void run(refresh, { retry: refresh, current });
     });
-    untracked(() => { void run(refresh); });
-    void native('runtime.stream', { path: '/api/yuri/events', key: 'global', ...(scope ? { expectedHost: scope } : {}) }).catch(failure => { if (current()) report(failure); });
+    untracked(() => { void run(refresh, { retry: refresh, current }); });
+    const connectStream = async () => { if (!current()) return; await native('runtime.stream', { path: '/api/yuri/events', key: 'global', ...(scope ? { expectedHost: scope } : {}) }); };
+    void connectStream().catch(failure => { if (current()) report(failure, { current, retry: connectStream }); });
     return () => {
       alive = false; disconnected(); reconnected();
       connectivityRevision++; app.online.set(false);
@@ -348,8 +391,12 @@ export function runtimeLifecycle() {
 export type SendPreparationInput = { text: string; files: Attachment[]; references: ScopedReferenceDocument; scope: ReferenceScope; isCurrentScope: () => boolean };
 export type SendOptions = { inputMode?: 'normal' | 'shell'; prepare?: (input: SendPreparationInput) => Promise<CompiledSubmission>; goalArm?: GoalArmSnapshot };
 const chatOwners = signal<number[]>([]);
+const historyCache = createNativeHistoryCache(Storage);
+export const clearHistoryCache = (): Promise<void> => historyCache.clear();
+export const retireHistoryAuthorization = (connectionID: string, authorizationID: string) =>
+  historyCache.retireAuthorization(connectionID, authorizationID);
 let nextChatOwner = 0;
-export function createChat(target: ChatTarget, dependencies: { followUpBehavior?: () => 'queue' | 'steer' | null; beforeHistoryPresentationFlush?: (next: NativeHistoryPresentation) => void } = {}) {
+export function createChat(target: ChatTarget, dependencies: { messageStreamTransport?: () => NativeMessageStreamTransport | null; followUpBehavior?: () => 'queue' | 'steer' | null; deviceChatPreferences?: () => { allowPromptingSubagentSessions: boolean; persistChatDraft: boolean } | null; beforeHistoryPresentationFlush?: (next: NativeHistoryPresentation) => void } = {}) {
   type OperationLane = Readonly<{ scope: RuntimeScope | null; generation: number; request: ReturnType<typeof bindRequest>; history: ReturnType<typeof openNativeHistoryLane> }>;
   const makeOperationLane = (): OperationLane => {
     const scope = runtimeScopeFrom(app.runtimeScope());
@@ -357,6 +404,9 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   };
   let operationLane = makeOperationLane();
   const initialOperationLane = operationLane, laneRevision = signal(0);
+  const cacheKey = nativeHistoryCacheKey(app.connection(), target);
+  const cacheCurrent = () => !!cacheKey && cacheKey === nativeHistoryCacheKey(app.connection(), target) && !switching && runtimeReady();
+  let rememberedRows: Message[] | undefined, rememberedCursor: string | null | undefined, rememberedRevert: NativeRevert | null | undefined;
   const messages = signal<Message[]>([]), inbox = signal<Row[]>([]), permissions = signal<Row[]>([]), forms = signal<Row[]>([]), error = signal('');
   type MessageCommit = { kind: 'snapshot'; error?: string } | { kind: 'patch'; messages: readonly Message[] };
   const messageCommitListeners = new Set<(commit: MessageCommit) => void>();
@@ -410,7 +460,8 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   const loading = signal(false), sending = signal(false), busy = signal(false), more = signal(false), hasGap = signal(false);
   const olderLoading = signal(false), historyError = signal('');
-  const durable = openDraft(app.connection()?.id ?? `unconnected:${generation}`, target);
+  const durable = openDraft(app.connection()?.id ?? `unconnected:${generation}`, target, dependencies.deviceChatPreferences ? { persistChatDraft: () => dependencies.deviceChatPreferences!()?.persistChatDraft ?? null } : {});
+  const parentAuthority = signal<string | null | undefined>(undefined);
   const { draft, attachments, pendingSend, queueEdit } = durable;
   const active = signal(true), syncActive = signal(false), syncDemand = signal(true);
   const retry = signal<Row | null>(null), streamState = signal<'inactive' | 'connecting' | 'live' | 'disconnected'>('inactive');
@@ -433,7 +484,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       const boundaryChanged = revertSource()?.messageID !== value?.messageID;
       changed = boundaryChanged;
       if (boundaryChanged && historyPresentationListener) presentHistory('reset', { revert: value, historyGeneration: historyGeneration() + 1, resolved: false, repairPending: historyRepairPending() || !!revertSource() && !value });
-      if (boundaryChanged) resetHistoryAuthority();
+      if (boundaryChanged) { resetHistoryAuthority(); void historyCache.invalidate(cacheKey).catch(() => {}); rememberedRows = undefined; }
       if (revertSource() && !value) { historyNeedsReset = true; historyRepairPending.set(true); }
       historyRevision++; revertSource.set(value);
       if (boundaryChanged) updateTasks();
@@ -471,6 +522,16 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   let cursor: string | null = null, contactGeneration: number | undefined, contactRevision = -1;
   let messagesLoaded = false;
   let authorityMessageIDs = new Set<string>();
+  function rememberHistory() {
+    if (!cacheKey || !cacheCurrent() || !messagesLoaded || !resolvedAuthority() || hasGap() || historyRepairPending() || historyNeedsReset) return;
+    const rows = messages();
+    if (rows === rememberedRows && cursor === rememberedCursor && revertSource() === rememberedRevert) return;
+    rememberedRows = rows; rememberedCursor = cursor; rememberedRevert = revertSource();
+    const pending = rows.findIndex(message => !authorityMessageIDs.has(message.id) || streaming.has(message.id));
+    const writeGeneration = operationLane.generation;
+    void historyCache.write(cacheKey, { messages: pending < 0 ? rows : rows.slice(0, pending), cursor, complete: !more(),
+      ...(contactGeneration === undefined ? {} : { generation: contactGeneration }), ...(contactRevision < 0 ? {} : { revision: contactRevision }), revert: revertSource() }, () => cacheCurrent() && generation === writeGeneration).catch(() => {});
+  }
   const olderCursors = new Set<string>();
   let olderFlight: Promise<void> | undefined;
   let catchup: { page: ReturnType<typeof messagesFrom>; anchors: Set<string>; visited: Set<string> } | undefined;
@@ -483,12 +544,76 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deltaTimer: ReturnType<typeof setTimeout> | undefined;
   let streamDisconnected = false;
+  let nativeStreamReady = false;
   const seenEvents = new Set<string>();
   let latestStatusClock = -1;
   const inboxTerminals = new Map<string, 'delivered' | 'cancelled'>();
   let queueFlight: Promise<boolean> | undefined, recoveryFlight: Promise<boolean> | undefined;
   const laneCurrent = (lane: OperationLane) => alive && !retiredAuthority && lane === operationLane && runtimeReady() && !switching && lane.generation === generation && sameRuntimeScope(lane.scope, app.runtimeScope());
   const current = () => laneCurrent(operationLane);
+  const sendAdmission = (): 'allowed' | 'inactive' | 'session-authority-unknown' | 'subagent-preference-unknown' | 'subagent-prompting-disabled' => {
+    if (!current() || !active() || lifecycle() !== 'active') return 'inactive';
+    if (target.kind !== 'session') return 'allowed';
+    const parent = parentAuthority();
+    if (parent === undefined) return 'session-authority-unknown';
+    if (!parent) return 'allowed';
+    const preference = dependencies.deviceChatPreferences?.();
+    return preference?.allowPromptingSubagentSessions === true ? 'allowed' : preference == null ? 'subagent-preference-unknown' : 'subagent-prompting-disabled';
+  };
+  const canSend = () => sendAdmission() === 'allowed';
+  const compactReceipt = signal<NativeCompactReceipt | null>(null), compactionBarrier = signal(false), compactionInbox = signal<Row[]>([]);
+  const historyActionStorageKey = app.connection() ? nativeSessionActionStorageKey(app.connection(), target) : null;
+  const compactJournalKey = historyActionStorageKey ? `nsh:compact:v1:${historyActionStorageKey}` : null;
+  const compactAction = createNativeCompactAction({ sessionID: target.id, directory: target.directory,
+    capture: () => { const lane = operationLane; return { current: () => laneForeground(lane), send: lane.request }; },
+    changed: (receipt, barrier) => batch(() => { compactReceipt.set(receipt); compactionBarrier.set(barrier); }),
+    admitted: item => { if (!inboxTerminals.has(text(item.id)) && !compactionInbox().some(row => row.id === item.id)) compactionInbox.set([...compactionInbox(), item]); },
+    journal: {
+      key: compactJournalKey ?? undefined,
+      read: async () => {
+        if (!compactJournalKey) throw new Error('Compaction storage scope unavailable');
+        const raw = await inNativeSessionActionStorageLane(compactJournalKey, () => Storage.getItem(compactJournalKey));
+        if (!raw || raw === 'null') return null;
+        const value = record(JSON.parse(raw));
+        if (!['unknown', 'acknowledged'].includes(text(value.status)) || value.inboxID !== undefined && typeof value.inboxID !== 'string') throw new Error('Invalid compaction receipt');
+        return { status: value.status as 'unknown' | 'acknowledged', ...(text(value.inboxID) ? { inboxID: text(value.inboxID) } : {}) };
+      },
+      write: value => compactJournalKey ? Storage.setItem(compactJournalKey, JSON.stringify(value)) : Promise.reject(new Error('Compaction storage scope unavailable')),
+    },
+  });
+  async function compact() {
+    const lane = operationLane;
+    if (target.kind !== 'session' || !laneForeground(lane) || sending() || historyBusy() || pendingSend() || queueEdit()) return false;
+    try {
+      const accepted = await compactAction.compact(busy() && dependencies.followUpBehavior?.() !== 'steer' ? 'queue' : 'steer', async () => {
+        if (!await admitNewInput(lane) || !laneForeground(lane)) throw new Error('Compaction source changed');
+        // A staged tail must be resolved explicitly; compact cannot commit history as a side effect.
+        if (await refreshHistory(() => laneForeground(lane), lane)) throw new Error('Restore or commit reverted history before compaction');
+      });
+      if (accepted && laneForeground(lane)) schedule(['inbox', 'status']);
+      return accepted;
+    } catch (failure) { if (laneCurrent(lane)) fail(failure); return false; }
+  }
+  async function reconcileCompaction(lane: OperationLane) {
+    const revision = compactAction.revision();
+    const value = record(await lane.request(`/api/sessions/${encodeURIComponent(target.id)}/delivery?${query(target.directory)}`));
+    if (typeof value.compactionRunning !== 'boolean' || !Array.isArray(value.data)) throw new Error('Compaction delivery authority is unknown');
+    const items = rowsFrom(value).filter(item => item.type === 'compaction');
+    const running = activeFrom(await lane.request('/api/session/active'), target.id);
+    if (!laneForeground(lane)) throw new Error('Compaction source changed');
+    if (await compactAction.confirmAuthority({ items, running: value.compactionRunning, idle: !running }, revision) && laneForeground(lane)) compactionInbox.set(items);
+  }
+  async function readInbox(lane: OperationLane) {
+    const payload = await lane.request(scoped('inbox'));
+    if (laneForeground(lane) && compactReceipt()?.status !== 'pending' && (compactAction.receipt() || compactAction.barrier() || rowsFrom(payload).some(item => item.type === 'compaction'))) await reconcileCompaction(lane);
+    return inboxFrom(payload);
+  }
+  async function admitNewInput(lane = operationLane) {
+    if (target.kind === 'session' && parentAuthority() === undefined) await refreshHistory(() => laneCurrent(lane), lane);
+    const admission = sendAdmission();
+    if (admission === 'allowed') return true;
+    error.set(admission); return false;
+  }
   const referenceCurrent = () => current() && app.connection()?.id === durable.scope.host;
   const referenceSnapshot = (): ScopedReferenceDocument => {
     const document = durable.document();
@@ -517,6 +642,51 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   const foreground = () => current() && (active() || syncActive()) && lifecycle() === 'active' && chatOwners().at(-1) === owner;
   const laneForeground = (lane: OperationLane) => laneCurrent(lane) && foreground();
+  let attachmentOperation = 0;
+  /** Capture before native presentation. UI also retires its exact picker port on page retirement. */
+  function captureAttachment(page?: Readonly<{ scope: RuntimeScope | null; current: () => boolean }>) {
+    const lane = operationLane, expectedHost = lane.scope && Object.freeze({ ...lane.scope });
+    const capturedTarget = Object.freeze({ ...target });
+    const revision = durable.revision(), draftRevision = durable.draftRevision(), capturedGeneration = contactGeneration;
+    const pageOperation = `attachment_${owner}_${++attachmentOperation}`;
+    const authoritative = target.kind !== 'assistant' || messagesResolved() && typeof capturedGeneration === 'number' && Number.isSafeInteger(capturedGeneration) && capturedGeneration >= 0;
+    let checkpoint: number | undefined;
+    let adoptionWrite: Promise<void> | undefined;
+    let settled = false;
+    const valid = () => !settled && authoritative && !!expectedHost && expectedHost.hostID === durable.scope.host && laneForeground(lane) && active() && durable.status() === 'ready'
+      && target.kind === capturedTarget.kind && target.id === capturedTarget.id && target.directory === capturedTarget.directory
+      && (!page || page.current() && sameRuntimeScope(page.scope, expectedHost)) && durable.revision() === revision && durable.draftRevision() === draftRevision
+      && (target.kind !== 'assistant' || messagesResolved() && contactGeneration === capturedGeneration);
+    function adopt(value: unknown, restoringRevision?: number) {
+      if (!valid() || value === null) return false;
+      let file: Attachment;
+      try { file = pickedAttachmentFrom(value, { hostID: durable.scope.host, target: capturedTarget, ...(capturedTarget.kind === 'assistant' ? { contactGeneration: capturedGeneration } : {}) }); }
+      catch { return false; }
+      if (restoringRevision !== undefined && restoringRevision !== checkpoint) {
+        // An ACK/storage interruption may leave this exact descriptor already
+        // persisted. Confirm it without appending a second attachment.
+        if (!attachments().some(existing => sameAttachment(existing, file))) return false;
+        settled = true; adoptionWrite = durable.flush(); void adoptionWrite.catch(() => {}); return true;
+      }
+      settled = true;
+      attachments.set([...attachments(), file]);
+      adoptionWrite = durable.flush(); void adoptionWrite.catch(() => {});
+      return true;
+    }
+    return { expectedHost, target: capturedTarget, current: valid, retire() { settled = true; }, adopt,
+      recover: (value: unknown, savedRevision: number) => adopt(value, savedRevision),
+      async commit() {
+        try { await adoptionWrite; } catch { await durable.retry(); }
+        if (durable.status() !== 'ready') throw new Error('attachment_receipt_storage_failed');
+      },
+      async prepare() {
+        if (!valid()) throw new Error('attachment_capture_stale');
+        checkpoint = await durable.checkpoint();
+        if (!valid()) throw new Error('attachment_capture_stale');
+        return { contactGeneration: capturedGeneration, draftIdentity: durable.key, draftRevision: checkpoint, pageOperation };
+      },
+    };
+  }
   let goalObservers = 0, goalNotice = 0;
   const goalRevision = signal(0);
   const goalCore = createGoalController({ sessionID: target.kind === 'session' ? target.id : '', directory: target.directory }, {
@@ -562,6 +732,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       return;
     }
     retiredAuthority = true;
+    parentAuthority.set(undefined);
     suspendedOperations = reason === 'suspend';
     previousHistoryPresentation = undefined;
     if (!suspendedOperations) { historyPresentationListener = undefined; messageCommitListeners.clear(); }
@@ -596,7 +767,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (!foreground() || streaming.has(expected.id)) return false;
       const rows = messages(), index = rows.findIndex(message => message.id === expected.id);
       if (rows[index] !== expected) return false;
-      const next = rows.slice(); next[index] = full; messages.set(next); updateTasks(); snapshotCommitted(); return true;
+      const next = rows.slice(); next[index] = full; messages.set(next); updateTasks(); snapshotCommitted(); rememberHistory(); return true;
     },
     changed: () => untracked(() => activityRevision.set(activityRevision() + 1)),
   });
@@ -612,13 +783,35 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     const session = record(unwrap(await request(`/api/session/${encodeURIComponent(target.id)}?${query(target.directory)}`)));
     if (!laneCurrent(lane) || !valid()) throw new Error('Session history source changed');
     if (session.id !== target.id) throw new Error('Invalid session history authority');
+    if (session.parentID !== undefined && session.parentID !== null && typeof session.parentID !== 'string') throw new Error('Invalid session parent authority');
+    parentAuthority.set(typeof session.parentID === 'string' && session.parentID ? session.parentID : null);
     const value = session.revert ? nativeRevertFrom(session.revert) : null;
     if (revision === historyRevision) setRevert(value);
     return revert();
   }
+  function historyActionSnapshot(): NativeSessionHistorySnapshot {
+    return { messages: messages(), revert: revert(), more: more(), cursor, revision: historyRevision,
+      ready: messagesLoaded && resolvedAuthority() && !hasGap() && !historyRepairPending() && !messageReadError() && !historyError() && messages().every(message => authorityMessageIDs.has(message.id)) };
+  }
+  async function prepareHistoryAction(valid: () => boolean) {
+    const lane = operationLane;
+    await load(false, ['messages'], lane);
+    if (!laneForeground(lane) || !valid()) throw new Error('Session history source changed');
+    // load preserves display on failure; a mutation additionally requires a fresh successful marker read.
+    await refreshHistory(valid, lane);
+    if (historyError()) {
+      // An explicit slash retry owns retrying the failed opaque page. Do not
+      // require a separate scroll gesture or drop the pages already adopted.
+      if (more() && cursor) await loadOlder(false, lane);
+      else if (!more()) historyError.set('');
+      if (!laneForeground(lane) || !valid()) throw new Error('Session history source changed');
+    }
+    if (!historyActionSnapshot().ready) throw new Error('Session history authority is unknown');
+  }
   function trimCommitted(boundary: string) {
     if (committedHiddenIDs.has(boundary)) return;
     committedHiddenIDs.add(boundary);
+    void historyCache.invalidate(cacheKey).catch(() => {}); rememberedRows = undefined;
     const rows = messages(), index = rows.findIndex(message => message.id === boundary);
     batch(() => {
       if (historyPresentationListener) presentHistory('reset', { revert: null, hasGap: false, resolved: false, historyGeneration: historyGeneration() + 1, repairPending: historyRepairPending() || index < 0 });
@@ -654,6 +847,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       messageReadError.set('');
     });
     snapshotCommitted();
+    rememberHistory();
   }
   async function commitStagedRevertBeforeSend(lane: OperationLane) {
     const request = lane.request, foreground = () => laneForeground(lane);
@@ -704,10 +898,10 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   function schedule(changed: ChatDomain[] = allChatDomains) {
     changed.forEach(domain => pendingRefresh.add(domain));
-    if (!foreground() || timer) return;
+    if (!foreground() || timer || target.kind === 'session' && !nativeStreamReady) return;
     timer = setTimeout(() => {
       timer = undefined;
-      if (!foreground()) return;
+      if (!foreground() || target.kind === 'session' && !nativeStreamReady) return;
       const selected = [...pendingRefresh]; pendingRefresh.clear();
       void load(false, selected);
     }, 120);
@@ -843,7 +1037,8 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
                if (older) historyError.set('');
                updateTasks();
             });
-            snapshotCommitted();
+             snapshotCommitted();
+             if (!historyReadFailed) rememberHistory();
         })] : []),
         ...(!older && selected.includes('status') ? [apply(async () => {
           if (target.kind === 'session') {
@@ -859,7 +1054,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         })] : []),
         historyRead,
         ...(target.kind === 'session' && !older ? [
-           ...(selected.includes('inbox') ? [apply(async () => { const value = inboxFrom(await request(scoped('inbox'))); if (valid() && blockingAtStart === blockingRevision) inbox.set(value.filter(item => !inboxTerminals.has(text(item.id)))); })] : []),
+           ...(selected.includes('inbox') ? [apply(async () => { const value = await readInbox(lane); if (valid() && blockingAtStart === blockingRevision) inbox.set(value.filter(item => !inboxTerminals.has(text(item.id)))); })] : []),
           ...(selected.includes('permissions') ? [apply(async () => { const value = rowsFrom(await request(`/api/permission/request?${query(target.directory)}`)).filter(item => item.sessionID === target.id); if (valid() && blockingAtStart === blockingRevision) permissions.set(value); })] : []),
           ...(selected.includes('forms') ? [apply(async () => { const value = rowsFrom(await request(scoped('form'))); if (valid() && blockingAtStart === blockingRevision) forms.set(value); })] : []),
         ] : []),
@@ -978,6 +1173,13 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     const request = lane.request, current = () => laneCurrent(lane);
     const existing = queueEdit();
     if (existing && existing.id !== inboxID) throw new Error('请先确认上一项队列编辑的结果');
+    if (existing) {
+      if (await recoverQueueEdit(lane)) return true;
+      if (!current() || queueEdit() !== existing || inboxTerminals.get(inboxID) === 'delivered') return false;
+      await durable.flush();
+      if (!current() || queueEdit() !== existing) return false;
+      error.set('');
+    }
     if (!existing) {
       if (draft() || attachments().length || pendingSend()) throw new Error('请先处理当前草稿，队列编辑不会覆盖已有输入');
       const revision = durable.revision();
@@ -1032,9 +1234,11 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     if (current()) commands.set(rows);
   }
   async function command(name: string, args = '') {
+    const lane = operationLane;
     if (!active() || !current() || target.kind !== 'session' || sending() || historyBusy()) return false;
     if (pendingSend()) { error.set('上一条发送尚未确认，请先确认其结果'); return false; }
     if (!/^[\w:-]+$/.test(name)) { error.set('无效的命令名称'); return false; }
+    try { if (!await admitNewInput(lane) || !laneCurrent(lane) || !active()) return false; } catch (failure) { if (laneCurrent(lane)) fail(failure); return false; }
     draft.set(`/${name}${args ? ` ${args}` : ''}`);
     return send();
   }
@@ -1055,12 +1259,15 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     let submission: Submission | null = null;
     let dispatched = false;
     let historyFailed = false;
+    let newInput = false;
     const goalArm = { ...(options.goalArm ?? goalCore.captureArm()) };
     try {
       await durable.whenReady();
       if (!current()) return false;
       if (queueEdit()) { error.set('队列编辑尚未确认取消，不能重复发送'); return false; }
       submission = pendingSend();
+      newInput = !submission;
+      if (newInput && !await admitNewInput(lane)) return false;
       if (goalAction && submission) { error.set('上一条发送尚未确认，请先确认其结果'); return false; }
       if (!goalAction && !submission && !draft().trim() && !attachments().length) return false;
       if (submission && !retryPending && !durable.matches(submission.text, submission.files, submission.references?.references)) { error.set('上一条发送结果未知，请先重试确认后再发送新草稿'); return false; }
@@ -1068,7 +1275,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (!submission) {
         submission = goalAction
           ? { id: id(), text: '', files: [], delivery: 'steer', uncertain: false, inputMode: 'normal', references: { text: '', references: [], scope: { ...durable.scope } }, command: { name: 'goal', text: goalAction } }
-          : { id: id(), text: draft(), files: attachments().map(file => ({ ...file })), delivery: busy() && dependencies.followUpBehavior?.() !== 'steer' ? 'queue' : 'steer', uncertain: false, inputMode: options.inputMode ?? 'normal', references: referenceSnapshot() };
+          : { id: id(), text: draft(), files: attachments().map(file => ({ ...file })), delivery: (busy() || compactionBarrier()) && dependencies.followUpBehavior?.() !== 'steer' ? 'queue' : 'steer', uncertain: false, inputMode: options.inputMode ?? 'normal', references: referenceSnapshot() };
         const literal = submission.text.replace(/^(\s*)\/\u2003/, '$1/');
         const invocation = slashCommand(literal);
         const tokenEnd = /^\s*\/\u2003?[^\s]+/.exec(submission.text)?.[0].length ?? 0;
@@ -1094,7 +1301,11 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       const references = submissionReferences(submission);
       if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
       if (target.kind === 'assistant' && (references.references.length || submission.compiled?.agents?.length || submission.compiled?.skills?.length)) throw new Error('Assistant references are not supported by this client');
-      if (target.kind === 'assistant' && (submission.files.length || submission.compiled?.files?.length)) throw new Error('Assistant attachments are not supported by this client');
+      if (target.kind === 'assistant') {
+        const files = contactSendParts(submission.files, { hostID: durable.scope.host, target });
+        if (submission.compiled?.files && JSON.stringify(files) !== JSON.stringify(contactSendParts(submission.compiled.files, { hostID: durable.scope.host, target }))) throw new Error('contact_attachment_snapshot_changed');
+      }
+      else { sessionFiles(submission.files); if (submission.compiled?.files) sessionFiles(submission.compiled.files); }
       if (submission.inputMode === 'shell' && references.references.length) throw new Error('Shell references are not supported by this client');
       if (submission.uncertain && (submission.command || submission.inputMode === 'shell')) { error.set('命令结果未知；服务端不支持命令幂等重试，请先核对会话状态'); return false; }
       // Persist the exact owned document before asynchronous preparation, not just its eventual wire output.
@@ -1109,7 +1320,12 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         if (nativeGoal && !referenceCurrent()) throw new Error('Connection changed');
         if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
         if (!compiled || typeof compiled.text !== 'string') throw new Error('Invalid compiled submission');
-        if (target.kind === 'assistant' && (compiled.files?.length || compiled.agents?.length || compiled.skills?.length)) throw new Error('Assistant references are not supported by this client');
+        if (target.kind === 'assistant') {
+          if (compiled.agents?.length || compiled.skills?.length) throw new Error('Assistant references are not supported by this client');
+          const originalParts = contactSendParts(submission.files, { hostID: durable.scope.host, target });
+          const compiledParts = contactSendParts(compiled.files ?? submission.files, { hostID: durable.scope.host, target });
+          if (JSON.stringify(originalParts) !== JSON.stringify(compiledParts)) throw new Error('contact_attachment_snapshot_changed');
+        } else sessionFiles(compiled.files ?? []);
         if (nativeGoal) {
           // Only an already captured Goal may reinterpret compiled text. Ordinary compiler output never promotes a command.
           const original = slashCommand(submission.text.replace(/^(\s*)\/\u2003/, '$1/'));
@@ -1120,7 +1336,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
           if (plan.kind !== 'command') throw new Error(t('chat.goal.toast.actionFailed'));
           const capturedCompiled = { ...compiled, ...(compiled.files ? { files: compiled.files.map(file => ({ ...file })) } : {}), ...(compiled.agents ? { agents: compiled.agents.map(agent => ({ ...agent })) } : {}), ...(compiled.skills ? { skills: compiled.skills.map(skill => ({ ...skill })) } : {}) };
           submission = { ...submission, compiled: capturedCompiled, command: { name: 'goal', text: plan.command.text }, preparedText: plan.command.text };
-        } else submission = { ...submission, compiled, preparedText: compiled.text };
+        } else submission = { ...submission, compiled: target.kind === 'assistant' && compiled.files === undefined ? { ...compiled, files: submission.files.map(file => ({ ...file })) } : compiled, preparedText: compiled.text };
         pendingSend.set(submission);
       }
       if (submission.uncertain) {
@@ -1133,11 +1349,15 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         if (!current()) return;
         if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
         if (found) { admitted(submission, draftAtStart, lane); await durable.flush(); await load(false, allChatDomains, lane); return true; }
+        if (target.kind === 'assistant' && submission.files.length) { error.set('contact_attachment_send_unknown'); return false; }
       }
       const compiled = submission.compiled;
       const sendText = compiled?.text ?? submission.text;
       const sendFiles = compiled?.files ?? submission.files;
       const writeAhead = async () => {
+        if (!await compactAction.waitForAdmission(() => reconcileCompaction(lane))) throw new Error('Compaction admission is unknown; input was not dispatched');
+        if (!current()) throw new Error('Connection changed');
+        if (!await admitNewInput(lane)) throw new Error(sendAdmission());
         if (nativeGoal && !referenceCurrent()) throw new Error('Connection changed');
         try { if (!goalPanel) await commitStagedRevertBeforeSend(lane); }
         catch (failure) { historyFailed = true; throw failure; }
@@ -1145,11 +1365,13 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         pendingSend.set({ ...submission!, uncertain: true });
         await durable.flush();
         if (!current() || target.kind === 'session' && !foreground() || (nativeGoal || references.references.length) && !referenceCurrent()) throw new Error('Connection changed');
+        const admission = sendAdmission();
+        if (admission !== 'allowed') throw new Error(admission);
         dispatched = true;
       };
       if (nativeGoal) {
         const planned = planGoalSubmission({ text: `/goal${submission.command!.text ? ` ${submission.command!.text}` : ''}`, armed: false, ...(goalPanel ? {} : { delivery: submission.delivery }),
-          ...(goalPanel ? {} : { files: sendFiles.map(file => ({ uri: file.uri, name: file.name })), agents: compiled?.agents, skills: compiled?.skills }) });
+          ...(goalPanel ? {} : { files: sessionFiles(sendFiles), agents: compiled?.agents, skills: compiled?.skills }) });
         // Panel controls already carry the canonical native command argument, not slash syntax.
         const goalCommand = goalPanel ? { name: 'goal' as const, text: submission.command!.text } : planned.kind === 'command' ? planned.command : null;
         if (!goalCommand) throw new Error(t('chat.goal.toast.actionFailed'));
@@ -1167,20 +1389,21 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         }
         await writeAhead();
         await request(scoped('command'), 'POST', { name: text(registered.name), text: submission.command.text, delivery: submission.delivery,
-          ...(submission.files.length ? { files: submission.files.map(file => ({ uri: file.uri, name: file.name })) } : {}),
+          ...(submission.files.length ? { files: sessionFiles(submission.files) } : {}),
         });
       } else if (submission.inputMode === 'shell') {
         await writeAhead();
         await request(scoped('shell'), 'POST', { command: submission.text });
       } else if (target.kind === 'assistant') {
         await writeAhead();
-        const result = record(await request(assistantPath(target.id, 'messages'), 'POST', { messageID: submission.id, parts: [{ type: 'text', text: sendText }], language: 'zh-CN' }));
+        const parts = contactSendParts(sendFiles, { hostID: durable.scope.host, target });
+        const result = record(await request(assistantPath(target.id, 'messages'), 'POST', { messageID: submission.id, parts: [{ type: 'text', text: sendText }, ...parts], language: 'zh-CN' }));
         if (result.admitted !== true || result.messageID !== submission.id) throw new Error('Invalid assistant admission');
       } else {
         await writeAhead();
         const result = inboxFrom([unwrap(await request(scoped('prompt'), 'POST', {
           id: submission.id, text: sendText, delivery: submission.delivery,
-          ...(sendFiles.length ? { files: sendFiles.map(file => ({ uri: file.uri, name: file.name })) } : {}),
+          ...(sendFiles.length ? { files: sessionFiles(sendFiles) } : {}),
           ...(compiled?.agents?.length ? { agents: compiled.agents } : {}),
           ...(compiled?.skills?.length ? { skills: compiled.skills } : {}),
           ...(compiled?.metadata ? { metadata: compiled.metadata } : {}),
@@ -1248,22 +1471,34 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     blockingRevision++; forms.set(forms().filter(item => item.id !== formID));
     await load(false, allChatDomains, lane);
   }
+  let streamOwnerID: string | undefined;
+  function acceptsStream(payload: unknown) {
+    const envelope = record(payload);
+    try {
+      const received = runtimeScopeFrom(envelope.expectedHost);
+      if (!received || !sameRuntimeScope(received, operationLane.scope)) return false;
+    } catch { return false; }
+    if (envelope.key === 'global') return true;
+    return envelope.key === 'chat' && target.kind === 'session' && !!streamOwnerID && envelope.ownerID === streamOwnerID;
+  }
   const unsubscribe = host.on('runtime.event', payload => {
     if (!foreground()) return;
+    if (!acceptsStream(payload)) return;
     const event = runtimeEventFrom(payload);
     if (!event) return;
     if (event.type === 'reconnected') {
-      if (event.key === (target.kind === 'session' ? 'chat' : 'global')) { streamDisconnected = false; streamState.set('live'); schedule(); }
+      if (event.key === (target.kind === 'session' ? 'chat' : 'global')) { publishStream(); nativeStreamReady = true; streamDisconnected = false; streamState.set('live'); schedule(); }
       if (target.kind === 'session' && goalObservers) { goalCore.invalidateRead(); schedule(['goal']); }
       return;
     }
     if (event.type === 'server.connected') {
-      if (event.key === (target.kind === 'session' ? 'chat' : 'global')) { streamDisconnected = false; streamState.set('live'); schedule(); }
-      if (target.kind === 'session' && goalObservers) { goalCore.invalidateRead(); schedule(['goal']); }
+      if (target.kind === 'session') return;
+      if (event.key === 'global') { streamDisconnected = false; streamState.set('live'); schedule(); }
       return;
     }
     if (event.type === 'global.disposed') { if (target.kind === 'session' && goalObservers) { goalCore.invalidateRead(); schedule(['goal']); } return; }
-    if (streamDisconnected && event.key === (target.kind === 'session' ? 'chat' : 'global')) return;
+    // A current native ticket admits replay before ready; the barrier above
+    // flushes these writes before scheduling authoritative GET compensation.
     if (target.kind === 'session' && goalCore.event(event.directory || event.key !== 'chat' ? event : { ...event, directory: target.directory })) return;
     const relevant = target.kind === 'assistant'
       ? text(event.body.assistantID) === target.id || event.type === 'yuri:assistants-changed'
@@ -1279,6 +1514,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (inboxID) terminalInbox(inboxID, event.type.endsWith('.delivered') ? 'delivered' : 'cancelled');
       if (event.type.endsWith('.cancelled') && pendingSend()?.id === inboxID) pendingSend.set(null);
     }
+    if (target.kind === 'session' && compactAction.observe(event.type, event.body)) schedule(['inbox', 'status']);
     const status = eventBusy(event);
     if (status !== undefined && (event.created === undefined || event.created >= latestStatusClock)) {
       latestStatusClock = event.created ?? latestStatusClock;
@@ -1326,6 +1562,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       }
       else if (event.type === 'session.revert.committed' && text(event.body.to)) trimCommitted(text(event.body.to));
       else if (event.type === 'session.revert.committed') {
+        void historyCache.invalidate(cacheKey).catch(() => {}); rememberedRows = undefined;
         batch(() => {
           if (historyPresentationListener) presentHistory('reset', { revert: null, repairPending: true, resolved: false, historyGeneration: historyGeneration() + (historyNeedsReset ? 0 : 1) });
           if (!historyNeedsReset) resetHistoryAuthority(); historyNeedsReset = true; historyRepairPending.set(true); historyRevision++; revertSource.set(null); updateTasks();
@@ -1360,23 +1597,52 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     else schedule(['messages']);
   });
   const disconnected = host.on('runtime.disconnected', payload => {
-    if (!foreground() || record(payload).key !== (target.kind === 'session' ? 'chat' : 'global')) return;
+    if (!foreground() || !acceptsStream(payload) || record(payload).key !== (target.kind === 'session' ? 'chat' : 'global')) return;
     streamDisconnected = true;
+    nativeStreamReady = false;
     streamState.set('disconnected');
     // Preserve last-known activity, but an older in-flight snapshot cannot settle it.
     liveRevision++; blockingRevision++;
+  });
+  const historySeedCurrent = historyCache.captureRead(cacheKey);
+  function seedHistory(snapshot: ReturnType<typeof historyCache.peek>) {
+    if (!snapshot || !current() || messagesLoaded || messages().length || historyNeedsReset || !snapshot.messages.length) return;
+    if (historyRevision && revertSource()?.messageID !== snapshot.revert?.messageID) return;
+    batch(() => {
+      if (!historySeedCurrent()) return;
+      messages.set(snapshot.messages); cursor = snapshot.cursor; more.set(!snapshot.complete); messagesLoaded = true;
+      authorityMessageIDs = new Set(snapshot.messages.map(message => message.id));
+      contactGeneration = snapshot.generation; contactRevision = snapshot.revision ?? -1;
+      if (!historyRevision) revertSource.set(snapshot.revert);
+    });
+    // Deliberately not resolved, not streaming, and no task/status/auto-read admission.
+  }
+  seedHistory(historyCache.peek(cacheKey));
+  if (!messagesLoaded) void historyCache.read(cacheKey).then(seedHistory).catch(() => {});
+  // Narrow the canonical object subscription to its primitive mode before it
+  // reaches the lifetime effect; unrelated appearance changes must not reconnect.
+  const readMessageStreamTransport = dependencies.messageStreamTransport;
+  const messageStreamMode = signal<NativeMessageStreamTransport | null>(readMessageStreamTransport ? null : 'sse');
+  if (readMessageStreamTransport) effect(() => {
+    const requested = readMessageStreamTransport();
+    untracked(() => { if (messageStreamMode() !== requested) messageStreamMode.set(requested); });
   });
   effect(() => {
     laneRevision();
     // Only the most recently mounted chat owns foreground safety polling.
     const visible = runtimeReady() && syncDemand() && lifecycle() === 'active' && chatOwners().at(-1) === owner;
     const connection = app.connection();
+    const mode = messageStreamMode();
     if (!visible || !connection || !current()) { clearStreamingSelection(); goalCore.cancel(); activityFill.cancel(); void durable.flush().catch(() => {}); return; }
     activation++;
     const lane = operationLane;
-    streamState.set('connecting');
+    const ownerID = `chat-${owner}-${activation}`;
+    nativeStreamReady = false;
+    if (target.kind === 'session' && mode !== null) streamOwnerID = ownerID;
+    if (target.kind === 'session' && mode === null) streamDisconnected = true;
+    streamState.set(target.kind === 'session' && mode === null ? 'inactive' : 'connecting');
     untracked(() => { void load(); if (goalObservers) void goalCore.refresh(); });
-    if (target.kind === 'session') void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: 'chat', ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+    if (target.kind === 'session' && mode !== null) void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: 'chat', ownerID, mode, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane) && streamOwnerID === ownerID) fail(failure); });
     const interval = setInterval(() => {
       if (!laneForeground(lane)) return;
       // Live deltas own running text. Safety polls keep status/blocking authority without
@@ -1384,6 +1650,8 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       void load(false, target.kind === 'session' && busy() && !streamDisconnected ? ['status', 'inbox', 'permissions', 'forms'] : allChatDomains, lane);
     }, 4000);
     return () => {
+      if (streamOwnerID === ownerID) streamOwnerID = undefined;
+      nativeStreamReady = false;
       void durable.flush().catch(() => {});
       activation++;
       streamState.set('inactive');
@@ -1392,7 +1660,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       clearStreamingSelection();
       clearInterval(interval); if (timer) { clearTimeout(timer); timer = undefined; }
       if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = undefined; }
-      if (target.kind === 'session') void native('runtime.stop', { key: 'chat', ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+      if (target.kind === 'session' && mode !== null) void native('runtime.stop', { key: 'chat', ownerID, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
     };
   });
   // Display→overview changes retain one existing stream/poll owner while UI actions become inactive.
@@ -1403,5 +1671,5 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     if (laneCurrent(initialOperationLane) && pendingSend()) await recoverPendingSend();
   }).catch(fail);
   cleanup(() => { historyPresentationListener = undefined; previousHistoryPresentation = undefined; messageCommitListeners.clear(); void durable.close(); operationLane.history.close(); alive = false; activityFill.cancel(true); goalCore.retire(); taskSnapshot.set([]); resolvedAuthority.set(false); clearStreamingSelection(); chatAuthorityRetirements.delete(retireAuthority); chatOperationResumptions.delete(rebuildOperationLane); unsubscribe(); disconnected(); if (timer) clearTimeout(timer); if (deltaTimer) clearTimeout(deltaTimer); chatOwners.set(chatOwners().filter(value => value !== owner)); });
-  return { rebuildOperationLane, goal, tasks, activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft: durable.flush, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm };
+  return { historyActionStorageKey, draftRevision: durable.draftRevision, compact, compactReceipt, compactionBarrier, prepareHistoryAction, historyActionSnapshot, captureAttachment, canSend, sendAdmission, rebuildOperationLane, goal, tasks, activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft: durable.flush, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm };
 }

@@ -1,5 +1,6 @@
 import '@/lib/brand-storage-bootstrap';
 import * as React from 'react';
+import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,7 @@ import { waitForWorktreeBootstrap } from '@/lib/worktrees/worktreeBootstrap';
 import { getWorktreeSetupCommands, getWorktreeSetupWaitEnabled } from '@/lib/yuriConfig';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { generateBranchSlug } from '@/lib/git/branchNameGenerator';
+import { normalizeBranchName, slugifyWorktreeName } from '@/lib/worktrees/worktreeNames';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { rankBranchesForQuery } from '@/lib/worktrees/branchSearch';
@@ -47,11 +49,12 @@ import {
   resolveWorktreeSourceBranchToPersist,
 } from '@/lib/worktrees/worktreeSourceBranchPreference';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useGitBranches, useGitStore, useGitLoadingBranches } from '@/stores/useGitStore';
+import { useGitBranchesQuery } from '@/queries/gitBranchQueries';
 import { GitHubIntegrationDialog } from './GitHubIntegrationDialog';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { MobileWindowActiveContext } from '@/components/ui/mobile-window-active-context';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import type {
@@ -66,6 +69,37 @@ import { useI18n } from '@/lib/i18n';
 import { resolveWorktreeDialogProject } from './newWorktreeDialogProject';
 
 type Mode = 'new-branch' | 'existing-branch';
+
+function MobileWorktreeFields({ open, children }: React.PropsWithChildren<{ open: boolean }>) {
+  const isTop = React.useContext(MobileWindowActiveContext);
+  const active = open && isTop;
+  const scrollerRef = React.useRef<HTMLElement | null>(null);
+  const frameRef = React.useRef<number | null>(null);
+  const reveal = useEvent(() => {
+    frameRef.current = null;
+    const scroller = scrollerRef.current;
+    const field = document.activeElement;
+    if (!active || !scroller || !(field instanceof HTMLInputElement) || !scroller.contains(field)) return;
+    const viewport = scroller.getBoundingClientRect(), box = field.getBoundingClientRect();
+    if (viewport.height <= 0 || box.height <= 0) return;
+    if (box.top < viewport.top + 8 || box.bottom > viewport.bottom - 8) {
+      field.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    }
+  });
+  const scheduleReveal = useEvent(() => {
+    if (active && frameRef.current === null) frameRef.current = window.requestAnimationFrame(reveal);
+  });
+  useResizeObserver(active ? scrollerRef : null, scheduleReveal);
+  useEventListener('resize', scheduleReveal, () => active ? window.visualViewport : null);
+  useEventListener('scroll', scheduleReveal, () => active ? window.visualViewport : null);
+  React.useLayoutEffect(() => () => {
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }, [active]);
+  return <ScrollableOverlay ref={scrollerRef} onFocusCapture={scheduleReveal}
+    disableHorizontal preventOverscroll outerClassName="min-h-0 flex-1"
+    className="overscroll-contain px-4 pb-4 pt-2 [&_input]:scroll-my-2">{children}</ScrollableOverlay>;
+}
 
 interface ValidationState {
   isValidating: boolean;
@@ -90,29 +124,6 @@ interface ExistingBranchState {
   selectedBranch: string;
   worktreeName: string;
 }
-
-const normalizeBranchName = (value: string): string => {
-  return value
-    .trim()
-    .replace(/^refs\/heads\//, '')
-    .replace(/^heads\//, '')
-    .replace(/\s+/g, '-')
-    .replace(/^\/+|\/+$/g, '');
-};
-
-const slugifyWorktreeName = (value: string): string => {
-  return value
-    .trim()
-    .replace(/^refs\/heads\//, '')
-    .replace(/^heads\//, '')
-    .replace(/\s+/g, '-')
-    .replace(/^\/+|\/+$/g, '')
-    .split('/').join('-')
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-};
 
 const sanitizeRemoteName = (value: string): string => {
   const normalized = String(value || '')
@@ -252,10 +263,11 @@ export function NewWorktreeDialog({
     worktreeName: '',
   });
   
-  // Use cached branches from Git store (instant if already fetched)
-  const branches = useGitBranches(projectDirectory);
-  const isLoadingBranches = useGitLoadingBranches(projectDirectory);
-  const fetchBranches = useGitStore((state) => state.fetchBranches);
+  // Query owns cached data and refresh failure together; a failure is not an empty catalog.
+  const branchesQuery = useGitBranchesQuery(projectDirectory, git, open);
+  const branches = branchesQuery.data;
+  const isLoadingBranches = branchesQuery.isFetching;
+  const branchReadError = branchesQuery.error;
 
   // Compute local and remote branch lists (same pattern as GitView)
   const localBranches = React.useMemo(() => {
@@ -366,18 +378,19 @@ export function NewWorktreeDialog({
   const hasSourceBranchMatches = sourceBranchRankedGroups.matching.length > 0;
   const canFetchBranches = Boolean(projectDirectory && git);
 
-  const handleFetchBranches = React.useCallback(() => {
-    if (!projectDirectory || !git) {
-      return;
-    }
-    void fetchBranches(projectDirectory, git);
-  }, [projectDirectory, git, fetchBranches]);
+  const handleFetchBranches = useEvent(() => {
+    if (!projectDirectory || !git || isLoadingBranches) return;
+    void branchesQuery.refetch({ cancelRefetch: false });
+  });
 
-  React.useEffect(() => {
-    if (!open || !projectDirectory || !git) return;
-    if (branches?.all) return;
-    void fetchBranches(projectDirectory, git);
-  }, [open, projectDirectory, git, branches?.all, fetchBranches]);
+  const renderBranchReadError = () => branchReadError ? (
+    <div role="alert" className="space-y-2 px-2 typography-small">
+      <p className="text-destructive">{branchReadError instanceof Error ? branchReadError.message : String(branchReadError)}</p>
+      <Button size="sm" disabled={!canFetchBranches || isLoadingBranches} onClick={handleFetchBranches}>
+        {t('layout.browserProvider.retry')}
+      </Button>
+    </div>
+  ) : null;
 
   React.useEffect(() => {
     if (!existingBranchDropdownOpen && !existingBranchPickerOpen) {
@@ -431,7 +444,7 @@ export function NewWorktreeDialog({
   
   // Creation state
   const [isCreating, setIsCreating] = React.useState(false);
-  const [validationAbortController, setValidationAbortController] = React.useState<AbortController | null>(null);
+  const validationAbortController = React.useRef<AbortController | null>(null);
 
   const resolveDefaultAgentName = React.useCallback((): string | undefined => {
     const configState = useConfigStore.getState();
@@ -683,16 +696,14 @@ export function NewWorktreeDialog({
   }, [mode, newBranchState.branchName, newBranchState.isSyncingWorktreeName]);
 
   // Validation - only runs after fields are touched
-  const validateInputs = React.useCallback(async () => {
-    if (!projectRef || !validation.touched || isCreating) return;
+  const validateInputs = useEvent(async () => {
+    if (!open || !projectRef || !validation.touched || isCreating) return;
     
     // Cancel previous validation
-    if (validationAbortController) {
-      validationAbortController.abort();
-    }
+    validationAbortController.current?.abort();
     
     const abortController = new AbortController();
-    setValidationAbortController(abortController);
+    validationAbortController.current = abortController;
     
     setValidation(prev => ({ ...prev, isValidating: true }));
     
@@ -758,20 +769,7 @@ export function NewWorktreeDialog({
         }));
       }
     }
-  }, [
-    projectRef,
-    mode,
-    newBranchState.branchName,
-    newBranchState.linkedPr,
-    existingBranchState.selectedBranch,
-    currentState.worktreeName,
-    localBranches,
-    remoteBranches,
-    validation.touched,
-    validationAbortController,
-    isCreating,
-    t,
-  ]);
+  });
 
   // Extract branch name for dependency array
   const currentBranchName = mode === 'new-branch' ? newBranchState.branchName : existingBranchState.selectedBranch;
@@ -784,8 +782,8 @@ export function NewWorktreeDialog({
       void validateInputs();
     }, 300);
     
-    return () => clearTimeout(timer);
-  }, [currentState.worktreeName, currentBranchName, open, projectRef, validateInputs, validation.touched, isCreating]);
+    return () => { clearTimeout(timer); validationAbortController.current?.abort(); };
+  }, [currentState.worktreeName, currentBranchName, newBranchState.linkedPr, localBranches, remoteBranches, mode, open, projectRef, validation.touched, isCreating, t]);
 
   // Handle worktree creation
   const handleCreate = async () => {
@@ -812,10 +810,8 @@ export function NewWorktreeDialog({
       return;
     }
 
-    if (validationAbortController) {
-      validationAbortController.abort();
-      setValidationAbortController(null);
-    }
+    validationAbortController.current?.abort();
+    validationAbortController.current = null;
 
     setValidation((prev) => ({
       ...prev,
@@ -1076,13 +1072,7 @@ export function NewWorktreeDialog({
           resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
         >
           <div className="flex min-h-0 flex-1 flex-col">
-            <ScrollableOverlay
-              useScrollShadow
-              disableHorizontal
-              preventOverscroll
-              outerClassName="min-h-0 flex-1"
-              className="overscroll-contain px-4 pb-4 pt-2"
-            >
+            <MobileWorktreeFields open={open}>
               {/* Mode Selection - using SortableTabsStrip */}
               <div className="w-full mb-4">
                 <SortableTabsStrip
@@ -1099,6 +1089,7 @@ export function NewWorktreeDialog({
               </div>
 
               <div className="space-y-6">
+                {renderBranchReadError()}
             {/* Branch Name / Existing Branch Selection */}
             {mode === 'existing-branch' ? (
               <div className="space-y-1.5">
@@ -1142,11 +1133,12 @@ export function NewWorktreeDialog({
                       placeholder={t('session.newWorktree.searchBranches')}
                       className="h-8"
                     />
+                    {renderBranchReadError()}
                     {isLoadingBranches ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.loadingBranches')}
                       </div>
-                    ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
+                    ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.noBranchesFound')}
                       </div>
@@ -1406,11 +1398,12 @@ export function NewWorktreeDialog({
                       placeholder={t('session.newWorktree.searchBranches')}
                       className="h-8"
                     />
+                    {renderBranchReadError()}
                     {isLoadingBranches ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.loadingBranches')}
                       </div>
-                    ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
+                    ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.noBranchesFound')}
                       </div>
@@ -1565,7 +1558,7 @@ export function NewWorktreeDialog({
               </div>
             )}
               </div>
-            </ScrollableOverlay>
+            </MobileWorktreeFields>
             <div className="shrink-0 border-t border-border/50 px-4 pb-3 pt-2">
               {footerContent}
             </div>
@@ -1599,6 +1592,7 @@ export function NewWorktreeDialog({
             </DialogHeader>
 
             <div className="flex-1 overflow-y-auto mt-2 space-y-6">
+              {renderBranchReadError()}
               {/* Branch Name / Existing Branch Selection */}
               {mode === 'existing-branch' ? (
                 <div className="space-y-1.5">
@@ -1624,11 +1618,12 @@ export function NewWorktreeDialog({
                           onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
+                          {renderBranchReadError()}
                           {isLoadingBranches ? (
                             <div className="px-2 py-4 text-center typography-small text-muted-foreground">
                               {t('session.newWorktree.loadingBranches')}
                             </div>
-                          ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
+                          ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
                             <CommandEmpty>{t('session.newWorktree.noBranchesFound')}</CommandEmpty>
                           ) : (
                             <>
@@ -1865,11 +1860,12 @@ export function NewWorktreeDialog({
                           onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
+                          {renderBranchReadError()}
                           {isLoadingBranches ? (
                             <div className="px-2 py-4 text-center typography-small text-muted-foreground">
                               {t('session.newWorktree.loadingBranches')}
                             </div>
-                          ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
+                          ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
                             <CommandEmpty>{t('session.newWorktree.noBranchesFound')}</CommandEmpty>
                           ) : (
                             <>

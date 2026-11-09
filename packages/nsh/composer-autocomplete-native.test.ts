@@ -30,7 +30,7 @@ test('closed/open/closed 300-entry catalog has zero enumeration on 50 ordinary e
   'for (let i=0;i<50;i++) await app.type("id:autocomplete-input", "x");',
   'expect(app.texts().some(text => text.includes("calls:0 scans:0"))).toBe(true);',
   'await app.press("id:failure");', 'await app.press("id:slash");', 'await app.waitFor("id:command-retry");',
-  'expect(app.texts()).toContain("slash:308 refs:0");',
+  'expect(app.texts()).toContain("slash:315 refs:0");',
   'await app.keyboard.press("up");', 'expect(app.shows("id:command-workspace-review")).toBe(true);',
   'await app.keyboard.press("down");', 'expect(app.shows("id:command-model")).toBe(true);',
   'expect(app.texts().some(text => text.includes("calls:1"))).toBe(true);',

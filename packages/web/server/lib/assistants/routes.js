@@ -9,8 +9,57 @@ import { createAssistantChannelsRuntime } from './channels/runtime.js';
 import { registerAssistantChannelRoutes } from './channels/routes.js';
 import { createAssistantChannelAdapters } from './channels/sdk-adapters.js';
 
-const respond = (res, work, success = 200) => Promise.resolve().then(work).then((body) => res.status(success).json(body)).catch((error) => { const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error'; const status = code === 'not_found' ? 404 : ['revision_conflict', 'idempotency_conflict', 'contact_generation_conflict'].includes(code) ? 409 : code === 'assistant_disabled' ? 403 : code === 'no_provider' ? 400 : code === 'upstream_error' || code === 'llm_attachment_generation_unavailable' ? 502 : 400; res.status(status).json({ ok: false, error: code, message: typeof error?.message === 'string' && error.message.trim() ? error.message : code }); });
+const respond = (res, work, success = 200) => Promise.resolve().then(work).then((body) => res.status(success).json(body)).catch((error) => { const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error'; const status = code === 'not_found' ? 404 : ['revision_conflict', 'idempotency_conflict', 'contact_generation_conflict', 'attachment_retired', 'attachment_upload_inflight'].includes(code) ? 409 : code === 'assistant_disabled' ? 403 : code === 'no_provider' ? 400 : code === 'upstream_error' || code === 'llm_attachment_generation_unavailable' ? 502 : 400; res.status(status).json({ ok: false, error: code, message: typeof error?.message === 'string' && error.message.trim() ? error.message : code }); });
 const gone = (_req, res) => res.status(410).json({ ok: false, error: 'assistant_topics_retired' });
+
+export const registerContactAttachmentRoutes = (app, service) => {
+  const uploads = '/api/yuri/assistants/:assistantID/contact/attachments/uploads/:uploadID';
+  app.get(uploads, async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const receipt = service.getAssistantContactAttachmentReceipt(req.params.assistantID, req.params.uploadID, req.query.generation);
+      return res.status(receipt.state === 'not_found' ? 404 : 200).json(receipt);
+    } catch (error) { return respond(res, () => { throw error; }); }
+  });
+  app.delete(uploads, (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return respond(res, () => service.retireAssistantContactAttachment(req.params.assistantID, req.params.uploadID, req.body));
+  });
+  // Contact attachments: raw-byte PUT + opaque GET (content-addressed under dataDir).
+  app.put('/api/yuri/assistants/:assistantID/contact/attachments/:uploadID', (req, res) => {
+    const controller = new AbortController();
+    req.once?.('aborted', () => controller.abort());
+    return respond(res, () => service.putAssistantContactAttachment(req.params.assistantID, req.params.uploadID, {
+      stream: req, headers: req.headers, signal: controller.signal, expectedGeneration: req.query.generation,
+    }), 201);
+  });
+  app.get('/api/yuri/assistants/:assistantID/contact/attachments/:attachmentID', (req, res) => {
+    return Promise.resolve()
+      .then(() => service.getAssistantContactAttachment(req.params.assistantID, req.params.attachmentID))
+      .then((file) => {
+        res.status(200);
+        res.setHeader('Content-Type', file.mime || 'application/octet-stream');
+        res.setHeader('Content-Length', String(file.size));
+        res.setHeader('ETag', file.etag || `"${file.sha256}"`);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        // App owns cache; do not let browsers/CDNs immutable-cache attachment bodies.
+        res.setHeader('Cache-Control', 'private, no-store');
+        const safeInline = isSafeInlineImageMime(file.mime);
+        const name = file.filename ? encodeURIComponent(file.filename) : 'attachment';
+        res.setHeader('Content-Disposition', `${safeInline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`);
+        res.end(file.buffer);
+      })
+      .catch((error) => {
+        const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error';
+        const status = code === 'not_found' ? 404
+          : ['revision_conflict', 'idempotency_conflict', 'contact_generation_conflict', 'attachment_retired'].includes(code) ? 409
+          : code === 'assistant_disabled' ? 403
+          : code === 'PROMPT_ATTACHMENT_TOO_LARGE' ? 413
+          : code === 'upstream_error' ? 502 : 400;
+        res.status(status).json({ ok: false, error: code, message: typeof error?.message === 'string' && error.message.trim() ? error.message : code });
+      });
+  });
+};
 
 export const registerAssistantRoutes = (app, dependencies) => {
   let weixin;
@@ -76,50 +125,7 @@ export const registerAssistantRoutes = (app, dependencies) => {
   app.post('/api/yuri/assistants/:assistantID/contact/read', (req, res) => respond(res, () => service.markContactRead(req.params.assistantID, req.body)));
   app.post('/api/yuri/assistants/:assistantID/contact/cards', (req, res) => respond(res, () => service.appendContactCard(req.params.assistantID, req.body), 201));
   app.post('/api/yuri/assistants/:assistantID/contact/dm', (req, res) => respond(res, () => service.deliverPeerMessage(req.params.assistantID, req.body), 201));
-  // Contact attachments: raw-byte PUT + opaque GET (content-addressed under dataDir).
-  app.put('/api/yuri/assistants/:assistantID/contact/attachments/:uploadID', (req, res) => {
-    const controller = new AbortController();
-    req.once?.('aborted', () => controller.abort());
-    respond(res, () => service.putAssistantContactAttachment(req.params.assistantID, req.params.uploadID, {
-      stream: req,
-      headers: req.headers,
-      signal: controller.signal,
-    }), 201);
-  });
-  app.get('/api/yuri/assistants/:assistantID/contact/attachments/:attachmentID', (req, res) => {
-    Promise.resolve()
-      .then(() => service.getAssistantContactAttachment(req.params.assistantID, req.params.attachmentID))
-      .then((file) => {
-        res.status(200);
-        res.setHeader('Content-Type', file.mime || 'application/octet-stream');
-        res.setHeader('Content-Length', String(file.size));
-        res.setHeader('ETag', file.etag || `"${file.sha256}"`);
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        // App owns cache; do not let browsers/CDNs immutable-cache attachment bodies.
-        res.setHeader('Cache-Control', 'private, no-store');
-        const safeInline = isSafeInlineImageMime(file.mime);
-        const name = file.filename ? encodeURIComponent(file.filename) : 'attachment';
-        res.setHeader(
-          'Content-Disposition',
-          `${safeInline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
-        );
-        res.end(file.buffer);
-      })
-      .catch((error) => {
-        const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error';
-        const status = code === 'not_found' ? 404
-          : ['revision_conflict', 'idempotency_conflict', 'contact_generation_conflict'].includes(code) ? 409
-          : code === 'assistant_disabled' ? 403
-          : code === 'PROMPT_ATTACHMENT_TOO_LARGE' ? 413
-          : code === 'upstream_error' ? 502
-          : 400;
-        res.status(status).json({
-          ok: false,
-          error: code,
-          message: typeof error?.message === 'string' && error.message.trim() ? error.message : code,
-        });
-      });
-  });
+  registerContactAttachmentRoutes(app, service);
   app.get('/api/yuri/assistants/:assistantID/scheduled-tasks', (req, res) => respond(res, () => service.listAssistantScheduledTasks(req.params.assistantID)));
   // Contact send admits the user message at 202; assistant bubbles stream on SSE.
   app.post('/api/yuri/assistants/:assistantID/messages', (req, res) => respond(res, () => service.send(req.params.assistantID, req.body), 202)); app.post('/api/yuri/assistants/:assistantID/share', (req, res) => respond(res, () => service.share(req.params.assistantID, req.body), 202)); app.get('/api/yuri/assistants/share-operations/:operationID', (req, res) => respond(res, () => { const operation = service.shareOperation(req.params.operationID); if (!operation) throw new AssistantError('not_found'); return operation; }));

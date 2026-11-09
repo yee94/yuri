@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { nativeToolDescription, nativeToolDetails, nativeToolDuration } from './transcript-tools-model';
+import { nativeMultiFileEntries, nativeToolDescription, nativeToolDetails, nativeToolDuration } from './transcript-tools-model';
 import { toolIconSpec } from '../ui/src/components/chat/message/parts/toolIconModel';
+import { createChangesReader, type ChangesSource } from './chat-changes-model';
+import { nativeDiffIsNew, nativeDiffLayout } from './chat-changes-layout';
 
 describe('production native tool projection', () => {
   it('formats authoritative F16 timing without inventing completed elapsed time', () => {
@@ -36,6 +38,36 @@ describe('production native tool projection', () => {
     expect(nativeToolDetails({ tool: 'edit', state: { input: { filePath: 'a', oldString: 'old', newString: 'new' } } }).files).toEqual([{ path: 'a', patch: '', before: 'old', after: 'new' }]);
     expect(nativeToolDetails({ tool: 'edit', state: { input: { filePath: 'stale' }, metadata: { filediff: { file: 'authoritative.txt', before: 'full old', after: 'full new', patch: '@@ file diff', additions: 1, deletions: 1 } } } }).files).toEqual([{ path: 'authoritative.txt', patch: '@@ file diff', before: 'full old', after: 'full new', additions: 1, deletions: 1 }]);
   });
+  describe.each(['files', 'filediff'] as const)('%s metadata status through real historical Changes', branch => {
+    const tool = (status: unknown, complete = true) => ({ name: branch === 'files' ? 'apply_patch' : 'write', state: { status: 'completed', input: { filePath: 'a.ts' }, metadata: branch === 'files'
+      ? { files: [{ filePath: 'a.ts', status, ...(complete ? { before: '' } : {}), after: 'historical new text' }] }
+      : { filediff: { file: 'a.ts', status, ...(complete ? { before: '' } : {}), after: 'historical new text' } } } });
+    it.each(['added', 'modified', 'deleted', 'renamed'] as const)('retains validated %s without fetching or guessing from the empty before side', async status => {
+      const files = nativeToolDetails(tool(status)).files;
+      expect(files[0]).toMatchObject({ path: 'a.ts', status, before: '', after: 'historical new text' });
+      expect(files[0].patch).toBe('');
+      const calls: string[] = [], source: ChangesSource = { kind: 'turn', directory: '/fixture', sessionID: 'original', messageID: 'turn', files };
+      const reader = createChangesReader(source, async path => { calls.push(path); throw new Error('Complete historical metadata must not fetch'); });
+      await reader.select('a.ts');
+      expect(reader.state().diffError).toBe(''); expect(reader.state().diff).toMatchObject({ path: 'a.ts', status, before: '', after: 'historical new text' });
+      const isNew = nativeDiffIsNew(source, null, 'a.ts', reader.state().diff);
+      expect(isNew).toBe(status === 'added'); expect(nativeDiffLayout('dynamic', 1600, isNew)).toBe(status === 'added' ? 'unified' : 'split');
+      expect(calls).toEqual([]);
+    });
+    it.each([undefined, null, '', 'ADDED', 'completed', true, 1, {}])('omits invalid status %j rather than treating an empty before side as added', async status => {
+      const files = nativeToolDetails(tool(status)).files; expect(files[0]).not.toHaveProperty('status');
+      const source: ChangesSource = { kind: 'turn', directory: '/fixture', sessionID: 'original', messageID: 'turn', files };
+      const reader = createChangesReader(source, async () => { throw new Error('Complete history must not fetch'); }); await reader.select('a.ts');
+      expect(reader.state().diffError).toBe(''); expect(nativeDiffIsNew(source, null, 'a.ts', reader.state().diff)).toBe(false);
+    });
+    it('does not let added metadata turn one-sided history into body authority or fall back to current Git', async () => {
+      const files = nativeToolDetails(tool('added', false)).files, calls: string[] = [];
+      const reader = createChangesReader({ kind: 'turn', directory: '/fixture', sessionID: 'original', messageID: 'turn', files }, async path => { calls.push(path); return { diff: { file: 'a.ts', status: 'added', after: 'still only one side' } }; });
+      await reader.select('a.ts');
+      expect(reader.state().diff).toBeNull(); expect(reader.state().diffError).toBe('Historical diff body unavailable');
+      expect(calls).toEqual(['/api/yuri/sessions/original/changes?directory=%2Ffixture&messageID=turn&file=a.ts']);
+    });
+  });
   it('projects todo rows instead of dumping the tool object', () => {
     expect(nativeToolDetails({ tool: 'todowrite', state: { input: { todos: [{ content: 'Verify', status: 'in_progress' }] } } }).todos).toEqual([{ content: 'Verify', status: 'in_progress' }]);
   });
@@ -48,5 +80,20 @@ describe('production native tool projection', () => {
     expect(nativeToolDescription(nativeToolDetails({ name: 'shell', state: { title: 'Do not replace command', input: { command: 'first\nsecond' } } }), '/fixture')).toBe('first');
     expect(nativeToolDescription(nativeToolDetails({ name: 'task', state: { input: { description: 'x'.repeat(120) } } }), '')).toHaveLength(80);
     expect(nativeToolDescription(nativeToolDetails({ name: 'read', state: { input: { filePath: '/fixtures/keep.ts' } } }), '/fixture')).toBe('/fixtures/keep.ts');
+  });
+  it('shows each multi-file patch basename with its own counts and keeps single-file totals on the row', () => {
+    const patch = nativeToolDetails({ name: 'apply_patch', state: { metadata: { files: [
+      { relativePath: 'packages/nsh/ios/main.swift', additions: 4, deletions: 0 },
+      { filePath: 'packages/nsh/nsh.json', additions: '8', deletions: 0 },
+      { relativePath: 'packages/nsh/ios/main.swift', additions: 1.9 },
+    ] } } });
+    expect(nativeMultiFileEntries(patch)).toEqual([
+      { path: 'packages/nsh/ios/main.swift', name: 'main.swift', added: 5, removed: 0 },
+      { path: 'packages/nsh/nsh.json', name: 'nsh.json', added: null, removed: 0 },
+    ]);
+    expect(nativeToolDescription(patch, '/workspace')).toBe('');
+    expect(patch.files.map(file => file.path)).toEqual(['packages/nsh/ios/main.swift', 'packages/nsh/nsh.json', 'packages/nsh/ios/main.swift']);
+    expect(nativeMultiFileEntries(nativeToolDetails({ name: 'apply_patch', state: { metadata: { files: [{ relativePath: 'packages/nsh/ios/main.swift', additions: 12 }] } } }))).toEqual([]);
+    expect(nativeMultiFileEntries(nativeToolDetails({ name: 'edit', state: { metadata: { files: [{ filePath: 'a.ts', additions: 1 }, { filePath: 'b.ts', deletions: 2 }] } } }))).toEqual([]);
   });
 });

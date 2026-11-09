@@ -91,7 +91,7 @@ describe('quota production strict synthetic Host (pure VM; not production naviga
       const scope = snapshot().runtimeScope!; scopes.push(scope);
       expect(scope.hostID).toBe(id);
       for (const [key, path] of [['global', '/api/yuri/events'], ['chat', '/api/event?directory=' + encodeURIComponent(actual)]]) {
-        expect(host.call('runtime.stream', { key, path, expectedHost: scope })).toBe(true);
+        expect(host.call('runtime.stream', { key, path, expectedHost: scope, ...(key === 'chat' ? { mode: 'sse', ownerID: 'quota-chat-' + scopes.length } : {}) })).toBe(true);
       }
       await bindSend()('/api/config/settings');
       expect(audit().streams.global.expectedHost).toEqual(scope);
@@ -111,7 +111,7 @@ describe('quota production strict synthetic Host (pure VM; not production naviga
     expect(audit().streamCalls.filter(call => call.name === 'runtime.stop').map(call => call.released)).toEqual([false, false]);
     expect(host.call('runtime.stop', { key: 'global', expectedHost: scopes[2] })).toBe(true);
     expect(audit().streams.global).toBeUndefined(); expect(audit().streams.chat.expectedHost).toEqual(scopes[2]);
-    expect(host.call('runtime.stop', { key: 'chat', expectedHost: scopes[2] })).toBe(true);
+    expect(host.call('runtime.stop', { key: 'chat', expectedHost: scopes[2], ownerID: 'quota-chat-3' })).toBe(true);
     expect(audit().streams).toEqual({});
     expect(audit().streamCalls.filter(call => call.name === 'runtime.stop').map(call => call.released)).toEqual([false, false, true, true]);
     expect(audit().writes).toEqual([]); expect(audit().actions).toEqual({ validates: 0, imports: 0, deletes: 0 });

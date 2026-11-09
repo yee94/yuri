@@ -28,7 +28,11 @@ function isolatedHost(): Host {
     // No require/import resolver: this is the same standalone bundle handed to --web-host.
     const evaluate = vm.runInContext(`(function(exports, require) { ${source}\n})`, context);
     evaluate(exports, undefined);
-    return (exports.createHost as () => Host)();
+    const raw = (exports.createHost as () => Host)();
+    const snapshot = raw.call('connection.list', {}) as unknown as { runtimeScope: unknown };
+    return { call(name: string, input: Input) {
+      return raw.call(name, name === 'runtime.request' ? { ...input, expectedHost: snapshot.runtimeScope } as Input : input);
+    } };
   });
   expect(existsSync(artifact)).toBe(false);
   return host;

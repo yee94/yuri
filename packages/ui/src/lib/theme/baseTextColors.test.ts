@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { withBaseTextFloor } from './baseTextColors';
 import { CSSVariableGenerator } from './cssGenerator';
 import { getThemeById, themes } from './themes';
+import { registerRuntimeAPIs } from '../../contexts/runtimeAPIRegistry';
+import { SEMANTIC_TYPOGRAPHY, VSCODE_TYPOGRAPHY } from '../typography';
 
 afterEach(() => {
   document.getElementById('opencode-theme-variables')?.remove();
@@ -10,6 +12,22 @@ afterEach(() => {
 });
 
 describe('primary-text brightness floor', () => {
+  test('resolves VS Code typography from current runtime authority on every generation', () => {
+    const previous = Object.getOwnPropertyDescriptor(window, '__YURI_RUNTIME_APIS__');
+    registerRuntimeAPIs(null);
+    const generator = new CSSVariableGenerator();
+    try {
+      for (const isVSCode of [false, true, false]) {
+        Object.defineProperty(window, '__YURI_RUNTIME_APIS__', { configurable: true, value: { runtime: { isVSCode } } });
+        const typography = isVSCode ? VSCODE_TYPOGRAPHY : SEMANTIC_TYPOGRAPHY;
+        expect(generator.generate(getThemeById('cursor-dark')!)).toContain(`--text-markdown: ${typography.markdown};`);
+      }
+    } finally {
+      if (previous) Object.defineProperty(window, '__YURI_RUNTIME_APIS__', previous);
+      else Reflect.deleteProperty(window, '__YURI_RUNTIME_APIS__');
+    }
+  });
+
   test.each([
     ['flexoki-light', '#212121'],
     ['jetbrains-light', '#212121'],

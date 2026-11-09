@@ -28,13 +28,13 @@ export async function compileGuiRuntime(root, temporary, harness, runnerName = '
   const desktop = await readFile(path.join(root, 'ios/RemoteDesktopBridge.swift'), 'utf8');
   const contracts = path.join(temporary, 'Contracts.swift');
   await writeFile(contracts, store + '\n' + desktop.slice(desktop.indexOf('enum RemoteDesktopWireMessage'), desktop.indexOf('/// A deadline')));
-  const sources = ['connection-editor.swift', 'RuntimeHostScope.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionRuntime.swift', 'ResourceBridge.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginRuntime.swift', 'RuntimeBridge.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'];
+  const sources = ['PasskeyPolicy.swift', 'connection-editor.swift', 'RuntimeHostScope.swift', 'AttachmentUploadPolicy.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionRuntime.swift', 'ResourceBridge.swift', 'ResourceWebPreviewBridge.swift', 'ResourceWebPreviewView.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginResourceResolver.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginRuntime.swift', 'RuntimeBridge.swift', 'SessionMessageStream.swift', 'SessionMessageStreamDirect.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'];
   const sdk = await runTerminalFixture('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path']);
   const flags = ['-swift-version', '5', '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator'];
   const iosModules = path.join(temporary, 'ios-modules'); await mkdir(iosModules, { recursive: true });
   await runTerminalFixture('xcrun', ['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temporary, 'NativeShell-ios.swiftmodule')]);
   await copyFile(path.join(temporary, 'NativeShell-ios.swiftmodule'), path.join(iosModules, 'NativeShell.swiftmodule'));
-  await runTerminalFixture('xcrun', ['swiftc', ...flags, '-I', iosModules, '-parse-as-library', '-typecheck', contracts, ...sources.filter(file => file !== 'ResourceBridge.swift').map(file => path.join(root, 'ios', file))]);
+  await runTerminalFixture('xcrun', ['swiftc', ...flags, '-I', iosModules, '-parse-as-library', '-typecheck', contracts, ...sources.filter(file => file !== 'ResourceBridge.swift').map(file => path.join(root, 'ios', file)), path.join(root, '../mobile/ios/App/App/YuriViewExportRenderer.swift')]);
   const runner = path.join(temporary, runnerName);
   await runTerminalFixture('xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-warnings-as-errors', '-I', temporary, '-L', temporary, '-lNativeShell', '-Xlinker', '-rpath', '-Xlinker', temporary, contracts, ...sources.map(file => path.join(root, 'ios', file)), harness, '-o', runner]);
   return runner;

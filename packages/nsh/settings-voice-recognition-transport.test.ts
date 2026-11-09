@@ -51,7 +51,7 @@ beforeAll(() => {
   const contracts = path.join(temporary, 'Contracts.swift'); writeFileSync(contracts, store + '\n' + seam);
   runner = path.join(temporary, 'runner');
   const inputs = ['swiftc', '-parse-as-library', '-swift-version', '5', '-warnings-as-errors', '-I', temporary, '-L', temporary, '-lNativeShell', '-Xlinker', '-rpath', '-Xlinker', temporary,
-    contracts, ...['connection-editor.swift', 'RuntimeHostScope.swift', 'ResourceBridge.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginRuntime.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionRuntime.swift', 'RuntimeBridge.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'].map(file => path.join(root, 'ios', file))];
+    contracts, ...['PasskeyPolicy.swift', 'connection-editor.swift', 'RuntimeHostScope.swift', 'AttachmentUploadPolicy.swift', 'ResourceBridge.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift', 'GuiPluginRuntime.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionRuntime.swift', 'RuntimeBridge.swift', 'SessionMessageStream.swift', 'SessionMessageStreamDirect.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'].map(file => path.join(root, 'ios', file))];
   run([...inputs, path.join(root, 'tests/settings-voice-recognition-transport.swift'), '-o', runner]);
   retirementRunner = path.join(temporary, 'retirement-runner');
   run([...inputs, path.join(root, 'tests/runtime-authorization-retirement.swift'), '-o', retirementRunner]);

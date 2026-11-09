@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { access, cp, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stageTerminalOfflineResources } from '../terminal-offline.mjs';
+import { stageNativeApplication, validateNativeApplicationBundle } from './stage-native-application.mjs';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceRoot = path.resolve(packageRoot, '../..');
@@ -16,8 +17,8 @@ if (args.includes('--help')) {
 }
 if (args.some(arg => arg !== '--device')) throw new Error('Only --device is supported; see --help');
 const device = args.includes('--device');
-function run(command, args, capture = false) {
-  const result = spawnSync(command, args, { cwd: workspaceRoot, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
+function run(command, args, capture = false, cwd = workspaceRoot) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${path.basename(command)} failed (${result.status})${capture ? `: ${result.stderr}` : ''}`);
   return result.stdout?.trim();
@@ -50,7 +51,18 @@ await mkdir(localBrand, { recursive: true });
 for (const name of ['yuri-b-mark-black.svg', 'yuri-b-mark-white.svg', 'yuri-wordmark-black.svg', 'yuri-wordmark-white.svg']) {
   await cp(path.join(workspaceRoot, 'assets/brand/yuri', name), path.join(localBrand, name));
 }
-run(nsh, ['build', 'packages/nsh/App.tsx', '--release', '--out', path.relative(workspaceRoot, bundle)]);
+const sourceStage = await stageNativeApplication({ root: path.join(output, `native-source-${randomUUID()}`), workspaceRoot });
+try {
+  run(nsh, ['build', sourceStage.entry, '--release', '--out', bundle], false, sourceStage.cwd);
+  const assetEvidence = await validateNativeApplicationBundle(bundle, sourceStage.manifest);
+  await writeFile(path.join(output, 'native-application-evidence.json'), JSON.stringify({
+    ...sourceStage.manifest,
+    bundleSHA256: createHash('sha256').update(await readFile(path.join(bundle, 'bundle.nshc'))).digest('hex'),
+    assetEvidence,
+  }, null, 2) + '\n');
+} finally {
+  await rm(sourceStage.root, { recursive: true, force: true });
+}
 await cp(bundle, path.join(staging, 'nsh'), { recursive: true });
 await stageTerminalOfflineResources(staging, workspaceRoot);
 run(process.execPath, [path.join(packageRoot, 'scripts/build-gui-plugin-preview.mjs'), '--out', path.join(staging, 'gui-plugin-preview')]);
@@ -73,6 +85,7 @@ const iconInfo = path.join(output, 'assetcatalog-info.plist');
 run('xcrun', ['actool', brandCatalog, '--compile', staging, '--platform', sdkName, '--minimum-deployment-target', '15.0', '--target-device', 'iphone', '--target-device', 'ipad', '--app-icon', 'AppIcon', '--output-partial-info-plist', iconInfo, '--output-format', 'human-readable-text', '--warnings', '--notices']);
 run('xcrun', ['ibtool', '--compile', path.join(staging, 'LaunchScreen.storyboardc'), path.join(packageRoot, 'ios/LaunchScreen.storyboard'), '--minimum-deployment-target', '15.0', '--target-device', 'iphone', '--target-device', 'ipad', '--module', 'YuriNative', '--errors', '--warnings', '--notices']);
 const sources = (await readdir(path.join(packageRoot, 'ios'))).filter(name => name.endsWith('.swift')).sort().map(name => path.join(packageRoot, 'ios', name));
+sources.push(path.join(workspaceRoot, 'packages/mobile/ios/App/App/YuriViewExportRenderer.swift'));
 const simulatorEntitlements = path.join(output, 'simulator-entitlements.plist');
 if (!device) {
   await writeFile(simulatorEntitlements, JSON.stringify({ 'application-identifier': 'com.yee94.yuri.nsh', 'keychain-access-groups': ['com.yee94.yuri.nsh'], 'get-task-allow': true }));
@@ -83,6 +96,14 @@ if (!device) {
 const simulatorLinkFlags = device ? [] : ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__entitlements', '-Xlinker', simulatorEntitlements];
 const frameworks = ['UIKit', 'UserNotifications', 'Foundation', 'Security', 'AVFoundation', 'AVKit', 'QuickLook', 'Speech', 'CoreMedia', 'CoreVideo', 'CoreGraphics', 'CoreText', 'QuartzCore', 'ImageIO', 'Photos', 'PhotosUI', 'UniformTypeIdentifiers', 'WebKit', 'SafariServices', 'Network', 'SystemConfiguration', 'AudioToolbox'];
 run('xcrun', ['--sdk', sdkName, 'swiftc', '-swift-version', '5', '-O', '-sdk', sdk, '-target', `arm64-apple-ios15.0${device ? '' : '-simulator'}`, '-F', frameworkDir, '-framework', 'NativeShell', ...frameworks.flatMap(name => ['-framework', name]), '-lc++', '-lz', '-lsqlite3', '-Xlinker', '-ObjC', ...simulatorLinkFlags, ...sources, '-o', path.join(staging, 'YuriNative')]);
+const photoUsage = JSON.parse(await readFile(path.join(packageRoot, 'ios/PhotoLibraryUsage.json'), 'utf8'));
+const photoLocales = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'es', 'pl', 'pt-BR', 'uk'];
+if (Object.keys(photoUsage).length !== photoLocales.length || photoLocales.some(locale => typeof photoUsage[locale] !== 'string' || !photoUsage[locale].trim())) throw new Error('Missing localized photo library usage description');
+for (const locale of photoLocales) {
+  const localized = path.join(staging, `${locale}.lproj`);
+  await mkdir(localized, { recursive: true });
+  await writeFile(path.join(localized, 'InfoPlist.strings'), `"NSPhotoLibraryAddUsageDescription" = ${JSON.stringify(photoUsage[locale])};\n`);
+}
 const plist = {
   CFBundleDevelopmentRegion: 'en', CFBundleDisplayName: 'Yuri Native', CFBundleExecutable: 'YuriNative',
   CFBundleIdentifier: 'com.yee94.yuri.nsh', CFBundleInfoDictionaryVersion: '6.0', CFBundleName: 'YuriNative',
@@ -95,6 +116,7 @@ const plist = {
   NSMicrophoneUsageDescription: '使用麦克风将语音输入为聊天文字。',
   NSSpeechRecognitionUsageDescription: '使用系统语音识别将语音转换为聊天文字。',
   NSLocalNetworkUsageDescription: '连接你选择的局域网 Yuri Host。',
+  NSPhotoLibraryAddUsageDescription: photoUsage.en,
   NSAppTransportSecurity: { NSAllowsArbitraryLoads: true },
   CFBundleURLTypes: [{ CFBundleURLName: 'com.yee94.yuri.nsh.pairing', CFBundleURLSchemes: ['yuri'] }],
 };
@@ -105,6 +127,13 @@ run('plutil', ['-convert', 'xml1', info]);
 await access(path.join(staging, 'Assets.car'));
 if (compiledIconInfo.CFBundleIcons?.CFBundlePrimaryIcon?.CFBundleIconName !== 'AppIcon') throw new Error('Compiled asset catalog does not declare the primary AppIcon');
 const identity = process.env.NSH_SIGN_IDENTITY;
+const requestedWebcredentials = (process.env.NSH_WEBCREDENTIALS_DOMAINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
+if (new Set(requestedWebcredentials).size !== requestedWebcredentials.length || requestedWebcredentials.some(domain => {
+  if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(domain) || domain.length > 253 || domain.split('.').some(label => !label || label.length > 63 || label.startsWith('-') || label.endsWith('-'))) return true;
+  const url = new URL(`https://${domain}`);
+  return url.hostname !== domain || !!url.port || url.pathname !== '/' || !!url.search || !!url.hash;
+})) throw new Error('NSH_WEBCREDENTIALS_DOMAINS must contain unique canonical RP hostnames');
+if (requestedWebcredentials.length && (!device || !identity)) throw new Error('Webcredentials domains require a development-signed device build');
 if (device && identity) {
   if (!process.env.NSH_PROVISIONING_PROFILE) throw new Error('Development device signing requires NSH_PROVISIONING_PROFILE');
   const profile = path.resolve(process.env.NSH_PROVISIONING_PROFILE);
@@ -126,6 +155,14 @@ if (device && identity) {
     'get-task-allow': true,
     'keychain-access-groups': [expectedID],
   };
+  if (requestedWebcredentials.length) {
+    const domains = requestedWebcredentials.map(domain => `webcredentials:${domain}`);
+    const permitted = entitlements['com.apple.developer.associated-domains'];
+    if (!Array.isArray(permitted) || domains.some(domain => !permitted.includes('*') && !permitted.includes(domain))) throw new Error('Provisioning profile does not authorize the requested webcredentials domains');
+    signingEntitlements['com.apple.developer.associated-domains'] = domains;
+    await writeFile(info, JSON.stringify({ ...plist, ...compiledIconInfo, YuriWebcredentialsDomains: domains }));
+    run('plutil', ['-convert', 'xml1', info]);
+  }
   const entitlementsPath = path.join(output, 'development-entitlements.plist');
   await writeFile(entitlementsPath, JSON.stringify(signingEntitlements));
   run('plutil', ['-convert', 'xml1', entitlementsPath]);

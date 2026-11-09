@@ -59,29 +59,15 @@ it('compiles and runs production Foundation scope without UIKit, NSH engine, net
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }, 150_000);
 
-it('typechecks the full iOS WKWebView bridge using a minimal NativeShell contract, without an app build', () => {
-  const temp = mkdtempSync(path.join(tmpdir(), 'resource-web-preview-ios-contract-'));
-  try {
-    const sdk = run(['--sdk', 'iphonesimulator', '--show-sdk-path']);
-    const stub = path.join(temp, 'NativeShell.swift');
-    writeFileSync(stub, `@MainActor public final class NshAppView {
-      public func handle(_ name: String, _ body: @escaping @MainActor (Any?) async throws -> Any?) {}
-      public func send(_ name: String, _ data: Any?) {}
-    }`);
-    const flags = ['-swift-version', '5', '-sdk', sdk, '-target', 'arm64-apple-ios26.0-simulator'];
-    run(['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temp, 'NativeShell.swiftmodule')]);
-    run(['swiftc', ...flags, '-I', temp, '-typecheck', path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift')]);
-    const desktop = readFileSync(path.join(root, 'ios/RemoteDesktopBridge.swift'), 'utf8');
-    const desktopContract = path.join(temp, 'DesktopContract.swift');
-    writeFileSync(desktopContract, 'import Foundation\n' + desktop.slice(desktop.indexOf('enum RemoteDesktopWireMessage'), desktop.indexOf('/// A deadline')));
-    run(['swiftc', ...flags, '-I', temp, '-typecheck', path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'ios/GuiPluginPreviewBridge.swift'), path.join(root, 'ios/GuiPluginRuntime.swift'), path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/VoiceRecognitionCore.swift'), path.join(root, 'ios/VoiceRecognitionRuntime.swift'), path.join(root, 'ios/RuntimeBridge.swift'), path.join(root, 'ios/TerminalBridge.swift'), path.join(root, 'ios/TerminalTransport.swift'), path.join(root, 'ios/ConnectionStore.swift'), path.join(root, 'ios/connection-editor.swift'), path.join(root, 'ios/RelayTunnel.swift'), desktopContract]);
-    run(['swiftc', ...flags, '-I', temp, '-typecheck', path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'tests/resource-web-preview/uikit-main.swift')]);
-    const source = readFileSync(path.join(root, 'ios/ResourceWebPreviewBridge.swift'), 'utf8');
-    expect(source).not.toMatch(/URLSession\s*\(|URLSession\.shared|RelayTunnel\s*\(/);
-    expect(source).toContain('let head = try response.webResponse(for: url)');
-    expect(source).toContain('urlSchemeTask.didReceive(head); urlSchemeTask.didReceive(response.data)');
-  } finally { rmSync(temp, { recursive: true, force: true }); }
-}, 150_000);
+it('typechecks every production iOS source against the real NativeShell SDK without engine, app or network execution', () => {
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/check-resource-html-sdk.mjs')], { encoding: 'utf8', timeout: 180_000 });
+  expect(result.error).toBeUndefined(); expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toMatchObject({ typechecked: true, changedAfterSnapshot: [] });
+  const source = readFileSync(path.join(root, 'ios/ResourceWebPreviewView.swift'), 'utf8');
+  expect(source).not.toMatch(/URLSession\s*\(|URLSession\.shared|RelayTunnel\s*\(/);
+  expect(source).toContain('let head = try response.webResponse(for: url)');
+  expect(source).toContain('task.didReceive(head); task.didReceive(response.data)');
+}, 190_000);
 
 it('keeps the UIKit fixture isolated from production products, NSH execution and native page bridges', () => {
   const fixture = readFileSync(path.join(root, 'tests/resource-web-preview/uikit-main.swift'), 'utf8');

@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["../settings-preferences-receipt.ts", "../settings-preferences-receipt.test.ts"],
+  "exclude": []
+}

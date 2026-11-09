@@ -1,7 +1,7 @@
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 
 /** Intent only; native admission requires the originating owner's receipt. */
-export type ResourceWebPreviewIntent =
+type ResourceWebPreviewIntent =
   | { kind: 'html'; directory: string; path: string }
   | { kind: 'loopback'; url: string };
 
@@ -74,17 +74,18 @@ export function bindResourceWebPreview(
     closing.set(owner, flight); return flight;
   };
   const close = async () => {
-    await Promise.all([...pending].map(owner => closeOwner(owner).catch(() => {})));
+    await Promise.all([...pending].map(closeOwner));
   };
   return {
     close,
+    closeOwner,
     async present(input: { directory: string; path?: string; href?: string }) {
       if (!expectedHost) throw new Error('resource_web_scope_required');
       const owner = identify(); pending.add(owner);
       try { return await presentResourceWebPreview(call, input, { expectedHost, owner }); }
       finally {
         // Also covers a rejected/timeout response: cleanup is exact, never global.
-        if (pending.has(owner)) await closeOwner(owner).catch(() => {});
+        if (pending.has(owner)) await closeOwner(owner);
       }
     },
   };

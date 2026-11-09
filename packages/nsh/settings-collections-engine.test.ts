@@ -1,27 +1,22 @@
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { prepareCollectionsFixture } from './tests/settings-collections-fixture-config.mjs';
+import { runSettingsEngineFixture } from './tests/settings-engine-fixture-runner.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 function run(steps: string[]) {
-  const parent = path.join(process.env.TMPDIR || tmpdir(), 'opencode');
-  mkdirSync(parent, { recursive: true });
-  const temporary = mkdtempSync(path.join(parent, 'settings-collections-'));
-  try {
-    const fixture = prepareCollectionsFixture(directory, temporary);
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', fixture.entry, '--web-host', fixture.host], { cwd: temporary, input: steps.join('\n'), encoding: 'utf8', timeout: 60_000 });
+    const result = runSettingsEngineFixture(directory, 'settings-collections-fixture.tsx', 'tests/settings-collections-host.js', steps, 60_000, ['collections.fixture.audit']);
     expect(result.error, result.stdout + result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 // Prepared only: this file launches NSH. Do not include it in pure Vitest commands.
 test('production Agent editor displays object model/variant and stored prompt; patches one field', () => run([
-  'await app.waitFor("text:review");', 'await app.press("text:review");', 'await app.waitFor("id:settings-model");',
-  'expect(app.value("id:settings-model")).toBe("example/model#deep");',
+  'await app.waitFor("text:review");', 'await app.press("text:review");',
+  'await app.waitFor("id:features-model-picker >> text:example/model");',
+  'await app.waitFor("id:features-model-picker >> text:Deep");',
+  'expect(app.shows("id:features-model-picker >> text:example/model")).toBe(true);',
+  'expect(app.shows("id:features-model-picker >> text:Deep")).toBe(true);',
+  'await app.waitFor("id:settings-system");',
   'expect(app.value("id:settings-system")).toBe("Stored fixture prompt");',
   'await app.waitUntil(() => app.enabled("id:settings-description"));', 'await app.type("id:settings-description", "Edited fixture");', 'await app.waitUntil(() => app.enabled("text:Save"));', 'await app.press("text:Save");',
   'await app.waitFor("text:Done");', 'await app.press("id:collections-fixture-audit");',

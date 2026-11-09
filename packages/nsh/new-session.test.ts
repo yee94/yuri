@@ -62,9 +62,41 @@ afterEach(async () => {
 });
 
 describe('native new-session durable draft and handoff', () => {
+  const deviceChatPreferences = () => ({ allowPromptingSubagentSessions: false, persistChatDraft: false });
+  it('disabled ordinary persistence preserves created receipt, frozen sidecars and actual Chat handoff after reopening', async () => {
+    const draft = await open({ project, active: () => true, deviceChatPreferences }); await draft.ready;
+    draft.setDraftText('Read '); draft.insertReference({ kind: 'file', value: 'a.ts', label: 'a.ts', scope: draft.durable.scope }); draft.setAttachments([file]);
+    const normal = harness.set.getMockImplementation()!;
+    harness.set.mockImplementation(async (key: string, value: string) => {
+      if (key.startsWith('nsh:new-session:') && JSON.parse(value).phase === 'installed') throw new Error('installed receipt quota');
+      return normal(key, value);
+    });
+    await expect(draft.submit()).rejects.toThrow('installed receipt quota'); expect(creates()).toHaveLength(1);
+    const frozenID = draft.inputID(); await draft.close(); harness.set.mockImplementation(normal);
+    const reopened = await open({ project, active: () => true, deviceChatPreferences }); await reopened.ready;
+    expect(reopened.durable.draft()).toBe(''); expect(reopened.durable.pendingSend()?.id).toBe(frozenID); expect(reopened.phase()).toBe('created');
+    const handoff = (await reopened.submit())!; expect(creates()).toHaveLength(1);
+    const state = await import('./state'); const chat = state.createChat(handoff.target, { deviceChatPreferences }); await chat.draftReady; await flush();
+    expect(chat.draft()).toBe(''); expect(chat.pendingSend()?.references?.references).toHaveLength(1);
+    const { sendNewSessionHandoff } = await import('./new-session'); expect(await sendNewSessionHandoff(chat, handoff)).toBe(true);
+    expect(prompts()).toHaveLength(1); expect(prompts()[0].body.text).toContain('Read'); await reopened.complete(handoff);
+  });
+  it('a pending frozen submission before creating receipt still resumes when ordinary draft restore is disabled', async () => {
+    const first = await open({ project, active: () => true, deviceChatPreferences }); await first.ready; first.setDraftText('Frozen create intent');
+    const normal = harness.set.getMockImplementation()!;
+    harness.set.mockImplementation(async (key: string, value: string) => {
+      if (key.startsWith('nsh:new-session:') && JSON.parse(value).phase === 'creating') throw new Error('creating quota');
+      return normal(key, value);
+    });
+    await expect(first.submit()).rejects.toThrow('creating quota'); expect(creates()).toHaveLength(0); const frozenID = first.inputID(); await first.close();
+    harness.set.mockImplementation(normal); const second = await open({ project, active: () => true, deviceChatPreferences }); await second.ready;
+    expect(second.durable.draft()).toBe(''); expect(second.inputID()).toBe(frozenID);
+    const handoff = await second.submit(); expect(handoff?.inputID).toBe(frozenID); expect(creates()).toHaveLength(1);
+  });
   it('the own UI fixture bridge supports real create/unknown recovery/config/Chat admission without running an engine', async () => {
     const fake = (await import('./tests/new-session-host.js')).createHost();
     harness.call.mockImplementation(async (name, input) => fake.call(name, input));
+    await (await import('./state')).loadConnections();
     fake.call('runtime.request', { path: '/__fixture/new-session/lose-create', method: 'GET' });
     const draft = await open(); await draft.ready; draft.setDraftText('fixture pipeline'); await draft.select({ agent: 'plan', model: { providerID: 'fixture', id: 'gpt-model', variant: 'high' } });
     await expect(draft.submit()).rejects.toThrow('lost session creation response'); await draft.recoverCreatedSession('ses_draft_1');

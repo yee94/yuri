@@ -1,5 +1,6 @@
 import { cleanup, computed, effect, keymap, lifecycle, List, signal, Text, untracked, View, windowSize, type InputRef, type ListRef } from 'nsh';
 import { Button, Input } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { language, t } from './i18n';
 import { Icon } from './Icon';
 import { captureHostRequest } from './state';
@@ -63,8 +64,8 @@ export function TaskEditorPrompt(props: {
     return keymap.bind({ up: () => key('up'), down: () => key('down'), enter: () => key('enter'), tab: () => key('tab'), escape: () => key('escape') }, { when: 'always', repeat: true });
   });
   cleanup(search.dispose);
-  return <View class="gap-2">
-    <Input testID="features-task-prompt" ref={node => { input = node; }} class={props.fieldClass + ' min-h-36'} multiline value={props.value} disabled={props.disabled} selectedRange={selection()} onSelectionChange={range => { selection.set(undefined); caret.set(range); }} onCompositionChange={event => composing.set(event.composing)} onFocus={() => focused.set(true)} onBlur={() => focused.set(false)} submitBehavior={snapshot() ? 'submit' : 'newline'} onSubmit={() => key('enter')} onChange={event => { selection.set(undefined); caret.set(null); dismissed.set(''); props.onChange(event.value); }} placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')} accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')} />
+  return <View class="gap-2" style={nativeDensity().forms.compact}>
+    <Input testID="features-task-prompt" ref={node => { input = node; }} class={props.fieldClass + ' min-h-36'} style={{ ...nativeDensity().settings.field, minHeight: 144 * nativeDensity().scale }} multiline value={props.value} disabled={props.disabled} selectedRange={selection()} onSelectionChange={range => { selection.set(undefined); caret.set(range); }} onCompositionChange={event => composing.set(event.composing)} onFocus={() => focused.set(true)} onBlur={() => focused.set(false)} submitBehavior={snapshot() ? 'submit' : 'newline'} onSubmit={() => key('enter')} onChange={event => { selection.set(undefined); caret.set(null); dismissed.set(''); props.onChange(event.value); }} placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')} accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')} />
     <If when={!!snapshot()}><View testID="task-editor-autocomplete" class="bg-card rounded-2xl border border-border/30 gap-1 py-2">
       <View class="flex-row items-center justify-between px-3"><Text class="text-xs text-muted-foreground">{t(snapshot()?.trigger.kind === 'slash-command' ? 'chat.autocomplete.tabs.commands' : 'chat.autocomplete.tabs.files')}</Text><Button testID="task-editor-autocomplete-close" class="min-h-8 min-w-8 items-center justify-center" accessibilityLabel={t('gitView.common.close')} onPress={dismiss}><Text class="text-foreground">×</Text></Button></View>
       <If when={state().busy && !state().rows.length}><Text class="px-3 text-xs text-muted-foreground">{t('common.loading')}</Text></If>

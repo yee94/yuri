@@ -2,11 +2,13 @@ import { mount, signal, Text, View } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { ChatHeaderActions, NativeChatHeader } from './chat-header';
 import { language } from './i18n';
-import { request } from './runtime';
+import { captureHostRequest } from './state';
+import { prepareInteractionFixture } from './tests/chat-interaction-fixture-bootstrap';
 import { headerQuotaReset } from './chat-header-quota';
 
 export default function HeaderTestApp() {
   language.set('en');
+  const request = captureHostRequest();
   const back = signal(false), options = signal(''), draft = signal(''), count = signal(-1), native = signal(false), anchorError = signal('');
   return <View class="flex-1 bg-background p-4 gap-4">
     <If when={native()} else={<NativeChatHeader target={{ kind: 'session', id: 'ses_header', title: 'Native conversation', directory: '/workspace/header' }} active busy={false} current={() => true} onBack={() => back.set(true)} onOptions={option => options.set(option)} />}>
@@ -22,4 +24,7 @@ export default function HeaderTestApp() {
     <Text>{back() ? 'Back pressed' : ''}</Text><Text>{options() ? `Options ${options()}` : ''}</Text>
   </View>;
 }
-mount(HeaderTestApp);
+mount(() => {
+  const boot = prepareInteractionFixture();
+  return <If when={boot.ready()} else={<Text>{boot.error() || 'Loading fixture connection'}</Text>}><HeaderTestApp /></If>;
+});

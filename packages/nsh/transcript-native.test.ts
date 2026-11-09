@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,18 +12,32 @@ import { nativeBodyRows } from './transcript-body-model';
 import { nativeTurnHeaderMessage, nativeTurnPresentation } from './transcript-tools-turn-model';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-let temporary: string, fixture: string;
+let temporary: string, fixture: string, engineDirectory: string;
 beforeAll(() => {
   temporary = mkdtempSync(path.join(tmpdir(), 'nsh-transcript-'));
   fixture = path.join(temporary, 'host.js');
+  engineDirectory = mkdtempSync(path.join(directory, 'tests', '.transcript-engine-'));
   const result = spawnSync('bun', ['build', 'tests/transcript-host.js', '--target=browser', '--outfile', fixture], { cwd: directory, encoding: 'utf8' });
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
-afterAll(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
+afterAll(() => {
+  if (temporary) rmSync(temporary, { recursive: true, force: true });
+  if (engineDirectory) rmSync(engineDirectory, { recursive: true, force: true });
+});
 function run(steps: string[]) {
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'App.tsx', '--web-host', fixture], {
+  const engineTest = path.join(engineDirectory, 'transcript-engine.test.tsx');
+  writeFileSync(engineTest, [
+    'import { expect, open, test } from "nsh/test";',
+    'test("production transcript callbacks on the headless non-iOS surface", async () => {',
+    `const app = await open(${JSON.stringify(path.join(directory, 'App.tsx'))}, { platform: 'macos', storage: {}, network: {} });`,
+    'try {',
+    'await app.waitFor("text:Native conversation");', 'await app.press("text:Native conversation");', 'await app.waitFor("id:history-edit-history-user");',
+    ...steps,
+    '} finally { app.dispose(); }',
+    '});',
+  ].join('\n'));
+  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', engineTest, '--web-host', fixture], {
     cwd: directory, encoding: 'utf8', timeout: 60_000,
-    input: ['await app.waitFor("text:Native conversation");', 'await app.press("text:Native conversation");', 'await app.waitFor("id:history-edit-history-user");', ...steps].join('\n'),
   });
   expect(result.error, result.stdout + result.stderr).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -45,6 +59,20 @@ function appearanceFixture(host = createHost()) {
   sync.setScope({ hostID: 'fixture', url: 'https://host.example', generation: 1 });
   return { host, sync, snapshot: (): AppliedNativeAppearance | null => current, error: () => error };
 }
+
+test('the transcript Host rejects stale and missing write scopes before changing history', () => {
+  const host = createHost();
+  const scope = host.call('connection.list', {}).runtimeScope;
+  const path = '/api/session/ses_1/revert/stage?directory=%2Fworkspace%2Fproject';
+  const body = { messageID: 'history-user', files: false };
+  expect(() => host.call('runtime.request', { path, method: 'POST', body })).toThrow('Missing synthetic chat scope');
+  expect(() => host.call('runtime.request', { path, method: 'POST', body, expectedHost: { ...scope, lease: 'retired' } })).toThrow('Stale synthetic chat scope');
+  expect(host.call('runtime.request', { path: '/api/session/ses_1/message?', method: 'GET' }).body.data).toHaveLength(3);
+  expect(host.call('runtime.request', { path, method: 'POST', body, expectedHost: scope }).status).toBe(200);
+  expect(() => host.call('runtime.request', { path: '/api/session/ses_1/revert?', method: 'DELETE' })).toThrow('Missing synthetic chat scope');
+  expect(host.call('runtime.request', { path: '/api/session/ses_1/message?', method: 'GET' }).body.data).toEqual([]);
+  expect(host.call('runtime.request', { path: '/api/git/remotes?directory=%2Fworkspace%2Fproject', method: 'GET' }).body).toEqual([]);
+});
 
 test('transcript fixture authorizes the exact historical TPS through the real root appearance protocol (pure)', async () => {
   const { host, sync, snapshot, error } = appearanceFixture();
@@ -113,8 +141,9 @@ test('transcript fixture rejects unknown appearance calls, writes and stale revi
   const host = createHost();
   expect(() => host.call('appearance.unknown', {})).toThrow('Unexpected native call');
   expect(() => host.call('runtime.request', { path: '/api/config/unknown', method: 'GET' })).toThrow('Unexpected request');
+  const expectedHost = host.call('connection.list', {}).runtimeScope;
   for (const path of ['/api/config/settings', '/api/config/themes']) {
-    for (const method of ['PUT', 'POST', 'DELETE']) expect(() => host.call('runtime.request', { path, method, body: {} })).toThrow('Unsafe transcript appearance request');
+    for (const method of ['PUT', 'POST', 'DELETE']) expect(() => host.call('runtime.request', { path, method, body: {}, expectedHost })).toThrow('Unsafe transcript appearance request');
   }
   expect(() => host.call('appearance.reset', { hostID: 'other' })).toThrow('Unsafe transcript appearance reset');
   expect(() => host.call('appearance.reset', { hostID: 'fixture', unknown: true })).toThrow('Unsafe transcript appearance reset');
@@ -132,8 +161,9 @@ test('production transcript uses native inversion with a newest-first display co
   expect(source).toContain('projectHistoryRows(chat.visibleMessages())');
   expect(source).not.toContain('previousBodyRows.slice().reverse()');
   expect(list.includes('maintainVisibleContentPosition'), 'native inversion is the sole follow owner').toBe(false);
-  for (const event of ['onScrollDragStart', 'onScroll', 'onScrollEnd', 'onLoadMore', 'onLoadMoreAtStart']) expect(list).toContain(`${event}={historyScroll.${event}}`);
-  expect(source).toContain("loadLatest: () => chat.load(false, ['messages'])");
+  for (const event of ['onScrollDragStart', 'onScroll', 'onScrollEnd', 'onLoadMore', 'onLoadMoreAtStart']) expect(list).toContain(`${event}={listHistoryEvents().${event}}`);
+  expect(source).toContain("return chat.load(false, ['messages']);");
+  expect(source).toContain('generation === footerState().eventGeneration');
   expect(list.includes('onLoadMore='), 'old history loads at the native inverted-list end').toBe(true);
   expect(list).toContain('footer={() => <View');
   expect(list).toContain('void chat.loadOlder();');

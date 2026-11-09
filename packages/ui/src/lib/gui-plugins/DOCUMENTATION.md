@@ -9,6 +9,7 @@
 - 能力代理属于宿主内部实现，`screen` 使用运行时私有字段，不进入宿主对象的属性枚举。React 开发模式的性能元数据会递归检查组件 props；不能让这类检查读取能力代理并抛出 `screen.$$typeof`，否则会中断整个 React 提交、表现为 URL/Store 已变但界面不更新。插件通过官方 context/PanelProps 访问 screen 的方式不变，真正访问未支持能力仍明确报错。
 - React inventory 保留官方 `source`，插件设置按来源关联 GUI 能力，不按 GUI id 猜 npm 包名。commands/menuItems 与 panels/settings 一样携带显式 `pluginId`，以便详情只展示当前插件自己的贡献；停用后仍保留来源与 GUI 标识。
 - `files.ts` 负责会话工作区文件读取与变更观察；`storage.ts` 和 `preferences.ts` 负责插件持久状态及 GUI 启用偏好。
+- `preferences.ts` 的显式 runtime 键生成只依赖 `instanceScopedStorageKey.ts`，不初始化浏览器 storage/bootstrap；浏览器 `instanceScopedStorage.ts` 复用同一编码并继续拥有默认 runtime、迁移与实际存储读写。
 - `file-icons.ts` 负责窗口级文件扩展名图标索引、SVG 资源校验和独立订阅，不依赖 host snapshot。
 - `work-status.ts` 负责 `yuri.work-status` 注册目录和每次挂载的只读响应式数据；独立订阅不跟随窗口 session/layout snapshot，渲染仍复用 host.mount。
 - Web、Electron、VS Code 聊天窗口、hosted/mobile 使用同一个窗口 host。嵌入会话和独立 Agent Manager 不重复加载宿主。只有新版 Electron 的本地实例主 frame 可以申请 native lease；其他运行时、远程/Relay 实例及旧 shell 保持 `app.platform: web`、`desktop: undefined`。获得 lease 后为 `app.platform: desktop`，提供 `desktop.os`（其他 desktop 方法仍明确 unsupported）。若部署的 CSP 禁止 CJS 求值，插件状态显示求值失败，不能绕过 CSP。
@@ -16,6 +17,7 @@
 - `view-export.ts` 将当前客户端容器的两个 GSAPI 发布为宿主保留的 `yuri.exportPDF`、`yuri.exportLongImage` Contract。实现与跨端传输归 `lib/view-export`；通过 `RuntimeAPIs.viewExport` 注入，不改 `ctx.client`、官方 OpenAPI 或插件 main/IPC。
 - `toast.ts` 实现官方窗口 `ctx.toast` 的纯文本子集；Provider 注入现有全局 Sonner，不创建插件容器、远端调用或 OS 通知。
 - `save.ts` 实现官方 `ctx.system.save` 的客户端文件保存：Capacitor iOS/Android 复用 `YuriMedia.saveFile` 系统文件选择器，按 UTF-8 编码，限制 32 MiB，确认保存后返回 true、取消返回 false、失败拒绝；缺少原生实现明确 unsupported。Web/hosted mobile/Electron/VS Code 保留浏览器下载，不访问连接 Host 的文件路径。这不开放插件 main/IPC，也不依赖 LAN/Relay。
+- 独立原生 GUI document 可在 host 构造时注入 `system` 和 `toasts(ownerSignal)`，将官方窗口 API 接到当前客户端设备边界；缺省仍使用上述 Web/Capacitor 实现。该注入不改变官方 client、插件 options 或 native main/IPC 权限。NSH 的 main-frame scope、资源 resolver、真实 iOS renderer 和装配/验收边界见 `packages/nsh/GUI-CAPABILITIES-HANDOFF.md`。
 
 官方 npm SDK 2.2.0 没有公开 `gui/host` 导出。Yuri 的受控依赖 patch 只开放 `gui/yuri-host` 内部 context，让 host 与官方 `usePlugin` / `bindPlugin` 共用真实 `PluginContext`、`PanelContext` 和 lifetime。它是**宿主实现细节**，第三方插件始终只 import 官方公开 SDK。升级 SDK 必须重新验证 patch 与单实例 Solid 语义。
 

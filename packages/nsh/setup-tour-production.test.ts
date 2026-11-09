@@ -104,6 +104,7 @@ function productionCallbacks(controller: ReturnType<typeof createSetupTour>, sta
     'nsh/base': { Button: 'Button', NavPage: 'NavPage', Sheet: 'Sheet', TextView: 'TextView' },
     './native-sheet': { NativeSheet: 'Sheet' },
     './Icon': { Icon: 'Icon' }, './i18n': { t: (key: string) => key },
+    './appearance': { nativeCodeTextViewStyles: () => ({}) },
     './settings-controls': { SettingsGroup: 'SettingsGroup', settingsAction: 'neutral-action' }, './setup-tour-core': core,
     './state': stateBoundary ?? { app: { connection: () => ({ id: 'fixture' }), runtimeScope: () => null }, epoch: () => 1, captureHostRequest: () => { throw new Error('Unexpected native factory construction in injected callback test'); } },
     './runtime-scope': runtimeScope,

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
+import { prepareInteractionEngineDriver } from './tests/chat-interaction-engine-driver';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 test('native header opens real metadata, refreshes, closes, and preserves both toolbar callbacks', () => {
@@ -47,10 +48,14 @@ test('native header opens real metadata, refreshes, closes, and preserves both t
     'await app.press("id:fail-anchor");',
     'await app.press("id:chat-header-options");',
     'await app.waitFor("text:Anchor unavailable");',
-  ].join('\n');
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'chat-header-test-app.tsx', '--web-host', 'tests/chat-header-host.js'], { cwd: directory, input: steps, encoding: 'utf8', timeout: 45000 });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+  ];
+  const driver = prepareInteractionEngineDriver(directory, 'chat-header-test-app.tsx', 'tests/chat-header-host.js', steps);
+  try {
+    const fixture = driver.bundleHost();
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', driver.testFile, '--web-host', fixture], { cwd: directory, encoding: 'utf8', timeout: 45000 });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { driver.dispose(); }
 }, 60000);
 
 test('Chat delegates back/title to the system navigation bar and puts only context/workspace in its trailing slot', () => {

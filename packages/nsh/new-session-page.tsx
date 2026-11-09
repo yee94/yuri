@@ -4,21 +4,26 @@ import { nativeChatTextStyle } from './appearance';
 import { NativeAgentAvatar, NativeModelLogo, nativeAgentAccent } from './chat-identity';
 import { pickerPreferences, pickerSheetHeight } from './chat-models-helpers';
 import { NativeCommandSuggestions } from './composer-controls';
+import { NativeComposerPress } from './native-composer-press';
 import { nativeComposerSurface } from './composer-surface';
-import { shouldSubmitCommandOnSelection } from './composer-commands-model';
+import { createNativeComposerCommandRouter } from './composer-command-router';
 import { createNativeReferenceKeyboard } from './composer-reference-keyboard-native';
 import { NativeReferencePicker } from './composer-references-controls';
 import { NativeComposerSend } from './composer-send';
+import { nativeDensity } from './appearance';
 import { Icon } from './Icon';
 import { t } from './i18n';
-import { nameOf, record, rowsFrom, sessionsFrom, text, type Attachment, type ChatTarget, type Project, type Row, type Session } from './model';
+import { nameOf, record, rowsFrom, sessionsFrom, text, type ChatTarget, type Project, type Row, type Session } from './model';
 import { createNativeNewSessionOwnership, type NativeNewSessionPageHandoff } from './new-session';
 import { newSessionText } from './new-session-copy';
 import { NativeNewSessionModels } from './new-session-models';
 import { NativeNewSessionModal } from './new-session-modal';
 import { NativeNewSessionInputAX } from './new-session-native-owners';
+import { NativeInputMetadata } from './native-input-metadata';
+import { NativeComposerSpellcheck } from './native-composer-spellcheck';
 import { native } from './runtime';
-import { app, captureHostRequest } from './state';
+import { app, captureHostRequest, reportOwnedError } from './state';
+import { createAttachmentPick } from './attachment-pick';
 import { getAgentDisplayName, getCycledPrimaryAgentName } from '../ui/src/components/chat/mobileControlsUtils';
 import { LONG_PRESS_MS, LONG_PRESS_MOVE_PX } from '../ui/src/lib/touch-gestures/tap';
 import { createNewSessionCatalog } from './new-session-selection';
@@ -28,6 +33,7 @@ type Ownership = ReturnType<typeof createNativeNewSessionOwnership>;
 const action = 'min-h-11 px-3 py-2 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
 
 export interface NativeNewSessionPageProps {
+  deviceChatPreferences?: Parameters<typeof createNativeNewSessionOwnership>[0]['deviceChatPreferences'];
   project?: Project;
   directory?: string;
   active: boolean;
@@ -44,7 +50,7 @@ export function NativeNewSessionPage(props: NativeNewSessionPageProps) {
   const current = () => alive && props.active && lifecycle() === 'active';
   const ownership = signal<Ownership | null>(null), switching = signal(false), error = signal(''), starterGesture = signal(false);
   function open(project?: Project, directory?: string) {
-    try { ownership.set(createNativeNewSessionOwnership({ project, directory, active: current })); }
+    try { ownership.set(createNativeNewSessionOwnership({ project, directory, active: current, deviceChatPreferences: props.deviceChatPreferences })); }
     catch { error.set(t('common.unavailable')); }
   }
   open(props.project, props.directory);
@@ -85,6 +91,9 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
   let alive = true, speech: SpeechSession | undefined, speechOperation = 0;
   let pendingProject: { project: Project | undefined; directory: string } | undefined;
   const current = () => alive && props.active() && owner.current() && !props.switching();
+  const attachmentPicker = createAttachmentPick({ target: { kind: 'session', id: 'new-session-draft' }, current, call: native,
+    busy: attaching.set, receive: attachment => owner.setAttachments([...owner.durable.attachments(), attachment]),
+    failed: (phase, failure, retirement) => { if (alive) error.set(newSessionText('operationFailed')); if (phase === 'cancel' && retirement) reportOwnedError(failure, retirement, 'chat.attachments.retirementPending'); } });
   const selectionEnabled = () => current() && owner.phase() === 'draft' && !owner.submitting();
   let publishedSelection: string | undefined;
   effect(() => {
@@ -96,22 +105,39 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
     publishedSelection = signature;
     untracked(() => props.onSelection?.(owner.directory, selection, draftSelection.agent));
   });
-  const keyboard = createNativeReferenceKeyboard({ active: () => current() && !panel() && mode() === 'normal' && !recording(), scope: () => owner.durable.scope, text: owner.durable.draft, insert: owner.insertReference,
-    chooseCommand: (command, submitIntent, context) => {
-      if (!current()) return false;
-      if (shouldSubmitCommandOnSelection(command, submitIntent)) {
-        owner.setDraftText(context.text.slice(context.end)); Keyboard.dismiss(); panel.set('model');
-      } else {
-        owner.setDraftText(`/${command.name} ${context.text.slice(context.end)}`);
-      }
+  const commandContext = { hasSession: false, hasMessages: false, hasNewDraft: true };
+  const commandRouter = createNativeComposerCommandRouter({
+    read: () => {
+      const operation = owner.operation();
+      if (!current() || !operation?.current() || owner.phase() !== 'draft' || owner.submitting() || ownership.transferred() || owner.durable.status() !== 'ready' || owner.durable.pendingSend() || owner.durable.queueEdit()) return null;
+      return { owner: operation, revision: owner.durable.revision(), document: owner.durable.document(), context: commandContext, inputMode: mode() };
     },
+    write: (next, expected) => {
+      if (!current() || owner.operation() !== expected.owner || owner.durable.revision() !== expected.revision) return false;
+      owner.durable.setDocument(next); return true;
+    },
+    actions: {
+      model: () => { Keyboard.dismiss(); panel.set('model'); },
+      // This route already is the unsent draft. Reopening it is idempotent and
+      // must not replace its durable owner, selection, references or attachments.
+      new: () => { Keyboard.dismiss(); panel.set(null); },
+    },
+    notify: notice => error.set(t(notice === 'session-required' ? 'chat.btw.sessionRequired' : notice === 'plain-text-required' ? 'chat.btw.plainTextRequired' : 'common.unavailable')),
+    submitPass: presetText => { void submit(presetText); },
+  });
+  const keyboard = createNativeReferenceKeyboard({ active: () => current() && !panel() && mode() === 'normal' && !recording(), scope: () => owner.durable.scope, text: owner.durable.draft, insert: owner.insertReference,
+    chooseCommand: commandRouter.choose,
+    commandActions: () => ['new', 'model', 'compact'],
+    commandOwner: owner.operation,
   });
   const stopSpeech = () => { speechOperation++; speech?.abort(); speech = undefined; recording.set(false); };
   effect(() => {
+    owner.operation();
+    untracked(attachmentPicker.sync);
     if (current()) return;
     panel.set(null); keyboard.dismiss(); stopSpeech(); void owner.durable.flush().catch(() => {});
   });
-  cleanup(() => { alive = false; stopSpeech(); });
+  cleanup(() => { alive = false; stopSpeech(); attachmentPicker.dispose(); });
   async function perform(work: () => Promise<unknown>) {
     if (!current() || pending()) return;
     pending.set(true); error.set('');
@@ -120,14 +146,11 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
       if (alive && props.active()) error.set(failure instanceof Error && failure.message === 'new-session-recovery-not-empty' ? newSessionText('recoveryNotEmpty') : failure instanceof Error && failure.message === 'new-session-recovery-directory-mismatch' ? newSessionText('recoveryMismatch') : newSessionText('operationFailed'));
     } finally { if (alive) pending.set(false); }
   }
-  async function submit() {
+  async function submit(presetText?: string) {
     if (!current() || owner.submitting() || ownership.transferred()) return;
-    if (mode() === 'normal' && /^\/model(?:\s|$)/i.test(owner.durable.draft().trim())) {
-      owner.setDraftText(owner.durable.draft().trimStart().replace(/^\/model\s*/i, ''));
-      Keyboard.dismiss(); panel.set('model'); return;
-    }
+    if (owner.phase() === 'draft' && !owner.durable.pendingSend() && !owner.durable.queueEdit() && commandRouter.submit() !== 'pass') return;
     await perform(async () => {
-      const receipt = await owner.submit({ inputMode: mode() });
+      const receipt = await owner.submit({ inputMode: mode(), ...(presetText !== undefined ? { presetText } : {}) });
       if (!receipt || !current()) return;
       Keyboard.dismiss(); panel.set(null); stopSpeech();
       const handoff = ownership.transfer(receipt);
@@ -138,14 +161,10 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
   async function attach() {
     if (!current() || attaching() || mode() === 'shell') return;
     const captured = owner.captureOperation();
-    attaching.set(true);
-    try {
+    await attachmentPicker.pick(captured, async () => {
       const choice = await AlertDialog.show({ title: t('chat.chatInput.actions.addAttachment'), presentation: 'actionSheet', actions: [{ id: 'images', label: t('chat.chatInput.actions.attachPhotos') }, { id: 'files', label: t('chat.chatInput.actions.attachFiles') }, { id: 'cancel', label: t('chat.chatInput.actions.attachCancel'), role: 'cancel' }] });
-      if (!current() || !captured.current() || choice.action !== 'files' && choice.action !== 'images') return;
-      const attachment = await native<Attachment | null>('runtime.pickAttachment', { kind: choice.action });
-      if (current() && captured.current() && attachment) owner.setAttachments([...owner.durable.attachments(), attachment]);
-    } catch { if (current()) error.set(newSessionText('operationFailed')); }
-    finally { if (alive) attaching.set(false); }
+      return choice.action === 'files' || choice.action === 'images' ? choice.action : null;
+    });
   }
   async function dictate() {
     if (recording()) { speech?.stop(); return; }
@@ -171,7 +190,7 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
   const projectTitleIndex = () => owner.project.name ? welcomeTitle().indexOf(owner.project.name) : -1;
   return <View class="flex-1">
     <If when={ownership.transferred()} else={<>
-      <Scroll class="flex-1" contentClass="grow justify-center px-6 py-4 gap-4">
+      <Scroll class="flex-1" contentClass="grow justify-center px-6 py-4 gap-4" contentStyle={nativeDensity().chat.welcome}>
         <View class="items-center">
           <Text class="text-foreground" style={{ fontSize: 30, lineHeight: 36, fontWeight: '400', letterSpacing: -0.75, textAlign: 'center', maxWidth: 448 }}><If when={projectTitleIndex() >= 0} else={welcomeTitle()}>{welcomeTitle().slice(0, projectTitleIndex())}<Text style={{ fontWeight: '500' }}>{owner.project.name}</Text>{welcomeTitle().slice(projectTitleIndex() + owner.project.name.length)}</If></Text>
           <NativeNewSessionStarters owner={owner} active={() => selectionEnabled() && !panel()} visible={() => owner.phase() === 'draft' && keyboardFrame().height === 0} onGestureActiveChange={props.onStarterGestureChange} onSubmit={item => {
@@ -189,12 +208,15 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
         <If when={owner.status() === 'loading' || owner.durable.status() === 'loading'}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If>
         <If when={owner.status() === 'error' || owner.durable.status() === 'error' || !!error()}><View testID="new-session-error" class="gap-2"><Text role="alert" class="text-sm text-destructive">{error() || (owner.durable.status() === 'error' || owner.error() === 'new-session-restore-failed' ? newSessionText('storageFailed') : owner.creationUnknown() ? newSessionText('unknownTitle') : newSessionText('operationFailed'))}</Text><Button testID="new-session-storage-retry" class={action} disabled={!current() || pending() || owner.submitting()} onPress={() => { void perform(owner.retryStorage); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></View></If>
       </Scroll>
-      <View class="px-3 pt-2" style={{ paddingBottom: keyboardFrame().height > 0 ? keyboardFrame().height : safeArea().bottom + 16, transitionProperty: 'all', transitionDuration: keyboardFrame().duration }}>
+      <View class="px-3 pt-2" style={{ ...nativeDensity().chat.composerOuter, paddingBottom: keyboardFrame().height > 0 ? 'calc(env(keyboard-inset-height) + 12px)' : 'calc(env(safe-area-inset-bottom) + 16px)' }}>
         <View class="mb-1.5 px-0.5 flex-row items-center gap-1.5"><Button testID="new-session-project" class="h-[26px] px-1.5 flex-row items-center gap-1.5 rounded-lg active:bg-accent disabled:opacity-40" style={{ maxWidth: '46%' }} hitSlop={8} disabled={!selectionEnabled()} accessibilityLabel={`${owner.project.name || t('sessions.scheduledTasks.dialog.error.chooseProjectFirst')}${owner.directory ? ` ${owner.directory}` : ''}`} onPress={() => { Keyboard.dismiss(); panel.set('project'); }}><View style={{ opacity: 0.8 }}><Icon name="folder" size={14} /></View><Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', opacity: 0.8, flexShrink: 1, numberOfLines: 1 }}>{owner.project.name || t('sessions.scheduledTasks.dialog.error.chooseProjectFirst')}</Text></Button></View>
-        <View testID="new-session-composer-glass" ref={node => anchor.set(node)} class="px-3 pt-1 pb-1" style={nativeComposerSurface}>
+        <View testID="new-session-composer-glass" ref={node => anchor.set(node)} class="px-3 pt-1 pb-1" style={{ ...nativeComposerSurface, ...nativeDensity().chat.composerSurface }}>
           <Each of={owner.durable.attachments()}>{attachment => <View class="flex-row items-center gap-2"><Text class="flex-1 text-sm text-foreground">{attachment().name}</Text><Button testID={`new-session-remove-attachment-${attachment().name}`} class="min-h-10 min-w-10 items-center justify-center" disabled={!current() || owner.submitting()} accessibilityLabel={t('chat.chatInput.actions.attachCancel')} onPress={() => owner.setAttachments(owner.durable.attachments().filter(file => file !== attachment()))}><Icon name="close" size={16} /></Button></View>}</Each>
-          <Input testID="new-session-composer" ref={keyboard.ref} class="min-h-[52px] max-h-36 py-[10px] text-foreground" style={{ ...nativeChatTextStyle('composer'), backgroundColor: 'transparent', borderWidth: 0 }} multiline readonly={recording() || !current()} value={owner.durable.draft()} selectedRange={keyboard.selectedRange()} onFocus={keyboard.onFocus} onBlur={keyboard.onBlur} submitBehavior={keyboard.submitBehavior()} onSubmit={keyboard.onSubmit} onSelectionChange={keyboard.onSelectionChange} onCompositionChange={keyboard.onCompositionChange} onChange={event => { keyboard.beforeChange(); if (!owner.durable.draft() && mode() === 'normal' && event.value.startsWith('!')) { mode.set('shell'); owner.setDraftText(event.value.slice(1)); } else owner.setDraftText(event.value); keyboard.refresh(); }} placeholder={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} />
-          <View class="min-h-10 flex-row items-center gap-1.5">
+          <NativeInputMetadata ownerID="new-session-composer-glass" inputID="new-session-composer" label={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} active={current() && !panel()} />
+          <NativeComposerSpellcheck ownerID="new-session-composer-glass" inputID="new-session-composer" />
+          <NativeComposerPress ownerID="new-session-composer-glass" inputID="new-session-composer" />
+          <Input testID="new-session-composer" accessibilityLabel={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} ref={keyboard.ref} class="min-h-[52px] max-h-36 py-[10px] text-foreground" style={{ ...nativeChatTextStyle('composer'), ...nativeDensity().chat.input, backgroundColor: 'transparent', borderWidth: 0 }} multiline readonly={recording() || !current()} value={owner.durable.draft()} selectedRange={keyboard.selectedRange()} onFocus={keyboard.onFocus} onBlur={keyboard.onBlur} submitBehavior={keyboard.submitBehavior()} onSubmit={keyboard.onSubmit} onSelectionChange={keyboard.onSelectionChange} onCompositionChange={keyboard.onCompositionChange} onChange={event => { keyboard.beforeChange(); if (!owner.durable.draft() && mode() === 'normal' && event.value.startsWith('!')) { mode.set('shell'); owner.setDraftText(event.value.slice(1)); } else owner.setDraftText(event.value); keyboard.refresh(); }} placeholder={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} />
+          <View class="min-h-10 flex-row items-center gap-1.5" style={nativeDensity().chat.actions}>
             <Button testID="new-session-attach" class="size-8 rounded-full items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!current() || attaching() || mode() === 'shell'} accessibilityLabel={t('chat.chatInput.actions.addAttachment')} onPress={() => { void attach(); }}><View style={{ opacity: 0.8 }}><Icon name="attachment-2" size={18} /></View></Button>
             <Button testID="new-session-dictate" class="size-8 rounded-full items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!current() || owner.submitting()} accessibilityLabel={t('chat.dictation.start')} onPress={() => { void dictate(); }}><View style={{ opacity: recording() ? 1 : 0.8 }}><Icon name={recording() ? 'stop' : 'mic'} size={18} /></View></Button>
             <If when={mode() === 'shell'}><Button testID="new-session-normal-mode" class="min-h-10 px-1" accessibilityLabel={t('settings.common.actions.cancel')} onPress={() => mode.set('normal')}><Text class="text-xs text-foreground">! ×</Text></Button></If>
@@ -204,7 +226,7 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
             <NativeComposerSend hasContent={hasContent()} inFlight={owner.submitting()} disabled={!current() || owner.status() === 'loading' || owner.durable.status() !== 'ready' || pending() || attaching() || recording() || !owner.directory || !hasContent() && owner.phase() === 'draft' || owner.creationUnknown()} onPress={() => { void submit(); }} />
           </View>
         </View>
-        <If when={!!keyboard.commandTrigger() && !!anchor() && !panel()}><Overlay testID="new-session-command-panel" anchor={anchor()} placement="top" align="start" offset={8} margin={12} style={{ width: windowSize().width - 24 }} onPressOutside={keyboard.dismiss} onCancel={keyboard.dismiss}><NativeCommandSuggestions scope={owner.durable.scope} keyboard={keyboard} commands={commands()} loadCommands={loadCommands} /></Overlay></If>
+        <If when={!!keyboard.commandTrigger() && !!anchor() && !panel()}><Overlay testID="new-session-command-panel" anchor={anchor()} placement="top" align="start" offset={8} margin={12} style={{ width: windowSize().width - 24 }} onPressOutside={keyboard.dismiss} onCancel={keyboard.dismiss}><NativeCommandSuggestions scope={owner.durable.scope} keyboard={keyboard} commands={commands()} loadCommands={loadCommands} context={commandContext} /></Overlay></If>
         <If when={!!keyboard.trigger() && !!anchor() && !panel()}><Overlay testID="new-session-reference-panel" anchor={anchor()} placement="top" align="start" offset={8} margin={12} style={{ width: windowSize().width - 24 }} onPressOutside={keyboard.dismiss} onCancel={keyboard.dismiss}><NativeReferencePicker scope={owner.durable.scope} keyboard={keyboard} open query={keyboard.trigger()?.query} request={request} onClose={keyboard.dismiss} /></Overlay></If>
       </View>
     </>}><View testID="new-session-transferred" class="p-5 gap-3"><Text class="text-sm text-muted-foreground">{newSessionText('handedOff')}</Text></View></If>
@@ -260,11 +282,13 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
   const open = signal(false), search = signal(''), expanded = signal(false), overflow = signal(false);
   const drag = signal<{ id: string; dx: number; dy: number; over: string | null; rects: StarterRect[]; hidden: Set<string>; shifts: Map<string, { x: number; y: number }> } | null>(null);
   const refs = new Map<string, ViewRef>();
+  const chipRects = signal(new Map<string, StarterRect>());
   let alive = true, wasActive = false, timer: ReturnType<typeof setTimeout> | undefined, gesture = 0, suppressed = false, origin: { x: number; y: number } | undefined;
   let layout: { width: number; height: number } | undefined;
   let touchActive = false, pressedID: string | undefined, measuredItems: StarterItem[] | undefined;
   const current = () => alive && props.active() && props.owner.current();
   const chipsActive = () => current() && props.visible() && !open();
+  const chipVisible = (id: string) => { const rect = chipRects().get(id); return expanded() || !!rect && rect.y >= 0 && rect.y + rect.height <= 28; };
   const hasProject = !!props.owner.project.id && !!props.owner.project.path;
   const items = computed(() => [...resolveStarters(global(), 'global', commands(), skills(), t), ...resolveStarters(project(), 'project', commands(), skills(), t)]);
   const options = computed(() => starterOptions(global(), project(), commands(), skills(), t).filter(item => (item.group !== 'project' || hasProject) && `${item.label} ${item.ref.name}`.toLocaleLowerCase().includes(search().trim().toLocaleLowerCase())));
@@ -343,14 +367,13 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     if (!chipsActive() || ticket !== gesture || !origin) { if (ticket === gesture) cancelDrag(); return; }
     const rects = measured.filter((rect): rect is StarterRect => !!rect), own = rects.find(rect => rect.id === item.id);
     if (!own) { cancelDrag(); return; }
-    const firstRow = Math.min(...rects.filter(rect => rect.id !== STARTER_TRASH).map(rect => rect.y));
-    const hidden = new Set(!expanded() ? rects.filter(rect => rect.id !== STARTER_TRASH && rect.y >= firstRow + 28).map(rect => rect.id) : []);
+    const hidden = new Set(rects.filter(rect => rect.id !== STARTER_TRASH && !chipVisible(rect.id)).map(rect => rect.id));
     if (hidden.has(item.id)) { cancelDrag(); return; }
     suppressed = true; drag.set({ id: item.id, dx: 0, dy: 0, over: item.id, rects: rects.filter(rect => !hidden.has(rect.id)), hidden, shifts: new Map() });
   }
   function startDrag(item: StarterItem, x: number, y: number) {
     cancelDrag(); touchActive = true; pressedID = item.id; suppressed = true;
-    if (!chipsActive() || saving()) return;
+    if (!chipsActive() || !chipVisible(item.id) || saving()) return;
     suppressed = false;
     origin = { x, y }; props.onGestureActiveChange?.(true); const ticket = gesture;
     timer = setTimeout(() => { timer = undefined; suppressed = true; void beginDrag(item, ticket).catch(() => { if (ticket === gesture) cancelDrag(); }); }, 200);
@@ -364,7 +387,8 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     const over = closestStarter(active.rects, own, dx, dy);
     drag.set({ ...active, dx, dy, over, shifts: over === active.over ? active.shifts : starterShifts(active.id, over, active.rects) });
   }
-  function finishDrag() {
+  function finishDrag(event?: { touches: readonly unknown[] }) {
+    if (event && event.touches.length > 0) { touchActive = true; suppressed = true; cancelDrag(); return; }
     touchActive = false;
     const active = drag(); cancelDrag();
     if (!active || !chipsActive()) return;
@@ -379,8 +403,14 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
     layout = { width: next.width, height: next.height };
     const more = next.height > 32; overflow.set(more); if (!more && expanded()) expanded.set(false);
   }
+  function layoutChip(id: string, bounds: { origin: { x: number; y: number }; size: { width: number; height: number } }) {
+    const next = { id, x: bounds.origin.x, y: bounds.origin.y, width: bounds.size.width, height: bounds.size.height }, previous = chipRects().get(id);
+    if (previous && previous.x === next.x && previous.y === next.y && previous.width === next.width && previous.height === next.height) return;
+    if (origin) { suppressed = true; cancelDrag(); }
+    const rects = new Map(chipRects()); rects.set(id, next); chipRects.set(rects);
+  }
   function pressStarter(item: StarterItem) {
-    if (suppressed || !chipsActive() || saving() || pressedID && pressedID !== item.id) return;
+    if (suppressed || !chipsActive() || !chipVisible(item.id) || saving() || pressedID && pressedID !== item.id) return;
     const currentItem = items().find(next => next.id === item.id);
     if (!currentItem) return;
     suppressed = true; props.onSubmit(currentItem);
@@ -388,7 +418,13 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
   const translation = (id: string) => { const active = drag(); return !active ? { x: 0, y: 0 } : active.id === id ? { x: active.dx, y: active.dy } : active.shifts.get(id) ?? { x: 0, y: 0 }; };
   effect(() => {
     const next = items();
-    untracked(() => { if (measuredItems && measuredItems !== next && origin) { suppressed = true; cancelDrag(); } measuredItems = next; });
+    untracked(() => {
+      if (measuredItems && measuredItems !== next && origin) { suppressed = true; cancelDrag(); }
+      measuredItems = next;
+      const ids = new Set(next.map(item => item.id)), previous = chipRects();
+      for (const id of refs.keys()) if (id !== STARTER_TRASH && !ids.has(id)) refs.delete(id);
+      if ([...previous.keys()].some(id => !ids.has(id))) chipRects.set(new Map([...previous].filter(([id]) => ids.has(id))));
+    });
   });
   effect(() => {
     const active = props.active(), enabled = chipsActive();
@@ -398,8 +434,8 @@ function NativeNewSessionStarters(props: { owner: Ownership['owner']; active: ()
   return <>
     <If when={props.visible()}><View class="mt-8 w-full gap-2" style={{ maxWidth: 448 }}>
       <View class="flex-row items-start gap-0.5">
-        <View class="flex-1" style={{ maxHeight: expanded() ? undefined : 28, overflow: expanded() || !!drag() ? 'visible' : 'hidden' }}><View class="flex-row flex-wrap items-center justify-center gap-0.5" onLayout={event => layoutChips(event.bounds.size)}><Each of={items()}>{item => <View ref={ref => refs.set(item().id, ref)} accessibilityElementsHidden={drag()?.hidden.has(item().id) === true} style={{ zIndex: drag()?.id === item().id ? 10 : 0, opacity: drag()?.hidden.has(item().id) ? 0 : drag()?.id === item().id ? 0.6 : 1, pointerEvents: drag()?.hidden.has(item().id) ? 'none' : 'auto', transform: [{ translateX: translation(item().id).x }, { translateY: translation(item().id).y }], transitionProperty: 'transform', transitionDuration: drag()?.id === item().id ? 0 : 200, transitionTimingFunction: 'ease' }} onTouchStartCapture={event => { if (event.touches.length > 1) { touchActive = true; pressedID = undefined; suppressed = true; cancelDrag(); } else startDrag(item(), event.pageX, event.pageY); }} onTouchMoveCapture={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onTouchEndCapture={finishDrag} onTouchCancel={() => { touchActive = false; suppressed = true; cancelDrag(); }} onMoveShouldSetResponderCapture={() => !!drag()} onResponderGrant={() => true} onResponderMove={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onResponderRelease={finishDrag} onResponderTerminate={() => { touchActive = false; suppressed = true; cancelDrag(); }} onResponderTerminationRequest={() => !drag()} onBlur={() => { suppressed = true; cancelDrag(); }}>
-          <Button testID={`new-session-preset-${item().submitText.startsWith('/') ? item().submitText.slice(1) : `skill-${item().ref.name}`}`} class="h-7 px-2 flex-row items-center gap-1 rounded-md active:bg-accent disabled:opacity-40" disabled={!chipsActive() || saving()} onPressDown={() => { if (!touchActive && chipsActive() && !saving()) { pressedID = item().id; suppressed = false; } }} onPress={() => pressStarter(item())}><View style={{ opacity: 0.6 }}><Icon name={item().icon} size={12} color={token('muted-foreground')} /></View><Text class="text-xs text-muted-foreground">{item().label}</Text></Button>
+        <View class="flex-1" style={{ maxHeight: expanded() ? undefined : 28, overflow: expanded() || !!drag() ? 'visible' : 'hidden' }}><View class="flex-row flex-wrap items-center justify-center gap-0.5" onLayout={event => layoutChips(event.bounds.size)}><Each of={items()}>{item => <View ref={ref => refs.set(item().id, ref)} onLayout={event => layoutChip(item().id, event.bounds)} accessibilityElementsHidden={!chipVisible(item().id)} style={{ zIndex: drag()?.id === item().id ? 10 : 0, opacity: !chipVisible(item().id) ? 0 : drag()?.id === item().id ? 0.6 : 1, pointerEvents: !chipVisible(item().id) ? 'none' : 'auto', transform: [{ translateX: translation(item().id).x }, { translateY: translation(item().id).y }], transitionProperty: 'transform', transitionDuration: drag()?.id === item().id ? 0 : 200, transitionTimingFunction: 'ease' }} onTouchStartCapture={event => { if (event.touches.length > 1) { touchActive = true; pressedID = undefined; suppressed = true; cancelDrag(); } else startDrag(item(), event.pageX, event.pageY); }} onTouchMoveCapture={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onTouchEndCapture={finishDrag} onTouchCancel={() => { touchActive = false; suppressed = true; cancelDrag(); }} onMoveShouldSetResponderCapture={() => !!drag()} onResponderGrant={() => true} onResponderMove={event => moveDrag(event.pageX, event.pageY, event.touches.length)} onResponderRelease={finishDrag} onResponderTerminate={() => { touchActive = false; suppressed = true; cancelDrag(); }} onResponderTerminationRequest={() => !drag()} onBlur={() => { suppressed = true; cancelDrag(); }}>
+          <Button testID={`new-session-preset-${item().submitText.startsWith('/') ? item().submitText.slice(1) : `skill-${item().ref.name}`}`} class="h-7 px-2 flex-row items-center gap-1 rounded-md active:bg-accent disabled:opacity-40" disabled={!chipsActive() || !chipVisible(item().id) || saving()} onPressDown={() => { if (!touchActive && chipsActive() && chipVisible(item().id) && !saving()) { pressedID = item().id; suppressed = false; } }} onPress={() => pressStarter(item())}><View style={{ opacity: 0.6 }}><Icon name={item().icon} size={12} color={token('muted-foreground')} /></View><Text class="text-xs text-muted-foreground">{item().label}</Text></Button>
         </View>}</Each></View></View>
         <If when={overflow() || expanded()}><Button testID="new-session-presets-expand" class="size-6 rounded-md items-center justify-center active:bg-accent" hitSlop={6} accessibilityLabel={t(expanded() ? 'chat.draftStarters.collapse' : 'chat.draftStarters.expand')} onPress={() => { if (!chipsActive() || saving()) return; if (touchActive) suppressed = true; cancelDrag(); expanded.set(!expanded()); }}><Icon name={expanded() ? 'arrow-up-s' : 'arrow-down-s'} size={14} /></Button></If>
         <View ref={ref => refs.set(STARTER_TRASH, ref)}><If when={!!drag()} else={<Button testID="new-session-presets-add" class="size-6 rounded-md items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!props.active() || loading() || saving() || !globalReady() || !projectReady()} accessibilityLabel={t('chat.draftStarters.add')} onPress={() => { if (!chipsActive() || loading() || saving() || !globalReady() || !projectReady()) return; suppressed = true; cancelDrag(); Keyboard.dismiss(); search.set(''); open.set(true); error.set(''); void loadCatalog(); }}><Icon name="add" size={14} color={token('muted-foreground')} /></Button>}><View testID="new-session-presets-trash" accessibilityLabel={t('chat.draftStarters.remove')} class="size-6 items-center justify-center rounded-md"><Icon name="delete-bin" size={14} color={token(drag()?.over === STARTER_TRASH ? 'destructive' : 'muted-foreground')} /></View></If></View>

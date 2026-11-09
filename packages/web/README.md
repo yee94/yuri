@@ -24,6 +24,11 @@ Full project overview, screenshots, and all features: [github.com/yee94/yuri](ht
 
 ## Repository HMR development
 
+The browser graph filter retains the existing import-free notification admission
+wire validator at `server/lib/notifications/admission-event.js`, which both clients
+already consume. Other server implementation files remain excluded; this narrow
+exception does not expose notification delivery, credentials or server transports.
+
 The web Files API (also used by Electron and hosted/native mobile) searches
 through the shared V2 client's `file.find` (`/api/fs/find`). A typed
 `LocationNotFoundError` skips a deleted project/worktree without a UI error;

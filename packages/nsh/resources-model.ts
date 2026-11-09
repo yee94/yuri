@@ -1,7 +1,8 @@
 export type ResourceEntry = { name: string; path: string; isDirectory: boolean; size?: number };
-export type ResourceKind = 'text' | 'image' | 'pdf' | 'video' | 'audio' | 'binary';
-export type ResourcePreview = 'quicklook' | 'avkit' | 'unsupported';
-export type ResourceContent = { kind: ResourceKind; preview?: ResourcePreview; previewError?: string; text?: string; thumbnail?: string; lease: string; size: number };
+export type ResourceKind = 'text' | 'svg' | 'image' | 'pdf' | 'video' | 'audio' | 'binary';
+export type ResourcePreview = 'quicklook' | 'avkit' | 'svg-image' | 'unsupported';
+export type ResourceStat = { size: number; mtimeMs: number; isBinary: boolean };
+export type ResourceContent = { kind: ResourceKind; preview?: ResourcePreview; previewError?: string; text?: string; thumbnail?: string; lease: string; size: number; stat?: ResourceStat };
 export const RESOURCE_TEXT_LIMIT = 1_000_000;
 export const RESOURCE_BINARY_LIMIT = 25 * 1024 * 1024;
 /** Format admission is not codec support: Swift must probe the protected local asset. */
@@ -11,6 +12,7 @@ export function resourceKind(path: string, mime = '', binary = false, containsNu
   const type = mime.split(';')[0].trim().toLowerCase();
   if (['m3u', 'm3u8', 'pls', 'mpd'].includes(ext) || ['application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl', 'application/dash+xml'].includes(type)) return 'binary';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext)) return 'image';
+  if (ext === 'svg' || type === 'image/svg+xml') return 'svg';
   if (ext === 'pdf') return 'pdf';
   if (type.startsWith('video/')) return 'video';
   if (type.startsWith('audio/')) return 'audio';
@@ -56,6 +58,14 @@ export function resourceServeRoute(path: string): string {
   return '/api/fs/serve' + resourcePath(path).split('/').map(encodeURIComponent).join('/');
 }
 export const resourceFindRoute = (directory: string, query: string) => `/api/fs/find?location%5Bdirectory%5D=${encodeURIComponent(directory)}&query=${encodeURIComponent(query)}&limit=40&type=file`;
+export const resourceWatchable = (path: string) => resourceKind(path) !== 'image';
+export function resourceStatFrom(value: unknown): ResourceStat {
+  if (!value || typeof value !== 'object' || !('isFile' in value) || value.isFile !== true
+    || !('size' in value) || typeof value.size !== 'number' || !Number.isFinite(value.size) || value.size < 0
+    || !('mtimeMs' in value) || typeof value.mtimeMs !== 'number' || !Number.isFinite(value.mtimeMs)
+    || !('isBinary' in value) || typeof value.isBinary !== 'boolean') throw new Error('Invalid file stat');
+  return { size: value.size, mtimeMs: value.mtimeMs, isBinary: value.isBinary };
+}
 export function resourceSearchEntries(value: unknown, directory: string, root: string): ResourceEntry[] {
   if (!value || typeof value !== 'object' || !('data' in value) || !Array.isArray(value.data)) throw new Error('Invalid file search');
   return value.data.map((item: unknown) => {

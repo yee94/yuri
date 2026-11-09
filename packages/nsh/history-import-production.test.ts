@@ -88,7 +88,7 @@ function uiModule(f: ReturnType<typeof prepared>, boundary?: { id: () => string;
     nsh: { signal, computed: (work: () => unknown) => work, cleanup: (work: () => void) => cleanups.push(work), effect: (work: () => void) => effects.push(work), untracked: (work: () => unknown) => work(), lifecycle: () => 'active', colorScheme: () => 'light', locale: () => 'en', reduceMotion: () => true, Image: 'Image', View: 'View', Scroll: 'Scroll', Text: 'Text' },
     'nsh/base': { Button: 'Button', NavPage: 'NavPage', Progress: 'Progress', Sheet: 'Sheet', TextView: 'TextView' },
     './native-sheet': { NativeSheet: 'Sheet' },
-    './appearance': { nativeAppearance: { current: () => null } }, './i18n': { language: () => 'en', t: (key: string) => key }, './Icon': { Icon: 'Icon' },
+    './appearance': { nativeAppearance: { current: () => null }, nativeCodeTextViewStyles: () => ({}) }, './i18n': { language: () => 'en', t: (key: string) => key }, './Icon': { Icon: 'Icon' },
     './state': { app: { connection: () => ({ id: boundary?.id() ?? historyImportTestScope.hostID }), runtimeScope: () => ({ hostID: boundary?.id() ?? historyImportTestScope.hostID, lease: boundary?.lease() ?? historyImportTestScope.lease }) }, epoch: () => boundary?.epoch() ?? 1, captureHostRequest: () => f.send },
     './runtime': { bindRawRequest: f.bindRaw }, './runtime-scope': scopes,
     './history-import-core': core, './history-import-protocol': protocol, './settings-controls': { SettingsGroup: 'SettingsGroup', settingsAction: 'neutral-action' },
@@ -196,7 +196,8 @@ describe('actual native factory and TSX event closures (inert JSX, not an NSH re
 it('all history-import production modules, fixtures and tests type-check against actual generated declarations', () => {
   const config = ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile), parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   const names = ['.nsh/types/nsh/globals.d.ts', '.nsh/types/nsh/assets.d.ts', '.nsh/types/nsh/tokens.d.ts', 'history-import-protocol.ts', 'history-import-core.ts', 'history-import.tsx', 'history-import-test-host.ts', 'history-import-core.test.ts', 'history-import-production.test.ts', 'setup-tour.tsx', 'setup-tour-details.tsx', 'application.tsx', 'App.tsx'];
-  const program = ts.createProgram(names.map(file => path.join(root, file)), { ...parsed.options, types: ['node'] });
+  const declarations = parsed.fileNames.filter(file => file.endsWith('.d.ts'));
+  const program = ts.createProgram([...new Set([...names.map(file => path.join(root, file)), ...declarations])], { ...parsed.options, types: ['node'] });
   const diagnostics = ts.getPreEmitDiagnostics(program).map(diagnostic => { const position = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0); return `${diagnostic.file ? path.relative(root, diagnostic.file.fileName) : 'compiler'}:${(position?.line ?? 0) + 1}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`; });
   expect(diagnostics).toEqual([]);
 }, 30_000);

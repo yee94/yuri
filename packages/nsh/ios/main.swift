@@ -5,6 +5,22 @@ import NativeShell
     var window: UIWindow?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         NotificationLaunchDelegate.shared.install()
+        let navigationAppearance = UINavigationBarAppearance()
+        navigationAppearance.configureWithDefaultBackground()
+        navigationAppearance.backgroundColor = .clear
+        navigationAppearance.shadowColor = .clear
+        let navigationBar = UINavigationBar.appearance()
+        navigationBar.standardAppearance = navigationAppearance
+        navigationBar.scrollEdgeAppearance = navigationAppearance
+        navigationBar.compactAppearance = navigationAppearance
+        navigationBar.compactScrollEdgeAppearance = navigationAppearance
+        let tabAppearance = UITabBarAppearance()
+        tabAppearance.configureWithDefaultBackground()
+        tabAppearance.backgroundColor = .clear
+        tabAppearance.shadowColor = .clear
+        let tabBar = UITabBar.appearance()
+        tabBar.standardAppearance = tabAppearance
+        tabBar.scrollEdgeAppearance = tabAppearance
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = YuriController()
         window.makeKeyAndVisible(); self.window = window
@@ -31,6 +47,8 @@ import NativeShell
     private var attachments: AttachmentBridge?
     private var resources: ResourceBridge?
     private var resourceWebPreview: ResourceWebPreviewBridge?
+    private var guiPluginPreview: GuiPluginPreviewBridge?
+    private var guiPluginResources: GuiPluginPreviewResources?
     private var appearance: AppearanceBridge?
     private var speech: SpeechPlaybackBridge?
     private var recognition: VoiceRecognitionBridge?
@@ -40,6 +58,9 @@ import NativeShell
     private var scheduleDate: ScheduleDateBridge?
     private var diagnostics: DiagnosticsBridge?
     private var notifications: NotificationBridge?
+    private var passkeys: PasskeyBridge?
+    private var shutdownTask: Task<Void, Never>?
+    private var authorizationCacheCleanup: AuthorizationCacheCleanupBridge?
     private var pendingLink: URL?
     private var visible = false
     override func viewDidLoad() {
@@ -55,6 +76,13 @@ import NativeShell
             bridge = RuntimeBridge(app: surface, store: try ConnectionStore())
             if let bridge {
                 bridge.setForeground(UIApplication.shared.applicationState != .background)
+                let passkeys = PasskeyBridge(app: surface, presenter: self,
+                    associatedDomains: Set(Bundle.main.object(forInfoDictionaryKey: "YuriWebcredentialsDomains") as? [String] ?? []),
+                    capture: { [weak bridge] expectedHost in
+                        guard let bridge else { throw CancellationError() }
+                        return try bridge.passkeyTransport(expectedHost: expectedHost)
+                    })
+                self.passkeys = passkeys
                 let appearance = AppearanceBridge(app: surface, selectedHost: { [weak bridge] in bridge?.store.selected?.id })
                 self.appearance = appearance
                 let scheduleDate = ScheduleDateBridge(app: surface, capture: { [weak bridge] in
@@ -75,8 +103,22 @@ import NativeShell
                     return NotificationHostScope(hostID: selected.id, isCurrent: transport.isCurrent, authorizationID: selected.authorizationID)
                 })
                 self.notifications = notifications
-                bridge.onAuthorizationRetired = { [weak notifications] connectionID, authorizationID in
-                    guard let notifications else { throw CancellationError() }
+                let cacheCleanup = AuthorizationCacheCleanupBridge(app: surface, pending: { [weak bridge] in
+                    Set((bridge?.store.pendingAuthorizationRetirements ?? []).map {
+                        AuthorizationCacheCleanup.Identity(connectionID: $0.connectionID, authorizationID: $0.authorizationID)
+                    })
+                }, afterSweep: { [weak bridge] in
+                    guard let bridge else { throw CancellationError() }
+                    await bridge.retryAuthorizationRetirements()
+                    guard let failed = bridge.authorizationRetirementStatus["failed"] as? Int, failed == 0 else {
+                        throw NativeFailure.message("authorization_cleanup_failed")
+                    }
+                })
+                self.authorizationCacheCleanup = cacheCleanup
+                bridge.onAuthorizationRetired = { [weak notifications, weak cacheCleanup] connectionID, authorizationID in
+                    guard let notifications, let cacheCleanup else { throw CancellationError() }
+                    cacheCleanup.requestSweep()
+                    try cacheCleanup.requireCompletion(connectionID: connectionID, authorizationID: authorizationID)
                     try await notifications.retireAuthorization(connectionID: connectionID, authorizationID: authorizationID)
                 }
                 Task { [weak bridge] in await bridge?.retryAuthorizationRetirements() }
@@ -96,13 +138,51 @@ import NativeShell
                 })
                 self.resources = resources
                 resources.install(on: surface)
+                resources.installPresentationAnchor(on: surface)
+                let svgResolve: ResourceSVGImageFactory.Resolve = { [weak resources] lease, expectedHost in
+                    guard let resources else { throw CancellationError() }
+                    let asset = try resources.svgAsset(lease, expectedHost: expectedHost)
+                    return ResourceSVGImageAsset(url: asset.url, current: asset.current, observeRetirement: asset.observe)
+                }
+                ResourceSVGImageFactory.install(on: surface, resolve: svgResolve)
+                resources.makeSVGPreview = { lease, expectedHost in
+                    try ResourceSVGImageFactory.controller(lease: lease, expectedHost: expectedHost, resolve: svgResolve)
+                }
                 let resourceWebPreview = ResourceWebPreviewBridge(controller: self, capture: { [weak bridge] expectedHost in
                     guard let bridge else { throw CancellationError() }
                     return try bridge.resourceWebPreviewTransport(expectedHost: expectedHost)
                 })
                 self.resourceWebPreview = resourceWebPreview
                 resourceWebPreview.install(on: surface)
-                let speech = SpeechPlaybackBridge(app: surface, capture: { [weak bridge] in
+                resourceWebPreview.initialFile = { [weak resources] lease, path, expectedHost in
+                    guard let resources else { throw CancellationError() }
+                    let original = try resources.htmlInitial(lease, path: path, expectedHost: expectedHost)
+                    return ResourceWebPreviewResponse(status: 200, mime: original.mime, data: original.data)
+                }
+                resourceWebPreview.installView(on: surface, covered: { [weak resources] owner in resources?.ownsPresentation(owner) == true })
+                let guiPluginPreview = GuiPluginPreviewBridge(controller: self, capture: { [weak self, weak bridge] expectedHost in
+                    guard let self, let bridge else { throw CancellationError() }
+                    let io = try bridge.guiPluginPreviewCapture(expectedHost: expectedHost)
+                    if self.guiPluginResources == nil {
+                        guard let staged = Bundle.main.url(forResource: "gui-plugin-preview", withExtension: nil) else { throw GuiPluginPreviewFailure.unavailable }
+                        let storage = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                            .appendingPathComponent("gui-plugin-storage", isDirectory: true)
+                        self.guiPluginResources = try GuiPluginPreviewResources(stagedDirectory: staged, storageDirectory: storage)
+                    }
+                    guard let resources = self.guiPluginResources else { throw GuiPluginPreviewFailure.unavailable }
+                    var captured = try resources.capture(expectedHost: io.expectedHost,
+                        isCurrent: { expected in expected == io.expectedHost && io.isCurrent() },
+                        resource: io.resource, readGui: io.readGui, openGui: io.openGui)
+                    captured.isHostResourceURL = io.isHostResourceURL
+                    return captured
+                })
+                self.guiPluginPreview = guiPluginPreview
+                guiPluginPreview.install(on: surface)
+                let speech = SpeechPlaybackBridge(app: surface, captureVoices: { [weak bridge] expected in
+                    guard let bridge else { throw CancellationError() }
+                    let captured = try bridge.resourceTransport(expectedHost: expected)
+                    return NativeSpeechVoiceScope(expectedHost: expected, isCurrent: captured.isCurrent)
+                }, capture: { [weak bridge] in
                     guard let bridge else { throw CancellationError() }
                     return try bridge.resourceTransport()
                 })
@@ -117,9 +197,10 @@ import NativeShell
                     return try bridge.remoteDesktopTransport()
                 })
                 self.remoteDesktop = remoteDesktop
-                bridge.onInvalidate = { [weak self, weak resources, weak appearance, weak speech, weak recognition, weak remoteDesktop, weak terminal, weak terminalPage, weak resourceWebPreview, weak diagnostics, weak notifications] in
+                bridge.onInvalidate = { [weak self, weak resources, weak appearance, weak speech, weak recognition, weak remoteDesktop, weak terminal, weak terminalPage, weak resourceWebPreview, weak guiPluginPreview, weak diagnostics, weak notifications] in
                     resources?.invalidate()
                     resourceWebPreview?.invalidate()
+                    guiPluginPreview?.invalidate()
                     speech?.invalidate()
                     recognition?.invalidate()
                     remoteDesktop?.invalidate()
@@ -129,11 +210,31 @@ import NativeShell
                     notifications?.invalidate()
                     do { try appearance?.invalidate() } catch { self?.surface.send("appearance.error", ["message": "原生外观重置失败"]) }
                 }
-                let attachments = AttachmentBridge(controller: self, runtime: bridge)
+                let attachmentStorage = surface.storageDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("nsh", isDirectory: true).appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.yee94.yuri.nsh", isDirectory: true)
+                let attachments = AttachmentBridge(controller: self, runtime: bridge, journal: AttachmentReceiptJournal(directory: attachmentStorage))
                 self.attachments = attachments
                 surface.handle("runtime.pickAttachment") { [weak attachments] input async throws -> Any? in
                     guard let attachments else { throw CancellationError() }
                     return try await attachments.pick(input)
+                }
+                surface.handle("runtime.cancelAttachment") { [weak attachments] input async throws -> Any? in
+                    guard let attachments else { throw CancellationError() }
+                    try await attachments.retirePick(input)
+                    return nil
+                }
+                surface.handle("runtime.reconcileAttachment") { [weak attachments] input async throws -> Any? in
+                    guard let attachments else { throw CancellationError() }
+                    return try await attachments.reconcilePick(input)
+                }
+                surface.handle("runtime.pendingAttachments") { [weak attachments] input async throws -> Any? in
+                    guard let attachments else { throw CancellationError() }
+                    return try attachments.pendingReceipts(input)
+                }
+                surface.handle("runtime.acknowledgeAttachment") { [weak attachments] input async throws -> Any? in
+                    guard let attachments else { throw CancellationError() }
+                    try attachments.acknowledgePick(input)
+                    return nil
                 }
             }
             surface.handle("camera.scan") { [weak self] _, reply in
@@ -141,7 +242,11 @@ import NativeShell
                 self.scan(reply)
             }
             NavigationBridge.install(on: surface)
+            FeedbackLayoutBridge.install(on: surface)
             NewSessionPickerOwners.install(on: surface)
+            NativeInputMetadataOwner.install(on: surface)
+            NativeComposerSpellcheck.install(on: surface)
+            NativeComposerPress.install(on: surface)
             guard let bundle = Bundle.main.url(forResource: "bundle", withExtension: "nshc", subdirectory: "nsh") else { throw NativeFailure.message("未找到原生应用资源") }
             try surface.loadBundle(at: bundle)
         } catch {
@@ -164,22 +269,32 @@ import NativeShell
         super.viewDidAppear(animated); visible = true; confirmLinkIfReady()
     }
     override func viewDidDisappear(_ animated: Bool) { super.viewDidDisappear(animated); visible = false }
-    func suspendResourcePreview() { terminal?.setForeground(false); bridge?.setForeground(false); resourceWebPreview?.invalidate() }
+    func suspendResourcePreview() { terminal?.setForeground(false); bridge?.setForeground(false); resourceWebPreview?.invalidate(); guiPluginPreview?.invalidate() }
     func resumeRuntime() {
         bridge?.setForeground(true); terminal?.setForeground(true)
+        authorizationCacheCleanup?.requestSweep()
         Task { [weak bridge] in await bridge?.retryAuthorizationRetirements() }
     }
-    func shutdown() { Self.shutdown(bridge: bridge, notifications: notifications, diagnostics: diagnostics, recognition: recognition, terminal: terminal, terminalPage: terminalPage) }
-    private static func shutdown(bridge: RuntimeBridge?, notifications: NotificationBridge?, diagnostics: DiagnosticsBridge?, recognition: VoiceRecognitionBridge?, terminal: TerminalBridge?, terminalPage: NativeTerminalPreview?) {
-        withExtendedLifetime((notifications, diagnostics, recognition, terminal, terminalPage)) {
+    func shutdown() {
+        guard shutdownTask == nil else { return }
+        let passkeys = passkeys
+        Self.shutdown(bridge: bridge, notifications: notifications, diagnostics: diagnostics, recognition: recognition, terminal: terminal, terminalPage: terminalPage, guiPluginPreview: guiPluginPreview)
+        shutdownTask = Task { @MainActor in await passkeys?.close() }
+    }
+    private static func shutdown(bridge: RuntimeBridge?, notifications: NotificationBridge?, diagnostics: DiagnosticsBridge?, recognition: VoiceRecognitionBridge?, terminal: TerminalBridge?, terminalPage: NativeTerminalPreview?, guiPluginPreview: GuiPluginPreviewBridge?) {
+        withExtendedLifetime((notifications, diagnostics, recognition, terminal, terminalPage, guiPluginPreview)) {
             let installed = bridge?.onInvalidate != nil
             bridge?.stop()
-            if !installed { notifications?.invalidate(); diagnostics?.invalidate(); recognition?.invalidate(); terminalPage?.invalidate(); terminal?.invalidate() }
+            if !installed { notifications?.invalidate(); diagnostics?.invalidate(); recognition?.invalidate(); terminalPage?.invalidate(); terminal?.invalidate(); guiPluginPreview?.invalidate() }
         }
     }
     deinit {
-        let bridge = bridge, notifications = notifications, diagnostics = diagnostics, recognition = recognition, terminal = terminal, terminalPage = terminalPage
-        Task { @MainActor in Self.shutdown(bridge: bridge, notifications: notifications, diagnostics: diagnostics, recognition: recognition, terminal: terminal, terminalPage: terminalPage) }
+        let bridge = bridge, notifications = notifications, diagnostics = diagnostics, recognition = recognition, terminal = terminal, terminalPage = terminalPage, guiPluginPreview = guiPluginPreview, passkeys = passkeys, pendingShutdown = shutdownTask
+        Task { @MainActor in
+            if let pendingShutdown { await pendingShutdown.value; return }
+            Self.shutdown(bridge: bridge, notifications: notifications, diagnostics: diagnostics, recognition: recognition, terminal: terminal, terminalPage: terminalPage, guiPluginPreview: guiPluginPreview)
+            await passkeys?.close()
+        }
     }
     private func confirmLinkIfReady() {
         guard visible, presentedViewController == nil, let link = pendingLink else { return }

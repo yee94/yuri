@@ -4,15 +4,48 @@ export type ChangesSnapshot = {
   tracking?: string | null;
   ahead?: number;
   behind?: number;
+  oversized?: boolean;
   files: Array<{ path: string; index: string; working_dir: string }>;
   diffStats?: Record<string, { insertions: number; deletions: number }>;
 };
-export type HistoricalChange = { path: string; patch?: string; before?: string; after?: string; isBinary?: boolean };
+export type HistoricalChange = { path: string; patch?: string; before?: string; after?: string; isBinary?: boolean; status?: 'added' | 'deleted' | 'modified' | 'renamed' };
 export type ChangesSource =
   | { kind: 'workspace'; directory: string; path?: string; staged?: boolean; targetLine?: number }
   | { kind: 'turn'; directory: string; sessionID: string; messageID: string; files: HistoricalChange[]; path?: string; targetLine?: number; revision?: string | number; loadFile?: (path: string) => Promise<HistoricalChange> };
 export type ChangesRead = (path: string) => Promise<unknown>;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
+let authorityRevision = 0;
+/** One monotonic order for status dispatch and write completion, independent of wall-clock time. */
+export const nextChangesAuthorityRevision = () => ++authorityRevision;
+
+function validHistoricalPatch(patch: string) {
+  let hunks = 0, changed = false, oldRemaining = 0, newRemaining = 0;
+  for (const line of patch.split('\n')) {
+    const header = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@(?:.*)$/.exec(line);
+    if (header) {
+      if (oldRemaining || newRemaining) return false;
+      hunks++; oldRemaining = header[1] === undefined ? 1 : Number(header[1]); newRemaining = header[2] === undefined ? 1 : Number(header[2]);
+    } else if (oldRemaining || newRemaining) {
+      if (line.startsWith(' ')) { oldRemaining--; newRemaining--; }
+      else if (line.startsWith('-')) { oldRemaining--; changed = true; }
+      else if (line.startsWith('+')) { newRemaining--; changed = true; }
+      else if (!line.startsWith('\\ No newline at end of file')) return false;
+      if (oldRemaining < 0 || newRemaining < 0) return false;
+    } else if (hunks && /^[ +\-]/.test(line) && !/^(--- |\+\+\+ )/.test(line)) return false;
+  }
+  return hunks > 0 && changed && oldRemaining === 0 && newRemaining === 0;
+}
+
+function historicalBody(file: HistoricalChange): HistoricalChange | null {
+  if (file.isBinary === true || typeof file.patch === 'string' && /^(Binary files .+ differ|GIT binary patch)$/m.test(file.patch)) return { ...file, isBinary: true };
+  if (typeof file.patch === 'string' && file.patch.trim() && validHistoricalPatch(file.patch)) return file;
+  if (typeof file.before === 'string' && typeof file.after === 'string') {
+    // An invalid patch must not outrank a complete text pair in DiffView.
+    const { patch: _patch, ...pair } = file;
+    return pair;
+  }
+  return null;
+}
 
 async function historicalFile(source: Extract<ChangesSource, { kind: 'turn' }>, path: string, read: ChangesRead, current: () => boolean): Promise<HistoricalChange> {
   const query = `directory=${encodeURIComponent(source.directory)}&messageID=${encodeURIComponent(source.messageID)}`;
@@ -27,7 +60,8 @@ async function historicalFile(source: Extract<ChangesSource, { kind: 'turn' }>, 
     diff = object(Array.isArray(legacy.data) ? legacy.data.find(value => object(value).file === path) : undefined);
   }
   if (diff.file !== path) throw new Error('Historical diff body unavailable');
-  return { path, ...(typeof diff.patch === 'string' ? { patch: diff.patch } : {}), ...(typeof diff.before === 'string' ? { before: diff.before } : {}), ...(typeof diff.after === 'string' ? { after: diff.after } : {}), ...(typeof diff.isBinary === 'boolean' ? { isBinary: diff.isBinary } : {}) };
+  const status = diff.status === 'added' || diff.status === 'deleted' || diff.status === 'modified' || diff.status === 'renamed' ? diff.status : undefined;
+  return { path, ...(typeof diff.patch === 'string' ? { patch: diff.patch } : {}), ...(typeof diff.before === 'string' ? { before: diff.before } : {}), ...(typeof diff.after === 'string' ? { after: diff.after } : {}), ...(typeof diff.isBinary === 'boolean' ? { isBinary: diff.isBinary } : {}), ...(status ? { status } : {}) };
 }
 
 export function changesSnapshot(value: unknown): ChangesSnapshot {
@@ -47,7 +81,7 @@ export function changesSnapshot(value: unknown): ChangesSnapshot {
       diffStats[path] = { insertions: stats.insertions, deletions: stats.deletions };
     }
   }
-  return { isClean: body.isClean, files, diffStats, ...(typeof body.current === 'string' ? { current: body.current } : {}), ...(typeof body.tracking === 'string' || body.tracking === null ? { tracking: body.tracking } : {}), ...(typeof body.ahead === 'number' ? { ahead: body.ahead } : {}), ...(typeof body.behind === 'number' ? { behind: body.behind } : {}) };
+  return { isClean: body.isClean, files, diffStats, ...(typeof body.current === 'string' ? { current: body.current } : {}), ...(typeof body.tracking === 'string' || body.tracking === null ? { tracking: body.tracking } : {}), ...(typeof body.ahead === 'number' ? { ahead: body.ahead } : {}), ...(typeof body.behind === 'number' ? { behind: body.behind } : {}), ...(typeof body.oversized === 'boolean' ? { oversized: body.oversized } : {}) };
 }
 
 export function changeGroups(snapshot: ChangesSnapshot | null) {
@@ -74,21 +108,31 @@ export function patchLines(patch: string): PatchLine[] {
   });
 }
 
-type ChangesState = { snapshot: ChangesSnapshot | null; loading: boolean; error: string; path: string; staged: boolean; diff: HistoricalChange | null; diffLoading: boolean; diffError: string };
+type ChangesState = { snapshot: ChangesSnapshot | null; statusAuthorityRevision: number; gitRepository: boolean | null; loading: boolean; error: string; path: string; staged: boolean; diff: HistoricalChange | null; diffLoading: boolean; diffError: string };
 /** A page-owned reader, not a second cache: close/Host/selection fences all awaits. */
 export function createChangesReader(source: ChangesSource, read: ChangesRead, current: () => boolean = () => true, notify: () => void = () => {}) {
-  let state: ChangesState = { snapshot: null, loading: false, error: '', path: '', staged: false, diff: null, diffLoading: false, diffError: '' };
+  let state: ChangesState = { snapshot: null, statusAuthorityRevision: 0, gitRepository: null, loading: false, error: '', path: '', staged: false, diff: null, diffLoading: false, diffError: '' };
   let statusSerial = 0, diffSerial = 0;
   const update = (next: Partial<ChangesState>) => { state = { ...state, ...next }; notify(); };
   const failure = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
   async function refresh() {
     if (!current() || source.kind === 'turn') return;
     const serial = ++statusSerial;
+    const readRevision = nextChangesAuthorityRevision();
     update({ loading: true });
     try {
       const snapshot = changesSnapshot(await read(`/api/git/status?directory=${encodeURIComponent(source.directory)}`));
-      if (current() && serial === statusSerial) update({ snapshot, error: '' });
-    } catch (cause) { if (current() && serial === statusSerial) update({ error: failure(cause) }); }
+      if (current() && serial === statusSerial) update({ snapshot, statusAuthorityRevision: readRevision, gitRepository: true, error: '' });
+    } catch (cause) {
+      if (current() && serial === statusSerial) {
+        update({ error: failure(cause) });
+        try {
+          // A status error alone never means "not Git" or an empty working tree.
+          const check = object(await read(`/api/git/check?directory=${encodeURIComponent(source.directory)}`));
+          if (current() && serial === statusSerial && check.isGitRepository === false) update({ gitRepository: false, snapshot: null, error: '' });
+        } catch { /* Preserve the original failed status and its prior snapshot. */ }
+      }
+    }
     finally { if (current() && serial === statusSerial) update({ loading: false }); }
   }
   async function select(path: string, staged = false) {
@@ -99,15 +143,15 @@ export function createChangesReader(source: ChangesSource, read: ChangesRead, cu
     try {
       let diff: HistoricalChange;
       if (source.kind === 'workspace') {
-        const body = object(await read(`/api/git/diff?directory=${encodeURIComponent(source.directory)}&path=${encodeURIComponent(path)}&staged=${staged}`));
-        if (typeof body.diff !== 'string') throw new Error('Invalid Git diff');
-        diff = { path, patch: body.diff, isBinary: /^(Binary files .+ differ|GIT binary patch)/m.test(body.diff) };
+        const body = object(await read(`/api/git/file-diff?directory=${encodeURIComponent(source.directory)}&path=${encodeURIComponent(path)}&staged=${staged}`));
+        if (typeof body.original !== 'string' || typeof body.modified !== 'string') throw new Error('Invalid Git file diff');
+        diff = { path, before: body.original, after: body.modified, isBinary: body.isBinary === true };
       } else {
         const file = source.files.find(file => file.path === path);
         if (!file) throw new Error('Historical file unavailable');
-        const hasBody = (file: HistoricalChange) => typeof file.patch === 'string' || typeof file.before === 'string' || typeof file.after === 'string' || file.isBinary === true;
-        diff = hasBody(file) ? file : source.loadFile ? await source.loadFile(path) : await historicalFile(source, path, read, () => current() && serial === diffSerial);
-        if (diff.path !== path || !hasBody(diff)) throw new Error('Historical diff body unavailable');
+        const body = historicalBody(file) ?? historicalBody(source.loadFile ? await source.loadFile(path) : await historicalFile(source, path, read, () => current() && serial === diffSerial));
+        if (!body || body.path !== path) throw new Error('Historical diff body unavailable');
+        diff = body;
       }
       if (current() && serial === diffSerial) update({ diff, diffError: '' });
     } catch (cause) { if (current() && serial === diffSerial) update({ diffError: failure(cause) }); }

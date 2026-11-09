@@ -25,9 +25,11 @@ const server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0,
     if (url.pathname === '/api/fs/stat') return Response.json({exists:true});
     if (url.pathname === '/api/yuri/events' || url.pathname === '/api/event') {
       let timer;
+      const key = url.pathname === '/api/event' ? 'chat' : 'global';
+      const tick = new TextEncoder().encode(`data: ${JSON.stringify({type:`gui.isolation.${key}.tick`})}\n\n`);
       return new Response(new ReadableStream({start(controller){
-        controller.enqueue(new TextEncoder().encode('data: tick\n\n'));
-        timer=setInterval(()=>controller.enqueue(new TextEncoder().encode('data: tick\n\n')),100);
+        controller.enqueue(tick);
+        timer=setInterval(()=>controller.enqueue(tick),100);
       },cancel(){clearInterval(timer);}}),{headers:{'content-type':'text/event-stream'}});
     }
     if (url.pathname === '/api/rpc/synthetic/echo') {

@@ -1,14 +1,14 @@
 import { effect, signal, Storage, untracked } from 'nsh';
 import { openDraft, draftKey, sameAttachment } from './drafts';
 import { compileNativePrompt, magicCommand } from './composer';
-import { sameReferenceScope, validateNativeReferences, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
+import { referenceRoute, sameReferenceScope, validateNativeReferences, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 import { app, captureHostRequest, epoch, isCurrentHostScope, type createChat, type SendOptions } from './state';
 import { createPageOperations, type PageOperation } from './page-operations';
 import { query, sessionPath } from './runtime';
 import { activeFrom, id, inboxFrom, nameOf, record, rowsFrom, slashCommand, text, unwrap, type Attachment, type ChatTarget, type Project, type Submission } from './model';
 
 export type NativeNewSessionSelection = { model?: { providerID: string; id: string; variant?: string }; agent?: string };
-type Receipt = { version: 1; revision: number; selection: NativeNewSessionSelection; admission?: 'unknown' | 'acknowledged'; configuration?: { model?: 'unknown' | 'acknowledged'; agent?: 'unknown' | 'acknowledged' } } & (
+type Receipt = { version: 1; revision: number; selection: NativeNewSessionSelection; admission?: 'preparing' | 'unknown' | 'acknowledged'; configuration?: { model?: 'unknown' | 'acknowledged'; agent?: 'unknown' | 'acknowledged' } } & (
   | { phase: 'draft' }
   | { phase: 'creating'; inputID: string }
   | { phase: 'created' | 'installed'; inputID: string; target: ChatTarget }
@@ -29,11 +29,11 @@ function receiptFrom(raw: string | null, directory: string): Receipt {
   if (raw === null) return { version: 1, revision: 0, phase: 'draft', selection: {} };
   const row = record(JSON.parse(raw));
   if (row.version !== 1 || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0) throw new Error('new-session-invalid-receipt');
-  if (row.admission !== undefined && row.admission !== 'unknown' && row.admission !== 'acknowledged') throw new Error('new-session-invalid-receipt');
+  if (row.admission !== undefined && row.admission !== 'preparing' && row.admission !== 'unknown' && row.admission !== 'acknowledged') throw new Error('new-session-invalid-receipt');
   const configuration = record(row.configuration);
   if (row.configuration !== undefined && (!row.configuration || typeof row.configuration !== 'object' || Array.isArray(row.configuration) || Object.keys(configuration).some(key => !['model', 'agent'].includes(key)) || Object.values(configuration).some(value => value !== 'unknown' && value !== 'acknowledged'))) throw new Error('new-session-invalid-receipt');
   const base = { version: 1 as const, revision: Number(row.revision), selection: selectionFrom(row.selection),
-    ...(row.admission ? { admission: row.admission as 'unknown' | 'acknowledged' } : {}),
+    ...(row.admission ? { admission: row.admission as Receipt['admission'] } : {}),
     ...(row.configuration !== undefined ? { configuration: configuration as Receipt['configuration'] } : {}) };
   if (row.phase === 'draft') return { ...base, phase: 'draft' };
   if (!text(row.inputID)) throw new Error('new-session-invalid-receipt');
@@ -68,7 +68,7 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
   // durable input before this navigation callback gets its first turn.
   if (await chat.recoverPendingSend()) return current();
   if (!current()) return false;
-  const pending = chat.pendingSend();
+  let pending = chat.pendingSend();
   if (pending && pending.id !== handoff.inputID) throw new Error('new-session-handoff-input-mismatch');
   // An absent receipt may already be admitted or definitively rejected. Reinstalling
   // here would turn a remount into a duplicate command or prompt.
@@ -86,6 +86,31 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
       return current() && !pending?.command && pending?.inputMode !== 'shell' && (record(value.info).id ?? value.id) === handoff.inputID;
     } catch (failure) { if (record(failure).status === 404 || !current()) return false; throw failure; }
   }
+  if (pending.command?.name.toLowerCase() === 'compact' && pending.inputMode !== 'shell' && !pending.references?.references.length) {
+    // Web's no-session /compact misses the local handler. After the ordinary
+    // draft is materialized, routeMessage resolves a Host command or plain prompt.
+    const original = pending;
+    const [payload, skillPayload] = await Promise.all([
+      request(`/api/command?location%5Bdirectory%5D=${encodeURIComponent(handoff.target.directory)}`),
+      request(referenceRoute('skill', handoff.target.directory, '')),
+    ]);
+    if (!current() || chat.pendingSend() !== original) return false;
+    const commands = Array.isArray(payload) ? payload : record(payload).data;
+    const skills = Array.isArray(skillPayload) ? skillPayload : record(skillPayload).data;
+    if (!Array.isArray(commands) || !Array.isArray(skills)) throw new Error('Invalid command catalog');
+    const skill = skills.map(record).find(item => text(item.name).toLowerCase() === 'compact');
+    if (skill && !text(skill.id)) throw new Error('Invalid skill catalog');
+    const registered = commands.map(record).find(item => text(item.name).toLowerCase() === 'compact');
+    if (skill || !registered || registered.isBuiltIn === false) {
+      const { command, ...prompt } = original;
+      const suffix = command?.text ? ` ${command.text}` : '';
+      const compiledText = skill ? `[skill:${text(skill.id)}]${suffix}` : registered ? `[command:${text(registered.reference) || text(registered.name)}]${suffix}` : original.preparedText ?? original.text;
+      pending = { ...prompt, compiled: { text: compiledText, ...(skill ? { skills: [{ id: text(skill.id) }] } : {}) } };
+      chat.pendingSend.set(pending);
+      await chat.flushDraft();
+      if (!current() || chat.pendingSend() !== pending) return false;
+    }
+  }
   const prepare = options.prepare ?? (pending.inputMode !== 'shell' && (magicCommand(pending.text) || pending.references?.references.length) ? (input: Parameters<typeof compileNativePrompt>[0]) => {
     if (!request) throw new Error('new-session-request-owner-required');
     return compileNativePrompt(input, request);
@@ -95,7 +120,7 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
 }
 
 /** Headless draft owner. Opening/typing/selecting never creates a remote session. */
-export function openNativeNewSession(options: { project?: Project; directory?: string; active: () => boolean; operation?: () => PageOperation | null }) {
+export function openNativeNewSession(options: { project?: Project; directory?: string; active: () => boolean; operation?: () => PageOperation | null; deviceChatPreferences?: () => { persistChatDraft: boolean } | null }) {
   const lifetime = createPageOperations();
   const operation = signal<PageOperation | null>(null);
   const connection = app.connection();
@@ -103,7 +128,8 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
   const hostID = connection.id;
   const generation = epoch(), directory = options.directory ?? options.project?.path ?? '';
   const project: Project = { id: options.project?.id ?? '', name: options.project?.name ?? nameOf(directory), path: directory };
-  const durable = openDraft(hostID, localTarget(directory)), key = receiptKey(hostID, directory), owner = ++nextOwner;
+  const draftOptions = options.deviceChatPreferences ? { persistChatDraft: () => options.deviceChatPreferences!()?.persistChatDraft ?? null } : {};
+  const durable = openDraft(hostID, localTarget(directory), draftOptions), key = receiptKey(hostID, directory), owner = ++nextOwner;
   const lane = lanes.get(key) ?? { tail: Promise.resolve(), owner };
   lane.owner = owner; lanes.set(key, lane);
   const receipt = signal<Receipt>({ version: 1, revision: 0, phase: 'draft', selection: {} });
@@ -114,6 +140,7 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
   let submitOperation: PageOperation | null = null;
   let firstOperation: PageOperation | null = null;
   let retired = false, externalOperation = false;
+  let admissionWriteUnknown = false;
   const ownsJournal = () => alive && lane.owner === owner;
   const ownedScope = () => {
     const next = app.connection();
@@ -199,7 +226,7 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     const model = record(authority.model);
     if (authority.id !== target.id || selection.agent && authority.agent !== selection.agent || selection.model && (model.id !== selection.model.id || model.providerID !== selection.model.providerID || text(model.variant) !== text(selection.model.variant))) throw new Error('new-session-selection-not-confirmed');
   }
-  function submit(sendOptions: Pick<SendOptions, 'inputMode'> = {}): Promise<NativeNewSessionHandoff | null> {
+  function submit(sendOptions: Pick<SendOptions, 'inputMode'> & { presetText?: string } = {}): Promise<NativeNewSessionHandoff | null> {
     if (submitFlight) return submitFlight;
     let captured: ReturnType<typeof captureOperation>;
     try { captured = captureOperation(); } catch (failure) { return Promise.reject(failure); }
@@ -215,17 +242,20 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
         if (value.phase === 'draft') { firstOperation = assigned; restoredRemote = false; }
         const readOnly = value.phase !== 'draft' && (firstOperation !== assigned || restoredRemote);
         if (value.phase === 'draft') {
-          if (!durable.draft().trim() && !durable.attachments().length) return null;
+          if (!durable.pendingSend() && !durable.draft().trim() && !durable.attachments().length) return null;
           if (durable.queueEdit()) throw new Error('new-session-queue-edit-blocked');
           let submission = durable.pendingSend();
           if (!submission) {
             const document = untracked(durable.document), mode = sendOptions.inputMode ?? 'normal';
             if (mode === 'shell' && (document.references.length || durable.attachments().length)) throw new Error('new-session-shell-references-unsupported');
-            submission = { id: id(), text: document.text, files: durable.attachments().map(file => ({ ...file })), delivery: 'steer', uncertain: false, inputMode: mode, references: relocate(document, durable.scope) };
-            if (mode !== 'shell' && !document.references.length && !magicCommand(document.text)) {
-              const command = slashCommand(document.text); if (command) submission.command = command;
-            }
+            const capturedText = sendOptions.presetText ?? document.text;
             snapshotRevision = durable.draftRevision();
+            submission = { id: id(), text: document.text, files: durable.attachments().map(file => ({ ...file })), delivery: 'steer', uncertain: false, inputMode: mode,
+              references: relocate(document, durable.scope), ...(sendOptions.presetText !== undefined ? { preparedText: sendOptions.presetText } : {}) };
+            if (mode !== 'shell' && !document.references.length && !magicCommand(document.text)) {
+              const command = slashCommand(capturedText.replace(/^(\s*)\/\u2003/, '$1/'));
+              if (command) submission.command = command;
+            }
             durable.pendingSend.set(submission);
           }
           // Persist exact text/sidecars/files before the create write-ahead record.
@@ -252,14 +282,20 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
           const submission = durable.pendingSend();
           if (!submission || submission.id !== value.inputID || !submission.references) throw new Error('new-session-snapshot-missing');
           await configure(value.target, value.selection, captured, readOnly); assertCurrent(captured);
-          const destination = openDraft(hostID, value.target);
+          const destination = openDraft(hostID, value.target, draftOptions);
           try {
             await destination.ready; assertCurrent(captured);
             const references = relocate(submission.references, destination.scope);
             const transferred: Submission = { ...submission, files: submission.files.map(file => ({ ...file })), references };
             // Resume a crash/write failure between destination flush and the
             // installed receipt without overwriting an unrelated destination.
-            const staged = destination.pendingSend()?.id === value.inputID && destination.matches(submission.text, submission.files, references.references) && !destination.queueEdit();
+            const pending = destination.pendingSend();
+            const referenceIdentity = (document: ScopedReferenceDocument | undefined) => document && JSON.stringify([document.text, document.scope.host, document.scope.draft, document.scope.directory,
+              document.references.map(ref => [ref.kind, ref.value, ref.label, ref.display, ref.start, ref.end, ref.directory, ref.description])]);
+            const staged = pending?.id === value.inputID && pending.text === transferred.text && pending.delivery === transferred.delivery && pending.inputMode === transferred.inputMode
+              && pending.command?.name === transferred.command?.name && pending.command?.text === transferred.command?.text
+              && pending.files.length === transferred.files.length && pending.files.every((file, index) => sameAttachment(file, transferred.files[index]))
+              && referenceIdentity(pending.references) === referenceIdentity(references) && !destination.queueEdit();
             if (!staged) {
               if (destination.pendingSend() || destination.queueEdit() || destination.draft() || destination.attachments().length) throw new Error('new-session-destination-not-empty');
               destination.setDocument(references); destination.attachments.set(transferred.files); destination.pendingSend.set(transferred);
@@ -331,14 +367,16 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     await durable.close();
     if (lane.owner === owner && !submitFlight) lanes.delete(key);
   }
-  async function noteAdmission(handoff: NativeNewSessionHandoff, phase: 'unknown' | 'acknowledged', captured: PageOperation) {
+  async function noteAdmission(handoff: NativeNewSessionHandoff, phase: 'preparing' | 'unknown' | 'acknowledged', captured: PageOperation) {
     await restoration; assertCurrent(captured);
+    if (admissionWriteUnknown) throw new Error('new-session-admission-storage-unknown');
     const value = receipt();
     if (value.phase !== 'installed' || value.inputID !== handoff.inputID || value.target.id !== handoff.target.id || handoff.hostID !== hostID || handoff.generation !== generation || handoff.target.directory !== directory) throw new Error('new-session-handoff-input-mismatch');
     if (value.admission === 'acknowledged' || value.admission === phase) return;
-    await write({ ...value, admission: phase }, captured);
+    try { await write({ ...value, admission: phase }, captured); }
+    catch (failure) { if (captured.current()) admissionWriteUnknown = true; throw failure; }
   }
-  return { directory, hostID, generation, project: { ...project }, durable, ready, status, error, submitting, current, replaceOperation, captureOperation, operation, ownedScope, noteAdmission, admission: () => receipt().admission,
+  return { directory, hostID, generation, project: { ...project }, durable, ready, status, error, submitting, current, replaceOperation, captureOperation, operation, ownedScope, noteAdmission, admission: () => admissionWriteUnknown ? 'unknown' as const : receipt().admission,
     selection: () => selectionFrom(receipt().selection),
     phase: () => receipt().phase, target: () => { const value = receipt(); return value.phase === 'created' || value.phase === 'installed' ? { ...value.target } : null; },
     creationUnknown: () => receipt().phase === 'creating' && !knownCreated(), inputID: () => { const value = receipt(); return value.phase === 'draft' ? durable.pendingSend()?.id : value.inputID; },

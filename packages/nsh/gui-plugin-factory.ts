@@ -8,7 +8,16 @@ import type { ViewExportAPI } from '../ui/src/lib/view-export/types';
 import type { RuntimeScope } from './runtime-scope';
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const appearanceOwners = new WeakMap<HTMLElement, symbol>();
+const factoryOwners = new Set<symbol>();
+const documentAppearance = (root: HTMLElement) => ({ dark: root.classList.contains('dark'), light: root.classList.contains('light'), theme: root.getAttribute('data-theme'), lang: root.getAttribute('lang'), scheme: root.style.colorScheme });
+type DocumentAppearance = ReturnType<typeof documentAppearance>;
+type AppearanceOwners = { base: DocumentAppearance; layers: { owner: symbol; value: DocumentAppearance }[] };
+const appearanceOwners = new WeakMap<HTMLElement, AppearanceOwners>();
+function applyDocumentAppearance(root: HTMLElement, value: DocumentAppearance) {
+  root.classList.toggle('dark', value.dark); root.classList.toggle('light', value.light);
+  for (const [key, text] of [['data-theme', value.theme], ['lang', value.lang]] as const) { if (text === null) root.removeAttribute(key); else root.setAttribute(key, text); }
+  root.style.colorScheme = value.scheme;
+}
 
 /** This module is a browser build entry dependency, never a QuickJS dependency.
  * SDK/Solid/GUI context instances are exactly the existing host's instances. */
@@ -24,6 +33,8 @@ export function captureGuiPluginFactory(input: {
   themeCSS: string;
   preferenceKey: string;
   viewExport?: ViewExportAPI;
+  system?: ConstructorParameters<typeof GuiPluginHost>[0]['system'];
+  toasts?: ConstructorParameters<typeof GuiPluginHost>[0]['toasts'];
 }) {
   const client = OpenCode.make({ baseUrl: input.origin, fetch: input.fetch });
   const checkedFetch = async (route: string, headers: Record<string, string> = {}) => {
@@ -82,12 +93,13 @@ export function captureGuiPluginFactory(input: {
   if (preferenceKey !== input.preferenceKey) throw new Error('GUI_INVALID_PREFERENCE_SCOPE');
   let disabled = readDisabledPlugins(input.storage, preferenceKey);
   const host = new GuiPluginHost({ client, files, queryClient, storage: input.storage,
-    transport: input.runtimeKey, ...input.appearance, narrow: true, viewExport: input.viewExport });
+    transport: input.runtimeKey, ...input.appearance, narrow: true, viewExport: input.viewExport, system: input.system, toasts: input.toasts });
   const root = document.documentElement, owner = Symbol('gui-appearance');
-  const previous = { dark: root.classList.contains('dark'), light: root.classList.contains('light'), theme: root.getAttribute('data-theme'), lang: root.getAttribute('lang'), scheme: root.style.colorScheme };
-  appearanceOwners.set(root, owner);
-  root.classList.toggle('dark', input.appearance.mode === 'dark'); root.classList.toggle('light', input.appearance.mode === 'light');
-  root.setAttribute('data-theme', input.appearance.mode); root.lang = input.appearance.locale; root.style.colorScheme = input.appearance.mode;
+  const owners: AppearanceOwners = appearanceOwners.get(root) ?? { base: documentAppearance(root), layers: [] };
+  const value = { dark: input.appearance.mode === 'dark', light: input.appearance.mode === 'light', theme: input.appearance.mode, lang: input.appearance.locale, scheme: input.appearance.mode };
+  owners.layers.push({ owner, value }); appearanceOwners.set(root, owners); factoryOwners.add(owner);
+  applyDocumentAppearance(root, value);
+  let disposed = false;
   return {
     host, client, files, appearance: input.appearance, themeCSS: input.themeCSS,
     captureClient: () => client,
@@ -95,12 +107,14 @@ export function captureGuiPluginFactory(input: {
     readPreferences() { disabled = readDisabledPlugins(input.storage, preferenceKey); },
     setEnabled(id: string, enabled: boolean) { disabled = writePluginEnabled(input.storage, preferenceKey, id, enabled); },
     dispose() {
-      void queryClient.cancelQueries(); queryClient.clear();
-      if (appearanceOwners.get(root) === owner) {
-        appearanceOwners.delete(root); root.classList.toggle('dark', previous.dark); root.classList.toggle('light', previous.light);
-        for (const [key, value] of [['data-theme', previous.theme], ['lang', previous.lang]] as const) { if (value === null) root.removeAttribute(key); else root.setAttribute(key, value); }
-        root.style.colorScheme = previous.scheme;
-      }
+      if (disposed) return; disposed = true; factoryOwners.delete(owner);
+      // The real owning QueryClient is shared within this document/realm. An
+      // old factory cannot retire another active factory's queries or cache.
+      if (!factoryOwners.size) { void queryClient.cancelQueries(); if (!factoryOwners.size) queryClient.clear(); }
+      const index = owners.layers.findIndex(layer => layer.owner === owner);
+      if (index >= 0) owners.layers.splice(index, 1);
+      applyDocumentAppearance(root, owners.layers.at(-1)?.value ?? owners.base);
+      if (!owners.layers.length) appearanceOwners.delete(root);
     },
   };
 }

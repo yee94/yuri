@@ -2,6 +2,8 @@ import { Scroll, signal, Text, View } from 'nsh';
 import { AlertDialog, Button, TextView } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
 import { t } from './i18n';
+import { nativeCodeTextViewStyles, nativeDensity } from './appearance';
+import { nativeEditorTextStyle } from './native-editor-style';
 import { text, type Row } from './model';
 import { SettingsFeedback, SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { scopedSettingsPath, settingsObject } from './settings-protocol';
@@ -56,12 +58,12 @@ export function SettingsSkillFiles(props: { name: string; directory?: string; fi
       }); }}><Text class="text-destructive">{t('settings.common.actions.delete')}</Text></Button></If></View>}</Each>
       <If when={!props.readOnly}><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void open(); }}><Text class="text-foreground">{t('settings.skills.page.actions.addFile')}</Text></Button></If>
     </If>
-    <Sheet open={editor()} onOpenChange={event => editor.set(event.open)} closeOnSwipe popupClass="bg-background rounded-t-3xl" popupStyle={{ height: '80%' }} backdropClass="bg-background/50"><Scroll class="flex-1" contentClass="p-5 gap-4 pb-10">
+    <Sheet open={editor()} onOpenChange={event => editor.set(event.open)} closeOnSwipe popupClass="bg-background rounded-t-3xl" popupStyle={{ height: '80%' }} backdropClass="bg-background/50"><Scroll class="flex-1" contentClass="p-5 gap-4 pb-10" contentStyle={nativeDensity().pages.sheetEditor}>
       <Text class="text-lg font-semibold text-foreground">{t('settings.skills.page.section.supportingFiles')}</Text>
       <SettingsFeedback state={state} />
       <SettingsInput title={t('settings.skills.page.fileDialog.field.filePath')} value={path()} disabled={existing() || state.busy()} onChange={next => path.set(next)} />
-      <If when={props.readOnly}><TextView markdown={content()} selectable class="text-foreground" /></If>
-      <If when={!props.readOnly}><SettingsInput title={t('settings.skills.page.fileDialog.field.content')} value={content()} multiline disabled={state.busy() || props.disabled} onChange={next => content.set(next)} /><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
+      <If when={props.readOnly}><TextView markdown={content()} selectable styles={nativeCodeTextViewStyles()} class="text-foreground" /></If>
+      <If when={!props.readOnly}><SettingsInput title={t('settings.skills.page.fileDialog.field.content')} value={content()} multiline inputStyle={nativeEditorTextStyle()} disabled={state.busy() || props.disabled} onChange={next => content.set(next)} /><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
       <Button class={settingsAction} disabled={state.busy()} onPress={() => editor.set(false)}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>
     </Scroll></Sheet>
   </SettingsGroup>;

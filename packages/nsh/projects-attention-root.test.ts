@@ -7,6 +7,7 @@ import { expect, it, vi } from 'vitest';
 import { createProjectsAttention, createProjectsAttentionSource, isProjectsAttentionEvent } from './projects-attention';
 import { readProjectsBlocking } from './projects-attention-blocking';
 import { runtimeEventFrom } from './model';
+import { createProjectsScopeVM } from './tests/projects-scope-vm';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const file = ts.createSourceFile('state.ts', readFileSync(path.join(root, 'state.ts'), 'utf8'), ts.ScriptTarget.ES2023, true);
@@ -22,14 +23,17 @@ function fixture(onEvent?: (event: ReturnType<typeof runtimeEventFrom>, scope: {
       : path.startsWith('/api/form?') ? { data: [{ id: 'pending', sessionID: 'root', metadata: { kind: 'question' } }] } : { data: [] };
   });
   const host = { on: vi.fn((_name: string, listener: typeof event) => { event = listener; return vi.fn(); }) };
-  const context = vm.createContext({ exports: {}, generation: 1, switching: false, app: { connection: () => ({ id: 'host' }), sessions: () => [] },
-    createProjectsAttentionSource, isProjectsAttentionEvent, projectsAttention: attention, request: send,
+  const wire = vi.fn(async (name: string, input: Record<string, unknown>) => { if (name !== 'runtime.request') throw new Error(name); return { status: 200, body: await send(input.path as string) }; });
+  const scope = createProjectsScopeVM(wire, 'host');
+  const context = scope.context;
+  Object.assign(context, {
+    createProjectsAttentionSource, isProjectsAttentionEvent, projectsAttention: attention,
     effect: (work: () => void) => { effects.push(work); work(); }, untracked: (work: () => void) => work(), lifecycle: () => active ? 'active' : 'background',
     host, runtimeEventFrom, catalogDomains: () => [], report: (failure: unknown) => { throw failure; }, cleanup: (work: () => void) => cleanup.push(work),
     setTimeout, clearTimeout, dirtyDomains: new Set(), onEvent,
   });
   vm.runInContext(compiled + '\nexports.observeRuntime(() => {}, onEvent);', context);
-  return { attention, send, host, context, effects, cleanup, hide: () => { active = false; effects.forEach(work => work()); }, show: () => { active = true; effects.forEach(work => work()); },
+  return { attention, send, wire, host, context, effects, cleanup, hide: () => { active = false; effects.forEach(work => work()); }, show: () => { active = true; effects.forEach(work => work()); },
     emit: (type: string, data: Record<string, unknown> = {}, key = 'global') => event({ key, data: JSON.stringify({ directory: '/repo', payload: { type, data } }) }) };
 }
 it('the sole production sink forwards global and Chat events, but not hidden or switching scopes', () => {
@@ -48,6 +52,7 @@ it('production root seam bootstraps once, reuses its sole event listener and pre
   const f = fixture(), key = JSON.stringify([1, 'host']);
   await vi.waitFor(() => expect(readProjectsBlocking(f.attention.snapshot(key).blockingByDirectory, '/repo', 'root').questionsKnown).toBe(true));
   expect(f.send).toHaveBeenCalledTimes(3); expect(f.host.on).toHaveBeenCalledTimes(1);
+  expect(f.wire.mock.calls.map(([, input]) => input.expectedHost)).toEqual(Array(3).fill({ hostID: 'host', lease: 'projects-fixture-lease' }));
   for (let i = 0; i < 1000; i++) f.emit('session.text.delta', { sessionID: 'root', delta: 'x' });
   expect(f.send).toHaveBeenCalledTimes(3);
   f.attention.setViewedSession(key, 'root'); expect(readProjectsBlocking(f.attention.snapshot(key).blockingByDirectory, '/repo', 'root').hasPendingQuestion).toBe(true);

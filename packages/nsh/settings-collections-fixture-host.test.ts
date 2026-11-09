@@ -4,11 +4,19 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { createHost } from './tests/settings-collections-host.js';
 import { prepareCollectionsFixture } from './tests/settings-collections-fixture-config.mjs';
 
+function admittedHost(host = createHost()) {
+  const expectedHost = host.call('connection.list', {}).runtimeScope;
+  return { call(name: string, input: Record<string, unknown>) {
+    return host.call(name, name === 'runtime.request' ? { ...input, expectedHost } : input);
+  } };
+}
+
 test('isolated fixture audit rejects every unintended import/cancel write or connection', () => {
-  const host = createHost();
+  const host = admittedHost();
   expect(host.call('collections.fixture.audit', {})).toEqual({ permissionDeletes: 0, agentWrites: 0, mcpWrites: 0, reloads: 0, checks: 0, updates: 0 });
   expect(() => host.call('runtime.request', { path: '/api/experimental/mcp/imported/connect', method: 'POST' })).toThrow('Unexpected collections fixture request');
   expect(() => host.call('runtime.request', { path: '/api/location/reload', method: 'GET' })).toThrow('Unexpected collections fixture request');
@@ -18,8 +26,15 @@ test('isolated fixture audit rejects every unintended import/cancel write or con
 
 test('own Host parses/dispatches with no URL globals and keeps exact method/query/directory allowlists', () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
-  const source = readFileSync(path.join(directory, 'tests/settings-collections-host.js'), 'utf8');
-  const host = runInNewContext(source.replace('export function createHost()', 'function createHost()') + '\ncreateHost()', { URL: undefined, URLSearchParams: undefined });
+  const temporary = mkdtempSync(path.join(process.env.TMPDIR || tmpdir(), 'settings-collections-vm-'));
+  let host;
+  try {
+    const fixture = prepareCollectionsFixture(directory, temporary);
+    const source = ts.transpileModule(readFileSync(fixture.host, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const exports: Record<string, unknown> = {};
+    runInNewContext(source, { exports, URL: undefined, URLSearchParams: undefined });
+    host = admittedHost((exports.createHost as typeof createHost)());
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
   const send = (path: string, method = 'GET', body?: unknown) => host.call('runtime.request', { path, method, ...(body === undefined ? {} : { body }) });
   expect(send('/api/location?location%5Bdirectory%5D=%2Ffixture%2Fproject').body.project.id).toBe('fixture-project');
   expect(send('/api/permission/saved?projectID=fixture-project').body.data).toHaveLength(1);
@@ -48,10 +63,10 @@ test('runner grants audit only in its own temporary config, without changing pro
   try {
     const fixture = prepareCollectionsFixture(root, temporary);
     const config = JSON.parse(readFileSync(path.join(temporary, 'nsh.json'), 'utf8'));
-    expect(config.capabilities).toEqual({ clipboard: true, host: ['runtime.request', 'collections.fixture.audit'] });
+    expect(config.capabilities).toEqual({ clipboard: true, host: ['connection.list', 'runtime.request', 'settings.fixture.scope', 'settings.fixture.scopeAudit', 'collections.fixture.audit'] });
     expect(config.theme).toBe(path.join(root, 'theme.json'));
     expect(readFileSync(path.join(temporary, fixture.entry), 'utf8')).toBe(`import ${JSON.stringify(path.join(root, 'settings-collections-fixture.tsx'))};\n`);
-    expect(fixture.host).toBe(path.join(root, 'tests/settings-collections-host.js'));
+    expect(fixture.host).toBe(path.join(temporary, 'host.js'));
     expect(readFileSync(path.join(root, 'nsh.json'), 'utf8')).toBe(production);
     expect(JSON.parse(production).capabilities.host).not.toContain('collections.fixture.audit');
   } finally { rmSync(temporary, { recursive: true, force: true }); }

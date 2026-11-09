@@ -1,0 +1,39 @@
+{
+  "schema": "history-identity-only-artifact-v1",
+  "buildID": "2026-11-08T00-07-46-928Z-5e595357",
+  "buildDirectory": "packages/nsh/.nsh/history-production-uikit-v4-identity/2026-11-08T00-07-46-928Z-5e595357",
+  "app": "HistoryProductionUIKit.app",
+  "bundleID": "example.nsh.history-production.run-e6f195ad",
+  "target": "arm64-apple-ios15.0-simulator",
+  "manifestSHA256": "ba86b10b8a3728d12045599fbb6631bbfa300187da9bfecb91d4182d763bcbca",
+  "executableSHA256": "249cef5b1d3c8a499f265fd1217c72528cff4204d304ef458491258cc0214753",
+  "bundleSHA256": "0a246339ff40b3b5682bf1c6450d45be466976dbd255912a28b7a44013673d65",
+  "clockClientSHA256": "a02a90398d38c66f94d8d9fe18473d73a0e57501dbd73389eff440ad07f2ef2b",
+  "identityProbeSHA256": "a8b06f792d65017c3de4f4edc5522dbeece4465f040745a68690ed9c071c795f",
+  "observerSHA256": "ccd7fb08160dafb9b18ad61df44b5c52153f1535dc8abd327f284470eb2e26b9",
+  "hostSHA256": "94ae5500c9df0bff3337428c89ddf4bb037c80840310342af4f25bae65805933",
+  "observerProfile": "identity-only",
+  "periodicSampling": false,
+  "automaticPan": false,
+  "historyDriverAdmission": false,
+  "runtimeVerified": false,
+  "sdkAdoptionIdentity": null,
+  "production53ptVerdict": "unresolved",
+  "baseline": {
+    "trigger": "single explicit prepare-ax only",
+    "maximumFrames": 24,
+    "targetSpanMs": 275,
+    "maximumDurationMs": 600,
+    "originalStableBaselineMs": 250,
+    "readBudgetMs": 5
+  },
+  "sequence": ["prepare-ax", "read-ax", "helper AX GET", "read-ax"],
+  "controls": {
+    "projectToggle": "projects-toggle-history-project",
+    "session": "project-session-history-production-500",
+    "chatHeader": "chat-header-metadata",
+    "chatSelection": "chat-selection"
+  },
+  "URLScheme": null,
+  "scope": "compile/signature/source freeze only; main has not executed this built Observer identity sequence"
+}

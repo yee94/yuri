@@ -7,6 +7,11 @@ import { MOBILE_SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypogra
 import { agentAvatarThemeTokens } from '../ui/src/lib/agentAvatarPalette';
 import { DEFAULT_FOLLOW_UP_BEHAVIOR, isFollowUpBehavior, normalizeFollowUpBehavior, type FollowUpBehavior } from '../ui/src/lib/followUpBehavior';
 import { contextUsageThemeTokens, type ContextUsagePalette } from './context-usage-palette';
+import { nativeDiffLayoutPreference, type NativeDiffLayoutPreference } from './chat-changes-layout';
+import type { NativeMessageStreamTransport } from './runtime';
+import { editorWeekPreference, type EditorWeekPreference } from './features-calendar';
+import { nativePadding } from './native-density';
+import type { NativeFontState } from './native-font-projection';
 // Structurally matches Web TimeFormatPreference without pulling its React/store type-check graph into NSH.
 export type NativeTimeFormatPreference = 'auto' | '12h' | '24h';
 
@@ -20,6 +25,10 @@ export type NativeAppearance = {
   contextUsageTokens: { light: ContextUsagePalette; dark: ContextUsagePalette };
   fonts: { ui: string; mono: string; assistantLight: string; assistantDark: string };
   fontSize: number;
+  padding?: number;
+  /** Device-local projection, never read from or written to Host settings. */
+  codeFontSize?: number | null;
+  terminalFontSize: number;
   timeFormatPreference: NativeTimeFormatPreference | null;
   collapsibleUserMessages: boolean | null;
   chatRenderMode: 'sorted' | 'live';
@@ -29,11 +38,14 @@ export type NativeAppearance = {
   showAssistantTps: boolean | null;
   collapsibleThinkingBlocks: boolean | null;
   followUpBehavior: FollowUpBehavior | null;
+  diffLayoutPreference: NativeDiffLayoutPreference | null;
+  messageStreamTransport: NativeMessageStreamTransport | null;
+  weekStartPreference: EditorWeekPreference;
   /** Read-only Web projection from this same canonical snapshot. Never sent in
    * appearance.apply; UIKit's semantic palette is not a complete Web theme. */
   webTheme?: { light: Theme; dark: Theme; uiStack: string; monoStack: string };
 };
-export type AppliedNativeAppearance = NativeAppearance & {
+export type AppliedNativeAppearance = NativeAppearance & NativeFontState & {
   uiFontFamily: string; monoFontFamily: string; assistantFontFamilies: { light: string; dark: string }; unsupportedFonts: string[];
   systemColorScheme?: 'light' | 'dark';
   sourceHost?: Readonly<AppearanceScope>;
@@ -140,6 +152,8 @@ export async function appearanceFromSettings(value: unknown, loadCustom: () => P
   }
   const fontSize = settings.fontSize === undefined ? 100 : settings.fontSize;
   if (typeof fontSize !== 'number' || !Number.isFinite(fontSize) || fontSize < 50 || fontSize > 200) throw new Error('Invalid Host font scale');
+  const terminalFontSize = settings.terminalFontSize === undefined ? 13 : settings.terminalFontSize;
+  if (typeof terminalFontSize !== 'number' || !Number.isFinite(terminalFontSize) || terminalFontSize < 9 || terminalFontSize > 52) throw new Error('Invalid Host terminal font size');
   const ui = family(settings.uiFont, UI_FONT_OPTIONS, DEFAULT_UI_FONT, 'system-ui');
   const uiStack = UI_FONT_OPTIONS.find(item => item.id === (settings.uiFont ?? DEFAULT_UI_FONT))!.stack;
   const monoStack = CODE_FONT_OPTIONS.find(item => item.id === (settings.monoFont ?? DEFAULT_MONO_FONT))?.stack;
@@ -158,7 +172,7 @@ export async function appearanceFromSettings(value: unknown, loadCustom: () => P
     return first;
   }
   return {
-    mode, themeIDs: ids, cssVars: { light: (light ?? dark!).tokens, dark: (dark ?? light!).tokens }, fontSize,
+    mode, themeIDs: ids, cssVars: { light: (light ?? dark!).tokens, dark: (dark ?? light!).tokens }, fontSize, padding: nativePadding(settings.padding), terminalFontSize: Math.round(terminalFontSize),
     agentAvatarTokens: { light: (light ?? dark!).agentTokens, dark: (dark ?? light!).agentTokens },
     toolTokens: { light: (light ?? dark!).toolTokens, dark: (dark ?? light!).toolTokens },
     contextUsageTokens: { light: (light ?? dark!).contextUsageTokens, dark: (dark ?? light!).contextUsageTokens },
@@ -171,6 +185,9 @@ export async function appearanceFromSettings(value: unknown, loadCustom: () => P
     showAssistantTps: enabledPreference(settings.showAssistantTps),
     collapsibleThinkingBlocks: enabledPreference(settings.collapsibleThinkingBlocks),
     followUpBehavior,
+    diffLayoutPreference: settings.diffLayoutPreference === undefined ? 'inline' : nativeDiffLayoutPreference(settings.diffLayoutPreference),
+    messageStreamTransport: settings.messageStreamTransport === undefined ? 'auto' : settings.messageStreamTransport === 'auto' || settings.messageStreamTransport === 'ws' || settings.messageStreamTransport === 'sse' ? settings.messageStreamTransport : null,
+    weekStartPreference: editorWeekPreference(settings),
     fonts: {
       ui,
       mono: family(settings.monoFont, CODE_FONT_OPTIONS, DEFAULT_MONO_FONT, 'monospace'),
@@ -188,17 +205,15 @@ export function nativeFullThemeCSS(appearance: NativeAppearance | null, variant:
   const { uiStack, monoStack } = appearance.webTheme;
   const vars = generate(appearance.webTheme[mode]);
   const typography = (Object.keys(MOBILE_SEMANTIC_TYPOGRAPHY) as SemanticTypographyKey[]).map(key => {
-    // Same mobile applyTypography contract; codeFontSize is browser-local and
-    // absent from Host settings, so the canonical default code scale stays 1.
-    const points = parseFloat(MOBILE_SEMANTIC_TYPOGRAPHY[key]) * 16 * (key === 'code' ? 1 : appearance.fontSize / 100);
+    // Device code scale is projected by the single native appearance root.
+    const points = parseFloat(MOBILE_SEMANTIC_TYPOGRAPHY[key]) * 16 * (key === 'code' ? (appearance.codeFontSize ?? 100) / 100 : appearance.fontSize / 100);
     return `${getTypographyVariable(key)}: calc(${Math.round(points * 1000) / 1000} * var(--dpt, 1px));`;
   }).join('\n');
   return `:root {\n${vars}\n--font-sans: ${uiStack};\n--font-heading: ${uiStack};\n--font-family-sans: ${uiStack};\n--font-mono: ${monoStack};\n--font-family-mono: ${monoStack};\n--ui-regular-font-weight: 400;\n${typography}\n}\nbody { font-family: var(--font-sans); }`;
 }
 
 export function nativeTypographyStyle(appearance: AppliedNativeAppearance | null, role: SemanticTypographyKey) {
-  // codeFontSize is browser-local, not present in the Host settings GET contract.
-  const scale = role === 'code' ? 1 : (appearance?.fontSize ?? 100) / 100;
+  const scale = (role === 'code' ? appearance?.codeFontSize ?? 100 : appearance?.fontSize ?? 100) / 100;
   const style = {
     fontFamily: role === 'code' ? appearance?.monoFontFamily ?? 'monospace' : appearance?.uiFontFamily ?? 'system-ui',
     fontSize: parseFloat(MOBILE_SEMANTIC_TYPOGRAPHY[role]) * 16 * scale,
@@ -211,7 +226,7 @@ export function createNativeAppearanceSync(deps: {
   readSettings: () => Promise<unknown>;
   readThemes: () => Promise<unknown>;
   reset: (scope: AppearanceScope | null) => Promise<number>;
-  apply: (scope: AppearanceScope, revision: number, appearance: NativeAppearance) => Promise<Pick<AppliedNativeAppearance, 'uiFontFamily' | 'monoFontFamily' | 'assistantFontFamilies' | 'unsupportedFonts' | 'systemColorScheme'>>;
+  apply: (scope: AppearanceScope, revision: number, appearance: NativeAppearance) => Promise<Pick<AppliedNativeAppearance, 'uiFontFamily' | 'monoFontFamily' | 'assistantFontFamilies' | 'unsupportedFonts' | 'systemColorScheme'> & NativeFontState>;
   changed: (value: AppliedNativeAppearance | null) => void;
   failed: (message: string) => void;
 }) {
@@ -223,6 +238,7 @@ export function createNativeAppearanceSync(deps: {
   let flight: Promise<void> | undefined;
   let signature = '';
   let value: AppliedNativeAppearance | null = null;
+  let readers = { readSettings: deps.readSettings, readThemes: deps.readThemes };
   function setScope(next: AppearanceScope | null) {
     generation++; scope = next; flight = undefined; signature = ''; resetFailed = false; paused = false;
     value = null; deps.changed(null); deps.failed('');
@@ -239,8 +255,13 @@ export function createNativeAppearanceSync(deps: {
     generation++; flight = undefined; paused = true;
   }
   /** Native transport invalidation fences revisions even for background; restore this Host's valid palette before GET. */
-  function rebind(hold = false) {
+  function rebind(hold = false, next?: { scope: AppearanceScope; readSettings: () => Promise<unknown>; readThemes: () => Promise<unknown> }) {
     if (!scope) return;
+    if (next) {
+      if (next.scope.hostID !== scope.hostID || next.scope.url !== scope.url) throw new Error('Native appearance reader Host changed');
+      scope = next.scope;
+      readers = { readSettings: next.readSettings, readThemes: next.readThemes };
+    }
     generation++; flight = undefined; resetFailed = false; paused = hold;
     const captured = generation, selected = scope, previous = value;
     revision = (async () => {
@@ -266,15 +287,15 @@ export function createNativeAppearanceSync(deps: {
       revision = deps.reset(scope);
       void revision.catch(() => { if (captured === generation) resetFailed = true; });
     }
-    const captured = generation, selected = scope, reset = revision;
+    const captured = generation, selected = scope, reset = revision, selectedReaders = readers;
     const current = () => captured === generation;
     const pending = (async () => {
       try {
         const nativeRevision = await reset;
         if (!current()) return;
-        const settings = await deps.readSettings();
+        const settings = await selectedReaders.readSettings();
         if (!current()) return;
-        const appearance = await appearanceFromSettings(settings, deps.readThemes);
+        const appearance = await appearanceFromSettings(settings, selectedReaders.readThemes);
         if (!current()) return;
         const next = JSON.stringify(appearance);
         if (next !== signature) {
@@ -291,8 +312,19 @@ export function createNativeAppearanceSync(deps: {
     flight = pending;
     return pending;
   }
+  /** Confirmation must not adopt a read which started before its caller's ACK. */
+  async function refreshAfterCurrent(isCurrent: () => boolean): Promise<void> {
+    const captured = generation, selected = scope;
+    const current = () => !!selected && scope === selected && generation === captured && !paused && isCurrent();
+    if (!current()) throw new Error('Native appearance confirmation retired');
+    const previous = flight;
+    if (previous) await previous;
+    if (!current()) throw new Error('Native appearance confirmation retired');
+    await refresh();
+    if (!current()) throw new Error('Native appearance confirmation retired');
+  }
   return {
-    setScope, pause, rebind, refresh,
+    setScope, pause, rebind, refresh, refreshAfterCurrent,
     hold: async () => { rebind(true); await revision; },
     resume: () => { paused = false; },
   };

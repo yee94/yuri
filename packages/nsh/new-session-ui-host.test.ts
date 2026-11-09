@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createProjectIdFromPath } from '../ui/src/lib/projectId';
 import { newSessionUIScenarios } from './new-session-ui-steps';
 
-type Input = { path: string; method?: string; body?: unknown };
+type Input = { path: string; method?: string; body?: unknown; expectedHost?: unknown };
 type Response = { status: number; body: unknown };
 type Host = { call(name: string, input: Input): Response };
 const directory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tests');
@@ -24,7 +24,8 @@ function fixture() {
     return exports;
   }
   const host = (load('new-session-host.js').createHost as () => Host)();
-  return (resource: string, method = 'GET', body?: unknown) => host.call('runtime.request', { path: resource, method, ...(body === undefined ? {} : { body }) });
+  const scope = (host.call('connection.list', { path: '' }) as unknown as { runtimeScope: unknown }).runtimeScope;
+  return (resource: string, method = 'GET', body?: unknown) => host.call('runtime.request', { path: resource, method, expectedHost: scope, ...(body === undefined ? {} : { body }) });
 }
 const canonical = `/fixture/home/.config/yuri/projects/${createProjectIdFromPath('/fixture/project')}.json`;
 const readConfig = (file: string) => `/api/fs/read?path=${encodeURIComponent(file)}&optional=true`;

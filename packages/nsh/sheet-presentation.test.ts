@@ -1,5 +1,22 @@
 import { expect, test } from 'vitest';
 import { createSheetPresentation, systemSheetContentStyle, type SheetPresentation } from './sheet-presentation';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+test('the iOS system Dialog reserves the native keyboard environment once outside scrolling content', () => {
+  const file = path.join(path.dirname(fileURLToPath(import.meta.url)), 'native-sheet.tsx');
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const dialogs: ts.JsxOpeningElement[] = [];
+  const visit = (node: ts.Node) => { if (ts.isJsxOpeningElement(node) && node.tagName.getText() === 'Dialog') dialogs.push(node); ts.forEachChild(node, visit); };
+  visit(source);
+  expect(dialogs).toHaveLength(1);
+  const style = dialogs[0].attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText() === 'style');
+  expect(style).toBeDefined();
+  expect(style!.getText()).toContain("paddingBottom: 'env(keyboard-inset-height)'");
+  expect(source.text).not.toContain('keyboardFrame()');
+});
 
 test('system container strips legacy height and keyboard margins without losing content styling', () => {
   expect(systemSheetContentStyle([{ height: 700, maxHeight: 800, marginBottom: 320, padding: 20 }, null, [{ borderRadius: 24, gap: 12 }]])).toEqual([{ padding: 20 }, null, [{ gap: 12 }]]);

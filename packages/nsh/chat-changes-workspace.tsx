@@ -1,32 +1,66 @@
-import { cleanup, computed, signal, Text, untracked, View, windowSize, List } from 'nsh';
+import { cleanup, computed, signal, Storage, Text, untracked, View, windowSize, List } from 'nsh';
 import { AlertDialog, Button, Input } from 'nsh/base';
 import { buildChangesTree, flattenChangesTree, type ChangesTreeDirectoryNode, type FlattenedTreeRow } from './chat-changes-tree.js';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { captureHostRequest } from './state';
+import { app, captureHostRequest } from './state';
 import { changeGroups, type ChangesReader } from './chat-changes-model';
-import { createChangesActions } from './chat-changes-actions';
+import { changesWriteJournal, createChangesActions } from './chat-changes-actions';
+import { createChangesGeneration, type createChangesDraft, type ChangesGenerationContext } from './chat-changes-generation';
 
-type Owner = { reader: ChangesReader; state: () => ReturnType<ChangesReader['state']> };
+type Owner = { reader: ChangesReader; state: () => ReturnType<ChangesReader['state']>; draft: ReturnType<typeof createChangesDraft> };
 type PanelRow = { key: string; staged: boolean; kind: 'header'; count: number; paths: string[] } | { key: string; staged: boolean; kind: 'entry'; row: FlattenedTreeRow };
 const iconAction = 'min-h-9 min-w-9 items-center justify-center rounded-lg active:bg-accent disabled:opacity-40';
 const action = 'min-h-11 px-3 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
 
-export function NativeWorkspaceChanges(props: { owner: Owner }) {
+export function NativeWorkspaceChanges(props: { owner: Owner; active?: boolean; generationContext?: ChangesGenerationContext }) {
   const request = captureHostRequest();
   const { reader, state } = props.owner;
-  const version = signal(0), tree = signal(true), collapsed = signal(new Set<string>()), collapsedGroups = signal(new Set<boolean>()), message = signal(''), inputHeight = signal(88);
-  let alive = true, resize: { y: number; height: number } | undefined;
-  const current = () => alive && reader.current();
-  const actions = createChangesActions(reader, request, current, () => untracked(() => version.set(version() + 1)));
-  const status = () => { version(); return actions.state(); };
-  cleanup(() => { alive = false; actions.cancel(); });
+  const version = signal(0), tree = signal(true), collapsed = signal(new Set<string>()), collapsedGroups = signal(new Set<boolean>()), inputHeight = signal(88), deferredLoaded = signal(false), remotes = signal<string[] | null>(null), remoteError = signal('');
+  let alive = true, remoteSerial = 0, resize: { y: number; height: number } | undefined;
+  const current = () => alive && props.active !== false && reader.current();
+  const changed = () => untracked(() => version.set(version() + 1));
+  const journal = changesWriteJournal(app.runtimeScope()?.hostID ?? '', reader.source.directory, Storage);
+  const actions = createChangesActions(reader, request, current, changed, journal);
+  const generation = createChangesGeneration(reader, request, current, changed, () => props.generationContext ?? {}, props.owner.draft);
+  const generated = () => { version(); return generation.state(); };
+  const message = () => generated().message;
+  const status = () => { version(); state().statusAuthorityRevision; return actions.state(); };
+  async function refreshRemotes() {
+    if (!current()) return;
+    const serial = ++remoteSerial;
+    try {
+      const value = await request(`/api/git/remotes?directory=${encodeURIComponent(reader.source.directory)}`);
+      if (!current() || serial !== remoteSerial) return;
+      if (!Array.isArray(value) || value.some(item => !item || typeof item !== 'object' || typeof item.name !== 'string')) throw new Error('Invalid Git remotes');
+      remotes.set(value.map(item => String(item.name)).filter(Boolean)); remoteError.set('');
+    } catch (cause) { if (current() && serial === remoteSerial) remoteError.set(cause instanceof Error ? cause.message : String(cause)); }
+  }
+  void refreshRemotes();
+  cleanup(() => { alive = false; actions.cancel(); generation.cancel(); });
   const snapshot = computed(() => state().snapshot);
-  const groups = computed(() => changeGroups(snapshot()));
+  const deferred = () => snapshot()?.oversized === true && !deferredLoaded();
+  const deferredCounts = computed(() => {
+    let staged = 0, working = 0;
+    if (deferred()) for (const file of snapshot()?.files ?? []) { if (file.index.trim() && file.index.trim() !== '?') staged++; if (file.working_dir.trim() || file.index.trim() === '?') working++; }
+    return { staged, working };
+  });
+  const groups = computed(() => deferred() ? [] : changeGroups(snapshot()));
   const paths = computed(() => [...new Set(groups().flatMap(group => group.files.map(file => file.path)))]);
   const stagedCount = computed(() => groups().find(group => group.staged)?.files.length ?? 0);
-  const disabled = () => status().pending || state().loading || !!state().error || !state().snapshot;
+  const disabled = () => status().pending || status().unknown || status().needsRefresh || generated().pending || state().loading || !!state().error || !state().snapshot;
   const trees = computed(() => groups().map(group => ({ ...group, tree: buildChangesTree(group.files) })));
+  const directoryKeys = computed(() => new Map(trees().map(group => {
+    const keys: string[] = [], prefix = group.staged ? 'staged:' : 'working:';
+    const visit = (node: ChangesTreeDirectoryNode) => { for (const directory of node.children.values()) { keys.push(prefix + directory.path); visit(directory); } };
+    visit(group.tree); return [group.staged, keys] as const;
+  })));
+  const allDirectoriesExpanded = (staged: boolean) => (directoryKeys().get(staged) ?? []).every(key => !collapsed().has(key));
+  function toggleDirectories(staged: boolean) {
+    const next = new Set(collapsed()), collapse = allDirectoriesExpanded(staged);
+    for (const key of directoryKeys().get(staged) ?? []) { if (collapse) next.add(key); else next.delete(key); }
+    collapsed.set(next);
+  }
   const rows = computed(() => {
     const result: PanelRow[] = [];
     for (const group of trees()) {
@@ -56,49 +90,57 @@ export function NativeWorkspaceChanges(props: { owner: Owner }) {
     const draft = message();
     await actions.commit(draft, pushAfter);
     // A sync failure must never invite re-committing a confirmed successful commit.
-    if (current() && actions.state().committed && message() === draft) message.set('');
+    if (current() && actions.state().committed && message() === draft) generation.clear();
   }
   const actionError = () => status().error === 'mobile.changes.noRemote' ? t('mobile.changes.noRemote') : status().error === 'gitView.toast.commitOrStashBeforeSync' ? t('gitView.toast.commitOrStashBeforeSync') : status().error;
+  const dirtyBehind = () => (snapshot()?.behind ?? 0) > 0 && (snapshot()?.files.length ?? 0) > 0;
+  const syncLabel = () => dirtyBehind() ? t('gitView.sync.commitOrStashTooltip') : !remotes()?.length ? t('gitView.sync.noRemoteTooltip') : (snapshot()?.ahead ?? 0) > 0 || (snapshot()?.behind ?? 0) > 0 ? t('gitView.sync.syncChangesTooltip', { ahead: snapshot()?.ahead ?? 0, behind: snapshot()?.behind ?? 0 }) : t('gitView.sync.syncChanges');
   return <View class="flex-1">
     <View class="px-4 py-2 gap-2">
-      <View class="flex-row items-center gap-2"><Text class="flex-1 text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{state().snapshot?.current || reader.source.directory}</Text><Button testID="changes-sync" class={action} disabled={disabled()} onPress={() => { void actions.sync(); }}><Text class="text-sm text-foreground">{t('gitView.sync.syncChanges')}</Text></Button><Button testID="changes-refresh" class={iconAction} disabled={state().loading || status().pending} accessibilityLabel={t('mobile.files.refreshAria')} onPress={() => { void reader.refresh(); }}><Icon name="refresh" size={18} /></Button></View>
+      <View class="flex-row items-center gap-2"><Text class="flex-1 text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{state().snapshot?.current || reader.source.directory}</Text><Button testID="changes-sync" class={iconAction} disabled={disabled() || dirtyBehind() || !remotes()?.length || !!remoteError()} accessibilityLabel={syncLabel()} onPress={() => { void actions.sync(); }}><Icon name={status().pending ? 'loader-4' : 'refresh'} size={16} /></Button><Button testID="changes-refresh" class={iconAction} disabled={state().loading || status().pending} accessibilityLabel={t('mobile.files.refreshAria')} onPress={() => { void reader.refresh(); void refreshRemotes(); }}><Icon name="refresh" size={18} /></Button></View>
       <If when={state().loading || status().pending}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If>
       <If when={!!state().error}><Text role="alert" class="text-sm text-destructive">{state().error}</Text></If>
+      <If when={!!remoteError()}><Text role="alert" class="text-sm text-destructive">{remoteError()}</Text></If>
       <If when={!!status().error}><Text role="alert" class="text-sm text-destructive">{actionError()}</Text></If>
+      <If when={status().unknown}><Text testID="changes-write-unknown" role="alert" class="text-sm text-destructive">{t('chat.questionDelegate.uncertain')}</Text></If>
+      <If when={!!generated().error}><Text testID="changes-generation-error" role="alert" class="text-sm text-destructive">{generated().error === 'gitView.toast.generateCommitMessageFailed' ? t('gitView.toast.generateCommitMessageFailed') : generated().error}</Text></If>
       <If when={status().failedPaths.length > 0}><Button testID="changes-retry-failed" class={action} disabled={disabled()} onPress={() => { void revert(status().failedPaths); }}><Text>{t('diffView.actions.retry')}</Text></Button></If>
     </View>
-    <List testID="changes-workspace-list" class="flex-1" each={rows()} keyExtractor={row => row.key}>{item => <View>
+    <If when={deferred()}><View testID="changes-deferred" class="flex-1 px-6 gap-3 items-center justify-center"><Text class="text-sm text-muted-foreground">{t('gitView.changes.deferredStagedCount', { count: deferredCounts().staged })} · {t('gitView.changes.deferredUnstagedCount', { count: deferredCounts().working })}</Text><Text class="text-sm text-muted-foreground">{t('gitView.changes.deferredHint')}</Text><Button testID="changes-load-deferred" class={action} onPress={() => deferredLoaded.set(true)}><Text class="text-sm text-foreground">{t('gitView.changes.deferredLoadAction')}</Text></Button></View></If>
+    <If when={state().gitRepository === false}><View testID="changes-not-repository" class="flex-1 px-6 gap-2 items-center justify-center"><Icon name="git-branch" size={24} /><Text class="text-sm font-semibold text-foreground">{t('gitView.empty.notGitRepository')}</Text><Text class="text-sm text-muted-foreground">{t('gitView.empty.notGitRepositoryDescription')}</Text></View></If>
+    <List testID="changes-workspace-list" class="flex-1" style={{ display: deferred() || state().gitRepository === false ? 'none' : 'flex' }} each={rows()} keyExtractor={row => row.key}>{item => <View>
       {item().kind === 'header' ? (() => {
         const group = item(); if (group.kind !== 'header') return null;
         return <View class="min-h-11 px-3 flex-row items-center gap-1">
           <Button testID={`changes-group-${group.staged ? 'staged' : 'working'}`} class="flex-1 min-h-11 flex-row items-center gap-1" onPress={() => toggleGroup(group.staged)}><Text class="text-sm font-semibold text-foreground">{t(group.staged ? 'gitView.changes.stagedTitle' : 'gitView.changes.title')}</Text><Text class="text-xs text-muted-foreground">{group.count}</Text><Icon name={collapsedGroups().has(group.staged) ? 'arrow-right-s' : 'arrow-down-s'} size={14} /></Button>
-          <Button testID="changes-collapse-all" class={iconAction} accessibilityLabel={t(collapsedGroups().size > 0 ? 'diffView.actions.expandAll' : 'diffView.actions.collapseAll')} onPress={() => collapsedGroups.set(collapsedGroups().size > 0 ? new Set() : new Set(groups().map(group => group.staged)))}><Icon name="arrow-up-s" size={16} /></Button>
-          <Button testID="changes-view-mode" class={iconAction} accessibilityLabel={t(tree() ? 'settings.yuri.git.option.flatList' : 'settings.yuri.git.option.treeView')} onPress={() => tree.set(!tree())}><Text class="text-xs text-muted-foreground">{tree() ? '≡' : '▸'}</Text></Button>
-          <If when={groups()[0]?.staged === group.staged}><Button testID="changes-revert-all" class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertAll')} onPress={() => { void revert(paths()); }}><Text class="text-muted-foreground">↶</Text></Button></If>
+          <If when={tree()}><Button testID={`changes-collapse-directories-${group.staged}`} class={iconAction} accessibilityLabel={t(allDirectoriesExpanded(group.staged) ? 'diffView.actions.collapseAll' : 'diffView.actions.expandAll')} onPress={() => toggleDirectories(group.staged)}><Icon name={allDirectoriesExpanded(group.staged) ? 'contract-up-down' : 'expand-up-down'} size={16} /></Button></If>
+          <Button testID="changes-view-mode" class={iconAction} accessibilityLabel={t(tree() ? 'settings.yuri.git.option.flatList' : 'settings.yuri.git.option.treeView')} onPress={() => tree.set(!tree())}><Icon name={tree() ? 'node-tree' : 'list-unordered'} size={16} /></Button>
+          <If when={groups()[0]?.staged === group.staged}><Button testID="changes-revert-all" class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertAll')} onPress={() => { void revert(paths()); }}><Icon name="arrow-go-back" size={16} /></Button></If>
           <Button testID={`changes-${group.staged ? 'unstage' : 'stage'}-all`} class={iconAction} disabled={disabled()} accessibilityLabel={t(group.staged ? 'gitView.changes.unstageAllAria' : 'gitView.changes.stageAllAria')} onPress={() => { void actions.move(group.paths, group.staged); }}><Text class="text-muted-foreground">{group.staged ? '−' : '+'}</Text></Button>
         </View>;
       })() : (() => {
         const value = item(); if (value.kind !== 'entry') return null;
         const row = value.row;
         if (row.kind === 'directory') return <View class="min-h-11 pr-3 flex-row items-center gap-1" style={{ paddingLeft: 12 + row.depth * 14 }}>
-          <Button testID={`changes-directory-${value.staged}-${row.directory.path}`} class="flex-1 min-h-11 flex-row items-center gap-2" accessibilityLabel={t(collapsed().has((value.staged ? 'staged' : 'working') + ':' + row.directory.path) ? 'gitView.changes.expandDirectoryAria' : 'gitView.changes.collapseDirectoryAria', { path: row.directory.path })} onPress={() => toggleDirectory(value.staged, row.directory.path)}><Icon name="folder" size={16} /><Text class="flex-1 text-sm text-muted-foreground" style={{ numberOfLines: 1 }}>{row.directory.name}</Text><Text class="text-xs text-muted-foreground">{row.directory.files.length}</Text></Button>
-          <If when={!value.staged}><Button class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertDirectoryAria', { path: row.directory.path })} onPress={() => { void revert(row.directory.files.map(file => file.path), row.directory.path); }}><Text class="text-muted-foreground">↶</Text></Button></If>
+          <Button testID={`changes-directory-${value.staged}-${row.directory.path}`} class="flex-1 min-h-11 flex-row items-center gap-2" accessibilityLabel={t(collapsed().has((value.staged ? 'staged' : 'working') + ':' + row.directory.path) ? 'gitView.changes.expandDirectoryAria' : 'gitView.changes.collapseDirectoryAria', { path: row.directory.path })} onPress={() => toggleDirectory(value.staged, row.directory.path)}><Icon name={collapsed().has((value.staged ? 'staged' : 'working') + ':' + row.directory.path) ? 'folder-3-fill' : 'folder-open-fill'} size={16} /><Text class="flex-1 text-sm text-muted-foreground" style={{ numberOfLines: 1 }}>{row.directory.name}</Text><Text class="text-xs text-muted-foreground">{row.directory.files.length}</Text></Button>
+          <If when={!value.staged}><Button class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertDirectoryAria', { path: row.directory.path })} onPress={() => { void revert(row.directory.files.map(file => file.path), row.directory.path); }}><Icon name="arrow-go-back" size={16} /></Button></If>
           <Button class={iconAction} disabled={disabled()} accessibilityLabel={t(value.staged ? 'gitView.changes.unstageDirectoryAria' : 'gitView.changes.stageDirectoryAria', { path: row.directory.path })} onPress={() => { void actions.move(row.directory.files.map(file => file.path), value.staged); }}><Text class="text-muted-foreground">{value.staged ? '−' : '+'}</Text></Button>
         </View>;
         const file = row.file, stats = state().snapshot?.diffStats?.[file.path];
         return <View class="min-h-11 pr-3 flex-row items-center gap-1" style={{ paddingLeft: 12 + row.depth * 14 }}>
           <Button testID={`changes-${value.staged ? 'staged' : 'working'}-${file.path}`} class="flex-1 min-h-11 flex-row items-center gap-2 active:bg-accent disabled:opacity-40" disabled={status().pending} onPress={() => { void reader.select(file.path, value.staged); }}><Text class="text-xs text-muted-foreground">{value.staged ? file.index : file.working_dir || file.index}</Text><Icon name="file-edit" size={14} /><Text class="flex-1 text-sm text-foreground" style={{ numberOfLines: 1 }}>{tree() ? file.path.split('/').pop() : file.path}</Text><If when={!!stats}><Text class="text-xs text-success">+{stats?.insertions}</Text><Text class="text-xs text-destructive">−{stats?.deletions}</Text></If></Button>
-          <If when={!value.staged}><Button testID={`changes-revert-${file.path}`} class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertFileAria', { path: file.path })} onPress={() => { void revert([file.path]); }}><Text class="text-muted-foreground">↶</Text></Button></If>
+          <If when={!value.staged}><Button testID={`changes-revert-${file.path}`} class={iconAction} disabled={disabled()} accessibilityLabel={t('gitView.changes.revertFileAria', { path: file.path })} onPress={() => { void revert([file.path]); }}><Icon name="arrow-go-back" size={16} /></Button></If>
           <Button testID={`changes-${value.staged ? 'unstage' : 'stage'}-${file.path}`} class={iconAction} disabled={disabled()} accessibilityLabel={t(value.staged ? 'gitView.changes.unstageFileAria' : 'gitView.changes.stageFileAria', { path: file.path })} onPress={() => { void actions.move([file.path], value.staged); }}><Text class="text-muted-foreground">{value.staged ? '−' : '+'}</Text></Button>
         </View>;
       })()}
     </View>}</List>
-    <If when={!state().loading && !state().error && state().snapshot !== null && groups().length === 0}><Text class="px-4 text-muted-foreground">{t('diffView.state.cleanWorkingTree')}</Text></If>
+    <If when={!deferred() && !state().loading && !state().error && state().snapshot !== null && groups().length === 0}><Text class="px-4 text-muted-foreground">{t('diffView.state.cleanWorkingTree')}</Text></If>
     <If when={groups().length > 0}><View class="px-4 pt-2 pb-3 gap-2 border-t border-border/30">
       <View class="flex-row items-center gap-2"><Text class="text-sm font-semibold text-foreground">{t('gitView.commit.title')}</Text><If when={stagedCount() === 0}><Text class="flex-1 text-xs text-muted-foreground">{t('gitView.commit.stageFilesHint')}</Text></If></View>
-      <Input testID="changes-commit-message" multiline value={message()} placeholder={t('gitView.commit.messagePlaceholder')} accessibilityLabel={t('gitView.commit.messagePlaceholder')} disabled={status().pending} class="bg-card rounded-xl p-2 text-sm text-foreground" style={{ height: inputHeight() }} onChange={event => message.set(event.value)} />
+      <If when={generated().highlights.length > 0}><View testID="changes-highlights" class="rounded-xl border border-border/30 px-3 py-2 gap-2"><View class="flex-row items-center gap-2"><Text class="flex-1 text-xs text-muted-foreground">{t('gitView.commit.aiHighlights.title')}</Text><Button testID="changes-insert-highlights" class={iconAction} disabled={generated().pending || status().pending} accessibilityLabel={t('gitView.commit.aiHighlights.insertAria')} onPress={generation.insertHighlights}><Icon name="arrow-down" size={16} /></Button></View><Each of={generated().highlights}>{highlight => <Text class="text-sm text-foreground">{highlight()}</Text>}</Each></View></If>
+      <Input testID="changes-commit-message" multiline value={message()} placeholder={t('gitView.commit.messagePlaceholder')} accessibilityLabel={t('gitView.commit.messagePlaceholder')} disabled={status().pending} class="bg-card rounded-xl p-2 text-sm text-foreground" style={{ height: inputHeight() }} onChange={event => generation.edit(event.value)} />
       <View testID="changes-commit-resize" accessibilityLabel={t('textarea.resizeHandleAria')} class="items-center justify-center" style={{ height: 20 }} onTouchStart={event => { resize = { y: event.pageY, height: inputHeight() }; }} onTouchMove={event => { if (resize) inputHeight.set(Math.max(60, Math.min(windowSize().height * .35, resize.height + event.pageY - resize.y))); }} onTouchEnd={() => { resize = undefined; }} onTouchCancel={() => { resize = undefined; }}><View class="rounded-full bg-muted-foreground/40" style={{ width: 40, height: 4 }} /></View>
-      <View class="flex-row items-center gap-2"><Button testID="changes-generate-unavailable" class={action} disabled accessibilityLabel={t('gitView.commit.generateAria')}><Text class="text-xs text-muted-foreground">{t('gitView.commit.generate')} · {t('common.unavailable')}</Text></Button><View class="flex-1" /><Button testID="changes-commit" class={action} disabled={disabled() || stagedCount() === 0 || !message().trim()} onPress={() => { void commit(false); }}><Text class="text-sm text-foreground">{t('gitView.commit.commit')}</Text></Button><Button testID="changes-commit-sync" class={action} disabled={disabled() || stagedCount() === 0 || !message().trim()} onPress={() => { void commit(true); }}><Text class="text-sm text-foreground">{t('gitView.commit.push')}</Text></Button></View>
+      <View class="flex-row items-center gap-2"><Button testID="changes-generate" class={action} disabled={disabled() || stagedCount() === 0} accessibilityLabel={t('gitView.commit.generateAria')} onPress={() => { void generation.generate(); }}><Icon name={generated().pending ? 'loader-4' : 'ai-generate-2'} size={16} /><Text class="text-xs text-foreground">{t('gitView.commit.generate')}</Text></Button><View class="flex-1" /><Button testID="changes-commit" class={action} disabled={disabled() || stagedCount() === 0 || !message().trim()} onPress={() => { void commit(false); }}><Icon name="git-commit" size={16} /><Text class="text-sm text-foreground">{t('gitView.commit.commit')}</Text></Button><Button testID="changes-commit-sync" class={action} disabled={disabled() || stagedCount() === 0 || !message().trim()} accessibilityLabel={t('gitView.commit.pushAria')} onPress={() => { void commit(true); }}><Icon name="arrow-up" size={16} /></Button></View>
     </View></If>
   </View>;
 }

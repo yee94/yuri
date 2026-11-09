@@ -163,6 +163,24 @@ describe('production transcript actions with fixture-only Host requests', () => 
     const { actions, onOpenChat } = setup(); await actions.fork();
     expect(onOpenChat).toHaveBeenCalledWith({ ...target, id: 'forked', title: 'Fork' });
   });
+  it('fork validates the selected row in authoritative paged history without requiring a second exact-body projection', async () => {
+    selected = messageFrom({ id: 'answer', type: 'assistant', text: 'Answer' })!;
+    handle = (path, method) => {
+      if (path.includes('/message/answer?')) throw new Error('Selected message is unavailable');
+      if (path.includes('/message?')) return { data: [{ id: 'answer', type: 'assistant', finish: 'stop' }, { id: 'input', type: 'user' }], cursor: { next: null } };
+      if (path.includes('/fork?') && method === 'POST') return { data: { id: 'forked' } };
+      throw new Error('Unexpected request');
+    };
+    const { actions, onOpenChat } = setup();
+    await actions.fork();
+    expect(onOpenChat).toHaveBeenCalledOnce();
+    expect(requests().filter(input => input.method === 'GET')).toHaveLength(1);
+  });
+  it('fork never writes when authoritative history does not contain the clicked message', async () => {
+    handle = () => ({ data: [{ id: 'other', type: 'assistant', finish: 'stop' }], cursor: { next: null } });
+    await expect(setup().actions.fork()).rejects.toThrow('unavailable');
+    expect(requests().some(input => input.method === 'POST')).toBe(false);
+  });
   it('refuses to fork an incomplete live turn', async () => {
     busy = true; selected = messageFrom({ id: 'answer', type: 'assistant' })!;
     handle = path => path.includes('/message/answer?') ? { id: 'answer', type: 'assistant' } : { data: [{ id: 'answer', type: 'assistant' }] };

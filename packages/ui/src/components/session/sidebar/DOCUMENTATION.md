@@ -1,5 +1,12 @@
 # Session Sidebar Documentation
 
+`createSessionOwnershipIndex` accepts the minimal directory identity of a session
+and preserves the caller's record type in its project buckets. Web retains the
+default SDK `Session` contract; NSH passes its native root-session projection
+without manufacturing SDK fields. Both consumers share deepest-project,
+registered-worktree, path-normalization and collision precedence. This index
+does not infer pagination completeness or filter visible roots for its callers.
+
 `SidebarBackgroundTasks` is the shared inline progress area to the right of the
 footer settings/device/help buttons. It consumes existing runtime-scoped import,
 content-index and Host-update Queries plus the client update store; it adds no

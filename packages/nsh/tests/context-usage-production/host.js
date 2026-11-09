@@ -27,7 +27,9 @@ export function createHost(player) {
   }
   function emit(type, data) {
     if (typeof player?.hostEvent !== 'function') throw new Error('Context fixture requires the real hostEvent boundary');
-    player.hostEvent('runtime.event', { key: 'chat', data: JSON.stringify({ type, data: { sessionID, ...data }, location: { directory } }) });
+    const issued = [...admittedStreams].reverse().find(row => row.input.key === 'chat')?.input;
+    if (!issued) return;
+    player.hostEvent('runtime.event', { key: 'chat', ownerID: issued.ownerID, expectedHost: clone(issued.expectedHost), data: JSON.stringify({ type, data: { sessionID, ...data }, location: { directory } }) });
   }
   return { call(name, input) {
     calls.push({ name, input: clone(input ?? {}) });
@@ -75,16 +77,19 @@ export function createHost(player) {
       if (name === 'speech.prepare') return { visible: true, provider: 'browser', mode: 'sanitized' };
       if (name === 'speech.stop' || name === 'speech.release') return null;
       if (name === 'runtime.stream') {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || !['global', 'chat'].includes(input.key) || input.path !== (input.key === 'global' ? '/api/yuri/events' : '/api/event?directory=%2Ffixture%2Factual') || Object.keys(input).some(key => !['path', 'key', 'expectedHost'].includes(key))) throw new Error('Unexpected context stream');
+        if (!input || typeof input !== 'object' || Array.isArray(input) || !['global', 'chat'].includes(input.key) || input.path !== (input.key === 'global' ? '/api/yuri/events' : '/api/event?directory=%2Ffixture%2Factual') || Object.keys(input).some(key => !(input.key === 'chat' ? ['path', 'key', 'expectedHost', 'mode', 'ownerID'] : ['path', 'key', 'expectedHost']).includes(key))) throw new Error('Unexpected context stream');
         if (!Object.prototype.hasOwnProperty.call(input, 'expectedHost')) throw new Error('runtime_host_scope_required');
         admit(input.expectedHost);
+        if (input.key === 'chat' && (!['auto', 'ws', 'sse'].includes(input.mode) || typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected context stream ticket');
         admittedStreams.push({ name, input: clone(input) });
+        if (input.key === 'chat') player?.hostEvent?.('runtime.event', { key: 'chat', ownerID: input.ownerID, expectedHost: clone(input.expectedHost), type: 'reconnected' });
         return true;
       }
       if (name === 'runtime.stop') {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || !['global', 'chat'].includes(input.key) || Object.keys(input).some(key => !['key', 'expectedHost'].includes(key))) throw new Error('Unexpected context stream stop');
+        if (!input || typeof input !== 'object' || Array.isArray(input) || !['global', 'chat'].includes(input.key) || Object.keys(input).some(key => !(input.key === 'chat' ? ['key', 'expectedHost', 'ownerID'] : ['key', 'expectedHost']).includes(key))) throw new Error('Unexpected context stream stop');
         if (!Object.prototype.hasOwnProperty.call(input, 'expectedHost')) throw new Error('runtime_host_scope_required');
         admit(input.expectedHost);
+        if (input.key === 'chat' && (typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected context stream stop ticket');
         admittedStops.push({ name, input: clone(input) });
         return true;
       }

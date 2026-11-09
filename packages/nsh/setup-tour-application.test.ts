@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createSetupTour, type SetupTourStep } from './setup-tour-core';
 import { createHistoryImport } from './history-import-core';
 import { createSetupTourProgress } from './setup-tour-progress';
+import { createResourceConnectionClear } from './resource-retirement';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 /** Actual application's command/navigation closures, with inert uncalled
@@ -29,9 +30,10 @@ function application() {
   const connection = { id: 'fixture-app', url: 'https://example.invalid', authorizationID: 'synthetic-auth' };
   const storage: Record<string, string> = {}, storageWrites: string[] = [], requests: unknown[] = [];
   const operation = { scope: { hostID: connection.id, lease: 'synthetic-lease' }, generation: 1, current: () => online, request: async (...args: unknown[]) => { requests.push(args); throw new Error('Unexpected Host request'); } };
-  const nav = { routes: () => routes, push(route: Route) { routes.push(route); }, pop() { if (routes.length > 1) routes.pop(); }, setRoutes(value: Route[]) { routes = [...value]; }, remove(route: Route) { routes = routes.filter(item => item !== route); } };
+  const nav = { routes: () => routes, push(route: Route) { routes.push(route); }, pop() { if (routes.length > 1) routes.pop(); }, popToRoot() { routes = routes.slice(0, 1); }, setRoutes(value: Route[]) { routes = [...value]; }, remove(route: Route) { routes = routes.filter(item => item !== route); } };
   const storageAPI = { getItem: async (key: string) => storage[key] ?? null, setItem: async (key: string, value: string) => { storageWrites.push(key); storage[key] = value; } };
-  modules.nsh = { ...modules.nsh, signal, Storage: storageAPI, batch: (work: () => void) => work() };
+  modules.nsh = { ...modules.nsh, signal, computed: <T>(read: () => T) => read, Storage: storageAPI, batch: (work: () => void) => work() };
+  modules['./resource-retirement'] = { createResourceConnectionClear };
   modules['nsh/base'].createNavStack = (initial: Route[]) => { routes = [...initial]; return nav; };
   modules['./state'] = { ...modules['./state'], epoch: () => 1, captureHostOperation: () => operation, app: { connection: () => connection, projects: () => [] }, run: async (work: () => Promise<unknown>) => work(), report: unexpected };
   modules['./model'] = { ...modules['./model'], id: () => `synthetic-owner-${++serial}` };

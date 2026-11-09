@@ -3,6 +3,20 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'native.feedback.permission': 'Esta versão não tem uma permissão necessária. Atualize o aplicativo e tente novamente.',
+  'native.feedback.authorization': 'Não foi possível verificar a autorização do servidor. Verifique esta conexão e tente novamente.',
+  'native.feedback.connection': 'Não foi possível conectar ao servidor. Verifique a rede e a conexão e tente novamente.',
+  'native.feedback.operation': 'Não foi possível concluir a operação. Tente novamente ou feche este aviso e retome pela página original.',
+  'chat.attachments.notDispatched': 'O anexo não foi enviado. Tente novamente ou selecione um arquivo; o registro de recuperação foi mantido.',
+  'chat.attachments.originalAuthorizationUnavailable': 'A autorização original está indisponível. Restaure essa conexão e tente novamente; o registro de recuperação foi mantido.',
+  'chat.attachments.pendingCapacity': 'Há 64 registros de anexos pendentes. Confira ou retire esses anexos antes de selecionar mais arquivos.',
+  'chat.attachments.receiptStorageFailed': 'Não foi possível salvar o registro de recuperação. Tente novamente; arquivos ainda não enviados não serão carregados.',
+  'chat.attachments.retirementPending': 'A retirada do anexo não foi confirmada. Toque em Anexar novamente para tentar de novo. Nenhum arquivo foi excluído.',
+  'chat.attachments.receiptPending': 'O resultado do envio não foi confirmado. Toque em Anexar novamente para conferir sem reenviar o arquivo.',
+  'settings.appearance.fontLoadFailed': 'Não foi possível carregar a fonte selecionada. A fonte anterior foi mantida. Tente carregá-la novamente.',
+  'settings.appearance.fontUnsupported': 'Uma fonte selecionada não está disponível neste dispositivo. Uma fonte alternativa está sendo usada.',
+  'mobile.files.error.previewExpired': 'Esta prévia expirou. Volte e abra o anexo novamente.',
+  'mobile.sessions.catalogPartial': 'Alguns diretórios ainda não foram atualizados. As sessões disponíveis e os dados salvos continuam visíveis. Tente novamente para verificar.',
   'mobile.instances.nativeEditor.invalid': 'Digite um nome de 1 a 120 caracteres e um endereço de servidor válido.',
   'mobile.instances.nativeEditor.missing': 'Esta conexão salva não existe mais.',
   'mobile.instances.nativeEditor.stale': 'Esta conexão foi alterada. Feche e abra o editor novamente antes de salvar.',
@@ -2794,6 +2808,7 @@ export const dict: Record<I18nKey, string> = {
   "mcpDropdown.actions.openAria": "Servidores MCP",
   "mcpDropdown.statusAria": "Status MCP",
   "mcpDropdown.status.unknown": "Desconhecido",
+  "mcpDropdown.status.unconfirmed": "A alteração da conexão ainda não foi confirmada. Atualize para verificar; a operação não será reenviada automaticamente.",
   "mcpDropdown.status.connected": "Conectado",
   "mcpDropdown.status.failed": "Falhou: {error}",
   "mcpDropdown.status.unknownError": "Erro desconhecido",

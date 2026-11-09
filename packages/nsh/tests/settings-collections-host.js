@@ -1,3 +1,4 @@
+import { settingsEngineFixtureScope } from './settings-engine-fixture-scope.js';
 /** Explicit --web-host only. Rejects every unknown request; no real Host/credentials. */
 function parseFixturePath(value) {
   if (typeof value !== 'string' || !value.startsWith('/api/') || /[\s#]/.test(value)) throw new Error('Invalid collections fixture path');
@@ -18,6 +19,7 @@ function parseFixturePath(value) {
 }
 
 export function createHost() {
+  const scope = settingsEngineFixtureScope('collections-settings-fixture');
   let deleted = false, permissionDeletes = 0, agentWrites = 0, mcpWrites = 0, reloads = 0, checks = 0, updates = 0;
   let agentDescription = 'Review fixtures';
   let pluginUpdated = false;
@@ -26,10 +28,19 @@ export function createHost() {
   const ok = body => ({ status: 200, body });
   const inventory = () => ({ data: [{ source: { type: 'package', target: 'example-plugin@latest', version: pluginUpdated ? '2.0.0' : '1.0.0', outdated: !pluginUpdated, updating: false }, state: pluginUpdated ? { status: 'active' } : { status: 'failed', error: 'Fixture load failure\nSecond detail\nThird detail', ref: 'fixture-reference' } }] });
   return { call(name, input) {
-    if (name === 'collections.fixture.audit') return { permissionDeletes, agentWrites, mcpWrites, reloads, checks, updates };
+    if (name === 'connection.list') return scope.connection(input);
+    if (name === 'settings.fixture.scope') return scope.control(input);
+    if (name === 'settings.fixture.scopeAudit') return scope.audit(input);
+    if (name === 'collections.fixture.audit') {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('Invalid collections fixture audit payload');
+      return { permissionDeletes, agentWrites, mcpWrites, reloads, checks, updates };
+    }
     if (name !== 'runtime.request') throw new Error('Unexpected collections fixture call');
+    scope.admit(input);
     const { path, method, body } = input;
+    if ((method === 'GET' || method === 'DELETE') && body !== undefined) throw new Error('Unexpected collections read/delete body');
     parseFixturePath(path);
+    if (path === '/api/config/catalog/providers' + directoryQuery && method === 'GET') return ok({ schemaVersion: 1, providers: [{ id: 'example', name: 'Example provider', models: { model: { name: 'Example model', variants: { deep: {} }, capabilities: { tools: true, input: ['text'] } } } }] });
     if (path === '/api/agent' + locationQuery && method === 'GET') return ok({ data: [{ name: 'review', description: agentDescription, model: { providerID: 'example', modelID: 'model', variant: 'deep' }, mode: 'primary', permissions: [{ action: 'shell', resource: '*', effect: 'ask' }] }] });
     if (path === '/api/config/agents/metadata' + directoryQuery && method === 'POST') return ok({ agents: { review: { scope: 'project' } } });
     if (path === '/api/config/agents/review/config' + directoryQuery && method === 'GET') return ok({ config: { prompt: 'Stored fixture prompt' } });

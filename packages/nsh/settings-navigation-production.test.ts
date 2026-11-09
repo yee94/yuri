@@ -2,12 +2,17 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeLayoutDensity } from './native-density';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { readSettingsCollection, scopedSettingsPath, settingsMutation } from './settings-protocol';
 import { nativeAgentEditor } from './settings-collections-core';
 import * as collectionsCore from './settings-collections-core';
+import * as collectionOperations from './settings-collection-operations';
+import * as collectionScope from './settings-collection-scope';
+import * as collectionJSONC from './settings-collection-jsonc';
+import * as settingsSearch from './settings-search-core';
 import * as settingsProtocol from './settings-protocol';
 import * as model from './model';
 import * as projectsSearchCore from './projects-search-core';
@@ -144,8 +149,15 @@ function collectionEditorCallbacks(fixture: ReturnType<typeof evaluateHost>, pag
     nsh: { signal, cleanup: (work: () => void) => cleanups.push(work), effect, untracked, Scroll: 'Scroll', Text: 'Text', View: 'View' },
     'nsh/base': { Button: 'Button', Input: 'Input', Select: 'Select', Switch: 'Switch', TextView: 'TextView', AlertDialog: {} },
     './native-select': { NativeSelect: 'NativeSelect' },
+    './appearance': { nativeCodeTextViewStyles: () => ({}), nativeDensity: () => nativeLayoutDensity(100) },
+    './native-editor-style': { nativeEditorTextStyle: () => ({}) },
     './model': model, './runtime': fixture.runtime, './state': { captureHostRequest: () => fixture.runtime.bindRequest(runtimeScope()), captureHostOperation, epoch: generation, app: { connection, runtimeScope } },
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './settings-protocol': settingsProtocol, './settings-collections-core': collectionsCore,
+    './settings-collection-operations': collectionOperations, './settings-search-core': settingsSearch,
+    './settings-collection-scope': collectionScope, './settings-collection-jsonc': collectionJSONC,
+    './settings-collection-kv': { SettingsCollectionKV: 'SettingsCollectionKV' }, './settings-collection-picker': { SettingsCollectionPicker: 'SettingsCollectionPicker' },
+    './settings-collection-plugins': { SettingsCollectionPlugins: 'SettingsCollectionPlugins' }, './settings-collection-directory': { SettingsCollectionDirectory: 'SettingsCollectionDirectory' },
+    './native-sheet': { NativeSheet: 'NativeSheet' },
     './settings-providers': { SettingsProviders: 'SettingsProviders' }, './settings-skill-files': { SettingsSkillFiles: 'SettingsSkillFiles' },
     './settings-permissions': { SettingsPermissions: 'SettingsPermissions', SettingsSavedPermissions: 'SettingsSavedPermissions' },
     './settings-mcp-live': { SettingsMcpLive: 'SettingsMcpLive' }, './settings-plugin-runtime': { SettingsPluginRuntime: 'SettingsPluginRuntime' }, './settings-mcp-import': { SettingsMcpImport: 'SettingsMcpImport' },

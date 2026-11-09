@@ -1,4 +1,4 @@
-import { cleanup, mount, signal, List, Text, View, safeArea, type InputRef, type ListRef } from 'nsh';
+import { cleanup, keyboardFrame, mount, signal, List, Text, View, safeArea, type InputRef, type ListRef } from 'nsh';
 import { Button, createNavStack, Input, NavPage, NavStack } from 'nsh/base';
 import { createChatChromeState, createNativeChatChrome } from './chat-chrome';
 import { NativeComposerChrome } from './chat-chrome-surfaces';
@@ -7,6 +7,8 @@ import { NativeSheet } from './native-sheet';
 import { NativeSelect } from './native-select';
 import { NativeDatePicker } from './native-date-picker';
 import { NativeNewSessionModal } from './new-session-modal';
+import { NativeComposerTasks } from './chat-tasks';
+import { nativeComposerSurface } from './composer-surface';
 
 /** Isolated UIKit carrier for production presentation/chrome; no Host or model calls. */
 function Fixture() {
@@ -17,6 +19,7 @@ function Page() {
   const state = signal(createChatChromeState()), height = signal(160), draft = signal('Retained draft'), sheet = signal(false), guarded = signal(false), newSession = signal<'model' | null>(null);
   const selected = signal('0'), date = signal('2026-11-07'), rows = signal(Array.from({ length: 500 }, (_, index) => ({ id: `${index}`, title: `Reading row ${500 - index}: native history text.\n${'Content with a stable reading anchor. '.repeat(index % 3 + 1)}` })));
   const chrome = createNativeChatChrome(value => state.set(value));
+  const tasksOpen = signal(false);
   let input: InputRef | undefined, list: ListRef | undefined;
   cleanup(chrome.dispose);
   return <NavPage title="Native chrome QA" headerTransparent class="flex-1 bg-background" headerRight={<Button testID="qa-sheet" class="min-h-11 px-2" onPress={() => sheet.set(true)}><Text class="text-foreground">Sheet</Text></Button>}>
@@ -29,8 +32,9 @@ function Page() {
       <Button testID="qa-compact-edit" class="flex-1 min-h-11 justify-center" onPress={() => { chrome.expand(); input?.focus(); }}><Text class="text-foreground" style={{ numberOfLines: 1 }}>{draft()}</Text></Button>
       <Button testID="qa-latest" class="size-8 items-center justify-center" onPress={() => { chrome.expand(); list?.scrollToIndex({ index: 0, viewPosition: 1, animated: true }); }}><Text>↓</Text></Button>
     </>}>
-      <View class="px-3 pt-2" style={{ paddingBottom: safeArea().bottom + 16 }}>
-        <View class="bg-card rounded-3xl p-3 gap-2"><Input testID="qa-editor" ref={node => { input = node; }} multiline value={draft()} onChange={event => draft.set(event.value)} onFocus={() => chrome.pin(true)} onBlur={() => chrome.pin(false)} class="text-foreground min-h-14" />
+      <View class="px-3 pt-2" style={{ paddingBottom: keyboardFrame().height > 0 ? 'calc(env(keyboard-inset-height) + 12px)' : 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+        <NativeComposerTasks todos={[{ id: 'qa-task', content: 'Native task touch target', status: 'in_progress', priority: 'high' }]} liveWorking active expanded={tasksOpen()} onExpandedChange={open => tasksOpen.set(open)} />
+        <View style={nativeComposerSurface} class="p-3 gap-2"><Input testID="qa-editor" ref={node => { input = node; }} multiline value={draft()} onChange={event => draft.set(event.value)} onFocus={() => chrome.pin(true)} onBlur={() => chrome.pin(false)} class="text-foreground min-h-14" />
           <View class="flex-row gap-2"><Button testID="qa-new-session" class="min-h-11 px-3" onPress={() => newSession.set('model')}><Text>New picker</Text></Button>
             <NativeSelect accessibilityLabel="Choose item" searchable value={selected()} items={Array.from({ length: 300 }, (_, index) => ({ value: `${index}`, title: `Choice ${index}` }))} onChange={event => selected.set(event.value ?? '')} trigger={<Text class="text-foreground">Select {selected()}</Text>} />
             <NativeDatePicker value={date()} onChange={event => { if (typeof event.value === 'string') date.set(event.value); }} trigger={<Text class="text-foreground">{date()}</Text>} accessibilityLabel="Choose date" />

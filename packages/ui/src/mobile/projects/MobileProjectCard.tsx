@@ -23,6 +23,7 @@ export type MobileProjectCardModel = {
   icon?: IconName;
   tone?: MobileProjectTone;
   sessionCount: number;
+  sessionCountPartial?: boolean;
   activityLabel?: string;
   active?: boolean;
 };
@@ -170,7 +171,7 @@ export function MobileProjectCard({
               ) : null}
             </span>
             <span className="yuri-mobile-project-meta yuri-mobile-entity-meta flex min-w-0 items-center text-muted-foreground">
-              <span className="shrink-0 tabular-nums">{countLabel}</span>
+              <span className="shrink-0 tabular-nums">{countLabel}{project.sessionCountPartial ? '+' : ''}</span>
               {project.activityLabel ? (
                 <>
                   <span aria-hidden className="text-muted-foreground/50">·</span>

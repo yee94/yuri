@@ -52,6 +52,7 @@ export const CONTACT_ATTACHMENT_SCHEMA_SQL = `
     filename TEXT,
     relative_path TEXT NOT NULL,
     upload_id TEXT,
+    retired_at INTEGER,
     created_at INTEGER NOT NULL
   );
   CREATE UNIQUE INDEX IF NOT EXISTS assistant_contact_attachment_upload
@@ -73,9 +74,13 @@ export function ensureContactAttachmentSchema(db) {
       filename TEXT,
       relative_path TEXT NOT NULL,
       upload_id TEXT,
+      retired_at INTEGER,
       created_at INTEGER NOT NULL
     );
   `);
+  if (!db.prepare('PRAGMA table_info(assistant_contact_attachment)').all().some(column => column.name === 'retired_at')) {
+    db.exec('ALTER TABLE assistant_contact_attachment ADD COLUMN retired_at INTEGER');
+  }
   db.exec(`
     CREATE INDEX IF NOT EXISTS assistant_contact_attachment_assistant
       ON assistant_contact_attachment(assistant_id, generation, attachment_id);
@@ -123,13 +128,14 @@ export function parseAttachmentFilenameHeader(raw) {
 
 /** Public descriptor — never includes filesystem paths. */
 export function toContactAttachmentDescriptor(row) {
-  if (!row) return null;
+  if (!row || row.relative_path === '') return null;
   return {
     type: 'file',
     attachmentID: row.attachment_id,
     sha256: row.sha256,
     size: row.size,
     mime: row.mime,
+    ...(Number.isSafeInteger(row.generation) ? { generation: row.generation } : {}),
     ...(row.filename ? { filename: row.filename } : {}),
   };
 }
@@ -148,12 +154,74 @@ export function getContactAttachmentByUploadID(db, assistantID, uploadID) {
   ).get(assistantID, uploadID.trim()) || null;
 }
 
+function contactAttachmentGeneration(value) {
+  const generation = typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) ? Number(value) : value;
+  if (!Number.isSafeInteger(generation) || generation < 0) fail('validation_error', 'A nonnegative contact generation is required');
+  return generation;
+}
+
+function exactUpload(assistantID, uploadID) {
+  if (typeof assistantID !== 'string' || !assistantID || typeof uploadID !== 'string' || !PROMPT_ATTACHMENT_ID.test(uploadID)) {
+    fail('validation_error', 'Invalid attachment upload owner');
+  }
+}
+
+function uploadReceipt(db, row) {
+  return {
+    assistantID: row.assistant_id, uploadID: row.upload_id, generation: row.generation,
+    currentGeneration: getContactGeneration(db, row.assistant_id),
+    state: row.retired_at != null ? 'retired' : row.relative_path ? 'committed' : 'inflight',
+    descriptor: row.relative_path ? canonicalDescriptorFromRow(row) : null,
+  };
+}
+
+export function getContactAttachmentReceipt(db, { assistantID, uploadID, generation }) {
+  exactUpload(assistantID, uploadID);
+  const expected = contactAttachmentGeneration(generation);
+  const row = getContactAttachmentByUploadID(db, assistantID, uploadID);
+  if (!row) return { assistantID, uploadID, generation: expected, currentGeneration: getContactGeneration(db, assistantID), state: 'not_found', descriptor: null };
+  if (row.generation !== expected) fail('contact_generation_conflict', 'Upload belongs to another contact generation');
+  return uploadReceipt(db, row);
+}
+
+export function retireContactAttachment(db, { assistantID, uploadID, generation, descriptor }, clock = () => Date.now()) {
+  exactUpload(assistantID, uploadID);
+  if (typeof generation !== 'number') fail('validation_error', 'Retirement generation must be a number');
+  const expected = contactAttachmentGeneration(generation);
+  if (descriptor !== null && (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(descriptor)))) {
+    fail('validation_error', 'Retirement requires a descriptor or explicit null for an unknown receipt');
+  }
+  return db.transaction(() => {
+    if (expected > getContactGeneration(db, assistantID)) fail('contact_generation_conflict', 'Future contact generation');
+    let row = getContactAttachmentByUploadID(db, assistantID, uploadID);
+    if (row && row.generation !== expected) fail('contact_generation_conflict', 'Upload belongs to another contact generation');
+    if (descriptor !== null) {
+      const canonical = row?.relative_path ? canonicalDescriptorFromRow(row) : null;
+      if (!canonical || Object.keys(descriptor).some(key => !Object.hasOwn(canonical, key))
+        || Object.keys(canonical).some(key => !Object.hasOwn(descriptor, key) || descriptor[key] !== canonical[key])) {
+        fail('idempotency_conflict', 'Attachment descriptor does not match this exact upload');
+      }
+    }
+    if (!row) {
+      // A fence is not an attachment: empty object metadata is never projected as a descriptor.
+      db.prepare(`INSERT INTO assistant_contact_attachment(
+        attachment_id,assistant_id,generation,sha256,size,mime,relative_path,upload_id,retired_at,created_at
+      ) VALUES (?,?,?,'',0,'','',?,?,?)`).run(`retired_${crypto.randomUUID()}`, assistantID, expected, uploadID, clock(), clock());
+    } else {
+      db.prepare('UPDATE assistant_contact_attachment SET retired_at=COALESCE(retired_at,?) WHERE attachment_id=?').run(clock(), row.attachment_id);
+    }
+    row = getContactAttachmentByUploadID(db, assistantID, uploadID);
+    return { ...uploadReceipt(db, row), newAdmissionAllowed: false, ownershipRetained: !!row.relative_path, bytesDeleted: false };
+  }).immediate();
+}
+
 /**
  * External GET / admission: assistant match + generation === current live gen.
  */
-export function assertContactAttachmentReadable(db, { attachmentID, assistantID }) {
+export function assertContactAttachmentReadable(db, { attachmentID, assistantID, allowRetired = false }) {
   const row = getContactAttachmentRow(db, attachmentID);
-  if (!row || row.assistant_id !== assistantID) {
+  if (!row || !row.relative_path || row.assistant_id !== assistantID || !allowRetired && row.retired_at != null) {
     fail('not_found', 'Attachment not found');
   }
   const current = getContactGeneration(db, assistantID);
@@ -170,7 +238,7 @@ export function assertContactAttachmentReadable(db, { attachmentID, assistantID 
  */
 export function assertContactAttachmentOwned(db, { attachmentID, assistantID }) {
   const row = getContactAttachmentRow(db, attachmentID);
-  if (!row || row.assistant_id !== assistantID) {
+  if (!row || !row.relative_path || row.assistant_id !== assistantID) {
     fail('not_found', 'Attachment not found');
   }
   const current = getContactGeneration(db, assistantID);
@@ -190,6 +258,7 @@ export async function putContactAttachment({
   dataDir,
   assistantID,
   uploadID,
+  expectedGeneration,
   stream,
   headers = {},
   clock = () => Date.now(),
@@ -201,8 +270,21 @@ export async function putContactAttachment({
     fail('validation_error', 'uploadID is invalid');
   }
   const upload = uploadID.trim();
-
-  const existing = getContactAttachmentByUploadID(db, assistantID, upload);
+  if (headers.accept !== undefined && typeof headers.accept !== 'string') fail('validation_error', 'Accept must be a single header value');
+  const receiptAware = typeof headers.accept === 'string' && headers.accept.split(',').some(value => value.split(';', 1)[0].trim().toLowerCase() === 'application/vnd.yuri.contact-upload+json');
+  if (receiptAware && expectedGeneration === undefined) {
+    fail('validation_error', 'The receipt-aware upload protocol requires a captured contact generation');
+  }
+  if (receiptAware && (['content-type', 'x-content-sha256', 'x-content-size'].some(key => typeof headers[key] !== 'string')
+    || !/^[1-9][0-9]*$/.test(headers['x-content-size'])
+    || headers['x-attachment-filename'] !== undefined && (typeof headers['x-attachment-filename'] !== 'string' || !parseAttachmentFilenameHeader(headers['x-attachment-filename'])))) {
+    fail('validation_error', 'Receipt-aware uploads require exact integrity headers');
+  }
+  const genBefore = expectedGeneration === undefined ? getContactGeneration(db, assistantID) : contactAttachmentGeneration(expectedGeneration);
+  const checkGeneration = () => {
+    if (getContactGeneration(db, assistantID) !== genBefore) fail('contact_generation_conflict', 'Contact generation changed during upload');
+  };
+  checkGeneration();
   const expectedSize = Number(
     headerValue(headers['x-content-size'])
     ?? headerValue(headers['x-yuri-content-length'])
@@ -232,95 +314,96 @@ export async function putContactAttachment({
     fail('validation_error', 'Attachment MIME type is invalid');
   }
 
-  if (existing) {
+  const reuse = (existing) => {
+    checkGeneration();
+    if (!existing) return null;
+    if (existing.generation !== genBefore) fail('contact_generation_conflict', 'Upload belongs to another contact generation');
+    if (existing.retired_at != null) fail('attachment_retired', 'Upload has been retired');
     if (existing.sha256 !== expectedSha256 || existing.size !== expectedSize || existing.mime !== mime) {
       fail('idempotency_conflict', 'Upload ID already used with different content');
     }
+    if (!existing.relative_path) fail('attachment_upload_inflight', 'Upload has not committed; reconcile its receipt or retire it');
     // Re-check generation still current after any concurrent reset.
     const live = getContactGeneration(db, assistantID);
     if (existing.generation !== live) {
       fail('contact_generation_conflict', 'Contact generation changed during upload');
     }
     return canonicalDescriptorFromRow(existing);
-  }
-
-  const genBefore = getContactGeneration(db, assistantID);
-  const { buffer, size } = await collectRequestBytes(stream, {
-    expectedSize,
-    maxBytes: CONTACT_ATTACHMENT_MAX_BYTES,
-    signal,
-  });
-  // After await: reset/delete may have raced — re-check before durable write/DB.
-  const genAfterRead = getContactGeneration(db, assistantID);
-  if (genAfterRead !== genBefore) {
-    fail('contact_generation_conflict', 'Contact generation changed during upload');
-  }
-  if (getContactAttachmentByUploadID(db, assistantID, upload)) {
-    const racedEarly = getContactAttachmentByUploadID(db, assistantID, upload);
-    if (racedEarly.sha256 === expectedSha256 && racedEarly.size === expectedSize) {
-      return canonicalDescriptorFromRow(racedEarly);
+  };
+  const reservation = db.transaction(() => {
+    const existing = reuse(getContactAttachmentByUploadID(db, assistantID, upload));
+    if (existing) return { descriptor: existing };
+    const attachmentID = `att_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+    try {
+      db.prepare(`INSERT INTO assistant_contact_attachment(
+        attachment_id,assistant_id,generation,sha256,size,mime,filename,relative_path,upload_id,created_at
+      ) VALUES (?,?,?,?,?,?,?,'',?,?)`).run(attachmentID, assistantID, genBefore, expectedSha256, expectedSize, mime, filename, upload, clock());
+    } catch (error) {
+      const raced = reuse(getContactAttachmentByUploadID(db, assistantID, upload));
+      if (raced) return { descriptor: raced };
+      throw error;
     }
-    fail('idempotency_conflict', 'Upload ID already used with different content');
-  }
+    const row = getContactAttachmentByUploadID(db, assistantID, upload);
+    if (row?.attachment_id !== attachmentID || row.relative_path) {
+      const raced = reuse(row);
+      if (raced) return { descriptor: raced };
+      fail('attachment_write_failed', 'Upload reservation was not committed');
+    }
+    return { attachmentID };
+  }).immediate();
+  if (reservation.descriptor) return reservation.descriptor;
+  const checkReservation = () => {
+    checkGeneration();
+    const row = getContactAttachmentByUploadID(db, assistantID, upload);
+    if (!row) fail('attachment_write_failed', 'Upload reservation is missing');
+    if (row.generation !== genBefore) fail('contact_generation_conflict', 'Upload belongs to another contact generation');
+    if (row.retired_at != null) fail('attachment_retired', 'Upload has been retired');
+    if (row.attachment_id !== reservation.attachmentID || row.sha256 !== expectedSha256 || row.size !== expectedSize || row.mime !== mime) {
+      fail('idempotency_conflict', 'Upload reservation changed');
+    }
+    return row;
+  };
 
-  const stored = await storeBytes({
-    dataDir,
-    buffer,
-    expectedSha256,
-    mime,
-    filename: filename || undefined,
-    maxBytes: CONTACT_ATTACHMENT_MAX_BYTES,
-    validateImage: true,
-  });
-  if (Number.isSafeInteger(expectedSize) && stored.size !== expectedSize) {
-    fail('attachment_hash_mismatch', 'Stored size does not match declared size');
-  }
-  if (expectedSha256 && stored.sha256 !== expectedSha256) {
-    fail('attachment_hash_mismatch', 'Stored digest does not match declared digest');
-  }
-
-  const genAfterStore = getContactGeneration(db, assistantID);
-  if (genAfterStore !== genBefore) {
-    fail('contact_generation_conflict', 'Contact generation changed during upload');
-  }
-
-  const attachmentID = `att_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
-  const at = clock();
   try {
-    db.prepare(
-      `INSERT INTO assistant_contact_attachment(
-        attachment_id, assistant_id, generation, sha256, size, mime, filename, relative_path, upload_id, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    ).run(
-      attachmentID,
-      assistantID,
-      genAfterStore,
-      stored.sha256,
-      stored.size,
-      stored.mime,
-      filename || null,
-      stored.relativePath,
-      upload,
-      at,
-    );
+    const { buffer } = await collectRequestBytes(stream, {
+      expectedSize,
+      maxBytes: CONTACT_ATTACHMENT_MAX_BYTES,
+      signal,
+    });
+    // After await: reset/delete may have raced — re-check before durable write/DB.
+    checkReservation();
+
+    const stored = await storeBytes({
+      dataDir,
+      buffer,
+      expectedSha256,
+      mime,
+      filename: filename || undefined,
+      maxBytes: CONTACT_ATTACHMENT_MAX_BYTES,
+      validateImage: true,
+    });
+    if (Number.isSafeInteger(expectedSize) && stored.size !== expectedSize) {
+      fail('attachment_hash_mismatch', 'Stored size does not match declared size');
+    }
+    if (expectedSha256 && stored.sha256 !== expectedSha256) {
+      fail('attachment_hash_mismatch', 'Stored digest does not match declared digest');
+    }
+    if (stored.mime !== mime) fail('attachment_mime_mismatch', 'Stored MIME does not match declared MIME');
+
+    return db.transaction(() => {
+      checkReservation();
+      db.prepare(`UPDATE assistant_contact_attachment SET relative_path=?
+        WHERE attachment_id=? AND generation=? AND retired_at IS NULL AND relative_path=''`).run(stored.relativePath, reservation.attachmentID, genBefore);
+
+      const committed = reuse(getContactAttachmentByUploadID(db, assistantID, upload));
+      if (!committed) fail('attachment_write_failed', 'Upload ownership was not committed');
+      return committed;
+    }).immediate();
   } catch (error) {
-    const raced = getContactAttachmentByUploadID(db, assistantID, upload);
-    if (raced && raced.sha256 === stored.sha256 && raced.size === size) {
-      return canonicalDescriptorFromRow(raced);
-    }
-    if (String(error?.message || '').includes('UNIQUE') || error?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      fail('idempotency_conflict', 'Upload ID already used with different content');
-    }
+    // Only this failed, uncommitted reservation is removable. Retirement fences and objects survive.
+    db.prepare("DELETE FROM assistant_contact_attachment WHERE attachment_id=? AND relative_path='' AND retired_at IS NULL").run(reservation.attachmentID);
     throw error;
   }
-
-  return canonicalDescriptorFromRow({
-    attachment_id: attachmentID,
-    sha256: stored.sha256,
-    size: stored.size,
-    mime: stored.mime,
-    filename: filename || null,
-  });
 }
 
 export async function readContactAttachmentBytes({
@@ -331,7 +414,7 @@ export async function readContactAttachmentBytes({
   external = true,
 }) {
   const row = external
-    ? assertContactAttachmentReadable(db, { attachmentID, assistantID })
+    ? assertContactAttachmentReadable(db, { attachmentID, assistantID, allowRetired: true })
     : assertContactAttachmentOwned(db, { attachmentID, assistantID });
   const { buffer, size } = await readPromptAttachmentBytes(dataDir, row.relative_path, {
     maxBytes: Math.max(CONTACT_ATTACHMENT_HISTORICAL_MAX_BYTES, CONTACT_ATTACHMENT_MAX_BYTES * 4),
@@ -627,6 +710,7 @@ export async function ingestDataUrlFilePart({
   );
   return canonicalDescriptorFromRow({
     attachment_id: attachmentID,
+    generation: genAfter,
     sha256: stored.sha256,
     size: stored.size,
     mime: stored.mime,

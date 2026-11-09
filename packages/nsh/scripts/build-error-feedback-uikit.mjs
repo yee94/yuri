@@ -1,0 +1,42 @@
+import { spawnSync } from 'node:child_process';
+import { randomUUID, createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile, cp, rename } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stageNativeApplication, validateNativeApplicationBundle } from './stage-native-application.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), repo = path.resolve(root, '../..');
+const id = randomUUID().slice(0, 8), output = path.join(root, '.nsh/error-feedback-uikit', id), name = 'ErrorFeedbackFixture';
+const bundleID = `example.nsh.error-feedback.run-${id}`;
+const grants = ['connection.list', 'feedback.layout', 'appearance.fonts.retry', 'feedback.fixture.read', 'feedback.fixture.recover', 'feedback.fixture.capture'];
+const nsh = process.env.NSH_BIN;
+if (!nsh || !path.isAbsolute(nsh)) throw Error('Set NSH_BIN to an existing absolute compiler path');
+const dist = process.env.NSH_DIST || path.resolve(path.dirname(nsh), '..');
+function run(command, args, cwd = repo, capture = false) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', timeout: 240_000 });
+  if (result.error || result.status !== 0) throw Error(result.error?.message || result.stderr || `${command} failed`);
+  return result.stdout?.trim();
+}
+await mkdir(output, { recursive: true });
+const stage = await stageNativeApplication({ root: path.join(output, 'stage'), workspaceRoot: repo, entry: 'packages/nsh/tests/error-feedback/fixture.tsx' });
+await writeFile(path.join(stage.cwd, 'nsh.json'), JSON.stringify({ name, id: bundleID, version: '0.1.0', theme: 'theme.json', capabilities: { host: grants } }));
+const bundle = path.join(output, 'bundle');
+run(nsh, ['build', stage.entry, '--release', '--out', bundle], stage.cwd);
+const compiledGrants = JSON.parse(await readFile(path.join(bundle, 'capabilities.json')));
+if (JSON.stringify(compiledGrants.host) !== JSON.stringify(grants) || compiledGrants.host.includes('connection.unknown') || compiledGrants.host.some(value => value.includes('*'))) throw Error('Unexpected fixture grants');
+const assets = await validateNativeApplicationBundle(bundle, stage.manifest);
+const app = path.join(output, `${name}.app`), staging = path.join(output, `${name}.staging.app`);
+await mkdir(staging); await cp(bundle, path.join(staging, 'nsh'), { recursive: true });
+await writeFile(path.join(staging, 'grants.json'), JSON.stringify({ host: grants }));
+const native = await readFile(path.join(root, 'tests/error-feedback/main.swift'));
+await writeFile(path.join(output, 'main.swift'), native);
+const layoutNative = await readFile(path.join(root, 'ios/FeedbackLayoutBridge.swift'));
+await writeFile(path.join(output, 'FeedbackLayoutBridge.swift'), layoutNative);
+const sdk = run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path'], repo, true);
+const framework = path.join(dist, 'embed/ios/NativeShell.xcframework/ios-arm64-simulator');
+run('xcrun', ['--sdk', 'iphonesimulator', 'swiftc', '-swift-version', '5', '-O', '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', '-F', framework, '-framework', 'NativeShell', ...['UIKit', 'Foundation', 'Security', 'AVFoundation', 'WebKit', 'SafariServices', 'Network', 'SystemConfiguration', 'AudioToolbox', 'CoreGraphics', 'CoreText', 'QuartzCore', 'ImageIO', 'Photos', 'PhotosUI', 'UniformTypeIdentifiers', 'Speech', 'CoreMedia', 'CoreVideo'].flatMap(value => ['-framework', value]), '-lc++', '-lz', '-lsqlite3', '-Xlinker', '-ObjC', path.join(output, 'main.swift'), path.join(output, 'FeedbackLayoutBridge.swift'), '-o', path.join(staging, name)]);
+await writeFile(path.join(staging, 'Info.plist'), JSON.stringify({ CFBundleExecutable: name, CFBundleIdentifier: bundleID, CFBundleName: name, CFBundleDisplayName: 'Error Feedback QA', CFBundleVersion: '1', CFBundleShortVersionString: '0.1.0', CFBundlePackageType: 'APPL', CFBundleSupportedPlatforms: ['iPhoneSimulator'], LSRequiresIPhoneOS: true, MinimumOSVersion: '15.0', UIDeviceFamily: [1, 2], UILaunchScreen: {}, UISupportedInterfaceOrientations: ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'] }));
+run('plutil', ['-convert', 'xml1', path.join(staging, 'Info.plist')]); run('codesign', ['--force', '--sign', '-', '--timestamp=none', staging]); run('codesign', ['--verify', '--strict', staging]);
+await rename(staging, app);
+await writeFile(path.join(output, 'evidence.json'), JSON.stringify({ app, bundleID, grants, graph: stage.manifest, assets, nativeSHA256: createHash('sha256').update(native).digest('hex'), layoutSHA256: createHash('sha256').update(layoutNative).digest('hex'), bundleSHA256: createHash('sha256').update(await readFile(path.join(bundle, 'bundle.nshc'))).digest('hex'), installed: false, launched: false, UIKitValidated: false }, null, 2));
+console.log(JSON.stringify({ app, bundleID, evidence: path.join(output, 'evidence.json') }));

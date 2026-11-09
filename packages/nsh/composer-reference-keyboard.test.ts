@@ -2,8 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { createReferenceKeyboard, type ReferenceKeyboardContext } from './composer-reference-keyboard';
+import { createAutocompleteKeyboard, createReferenceKeyboard, type ReferenceKeyboardContext } from './composer-reference-keyboard';
 import { mixedReferenceRows, type ReferenceCandidate } from './composer-references';
+import { prepareReferenceKeyboardDriver } from './tests/composer-reference-keyboard-runner';
 
 test('query reset, identity retention, wrapping, scope fence and selection CAS share one core', () => {
   const scope = { host: 'host', draft: 'draft', directory: '/workspace' };
@@ -34,11 +35,26 @@ test('query reset, identity retention, wrapping, scope fence and selection CAS s
   context.editing = true; expect(core.key('escape')).toBe(true); expect(core.state().rows).toEqual([]);
 });
 
+test('operation replacement rejects old command rows even with identical scope, text, query and range', () => {
+  const scope = { host: 'host', draft: 'draft', directory: '/workspace' };
+  let context: ReferenceKeyboardContext = { owner: {}, scope, text: '/m', query: 'm', start: 0, end: 2, editing: true };
+  const selected: string[] = [];
+  const core = createAutocompleteKeyboard({ read: () => context, publish: () => {}, choose: (row: { id: string; scope: typeof scope }) => { selected.push(row.id); }, dismiss: () => {}, id: row => row.id, scope: row => row.scope, validate: () => true });
+  core.rows({ scope, query: 'm' }, [{ id: 'yuri:model', scope }]);
+  context = { ...context, owner: {} };
+  expect(core.choose('yuri:model')).toBe(false); expect(selected).toEqual([]); expect(core.state().rows).toEqual([]);
+  core.rows({ scope, query: 'm' }, [{ id: 'yuri:model', scope }]);
+  expect(core.choose('yuri:model')).toBe(true); expect(selected).toEqual(['yuri:model']);
+});
+
 function headless(steps: string[]) {
   const directory = path.dirname(fileURLToPath(import.meta.url));
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'composer-reference-keyboard-fixture.tsx', '--web-host', 'tests/composer-references-chat-host.js'], { cwd: directory, encoding: 'utf8', timeout: 60_000, input: ['await app.waitFor("text:ready");', 'await app.paste("id:keyboard-composer", {text:""});', ...steps].join('\n') });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const driver = prepareReferenceKeyboardDriver(directory, steps);
+  try {
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', driver.testFile, '--web-host', driver.bundleHost()], { cwd: directory, encoding: 'utf8', timeout: 60_000 });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { driver.dispose(); }
 }
 
 test('real headless keyboard navigates, wraps, chooses by Enter/Tab, dismisses without sending, and preserves tail', () => headless([

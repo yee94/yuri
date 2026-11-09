@@ -100,6 +100,7 @@ export const newSessionUIScenarios = {
     'await app.press("id:new-session-presets-add");',
     'await app.waitFor("id:new-session-presets-search");',
     'await app.waitFor("id:new-session-pin-skill-fixture-review");',
+    'await app.waitUntil(() => app.enabled("id:new-session-pin-skill-fixture-review"));',
     'expect(app.shows("id:new-session-pin-command-fixture-project-command")).toBe(true);',
     'expect(app.shows("id:new-session-presets-catalog-retry")).toBe(false);',
     'await app.press("id:new-session-pin-skill-fixture-review");',

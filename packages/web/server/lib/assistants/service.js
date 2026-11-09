@@ -50,6 +50,7 @@ import {
   ensureContactAttachmentSchema,
   getContactAttachmentRow,
   getContactAttachmentByUploadID,
+  getContactAttachmentReceipt,
   ingestDataUrlFilePart,
   isSafeInlineImageMime,
   materializeContactHistory,
@@ -57,6 +58,7 @@ import {
   migrateContactDataUrlParts,
   putContactAttachment,
   readContactAttachmentBytes,
+  retireContactAttachment,
 } from './contact-attachments.js';
 import {
   boundSessionListLimit,
@@ -509,7 +511,13 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   const configuration = (row) => ({ model: { providerID: row.provider_id, modelID: row.model_id }, ...(row.agent ? { agent: row.agent } : {}), ...(row.variant ? { variant: row.variant } : {}), ...(row.default_prompt ? { system: row.default_prompt } : {}) });
   const capturedConfiguration = (target) => ({ model: { providerID: target.providerID, modelID: target.modelID }, ...(target.agent ? { agent: target.agent } : {}), ...(target.variant ? { variant: target.variant } : {}), ...(target.system ? { system: target.system } : target.defaultPrompt ? { system: target.defaultPrompt } : {}) });
   const validateParts = (parts) => {
-    if (!validAssistantDeliveryParts(parts, { allowAttachmentRefs: true })) fail('validation_error');
+    const deliveryParts = Array.isArray(parts) ? parts.map(part => {
+      if (!plainObject(part) || part.type !== 'file' || !part.attachmentID || !Object.hasOwn(part, 'generation')) return part;
+      if (!Number.isSafeInteger(part.generation) || part.generation < 0) fail('validation_error');
+      const { generation: _generation, ...descriptor } = part;
+      return descriptor;
+    }) : parts;
+    if (!validAssistantDeliveryParts(deliveryParts, { allowAttachmentRefs: true })) fail('validation_error');
   };
   const migrate = () => {
     const previousVersion = Number(db.prepare("SELECT value FROM assistant_meta WHERE key='schema_version'").get()?.value ?? 0);
@@ -1569,7 +1577,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     if (text) return text;
     return input.parts.some((part) => part?.type === 'file') ? '[attachment]' : '';
   };
-  const userContactParts = async (assistantID, input, userText) => {
+  const userContactParts = async (assistantID, input, userText, admittedParts = []) => {
     const parts = [];
     let turnBytes = 0;
     if (Array.isArray(input.parts)) {
@@ -1584,11 +1592,14 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           let row;
           try {
             // Admission: current-generation ownership + canonical row rebuild (ignore client meta).
-            row = assertContactAttachmentReadable(db, { attachmentID: parsed.attachmentID, assistantID });
+            row = admittedParts.some(part => part.type === 'file' && part.attachmentID === parsed.attachmentID)
+              ? assertContactAttachmentOwned(db, { attachmentID: parsed.attachmentID, assistantID })
+              : assertContactAttachmentReadable(db, { attachmentID: parsed.attachmentID, assistantID });
           } catch (error) {
             fail(error?.code === 'not_found' ? 'not_found' : 'validation_error', error?.message);
           }
           const descriptor = canonicalDescriptorFromRow(row);
+          if (part.generation !== undefined && part.generation !== row.generation) fail('contact_generation_conflict');
           turnBytes += descriptor.size || 0;
           if (turnBytes > CONTACT_ATTACHMENT_TURN_BUDGET_BYTES) {
             fail('validation_error', 'Contact attachment total exceeds 50MiB budget');
@@ -1629,9 +1640,14 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     return parts;
   };
   /** Admit the user row only — HTTP 202 returns here; assistant bubbles persist as they publish. */
-  const admitContactUser = (assistantID, { userMessageID, userText, userParts, turnID }) => {
+  const admitContactUser = (assistantID, { userMessageID, userText, userParts, turnID, existingReference = false }) => {
     db.exec('BEGIN IMMEDIATE');
     try {
+      for (const part of userParts || []) {
+        if (part.type !== 'file' || !part.attachmentID) continue;
+        if (existingReference) assertContactAttachmentOwned(db, { attachmentID: part.attachmentID, assistantID });
+        else assertContactAttachmentReadable(db, { attachmentID: part.attachmentID, assistantID });
+      }
       insertContactMessage(db, {
         messageID: userMessageID,
         assistantID,
@@ -3415,7 +3431,9 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     const language = typeof input.language === 'string' ? input.language.trim().slice(0, 64) : '';
     const row = active(assistantID);
     if (language) contactTurnLanguages.set(row.assistant_id, language);
-    const userParts = await userContactParts(row.assistant_id, input, userText);
+    const priorUser = getContactMessage(db, messageID);
+    const admittedParts = priorUser?.assistantID === row.assistant_id && priorUser.role === 'user' ? priorUser.parts : [];
+    const userParts = await userContactParts(row.assistant_id, input, userText, admittedParts);
     if (typeof createChatCompletion !== 'function' && runContactTurn === defaultRunContactTurn) fail('upstream_error');
     let registeredProjects = [];
     try {
@@ -3685,6 +3703,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
                 userText,
                 userParts,
                 turnID,
+                existingReference: true,
               });
             }
           }
@@ -3942,6 +3961,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         db.exec('COMMIT');
         return { messageID, admitted: true, role: 'peer', fromAssistantID: sender.assistant_id, fromAssistantName: sender.name, toAssistantID: recipient.assistant_id, replayed: true };
       }
+      for (let index = 0; index < parts.length; index++) {
+        const part = parts[index];
+        if (part.type === 'file' && part.attachmentID) {
+          parts[index] = canonicalDescriptorFromRow(assertContactAttachmentReadable(db, { attachmentID: part.attachmentID, assistantID: recipient.assistant_id }));
+        }
+      }
       insertContactMessage(db, {
         messageID,
         assistantID: recipient.assistant_id,
@@ -4048,7 +4073,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     operation = db.prepare('SELECT * FROM assistant_share_operation WHERE operation_id=?').get(operationID); if (operation?.phase !== 'reserving') { const claimed = claim(operationID, operation?.state === 'failed'); if (claimed) await submitClaim(claimed); } return shareOperation(operationID); };
   const timer = setIntervalFn(() => { if (!closed) { db.prepare('DELETE FROM assistant_share_operation WHERE updated_at<?').run(now() - SHARE_RETENTION_MS); return reconcile(); } }, reconcileIntervalMs);
   void reconcile();
-  const putAssistantContactAttachment = async (assistantID, uploadID, { stream, headers, signal, storeBytes } = {}) => {
+  const putAssistantContactAttachment = async (assistantID, uploadID, { stream, headers, signal, storeBytes, expectedGeneration } = {}) => {
     const row = editable(assistantID);
     try {
       return await putContactAttachment({
@@ -4056,6 +4081,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         dataDir,
         assistantID: row.assistant_id,
         uploadID,
+        expectedGeneration,
         stream,
         headers,
         clock: now,
@@ -4066,6 +4092,15 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       if (error?.code) fail(error.code, error.message);
       throw error;
     }
+  };
+  const getAssistantContactAttachmentReceipt = (assistantID, uploadID, generation) => {
+    const row = editable(assistantID);
+    return getContactAttachmentReceipt(db, { assistantID: row.assistant_id, uploadID, generation });
+  };
+  const retireAssistantContactAttachment = (assistantID, uploadID, input) => {
+    const row = editable(assistantID);
+    if (!plainObject(input) || Object.keys(input).some(key => !['generation', 'descriptor'].includes(key))) fail('validation_error');
+    return retireContactAttachment(db, { assistantID: row.assistant_id, uploadID, generation: input.generation, descriptor: input.descriptor }, now);
   };
   const getAssistantContactAttachment = async (assistantID, attachmentID) => {
     const row = editable(assistantID);
@@ -4141,7 +4176,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     };
     assertGeneration();
     const existing = getContactAttachmentByUploadID(db, assistantID, uploadID);
-    if (existing && existing.generation === generation) return canonicalDescriptorFromRow(existing);
+    if (existing && existing.retired_at == null && existing.generation === generation) return canonicalDescriptorFromRow(existing);
     const { buffer, mime, filename } = await loadChannelImage(source, {
       cwd: resolveAssistantCwd({ workspacePath: row.workspace_path, effectiveWorkspacePath: effectiveWorkspace(row) }),
       allowedRoots: getAllowedRoots(), signal,
@@ -4156,7 +4191,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     assertGeneration();
     return image;
   };
-  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, prepareChannelImage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
+  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, prepareChannelImage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, getAssistantContactAttachmentReceipt, retireAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
     assignedCompletion.dispose();
     cancelAssignedResumes({});
     sessionAbortInflight.clear();

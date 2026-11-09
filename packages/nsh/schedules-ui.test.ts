@@ -1,15 +1,17 @@
-import { spawnSync } from 'node:child_process';
+import { runSettingsEngineFixture } from './tests/settings-engine-fixture-runner.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { expect, test } from 'vitest';
 import { dict as english } from '../ui/src/lib/i18n/messages/en';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const cli = process.env.NSH_BIN || 'nsh';
 test('native scheduled tasks support filters, menus, paging, detail and session navigation', () => {
   const steps = [
     'await app.waitFor("text:Native daily schedule");',
     'expect(app.spanStyle("text:Schedule").fontSize).toBe(32);',
+    'await app.press("id:schedules-fixture-audit");',
+    'await app.waitUntil(() => app.texts().some(text => text.startsWith("{\\"requests\\":")));',
+    'const searchAudit = JSON.parse(app.texts().find(text => text.startsWith("{\\"requests\\":")));',
     'const beforeSearch = app.host.calls().length;',
     'await app.type("id:scheduled-search", "does-not-match");',
     'expect(app.value("id:scheduled-search")).toBe("does-not-match");',
@@ -29,6 +31,9 @@ test('native scheduled tasks support filters, menus, paging, detail and session 
     'expect(app.shows("text:Native daily schedule")).toBe(true);',
     'expect(app.shows("text:Native paused schedule")).toBe(false);',
     'await app.press("id:scheduled-filter-all");',
+    'await app.press("id:schedules-fixture-audit");',
+    'await app.waitUntil(() => app.texts().some(text => text.includes("\\"auditReads\\":2")));',
+    'expect(JSON.parse(app.texts().find(text => text.startsWith("{\\"requests\\":")))).toEqual({...searchAudit,auditReads:2});',
     'app.onDialog(dialog => dialog.buttons.includes("Pause") ? "Pause" : null);',
     'await app.press("label:More actions for Native daily schedule");',
     'await app.waitFor("text:Schedule saved");',
@@ -54,12 +59,15 @@ test('native scheduled tasks support filters, menus, paging, detail and session 
     'app.onDialog(dialog => dialog.buttons.includes("Delete") ? "Delete" : null);',
     'await app.press("label:More actions for Native daily schedule");',
     'await app.waitFor("text:Native daily schedule", {state:"gone"});',
+    'await app.press("id:schedules-fixture-audit");',
+    'await app.waitUntil(() => app.texts().some(text => text.includes("\\"deletes\\":1")));',
+    'expect(JSON.parse(app.texts().find(text => text.startsWith("{\\"requests\\":")))).toMatchObject({toggles:2,runs:1,deletes:1});',
     'expect(app.dialogs().length).toBeGreaterThanOrEqual(4);',
     'await app.press("id:scheduled-create");',
     'await app.waitFor("id:editor-done");',
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected request|Invalid native response/);',
-  ].join('\n');
-  const result = spawnSync(cli, ['test', 'schedules-test-app.tsx', '--web-host', 'tests/schedules-host.js'], { cwd: directory, input: steps, encoding: 'utf8', timeout: 60_000 });
+  ];
+  const result = runSettingsEngineFixture(directory, 'schedules-test-app.tsx', 'tests/schedules-host.js', steps, 60_000);
   expect(result.error, result.stdout + result.stderr).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
 }, 75_000);

@@ -1,5 +1,6 @@
-import { cleanup, computed, locale, signal, Scroll, Text, token, View } from 'nsh';
-import { Button, Input } from 'nsh/base';
+import { cleanup, computed, effect, locale, signal, Scroll, Text, token, untracked, View } from 'nsh';
+import { Button } from 'nsh/base';
+import { NativeSheetSearch } from './sheet-search';
 import { NativeAgentAvatar, NativeModelLogo } from './chat-identity';
 import { contextLabel, modelCapabilities, modelKey, modelLabel, modelMatches, modelRefs, modelVariants, pickerLists, pickerModels, pickerPreferences, resolvedVariant, sameModel, type ModelRef, type PickerModel } from './chat-models-helpers';
 import { Icon } from './Icon';
@@ -12,18 +13,26 @@ import type { NativeNewSessionOwner } from './new-session';
 import { newSessionText } from './new-session-copy';
 import { createNewSessionCatalog } from './new-session-selection';
 import { agentDraftSelection, favoriteDraftPatch } from './new-session-ui-helpers';
-import { captureHostRequest } from './state';
+import { app, captureHostRequest } from './state';
 import { NativeNewSessionInputAX } from './new-session-native-owners';
 
 /** Local draft selection: unlike ChatModels, this never reads/writes a session. */
 export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwner, 'directory' | 'current' | 'selection' | 'select'>; mode: 'model' | 'agent'; active: () => boolean; onDone: () => void; sheet?: ModelPickerSheet }) {
   const request = captureHostRequest();
-  const catalog = createNewSessionCatalog(props.owner.directory, () => props.active() && props.owner.current(), request);
+  const catalog = createNewSessionCatalog(props.owner.directory, () => props.active() && props.owner.current(), request, app.runtimeScope() ? JSON.stringify(app.runtimeScope()) : undefined);
   const search = signal(''), expanded = signal<string[]>([]), effort = signal(''), saving = signal(false), error = signal('');
   const variantTarget = signal<PickerModel | null>(null);
   let retryOperation: (() => Promise<void>) | undefined;
   cleanup(catalog.dispose);
-  void catalog.load(props.mode).then(() => { if (props.owner.current() && props.owner.selection().model) expanded.set([props.owner.selection().model!.providerID]); });
+  let wasActive = false;
+  effect(() => {
+    const active = props.active() && props.owner.current(), mode = props.mode;
+    if (active === wasActive) return;
+    wasActive = active;
+    if (active) untracked(() => {
+      void catalog.load(mode).then(() => { if (props.active() && props.owner.current() && props.owner.selection().model) expanded.set([props.owner.selection().model!.providerID]); });
+    });
+  });
   const selected = (): ModelRef => ({ providerID: props.owner.selection().model?.providerID ?? '', modelID: props.owner.selection().model?.id ?? '', variant: props.owner.selection().model?.variant });
   const entries = computed(() => props.mode === 'model' && catalog.resolved() ? pickerModels(catalog.providers(), catalog.preferences()) : []);
   const favorites = computed(() => pickerLists(entries(), catalog.preferences(), selected()).favorites.filter(entry => modelMatches(entry, search())));
@@ -45,7 +54,7 @@ export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwne
     const response = record(await request('/api/config/settings', 'PUT', patch));
     if (!props.active() || !props.owner.current()) return;
     if (response.ok === false || response.success === false) throw new Error('save-failed');
-    catalog.preferences.set({ ...latest, ...patch });
+    catalog.setPreferences({ ...latest, ...patch });
   }
   async function retry() {
     if (!props.active() || !props.owner.current() || saving() || catalog.busy()) return;
@@ -66,7 +75,7 @@ export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwne
       const response = record(await request('/api/config/settings', 'PUT', patch));
       if (!props.active() || !props.owner.current()) return;
       if (response.ok === false || response.success === false) throw new Error('save-failed');
-      catalog.preferences.set({ ...latest, ...patch });
+      catalog.setPreferences({ ...latest, ...patch });
     } catch { if (props.active() && props.owner.current()) error.set(newSessionText('operationFailed')); }
     finally { saving.set(false); }
   }
@@ -109,9 +118,9 @@ export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwne
   return <View class="flex-1 gap-2" role="group" accessible={false} accessibilityLabel={t(props.mode === 'model' ? 'chat.modelControls.selectModel' : 'chat.modelControls.selectAgent')}>
     <NativeModelPickerHandle sheet={props.sheet} />
     <If when={variantTarget()}><NativeModelVariantHeader entry={variantTarget()!} onBack={() => variantTarget.set(null)} onClose={props.onDone} /></If>
-    <View class="px-2 gap-2"><If when={!variantTarget()}><View class="rounded-xl border border-border/40 bg-card px-2 flex-row items-center gap-1.5"><View style={{ opacity: 0.6 }}><Icon name="search" size={14} /></View><Input testID="new-session-selection-search" class="flex-1 min-h-9 text-sm text-foreground" value={search()} autoCapitalize="none" autoCorrect={false} placeholder={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} accessibilityLabel={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} onChange={event => { search.set(event.value); effort.set(''); }} /><NativeNewSessionInputAX field="selection" label={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} /><If when={search()}><Button testID="new-session-search-clear" class="min-h-9 min-w-6 items-center justify-center" accessibilityLabel={t('chat.modelControls.clearSearch')} onPress={() => { search.set(''); effort.set(''); }}><Icon name="close-circle" size={16} /></Button></If></View></If>
+    <View class="px-2 gap-2"><If when={!variantTarget()}><NativeSheetSearch testID="new-session-selection-search" value={search()} placeholder={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} accessibilityLabel={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} onChange={event => { search.set(event.value); effort.set(''); }} registration={<NativeNewSessionInputAX field="selection" label={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} />} clearTestID="new-session-search-clear" onClear={() => { search.set(''); effort.set(''); }} /></If>
       <If when={catalog.error() || error()}><Text class="text-sm text-destructive">{error() || t('common.unavailable')}</Text><Button testID="new-session-catalog-retry" class="min-h-11 px-3 rounded-xl bg-secondary" disabled={catalog.busy() || saving()} onPress={() => { void retry(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
-      <If when={catalog.busy()}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If><If when={catalog.partial() && props.mode === 'model'}><Text class="text-sm text-muted-foreground">{t('chat.modelControls.partialCatalog')}</Text></If>
+      <If when={catalog.refreshing()}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If><If when={catalog.partial() && props.mode === 'model'}><Text class="text-sm text-muted-foreground">{t('chat.modelControls.partialCatalog')}</Text></If>
     </View>
     <Scroll class="flex-1" contentClass="px-2 pb-4 gap-2">
       <If when={variantTarget()}><NativeModelVariants entry={variantTarget()!} selected={sameModel(variantTarget()!, selected()) ? resolveVariant(variantTarget()!) : variantTarget()!.variant} disabled={saving() || catalog.busy() || !!retryOperation} id="new-session-variant-option" full onSelect={variant => { void choose(variantTarget()!, variant); }} /></If>

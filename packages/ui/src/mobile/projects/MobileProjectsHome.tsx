@@ -99,6 +99,9 @@ export type MobileProjectsHomeProps = {
   onSwitchInstance?: (id?: string) => void;
   onRemoteDesktop?: () => void;
   instanceOptions?: { id: string; label: string; active: boolean; disabled: boolean }[];
+  catalogIncomplete?: boolean;
+  catalogRetrying?: boolean;
+  onRetryCatalog?: () => void;
   onToggleProject: (project: MobileProjectHomeItem) => void;
   onOpenProjectActions: (project: MobileProjectHomeItem) => void;
   onToggleWorktree: (project: MobileProjectHomeItem, worktree: MobileWorktreeGroup) => void;
@@ -523,6 +526,9 @@ export function MobileProjectsHome({
   onSwitchInstance,
   onRemoteDesktop,
   instanceOptions,
+  catalogIncomplete,
+  catalogRetrying,
+  onRetryCatalog,
   onToggleProject,
   onOpenProjectActions,
   onToggleWorktree,
@@ -616,6 +622,10 @@ export function MobileProjectsHome({
         )}
       />
 
+      {catalogIncomplete ? <div data-testid="projects-catalog-partial" className="flex flex-col gap-2 px-2">
+        <p className="text-sm text-muted-foreground">{t('mobile.sessions.catalogPartial')}</p>
+        {onRetryCatalog ? <Button data-testid="projects-catalog-retry" size="sm" disabled={catalogRetrying} onClick={onRetryCatalog}>{t('layout.browserProvider.retry')}</Button> : null}
+      </div> : null}
       {pinnedSessions.length > 0 || inProgressSessions.length > 0 ? (
         <MobileFloatingSurface asChild>
           <section className="yuri-mobile-project-shell" aria-label={t('mobile.sessions.section.pinned')}>

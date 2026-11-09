@@ -29,3 +29,12 @@ test('typeahead supports prefixes, repeated-letter cycling and timeout without a
   keyboard.type('a'); keyboard.choose(); expect(choose).toHaveBeenLastCalledWith('a');
   time = 1000; keyboard.type('b'); keyboard.type('e'); keyboard.choose(); expect(choose).toHaveBeenLastCalledWith('d');
 });
+
+test('a ranked-query reset focuses the first enabled match once, not the retained nonmatching row', () => {
+  let rows = [{ value: 'local', title: 'Local' }, { value: 'remote', title: 'origin/main' }];
+  const focus = vi.fn(), choose = vi.fn();
+  const keyboard = createSelectKeyboard({ items: () => rows, selected: () => 'local', focus, choose });
+  keyboard.sync(); rows = [rows[1], rows[0]]; focus.mockClear();
+  keyboard.sync(true); expect(focus).toHaveBeenCalledExactlyOnceWith('remote', 0);
+  keyboard.choose(); expect(choose).toHaveBeenCalledExactlyOnceWith('remote');
+});

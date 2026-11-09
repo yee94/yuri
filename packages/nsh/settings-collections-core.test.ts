@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { nativeAgentEditor, nativeAgentPatch, nativeCollectionChanges, nativeMcpImport } from './settings-collections-core';
+import { nativeAgentEditor, nativeAgentPatch, nativeCollectionChanges, nativeCollectionDraft, nativeMcpImport } from './settings-collections-core';
 import { settingsMutation } from './settings-protocol';
 
 describe('native Agent editor uses the real catalog and stored prompt', () => {
@@ -55,4 +55,23 @@ describe('native MCP import is the Web pure parser, not a save/connect operation
     const result = nativeMcpImport(source, 'draft', true);
     expect(result.ok).toBe(false); if (!result.ok) expect(result.error.length).toBeGreaterThan(0);
   });
+});
+
+test('copy preparation keeps unknown Agent fields and has no mutations', async () => {
+  const send = vi.fn(async () => ({ scope: 'project', source: 'md', config: { prompt: 'stored', request: { temperature: .3 }, custom: { keep: true }, model: 'p/m#v' } }));
+  const result = await nativeCollectionDraft(send, 'agents', { name: 'agent', scope: 'project' }, '/captured');
+  expect(result.config).toEqual({ prompt: 'stored', request: { temperature: .3 }, custom: { keep: true }, model: 'p/m#v' });
+  expect(result.editor.system).toBe('stored');
+  expect(send.mock.calls).toEqual([['/api/config/agents/agent/config?directory=%2Fcaptured']]);
+});
+
+test('skill copy hydrates every supporting file and preserves frontmatter extensions before any save', async () => {
+  const send = vi.fn(async (path: string): Promise<unknown> => {
+    if (path.includes('/api/fs/read')) return '---\nname: original\ndescription: keep\nlicense: MIT\nmetadata:\n  custom: keep\n---\n\nComplete instructions';
+    if (path.includes('/files/')) return { content: 'full helper source' };
+    return { sources: { md: { path: '/captured/SKILL.md', supportingFiles: [{ path: 'scripts/helper.ts' }] } } };
+  });
+  const result = await nativeCollectionDraft(send, 'skills.installed', { name: 'original', scope: 'project' }, '/captured');
+  expect(result.config).toMatchObject({ name: 'original', license: 'MIT', metadata: { custom: 'keep' }, instructions: 'Complete instructions', supportingFiles: [{ path: 'scripts/helper.ts', content: 'full helper source' }] });
+  expect(send.mock.calls.every(call => !call[1])).toBe(true);
 });

@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -11,6 +10,7 @@ import { notificationAuthorized, notificationConfiguration, notificationStatus }
 import { createNotificationSettingsTransport } from './notification-preferences-core';
 import { createNotificationRootController } from './notification-root-core';
 import { createNativeAppearanceSync } from './appearance-core';
+import { prepareInteractionEngineDriver } from './tests/chat-interaction-engine-driver';
 
 const stateHarness = vi.hoisted(() => ({
   call: vi.fn(), storage: new Map<string, string>(),
@@ -52,20 +52,15 @@ const receipt = (pause = 0, resume = 0, clear = 0, objective = 0, prompt = 0) =>
 
 /** Bundles only the synthetic Host; the test target is the unmodified production App. */
 function runApp(steps: string[], selection: { modelID?: string; modelName?: string; variant?: string } = {}) {
-  const temporary = mkdtempSync(path.join(tmpdir(), 'nsh-goal-tasks-chat-'));
+  const driver = prepareInteractionEngineDriver(cwd, 'App.tsx', 'tests/goal-tasks-chat-host.js', steps, selection);
   try {
-    const fixture = path.join(temporary, 'host.js');
-    const entry = path.join(temporary, 'host-entry.js');
-    writeFileSync(entry, `import { createHost as fixture } from ${JSON.stringify(path.join(cwd, 'tests/goal-tasks-chat-host.js'))};\nexport const createHost = () => fixture(${JSON.stringify(selection)});\n`);
-    const build = spawnSync('bun', ['build', entry, '--target=browser', '--outfile', fixture], { cwd, encoding: 'utf8' });
-    expect(build.error, build.stdout + build.stderr).toBeUndefined();
-    expect(build.status, build.stdout + build.stderr).toBe(0);
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'App.tsx', '--web-host', fixture], {
-      cwd, encoding: 'utf8', timeout: 60_000, input: steps.join('\n'),
+    const fixture = driver.bundleHost();
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', driver.testFile, '--web-host', fixture], {
+      cwd, encoding: 'utf8', timeout: 60_000,
     });
     expect(result.error, result.stdout + result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
+  } finally { driver.dispose(); }
 }
 
 const chatSteps = (modelName = 'Native test model') => [
@@ -90,6 +85,18 @@ function metadataReceipt(value: string) {
 }
 
 describe('production App Goal/Tasks/Changes (headless engine, not UIKit or real Host evidence)', () => {
+  test('composer Tasks and Changes open from their own production triggers without requiring a Goal row', () => {
+    runApp([
+      'await app.waitFor("text:Native conversation");',
+      'await app.press("id:project-session-ses_1 >> nth=0");',
+      'await app.waitFor("id:composer-tasks");',
+      'await app.press("id:composer-tasks");',
+      'await app.waitFor("id:composer-tasks-popover");',
+      'await app.press("id:composer-changes");',
+      'await app.waitFor("id:composer-changed-files");',
+      'expect(app.count("id:composer-tasks-popover")).toBe(0);',
+    ]);
+  });
   test('existing authoritative Goal opens details and pauses/resumes/clears through one native owner', () => {
     runApp([...openChat,
       'expect(app.count("id:chat-goal-panel")).toBe(0);',
@@ -215,9 +222,18 @@ describe('production App Goal/Tasks/Changes (headless engine, not UIKit or real 
 });
 
 describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
+  test('supplies native runtime authority and only the exact read-only diagnostic/import bootstrap seams', () => {
+    const host = createHost(), scope = host.call('connection.list').runtimeScope;
+    expect(scope).toEqual({ hostID: host.call('connection.list').selected, lease: 'synthetic-goal-tasks-lease' });
+    expect(host.call('native.diagnostics.status')).toEqual({ schemaVersion: 2, mode: 'event-recorder', enabled: false, recordingLease: null, eventCount: 0, maxEntries: 500, maxBytes: 262144 });
+    expect(host.call('runtime.request', { path: '/api/yuri/history-import/jobs', method: 'GET', expectedHost: scope })).toEqual({ status: 200, body: [] });
+    expect(() => host.call('native.diagnostics.status', { enabled: true })).toThrow('diagnostics status arguments');
+    expect(() => host.call('runtime.request', { path: '/api/yuri/history-import/jobs', method: 'GET', expectedHost: { ...scope, lease: 'stale' } })).toThrow('history import read scope');
+    expect(() => host.call('runtime.request', { path: '/api/yuri/history-import/jobs', method: 'POST', expectedHost: scope })).toThrow('write POST');
+  });
   test('accepts only the confirmed synthetic notification configure wire and returns a lease, not OS authorization', () => {
     const host = createHost(), hostID = host.call('connection.list').selected;
-    const settings = host.call('runtime.request', { path: '/api/config/settings', method: 'GET' }).body;
+    const settings = host.call('runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: host.call('connection.list').runtimeScope }).body;
     const configuration = notificationConfiguration(hostID, settings, 'en');
     expect(configuration).toEqual({ hostID, enabled: false, mode: 'hidden-only',
       events: ['completion', 'error', 'question', 'permission', 'schedule', 'assistant', 'goal'], language: 'en' });
@@ -226,7 +242,7 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
     expect(host.call('notification.configure', configuration)).toEqual(first);
     expect(() => notificationStatus(first)).toThrow('notification_invalid_status');
     expect(notificationAuthorized(notificationStatus({ authorization: 'unknown', alert: 'unknown', sound: 'unknown', badge: 'unknown', backgroundPush: false }))).toBe(false);
-    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt());
+    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: host.call('connection.list').runtimeScope }).body.current).toBe(receipt());
   });
 
   test('rejects unconfirmed or non-exact notification configurations and all five other capabilities with observable faults', () => {
@@ -235,10 +251,10 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
     let rejected = 0;
     const reject = (name: string, input: unknown) => {
       expect(() => host.call(name, input)).toThrow('Goal fixture rejected'); rejected++;
-      expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt().replace('faults=0', `faults=${rejected}`));
+      expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: host.call('connection.list').runtimeScope }).body.current).toBe(receipt().replace('faults=0', `faults=${rejected}`));
     };
     reject('notification.configure', configuration);
-    host.call('runtime.request', { path: '/api/config/settings', method: 'GET' });
+    host.call('runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: host.call('connection.list').runtimeScope });
     expect(host.call('notification.configure', configuration)).toEqual({ lease: 'goal-tasks-memory-notification-lease' });
     for (const key of Object.keys(configuration)) {
       reject('notification.configure', Object.fromEntries(Object.entries(configuration).filter(([field]) => field !== key)));
@@ -256,10 +272,10 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
 
   test('long toolbar selection stays complete in synthetic authority and catalog without changing protocol', () => {
     const host = createHost(longSelection);
-    expect(host.call('runtime.request', { path: `/api/session/ses_1?${scope}` }).body.data.model).toEqual({ id: longSelection.modelID, providerID: 'fixture', variant: longSelection.variant });
-    const model = host.call('runtime.request', { path: `/api/config/catalog/providers?${scope}` }).body.providers[0].models[longSelection.modelID];
+    expect(host.call('runtime.request', { path: `/api/session/ses_1?${scope}`, expectedHost: host.call('connection.list').runtimeScope }).body.data.model).toEqual({ id: longSelection.modelID, providerID: 'fixture', variant: longSelection.variant });
+    const model = host.call('runtime.request', { path: `/api/config/catalog/providers?${scope}`, expectedHost: host.call('connection.list').runtimeScope }).body.providers[0].models[longSelection.modelID];
     expect(model.name).toBe(longSelection.modelName); expect(model.variants).toHaveProperty(longSelection.variant);
-    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt());
+    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: host.call('connection.list').runtimeScope }).body.current).toBe(receipt());
   });
   test('keeps Host identity stable during a run and gives each new run a distinct draft partition', () => {
     const first = createHost(), second = createHost();
@@ -269,10 +285,10 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
   });
   test('returns complete decodable RPC authority and exact native 204 transitions', () => {
     const host = createHost();
-    const read = () => host.call('runtime.request', { path: rpc, method: 'POST', body: { input: { sessionID: 'ses_1' } } });
+    const read = () => host.call('runtime.request', { path: rpc, method: 'POST', body: { input: { sessionID: 'ses_1' } }, expectedHost: host.call('connection.list').runtimeScope });
     expect(decodeNativeGoal(read().body.output)).toMatchObject({ status: 'active', rounds: 2, maxRounds: 20, stalls: 0, boot: 'synthetic-process', updatedAt: 1000 });
     for (const [text, status] of [['pause', 'paused'], ['resume', 'active'], ['clear', null]]) {
-      expect(host.call('runtime.request', { path: command, method: 'POST', body: { name: 'goal', text } })).toEqual({ status: 204, body: null });
+      expect(host.call('runtime.request', { path: command, method: 'POST', body: { name: 'goal', text }, expectedHost: host.call('connection.list').runtimeScope })).toEqual({ status: 204, body: null });
       const goal = decodeNativeGoal(read().body.output);
       expect(goal?.status ?? null).toBe(status);
     }
@@ -280,11 +296,11 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
 
   test('busy Goal and ordinary queue are disjoint, with observable zero-selection receipts', () => {
     const host = createHost();
-    expect(host.call('runtime.request', { path: command, method: 'POST', body: { name: 'goal', text: objective, delivery: 'queue' } }).status).toBe(204);
-    expect(host.call('runtime.request', { path: `/api/session/ses_1/inbox?${scope}` }).body.data).toEqual([]);
-    host.call('runtime.request', { path: `/api/session/ses_1/prompt?${scope}`, method: 'POST', body: { id: 'synthetic-queued', text: queuedText, delivery: 'queue' } });
-    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt(0, 0, 0, 1, 1));
-    expect(host.call('runtime.request', { path: `/api/session/ses_1/inbox?${scope}` }).body.data).toHaveLength(1);
+    expect(host.call('runtime.request', { path: command, method: 'POST', body: { name: 'goal', text: objective, delivery: 'queue' }, expectedHost: host.call('connection.list').runtimeScope }).status).toBe(204);
+    expect(host.call('runtime.request', { path: `/api/session/ses_1/inbox?${scope}`, expectedHost: host.call('connection.list').runtimeScope }).body.data).toEqual([]);
+    host.call('runtime.request', { path: `/api/session/ses_1/prompt?${scope}`, method: 'POST', body: { id: 'synthetic-queued', text: queuedText, delivery: 'queue' }, expectedHost: host.call('connection.list').runtimeScope });
+    expect(host.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: host.call('connection.list').runtimeScope }).body.current).toBe(receipt(0, 0, 0, 1, 1));
+    expect(host.call('runtime.request', { path: `/api/session/ses_1/inbox?${scope}`, expectedHost: host.call('connection.list').runtimeScope }).body.data).toHaveLength(1);
   });
 
   test('rejects non-synthetic scopes, native calls, prompt Goal and selection writes without forwarding', () => {
@@ -298,7 +314,7 @@ describe('Goal/Tasks synthetic Host contract (no NSH engine)', () => {
       ['runtime.request', { path: `/api/git/status?${scope}`, method: 'POST' }],
       ['connection.select', { id: 'real-host' }],
       ['speech.segment', { text: 'Do not synthesize audio' }],
-    ] as const) expect(() => host.call(name, input)).toThrow('Goal fixture rejected');
+    ] as const) expect(() => host.call(name, { ...input, ...(name === 'runtime.request' ? { expectedHost: host.call('connection.list').runtimeScope } : {}) })).toThrow('Goal fixture rejected');
   });
 });
 
@@ -323,10 +339,10 @@ describe('Goal/Tasks fixture real createChat state (no NSH engine)', () => {
     const state = await import('./state'); await state.loadConnections();
     const selected = state.app.connection()!;
     const notificationScope = { hostID: selected.id, generation: state.epoch() };
-    const read = async () => stateHarness.call('runtime.request', { path: '/api/config/settings', method: 'GET' }).body;
+    const read = async () => stateHarness.call('runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: state.app.runtimeScope() }).body;
     const appearance = createNativeAppearanceSync({
       readSettings: read,
-      readThemes: async () => stateHarness.call('runtime.request', { path: '/api/config/themes', method: 'GET' }).body,
+      readThemes: async () => stateHarness.call('runtime.request', { path: '/api/config/themes', method: 'GET', expectedHost: state.app.runtimeScope() }).body,
       reset: async scope => stateHarness.call('appearance.reset', { hostID: scope?.hostID ?? null }).revision,
       apply: async (scope, revision, value) => stateHarness.call('appearance.apply', { hostID: scope.hostID, revision, mode: value.mode, cssVars: value.cssVars, fonts: value.fonts }),
       changed: () => {}, failed: error => { expect(error).toBe(''); },
@@ -340,12 +356,12 @@ describe('Goal/Tasks fixture real createChat state (no NSH engine)', () => {
       root.bind(notificationScope, 'en', true);
       await Promise.all([state.refresh(), appearance.refresh()]); await flush();
       expect(state.app.online()).toBe(true);
-      expect(root.state()).toEqual({ ready: true, refreshing: false, error: null });
+      expect(root.state()).toEqual({ ready: true, refreshing: false, error: null, recovery: 'unsupported' });
       expect(transport.confirmed()?.preferences).toEqual({});
       expect(stateHarness.call.mock.calls.filter(([name, input]) => name === 'runtime.request' && input.path === '/api/config/settings')).toEqual([
-        ['runtime.request', { path: '/api/config/settings', method: 'GET' }],
-        ['runtime.request', { path: '/api/config/settings', method: 'GET' }],
-        ['runtime.request', { path: '/api/config/settings', method: 'GET' }],
+        ['runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: state.app.runtimeScope() }],
+        ['runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: state.app.runtimeScope() }],
+        ['runtime.request', { path: '/api/config/settings', method: 'GET', expectedHost: state.app.runtimeScope() }],
       ]);
       expect(stateHarness.call.mock.calls.filter(([name]) => name.startsWith('notification.'))).toEqual([
         ['notification.configure', { hostID: selected.id, enabled: false, mode: 'hidden-only',
@@ -356,7 +372,7 @@ describe('Goal/Tasks fixture real createChat state (no NSH engine)', () => {
         root.onEvent({ key: 'global', type, id: 'synthetic-event', directory: '/workspace/project', body: { sessionID: 'ses_1' } }, notificationScope);
       }
       await flush(); expect(stateHarness.call).toHaveBeenCalledTimes(reads);
-      expect(stateHarness.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt());
+      expect(stateHarness.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: state.app.runtimeScope() }).body.current).toBe(receipt());
     } finally { root.dispose(); appearance.setScope(null); }
   });
 
@@ -417,6 +433,6 @@ describe('Goal/Tasks fixture real createChat state (no NSH engine)', () => {
     expect(chat.goal.state().goal?.objective).toBe(objective);
     chat.setDraftText(queuedText); expect(await chat.send()).toBe(true); await flush();
     expect(chat.draft()).toBe(''); expect(chat.inbox()).toHaveLength(1);
-    expect(stateHarness.call('runtime.request', { path: `/api/git/status?${scope}&mode=light` }).body.current).toBe(receipt(0, 0, 0, 1, 1));
+    expect(stateHarness.call('runtime.request', { path: `/api/git/status?${scope}&mode=light`, expectedHost: stateHarness.call('connection.list').runtimeScope }).body.current).toBe(receipt(0, 0, 0, 1, 1));
   });
 });

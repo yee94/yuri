@@ -1,4 +1,5 @@
 /** Synthetic production-App fixture: no fetch, filesystem, model, Git or real Host calls. */
+import { requireInteractionScope } from './chat-interaction-fixture-scope.js';
 const directory = '/workspace/project';
 const scope = 'directory=%2Fworkspace%2Fproject';
 const session = '/api/session/ses_1';
@@ -14,6 +15,7 @@ const initialGoal = {
 export function createHost(options = {}) {
   // Isolate durable drafts even if a headless runtime shares Storage across Host bundles.
   const hostID = `goal-tasks-fixture-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const runtimeScope = { hostID, lease: 'synthetic-goal-tasks-lease' };
   const modelID = options.modelID ?? 'Native test model';
   const modelName = options.modelName ?? 'Native test model';
   const variant = options.variant ?? 'high';
@@ -22,6 +24,8 @@ export function createHost(options = {}) {
   let appearanceRevision = 0;
   let settingsReads = 0;
   let notificationLease = null;
+  const cacheOwner = 'synthetic-goal-cache-owner';
+  let cacheReady = false;
   const inbox = [];
   const receipt = () => `GOAL_FIXTURE pause=${pauses} resume=${resumes} clear=${clears} objective=${objectives} prompt=${prompts} selection=${selection} faults=${faults}`;
   const ok = body => ({ status: 200, body });
@@ -42,9 +46,22 @@ export function createHost(options = {}) {
     ], diffStats: { 'synthetic-goal.txt': { insertions: 2, deletions: 1 }, 'synthetic-tasks.txt': { insertions: 1, deletions: 0 } } };
   }
   return { call(name, input = {}) {
-    if (name === 'connection.list') return { selected: hostID, connections: [{ id: hostID, label: 'Synthetic Host', url: 'https://host.example', lastUsedAt: 0 }] };
-    if (name === 'runtime.stop') return true;
+    if (name === 'connection.list') return { selected: hostID, runtimeScope, connections: [{ id: hostID, label: 'Synthetic Host', url: 'https://host.example', lastUsedAt: 0 }] };
+    if (name === 'authorization.cache.ready' || name === 'authorization.cache.retry') {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length || name.endsWith('retry') && !cacheReady) return reject('cache handshake arguments');
+      if (name.endsWith('ready')) { cacheReady = true; return { owner: cacheOwner, tickets: [] }; }
+      return true;
+    }
+    if (name === 'authorization.cache.list') {
+      if (!cacheReady || !input || Object.keys(input).join(',') !== 'owner' || input.owner !== cacheOwner) return reject('cache owner');
+      return [];
+    }
+    if (name === 'runtime.stop') {
+      if (!input || input.expectedHost?.hostID !== hostID || input.expectedHost?.lease !== runtimeScope.lease || !['global', 'chat'].includes(input.key)) return reject('stop scope');
+      return true;
+    }
     if (name === 'runtime.stream') {
+      if (!input || input.expectedHost?.hostID !== hostID || input.expectedHost?.lease !== runtimeScope.lease) return reject('stream lease');
       if ((input.key === 'global' && input.path === '/api/yuri/events') || (input.key === 'chat' && input.path === `/api/event?${scope}`)) return true;
       return reject('stream scope');
     }
@@ -52,6 +69,10 @@ export function createHost(options = {}) {
     if (name === 'appearance.apply') return { applied: true, revision: input.revision };
     if (name === 'speech.prepare') return { provider: 'browser', visible: false, mode: 'final' };
     if (name === 'speech.stop' || name === 'speech.release') return true;
+    if (name === 'native.diagnostics.status') {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) return reject('diagnostics status arguments');
+      return { schemaVersion: 2, mode: 'event-recorder', enabled: false, recordingLease: null, eventCount: 0, maxEntries: 500, maxBytes: 262144 };
+    }
     if (name === 'notification.configure') {
       const events = ['completion', 'error', 'question', 'permission', 'schedule', 'assistant', 'goal'];
       if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).sort().join(',') !== 'enabled,events,hostID,language,mode' ||
@@ -64,6 +85,8 @@ export function createHost(options = {}) {
     }
     if (name !== 'runtime.request') return reject(`native ${name}`);
     const { path, method = 'GET', body } = input;
+    try { requireInteractionScope(input, runtimeScope); }
+    catch { return reject(path === '/api/yuri/history-import/jobs' ? 'history import read scope' : 'request scope'); }
     if (method === 'POST' && path === rpc) {
       if (JSON.stringify(body) !== JSON.stringify({ input: { sessionID: 'ses_1' } })) return reject('RPC input');
       return ok({ output: goal ? { ...goal, reason: receipt() } : null });
@@ -95,6 +118,10 @@ export function createHost(options = {}) {
     if (method !== 'GET') {
       if (path === `${session}/model?${scope}` || path === `${session}/agent?${scope}`) selection++;
       return reject(`write ${method} ${path}`);
+    }
+    if (path === '/api/yuri/history-import/jobs') {
+      if (JSON.stringify(input.expectedHost) !== JSON.stringify(runtimeScope) || body !== undefined) return reject('history import read scope');
+      return ok([]);
     }
     if (path === '/api/config/settings') {
       settingsReads++;
