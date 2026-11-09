@@ -21,6 +21,7 @@ import {
 } from '../fileReferenceActions';
 import { splitParagraphPathTokens } from '../fileReferenceSplit';
 import type { ToolPopupContent } from '../message/types';
+import { useMarkstreamHostContext } from './markstreamHostContext';
 
 type MarkstreamFileReferenceContextValue = OpenFileReferenceOptions & {
   enabled: boolean;
@@ -144,13 +145,15 @@ const FileReferenceToken: React.FC<{
 
 export function MarkstreamTextNode(props: NodeComponentProps<{ type: 'text'; content: string; center?: boolean }>) {
   const ctx = React.useContext(MarkstreamFileReferenceContext);
+  const host = useMarkstreamHostContext();
+  const fade = host.isStreaming && !host.disableStreamAnimation && host.variant !== 'tool';
   const content = props.node.content ?? '';
   if (!ctx.enabled || ctx.insideLink) {
-    return <TextNode {...props} />;
+    return <TextNode {...props} fade={fade} />;
   }
   const segments = splitParagraphPathTokens(content);
   if (segments.length === 1 && segments[0]?.kind !== 'path') {
-    return <TextNode {...props} />;
+    return <TextNode {...props} fade={fade} />;
   }
 
   return (
@@ -158,7 +161,7 @@ export function MarkstreamTextNode(props: NodeComponentProps<{ type: 'text'; con
       {segments.map((segment, index) => (
         segment.kind === 'path'
           ? <FileReferenceToken key={`path-${index}-${segment.value}`} raw={segment.value} />
-          : <TextNode key={`text-${index}`} {...props} node={{ ...props.node, content: segment.value }} />
+          : <TextNode key={`text-${index}`} {...props} fade={fade} node={{ ...props.node, content: segment.value }} />
       ))}
     </>
   );

@@ -15,6 +15,7 @@ import type { DraftStarterRef } from '@/lib/draftStarters';
 import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
 
 /** Main column tab. Product exclusive primaries: chat(session) | schedule | assistant. */
@@ -3070,6 +3071,18 @@ export const useUIStore = create<UIStore>()(
     }
   )
 );
+
+subscribeSessionSwitchIntent(() => {
+  const state = useUIStore.getState();
+  // Guard before setState: persist still projects state for no-op writes.
+  if (!state.isModelSelectorOpen && !state.isAgentSelectorOpen) return;
+  useUIStore.setState({
+    isModelSelectorOpen: false,
+    isAgentSelectorOpen: false,
+    isModelSelectorInstant: state.isModelSelectorOpen || state.isModelSelectorInstant,
+    isAgentSelectorInstant: state.isAgentSelectorOpen || state.isAgentSelectorInstant,
+  });
+});
 
 // Keep the leaf reasoning-projection flag aligned with the store for the
 // entire app lifetime (module init + persist hydrate + setter). runtime-fetch

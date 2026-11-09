@@ -1,5 +1,5 @@
 import React from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { createPortal } from 'react-dom';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { cn, isMacOS } from '@/lib/utils';
@@ -11,7 +11,7 @@ import { composerQuoteKey } from '@/stores/composerQuotes';
 import { useComposerQuoteStore } from '@/stores/useComposerQuoteStore';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { openSessionBtw } from '@/components/layout/btwComposerFocus';
-import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
+import { getSessionSwitchIntent, subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { Button } from '@/components/ui/button';
 import { keyboardOverlapPx, parseCssPx } from '@/lib/keyboardOverlap';
 import { holdNativeComposerCover, TEXT_SELECTION_NATIVE_COMPOSER_COVER } from '@/lib/nativeComposerCover';
@@ -85,12 +85,8 @@ const readTextSelectionBarFrame = (lastHeightPx: number): TextSelectionBarFrame 
 let dismissVisibleTextSelectionMenu: (() => void) | null = null;
 
 subscribeSessionSwitchIntent(() => {
-  if (typeof window !== 'undefined') {
-    window.getSelection()?.removeAllRanges();
-  }
-  if (dismissVisibleTextSelectionMenu) {
-    flushSync(dismissVisibleTextSelectionMenu);
-  }
+  if (typeof window !== 'undefined') window.getSelection()?.removeAllRanges();
+  dismissVisibleTextSelectionMenu?.();
 });
 
 const BLOCK_TAGS = new Set([
@@ -322,33 +318,20 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     isMenuVisibleRef.current = position.show;
   }, [position.show]);
 
-  React.useEffect(() => {
-    return () => {
-      if (openRafRef.current !== null) {
-        window.cancelAnimationFrame(openRafRef.current);
-        openRafRef.current = null;
-      }
-      if (mouseUpTimeoutRef.current !== null) {
-        window.clearTimeout(mouseUpTimeoutRef.current);
-        mouseUpTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
   const hideMenu = React.useCallback(() => {
     pendingSelectionRef.current = null;
     if (dismissVisibleTextSelectionMenu === hideMenu) {
       dismissVisibleTextSelectionMenu = null;
     }
-
-    if (!isMenuVisibleRef.current) {
-      return;
+    if (mouseUpTimeoutRef.current !== null) {
+      window.clearTimeout(mouseUpTimeoutRef.current);
+      mouseUpTimeoutRef.current = null;
     }
-
     if (openRafRef.current !== null) {
       window.cancelAnimationFrame(openRafRef.current);
       openRafRef.current = null;
     }
+    if (!isMenuVisibleRef.current) return;
     setIsOpening(false);
 
     setPosition((prev) => ({ ...prev, show: false }));
@@ -356,11 +339,8 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     isMenuVisibleRef.current = false;
   }, []);
 
-  React.useEffect(() => () => {
-    if (dismissVisibleTextSelectionMenu === hideMenu) {
-      dismissVisibleTextSelectionMenu = null;
-    }
-  }, [hideMenu]);
+  // Activity hide tears down Effects but retains state; do not restore an old popup.
+  React.useLayoutEffect(() => hideMenu, [hideMenu]);
 
   const getDesktopClampedX = React.useCallback((anchorX: number) => {
     if (typeof window === 'undefined') {
@@ -515,9 +495,10 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
       }
       // Read the finalized selection directly. Shadow-root selectionchange may
       // finish after the document-level mouseup event.
+      const intent = getSessionSwitchIntent();
       mouseUpTimeoutRef.current = window.setTimeout(() => {
         mouseUpTimeoutRef.current = null;
-        handleSelectionChange();
+        if (getSessionSwitchIntent() === intent) handleSelectionChange();
       }, 10);
     };
 

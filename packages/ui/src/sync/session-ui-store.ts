@@ -1625,6 +1625,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const key = runtimeMemoryKey(apiBaseUrl)
     const memory = runtimeSessionMemory.get(key)
     const restoredSessionId = memory?.sessionId ?? activeSessionByRuntime.get(key) ?? null
+    announceSessionSwitchIntent(restoredSessionId)
     setRuntimeInteractiveSessionRequestId(restoredSessionId)
     const restoredDraft = memory?.draft ? cloneDraft(memory.draft) : { ...DEFAULT_DRAFT }
     const restoredDirectory = memory?.directory ?? null
@@ -1679,6 +1680,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (existingDraft.draftSubmitting || existingDraft.draftEstablishing) {
       return
     }
+    // Same boundary as setCurrentSession: announce before dropping the session so
+    // session-scoped popups dismiss while their trigger is still mounted.
+    announceSessionSwitchIntent(null)
     // Same disarm as a session switch — this path does not go through setCurrentSession.
     get().clearStagedMessageEdit()
     let projectsState = useProjectsStore.getState()

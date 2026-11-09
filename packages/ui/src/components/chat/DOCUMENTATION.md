@@ -1,5 +1,13 @@
 # Chat components
 
+## Streaming text fade
+
+`MarkstreamTextNode` enables the installed renderer's appended-text opacity fade
+only while assistant/reasoning text streams and `disableStreamAnimation` is false.
+Existing text stays opaque; whole-message/block entrance, typewriter batching and
+`smoothStreaming` remain disabled. Completion displays authoritative text
+immediately. The library's reduced-motion CSS disables the text animation.
+
 ## Composer status popovers
 
 `StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
