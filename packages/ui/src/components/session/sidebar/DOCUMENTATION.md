@@ -109,6 +109,11 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   `Button`'s direct-SVG padding rule cannot shift the Assistant row when its icon
   becomes an image. Avatar artwork scales to 125% inside the unchanged 16px slot;
   all three labels retain the same left edge in both avatar and fallback states.
+  On desktop layout (Electron and web, not fullscreen) those rows, plus GUI
+  titlebar items, sit in a `shrink-0` block under the brand header and outside
+  `SidebarProjectsList`, so they stay fixed with the logo. The brand row itself
+  stays Electron-only. Mobile, fullscreen, search, and VS Code keep the rows in
+  the scroll body (VS Code still omits them).
 - Official GUI `TitlebarItem` contributions appear immediately below Bots and
   before pinned/in-progress sessions as icon-and-label rows. Their leaf component
   owns the GUI subscription; SessionSidebar does not subscribe to plugin state.
@@ -401,7 +406,7 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - `SidebarHeader.tsx`: Optional session-search field only (action toolbar removed).
 - `GlobalSearchButton.tsx`: Shared command-palette trigger. Electron with a configured logo renders it in the fixed (non-scrolling) sidebar brand row while open; otherwise it sits next to the titlebar collapse control (web parity, including logo-less Electron).
 - `TitlebarLeftControls.tsx`: Persistent Web brand and sidebar-toggle controls, plus Electron global search when the sidebar is collapsed or no logo is configured. Fullscreen Electron uses the Web single-row brand/search/toggle layout and hides the separate sidebar brand row. `useDesktopWindowFullscreen` shares the authoritative native fullscreen state with the header inset and sidebar through one resize subscription.
-- `SessionSidebar.tsx` desktop brand header: When a logo/wordmark is configured, Electron renders brand + search above `SidebarProjectsList` (`shrink-0`, outside the scroll region). Empty brand config reserves no row and leaves search in the titlebar. Sidebar brand text is transport-scoped in localStorage (`useSidebarBrandStore` via `createRuntimeScopedJSONStorage`) so packaged multi-window local and remote hosts do not share a wordmark.
+- `SessionSidebar.tsx` desktop brand header: When a logo/wordmark is configured, Electron renders brand + search above `SidebarProjectsList` (`shrink-0`, outside the scroll region). Empty brand config reserves no row and leaves search in the titlebar. The same non-scrolling block holds New / Schedule / Assistant (and GUI titlebar items) on any desktop layout, including web, even when the brand row is absent. Mobile, fullscreen, and an open session search keep those rows inside the scroll body. Sidebar brand text is transport-scoped in localStorage (`useSidebarBrandStore` via `createRuntimeScopedJSONStorage`) so packaged multi-window local and remote hosts do not share a wordmark.
 - `SidebarTopBar.tsx`: Desktop titlebar strip with preserved window-drag regions beneath the persistent titlebar controls.
 - `SidebarDisplayModeMenu.tsx`: Project collapse/expand overflow menu; rendered in the Projects section title row beside the add-project action.
 - `SidebarPinnedSessions.tsx`: Global top-section renderer for pinned sessions plus the unlabeled in-progress/unread rows below them.

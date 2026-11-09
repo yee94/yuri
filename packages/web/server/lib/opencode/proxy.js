@@ -1393,9 +1393,7 @@ export const registerOpenCodeProxy = (app, deps) => {
   app.use('/api', async (req, res, next) => {
     if (req.method !== 'GET' || req.path !== '/plugin/gui') return next();
     const upstreamPath = toUpstreamOpenCodeApiPath(req.url);
-    const gui = preparePluginGuiRequest(req.method, upstreamPath, normalizeForwardedDirectoryHeaders(
-      collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders()),
-    ));
+    const gui = preparePluginGuiRequest(req.method, upstreamPath, forwardRequestHeaders(req));
     if (!gui) return next();
 
     const controller = new AbortController();

@@ -606,7 +606,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     (state) => state.sidebarBrandName.trim().length > 0,
   );
 
-  const { isTablet } = useDeviceInfo();
+  const { isTablet, isDesktop } = useDeviceInfo();
   const alwaysShowSidebarActions = mobileVariant || isTablet;
 
   const {
@@ -2291,63 +2291,70 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     ) : null;
   // Leading action buttons stay web/desktop/mobile-only; the pinned/in-progress
   // top section also renders in VS Code (its pinned group is just empty).
+  // Desktop pins the nav rows with the logo; mobile and search keep them in the scroll body.
+  // Web desktop layout counts too — Electron shell is not required. The logo stays
+  // shell-only because the web titlebar already owns that slot.
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
+  const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !isDesktopWindowFullscreen && !mobileVariant;
   const showPinnedTopSection =
     !hasSessionSearchQuery && (pinnedItems.length > 0 || inProgressItems.length > 0);
+  const sidebarActionButtons = (
+    <div className="space-y-0.5 py-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleNewTask}
+      >
+        <Icon name="chat-new" className="size-4" />
+        <span className="truncate">
+          {t("sessions.sidebar.header.actions.newSession")}
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          activeMainTab === "schedule" && "bg-interactive-selection text-interactive-selection-foreground",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleOpenScheduledTasks}
+      >
+        <Icon name="time" className="size-4" />
+        <span className="truncate">{t("sessions.sidebar.header.actions.scheduledTasks")}</span>
+        {isVisible ? <ScheduledNavigationActivity /> : null}
+      </Button>
+      {assistantCapability.data?.supported && assistantCapability.data?.enabled ? <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          activeMainTab === "assistant" && "bg-interactive-selection text-interactive-selection-foreground",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleOpenAssistants}
+      >
+        <AssistantNavigationIcon className="size-4 shrink-0 [&[data-assistant-navigation-avatar]]:scale-125" />
+        <span className="truncate">{t("assistants.title")}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          <AssistantNavigationUnreadBadge className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
+          {isVisible ? <AssistantNavigationActivity /> : null}
+        </span>
+      </Button> : null}
+      <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
+    </div>
+  );
   const topContent =
-    showSidebarActionButtons || showPinnedTopSection ? (
+    (showSidebarActionButtons && !pinSidebarActionButtons) || showPinnedTopSection ? (
       <>
-        {showSidebarActionButtons ? (
+        {showSidebarActionButtons && !pinSidebarActionButtons ? (
           <>
             {mobileVariant && hasSidebarBrand ? <SidebarBrandMark /> : null}
-            <div className="space-y-0.5 py-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleNewTask}
-              >
-                <Icon name="chat-new" className="size-4" />
-                <span className="truncate">
-                  {t("sessions.sidebar.header.actions.newSession")}
-                </span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  activeMainTab === "schedule" && "bg-interactive-selection text-interactive-selection-foreground",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleOpenScheduledTasks}
-              >
-                <Icon name="time" className="size-4" />
-                <span className="truncate">{t("sessions.sidebar.header.actions.scheduledTasks")}</span>
-                {isVisible ? <ScheduledNavigationActivity /> : null}
-              </Button>
-              {assistantCapability.data?.supported && assistantCapability.data?.enabled ? <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  activeMainTab === "assistant" && "bg-interactive-selection text-interactive-selection-foreground",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleOpenAssistants}
-              >
-                <AssistantNavigationIcon className="size-4 shrink-0 [&[data-assistant-navigation-avatar]]:scale-125" />
-                <span className="truncate">{t("assistants.title")}</span>
-                <span className="ml-auto flex shrink-0 items-center gap-2">
-                  <AssistantNavigationUnreadBadge className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
-                  {isVisible ? <AssistantNavigationActivity /> : null}
-                </span>
-              </Button> : null}
-              <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
-            </div>
+            {sidebarActionButtons}
           </>
         ) : null}
         {showPinnedTopSection ? (
@@ -2415,6 +2422,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       />
 
       {desktopBrandHeader}
+
+      {pinSidebarActionButtons ? (
+        <div className="shrink-0 px-3">{sidebarActionButtons}</div>
+      ) : null}
 
       {isVisible ? (
       <SidebarProjectsList

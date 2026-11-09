@@ -65,12 +65,13 @@ const mountProxy = (options = {}) => {
 };
 
 describe('approved client provenance at the upstream boundary', () => {
-  it.each(['/api/session/ses_1/message', '/api/agent', '/api/event'])(
+  it.each(['/api/session/ses_1/message', '/api/agent', '/api/event', '/api/plugin/gui?id=fixture'])(
     'accepts approved native clients without relaxing auth or unknown-origin rejection on %s', async (route) => {
       const seen = [];
       const originalMetadata = [];
       const upstream = createServer((req, res) => {
-        seen.push({ origin: req.headers.origin, site: req.headers['sec-fetch-site'], auth: req.headers.authorization });
+        seen.push({ origin: req.headers.origin, site: req.headers['sec-fetch-site'],
+          dest: req.headers['sec-fetch-dest'], user: req.headers['sec-fetch-user'], auth: req.headers.authorization });
         if (req.headers.origin && req.headers['sec-fetch-site'] === 'cross-site') {
           res.writeHead(403, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Cross-site requests to the API are not allowed' }));
@@ -107,7 +108,7 @@ describe('approved client provenance at the upstream boundary', () => {
         for (const origin of ['capacitor://localhost', 'https://localhost', 'yuri-ui://app']) {
           const response = await request(app).get(route).set({ origin, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty', 'sec-fetch-user': '?1', authorization: 'Bearer fixture-client' });
           expect(response.status).toBe(200);
-          expect(seen.at(-1)).toEqual({ origin, site: undefined, auth: 'Basic upstream-fixture' });
+          expect(seen.at(-1)).toEqual({ origin, site: undefined, dest: undefined, user: undefined, auth: 'Basic upstream-fixture' });
           expect(originalMetadata.at(-1).after).toEqual(originalMetadata.at(-1).before);
           expect(originalMetadata.at(-1).after['sec-fetch-site']).toBe('cross-site');
         }

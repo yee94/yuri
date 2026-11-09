@@ -91,10 +91,10 @@ encoding, not removed V1 endpoints.
     Only approved origins have Fetch Metadata removed from the upstream copy:
     those headers describe browser → Yuri, not Yuri → OpenCode. Origin, the
     original request headers, Yuri credential validation and managed upstream
-    authentication are unchanged. Session/message reads, SSE and the generic
-    proxy share this rule. Missing/failed approval leaves metadata intact, so
-    unknown browser origins retain upstream cross-site rejection. No service
-    CORS configuration or origin allowlist is expanded.
+    authentication are unchanged. Session/message reads, SSE, GUI bundle reads
+    and the generic proxy share this rule. Missing/failed approval leaves metadata
+    intact, so unknown browser origins retain upstream cross-site rejection. No
+    service CORS configuration or origin allowlist is expanded.
 - `npm-registry.js`: plugin package lookup used by `GET /api/config/plugins/registry`. It asks the user's own `npm view` first (run in the project directory, so scope registries, auth tokens and mirrors from `.npmrc` apply as they do for `npm install`) and falls back to a direct request to the public registry only when the CLI is unavailable; a CLI 404 is final. Results are cached per name and directory. The latest release's top-level package.json `icon` is returned as `icon` only when it is an `https://` URL or `data:image/` URI of at most ~1.5 MB; nested icon fields are not read or used as fallbacks.
 - `plugin-icon.js` owns the shared icon sanitizer and optional local package metadata read for Web/Electron/mobile and VS Code. Registry `path-ok` includes the nearest package manifest's top-level `icon` for directories or built entry files. Search stops at the first manifest, root or 32 parents; malformed, unreadable or >2 MiB manifests omit artwork without changing path status. No server-side image fetch occurs. Settings → Plugins renders package artwork directly; GUI sidebar/titlebar entries use official `IconName` without package-image substitution.
 
