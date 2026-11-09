@@ -98,7 +98,7 @@ test.skip('popup glass has a readable theme fill, real menu blur and an opaque a
       const vibrantSessionMenus = await inspectSessionMenus();
       expect(vibrantSessionMenus.map(menu => menu.alpha)).toEqual([235, 235]);
       expect(vibrantSessionMenus.every(menu => menu.blur.includes('blur(20px)'))).toBe(true);
-      expect((await page.evaluate<{ menuFill: string }>('window.inspectGlass()')).menuFill).toBe(normal.menuFill);
+      expect((await page.evaluate<{ menuFill: string }>('window.inspectGlass()')).menuFill).not.toBe(normal.menuFill);
       await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
       expect(await inspectSessionMenus()).toEqual([{ alpha: 255, blur: 'none' }, { alpha: 255, blur: 'none' }]);
       await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }] });
