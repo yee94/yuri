@@ -505,7 +505,11 @@
   box-shadow: var(--yuri-popup-shadow);
 }
 
-:root.desktop-runtime[data-yuri-vibrancy] .yuri-session-context-menu {
+/* Electron vibrancy frosts the sidebar (and the window) behind anchored
+   popups. The shared 50% fill then lets list titles bleed into menus, so every
+   popup over a vibrant desktop window uses a denser theme fill — native
+   menu-bar weight — while keeping its frost, rim and shadow. */
+:root.desktop-runtime[data-yuri-vibrancy] .yuri-popup-surface {
   --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
 }
 
