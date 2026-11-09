@@ -498,6 +498,18 @@ describe('desktop shared OTA policy', () => {
     expect(useUpdateStore.getState().error).toBe('offline');
   });
 
+  test('mirrors a download another window already started instead of offering a second one', async () => {
+    vi.mocked(checkForDesktopUpdates).mockResolvedValue({ available: true, currentVersion: '1.18.2', version: '1.18.3',
+      inAppApply: false, downloading: true, progress: { downloaded: 512, total: 1024 } });
+    await useUpdateStore.getState().checkForUpdates();
+    expect(checkForDesktopUpdates).toHaveBeenCalledOnce();
+    expect(downloadDesktopUpdate).not.toHaveBeenCalled();
+    expect(useUpdateStore.getState()).toMatchObject({
+      downloading: true, available: true, downloaded: false, otaPhase: 'downloading',
+      progress: { downloaded: 512, total: 1024 },
+    });
+  });
+
   test('download failure stays distinct from check failures, retries safely and merges repeated clicks', async () => {
     vi.mocked(checkForDesktopUpdates).mockResolvedValue({ available: true, currentVersion: '1.18.2', version: '1.18.3', inAppApply: true });
     vi.mocked(downloadDesktopUpdate).mockRejectedValueOnce(new Error('offline'));

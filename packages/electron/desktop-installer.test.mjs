@@ -41,16 +41,41 @@ test('stable selection rejects beta and mismatched feed versions before download
   expect(updater.downloadUpdate).not.toHaveBeenCalled();
 });
 
-test('failed downloads remain retryable and channel changes cannot race an active download', async () => {
+test('concurrent windows join one check and one download instead of failing', async () => {
+  const { updater, installer } = fixture();
+  let releaseCheck;
+  updater.checkForUpdates.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCheck = () => resolve({ updateInfo: { version: '2.1.0-beta.1' }, isUpdateAvailable: true });
+  }));
+  const firstCheck = installer.check('2.1.0-beta.1', { channel: 'beta' });
+  const secondCheck = installer.check('2.1.0-beta.1', { channel: 'beta' });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseCheck();
+  await expect(firstCheck).resolves.toEqual({ downloaded: false });
+  await expect(secondCheck).resolves.toEqual({ downloaded: false });
+  expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+
+  let releaseDownload;
+  updater.downloadUpdate.mockImplementationOnce(() => new Promise((resolve) => { releaseDownload = () => resolve(['installer']); }));
+  const firstDownload = installer.download();
+  const secondDownload = installer.download();
+  await expect(installer.check('2.1.0', { channel: 'stable' })).resolves.toEqual({ downloaded: false });
+  releaseDownload();
+  await expect(Promise.all([firstDownload, secondDownload])).resolves.toEqual([undefined, undefined]);
+  expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+  expect(installer.downloaded).toBe(true);
+});
+
+test('failed downloads remain retryable', async () => {
   const { updater, installer } = fixture();
   await installer.check('2.1.0-beta.1', { channel: 'beta' });
   let reject;
   updater.downloadUpdate.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
   const downloading = installer.download();
-  await expect(installer.check('2.1.0', { channel: 'stable' })).rejects.toThrow('in progress');
   reject(new Error('offline'));
   await expect(downloading).rejects.toThrow('offline');
   expect(installer.downloaded).toBe(false);
+  expect(installer.busy).toBe(false);
   await installer.download();
   expect(installer.downloaded).toBe(true);
 });
