@@ -11,6 +11,12 @@ import { createProjectsDeletes } from './projects-delete';
 import { createProjectsAttention } from './projects-attention';
 import { createNativeHistoryFooter } from './history-footer';
 import { createSpeechController } from './speech-core';
+import * as projectsSidebar from './projects-sidebar';
+import { createChatChromeState, createNativeChatChrome } from './chat-chrome';
+import { desktopGitDraftAuthority } from './desktop-git-dispatch';
+import { createNativeDesktopComposerShortcutOwner } from './desktop-composer-actions';
+import { createDesktopAttachments } from './desktop-attachments';
+import { desktopAttachmentRecovery } from './desktop-attachments-recovery';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
@@ -133,7 +139,7 @@ describe('application stable display and replaceable operation owners (no engine
     const h = setup();
     const ports: Record<string, unknown> = { nsh: { ...h, host: { on: () => () => {} } }, 'nsh/base': {}, './state': h, './page-operations': h,
       './model': model, './runtime': { query: (directory: string) => `directory=${encodeURIComponent(directory)}`, sessionPath: (id: string, suffix: string) => `/api/session/${id}/${suffix}` },
-      './i18n': { t: (key: string) => key }, './projects-delete': { createProjectsDeletes }, './projects-attention': { projectsAttention: createProjectsAttention() } };
+      './i18n': { t: (key: string) => key }, './projects-delete': { createProjectsDeletes }, './projects-attention': { projectsAttention: createProjectsAttention() }, './projects-sidebar': projectsSidebar };
     const source = ts.transpileModule(readFileSync(path.join(root, 'projects.tsx'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText;
     const exports: Record<string, unknown> = {};
     vm.runInNewContext(source, { exports, require: (name: string) => ports[name] ?? {}, setTimeout, clearTimeout });
@@ -182,27 +188,39 @@ describe('application stable display and replaceable operation owners (no engine
     expect(calls.filter(call => call.name === 'speech.prepare')).toHaveLength(2);
   });
 
-  it('actual Chat assembly retains Chat/window/List ref and UI choices while retiring an attachment and dictation continuation', async () => {
+  it.each([false, true])('actual Chat assembly retains Chat/window/List ref and UI choices while retiring an attachment and dictation continuation, desktop=%s', async desktop => {
     const h = setup(), route = { kind: 'chat', target: { kind: 'session', id: 's', title: 'Retained', directory: '/neutral' } };
     const messages = [{ id: 'retained-row' }], rows = [{ key: 'retained-row', messages }];
     const draft = h.signal('unsent selection'), attachments = h.signal<unknown[]>([]), historyGeneration = h.signal(0);
-    const chat = { draft, attachments, active: h.signal(false), syncActive: h.signal(false), visibleMessages: () => messages, messages: () => messages,
+    const chat = { draft, attachments, draftAuthorityKey: desktop ? desktopGitDraftAuthority(h.app.connection()) : undefined, active: h.signal(false), syncActive: h.signal(false), visibleMessages: () => messages, messages: () => messages,
       more: h.signal(true), historyError: h.signal(''), loading: h.signal(false), olderLoading: h.signal(false), historyBusy: h.signal(false),
       messagesResolved: h.signal(true), historyRepairPending: h.signal(false), historyBoundaryMissing: h.signal(false), hasGap: h.signal(false), revert: h.signal(null),
-      busy: () => false, streamingMessageIDs: () => new Set(), historyGeneration, referenceScope: { host: 'A', draft: 'draft', directory: '/neutral' },
+      busy: () => false, sending: () => false, draftStatus: () => 'ready', streamingMessageIDs: () => new Set(), historyGeneration, referenceScope: { host: 'A', draft: 'draft', directory: '/neutral' },
       load: vi.fn(async () => {}), loadOlder: vi.fn(async () => {}), setDraftText: draft.set, error: h.signal(''),
       goal: { controller: { setArmed: () => {} }, observe: () => () => {}, state: () => ({ armed: false }) } };
     const pick = deferred<unknown>(), recognition = deferred<void>(), available = deferred<boolean>();
     const nativeCalls: string[] = [];
-    const native = async (name: string) => { nativeCalls.push(name); if (name === 'runtime.pickAttachment') return pick.promise; throw new Error('unexpected_native:' + name); };
+    let attachmentRequestID: string | undefined;
+    const native = async (name: string, body?: Record<string, unknown>) => {
+      nativeCalls.push(name);
+      if (name === 'runtime.pickAttachment') return pick.promise;
+      if (desktop && name === 'desktop.attachments.pick') { expect(body?.expectedHost).toEqual({ hostID: 'A', lease: 'lease-a' }); attachmentRequestID = String(body?.requestID); return pick.promise; }
+      if (desktop && ['desktop.attachments.cancel', 'desktop.attachments.release'].includes(name)) { expect(body?.requestID).toBe(attachmentRequestID); return { requestID: body?.requestID, state: 'retired', attachments: [], orphaned: 0 }; }
+      throw new Error('unexpected_native:' + name);
+    };
+    const createDesktopChatAttachments = production('desktop-chat-attachments.tsx', 'createDesktopChatAttachments', { ...h, createDesktopAttachments, desktopAttachmentRecovery, native, id: () => 'recovery-fixture-pick', t: (key: string) => key });
     const historyFactory = vi.fn(() => ({ props: () => ({}), Indicator: () => null }));
     const speechFactory = vi.fn(() => ({ state: () => ({ status: 'idle' }) }));
     const auto = { state: () => ({ preferred: false, available: false }), beginRecognition: () => recognition.promise, endRecognition: vi.fn(), toggle: vi.fn() };
     let beforeFlush: ((value: unknown) => void) | undefined;
     const initialFacts = { authority: 'successful-history', scope: { hostID: 'A', generation: 1, owner: 1, historyGeneration: 0, targetKind: 'session', targetID: 's', directory: '/neutral' }, more: true, historyError: '', boundaryMissing: false, repairPending: false, hasGap: false, readError: '', resolved: true };
-    const createChat = vi.fn((_target, options) => { beforeFlush = options.beforeHistoryPresentationFlush; beforeFlush!(initialFacts); return chat; });
+    const createChat = vi.fn((_target, options) => { expect(options.draftAuthorityKey).toBe(chat.draftAuthorityKey); beforeFlush = options.beforeHistoryPresentationFlush; beforeFlush!(initialFacts); return chat; });
     const nav = { routes: h.signal([route]) };
     const make = production('application.tsx', 'Chat', { ...h, createChat, mountedChats: new WeakMap(), nav, retainedChatRoute: () => route,
+      platform: { os: desktop ? 'macos' : 'ios', desktop }, desktopGitDraftAuthority, desktopHostIdentity: () => desktopGitDraftAuthority(h.app.connection()),
+      createDesktopChatAttachments, createChatChromeState, createNativeChatChrome, keyboardFrame: () => ({ height: 0 }),
+      desktopInteractionBlocked: () => false, desktopChatSubmitters: new Map(), createNativeDesktopComposerShortcutOwner,
+      publishDesktopComposerShortcuts: () => {}, desktopChatHeader: h.signal(null),
       nativeAppearance: { current: () => null }, createNativeHistoryFooter,
       createNativeSpeech: speechFactory, createNativeTranscriptHistory: historyFactory,
       createNativeHistoryRows: () => () => rows, createNativeHistoryFocus: () => ({ cancel: () => {}, focus: () => {} }),
@@ -214,6 +232,7 @@ describe('application stable display and replaceable operation owners (no engine
     }, 'chat, operations, current, transcriptRef, bodyRows, inputMode, activityChoices, headerSelection, attach, dictate, footer, footerState, footerExperiment');
     const mounted = make({ route, target: route.target });
     const ref = { marker: 'native-list-owner' }; mounted.transcriptRef.set(ref); mounted.inputMode.set('shell');
+    if (desktop) { await mounted.attach('files'); expect(nativeCalls).toEqual([]); mounted.inputMode.set('normal'); }
     const choices = { turn: true }; mounted.activityChoices.set(choices); const selection = { model: { id: 'retained-model' } }; mounted.headerSelection.set(selection);
     expect(mounted.footerExperiment()).toBe(false); expect(mounted.footerState().minHeight).toBe(0);
     expect(mounted.footerState().visible).toBe(true); // callback ran synchronously before chat assignment
@@ -225,12 +244,13 @@ describe('application stable display and replaceable operation owners (no engine
     const attachment = mounted.attach('files'), dictation = mounted.dictate();
     h.background(); h.foreground();
     expect(mounted.operations.operation()).toBeNull();
-    h.confirm(); recognition.resolve(); available.resolve(true); pick.resolve({ uri: 'old-host-file' });
+    h.confirm(); recognition.resolve(); available.resolve(true); pick.resolve(desktop ? { requestID: attachmentRequestID, state: 'ready', attachments: [{ uri: 'file:///synthetic/old-host-file', name: 'old.txt', mime: 'text/plain' }], orphaned: 0 } : { uri: 'old-host-file' });
     await Promise.all([attachment, dictation]);
     expect(createChat).toHaveBeenCalledTimes(1); expect(mounted.chat).toBe(chat); expect(chat.visibleMessages()).toBe(messages);
-    expect(mounted.bodyRows()).toBe(rows); expect(mounted.transcriptRef()).toBe(ref); expect(mounted.inputMode()).toBe('shell');
+    expect(mounted.bodyRows()).toBe(rows); expect(mounted.transcriptRef()).toBe(ref); expect(mounted.inputMode()).toBe(desktop ? 'normal' : 'shell');
     expect(mounted.activityChoices()).toBe(choices); expect(mounted.headerSelection()).toBe(selection); expect(draft()).toBe('unsent selection'); expect(attachments()).toEqual([]);
-    expect(nativeCalls).toEqual(['runtime.pickAttachment']);
+    if (desktop) { expect(nativeCalls[0]).toBe('desktop.attachments.pick'); expect(nativeCalls).toContain('desktop.attachments.cancel'); expect(nativeCalls).not.toContain('runtime.pickAttachment'); }
+    else expect(nativeCalls).toEqual(['runtime.pickAttachment']);
     expect(historyFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
     expect(speechFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
     beforeFlush!({ ...initialFacts, scope: { ...initialFacts.scope, generation: 2 }, more: false, boundaryMissing: true });

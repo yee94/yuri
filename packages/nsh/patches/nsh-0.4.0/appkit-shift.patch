@@ -1,0 +1,47 @@
+--- a/crates/nsh-platform-macos/src/chrome.rs
++++ b/crates/nsh-platform-macos/src/chrome.rs
+@@ -596,6 +596,9 @@
+ fn key_equivalent(shortcut: &Shortcut) -> (String, NSEventModifierFlags) {
+     let function = |code: u32| char::from_u32(code).map(String::from).unwrap_or_default();
+     let key = match shortcut.key {
++        Key::Char(c) if shortcut.shift && c.is_ascii_alphabetic() => {
++            c.to_ascii_uppercase().to_string()
++        }
+         Key::Char(c) => c.to_string(),
+         Key::Enter => "\r".to_owned(),
+         Key::Escape => "\u{1b}".to_owned(),
+@@ -937,14 +940,32 @@
+     #[test]
+     fn shortcuts_are_key_equivalents() {
+         let equivalent = |text: &str| key_equivalent(&Shortcut::parse(text, true).unwrap());
+-        // Lowercase: an uppercase key equivalent would add Shift.
++        // AppKit matches the shifted character, not the canonical unshifted key.
+         assert_eq!(
+             equivalent("mod+shift+n"),
+             (
+-                "n".to_owned(),
++                "N".to_owned(),
+                 NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+             )
+         );
++        assert_eq!(equivalent("mod+n").0, "n");
++        assert_eq!(equivalent("mod+shift+K").0, "K");
++        assert_eq!(equivalent("cmd+shift+,").0, ",");
++        let non_us = Shortcut {
++            shift: true,
++            ..Shortcut::key(Key::Char('é'))
++        };
++        assert_eq!(key_equivalent(&non_us).0, "é");
++        assert_eq!(equivalent("cmd+alt+,").0, ",");
++        assert_eq!(
++            equivalent("cmd+alt+shift+k"),
++            (
++                "K".to_owned(),
++                NSEventModifierFlags::Command
++                    | NSEventModifierFlags::Option
++                    | NSEventModifierFlags::Shift
++            )
++        );
+         assert_eq!(
+             equivalent("ctrl+alt+left"),
+             (

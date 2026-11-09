@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["desktop-panel.tsx", "desktop-panel-model.ts", "desktop-panel-changes.tsx", "desktop-files.tsx", "desktop-files-model.ts"],
+  "exclude": ["*.test.ts", "tests"]
+}

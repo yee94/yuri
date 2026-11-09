@@ -5,12 +5,14 @@ import { messagesFrom, record, text, type Message, type Row } from './model';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
 import { SettingsFeedback, SettingsGroup, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { createSettingsArchiveRestore, settingsObject, settingsRows, visibleArchivedSettingsSession } from './settings-protocol';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 export function SettingsArchive(props: SettingsCallbacks & SettingsRoute) {
   const state = settingsPageLifetime(), sessions = signal<Row[]>([]), cursor = signal<string | null>(null);
 
   const selected = signal<Row>({}), messages = signal<Message[]>([]), messageCursor = signal<string | null>(null);
   const selectedProject = signal<string | null>(null);
+  publishSettingsEditor({ current: state.current, scope: state.operation, pending: state.busy, dirty: () => false, stamp: () => [] });
   const initial = state.operation();
   const restoreArchive = createSettingsArchiveRestore(initial?.request ?? (async () => { throw new Error('Runtime changed'); }), initial?.current ?? (() => false));
   state.observeOperation(operation => { restoreArchive.replaceLane(operation); if (operation) void load(false, operation); });
@@ -42,13 +44,15 @@ export function SettingsArchive(props: SettingsCallbacks & SettingsRoute) {
   void load();
   async function restore(session: Row, operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
+    let restored = false;
     await state.perform(async (operation) => {
       try { await restoreArchive(session); }
       catch { throw new Error(t('settings.yuri.archivedSessions.toast.restoreFailed')); }
       sessions.set(sessions().filter(item => item.id !== session.id));
       state.notice.set(t('settings.yuri.archivedSessions.toast.restored'));
-      if (props.entity) props.onBack();
+      restored = true;
     }, operation);
+    if (restored && props.entity && operation.current()) props.onBack();
   }
   const projects = () => [...new Set(sessions().map(directory))];
   return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">

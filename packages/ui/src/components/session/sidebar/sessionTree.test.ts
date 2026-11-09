@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/v2-types';
 
-import { buildSessionTree } from './sessionTree';
+import { buildSessionTree, buildSessionForest } from './sessionTree';
+import { buildSessionForest as sharedForest } from './session-tree-core';
 
 const session = (
   id: string,
@@ -18,6 +19,11 @@ const session = (
   }) as Session;
 
 describe('buildSessionTree', () => {
+  test('Web and native attach through the same runtime-free forest implementation', () => {
+    expect(buildSessionForest).toBe(sharedForest);
+    const rows = [session('parent', { created: 20 }), session('sibling', { created: 10 }), session('child', { parentID: 'parent', created: 30 })];
+    expect(buildSessionTree(rows)).toEqual(sharedForest(rows, { archived: row => !!row.time?.archived }));
+  });
   test('omits pinned roots and keeps their children hidden from the project forest', () => {
     const parent = session('parent', { created: 20 });
     const child = session('child', { parentID: 'parent', created: 30 });

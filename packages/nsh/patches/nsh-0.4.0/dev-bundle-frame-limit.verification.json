@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "patchSha256": "86eee6d37cd33a8c74a469a25e72b4a1114b2502f5867b20c1c0c1d3655946af",
+  "toolchain": [
+    "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo 1.97.1 (c980f4866 2026-06-30)"
+  ],
+  "scope": "trusted same-PC development WebSocket; no production HTTP or Yuri relay changes",
+  "scratch": {
+    "path": "packages/nsh/.nsh/compat-dev-frame-work",
+    "workspace": "copied nsh-dev crate; scratch-only workspace members/default-members narrowed to nsh-dev",
+    "lock": "scratch-only pruned lock; all 86 retained versions/sources/checksums match original",
+    "lockSha256": "f925361721f092f99803b21de2e44009b2d21eb8689973d99369847c1329c729",
+    "dependencyAdded": false
+  },
+  "tests": {
+    "red": {
+      "test": "a_large_bundle_round_trips_through_a_redirect",
+      "client": "unmodified e626",
+      "exitCode": 101,
+      "observed": "Disconnected instead of complete 17 MiB bundle"
+    },
+    "green": {
+      "command": "cargo test --offline --locked -p nsh-dev -- --test-threads=1",
+      "unitPassed": 7,
+      "roundtripPassed": 9,
+      "failed": 0
+    },
+    "defaultSocket": "real local DevServer -> tungstenite::connect yields Capacity::MessageTooLong { size: 17825792, max_size: 16777216 }",
+    "configuredClient": "complete 17 MiB bundle + source map after HTTP 307 redirect",
+    "boundary": "67108864 bytes accepted intact; 67108865 bytes yields Disconnected without Bundle; reconnect receives version 3 small bundle",
+    "repeats": {
+      "roundtripPassedEach": 9,
+      "runs": 3
+    },
+    "clientOnlyCheck": {
+      "command": "cargo check --offline --locked -p nsh-dev --lib --no-default-features --features client",
+      "exitCode": 0
+    },
+    "rustfmtCheck": "passed for both touched Rust files",
+    "deadCode": "bun run dead-code blocked: existing packages/web/vite.config.ts cannot load vite-plugin-pwa; no full report"
+  },
+  "untouched": [
+    "external NSH baseline matches all 1740 manifest source hashes",
+    "original Cargo.toml/Cargo.lock",
+    "manifest/preparer",
+    "existing prepared compatibility trees",
+    "CLI/runtime tool binaries",
+    "user entity data"
+  ],
+  "notValidated": [
+    "registered preparation",
+    "full original NSH workspace build",
+    "paired CLI/runtime build",
+    "physical macOS or Windows",
+    "native screenshot or PC pixel parity"
+  ],
+  "logs": [
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/red.log",
+      "sha256": "8c29b0f23ac06fe7862bb9a1fe810eaedf282969b9f248f6c1087b420f30e64f"
+    },
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/green.log",
+      "sha256": "c433c17a5d3138d9dd0b6614ba63f28a1e88a350bf76169a6c30ac2b82509c08"
+    },
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/client-check.log",
+      "sha256": "97825960efee823fd4088372be2c6d72e998d4e4303cd1141c4608646501dce3"
+    },
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/repeat-1.log",
+      "sha256": "5d94e6631a58b58e4f0ac29fba4f9b21200bccc0ff239c53840f8ed86ea1477e"
+    },
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/repeat-2.log",
+      "sha256": "4476adc5ca590b4a43b82c82e3c7bf05922c5c0c058ff375fcffbc2e9174e482"
+    },
+    {
+      "path": "packages/nsh/.nsh/compat-dev-frame-work/repeat-3.log",
+      "sha256": "5d94e6631a58b58e4f0ac29fba4f9b21200bccc0ff239c53840f8ed86ea1477e"
+    }
+  ],
+  "strictReplay": {
+    "baseline": true,
+    "preparedF7ded": true,
+    "mode": "in-memory only; exact context and full before/after hash checks"
+  },
+  "finalAudit": {
+    "externalSourceFileCount": 1740,
+    "externalSourceSha256": "5764bf7d27dd530634a007ec2ca2df8d37b63903584f9b47401a1238e875b4d1",
+    "manifestUnchanged": true
+  }
+}

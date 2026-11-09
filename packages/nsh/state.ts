@@ -1,23 +1,149 @@
-import { batch, cleanup, effect, host, lifecycle, signal, untracked } from 'nsh';
+import { batch, cleanup, computed, effect, host, lifecycle, signal, untracked } from 'nsh';
 import { assistantPath, bindRequest, connectionSnapshotFrom, connections, native, query, sessionPath, type ConnectionSnapshot } from './runtime';
 import { runtimeScopeFrom, sameRuntimeScope, type RuntimeScope } from './runtime-scope';
-import { openDraft, sameAttachment } from './drafts';
+import { openDraft, sameAttachment, localMagicSubmission, type DurableSubmission as ContextSubmission } from './drafts';
+import { assistantAttachmentFilePart } from './assistant-attachment-model';
+import { currentLocale } from './i18n';
+import { createContactOptimisticTurn, markContactOptimisticAdmitted, markContactOptimisticFailed, mergeContactTranscript, reconcileContactOptimisticTurns, type ContactOptimisticTurn } from '../ui/src/components/assistants/contactOptimisticTurns';
+import type { AssistantContactPart } from '../ui/src/queries/assistantDTO';
+import { contactMessageFrom } from './model';
+import type { NativeLocalCommandInvocation, NativeLocalCommandOutcome } from './composer-local-commands';
 import { inboxDraft } from './inbox';
 import { openNativeHistoryLane } from './transcript-actions-lane';
 import { nativeRevertFrom, type NativeRevert } from './transcript-actions-core';
 import { compileNativePrompt } from './composer';
+import { compileDesktopGitContext, desktopGitDraftAuthority, sameDesktopGitContext, type DesktopGitContextInput, type DesktopGitStageConfirmation, type DesktopGitStageResult } from './desktop-git-dispatch';
 import { mergeHistoryMessages, stableHistoryMessages } from './history-messages';
 import type { NativeHistoryPresentation } from './history-presentation';
+import { desktopChatReadIdentity, desktopChatReadOnlyDraft, desktopChatReadSource, registerDesktopChatReadSource, rejectDesktopChatWrite, type DesktopPanelChatStream, type DesktopChatSessionIdentity } from './desktop-panel-chat-source';
 import { createActivityMaterializer, materializedActivityMessage } from './transcript-materialization';
 import { createGoalController, createGoalTransport, planGoalSubmission, type GoalArmSnapshot, type GoalCommandResult } from './chat-goal-model';
 import { createTasksProjection, type NativeTask } from './chat-tasks-model';
+import { createDesktopWorkStatusSourceProjection } from './desktop-work-status-source-projection';
+import { readDesktopWorkStatusChildren } from './desktop-work-status-source-children';
+import type { DesktopWorkStatusChat, DesktopWorkStatusChild, DesktopWorkStatusChildRead, DesktopWorkStatusScope } from './desktop-work-status-core';
+import type { PageOperation } from './page-operations';
+import { DesktopWriterError, desktopWriterNotDispatched, type VerifiedDesktopWriterGrant } from './desktop-writer-core';
 import { createProjectsAttentionSource, isProjectsAttentionEvent, projectsAttention } from './projects-attention';
+import { desktopSidebarScope } from './desktop-sidebar-model';
+import { createDesktopSidebarAuthorityProjection, desktopSidebarAssistantSnapshot, type DesktopSidebarAssistantSnapshot, type DesktopSidebarScopedRows } from './desktop-sidebar-authority';
+import { desktopSidebarSessionStateKey, type DesktopSidebarSessionState } from './desktop-sidebar-projection';
 import { t } from './i18n';
 import { sameReferenceScope, validateNativeReferences, type ReferenceCandidate, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 import { activeFrom, applySessionContent, eventBusy, eventSessionID, id, inboxFrom, isSessionContentEvent, list, mergeMessages, messagesFrom, projectsFrom, record, rowsFrom, runtimeEventFrom, sessionsFrom, slashCommand, text, unwrap, type Attachment, type ChatTarget, type CompiledSubmission, type Connection, type FormAnswer, type Message, type Project, type Row, type RuntimeEvent, type Session, type Submission } from './model';
 
 const notificationCatalogAuthority = signal<NotificationCatalogState>({ scope: null, refreshGeneration: 0, complete: false, domains: { projects: 'unknown', sessions: 'unknown', bots: 'unknown', tasks: 'unknown' }, error: null });
 const catalogSources: { projects?: readonly Project[]; sessions?: readonly Session[]; bots?: readonly Row[]; tasks?: readonly Row[] } = {};
+const sidebarAssistants = signal<DesktopSidebarAssistantSnapshot | null>(null);
+const assistantCatalogRevision = signal<Readonly<{ scope: string; revision: number }> | null>(null);
+const sidebarSessions = signal<DesktopSidebarScopedRows<Session> | null>(null), sidebarSchedules = signal<DesktopSidebarScopedRows<Row> | null>(null);
+const sidebarUnseen = signal<Readonly<Record<string, number>>>({});
+const emptyContactCatalogRows = Object.freeze([]);
+type ContactSessionStatus = Readonly<{ type: 'busy' | 'retry' | 'idle' }>;
+const sidebarLive = signal<ReadonlyMap<string, DesktopSidebarSessionState & { workStatusScope?: RuntimeScope; contactStatus?: ContactSessionStatus; contactStatusScope?: RuntimeScope }>>(new Map());
+const taskRows = signal<Row[]>([]);
+function setTaskCatalog(rows: Row[]) {
+  batch(() => {
+    taskRows.set(rows);
+    const scope = runtimeReady() && !switching ? desktopSidebarScope(app.connection(), generation) : null;
+    if (scope) sidebarSchedules.set({ scope, rows });
+  });
+}
+// Every existing schedule writer already commits through app.tasks. Preserve
+// that sole source, stamping its Host scope without another schedule observer.
+const taskCatalog = Object.assign(() => taskRows(), { set: setTaskCatalog, update: (update: (rows: Row[]) => Row[]) => setTaskCatalog(update(untracked(taskRows))) });
+const projectSidebarAuthority = createDesktopSidebarAuthorityProjection();
+/** Exact one-line root port: <DesktopSidebar authority={desktopSidebarAuthority()} ... />. */
+export function desktopSidebarAuthority() {
+  app.runtimeScope();
+  return projectSidebarAuthority({ scope: runtimeReady() && !switching ? desktopSidebarScope(app.connection(), generation) : null,
+    assistants: sidebarAssistants(), sessions: sidebarSessions(), schedules: sidebarSchedules(), unseen: sidebarUnseen(), live: sidebarLive() });
+}
+/** Raw display rows from the same scoped root producers, not another catalog or fallback to old authorization data. */
+export function desktopContactCatalog() {
+  const scope = runtimeReady() && !switching ? desktopSidebarScope(app.connection(), generation) : null;
+  const sessions = sidebarSessions(), assistants = assistantCatalogRevision(), tasks = sidebarSchedules();
+  return { sessions: scope && sessions?.scope === scope ? sessions.rows : emptyContactCatalogRows,
+    assistants: scope && assistants?.scope === scope ? app.bots() : emptyContactCatalogRows,
+    tasks: scope && tasks?.scope === scope ? tasks.rows : emptyContactCatalogRows };
+}
+/** Exact status already adopted by the root event owner. Missing execution metadata is not idle. */
+export function desktopContactSessionStatus(scope: RuntimeScope | null, sessionID: string, directory: string): ContactSessionStatus | undefined {
+  if (!scope || !runtimeReady() || switching || globalDisconnected || !sameRuntimeScope(scope, app.runtimeScope())) return;
+  const live = sidebarLive().get(desktopSidebarSessionStateKey({ id: sessionID, directory }));
+  return live?.contactStatusScope && sameRuntimeScope(live.contactStatusScope, scope) ? live.contactStatus : undefined;
+}
+/** Reuses the root's live cache without another active GET, event listener or catalog scan. */
+export const readChatWorkStatusChildren: DesktopWorkStatusChildRead = (operation, scope) => readDesktopWorkStatusChildren(operation, scope, (id, directory) => {
+  return chatWorkStatusChildActivity(operation, scope, id, directory);
+});
+function chatWorkStatusChildActivity(operation: PageOperation, scope: DesktopWorkStatusScope, id: string, directory: string): DesktopWorkStatusChild['activity'] {
+  if (!operation.current() || !runtimeReady() || globalDisconnected || !sameRuntimeScope(operation.scope, scope.host) || !sameRuntimeScope(scope.host, app.runtimeScope())) return 'unknown';
+  const live = sidebarLive().get(desktopSidebarSessionStateKey({ id, directory }));
+  return live?.workStatusScope && sameRuntimeScope(live.workStatusScope, scope.host) ? live.running ? 'working' : 'idle' : 'unknown';
+}
+const workStatusChildListeners = new Map<string, Set<() => void>>();
+function notifyWorkStatusChildren(key?: string) {
+  const listeners = key === undefined ? new Set([...workStatusChildListeners.values()].flatMap(value => [...value])) : workStatusChildListeners.get(key);
+  for (const listener of listeners ? [...listeners] : []) { try { listener(); } catch (failure) { report(failure); } }
+}
+/** Synchronous initial delivery, then only exact-child activity changes. Caller stops on close or replaces after a new child read. */
+export function observeChatWorkStatusChildren(operation: PageOperation, scope: DesktopWorkStatusScope, children: readonly DesktopWorkStatusChild[], changed: (children: readonly DesktopWorkStatusChild[]) => void): () => void {
+  const captured = { ...scope, host: { ...scope.host } };
+  if (children.some(child => child.parentID !== captured.sessionID || child.directory !== captured.directory || !child.id) || new Set(children.map(child => child.id)).size !== children.length) throw new Error('work_status_children_invalid_scope');
+  let rows = children, alive = true, initial = true;
+  const keys = children.map(child => desktopSidebarSessionStateKey(child));
+  const stop = () => {
+    if (!alive) return;
+    alive = false;
+    for (const key of keys) { const listeners = workStatusChildListeners.get(key); listeners?.delete(publish); if (!listeners?.size) workStatusChildListeners.delete(key); }
+  };
+  const publish = () => {
+    if (!alive) return;
+    let different = false;
+    const next = rows.map(child => { const activity = chatWorkStatusChildActivity(operation, captured, child.id, child.directory); if (activity === child.activity) return child; different = true; return { ...child, activity }; });
+    if (different) rows = Object.freeze(next);
+    if (!operation.current() || !sameRuntimeScope(operation.scope, captured.host) || !sameRuntimeScope(captured.host, app.runtimeScope())) stop();
+    if (initial || different) { initial = false; changed(rows); }
+  };
+  for (const key of keys) { const listeners = workStatusChildListeners.get(key) ?? new Set(); listeners.add(publish); workStatusChildListeners.set(key, listeners); }
+  try { publish(); } catch (failure) { stop(); throw failure; }
+  return stop;
+}
+function revokeWorkStatusChildActivity() {
+  const prior = sidebarLive();
+  if ([...prior.values()].some(value => value.workStatusScope || value.contactStatusScope)) {
+    sidebarLive.set(new Map([...prior].map(([key, value]) => [key, { running: value.running }])));
+  }
+  notifyWorkStatusChildren();
+}
+function workStatusEventScope(payload: unknown): RuntimeScope | null {
+  try { return runtimeScopeFrom(record(payload).expectedHost); } catch { return null; }
+}
+/** Called only by the existing root/AssistantHome snapshot receiver, after its request fence. */
+export function adoptAssistantCatalogSnapshot(snapshot: Row, scope = desktopSidebarScope(app.connection(), generation)) {
+  if (!scope || !runtimeReady() || switching || scope !== desktopSidebarScope(app.connection(), generation)) return false;
+  const knownMetadata = typeof snapshot.enabled === 'boolean' && Number.isSafeInteger(snapshot.revision) && Number(snapshot.revision) >= 0;
+  const revision = assistantCatalogRevision(), prior = sidebarAssistants();
+  if (knownMetadata && revision?.scope === scope && Number(snapshot.revision) < revision.revision) return false;
+  let source = prior;
+  try { source = desktopSidebarAssistantSnapshot(scope, snapshot); }
+  catch {
+    // Sidebar metadata is an optional reader, not a new Home validity gate.
+    // Preserve prior contact authority on incomplete fields; never turn it into
+    // empty unread/idle success or reject the original owner's valid snapshot.
+    if (knownMetadata && (snapshot.enabled === false || prior?.scope === scope)) source = {
+      scope, revision: Number(snapshot.revision), enabled: snapshot.enabled === true,
+      contacts: prior?.scope === scope ? prior.contacts : [],
+    };
+  }
+  batch(() => {
+    if (knownMetadata) assistantCatalogRevision.set({ scope, revision: Number(snapshot.revision) });
+    if (source !== prior) sidebarAssistants.set(source);
+    app.bots.set(list(snapshot.assistants));
+  });
+  return true;
+}
 function notificationCatalogState(): NotificationCatalogState {
   const receipt = notificationCatalogAuthority();
   if (!receipt.complete) return receipt;
@@ -31,7 +157,7 @@ export const app = {
   connections: signal<Connection[]>([]), connection: signal<Connection | null>(null),
   runtimeScope: signal<RuntimeScope | null>(null),
   notificationCatalog: notificationCatalogState,
-  projects: signal<Project[]>([]), sessions: signal<Session[]>([]), bots: signal<Row[]>([]), tasks: signal<Row[]>([]),
+  projects: signal<Project[]>([]), sessions: signal<Session[]>([]), bots: signal<Row[]>([]), tasks: taskCatalog,
   tab: signal(0), error: signal(''), loading: signal(false), online: signal(false),
 };
 let generation = 0, connectionRead = 0, reconnectPending = false;
@@ -83,6 +209,10 @@ function retireCatalog() {
   catalogRefreshGeneration++;
   for (const domain of domains) catalogDomainRevisions[domain]++;
   notificationCatalogAuthority.set({ scope: null, refreshGeneration: catalogRefreshGeneration, complete: false, domains: { projects: 'unknown', sessions: 'unknown', bots: 'unknown', tasks: 'unknown' }, error: null });
+  sidebarAssistants.set(null); sidebarSessions.set(null); sidebarSchedules.set(null); sidebarUnseen.set({}); sidebarLive.set(new Map());
+  notifyWorkStatusChildren();
+  assistantCatalogRevision.set(null);
+  taskRows.set([]);
 }
 function invalidateCatalog(changed: readonly Domain[]) {
   if (!changed.length) return;
@@ -142,13 +272,16 @@ function adoptConnections(saved: ConnectionSnapshot) {
   const changed = previous?.id !== next?.id || previous?.url !== next?.url;
   const authorizationChanged = previous?.authorizationID !== next?.authorizationID;
   const authorityChanged = changed || authorizationChanged || !sameRuntimeScope(saved.runtimeScope, app.runtimeScope());
+  const priorScope = app.runtimeScope();
+  const sameAuthorityLease = !!previous && !!next && !changed && !authorizationChanged && !!priorScope && !!saved.runtimeScope && priorScope.hostID === next.id && saved.runtimeScope.hostID === next.id;
   const sameHostResume = reconnectPending && pendingRetirement === 'suspend' && !changed && !authorizationChanged;
   batch(() => {
     if (authorityChanged) {
-      if (!reconnectPending) { generation++; retireCatalog(); chatAuthorityRetirements.forEach(retire => retire()); }
+      if (!reconnectPending) { generation++; retireCatalog(); chatAuthorityRetirements.forEach(retire => retire(sameAuthorityLease ? 'suspend' : 'host')); }
       else if (changed || authorizationChanged) chatAuthorityRetirements.forEach(retire => retire('host'));
       connectivityRevision++; globalDisconnected = false; refreshFlight = undefined; dirtyDomains.clear();
       if (changed) { app.projects.set([]); app.sessions.set([]); app.bots.set([]); app.tasks.set([]); }
+      else if (authorizationChanged) taskRows.set([]);
       app.online.set(false); app.loading.set(false);
     }
     app.connections.set(saved.connections);
@@ -187,6 +320,7 @@ export async function refresh() {
   const started = generation;
   const request = captureHostRequest();
   const scope = currentCatalogScope(), turn = ++catalogRefreshGeneration;
+  const sidebarScope = desktopSidebarScope(app.connection(), started)!;
   const connectivityAtStart = connectivityRevision;
   const selected = dirtyDomains.size ? [...dirtyDomains] : domains;
   dirtyDomains.clear();
@@ -211,18 +345,29 @@ export async function refresh() {
           || ['pendingDirectories', 'failedDirectories'].some(key => sync[key] !== undefined && (!Array.isArray(sync[key]) || sync[key].length > 0))
           || !Array.isArray(raw.directories) || raw.directories.some(value => !text(record(value).directory) || !Array.isArray(record(value).sessions))) throw new Error('Incomplete sessions catalog');
         const value = sessionsFrom(raw);
-        if (started === generation && !switching) { app.sessions.set(value); catalogSources.sessions = value; }
+        if (started === generation && !switching) { app.sessions.set(value); catalogSources.sessions = value; sidebarSessions.set({ scope: sidebarScope, rows: value }); }
       } else if (domain === 'bots') {
         const value = record(await request('/api/yuri/assistants/snapshot'));
         if (!Array.isArray(value.assistants) || value.partial === true || value.complete === false || value.assistants.some(item => !text(record(item).id))) throw new Error('Invalid assistants snapshot');
-        if (started === generation && !switching) { const rows = list(value.assistants); app.bots.set(rows); catalogSources.bots = rows; }
+        if (started === generation && !switching) {
+          // The older catalog consumer accepts an array-only response. That is
+          // never enabled/revision authority for the desktop sidebar.
+          if (value.enabled !== undefined || value.revision !== undefined) adoptAssistantCatalogSnapshot(value, sidebarScope);
+          else app.bots.set(list(value.assistants));
+          catalogSources.bots = app.bots();
+        }
       } else {
         const value = record(await request('/api/yuri/scheduled-tasks'));
         if (!Array.isArray(value.tasks) || value.partial === true || value.complete === false || value.failedProjectIds !== undefined && !Array.isArray(value.failedProjectIds)
           || value.tasks.some(item => !text(record(item).projectId) || !text(record(record(item).task).id))) throw new Error('Invalid scheduled tasks snapshot');
         if (started === generation && !switching) {
           const failed = new Set(Array.isArray(value.failedProjectIds) ? value.failedProjectIds : []);
-          app.tasks.set([...list(value.tasks), ...app.tasks().filter(item => failed.has(item.projectId))]);
+          const prior = sidebarSchedules();
+          const rows = [...list(value.tasks).filter(item => !failed.has(item.projectId)), ...(prior?.scope === sidebarScope ? prior.rows.filter(item => failed.has(item.projectId)) : [])];
+          batch(() => {
+            taskRows.set([...list(value.tasks).filter(item => !failed.has(item.projectId)), ...app.tasks().filter(item => failed.has(item.projectId))]);
+            sidebarSchedules.set({ scope: sidebarScope, rows });
+          });
           if (failed.size) throw new Error('部分项目的定时任务未能加载');
           catalogSources.tasks = app.tasks();
         }
@@ -271,6 +416,9 @@ function catalogDomains(event: RuntimeEvent): Domain[] {
 export function observeRuntime(onChange: () => void, onEvent?: (event: RuntimeEvent, scope: { hostID: string; generation: number }) => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attentionScope: string | undefined;
+  let stopSidebarAttention: (() => void) | undefined;
+  let indexedSessions: readonly Session[] | undefined;
+  const sessionDirectories = new Map<string, string>();
   const makeAttentionSource = () => createProjectsAttentionSource({ attention: projectsAttention, sessions: () => app.sessions(), request: captureHostRequest(),
     current: key => runtimeReady() && !switching && lifecycle() === 'active' && key === JSON.stringify([generation, app.connection()?.id]),
   });
@@ -278,15 +426,48 @@ export function observeRuntime(onChange: () => void, onEvent?: (event: RuntimeEv
   function syncAttentionScope() {
     const connection = app.connection(), key = runtimeReady() && connection ? JSON.stringify([generation, connection.id]) : undefined;
     if (key !== attentionScope) {
+      stopSidebarAttention?.(); stopSidebarAttention = undefined;
       if (attentionScope) projectsAttention.retire(attentionScope);
       attentionSource.dispose(); attentionSource = makeAttentionSource(); attentionScope = key;
-      if (key) projectsAttention.activate(key);
+      if (key) {
+        projectsAttention.activate(key);
+        const publish = () => sidebarUnseen.set(projectsAttention.snapshot(key).unseenBySession);
+        publish(); stopSidebarAttention = projectsAttention.observe(key, publish);
+      }
     }
     return key;
   }
   const stop = host.on('runtime.event', payload => {
     const event = runtimeEventFrom(payload);
     if (!event || !runtimeReady() || lifecycle() !== 'active') return;
+    if (event.key === 'global' && (event.type === 'reconnected' || event.type === 'server.connected') && (record(payload).expectedHost === undefined || sameRuntimeScope(workStatusEventScope(payload), app.runtimeScope()))) revokeWorkStatusChildActivity();
+    if (!switching && event.key === 'global' && (event.type.startsWith('session.') || event.type === 'yuri:session-status')) {
+      const busy = eventBusy(event), id = eventSessionID(event);
+      if (busy !== undefined && id) {
+        let directory = event.directory;
+        if (!directory) {
+          const rows = app.sessions();
+          if (rows !== indexedSessions) { sessionDirectories.clear(); for (const row of rows) sessionDirectories.set(row.id, row.directory); indexedSessions = rows; }
+          directory = sessionDirectories.get(id) || '';
+        }
+        const wireScope = workStatusEventScope(payload), scoped = wireScope && sameRuntimeScope(wireScope, app.runtimeScope()) ? wireScope : undefined;
+        if (directory && (record(payload).expectedHost === undefined || scoped)) {
+          const key = desktopSidebarSessionStateKey({ id, directory }), prior = sidebarLive();
+          const rawStatus = event.type === 'session.status' || event.type === 'yuri:session-status'
+            ? text(record(event.body.status).type) || text(event.body.status) || text(record(event.body.info).type) : '';
+          const statusType = rawStatus === 'busy' || rawStatus === 'retry' || rawStatus === 'idle' ? rawStatus : undefined;
+          const statusScope = statusType ? scoped ?? app.runtimeScope() ?? undefined : undefined;
+          const previous = prior.get(key);
+          if (previous?.running !== busy || !sameRuntimeScope(previous?.workStatusScope ?? null, scoped ?? null)
+            || previous?.contactStatus?.type !== statusType || !sameRuntimeScope(previous?.contactStatusScope ?? null, statusScope ?? null)) {
+            const next = new Map(prior);
+            next.set(key, { running: busy, ...(scoped ? { workStatusScope: scoped } : {}),
+              ...(statusType && statusScope ? { contactStatus: previous?.contactStatus?.type === statusType ? previous.contactStatus : { type: statusType }, contactStatusScope: statusScope } : {}) });
+            sidebarLive.set(next); notifyWorkStatusChildren(key);
+          }
+        }
+      }
+    }
     if (onEvent && !switching) {
       const hostID = app.connection()?.id;
       if (hostID) { try { onEvent(event, { hostID, generation }); } catch (error) { report(error); } }
@@ -304,7 +485,7 @@ export function observeRuntime(onChange: () => void, onEvent?: (event: RuntimeEv
     timer = setTimeout(() => { timer = undefined; if (started === generation && lifecycle() === 'active') onChange(); }, 120);
   });
   effect(() => { app.connection(); runtimeReady(); const active = lifecycle() === 'active'; untracked(() => { const key = syncAttentionScope(); attentionSource.setActive(key, active && !switching); }); });
-  cleanup(() => { stop(); if (timer) clearTimeout(timer); attentionSource.dispose(); if (attentionScope) projectsAttention.retire(attentionScope); });
+  cleanup(() => { stop(); stopSidebarAttention?.(); if (timer) clearTimeout(timer); attentionSource.dispose(); if (attentionScope) projectsAttention.retire(attentionScope); });
 }
 export function runtimeLifecycle() {
   effect(() => {
@@ -325,6 +506,7 @@ export function runtimeLifecycle() {
     const disconnected = host.on('runtime.disconnected', payload => {
       if (!current() || record(payload).key !== 'global') return;
       connectivityRevision++; globalDisconnected = true;
+      if (record(payload).expectedHost === undefined || sameRuntimeScope(workStatusEventScope(payload), scope)) revokeWorkStatusChildActivity();
       app.online.set(false);
     });
     const reconnected = host.on('runtime.event', payload => {
@@ -347,13 +529,51 @@ export function runtimeLifecycle() {
 
 export type SendPreparationInput = { text: string; files: Attachment[]; references: ScopedReferenceDocument; scope: ReferenceScope; isCurrentScope: () => boolean };
 export type SendOptions = { inputMode?: 'normal' | 'shell'; prepare?: (input: SendPreparationInput) => Promise<CompiledSubmission>; goalArm?: GoalArmSnapshot };
+export type ChatWriterRetirement = Readonly<{ canRelease: boolean; needsFlush: boolean; reasons: readonly string[] }>;
 const chatOwners = signal<number[]>([]);
 let nextChatOwner = 0;
-export function createChat(target: ChatTarget, dependencies: { followUpBehavior?: () => 'queue' | 'steer' | null; beforeHistoryPresentationFlush?: (next: NativeHistoryPresentation) => void } = {}) {
+export function createChat(target: ChatTarget, dependencies: { readOnly?: boolean; contactOptimistic?: boolean; displayConsumer?: { surfaceID: string; current: () => boolean; stream?: DesktopPanelChatStream }; draftAuthorityKey?: string; writerGrant?: () => VerifiedDesktopWriterGrant | null; writerUnknown?: (cause?: unknown) => void; recoveryReadOperation?: () => PageOperation | null; followUpBehavior?: () => 'queue' | 'steer' | null; beforeHistoryPresentationFlush?: (next: NativeHistoryPresentation) => void } = {}) {
+  const readOnly = dependencies.readOnly === true;
+  const writerRetiring = signal(false), writerWrites = signal(0), writerUnconfirmed = signal(false), writerFlushRevision = signal(-1);
+  const retiredWriterHistory = signal(false);
+  const writerNotDispatched = (failure: unknown) => failure instanceof DesktopWriterError && failure.outcome === 'not-dispatched' || desktopWriterNotDispatched(failure);
+  function writerDomainResponse<T>(parse: () => T): T {
+    try { return parse(); }
+    catch (failure) {
+      writerUnconfirmed.set(true);
+      if (!readOnly) { try { dependencies.writerUnknown?.(failure); } catch { /* A consumer cannot turn a malformed admission into a confirmed receipt. */ } }
+      throw failure;
+    }
+  }
+  if (dependencies.displayConsumer && !readOnly) throw new Error('chat_display_requires_read_only');
+  const draftConnection = app.connection() && { ...app.connection()! };
+  const draftAuthorityValid = dependencies.draftAuthorityKey === undefined || !!draftConnection && desktopGitDraftAuthority(draftConnection) === dependencies.draftAuthorityKey;
+  const draftAuthorityCurrent = () => {
+    if (dependencies.draftAuthorityKey === undefined) return true;
+    const connection = app.connection();
+    return draftAuthorityValid && connection?.id === draftConnection?.id && connection?.url === draftConnection?.url && connection?.authorizationID === draftConnection?.authorizationID;
+  };
   type OperationLane = Readonly<{ scope: RuntimeScope | null; generation: number; request: ReturnType<typeof bindRequest>; history: ReturnType<typeof openNativeHistoryLane> }>;
   const makeOperationLane = (): OperationLane => {
     const scope = runtimeScopeFrom(app.runtimeScope());
-    return Object.freeze({ scope, generation, request: bindRequest(scope), history: openNativeHistoryLane(JSON.stringify([generation, scope?.lease ?? null, target.kind, target.directory, target.id])) });
+    const request = bindRequest(scope, readOnly ? undefined : dependencies.writerGrant);
+    let lane: OperationLane;
+    const send = readOnly ? (path: string, method = 'GET', body?: unknown) => {
+      if (method.toUpperCase() !== 'GET' || body !== undefined) return Promise.reject(new Error('chat_read_only'));
+      return request(path);
+    } : async (path: string, method = 'GET', body?: unknown) => {
+      if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'POST' && path.split('?')[0] === '/api/rpc/opencode.goal/get') return request(path, method, body);
+      if (writerRetiring() || !laneCurrent(lane)) throw new Error('chat_writer_retiring');
+      writerWrites.set(writerWrites() + 1);
+      try { return await request(path, method, body); }
+      catch (failure) {
+        const status = record(failure).status;
+        if (!writerNotDispatched(failure) && !pendingSend() && !queueEdit() && !lane.history.historyBusy() && !(typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429)) writerUnconfirmed.set(true);
+        throw failure;
+      } finally { writerWrites.set(writerWrites() - 1); }
+    };
+    lane = Object.freeze({ scope, generation, request: send, history: openNativeHistoryLane(JSON.stringify([generation, scope?.lease ?? null, target.kind, target.directory, target.id, ...(readOnly ? ['display', dependencies.displayConsumer?.surfaceID] : [])])) });
+    return lane;
   };
   let operationLane = makeOperationLane();
   const initialOperationLane = operationLane, laneRevision = signal(0);
@@ -406,23 +626,57 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   function resetHistoryAuthority() {
     cancelActivityFill?.(true);
+    workStatusSource.resetLive();
     batch(() => { resolvedAuthority.set(false); clearStreamingSelection(); historyGeneration.set(historyGeneration() + 1); });
   }
   const loading = signal(false), sending = signal(false), busy = signal(false), more = signal(false), hasGap = signal(false);
   const olderLoading = signal(false), historyError = signal('');
-  const durable = openDraft(app.connection()?.id ?? `unconnected:${generation}`, target);
+  const durable = readOnly ? desktopChatReadOnlyDraft(app.connection()?.id ?? '', target) : openDraft(app.connection()?.id ?? `unconnected:${generation}`, target, dependencies.draftAuthorityKey);
   const { draft, attachments, pendingSend, queueEdit } = durable;
   const active = signal(true), syncActive = signal(false), syncDemand = signal(true);
   const retry = signal<Row | null>(null), streamState = signal<'inactive' | 'connecting' | 'live' | 'disconnected'>('inactive');
+  const displayStreamError = signal('');
+  const displayStreamRevision = signal(0), sessionIdentity = signal<DesktopChatSessionIdentity | null>(null);
   const executionError = signal('');
   const commands = signal<Row[]>([]);
   const queueBusy = signal(''), queueError = signal('');
+  const compactionBarrier = signal(false);
+  let compactionRevision = 0;
+  const compactionInputs = new Set<string>();
+  function setCompactionBarrier(running: boolean, inputID = '') {
+    compactionRevision++;
+    if (running) compactionInputs.add(inputID);
+    else if (inputID) compactionInputs.delete(inputID);
+    else compactionInputs.clear();
+    compactionBarrier.set(compactionInputs.size > 0);
+  }
+  function compactionReceipt(payload: unknown) {
+    const value = record(unwrap(payload));
+    if (!text(value.id) || value.sessionID !== target.id || value.type !== 'compaction') throw new Error('Invalid compaction admission');
+    return value;
+  }
+  function rememberCompactionInbox(rows: readonly Row[]) {
+    const item = rows.find(item => item.type === 'compaction' && item.sessionID === target.id);
+    if (item) setCompactionBarrier(true, text(compactionReceipt(item).id));
+  }
+  function rememberCompactionMessages(rows: readonly Message[]) {
+    for (let index = rows.length - 1; index >= 0; index--) {
+      const message = rows[index], card = message?.cards.find(part => part.type === 'compaction');
+      if (!card) continue;
+      if (card.status === 'running') setCompactionBarrier(true, message!.id);
+      else if (card.status === 'completed' || card.status === 'failed') setCompactionBarrier(false, message!.id);
+      return;
+    }
+  }
   const owner = ++nextChatOwner;
+  let streamKey = readOnly ? `panel-chat:${owner}` : 'chat';
+  const sourceIdentity = () => desktopChatReadIdentity(durable.scope.host, draftConnection ? desktopGitDraftAuthority(draftConnection) : '', operationLane.scope?.lease, target);
+  const sharedSource = readOnly ? computed(() => { laneRevision(); return desktopChatReadSource(sourceIdentity()); }) : () => undefined;
   const makeMessageScope = () => Object.freeze({ hostID: durable.scope.host, generation: operationLane.generation, sessionID: target.kind === 'session' ? target.id : '', directory: target.directory });
   let messageScope = makeMessageScope();
   const historyBusy = Object.assign(() => { laneRevision(); return operationLane.history.historyBusy(); }, {
-    set: (value: boolean) => { if (current()) operationLane.history.historyBusy.set(value); },
-    update: (work: (value: boolean) => boolean) => { if (current()) operationLane.history.historyBusy.update(work); },
+    set: (value: boolean) => { if (readOnly) rejectDesktopChatWrite(); if (value && writerRetiring()) throw new Error('chat_writer_retiring'); if (current()) operationLane.history.historyBusy.set(value); },
+    update: (work: (value: boolean) => boolean) => { if (readOnly) rejectDesktopChatWrite(); historyBusy.set(work(historyBusy())); },
   });
   const revertSource = signal<NativeRevert | null>(null), historyRepairPending = signal(false);
   let historyRevision = 0, historyNeedsReset = false;
@@ -441,10 +695,21 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     if (changed) snapshotCommitted();
   }
   const revert = Object.assign(() => revertSource(), { set: setRevert, update: (work: (value: NativeRevert | null) => NativeRevert | null) => setRevert(work(revertSource())) });
+  const contactOptimistic = signal<ContactOptimisticTurn[]>([]);
+  const contactIntents = new Map<string, ContextSubmission>();
+  const contactOptimisticEnabled = !readOnly && target.kind === 'assistant' && dependencies.contactOptimistic === true;
+  const contactDisplayMessages = computed(() => {
+    const authoritative = messages();
+    if (!contactOptimisticEnabled) return authoritative;
+    const seen = new Set(authoritative.map(message => message.id));
+    const pending = contactOptimistic().filter(turn => !seen.has(turn.messageID));
+    if (!pending.length) return authoritative;
+    return [...authoritative, ...mergeContactTranscript([], pending, target.id).map(value => contactMessageFrom({ ...value })!)];
+  });
   const visibleMessages = () => {
     const rows = messages(), boundary = revert()?.messageID;
     if (historyRepairPending()) return [];
-    if (!boundary) return rows;
+    if (!boundary) return contactOptimisticEnabled ? contactDisplayMessages() : rows;
     const index = rows.findIndex(message => message.id === boundary);
     return index < 0 ? [] : rows.slice(0, index);
   };
@@ -466,9 +731,16 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       try { historyPresentationListener?.(value); } catch { /* Presentation must not interrupt the authoritative writer. */ }
     });
   }
-  chatOwners.set([...chatOwners(), owner]);
+  if (!readOnly) chatOwners.set([...chatOwners(), owner]);
   let alive = true, flight: Promise<void> | undefined, queued = false;
   let cursor: string | null = null, contactGeneration: number | undefined, contactRevision = -1;
+  const contactPageGeneration = signal<number | null>(null);
+  const contactReadPosition = () => {
+    const generation = contactPageGeneration(), latest = messages().at(-1);
+    if (target.kind !== 'assistant' || !messagesResolved() || messageReadError() || hasGap() || historyRepairPending() || generation === null
+      || !latest?.contact || !Number.isSafeInteger(latest.ordinal) || latest.ordinal! < 0) return null;
+    return { generation, ordinal: latest.ordinal!, messageID: latest.id };
+  };
   let messagesLoaded = false;
   let authorityMessageIDs = new Set<string>();
   const olderCursors = new Set<string>();
@@ -487,7 +759,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   let latestStatusClock = -1;
   const inboxTerminals = new Map<string, 'delivered' | 'cancelled'>();
   let queueFlight: Promise<boolean> | undefined, recoveryFlight: Promise<boolean> | undefined;
-  const laneCurrent = (lane: OperationLane) => alive && !retiredAuthority && lane === operationLane && runtimeReady() && !switching && lane.generation === generation && sameRuntimeScope(lane.scope, app.runtimeScope());
+  const laneCurrent = (lane: OperationLane) => alive && !retiredAuthority && lane === operationLane && runtimeReady() && !switching && lane.generation === generation && sameRuntimeScope(lane.scope, app.runtimeScope()) && draftAuthorityCurrent() && (!readOnly || !!lane.scope && dependencies.displayConsumer?.current() !== false && app.connection()?.id === draftConnection?.id && app.connection()?.url === draftConnection?.url && app.connection()?.authorizationID === draftConnection?.authorizationID);
   const current = () => laneCurrent(operationLane);
   const referenceCurrent = () => current() && app.connection()?.id === durable.scope.host;
   const referenceSnapshot = (): ScopedReferenceDocument => {
@@ -502,40 +774,57 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     return { text: document.text, scope: { ...document.scope }, references: document.references.map(ref => ({ ...ref, ...(ref.scope ? { scope: { ...ref.scope } } : {}) })) };
   }
   function setDraftText(value: string) {
-    if (!current()) return false;
+    if (readOnly || writerRetiring() || !current()) return false;
     durable.setDraftText(value); return true;
   }
+  function compareAndSetDraftText(revision: number, value: string) {
+    if (readOnly || writerRetiring() || !active() || !foreground() || !Number.isSafeInteger(revision) || typeof value !== 'string' || durable.revision() !== revision) return false;
+    durable.setDraftText(value); return true;
+  }
+  function stageContext(input: DesktopGitContextInput, confirmation?: DesktopGitStageConfirmation): Promise<DesktopGitStageResult> {
+    if (writerRetiring()) return Promise.resolve({ status: 'blocked' });
+    const lane = operationLane, lease = input.lease;
+    return durable.stageContext(input, () => lane.scope?.lease === lease && laneForeground(lane) && active() && !sending(), confirmation);
+  }
+  // Like Web's pending synthetic parts, editing (including empty text) retains context.
+  // Explicit removal affects only the next draft, never the captured pending receipt.
+  function clearContext() { if (readOnly || writerRetiring() || !current() || !active()) return false; durable.context.set(undefined); return true; }
   function insertReference(candidate: ReferenceCandidate, start?: number, end?: number) {
-    if (!referenceCurrent()) return false;
+    if (readOnly || writerRetiring() || !referenceCurrent()) return false;
     if (target.kind !== 'session') throw new Error('Assistant references are not supported by this client');
     durable.insertReference(candidate, start, end); return true;
   }
   function setReferenceDocument(next: ScopedReferenceDocument, expected?: ScopedReferenceDocument) {
-    if (!referenceCurrent()) return false;
+    if (readOnly || writerRetiring() || !referenceCurrent()) return false;
     if (expected && (!sameReferenceScope(expected.scope, durable.scope) || !durable.matchesDocument(expected.text, expected.references))) return false;
     durable.setDocument(next); return true;
   }
-  const foreground = () => current() && (active() || syncActive()) && lifecycle() === 'active' && chatOwners().at(-1) === owner;
+  const foreground = () => current() && (active() || syncActive()) && lifecycle() === 'active' && (readOnly || chatOwners().at(-1) === owner);
   const laneForeground = (lane: OperationLane) => laneCurrent(lane) && foreground();
   let goalObservers = 0, goalNotice = 0;
   const goalRevision = signal(0);
   const goalCore = createGoalController({ sessionID: target.kind === 'session' ? target.id : '', directory: target.directory }, {
     get: scope => createGoalTransport(operationLane.request).get(scope),
     command: (scope, command) => createGoalTransport(operationLane.request).command(scope, command),
-  }, () => target.kind === 'session' && !!operationLane.scope && active() && foreground() && referenceCurrent(), () => goalRevision.set(++goalNotice));
+  }, () => !readOnly && target.kind === 'session' && !!operationLane.scope && active() && foreground() && referenceCurrent(), () => goalRevision.set(++goalNotice));
   const goalState = () => { goalRevision(); const state = goalCore.state(); return current() && (sending() || historyBusy()) ? { ...state, busy: true } : state; };
   let goalArmCapture: { submissionID: string; snapshot: GoalArmSnapshot } | undefined;
   const projectTasks = createTasksProjection(), taskSnapshot = signal<readonly NativeTask[]>([]);
   const tasks = () => taskSnapshot();
+  const workStatusSource = createDesktopWorkStatusSourceProjection(value => workStatusSnapshot.set(value), tasks());
+  const workStatusSnapshot = signal<DesktopWorkStatusChat>(workStatusSource.snapshot());
+  const workStatus = () => workStatusSnapshot();
+  const workStatusLiveCurrent = (payload: unknown) => !!operationLane.scope && sameRuntimeScope(workStatusEventScope(payload), operationLane.scope);
   function updateTasks() {
     if (target.kind !== 'session') return;
     const next = projectTasks(visibleMessages()) ?? [];
     const previous = tasks();
     if (next !== previous && (next.length || previous.length)) taskSnapshot.set(next);
+    workStatusSource.commitTranscript(visibleMessages(), tasks());
   }
   async function goalControl(action: 'pause' | 'resume' | 'clear'): Promise<GoalCommandResult> {
     const lane = operationLane;
-    if (!active() || !foreground() || target.kind !== 'session' || sending() || historyBusy() || pendingSend() || queueEdit()) return 'blocked';
+    if (readOnly || !active() || !foreground() || target.kind !== 'session' || sending() || historyBusy() || pendingSend() || queueEdit()) return 'blocked';
     const result = await send({}, false, action);
     return result ? 'acknowledged' : laneCurrent(lane) ? 'failed' : 'stale';
   }
@@ -543,10 +832,10 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     ? Promise.resolve<GoalCommandResult>('blocked') : goalControl(goalCore.state().goal?.status === 'active' ? 'pause' : 'resume');
   const goal = {
     state: goalState,
-    controller: { scope: goalCore.scope, refresh: goalCore.refresh, setArmed: goalCore.setArmed, captureArm: goalCore.captureArm, toggle: toggleGoal, clear: () => goalControl('clear') },
+    controller: { scope: goalCore.scope, refresh: goalCore.refresh, setArmed: readOnly ? () => {} : goalCore.setArmed, captureArm: goalCore.captureArm, toggle: toggleGoal, clear: () => goalControl('clear') },
     /** Observe once from the primary Chat; no new effect, socket or safety poll. */
     observe() {
-      if (target.kind !== 'session') return () => {};
+      if (readOnly || target.kind !== 'session') return () => {};
       goalObservers++;
       if (goalObservers === 1) void goalCore.refresh();
       let observing = true;
@@ -558,7 +847,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   let retiredAuthority = false, suspendedOperations = false;
   const retireAuthority = (reason: 'suspend' | 'host' = 'host') => {
     if (retiredAuthority) {
-      if (reason === 'host' && suspendedOperations) { suspendedOperations = false; historyPresentationListener = undefined; messageCommitListeners.clear(); goalCore.retire(); taskSnapshot.set([]); }
+      if (reason === 'host' && suspendedOperations) { suspendedOperations = false; historyPresentationListener = undefined; messageCommitListeners.clear(); goalCore.retire(); taskSnapshot.set([]); workStatusSource.retire(tasks()); }
       return;
     }
     retiredAuthority = true;
@@ -567,13 +856,16 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     if (!suspendedOperations) { historyPresentationListener = undefined; messageCommitListeners.clear(); }
     resetHistoryAuthority();
     if (suspendedOperations) goalCore.cancel(); else { goalCore.retire(); taskSnapshot.set([]); }
+    if (suspendedOperations) workStatusSource.suspend(); else workStatusSource.retire(tasks());
     goalArmCapture = undefined;
   };
   function rebuildOperationLane() {
-    if (!alive || !suspendedOperations || !runtimeReady() || switching || lifecycle() !== 'active' || app.connection()?.id !== durable.scope.host) return false;
+    if (!alive || !(suspendedOperations || readOnly && retiredAuthority) || !runtimeReady() || switching || lifecycle() !== 'active' || app.connection()?.id !== durable.scope.host) return false;
+    if (app.connection()?.url !== draftConnection?.url || app.connection()?.authorizationID !== draftConnection?.authorizationID || readOnly && dependencies.displayConsumer?.current() === false) return false;
     const next = makeOperationLane();
     if (next.scope && next.scope.hostID !== durable.scope.host) return false;
     batch(() => {
+      if (!readOnly && operationLane.history.historyBusy()) retiredWriterHistory.set(true);
       operationLane.history.historyBusy.set(false);
       operationLane.history.close();
       operationLane = next; messageScope = makeMessageScope(); retiredAuthority = false; suspendedOperations = false;
@@ -608,10 +900,14 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   async function refreshHistory(valid: () => boolean = current, lane = operationLane) {
     const request = lane.request;
     if (target.kind !== 'session') return null;
+    if (readOnly && !laneForeground(lane)) return null;
     const revision = historyRevision;
     const session = record(unwrap(await request(`/api/session/${encodeURIComponent(target.id)}?${query(target.directory)}`)));
     if (!laneCurrent(lane) || !valid()) throw new Error('Session history source changed');
     if (session.id !== target.id) throw new Error('Invalid session history authority');
+    if (readOnly && (record(session.location).directory ?? session.directory) !== target.directory) throw new Error('chat_directory_mismatch');
+    const identity = { id: target.id, directory: text(record(session.location).directory ?? session.directory), ...(text(session.parentID) ? { parentID: text(session.parentID) } : {}) };
+    if (JSON.stringify(sessionIdentity()) !== JSON.stringify(identity)) sessionIdentity.set(identity);
     const value = session.revert ? nativeRevertFrom(session.revert) : null;
     if (revision === historyRevision) setRevert(value);
     return revert();
@@ -629,7 +925,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       authorityMessageIDs = new Set(messages().filter(message => authorityMessageIDs.has(message.id)).map(message => message.id));
       historyRevision++; revertSource.set(null); updateTasks();
     });
-    snapshotCommitted();
+             snapshotCommitted();
   }
   async function repairCommittedHistory(lane = operationLane) {
     const request = lane.request, foreground = () => laneForeground(lane);
@@ -655,8 +951,8 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     });
     snapshotCommitted();
   }
-  async function commitStagedRevertBeforeSend(lane: OperationLane) {
-    const request = lane.request, foreground = () => laneForeground(lane);
+  async function commitStagedRevertBeforeSend(lane: OperationLane, fence: () => boolean = () => true) {
+    const request = lane.request, foreground = () => laneForeground(lane) && fence();
     if (target.kind !== 'session') return;
     const marker = await refreshHistory(foreground, lane);
     if (!foreground()) throw new Error('Session history source changed');
@@ -714,7 +1010,10 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   async function loadOlder(automatic = false, lane = operationLane): Promise<void> {
     const foreground = () => laneForeground(lane), current = () => laneCurrent(lane);
-    if (!foreground() || !cursor || automatic && historyError()) return;
+    if (!foreground()) return;
+    const source = sharedSource();
+    if (source) return source.loadOlder();
+    if (!cursor || automatic && historyError()) return;
     if (olderFlight) return olderFlight;
     const activeAtStart = activation;
     const valid = () => foreground() && activeAtStart === activation;
@@ -734,6 +1033,12 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   async function loadSnapshot(older = false, selected: ChatDomain[] = allChatDomains, lane = operationLane): Promise<void> {
     const request = lane.request, current = () => laneCurrent(lane);
     if (!current() || older && !cursor) return;
+    if (readOnly) {
+      if (!foreground()) return;
+      const source = sharedSource();
+      if (source) return source.load(older, selected.filter((domain): domain is 'messages' | 'status' => domain === 'messages' || domain === 'status'));
+      selected = selected.filter(domain => domain === 'messages' || domain === 'status');
+    }
     if (flight) { if (!older) { queued = true; selected.forEach(domain => pendingRefresh.add(domain)); } return flight; }
     const activeAtStart = activation;
     const valid = () => current() && activeAtStart === activation;
@@ -760,8 +1065,9 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       await Promise.all([
         ...(!older && selected.includes('goal') && goalObservers ? [goalCore.refresh()] : []),
          ...(selected.includes('messages') ? [applyMessageRead(async () => {
-          await historyRead;
-          const historyAtStart = historyRevision;
+           await historyRead;
+           if (readOnly && historyReadFailed) throw new Error('chat_session_authority_unavailable');
+           const historyAtStart = historyRevision, barrierAtStart = compactionRevision;
           const path = target.kind === 'assistant'
             ? `${assistantPath(target.id, 'contact/messages')}?limit=30${older && cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`
             : `${scoped('message')}&limit=20${older && cursor ? `&cursor=${encodeURIComponent(cursor)}` : '&order=desc'}`;
@@ -804,21 +1110,21 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
               if (!overlap && !boundary.complete) { catchup = { page, anchors: known, visited }; batch(() => { if (historyPresentationListener) presentHistory('presentation', { hasGap: true }); hasGap.set(true); }); return; }
            }
            if (!older) catchup = undefined;
-          contactGeneration = page.generation;
+           contactGeneration = page.generation;
           contactRevision = page.revision ?? contactRevision;
           if (historyAtStart !== historyRevision) { queued = true; pendingRefresh.add('messages'); return; }
            const previous = messages();
            const coverage = new Set(reset || historyNeedsReset || !messagesLoaded || !older && page.complete ? [] : authorityMessageIDs);
             page.messages.forEach(message => coverage.add(message.id));
-            batch(() => {
+             batch(() => {
+               if (target.kind === 'assistant') contactPageGeneration.set(Number.isSafeInteger(page.generation) && page.generation! >= 0 ? page.generation! : null);
               const replacing = historyNeedsReset;
               // Preparing rows only reconciles the existing stream overlay; signals are still unchanged.
               if (reset || replacing) streaming.clear();
               let rows: Message[];
               if (replacing || !messagesLoaded || reset || !older && page.complete) rows = prepareMessages(page.messages, streamAtStart);
               else if (!older && target.kind === 'assistant' && page.messages.length) {
-                const first = page.messages[0]!;
-                rows = prepareMessages([...previous.filter(message => (message.ordinal ?? 0) < (first.ordinal ?? 0) || message.ordinal === first.ordinal && message.id < first.id), ...page.messages], streamAtStart);
+                rows = prepareMessages(mergeHistoryMessages(previous, page.messages), streamAtStart);
               } else if (!older) {
                 const known = new Set(previous.map(message => message.id));
                 const first = page.messages.find(message => known.has(message.id));
@@ -830,6 +1136,15 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
                 repairPending: replacing ? false : historyRepairPending(), resolved: true, readError: '', historyError: older ? '' : historyError(), historyGeneration: historyGeneration() + (reset ? 1 : 0) });
               if (reset) { resetHistoryAuthority(); streaming.clear(); }
               if (rows !== previous) messages.set(rows);
+              if (contactOptimisticEnabled) {
+                const prior = contactOptimistic();
+                const remaining = reset ? [] : reconcileContactOptimisticTurns(prior, rows.map(message => ({ messageID: message.id })));
+                if (remaining !== prior) {
+                  const keep = new Set(remaining.map(turn => turn.messageID));
+                  for (const id of contactIntents.keys()) if (!keep.has(id)) contactIntents.delete(id);
+                  contactOptimistic.set(remaining);
+                }
+              }
               if (replacing) { historyNeedsReset = false; historyRepairPending.set(false); }
              if (reset) olderCursors.clear();
              else if (older && cursor) olderCursors.add(cursor);
@@ -843,12 +1158,13 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
                if (older) historyError.set('');
                updateTasks();
             });
-            snapshotCommitted();
+             if (!older && barrierAtStart === compactionRevision) rememberCompactionMessages(page.messages);
+             snapshotCommitted();
         })] : []),
         ...(!older && selected.includes('status') ? [apply(async () => {
           if (target.kind === 'session') {
             const value = activeFrom(await request('/api/session/active'), target.id);
-            if (valid() && statusAtStart === liveRevision) { busy.set(value); if (!value) retry.set(null); }
+            if (valid() && statusAtStart === liveRevision) { busy.set(value); if (!value) retry.set(null); workStatusSource.confirmActivity(value); }
           } else {
             const value = record(await request('/api/yuri/assistants/snapshot'));
             if (!Array.isArray(value.assistants)) throw new Error('Invalid assistants snapshot');
@@ -859,7 +1175,13 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         })] : []),
         historyRead,
         ...(target.kind === 'session' && !older ? [
-           ...(selected.includes('inbox') ? [apply(async () => { const value = inboxFrom(await request(scoped('inbox'))); if (valid() && blockingAtStart === blockingRevision) inbox.set(value.filter(item => !inboxTerminals.has(text(item.id)))); })] : []),
+            ...(selected.includes('inbox') ? [apply(async () => {
+              const barrierRevision = compactionRevision, payload = await request(scoped('inbox')), raw = rowsFrom(payload), value = inboxFrom(payload);
+              if (valid() && blockingAtStart === blockingRevision) {
+                if (barrierRevision === compactionRevision) rememberCompactionInbox(raw);
+                inbox.set(value.filter(item => !inboxTerminals.has(text(item.id))));
+              }
+            })] : []),
           ...(selected.includes('permissions') ? [apply(async () => { const value = rowsFrom(await request(`/api/permission/request?${query(target.directory)}`)).filter(item => item.sessionID === target.id); if (valid() && blockingAtStart === blockingRevision) permissions.set(value); })] : []),
           ...(selected.includes('forms') ? [apply(async () => { const value = rowsFrom(await request(scoped('form'))); if (valid() && blockingAtStart === blockingRevision) forms.set(value); })] : []),
         ] : []),
@@ -875,20 +1197,41 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (current() && queued) { queued = false; schedule([]); }
     }
   }
-  async function reconcile(submission: Submission, lane: OperationLane): Promise<boolean> {
-    const request = lane.request, current = () => laneCurrent(lane);
+  async function reconcile(submission: ContextSubmission, lane: OperationLane, admitted: () => boolean = () => true, strictScope = false): Promise<boolean> {
+    const current = () => laneCurrent(lane) && admitted();
+    const request = async (path: string) => {
+      if (!current()) throw new Error('chat_recovery_read_stale');
+      const value = await lane.request(path);
+      if (!current()) throw new Error('chat_recovery_read_stale');
+      return value;
+    };
+    if (submission.localCompact) {
+      try {
+        const pending = rowsFrom(await request(scoped('inbox'))).find(item => item.id === submission.id && item.sessionID === target.id && item.type === 'compaction');
+        if (pending && current()) { setCompactionBarrier(true, submission.id); return true; }
+      } catch { /* An exact promoted checkpoint may still prove admission when inbox cannot be read. */ }
+      if (!current()) return false;
+      const value = record(unwrap(await request(scoped(`message/${encodeURIComponent(submission.id)}`))));
+      const info = record(value.info), parts = list(value.parts ?? value.content);
+      const card = value.type === 'compaction' ? value : parts.find(part => part.type === 'compaction');
+      if ((info.id ?? value.id) !== submission.id || (info.sessionID ?? value.sessionID) !== target.id || !card || !['running', 'completed', 'failed'].includes(text(card.status))) return false;
+      if (current()) setCompactionBarrier(card.status === 'running', submission.id);
+      return current();
+    }
     if (inboxTerminals.get(submission.id) === 'delivered') return true;
     if (target.kind === 'assistant') {
       const page = messagesFrom(await request(`${assistantPath(target.id, 'contact/messages')}?messageID=${encodeURIComponent(submission.id)}&limit=1`), true, 1);
-      return page.messages.some(message => message.id === submission.id && message.role === 'user');
+      return page.messages.some(message => message.id === submission.id && message.contact?.kind === 'user'
+        && (message.contact.assistantID === undefined || message.contact.assistantID === target.id));
     }
     try {
       const pending = inboxFrom(await request(scoped('inbox')));
-      if (pending.some(item => item.id === submission.id)) return true;
+      if (pending.some(item => item.id === submission.id && item.sessionID === target.id)) return true;
     } catch { /* A failed inbox read must still allow exact promoted-message recovery. */ }
     if (!current()) return false;
     const value = record(unwrap(await request(scoped(`message/${encodeURIComponent(submission.id)}`))));
-    return (record(value.info).id ?? value.id) === submission.id;
+    const info = record(value.info);
+    return (info.id ?? value.id) === submission.id && (!(strictScope || submission.localMagic) || (info.sessionID ?? value.sessionID) === target.id);
   }
   function terminalInbox(inboxID: string, reason: 'delivered' | 'cancelled') {
     if (inboxTerminals.get(inboxID) === 'delivered') return;
@@ -899,9 +1242,10 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   async function queuedAuthority(inboxID: string, lane: OperationLane) {
     const request = lane.request, current = () => laneCurrent(lane);
-    const revision = blockingRevision;
-    const rows = inboxFrom(await request(scoped('inbox')));
+    const revision = blockingRevision, barrierRevision = compactionRevision;
+    const payload = await request(scoped('inbox')), rows = inboxFrom(payload);
     if (!current()) throw new Error('Connection changed');
+    if (barrierRevision === compactionRevision) rememberCompactionInbox(rowsFrom(payload));
     if (revision === blockingRevision) inbox.set(rows.filter(item => !inboxTerminals.has(text(item.id))));
     return inboxTerminals.has(inboxID) ? undefined : rows.find(item => item.id === inboxID);
   }
@@ -919,6 +1263,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     }
   }
   async function recoverQueueEdit(lane = operationLane) {
+    if (readOnly) return false;
     const current = () => laneCurrent(lane);
     await durable.whenReady();
     const edit = queueEdit();
@@ -943,7 +1288,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   }
   function mutateInbox(inboxID: string, work: (lane: OperationLane) => Promise<boolean>): Promise<boolean> {
     const lane = operationLane, current = () => laneCurrent(lane);
-    if (!active() || !current() || target.kind !== 'session') return Promise.resolve(false);
+    if (readOnly || writerRetiring() || !active() || !current() || target.kind !== 'session') return Promise.resolve(false);
     if (queueFlight) return queueBusy() === inboxID ? queueFlight : Promise.resolve(false);
     queueBusy.set(inboxID); queueError.set(''); error.set('');
     let flight: Promise<boolean> | undefined;
@@ -966,7 +1311,9 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   });
   const steerInbox = (inboxID: string) => mutateInbox(inboxID, async lane => {
     const request = lane.request, current = () => laneCurrent(lane);
+    if (compactionBarrier() || pendingSend()?.localCompact) return false;
     if (!await queuedAuthority(inboxID, lane)) return false;
+    if (compactionBarrier() || pendingSend()?.localCompact) return false;
     await request(scoped(`inbox/${encodeURIComponent(inboxID)}`), 'PATCH', { delivery: 'steer' });
     if (!current() || inboxTerminals.has(inboxID)) return false;
     blockingRevision++;
@@ -979,7 +1326,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     const existing = queueEdit();
     if (existing && existing.id !== inboxID) throw new Error('请先确认上一项队列编辑的结果');
     if (!existing) {
-      if (draft() || attachments().length || pendingSend()) throw new Error('请先处理当前草稿，队列编辑不会覆盖已有输入');
+      if (draft() || attachments().length || pendingSend() || durable.context()) throw new Error('请先处理当前草稿，队列编辑不会覆盖已有输入');
       const revision = durable.revision();
       const item = await queuedAuthority(inboxID, lane);
       if (!item || item.delivery !== 'queue') throw new Error('该项已不在待发送队列中');
@@ -995,6 +1342,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     return recoverQueueEdit(lane);
   });
   async function discardQueueEdit() {
+    if (readOnly) return false;
     const lane = operationLane, current = () => laneCurrent(lane);
     await durable.whenReady();
     if (!current() || !queueEdit() || queueFlight) return false;
@@ -1003,7 +1351,16 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     await durable.flush(); return true;
   }
   function recoverPendingSend(): Promise<boolean> {
-    const lane = operationLane, current = () => laneCurrent(lane);
+    if (readOnly) return Promise.resolve(false);
+    const lane = operationLane;
+    let readOperation: PageOperation | null = null;
+    try { readOperation = dependencies.recoveryReadOperation?.() ?? null; } catch { return Promise.resolve(false); }
+    const current = () => {
+      if (!laneCurrent(lane) || lifecycle() !== 'active' || chatOwners().at(-1) !== owner || app.connection()?.id !== draftConnection?.id || app.connection()?.url !== draftConnection?.url || app.connection()?.authorizationID !== draftConnection?.authorizationID) return false;
+      if (!dependencies.recoveryReadOperation) return active();
+      try { return !!readOperation && readOperation === dependencies.recoveryReadOperation() && readOperation.current() && readOperation.generation === lane.generation && sameRuntimeScope(readOperation.scope, lane.scope); } catch { return false; }
+    };
+    if (!current()) return Promise.resolve(false);
     if (recoveryFlight) return recoveryFlight;
     const flight = (async () => {
       await durable.whenReady();
@@ -1016,51 +1373,102 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       }
       const revision = durable.draftRevision();
       let found = false;
-      try { found = await reconcile(pending, lane); } catch (failure) { if (record(failure).status !== 404) throw failure; }
+      try { found = await reconcile(pending, lane, () => current() && pendingSend() === pending, !!dependencies.recoveryReadOperation); }
+      catch (failure) { if (!current() || pendingSend() !== pending) return false; if (record(failure).status !== 404) throw failure; }
       if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
-      if (!found || !current() || pendingSend()?.id !== pending.id) return false;
+      if (!found || !current() || pendingSend() !== pending) return false;
       admitted(pending, revision, lane);
-      await durable.flush();
+      try { await durable.flush(); }
+      catch (failure) { if ((pending.localMagic || pending.localCompact || target.kind === 'assistant') && !pendingSend()) pendingSend.set(pending); throw failure; }
       return true;
     })().finally(() => { if (recoveryFlight === flight) recoveryFlight = undefined; });
     recoveryFlight = flight; return flight;
   }
   async function loadCommands(lane = operationLane) {
     const request = lane.request, current = () => laneCurrent(lane);
-    if (!current() || target.kind !== 'session') return;
+    if (readOnly || !current() || target.kind !== 'session') return;
     const rows = rowsFrom(await request(`/api/command?location%5Bdirectory%5D=${encodeURIComponent(target.directory)}`));
     if (current()) commands.set(rows);
   }
   async function command(name: string, args = '') {
-    if (!active() || !current() || target.kind !== 'session' || sending() || historyBusy()) return false;
+    if (readOnly || writerRetiring() || !active() || !current() || target.kind !== 'session' || sending() || historyBusy()) return false;
     if (pendingSend()) { error.set('上一条发送尚未确认，请先确认其结果'); return false; }
+    if (durable.context()) { error.set('请先处理当前 Git 上下文'); return false; }
     if (!/^[\w:-]+$/.test(name)) { error.set('无效的命令名称'); return false; }
     draft.set(`/${name}${args ? ` ${args}` : ''}`);
     return send();
   }
-  function admitted(submission: Submission, expectedDraftRevision: number, lane: OperationLane) {
+  function admitted(submission: ContextSubmission, expectedDraftRevision: number, lane: OperationLane) {
     if (!laneCurrent(lane)) return;
+    if (submission.localMagic || submission.localCompact) { pendingSend.set(null); return; }
+    if (contactOptimisticEnabled) contactOptimistic.set(markContactOptimisticAdmitted(contactOptimistic(), submission.id));
     if (durable.draftRevision() === expectedDraftRevision && durable.matchesDocument(submission.text, submission.references?.references)) durable.setDocument({ text: '', references: [], scope: durable.scope });
     attachments.set(attachments().filter(file => !submission.files.some(capturedFile => sameAttachment(file, capturedFile))));
+    if (submission.context && sameDesktopGitContext(durable.context(), submission.context)) durable.context.set(undefined);
     pendingSend.set(null);
   }
-  async function send(options: SendOptions = {}, retryPending = false, goalAction?: 'pause' | 'resume' | 'clear', lane = operationLane) {
+  type LocalDispatch = { submission: ContextSubmission; current: () => boolean; dispatched: boolean; accepted: boolean; rejected: boolean };
+  /** The installed handoff and direct composer share exactly the ordinary writer's dispatch/history lane. */
+  async function dispatchLocalSubmission(submission: ContextSubmission, valid: () => boolean): Promise<NativeLocalCommandOutcome> {
+    const local: LocalDispatch = { submission, current: valid, dispatched: false, accepted: false, rejected: false };
+    try { await send({}, true, undefined, operationLane, local); }
+    catch { /* Presentation or cleanup failure never turns a dispatched request into a negative receipt. */ }
+    return { status: local.accepted ? 'accepted' : local.dispatched && !local.rejected ? 'unknown' : 'rejected' };
+  }
+  async function admitLocalMagic(compiled: CompiledSubmission, invocation: NativeLocalCommandInvocation): Promise<NativeLocalCommandOutcome> {
+    const lane = operationLane, snapshot = invocation.snapshot, capturedActivation = activation;
+    const valid = () => !readOnly && activation === capturedActivation && active() && laneForeground(lane) && invocation.current();
+    if (!valid() || target.kind !== 'session' || snapshot.target.kind !== 'session' || snapshot.target.id !== target.id || snapshot.target.directory !== target.directory || snapshot.revision !== durable.revision() || snapshot.text !== draft() || sending() || pendingSend() || queueEdit() || durable.status() !== 'ready') return { status: 'rejected' };
+    const tokenEnd = /^\s*\/\u2003?[^\s]+/.exec(snapshot.text)?.[0].length ?? 0;
+    if (durable.references().some(ref => ref.start < tokenEnd && ref.end > snapshot.text.indexOf('/'))) return { status: 'rejected' };
+    try {
+      const submission = { ...localMagicSubmission(compiled, invocation, durable.scope), id: id() };
+      return await dispatchLocalSubmission(submission, valid);
+    } catch { return { status: 'rejected' }; }
+  }
+  async function admitLocalCompact(invocation: NativeLocalCommandInvocation): Promise<NativeLocalCommandOutcome> {
+    const snapshot = invocation.snapshot, lane = operationLane, capturedActivation = activation;
+    const valid = () => !readOnly && activation === capturedActivation && active() && laneForeground(lane) && invocation.current();
+    const command = slashCommand(snapshot.text.replace(/^(\s*)\/\u2003/, '$1/'));
+    const original = snapshot.revision === durable.revision() && snapshot.text === draft();
+    const consumedBare = snapshot.revision + 1 === durable.revision() && draft() === '' && !durable.references().length;
+    if (!valid() || target.kind !== 'session' || invocation.command !== 'compact' || invocation.resourcePolicy !== 'preserve' || snapshot.inputMode !== 'normal' || snapshot.target.kind !== 'session' || snapshot.target.id !== target.id || snapshot.target.directory !== target.directory || !sameReferenceScope(snapshot.scope, durable.scope) || !Number.isSafeInteger(snapshot.revision) || (!original && !consumedBare) || command?.name.toLowerCase() !== 'compact' || command.text.trim() || snapshot.hasReferences || durable.references().length || pendingSend() || queueEdit() || sending() || compactionBarrier() || durable.status() !== 'ready') return { status: 'rejected' };
+    const submission: ContextSubmission = { id: id(), text: '', files: [], inputMode: 'normal', delivery: 'steer', uncertain: false, references: { text: '', references: [], scope: { ...durable.scope } }, localCompact: { version: 1, resourcePolicy: 'preserve' } };
+    return dispatchLocalSubmission(submission, valid);
+  }
+  async function dispatchLocalMagicHandoff(inputID: string): Promise<NativeLocalCommandOutcome> {
+    if (readOnly || writerRetiring() || !active() || !foreground()) return { status: 'rejected' };
+    await durable.whenReady();
+    const submission = pendingSend(), lane = operationLane, capturedActivation = activation;
+    if (!submission?.localMagic || submission.id !== inputID || submission.uncertain) return { status: 'rejected' };
+    return dispatchLocalSubmission(submission, () => activation === capturedActivation && active() && laneForeground(lane));
+  }
+  async function send(options: SendOptions = {}, retryPending = false, goalAction?: 'pause' | 'resume' | 'clear', lane = operationLane, local?: LocalDispatch) {
     const request = lane.request, current = () => laneCurrent(lane), foreground = () => laneForeground(lane);
     const referenceCurrent = () => current() && app.connection()?.id === durable.scope.host;
-    if (!active() || sending() || !current()) return false;
+    if (readOnly || writerRetiring() || !active() || sending() || !current()) return false;
+    if (!local && (pendingSend()?.localMagic || pendingSend()?.localCompact)) { await recoverPendingSend(); return false; }
     if (!lane.scope) { error.set('scope_required'); return false; }
     const releaseHistory = lane.history.acquireSend();
     if (!releaseHistory) return false;
     sending.set(true); error.set('');
-    let submission: Submission | null = null;
+    let submission: ContextSubmission | null = null;
     let dispatched = false;
+    let contactAdmitted = false;
     let historyFailed = false;
+    let localRevision = durable.revision();
+    const localCurrent = () => !local || local.current() && durable.revision() === localRevision;
     const goalArm = { ...(options.goalArm ?? goalCore.captureArm()) };
     try {
       await durable.whenReady();
-      if (!current()) return false;
+      if (!current() || !localCurrent()) return false;
       if (queueEdit()) { error.set('队列编辑尚未确认取消，不能重复发送'); return false; }
       submission = pendingSend();
+      if ((submission?.localMagic || submission?.localCompact) && !local) return false;
+      if (local) {
+        if (submission && submission !== local.submission || local.submission.uncertain) return false;
+        submission = local.submission;
+      }
       if (goalAction && submission) { error.set('上一条发送尚未确认，请先确认其结果'); return false; }
       if (!goalAction && !submission && !draft().trim() && !attachments().length) return false;
       if (submission && !retryPending && !durable.matches(submission.text, submission.files, submission.references?.references)) { error.set('上一条发送结果未知，请先重试确认后再发送新草稿'); return false; }
@@ -1068,12 +1476,12 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (!submission) {
         submission = goalAction
           ? { id: id(), text: '', files: [], delivery: 'steer', uncertain: false, inputMode: 'normal', references: { text: '', references: [], scope: { ...durable.scope } }, command: { name: 'goal', text: goalAction } }
-          : { id: id(), text: draft(), files: attachments().map(file => ({ ...file })), delivery: busy() && dependencies.followUpBehavior?.() !== 'steer' ? 'queue' : 'steer', uncertain: false, inputMode: options.inputMode ?? 'normal', references: referenceSnapshot() };
+          : { id: id(), text: draft(), files: attachments().map(file => ({ ...file })), delivery: busy() && dependencies.followUpBehavior?.() !== 'steer' ? 'queue' : 'steer', uncertain: false, inputMode: options.inputMode ?? 'normal', references: referenceSnapshot(), ...(durable.context() ? { context: durable.context() } : {}) };
         const literal = submission.text.replace(/^(\s*)\/\u2003/, '$1/');
         const invocation = slashCommand(literal);
         const tokenEnd = /^\s*\/\u2003?[^\s]+/.exec(submission.text)?.[0].length ?? 0;
         const authoredToken = !submission.references!.references.some(ref => ref.start < tokenEnd && ref.end > submission!.text.indexOf('/'));
-        const goalPlan = goalAction || !goalArm.armed && !authoredToken ? null : planGoalSubmission({ text: literal, armed: goalArm.armed, objectiveOverride: goalArm.objectiveOverride,
+        const goalPlan = submission.context || goalAction || !goalArm.armed && !authoredToken ? null : planGoalSubmission({ text: literal, armed: goalArm.armed, objectiveOverride: goalArm.objectiveOverride,
           inputMode: submission.inputMode, sessionKind: target.kind });
         if (goalPlan?.kind === 'invalid') { error.set(t('chat.goal.toast.actionFailed')); return false; }
         if (goalPlan?.kind === 'command' && (goalArm.armed || authoredToken)) {
@@ -1083,7 +1491,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         }
         if (submission.inputMode === 'shell') {
           if (target.kind !== 'session' || submission.files.length || submission.references!.references.length) { error.set('Shell 仅支持会话中的文本命令'); return false; }
-        } else if (!submission.command && !options.prepare && !submission.references!.references.length && target.kind === 'session') {
+        } else if (!submission.context && !submission.command && !options.prepare && !submission.references!.references.length && target.kind === 'session') {
           if (invocation) submission = { ...submission, command: invocation };
         }
       }
@@ -1092,19 +1500,26 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       // Empty owned document is the durable panel-control contract: never consume the composer's unrelated resources.
       const goalPanel = nativeGoal && submission.text === '' && !submission.files.length && !submission.references?.references.length;
       const references = submissionReferences(submission);
+      if (submission.context && (!dependencies.draftAuthorityKey || target.kind !== 'session' || submission.inputMode === 'shell' || submission.command)) throw new Error('git-context-send-unsupported');
       if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
       if (target.kind === 'assistant' && (references.references.length || submission.compiled?.agents?.length || submission.compiled?.skills?.length)) throw new Error('Assistant references are not supported by this client');
-      if (target.kind === 'assistant' && (submission.files.length || submission.compiled?.files?.length)) throw new Error('Assistant attachments are not supported by this client');
+      if (target.kind === 'assistant') {
+        if (submission.compiled?.files?.length || submission.files.length > 64 || submission.files.reduce((total, file) => total + assistantAttachmentFilePart(file, target.id).size, 0) > 50 * 1024 * 1024) throw new Error('Invalid Assistant attachment references');
+        if (contactOptimisticEnabled && !contactIntents.has(submission.id) && contactOptimistic().length >= 64) { error.set(t('chat.questionDelegate.uncertain')); return false; }
+      }
       if (submission.inputMode === 'shell' && references.references.length) throw new Error('Shell references are not supported by this client');
       if (submission.uncertain && (submission.command || submission.inputMode === 'shell')) { error.set('命令结果未知；服务端不支持命令幂等重试，请先核对会话状态'); return false; }
       // Persist the exact owned document before asynchronous preparation, not just its eventual wire output.
       pendingSend.set(submission);
+      localRevision = durable.revision();
       await durable.flush();
-      if (!current()) return false;
+      if (!current() || !localCurrent()) throw new Error('local-magic-stale');
       if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
-      if (!submission.compiled && (!submission.command || nativeGoal && !goalPanel) && submission.inputMode !== 'shell' && (options.prepare || references.references.length || retryPending && submission.references)) {
+      if (!submission.localCompact && !submission.compiled && (!submission.command || nativeGoal && !goalPanel) && submission.inputMode !== 'shell' && (submission.context || options.prepare || references.references.length || retryPending && submission.references && target.kind === 'session')) {
         const input: SendPreparationInput = { text: submission.text, files: submission.files.map(file => ({ ...file })), references, scope: { ...durable.scope }, isCurrentScope: referenceCurrent };
-        const compiled = await (options.prepare ? options.prepare(input) : compileNativePrompt(input, request));
+        const context = submission.context;
+        const prepared = await (options.prepare ? options.prepare(input) : compileNativePrompt(input, request));
+        const compiled = context ? compileDesktopGitContext(prepared, context) : prepared;
         if (!current()) return false;
         if (nativeGoal && !referenceCurrent()) throw new Error('Connection changed');
         if (references.references.length && !referenceCurrent()) throw new Error('native-reference-scope-changed');
@@ -1138,16 +1553,35 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       const sendText = compiled?.text ?? submission.text;
       const sendFiles = compiled?.files ?? submission.files;
       const writeAhead = async () => {
+        if (!localCurrent()) throw new Error('local-magic-stale');
+        if (submission!.localMagic) {
+          const selection = submission!.localMagic.selection;
+          const authority = record(unwrap(await request(`/api/session/${encodeURIComponent(target.id)}?${query(target.directory)}`)));
+          const model = record(authority.model);
+          if (!localCurrent() || authority.id !== target.id || selection.agent && authority.agent !== selection.agent || selection.model && (model.providerID !== selection.model.providerID || model.id !== selection.model.modelID || text(model.variant) !== text(selection.model.variant))) throw new Error('local-magic-selection-changed');
+        }
         if (nativeGoal && !referenceCurrent()) throw new Error('Connection changed');
-        try { if (!goalPanel) await commitStagedRevertBeforeSend(lane); }
+        try { if (!goalPanel) await commitStagedRevertBeforeSend(lane, localCurrent); }
         catch (failure) { historyFailed = true; throw failure; }
-        if (!current()) throw new Error('Connection changed');
+        if (!current() || !localCurrent()) throw new Error('Connection changed');
         pendingSend.set({ ...submission!, uncertain: true });
+        localRevision = durable.revision();
         await durable.flush();
-        if (!current() || target.kind === 'session' && !foreground() || (nativeGoal || references.references.length) && !referenceCurrent()) throw new Error('Connection changed');
+        if (!current() || !localCurrent() || target.kind === 'session' && !foreground() || (nativeGoal || references.references.length) && !referenceCurrent()) throw new Error('Connection changed');
         dispatched = true;
+        if (local) local.dispatched = true;
       };
-      if (nativeGoal) {
+      if (submission.localCompact) {
+        await writeAhead();
+        const payload = await request(scoped('compact'), 'POST', { id: submission.id, delivery: submission.delivery });
+        writerDomainResponse(() => {
+          const receipt = compactionReceipt(payload);
+          if (current()) setCompactionBarrier(true, text(receipt.id));
+          if (receipt.id !== submission!.id) throw new Error('Compaction admission identity changed');
+          return receipt;
+        });
+        if (local) local.accepted = true;
+      } else if (nativeGoal) {
         const planned = planGoalSubmission({ text: `/goal${submission.command!.text ? ` ${submission.command!.text}` : ''}`, armed: false, ...(goalPanel ? {} : { delivery: submission.delivery }),
           ...(goalPanel ? {} : { files: sendFiles.map(file => ({ uri: file.uri, name: file.name })), agents: compiled?.agents, skills: compiled?.skills }) });
         // Panel controls already carry the canonical native command argument, not slash syntax.
@@ -1173,19 +1607,31 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
         await writeAhead();
         await request(scoped('shell'), 'POST', { command: submission.text });
       } else if (target.kind === 'assistant') {
+        const parts: AssistantContactPart[] = [...(sendText.trim() ? [{ type: 'text' as const, text: sendText }] : []), ...submission.files.map(file => assistantAttachmentFilePart(file, target.id))];
+        if (contactOptimisticEnabled) {
+          const previous = contactOptimistic(), existing = previous.find(turn => turn.messageID === submission!.id);
+          contactIntents.set(submission.id, submission);
+          contactOptimistic.set(existing ? previous.map(turn => turn.messageID === submission!.id ? { ...turn, status: 'sending', error: undefined } : turn) : [...previous, createContactOptimisticTurn(target.id, submission.id, parts)]);
+        }
         await writeAhead();
-        const result = record(await request(assistantPath(target.id, 'messages'), 'POST', { messageID: submission.id, parts: [{ type: 'text', text: sendText }], language: 'zh-CN' }));
-        if (result.admitted !== true || result.messageID !== submission.id) throw new Error('Invalid assistant admission');
+        const result = record(await request(assistantPath(target.id, 'messages'), 'POST', { messageID: submission.id,
+          parts, language: currentLocale() }));
+        writerDomainResponse(() => { if (result.admitted !== true || result.messageID !== submission!.id) throw new Error('Invalid assistant admission'); });
+        contactAdmitted = true;
       } else {
         await writeAhead();
-        const result = inboxFrom([unwrap(await request(scoped('prompt'), 'POST', {
+        const payload = await request(scoped('prompt'), 'POST', {
           id: submission.id, text: sendText, delivery: submission.delivery,
           ...(sendFiles.length ? { files: sendFiles.map(file => ({ uri: file.uri, name: file.name })) } : {}),
           ...(compiled?.agents?.length ? { agents: compiled.agents } : {}),
           ...(compiled?.skills?.length ? { skills: compiled.skills } : {}),
           ...(compiled?.metadata ? { metadata: compiled.metadata } : {}),
-        }))]);
-        if (result[0]?.id !== submission.id || result[0]?.sessionID !== target.id) throw new Error('Invalid prompt admission');
+        });
+        writerDomainResponse(() => {
+          const result = inboxFrom([unwrap(payload)]);
+          if (result[0]?.id !== submission!.id || result[0]?.sessionID !== target.id) throw new Error('Invalid prompt admission');
+        });
+        if (local) local.accepted = true;
       }
       if (!current()) return false;
       if (goalPanel) pendingSend.set(null);
@@ -1195,28 +1641,51 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       await load(false, allChatDomains, lane);
       return true;
     } catch (failure) {
+      const notDispatched = writerNotDispatched(failure);
+      if (notDispatched) { dispatched = false; if (local) { local.dispatched = false; local.rejected = true; } }
       if (current()) {
         const status = record(failure).status;
+        const rejected = !historyFailed && (notDispatched && !submission?.uncertain || typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429);
+        if (local) local.rejected = rejected;
         if (submission && pendingSend()) {
-          if (!historyFailed && typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) pendingSend.set(null);
+          if (rejected || local && !dispatched) pendingSend.set(null);
           else pendingSend.set({ ...submission, uncertain: dispatched || submission.uncertain });
         }
-        fail(failure);
+        if (contactAdmitted && submission && !pendingSend()) pendingSend.set({ ...submission, uncertain: true });
+        const messageFailure = contactOptimisticEnabled && !contactAdmitted && submission && contactOptimistic().some(turn => turn.messageID === submission!.id);
+        if (local) error.set(t('chat.goal.toast.actionFailed'));
+        else if (!messageFailure) fail(failure);
+        if (messageFailure) contactOptimistic.set(markContactOptimisticFailed(contactOptimistic(), submission!.id, t(pendingSend()?.uncertain ? 'chat.questionDelegate.uncertain' : 'assistants.contact.sendFailed')));
         await durable.flush().catch(() => {});
       }
       return false;
-    } finally { releaseHistory(); if (current()) sending.set(false); }
+    } finally {
+      if (local && !dispatched && pendingSend()?.id === submission?.id) { pendingSend.set(null); await durable.flush().catch(() => {}); }
+      releaseHistory(); if (current()) sending.set(false);
+    }
   }
   /** Retry an unknown result even after the user has edited the visible draft. */
   async function retrySend(options: SendOptions = {}) {
+    if (readOnly) return false;
     const lane = operationLane;
     await durable.whenReady();
     if (!laneCurrent(lane)) return false;
     const pending = pendingSend();
     if (!pending || sending()) return;
+    if (pending.localMagic || pending.localCompact || target.kind === 'assistant' && pending.uncertain) return recoverPendingSend();
     return send(options, true, undefined, lane);
   }
+  async function retryContactMessage(messageID: string) {
+    if (!contactOptimisticEnabled || readOnly || sending()) return false;
+    const pending = pendingSend();
+    if (pending && (pending.id !== messageID || pending.uncertain)) return pending.id === messageID ? recoverPendingSend() : false;
+    const intent = contactIntents.get(messageID);
+    if (!intent || !contactOptimistic().some(turn => turn.messageID === messageID && turn.status === 'failed') || !active() || !foreground() || writerRetiring()) return false;
+    if (!pending) pendingSend.set(intent);
+    return send({}, true);
+  }
   async function stop() {
+    if (readOnly) return;
     const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
     if (!active()) return;
     if (!current()) return;
@@ -1230,6 +1699,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     if (current()) await load(false, allChatDomains, lane);
   }
   async function replyPermission(requestID: string, decision: 'once' | 'always' | 'reject', message?: string) {
+    if (readOnly) rejectDesktopChatWrite();
     const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
     if (!current() || target.kind !== 'session') throw new Error('Session unavailable');
     await request(scoped(`permission/${encodeURIComponent(requestID)}/reply`), 'POST', { decision, ...(message ? { message } : {}) });
@@ -1241,6 +1711,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
   async function replyForm(formID: string, answer: FormAnswer) { await mutateForm(formID, 'reply', { answer }); }
   async function cancelForm(formID: string) { await mutateForm(formID, 'cancel'); }
   async function mutateForm(formID: string, action: string, body?: unknown) {
+    if (readOnly) rejectDesktopChatWrite();
     const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
     if (!current() || target.kind !== 'session') throw new Error('Session unavailable');
     await request(scoped(`form/${encodeURIComponent(formID)}/${action}`), 'POST', body);
@@ -1249,15 +1720,22 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     await load(false, allChatDomains, lane);
   }
   const unsubscribe = host.on('runtime.event', payload => {
-    if (!foreground()) return;
-    const event = runtimeEventFrom(payload);
+    if (!foreground() || sharedSource()) return;
+    const envelope = record(payload);
+    if (envelope.expectedHost !== undefined && !workStatusLiveCurrent(payload)) return;
+    if (readOnly && envelope.key !== streamKey && envelope.key !== 'global') return;
+    // The native consumer key is a lease, not a wire-domain discriminator. Keep
+    // model.ts's existing chat decoder; admit only this display's key beforehand.
+    const event = runtimeEventFrom(readOnly && envelope.key === streamKey ? { ...envelope, key: 'chat' } : payload);
     if (!event) return;
     if (event.type === 'reconnected') {
+      if (target.kind === 'session' && event.key === 'chat' && workStatusLiveCurrent(payload)) workStatusSource.suspend();
       if (event.key === (target.kind === 'session' ? 'chat' : 'global')) { streamDisconnected = false; streamState.set('live'); schedule(); }
       if (target.kind === 'session' && goalObservers) { goalCore.invalidateRead(); schedule(['goal']); }
       return;
     }
     if (event.type === 'server.connected') {
+      if (target.kind === 'session' && event.key === 'chat' && workStatusLiveCurrent(payload)) workStatusSource.suspend();
       if (event.key === (target.kind === 'session' ? 'chat' : 'global')) { streamDisconnected = false; streamState.set('live'); schedule(); }
       if (target.kind === 'session' && goalObservers) { goalCore.invalidateRead(); schedule(['goal']); }
       return;
@@ -1274,6 +1752,12 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       seenEvents.add(event.id);
       if (seenEvents.size > 4096) seenEvents.delete(seenEvents.values().next().value!);
     }
+    if (target.kind === 'session' && event.type.startsWith('session.compaction.')) {
+      const inputID = text(event.body.inputID);
+      if (event.type === 'session.compaction.started') setCompactionBarrier(true, inputID);
+      else if (event.type === 'session.compaction.ended' || event.type === 'session.compaction.failed') setCompactionBarrier(false, inputID);
+      schedule(['messages', 'inbox']); return;
+    }
     if (event.type === 'session.inbox.delivered' || event.type === 'session.inbox.cancelled') {
       const inboxID = text(event.body.inboxID);
       if (inboxID) terminalInbox(inboxID, event.type.endsWith('.delivered') ? 'delivered' : 'cancelled');
@@ -1285,6 +1769,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       liveRevision++; busy.set(status);
       if (event.type === 'session.retry.scheduled') retry.set(event.body);
       else retry.set(null);
+      if (target.kind === 'session') { if (workStatusLiveCurrent(payload)) workStatusSource.confirmActivity(status, event.created); else workStatusSource.suspend(); }
       if (event.type === 'session.execution.failed' || event.type === 'session.error') {
         const message = text(record(event.body.error).message) || text(event.body.error) || text(event.body.message);
         executionError.set(message); if (message) error.set(message);
@@ -1310,7 +1795,7 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       const previous = streaming.get(messageID)?.message ?? messages().find(message => message.id === messageID);
       const next = applySessionContent(previous, event);
       batch(() => {
-        if (next && next !== previous) { if (event.type.startsWith('session.tool.')) tasksDirty = true; bufferStream(next); }
+        if (next && next !== previous) { if (event.type.startsWith('session.tool.')) { tasksDirty = true; if (workStatusLiveCurrent(payload)) workStatusSource.acceptTool(event, next); } bufferStream(next); }
         if (event.type === 'session.text.started' || event.type === 'session.text.delta' && typeof event.body.delta === 'string') setStreamingPart(messageID, typeof event.body.ordinal === 'number' ? event.body.ordinal : 0, true);
         else if (event.type === 'session.text.ended') {
           publishStream();
@@ -1341,7 +1826,13 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       if (turnID && typeof index === 'number' && Number.isSafeInteger(index) && index >= 0 && typeof event.body.delta === 'string') {
         const messageID = `${turnID}:bubble:${index + 1}`;
         const previous = streaming.get(messageID)?.message ?? messages().find(message => message.id === messageID);
-        const next: Message = { id: messageID, role: 'assistant', text: (previous?.text ?? '') + event.body.delta, reasoning: '', tools: [], cards: [], files: [], error: '' };
+        const body = (previous?.text ?? '') + event.body.delta;
+        const next: Message = { ...(previous ?? { id: messageID, role: 'assistant', reasoning: '', tools: [], cards: [], files: [], error: '' }), text: body,
+          content: [{ type: 'text', text: body }],
+          contact: { ...previous?.contact, kind: 'assistant', assistantID: target.id, turnID, bubbleIndex: index,
+            ...(previous?.contact?.createdAt !== undefined ? {} : typeof event.body.occurredAt === 'number' && Number.isFinite(event.body.occurredAt) ? { createdAt: event.body.occurredAt } : {}),
+            status: event.body.done === true ? 'complete' : 'streaming' },
+        };
         batch(() => {
           if (event.body.delta || event.body.done !== true) bufferStream(next);
           if (event.body.done === true) { publishStream(); setStreamingPart(messageID, 0, false); }
@@ -1360,23 +1851,41 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
     else schedule(['messages']);
   });
   const disconnected = host.on('runtime.disconnected', payload => {
-    if (!foreground() || record(payload).key !== (target.kind === 'session' ? 'chat' : 'global')) return;
+    if (!foreground() || sharedSource() || record(payload).key !== (target.kind === 'session' ? streamKey : 'global')) return;
+    if (record(payload).expectedHost !== undefined && !workStatusLiveCurrent(payload)) return;
     streamDisconnected = true;
     streamState.set('disconnected');
+    workStatusSource.suspend();
     // Preserve last-known activity, but an older in-flight snapshot cannot settle it.
     liveRevision++; blockingRevision++;
   });
   effect(() => {
     laneRevision();
+    if (readOnly) displayStreamRevision();
     // Only the most recently mounted chat owns foreground safety polling.
-    const visible = runtimeReady() && syncDemand() && lifecycle() === 'active' && chatOwners().at(-1) === owner;
+    const visible = runtimeReady() && syncDemand() && lifecycle() === 'active' && (readOnly || chatOwners().at(-1) === owner);
     const connection = app.connection();
+    if (readOnly && sharedSource()) { displayStreamError.set(''); return; }
     if (!visible || !connection || !current()) { clearStreamingSelection(); goalCore.cancel(); activityFill.cancel(); void durable.flush().catch(() => {}); return; }
     activation++;
     const lane = operationLane;
+    const streamActivation = activation;
+    if (readOnly) streamKey = `panel-chat:${owner}:${streamActivation}`;
+    const ownedStreamKey = streamKey;
+    let streamLeaseAlive = true;
     streamState.set('connecting');
     untracked(() => { void load(); if (goalObservers) void goalCore.refresh(); });
-    if (target.kind === 'session') void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: 'chat', ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+    let displayStreamStarted = false;
+    if (target.kind === 'session') {
+      if (!readOnly) void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: streamKey, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+      else if (lane.scope && dependencies.displayConsumer?.stream) {
+        displayStreamStarted = true; displayStreamError.set('');
+        const port = dependencies.displayConsumer.stream, scope = lane.scope;
+        void port.start({ path: `/api/event?${query(target.directory)}`, key: ownedStreamKey, expectedHost: scope }).then(() => {
+          if (!streamLeaseAlive) void port.stop({ key: ownedStreamKey, expectedHost: scope }).catch(() => {});
+        }).catch(() => { if (streamLeaseAlive && laneForeground(lane)) { streamDisconnected = true; displayStreamError.set('chat_display_stream_unavailable'); streamState.set('disconnected'); } });
+      } else { streamDisconnected = true; displayStreamError.set('chat_display_stream_unavailable'); streamState.set('disconnected'); }
+    }
     const interval = setInterval(() => {
       if (!laneForeground(lane)) return;
       // Live deltas own running text. Safety polls keep status/blocking authority without
@@ -1384,24 +1893,107 @@ export function createChat(target: ChatTarget, dependencies: { followUpBehavior?
       void load(false, target.kind === 'session' && busy() && !streamDisconnected ? ['status', 'inbox', 'permissions', 'forms'] : allChatDomains, lane);
     }, 4000);
     return () => {
+      streamLeaseAlive = false;
       void durable.flush().catch(() => {});
       activation++;
       streamState.set('inactive');
       goalCore.cancel();
       activityFill.cancel();
       clearStreamingSelection();
+      workStatusSource.suspend();
       clearInterval(interval); if (timer) { clearTimeout(timer); timer = undefined; }
       if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = undefined; }
-      if (target.kind === 'session') void native('runtime.stop', { key: 'chat', ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+      if (target.kind === 'session') {
+        if (!readOnly) void native('runtime.stop', { key: streamKey, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane)) fail(failure); });
+        else if (displayStreamStarted && lane.scope) void dependencies.displayConsumer?.stream?.stop({ key: ownedStreamKey, expectedHost: lane.scope }).catch(() => {});
+      }
     };
   });
   // Display→overview changes retain one existing stream/poll owner while UI actions become inactive.
   effect(() => { const requested = active() || syncActive(); untracked(() => { if (!requested) { goalCore.cancel(); activityFill.cancel(); } if (syncDemand() !== requested) syncDemand.set(requested); }); });
-  void durable.ready.then(async () => {
+  if (!readOnly) void durable.ready.then(async () => {
     if (!laneCurrent(initialOperationLane)) return;
     if (queueEdit()) await recoverQueueEdit(initialOperationLane);
     if (laneCurrent(initialOperationLane) && pendingSend()) await recoverPendingSend();
   }).catch(fail);
-  cleanup(() => { historyPresentationListener = undefined; previousHistoryPresentation = undefined; messageCommitListeners.clear(); void durable.close(); operationLane.history.close(); alive = false; activityFill.cancel(true); goalCore.retire(); taskSnapshot.set([]); resolvedAuthority.set(false); clearStreamingSelection(); chatAuthorityRetirements.delete(retireAuthority); chatOperationResumptions.delete(rebuildOperationLane); unsubscribe(); disconnected(); if (timer) clearTimeout(timer); if (deltaTimer) clearTimeout(deltaTimer); chatOwners.set(chatOwners().filter(value => value !== owner)); });
-  return { rebuildOperationLane, goal, tasks, activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft: durable.flush, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm };
+  let previouslyShared = false;
+  effect(() => {
+    const source = sharedSource();
+    if (!source) {
+      if (previouslyShared) untracked(() => { authorityMessageIDs = new Set(messages().map(message => message.id)); });
+      previouslyShared = false; return;
+    }
+    if (!foreground()) return;
+    previouslyShared = true;
+    const snapshot = { messages: source.messages(), resolved: source.messagesResolved(), identity: source.sessionIdentity(), generation: source.historyGeneration(), cursor: source.historyCursor(), revert: source.revert(), repair: source.historyRepairPending(), more: source.more(), gap: source.hasGap(), loading: source.loading(), olderLoading: source.olderLoading(), error: source.error(), readError: source.messageReadError(), historyError: source.historyError(), busy: source.busy(), retry: source.retry(), streaming: source.streamingMessageIDs(), stream: source.streamState() };
+    untracked(() => batch(() => {
+      if (snapshot.resolved && snapshot.identity?.directory !== target.directory) { error.set('chat_directory_mismatch'); resolvedAuthority.set(false); return; }
+      cursor = snapshot.cursor; messagesLoaded = snapshot.resolved;
+      sessionIdentity.set(snapshot.identity);
+      messages.set(snapshot.messages); resolvedAuthority.set(snapshot.resolved); historyGeneration.set(snapshot.generation); revertSource.set(snapshot.revert); historyRepairPending.set(snapshot.repair);
+      more.set(snapshot.more); hasGap.set(snapshot.gap); loading.set(snapshot.loading); olderLoading.set(snapshot.olderLoading); error.set(snapshot.error); messageReadError.set(snapshot.readError); historyError.set(snapshot.historyError); busy.set(snapshot.busy); retry.set(snapshot.retry); streamingIDs.set(snapshot.streaming); streamState.set(snapshot.stream);
+    }));
+  });
+  if (!readOnly) effect(() => {
+    laneRevision();
+    return untracked(() => registerDesktopChatReadSource(sourceIdentity(), { synchronizing: foreground, messages, messagesResolved, historyGeneration, historyCursor: () => cursor, sessionIdentity, revert, historyRepairPending, more, hasGap, loading, olderLoading, error, messageReadError, historyError, busy, retry, streamingMessageIDs, streamState, load, loadOlder, activityMaterialization }));
+  });
+  cleanup(() => { historyPresentationListener = undefined; previousHistoryPresentation = undefined; messageCommitListeners.clear(); void durable.close(); operationLane.history.close(); alive = false; activityFill.cancel(true); goalCore.retire(); taskSnapshot.set([]); workStatusSource.retire(tasks()); resolvedAuthority.set(false); clearStreamingSelection(); chatAuthorityRetirements.delete(retireAuthority); chatOperationResumptions.delete(rebuildOperationLane); unsubscribe(); disconnected(); if (timer) clearTimeout(timer); if (deltaTimer) clearTimeout(deltaTimer); if (!readOnly) chatOwners.set(chatOwners().filter(value => value !== owner)); });
+  const displayActivityMaterialization = {
+    state: (ids: readonly string[]) => (sharedSource()?.activityMaterialization ?? activityMaterialization).state(ids),
+    request: (ids: readonly string[], options?: Parameters<typeof activityMaterialization.request>[1]) => foreground()
+      ? (sharedSource()?.activityMaterialization ?? activityMaterialization).request(ids, options) : Promise.resolve(),
+  };
+  async function flushDraft() {
+    const revision = durable.revision();
+    await durable.flush();
+    if (durable.status() === 'ready' && durable.revision() === revision) writerFlushRevision.set(revision);
+  }
+  function writerRetirement(): ChatWriterRetirement {
+    if (readOnly) return { canRelease: true, needsFlush: false, reasons: [] };
+    draft(); durable.references(); attachments(); durable.context(); laneRevision();
+    const needsFlush = writerFlushRevision() !== durable.revision(), reasons: string[] = [];
+    if (!alive) reasons.push('disposed');
+    if (!writerRetiring()) reasons.push('not-prepared');
+    if (durable.status() !== 'ready') reasons.push('draft-' + durable.status());
+    if (needsFlush) reasons.push('draft-unflushed');
+    if (pendingSend()) reasons.push('pending-send');
+    if (queueEdit()) reasons.push('queue-edit');
+    if (sending()) reasons.push('sending');
+    if (historyBusy() || retiredWriterHistory()) reasons.push('history-unresolved');
+    if (queueBusy() || queueFlight) reasons.push('queue-busy');
+    if (recoveryFlight) reasons.push('recovery');
+    if (writerWrites()) reasons.push('write-in-flight');
+    if (writerUnconfirmed()) reasons.push('write-unconfirmed');
+    return { canRelease: !reasons.length, needsFlush, reasons };
+  }
+  const canReleaseWriter = () => writerRetirement().canRelease;
+  let writerPreparation: Promise<boolean> | undefined, writerPreparationSerial = 0;
+  function cancelWriterRetirement() { writerPreparationSerial++; writerRetiring.set(false); }
+  function prepareWriterRetirement(): Promise<boolean> {
+    if (readOnly) return Promise.resolve(true);
+    if (writerPreparation) return writerPreparation;
+    const serial = ++writerPreparationSerial, lane = operationLane;
+    writerRetiring.set(true);
+    const valid = () => alive && serial === writerPreparationSerial && writerRetiring() && lane === operationLane;
+    const prepared = (async () => {
+      let accepted = false;
+      try {
+        await durable.whenReady();
+        if (!valid() || writerRetirement().reasons.some(reason => reason !== 'draft-unflushed')) return false;
+        await flushDraft();
+        accepted = valid() && canReleaseWriter();
+        return accepted;
+      } catch { return false; }
+      finally { if (serial === writerPreparationSerial && !accepted) writerRetiring.set(false); }
+    })();
+    writerPreparation = prepared;
+    void prepared.finally(() => { if (writerPreparation === prepared) writerPreparation = undefined; });
+    return prepared;
+  }
+  return { writerRetirement, canReleaseWriter, prepareWriterRetirement, cancelWriterRetirement, stageContext, context: () => durable.context(), clearContext, draftAuthorityKey: dependencies.draftAuthorityKey, displayStreamError, sessionIdentity,
+    composerRevision: durable.revision, compareAndSetDraftText, admitLocalMagic, admitLocalCompact, dispatchLocalMagicHandoff, compactionBarrier: () => compactionBarrier(),
+    retryDisplayStream: () => { if (readOnly && foreground()) displayStreamRevision.set(displayStreamRevision() + 1); },
+    contactReadPosition, contactOptimistic, retryContactMessage,
+    rebuildOperationLane, goal, tasks, workStatus, activityMaterialization: readOnly ? displayActivityMaterialization : activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert: readOnly ? Object.assign(() => revert(), { set: rejectDesktopChatWrite, update: rejectDesktopChatWrite }) : revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm };
 }

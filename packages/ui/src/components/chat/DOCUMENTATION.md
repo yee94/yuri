@@ -1,5 +1,14 @@
 # Chat components
 
+## Local command rules and metadata
+
+`lib/composer-local-commands-core.ts` owns the runtime-free classifier sets, parsing,
+resource/text policies and the canonical autocomplete metadata. The Web
+`localCommandClassifier.ts` wrapper preserves its public exports and resolves the
+dynamic VS Code reload default. `CommandAutocomplete` uses the same metadata in
+both normal and fallback paths; availability, order and translation keys are
+unchanged. Native consumers import the pure module, never the browser wrapper.
+
 ## Composer status popovers
 
 `StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
@@ -22,6 +31,8 @@ metadata access lives in `lib/sessionMetadata.ts`. Goal state instead comes from
 Git change lists and working-tree/session/turn diff previews remain independent.
 
 ## Scroll hot-path boundary
+
+`hooks/chatTurnNavigationCore.ts` owns the runtime-free chronological turn-offset rule used by Web turn navigation and NSH Timeline. The platform list remains the only geometry/scroll owner; the shared helper chooses a turn, never applies passive offset compensation.
 
 Message hover chrome uses `lib/messageHover.ts` boundary handlers and the
 `data-message-hovered` scope marker. The handlers write only that DOM attribute;

@@ -1,12 +1,7 @@
 import { create } from 'zustand';
 
-export type SessionFocusScope = 'pinned' | 'project';
-
-export type SessionFocusIdentity = Readonly<{
-  scope: SessionFocusScope;
-  sessionId: string;
-  projectId: string | null;
-}>;
+import type { SessionFocusIdentity } from '../sync/session-navigation-core';
+export type { SessionFocusIdentity, SessionFocusScope } from '../sync/session-navigation-core';
 
 type SessionFocusState = {
   focus: SessionFocusIdentity | null;

@@ -24,6 +24,29 @@ afterEach(async () => { await Promise.allSettled(stores.map(store => store.close
 async function open(host = 'host', chat = target) { const { openDraft } = await import('./drafts'); const store = openDraft(host, chat); stores.push(store); return store; }
 
 describe('native durable draft storage boundary', () => {
+  it('round-trips canonical contact descriptors in attachments and the exact unknown submission without local-file conversion', async () => {
+    const { assistantAttachmentURI } = await import('./assistant-attachment-model');
+    const contactTarget = { ...target, kind: 'assistant' as const, id: 'bot' };
+    const contact = { type: 'file' as const, assistantID: 'bot', attachmentID: 'uploaded', sha256: 'a'.repeat(64), size: 17, mime: 'text/plain', filename: 'note.txt' };
+    const file = { uri: assistantAttachmentURI('bot', 'uploaded'), name: 'note.txt', mime: contact.mime, contact };
+    const { openDraft, sameAttachment } = await import('./drafts');
+    const first = openDraft('host', contactTarget); stores.push(first); await first.ready;
+    first.attachments.set([file]); first.pendingSend.set({ id: 'contact-input', text: '', files: [file], delivery: 'steer', uncertain: true });
+    await first.flush(); await first.close(); vi.resetModules();
+    const second = (await import('./drafts')).openDraft('host', contactTarget); stores.push(second); await second.ready;
+    expect(second.attachments()).toEqual([file]); expect(second.pendingSend()?.files).toEqual([file]);
+    expect(sameAttachment(file, { ...file, contact: { ...contact, sha256: 'b'.repeat(64) } })).toBe(false);
+    expect(await readFile(pathFor(first.key), 'utf8')).not.toContain('file://');
+  });
+  it.each(['sha256', 'uri', 'mime'] as const)('rejects malformed contact %s on flush without erasing the prior draft', async field => {
+    const store = await open(); await store.ready; store.draft.set('Keep prior'); await store.flush();
+    const before = await readFile(pathFor(store.key), 'utf8');
+    const contact = { type: 'file' as const, assistantID: 'bot', attachmentID: 'uploaded', sha256: field === 'sha256' ? 'bad' : 'a'.repeat(64), size: 17, mime: 'text/plain' };
+    store.attachments.set([{ uri: field === 'uri' ? 'file:///not-uploaded' : '/api/yuri/assistants/bot/contact/attachments/uploaded', name: 'note.txt', mime: field === 'mime' ? 'image/png' : 'text/plain', contact }]);
+    await expect(store.flush()).rejects.toThrow('attachment_invalid_receipt');
+    expect(await readFile(pathFor(store.key), 'utf8')).toBe(before);
+    expect(store.draft()).toBe('Keep prior');
+  });
   it('coalesces 200 input events without synchronous Storage calls or transcript work', async () => {
     const store = await open(); await store.ready; storage.get.mockClear(); storage.set.mockClear();
     for (let count = 0; count < 200; count++) store.draft.set(`input ${count}`);
@@ -169,5 +192,33 @@ describe('native durable draft storage boundary', () => {
     store.pendingSend.set({ id: 'msg', text: 'test', files: [], uncertain: true, delivery: 'steer', compiled: { text: 'test', metadata: { clientToken: 'must-not-be-stored' } } });
     await expect(store.flush()).rejects.toThrow('凭据');
     expect(await readFile(pathFor(store.key), 'utf8')).not.toContain('must-not-be-stored');
+  });
+  it('round-trips the explicit preserving policy and captured selection without consuming the source sidecars', async () => {
+    const first = await open(); await first.ready; first.setDraftText('/explore '); first.insertReference({ kind: 'skill', value: 'keep', label: 'Keep' });
+    const document = first.document(), file = { uri: 'attachment://keep', name: 'keep', mime: 'text/plain' }; first.attachments.set([file]);
+    first.pendingSend.set({ id: 'magic', text: document.text, files: [], delivery: 'steer', inputMode: 'normal', uncertain: true, references: { text: document.text, references: [], scope: first.scope }, compiled: { text: 'compiled', files: [] },
+      localMagic: { version: 1, command: 'explore', resourcePolicy: 'preserve', selection: { model: { providerID: 'p', modelID: 'm', variant: '' }, agent: 'build' } } });
+    await first.close(); vi.resetModules(); const second = await open(); await second.ready;
+    expect(second.document()).toEqual(document); expect(second.attachments()).toEqual([file]);
+    expect(second.pendingSend()?.localMagic).toEqual({ version: 1, command: 'explore', resourcePolicy: 'preserve', selection: { model: { providerID: 'p', modelID: 'm', variant: '' }, agent: 'build' } });
+  });
+  it('malformed preserving markers fail closed without stripping the policy or overwriting saved bytes', async () => {
+    const { draftKey } = await import('./drafts'), key = draftKey('host', target);
+    const raw = JSON.stringify({ version: 1, revision: 1, draft: '/explore', references: [], attachments: [], queueEdit: null,
+      pendingSend: { id: 'magic', text: '/explore', files: [], delivery: 'queue', uncertain: true, inputMode: 'normal', compiled: { text: 'compiled', files: [] }, localMagic: { version: 1, resourcePolicy: 'preserve', command: 'explore', selection: {} } } });
+    await writeFile(pathFor(key), raw); const store = await open(); await expect(store.ready).rejects.toThrow('local-magic-invalid-journal');
+    store.setDraftText('new'); await expect(store.flush()).rejects.toThrow(); expect(await readFile(pathFor(key), 'utf8')).toBe(raw);
+  });
+  it('round-trips unknown compact in the original v1 pending journal while preserving the independent authored document', async () => {
+    const first = await open(); await first.ready; first.setDraftText('authored input'); first.insertReference({ kind: 'skill', value: 'keep', label: 'Keep' }); const document = first.document();
+    first.attachments.set([{ uri: 'attachment://keep', name: 'keep', mime: 'text/plain' }]);
+    first.pendingSend.set({ id: 'compact-stable', text: '', files: [], delivery: 'steer', uncertain: true, inputMode: 'normal', references: { text: '', references: [], scope: first.scope }, localCompact: { version: 1, resourcePolicy: 'preserve' } });
+    await first.close(); vi.resetModules(); const second = await open(); await second.ready;
+    expect(second.document()).toEqual(document); expect(second.attachments()).toHaveLength(1); expect(second.pendingSend()).toMatchObject({ id: 'compact-stable', uncertain: true, localCompact: { version: 1, resourcePolicy: 'preserve' } });
+  });
+  it('rejects malformed compact journals rather than dropping their discriminator and replaying as a prompt', async () => {
+    const store = await open(); await store.ready; store.setDraftText('keep'); await store.flush(); const before = await readFile(pathFor(store.key), 'utf8');
+    store.pendingSend.set({ id: 'bad-compact', text: '', files: [], delivery: 'steer', uncertain: true, inputMode: 'normal', compiled: { text: 'must not replay', files: [] }, localCompact: { version: 1, resourcePolicy: 'preserve' } });
+    await expect(store.flush()).rejects.toThrow('local-compact-invalid-journal'); expect(await readFile(pathFor(store.key), 'utf8')).toBe(before);
   });
 });

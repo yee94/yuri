@@ -8,6 +8,7 @@ import { app } from './state';
 import { SettingsTarget } from './settings-target';
 import { createSettingsGitHub, type GitHubDependencies, type GitHubState } from './settings-github-core';
 import { gitSettingsResponse, type GitSettingsRequest } from './settings-github-protocol';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 export const settingsGitHubSearchTarget = 'git.github-account';
 export const settingsGitHubSearchItem = { page: 'git', id: settingsGitHubSearchTarget, title: 'settings.github.page.oauth.title', keywords: 'GitHub OAuth device account CLI 账户 授权' } as const;
@@ -35,11 +36,16 @@ export function SettingsGitHub(props: { active: boolean; target?: string; onReve
     };
   };
   const deps: GitHubDependencies = props.dependencies ?? dependencies(lifetime.operation());
-  const controller = createSettingsGitHub({ ...deps, changed: next => { state.set(next); deps.changed?.(next); } });
+  let update: ((next: GitHubState) => void) | undefined;
+  const controller = createSettingsGitHub({ ...deps, changed: next => { update?.(next); deps.changed?.(next); } });
   const state = signal<GitHubState>(controller.state());
+  update = next => state.set(next);
   const current = () => props.dependencies ? deps.current() : lifetime.current();
   const active = () => props.active === true && lifecycle() === 'active' && current();
-  const disabled = () => !active() || state().busy || state().refreshing || state().exchanging || state().needsReadback || !!state().pending || !!state().flow || !state().status;
+  const disabled = () => !active() || state().busy || state().refreshing || state().exchanging || state().needsReadback || !!state().pending || !!state().flow || !state().status || !!deps.sharedStatus && state().stale;
+  publishSettingsEditor({ current, scope: lifetime.operation, dirty: () => false, stamp: () => [],
+    pending: () => state().busy || state().refreshing || state().exchanging || state().needsReadback || !!state().pending || !!state().flow || !!state().removal || state().cancellation === 'stopping',
+  });
   const currentAccount = () => state().status?.accounts.find(account => account.current);
   let assigned = lifetime.operation();
   effect(() => {
@@ -59,6 +65,7 @@ export function SettingsGitHub(props: { active: boolean; target?: string; onReve
   };
   return <SettingsTarget id={settingsGitHubSearchTarget} target={props.target} onReveal={props.onReveal}><SettingsGroup title={t('settings.github.page.oauth.title')}>
       <If when={!!state().issue}><Text testID="github-error" class="text-sm text-destructive">{issueText()}</Text></If>
+      <If when={!!deps.sharedStatus && state().stale && !!state().status}><Text testID="github-stale" class="text-xs text-muted-foreground">{t('assistants.state.staleSnapshot')}</Text></If>
       <If when={!!state().cancellation}><Text testID="github-cancellation" class="text-sm text-muted-foreground">{t(state().cancellation === 'stopping' ? 'settings.github.native.cancelling' : state().cancellation === 'unknown' ? 'settings.github.native.cancelUnknown' : state().cancellation === 'unsupported' ? 'settings.github.native.unsupported' : 'settings.github.native.cancelled')}</Text></If>
       <Button testID="github-refresh" class={settingsAction} disabled={!active() || state().refreshing || state().busy} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('settings.usage.sidebar.actions.refreshTitle')}</Text></Button>
       <If when={!!state().status}>

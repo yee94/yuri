@@ -5,6 +5,7 @@ import { SettingsChoice, SettingsGroup, SettingsInput, SettingsToggle, settingsA
 import { SettingsTarget } from './settings-target';
 import { gitSettingsNativeRequest } from './settings-github';
 import { createSettingsGitCredentials, unimportedGitCredentials, type GitCredentialsDependencies, type GitCredentialsState } from './settings-git-credentials-core';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 const credentialColors = ['keyword', 'error', 'string', 'function', 'type'] as const;
 const credentialIcons = ['branch', 'briefcase', 'house', 'graduation', 'code'] as const;
 
@@ -30,6 +31,11 @@ export function SettingsGitCredentials(props: { active: boolean; target?: string
   const current = () => props.dependencies ? deps.current() : lifetime.current();
   const active = () => props.active === true && lifecycle() === 'active' && current();
   const disabled = () => !active() || state().busy || state().refreshing || !!state().pending;
+  const initialDraft = signal<GitCredentialsState['draft']>(null);
+  const editorNavigation = publishSettingsEditor({ current, scope: lifetime.operation,
+    pending: () => state().busy || state().refreshing || !!state().pending, dirty: () => !!state().draft && JSON.stringify(state().draft) !== JSON.stringify(initialDraft()), stamp: () => [state().draft],
+  });
+  async function cancelEditor() { if (await editorNavigation.requestLeave()) controller.cancel(); }
   let assigned = lifetime.operation();
   effect(() => {
     const visible = active(), op = visible ? lifetime.operation() : null;
@@ -46,7 +52,7 @@ export function SettingsGitCredentials(props: { active: boolean; target?: string
       <If when={!!state().issue}><Text testID="git-credentials-error" class="text-sm text-destructive">{error()}</Text></If>
       <If when={state().saved}><Text testID="git-credentials-saved" class="text-sm text-muted-foreground">{t('settings.gitIdentities.editor.toast.profileCreated')}</Text></If>
       <Button testID="git-credentials-refresh" class={settingsAction} disabled={!active() || state().busy || state().refreshing} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('settings.usage.sidebar.actions.refreshTitle')}</Text></Button>
-       <Each of={candidates()}>{credential => <View class="gap-2"><Text class="text-sm text-foreground">{credential().host}</Text><Text class="text-xs text-muted-foreground">{credential().username}</Text><Button testID={`git-credential-import-${credential().host}-${credential().username}`} class={settingsAction} disabled={disabled() || state().credentials.failed || state().profiles.failed || !!state().draft} onPress={() => controller.begin(credential())}><Text class="text-foreground">{t('settings.gitIdentities.page.actions.import')}</Text></Button></View>}</Each>
+       <Each of={candidates()}>{credential => <View class="gap-2"><Text class="text-sm text-foreground">{credential().host}</Text><Text class="text-xs text-muted-foreground">{credential().username}</Text><Button testID={`git-credential-import-${credential().host}-${credential().username}`} class={settingsAction} disabled={disabled() || state().credentials.failed || state().profiles.failed || !!state().draft} onPress={() => { controller.begin(credential()); initialDraft.set(state().draft); }}><Text class="text-foreground">{t('settings.gitIdentities.page.actions.import')}</Text></Button></View>}</Each>
       <If when={!!state().draft}><View testID="git-credential-editor" class="gap-3">
         <Text class="text-sm text-foreground">{t('settings.gitIdentities.editor.title.importCredential')}</Text>
         <SettingsInput testID="git-credential-name" title={t('settings.gitIdentities.editor.field.profileName')} value={state().draft?.name || ''} disabled={disabled()} onChange={value => controller.edit('name', value)} />
@@ -60,7 +66,7 @@ export function SettingsGitCredentials(props: { active: boolean; target?: string
         <SettingsToggle title={t('settings.gitIdentities.editor.field.signCommits')} value={state().draft?.signCommits === true} disabled={disabled()} onChange={value => controller.setSignCommits(value)} />
         <If when={state().draft?.signCommits}><SettingsInput title={t('settings.gitIdentities.editor.field.signingKey')} value={state().draft?.signingKey || ''} disabled={disabled()} onChange={value => controller.edit('signingKey', value)} /></If>
         <Button testID="git-credential-save" class={settingsAction} disabled={disabled()} onPress={() => { void controller.save(); }}><Text class="text-foreground">{t('settings.gitIdentities.editor.actions.create')}</Text></Button>
-        <Button testID="git-credential-cancel" class={settingsAction} disabled={disabled()} onPress={() => controller.cancel()}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>
+        <Button testID="git-credential-cancel" class={settingsAction} disabled={disabled()} onPress={() => { void cancelEditor(); }}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>
       </View></If>
       <If when={!!state().pending && state().inspected}><Button testID="git-credential-accept-state" class={settingsAction} disabled={!active() || state().busy || state().refreshing} onPress={() => controller.acknowledgeUnknown()}><Text class="text-foreground">{t('settings.github.native.accept')}</Text></Button></If>
   </SettingsGroup></SettingsTarget>;

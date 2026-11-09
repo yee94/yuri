@@ -6,7 +6,7 @@ export type AboutClient = { version: string | null; build: string | null; update
 export type AboutHost = { version: string | null };
 export type AboutOpenCode = { version: string | null; management: AboutManagement | null; canManage: boolean | null };
 type AboutUpdatePlan = { version: string; kind: 'ota' | 'installer' | 'cli-package'; planId: string; rollback: boolean; restartRequired: boolean; releaseNotes: string | null };
-type AboutUpdateOperation = { id: string; status: typeof aboutOperationStates[number]; version: string; channel: 'stable' | 'beta'; kind: AboutUpdatePlan['kind']; progress: number | null };
+type AboutUpdateOperation = { id: string; planId?: string; status: typeof aboutOperationStates[number]; version: string; channel: 'stable' | 'beta'; kind: AboutUpdatePlan['kind']; progress: number | null };
 export type AboutHostUpdate = { supported: boolean; currentVersion: string | null; available: boolean | null; availableVersion: string | null; operation: typeof aboutOperationStates[number] | null; checkFailed: boolean;
   serverId?: string; channel?: 'stable' | 'beta'; plan?: AboutUpdatePlan | null; task?: AboutUpdateOperation | null };
 type AboutDiagnostics = { enabled: boolean; mode: 'event-recorder' };
@@ -18,6 +18,7 @@ export type AboutState = {
   diagnosticsFailed: boolean;
   exportEventCount: number | null;
   updateBusy: boolean; updateConfirm: AboutHostUpdate | null; updateFailed: boolean; updateUncertain: boolean;
+  updateReceipt?: { serverId: string; planId: string; version: string; channel: 'stable' | 'beta'; kind: AboutUpdatePlan['kind'] };
 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('about_invalid_snapshot');
@@ -64,7 +65,7 @@ export function parseAboutHostUpdate(value: unknown): AboutHostUpdate {
 function parseAboutUpdateOperation(value: unknown): AboutUpdateOperation {
   const row = object(value), status = aboutOperationStates.find(state => state === row.status), version = aboutVersion(row.version);
   if (!status || !version || typeof row.id !== 'string' || !row.id || row.id.length > 512 || !['stable', 'beta'].includes(String(row.channel)) || !['ota', 'installer', 'cli-package'].includes(String(row.kind))) throw new Error('about_invalid_operation');
-  return { id: row.id, status, version, channel: row.channel as 'stable' | 'beta', kind: row.kind as AboutUpdatePlan['kind'],
+  return { id: row.id, ...(typeof row.planId === 'string' && row.planId.length > 0 && row.planId.length <= 512 ? { planId: row.planId } : {}), status, version, channel: row.channel as 'stable' | 'beta', kind: row.kind as AboutUpdatePlan['kind'],
     progress: typeof row.progress === 'number' && Number.isFinite(row.progress) && row.progress >= 0 && row.progress <= 100 ? row.progress : null };
 }
 export const aboutUpdateActive = (value: AboutHostUpdate | null) => !!value?.operation && !['succeeded', 'failed'].includes(value.operation);
@@ -109,18 +110,36 @@ export type AboutDependencies = {
   call: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
   current: () => boolean; hostID: string | null; changed?: (state: AboutState) => void;
 };
+export function aboutCanClose(state: AboutState): boolean {
+  return !state.updateBusy && !state.updateUncertain && !state.updateConfirm && !state.diagnosticsBusy && !state.exporting
+    && !(['client', 'host', 'opencode', 'hostUpdate', 'diagnostics'] as const).some(key => state[key].refreshing);
+}
 export function createSettingsAbout(deps: AboutDependencies) {
-  let lane = createAboutLane(deps);
+  let pending = 0;
+  const listeners = new Set<(state: AboutState) => void>();
+  const observed = (input: AboutDependencies): AboutDependencies => ({ ...input, changed: value => { input.changed?.(value); listeners.forEach(listener => listener(value)); } });
+  let lane = createAboutLane(observed(deps));
+  function track<T>(work: () => Promise<T>): Promise<T> {
+    pending++;
+    try { return work().finally(() => { pending--; listeners.forEach(listener => listener(lane.state())); }); }
+    catch (failure) { pending--; throw failure; }
+  }
+  const canClose = () => pending === 0 && aboutCanClose(lane.state());
   return {
-    state: () => lane.state(), client: () => lane.client(), host: () => lane.host(),
-    opencode: () => lane.opencode(), hostUpdate: () => lane.hostUpdate(), diagnostics: () => lane.diagnostics(),
-    refresh: () => lane.refresh(), cancelUpdate: () => lane.cancelUpdate(), prepareUpdate: () => lane.prepareUpdate(),
-    confirmUpdate: () => lane.confirmUpdate(), reconcileUpdate: () => lane.reconcileUpdate(),
-    setDiagnostics: (value: boolean) => lane.setDiagnostics(value), exportDiagnostics: () => lane.exportDiagnostics(),
-    replaceLane(next: AboutDependencies) { const retained = lane.retain(); lane.dispose(); lane = createAboutLane(next, retained); next.changed?.(lane.state()); },
-    dispose: () => lane.dispose(),
+    subscribe(listener: (state: AboutState) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    state: () => lane.state(), client: () => track(() => lane.client()), host: () => track(() => lane.host()),
+    opencode: () => track(() => lane.opencode()), hostUpdate: () => track(() => lane.hostUpdate()), diagnostics: () => track(() => lane.diagnostics()),
+    refresh: () => track(() => lane.refresh()), cancelUpdate: () => lane.cancelUpdate(), prepareUpdate: () => track(() => lane.prepareUpdate()),
+    confirmUpdate: () => track(() => lane.confirmUpdate()), reconcileUpdate: () => track(() => lane.reconcileUpdate()),
+    setDiagnostics: (value: boolean) => track(() => lane.setDiagnostics(value)), exportDiagnostics: () => track(() => lane.exportDiagnostics()),
+    updateAvailable: () => lane.updateAvailable(),
+    updateWritable: () => lane.updateWritable(),
+    canClose,
+    replaceLane(next: AboutDependencies) { const retained = lane.retain(); lane.dispose(); lane = createAboutLane(observed(next), retained); next.changed?.(lane.state()); listeners.forEach(listener => listener(lane.state())); },
+    dispose() { if (!canClose()) return false; lane.dispose(); listeners.clear(); return true; },
   };
 }
+export type SettingsAboutController = ReturnType<typeof createSettingsAbout>;
 function createAboutLane(input: AboutDependencies, retained?: AboutState) {
   let alive = true;
   const deps = { ...input, current: () => alive && input.current() };
@@ -129,6 +148,7 @@ function createAboutLane(input: AboutDependencies, retained?: AboutState) {
     updateBusy: false, updateConfirm: null, updateFailed: false, updateUncertain: false };
   if (retained) state = retained;
   const set = (next: AboutState) => { if (deps.current()) { state = next; deps.changed?.(state); } };
+  let updateFlight: Promise<void> | null = null;
   async function load<K extends 'client' | 'host' | 'opencode' | 'hostUpdate' | 'diagnostics'>(key: K, read: () => Promise<unknown>, parse: (value: unknown) => NonNullable<AboutState[K]['value']>) {
     if (!deps.current() || state[key].refreshing) return;
     if (key === 'hostUpdate' && state.updateBusy) return;
@@ -140,12 +160,27 @@ function createAboutLane(input: AboutDependencies, retained?: AboutState) {
       if (key === 'hostUpdate' && [404, 501].includes(Number(status)) && !state.hostUpdate.value?.operation) {
         set({ ...state, hostUpdate: { value: { supported: false, currentVersion: null, available: null, availableVersion: null, operation: null, checkFailed: false }, status: 'ready', refreshing: false } });
       } else set({ ...state, [key]: { ...state[key], status: 'failed', refreshing: false } });
+    } finally {
+      // A revoked read may release only its own read guard, never publish its
+      // result or clear an update/unknown/diagnostics mutation lock.
+      if (!deps.current() && state[key].refreshing) state = { ...state, [key]: { ...state[key], refreshing: false } };
     }
   }
   const client = () => load('client', () => deps.call('native.clientMetadata'), parseAboutClient);
   const host = () => load('host', () => deps.read('/api/system/info'), parseAboutHost);
   const opencode = () => load('opencode', () => deps.read('/api/opencode/upgrade-status'), parseAboutOpenCode);
-  const hostUpdate = () => load('hostUpdate', () => aboutDeadline(() => deps.read('/api/system/update')), parseAboutHostUpdate);
+  const hostUpdate = () => {
+    if (updateFlight) return updateFlight;
+    let resolve!: () => void, reject!: (failure: unknown) => void;
+    const work = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    // Publish the flight BEFORE load notifies consumers about refreshing.
+    updateFlight = work;
+    void load('hostUpdate', () => aboutDeadline(() => deps.read('/api/system/update')), parseAboutHostUpdate).then(() => {
+      if (updateFlight === work) updateFlight = null;
+      resolve();
+    }, failure => { if (updateFlight === work) updateFlight = null; reject(failure); });
+    return work;
+  };
   const diagnostics = () => load('diagnostics', () => deps.call('native.diagnostics.status'), parseAboutDiagnostics);
   const canUpdate = (value: AboutHostUpdate | null) => value?.supported && value.currentVersion && value.plan && value.channel && !value.checkFailed && !aboutUpdateActive(value);
   return {
@@ -154,10 +189,12 @@ function createAboutLane(input: AboutDependencies, retained?: AboutState) {
       updateBusy: false, updateConfirm: null, diagnosticsBusy: false, exporting: false }),
     dispose: () => { alive = false; },
     state: () => state, client, host, opencode, hostUpdate, diagnostics,
+    updateWritable: () => deps.current() && !!deps.submitUpdate,
+    updateAvailable: () => deps.current() && !!deps.submitUpdate && !state.updateBusy && !state.updateUncertain && !state.updateConfirm && !state.hostUpdate.refreshing && state.hostUpdate.status === 'ready' && !!canUpdate(state.hostUpdate.value),
     refresh: () => Promise.all([client(), host(), opencode(), hostUpdate(), diagnostics()]),
     cancelUpdate() { if (!state.updateBusy) set({ ...state, updateConfirm: null }); },
     async prepareUpdate() {
-      if (!deps.current() || state.updateBusy || state.hostUpdate.refreshing || state.updateUncertain || aboutUpdateActive(state.hostUpdate.value)) return;
+      if (!deps.current() || !deps.submitUpdate || state.updateBusy || state.hostUpdate.refreshing || state.updateUncertain || aboutUpdateActive(state.hostUpdate.value)) return;
       const previous = state.hostUpdate.value?.task;
       set({ ...state, updateBusy: true, updateConfirm: null, updateFailed: false });
       try {
@@ -178,21 +215,23 @@ function createAboutLane(input: AboutDependencies, retained?: AboutState) {
       set({ ...state, updateBusy: true, updateConfirm: null, updateFailed: false });
       try {
         const submit = deps.submitUpdate;
-        set({ ...state, updateUncertain: true });
+        set({ ...state, updateUncertain: true, updateReceipt: { serverId: captured.serverId!, planId: captured.plan.planId, version: captured.plan.version, channel: captured.channel, kind: captured.plan.kind } });
         const result = object(await aboutDeadline(() => submit({ version: captured.plan!.version, channel: captured.channel!, planId: captured.plan!.planId, allowDowngrade: captured.plan!.rollback })));
         if (!deps.current()) return;
         const task = parseAboutUpdateOperation(result.operation);
         if (task.version !== captured.plan.version || task.channel !== captured.channel || task.kind !== captured.plan.kind) throw new Error('about_unexpected_task');
-        set({ ...state, hostUpdate: { value: { ...captured, task, operation: task.status, plan: null }, status: 'ready', refreshing: false }, updateUncertain: false });
+        set({ ...state, hostUpdate: { value: { ...captured, task, operation: task.status, plan: null }, status: 'ready', refreshing: false }, updateUncertain: false, updateReceipt: undefined });
       } catch {
         // Lost POST response may already have admitted work. Never auto-replay it.
         set({ ...state, updateFailed: true, updateUncertain: true });
       } finally { set({ ...state, updateBusy: false }); }
     },
     async reconcileUpdate() {
-      if (state.updateBusy || state.hostUpdate.refreshing || !deps.current()) return;
+      if (state.updateBusy || !deps.current()) return;
       await hostUpdate();
-      if (state.hostUpdate.status === 'ready' && !state.hostUpdate.value?.checkFailed) set({ ...state, updateUncertain: false, updateFailed: false });
+      const value = state.hostUpdate.value, receipt = state.updateReceipt, task = value?.task;
+      const resolved = !state.updateUncertain || !!(receipt && task && value?.serverId === receipt.serverId && task.planId === receipt.planId && task.version === receipt.version && task.kind === receipt.kind && task.channel === receipt.channel);
+      if (deps.current() && state.hostUpdate.status === 'ready' && !value?.checkFailed && resolved) set({ ...state, updateUncertain: false, updateFailed: false, updateReceipt: undefined });
     },
     async setDiagnostics(enabled: boolean) {
       if (!deps.current() || state.diagnosticsBusy || state.exporting || state.diagnostics.refreshing) return;

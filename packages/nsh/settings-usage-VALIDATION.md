@@ -73,3 +73,40 @@ if (validModels.length > 0 || models.length === 0) {
 - `bun packages/nsh/settings-usage-static.mjs`：**GREEN**，静态产物 5,289,192 bytes，`executed: false`；检查未引入 React/Zustand/TanStack runtime。
 - Settings design audit **GREEN**；dead-code 已审阅，用量范围只有动态加载的 `settings-usage-fixture.tsx` unused-file 提示。
 - 真正磁盘 persisted round-trip 由 main 后续 owning 测试补足；这里已验证实际 sanitizer 的写入和 response 净化、Native GET authority，不把内存 fixture 冒称磁盘落盘或真实 Host 联调。
+
+## Desktop slice：当前 Web 事实与接线
+
+本节覆盖本轮桌面改动；上面的旧“未运行 engine”与旧 RED 快照不代表本轮结果。
+
+- 当前 `SettingsView.tsx::renderDesktopContent` 对 Usage 使用专用 `<UsageSidebar><UsagePage /></UsageSidebar>`，在普通 `kind === 'split'` 分支之前返回。`UsageSidebar` 的偏好、Magpie 连接在结果网格之前；`settings.css` 的 `.yuri-settings-usage-results` 是 192–256px provider 列和详情列，`settings-detail <= 768px` 时上下排列。**不是普通实体页的 304px 常驻 sidebar/detail split**，旧 parity 账本中的 Usage split 待办不能作为设计事实。
+- 当前 Usage 来源中没有 period filter、日期范围查询、UsageSection 图表页或新增 Provider quota owner。Native 不添加相应控件或请求。实际能力包含刷新、自动刷新/间隔、used/remaining、prediction、Magpie 连接/手动地址、注册及动态 Provider、header 显示、账户/余额/重置/预测、模型 family 折叠与真实模型选择。
+- `SettingsUsage` 原有 props **完全不变**。它在真实 `DesktopSettingsPublisher` context 中自动选择 `DesktopUsage`，否则保留原手机页面/子页 JSX。main 不需新增 props，不需修改 `application.tsx`、`settings.tsx` 或 `desktop-settings-root`。桌面 Provider 点击只改变同一个 owner 的选择，不调用 `onOpen`，不销毁 Magpie 草稿、pending receipt、family 折叠或 Settings publisher。
+- 唯一 owning API 的向后兼容增量：`createSettingsUsage(...).selectProvider(provider: QuotaProviderId, inlineDefaults = false): void`。只有桌面传 `true`，把原本详情挂载时的默认模型选择交回同一个 operation/write lane；没有刷新 quota 或新请求 owner。普通移动调用仍使用默认 `false`。用户在已确认偏好写入期间选择另一个 Provider，默认选择等待同一 lane 完成；失活/换 lane 清除该待办，未知写入不重发，显式 `[]` 不补回默认。
+- 生产窗口根仍只挂一次 `SettingsUsage`。`DesktopUsage`、`desktopUsageRows` 和 `DesktopUsageWindowProps` 是本模块内部呈现接口，不是要求 root 新建 controller 的端口。模型卡继续由原 `UsageWindowRow` 渲染，theme palette、官方 provider artwork、十语字典和 quota helper 沿用现有来源。
+
+### 结构、预算与失败
+
+- 一个外层 `Scroll`；Provider 与完整账户/window/family/model 元数据分别交给 NSH 0.4 的 `List viewport="parent"`，跟随同一个页面滚动，不制造两个独立滚动 owner。即使单账户有上千窗口，也不是一个 eager 巨型账户 View。所有模型和 Provider 均保留，没有分页截断或“只显示前 N 项”。
+- 响应式条件读取整个 Scroll 的真实宽度，不用已经扣掉 content padding 的结果列宽度判断 768px。详情保持 Web 的 768px 上限、居中及 window `sm` 内距；resize 只改呈现，不重挂 owner。
+- Provider 结果使用一次性派生 Map，避免动态来源的 provider×results 查找；不创建缓存/Storage/transport。结构派生只订阅原 results/selected/settings/collapse；Magpie URL 输入和外部无关 Input 不触发请求或模型目录重枚举。
+- GET failure 与 configured-but-failed 的 Provider 不显示成功 no-data/no-quota 提示。原 operation 的 stale fence、部分失败、prior snapshot、未知写入 GET 核验与唯一 timer 保持归属，不以新的本地空数组替代失败。
+
+### 本轮可重跑验证与边界
+
+```sh
+NSH_SETTINGS_USAGE_ENGINE=1 NSH_BIN=/path/to/nsh-0.4.0/bin/nsh \
+  bunx --no-install vitest run --config packages/nsh/vitest.config.ts \
+  packages/nsh/desktop-usage.test.ts packages/nsh/desktop-usage-native.test.ts \
+  packages/nsh/settings-usage.test.ts packages/nsh/settings-usage-completion.test.ts \
+  packages/nsh/settings-usage-host-contract.test.ts packages/nsh/settings-usage-engine.test.ts
+```
+
+- 新 focused：账户顺序、完整窗口/模型元数据、折叠 family、failed vs empty、inline 默认选择、显式空选择、并发偏好完成后的串行默认选择；与既有 Usage/Host 合同一起运行。
+- 新真实 NSH headless 生产组件：Mac/Windows 模型各 4 场景，共 8 场景；实际偏好/选择控件、无 route remount、草稿与 publisher 保留、header/模型实际写键、ACK 丢失只读确认、失活/后台/退休与迟到 ACK、resize、中文/波兰语、**50 次无关输入和 50 次 Magpie 草稿输入均零请求/零模型目录枚举**；2000 动态 Provider + 1000 账户窗口 + 2000 模型时只实现化 viewport 附近行。
+- fixture 挂真实 `SettingsUsage`、真实 `DesktopSettingsPublisher` 与原 protection；仅注入内存 strict fake settings/quota，native network 请求和 Storage 都断言为空。临时 `nsh.json`、入口和 `.nsh/test` 在每次独立 temp 目录内，绝不覆盖仓库 `.nsh/test`。
+- 原移动呈现（无 desktop publisher）的生产组件 engine fixture 同轮运行；不把它称为 UIKit/iOS 真机验收。
+- Settings audit 通过；Bun 静态生产 fixture 解析/链接通过、无 React/Zustand/TanStack runtime 越界。`dead-code` 已尝试，仍被 `packages/web/vite.config.ts` 缺少既有 `vite-plugin-pwa` 阻断，没有安装依赖；仓库 lockfile 未修改。
+- 并行工作区 `tsc` 的最终结果以交付消息为准；本轮遇到的诊断均在独占范围外，不能据此声称全仓 typecheck 通过。
+- **尚未验**：真实 AppKit/Win32 窗口及像素/hover/读屏/物理键盘、完整 main App 接线、真实 Host/账号/付费 quota、网络/安全凭据与磁盘持久化。headless 测试只确认两平台逻辑模型与生产 NSH 组件，不授予完整 Mac/Windows 1:1 视觉签收。没有执行 Git、真实 Host 写入、真实账号或付费调用。
+
+本 slice 最后一次复验：上述 6 个 Vitest 文件 **50/50 GREEN**（包含桌面 wrapper 内的真实 NSH 8 场景及原移动呈现 engine fixture）；`tsc --noEmit --project packages/nsh/tsconfig.json` **GREEN**；Settings audit **GREEN**；静态生产 fixture **GREEN**（5,403,126 bytes，`executed:false`）。`dead-code` 仍为上述依赖阻塞，不计为通过。并行源码后续变化仍须由 main 收敛后复验。

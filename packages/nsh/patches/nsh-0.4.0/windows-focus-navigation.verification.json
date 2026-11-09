@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "file": "windows-focus-navigation.patch",
+  "sha256": "b56462d863852674108ace1295db8783311e46cca783d575e61184d3af35eeea",
+  "hashFileSha256": "5bd7a85fb292277a43702e828fef84cc31af0efeb1a0441c399f7fe4151b84de",
+  "patchFileCount": 13,
+  "zeroFuzzRoundtrip": true,
+  "commands": [
+    {
+      "action": "dry-run",
+      "fuzz": 0,
+      "status": 0
+    },
+    {
+      "action": "apply",
+      "fuzz": 0,
+      "status": 0
+    }
+  ],
+  "matchesEveryAfterExistsAndSha256": true,
+  "overlapWithOtherPatchFiles": {
+    "list-scroll-snapshot.patch": [
+      "crates/nsh-platform-windows/src/mount.rs",
+      "crates/nsh-testing/src/headless/mod.rs",
+      "crates/nsh-testing/src/screen.rs"
+    ]
+  },
+  "roundtripScope": "e626-baseline-only-not-the-current-ordered-patch-chain",
+  "staticChecks": [
+    {
+      "command": "rustfmt",
+      "args": [
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "crates/nsh-platform-windows/src/input.rs",
+        "crates/nsh-platform-windows/src/focus_tests.rs",
+        "crates/nsh-platform-windows/src/text_input.rs",
+        "crates/nsh-platform-windows/src/keymap.rs",
+        "crates/nsh-platform-windows/src/mount.rs",
+        "crates/nsh-platform-windows/src/surface.rs",
+        "crates/nsh-platform-windows/src/access.rs",
+        "crates/nsh-platform-windows/src/access/uia.rs",
+        "crates/nsh-platform-windows/src/navigation.rs",
+        "crates/nsh-platform-windows/src/chrome.rs",
+        "crates/nsh-testing/src/headless/keyboard.rs",
+        "crates/nsh-testing/src/headless/mod.rs",
+        "crates/nsh-testing/src/screen.rs"
+      ],
+      "status": 0,
+      "signal": null
+    },
+    {
+      "command": "rustfmt",
+      "args": [
+        "--check",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "crates/nsh-platform-windows/src/input.rs",
+        "crates/nsh-platform-windows/src/focus_tests.rs",
+        "crates/nsh-platform-windows/src/text_input.rs",
+        "crates/nsh-platform-windows/src/keymap.rs",
+        "crates/nsh-platform-windows/src/mount.rs",
+        "crates/nsh-platform-windows/src/surface.rs",
+        "crates/nsh-platform-windows/src/access.rs",
+        "crates/nsh-platform-windows/src/access/uia.rs",
+        "crates/nsh-platform-windows/src/navigation.rs",
+        "crates/nsh-platform-windows/src/chrome.rs",
+        "crates/nsh-testing/src/headless/keyboard.rs",
+        "crates/nsh-testing/src/headless/mod.rs",
+        "crates/nsh-testing/src/screen.rs"
+      ],
+      "status": 0,
+      "signal": null
+    },
+    {
+      "command": "rustup",
+      "args": [
+        "target",
+        "list",
+        "--installed"
+      ],
+      "status": 0,
+      "signal": null
+    },
+    {
+      "command": "cargo",
+      "args": [
+        "check",
+        "-p",
+        "nsh-platform-windows",
+        "--target",
+        "x86_64-pc-windows-msvc",
+        "--no-default-features",
+        "--offline",
+        "--locked"
+      ],
+      "status": 101,
+      "signal": null
+    }
+  ],
+  "baselineHeadless": {
+    "status": "failed-as-expected",
+    "expected": "calls:1",
+    "actual": "calls:0",
+    "digest": "7834beffee6dc6dd588bee99f717366a37dca2282ceb53544b80734e800f97e0"
+  },
+  "postPatchHeadless": "not-run-worker-build-test-restriction",
+  "windowsNativeUnitTests": "not-run-Mac-only-no-Windows-target",
+  "windowsPhysical": "not-verified",
+  "explicitTabIndex": "not-implemented-frozen-core-JS-seam"
+}

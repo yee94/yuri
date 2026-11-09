@@ -1,0 +1,1289 @@
+diff --git a/crates/nsh-platform-windows/src/access.rs b/crates/nsh-platform-windows/src/access.rs
+--- a/crates/nsh-platform-windows/src/access.rs
++++ b/crates/nsh-platform-windows/src/access.rs
+@@ -195,27 +195,6 @@
+         )
+     }
+ 
+-    /// Controls that take the keyboard focus.
+-    fn focusable(self) -> bool {
+-        matches!(
+-            self,
+-            Control::Button
+-                | Control::Hyperlink
+-                | Control::Edit
+-                | Control::SearchBox
+-                | Control::Slider
+-                | Control::CheckBox
+-                | Control::ComboBox
+-                | Control::MenuItem
+-                | Control::RadioButton
+-                | Control::Spinner
+-                | Control::Switch
+-                | Control::TabItem
+-                | Control::ListItem
+-                | Control::TreeItem
+-        )
+-    }
+-
+     /// What the control is called where UIA's name for its control type
+     /// does not fit.
+     fn localized(self) -> Option<&'static str> {
+@@ -795,7 +774,7 @@
+ 
+ /// The element with the accessibility focus.
+ pub(crate) fn focused(surface: &Surface) -> Option<NshView> {
+-    if let Some(field) = crate::text_input::focused(surface) {
++    if let Some(field) = crate::text_input::owner(surface) {
+         return Some(field);
+     }
+     let id = FOCUS.with_borrow(|f| f.get(&surface.key()).copied())?;
+diff --git a/crates/nsh-platform-windows/src/access/uia.rs b/crates/nsh-platform-windows/src/access/uia.rs
+--- a/crates/nsh-platform-windows/src/access/uia.rs
++++ b/crates/nsh-platform-windows/src/access/uia.rs
+@@ -718,9 +718,7 @@
+                 Var::opt_str(super::help_of(&s.props.accessibility, Some(control)).as_deref())
+             }
+             UIA_IsEnabledPropertyId => Var::bool(!view.state().props.accessibility.state.disabled),
+-            UIA_IsKeyboardFocusablePropertyId => Var::bool(
+-                control.focusable() || view.state().events.contains(nsh_core::EventKind::Press),
+-            ),
++            UIA_IsKeyboardFocusablePropertyId => Var::bool(crate::input::is_key_stop(view)),
+             UIA_HasKeyboardFocusPropertyId => {
+                 Var::bool(super::focused(&t.surface).is_some_and(|f| f == *view))
+             }
+@@ -853,9 +851,8 @@
+ 
+     fn SetFocus(&self) -> Result<()> {
+         let t = self.target()?;
+-        if t.view.kind() == ViewKind::Input {
+-            crate::text_input::focus(&t.view);
+-            super::focus_changed(&t.surface, &t.view);
++        if crate::input::is_key_stop(&t.view) && crate::input::in_focus_scope(&t.surface, &t.view) {
++            crate::text_input::focus_view(&t.surface, &t.view);
+         } else {
+             super::focus(&t.surface, &t.view);
+         }
+diff --git a/crates/nsh-platform-windows/src/chrome.rs b/crates/nsh-platform-windows/src/chrome.rs
+--- a/crates/nsh-platform-windows/src/chrome.rs
++++ b/crates/nsh-platform-windows/src/chrome.rs
+@@ -1137,6 +1137,59 @@
+     }
+ }
+ 
++#[cfg(test)]
++mod focus_tests {
++    use super::*;
++    use nsh_core::keymap::{KeyBinding, Keymap, Keystroke, When};
++
++    #[test]
++    fn windows_keymap_then_menu_then_generic_activation_have_one_owner() {
++        let surface = Surface::new(Default::default());
++        let button = crate::view::NshView::new(2, nsh_core::ViewKind::View);
++        button.state_mut().events.set(EventKind::Press, true);
++        button.insert_before(&surface.root, None);
++        crate::text_input::focus_view(&surface, &button);
++        let enter = KeyEvent {
++            vk: 0x0D,
++            down: true,
++            repeat: false,
++            modifiers: Default::default(),
++        };
++        *surface.chrome.menu.borrow_mut() = Some(Arc::from(vec![MenuItem::Action(MenuAction {
++            id: 7,
++            label: "Fixture action".into(),
++            shortcut: Some(Shortcut::parse("enter", false).unwrap()),
++            enabled: true,
++            checked: None,
++            role: None,
++            when: When::Always,
++        })]));
++        let binding = KeyBinding::new(
++            9,
++            Keystroke::parse("enter", nsh_core::platform::Os::Windows).unwrap(),
++            When::Always,
++            false,
++        );
++        crate::keymap::set(&surface, Arc::new(Keymap::new(vec![binding])));
++        assert!(crate::input::key(&surface, enter));
++        assert_eq!(
++            *surface.focus_test_events.borrow(),
++            [(ROOT_ID, EventKind::KeyCommand)]
++        );
++        surface.focus_test_events.borrow_mut().clear();
++        crate::keymap::clear(&surface);
++        assert!(crate::input::key(&surface, enter));
++        assert_eq!(
++            *surface.focus_test_events.borrow(),
++            [(ROOT_ID, EventKind::Menu)]
++        );
++        surface.focus_test_events.borrow_mut().clear();
++        surface.chrome.menu.borrow_mut().take();
++        assert!(crate::input::key(&surface, enter));
++        assert_eq!(*surface.focus_test_events.borrow(), [(2, EventKind::Press)]);
++    }
++}
++
+ // --- The dark menu bar ------------------------------------------------------------------
+ 
+ fn colorref(c: u32) -> COLORREF {
+diff --git a/crates/nsh-platform-windows/src/focus_tests.rs b/crates/nsh-platform-windows/src/focus_tests.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/nsh-platform-windows/src/focus_tests.rs
+@@ -0,0 +1,238 @@
++//! Win32 routing tests. These require Windows, but open no native window.
++
++use super::*;
++use crate::{geom::rect, text_input};
++use nsh_core::keymap::{KeyBinding, Keymap, Keystroke, When};
++use nsh_core::platform::Os;
++
++fn surface() -> Rc<Surface> {
++    let mut env = nsh_core::platform::Environment::default();
++    env.reduce_motion = true;
++    let surface = Surface::new(env);
++    surface.without_shader_renderer();
++    surface
++}
++
++fn stop(parent: &NshView, id: NodeId) -> NshView {
++    let view = NshView::new(id, ViewKind::View);
++    view.state_mut().frame = rect(0.0, 0.0, 100.0, 30.0);
++    for kind in [
++        EventKind::PressDown,
++        EventKind::PressUp,
++        EventKind::Press,
++        EventKind::Focus,
++        EventKind::Blur,
++    ] {
++        view.state_mut().events.set(kind, true);
++    }
++    view.insert_before(parent, None);
++    view
++}
++
++fn down(vk: u16) -> KeyEvent {
++    KeyEvent {
++        vk,
++        down: true,
++        repeat: false,
++        modifiers: Modifiers::default(),
++    }
++}
++
++fn events(surface: &Surface, kind: EventKind) -> Vec<NodeId> {
++    surface
++        .focus_test_events
++        .borrow()
++        .iter()
++        .filter_map(|(id, event)| (*event == kind).then_some(*id))
++        .collect()
++}
++
++#[test]
++fn windows_stops_share_generic_gates_and_tree_order() {
++    let surface = surface();
++    let button = stop(&surface.root, 2);
++    let role = stop(&surface.root, 4);
++    role.state_mut().props.accessibility.role = nsh_core::AccessibilityRole::Button;
++    let chart = stop(&surface.root, 6);
++    chart.state_mut().events.set(EventKind::Press, false);
++    chart.state_mut().props.focusable = Some(true);
++    let excluded = stop(&surface.root, 8);
++    excluded.state_mut().props.accessibility.accessible = Some(false);
++    let disabled_parent = stop(&surface.root, 10);
++    disabled_parent
++        .state_mut()
++        .props
++        .accessibility
++        .state
++        .disabled = true;
++    stop(&disabled_parent, 12);
++    let hidden_parent = stop(&surface.root, 14);
++    hidden_parent.state_mut().style.hidden = true;
++    stop(&hidden_parent, 16);
++    let ax_parent = stop(&surface.root, 18);
++    ax_parent.state_mut().props.accessibility.hidden = true;
++    stop(&ax_parent, 20);
++    let opt_out = stop(&surface.root, 22);
++    opt_out.state_mut().props.focusable = Some(false);
++    let pointer_parent = stop(&surface.root, 24);
++    pointer_parent.state_mut().props.pointer_events = PointerEvents::None;
++    stop(&pointer_parent, 26);
++    let concealed_parent = stop(&surface.root, 28);
++    concealed_parent.state_mut().concealed = true;
++    stop(&concealed_parent, 30);
++    let mut stops = Vec::new();
++    collect_stops(&surface.root, &mut stops);
++    assert_eq!(stops, [button, role, chart]);
++}
++
++#[test]
++fn windows_tab_and_reverse_wrap_share_the_input_owner() {
++    let surface = surface();
++    let button = stop(&surface.root, 2);
++    let role = stop(&surface.root, 4);
++    role.state_mut().props.accessibility.role = nsh_core::AccessibilityRole::Button;
++    let field = NshView::new(6, ViewKind::Input);
++    field.insert_before(&surface.root, None);
++    text_input::create(&surface, &field);
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(button.clone()));
++    assert!(text_input::focused(&surface).is_none());
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(role.clone()));
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(field.clone()));
++    assert_eq!(text_input::focused(&surface), Some(field.clone()));
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(button.clone()));
++    let mut reverse = down(VK_TAB);
++    reverse.modifiers.shift = true;
++    assert!(key(&surface, reverse));
++    assert_eq!(text_input::owner(&surface), Some(field));
++    assert!(key(&surface, reverse));
++    assert_eq!(text_input::owner(&surface), Some(role));
++    text_input::blur(&button);
++    assert!(
++        text_input::owner(&surface).is_some(),
++        "non-owner blur is isolated"
++    );
++}
++
++#[test]
++fn windows_enter_space_activate_once_without_repeating_or_scrolling() {
++    let surface = surface();
++    let scroll = NshView::new(2, ViewKind::Scroll);
++    scroll.state_mut().frame = rect(0.0, 0.0, 100.0, 100.0);
++    scroll.insert_before(&surface.root, None);
++    let button = stop(&scroll, 4);
++    stop(&scroll, 6);
++    text_input::focus_view(&surface, &button);
++    for vk in [0x0D, 0x20] {
++        assert!(key(&surface, down(vk)));
++        assert!(key(
++            &surface,
++            KeyEvent {
++                repeat: true,
++                ..down(vk)
++            }
++        ));
++        key(
++            &surface,
++            KeyEvent {
++                down: false,
++                ..down(vk)
++            },
++        );
++    }
++    assert_eq!(events(&surface, EventKind::Press), [4, 4]);
++    assert_eq!(events(&surface, EventKind::PressDown), [4, 4]);
++    assert_eq!(events(&surface, EventKind::PressUp), [4, 4]);
++    assert_eq!(scroll.state().scroll.as_ref().unwrap().y, Points::ZERO);
++    for modifiers in [
++        Modifiers {
++            shift: true,
++            ..Default::default()
++        },
++        Modifiers {
++            ctrl: true,
++            ..Default::default()
++        },
++        Modifiers {
++            alt: true,
++            ..Default::default()
++        },
++        Modifiers {
++            meta: true,
++            ..Default::default()
++        },
++    ] {
++        assert!(!activate_key(
++            &surface,
++            &KeyEvent {
++                modifiers,
++                ..down(0x0D)
++            }
++        ));
++    }
++    assert_eq!(events(&surface, EventKind::Press), [4, 4]);
++}
++
++#[test]
++fn windows_keymap_precedes_activation_and_inactive_windows_keep_only_ownership() {
++    let surface = surface();
++    let button = stop(&surface.root, 2);
++    text_input::focus_view(&surface, &button);
++    let binding = KeyBinding::new(
++        77,
++        Keystroke::parse("enter", Os::Windows).unwrap(),
++        When::Always,
++        false,
++    );
++    crate::keymap::set(&surface, std::sync::Arc::new(Keymap::new(vec![binding])));
++    assert!(key(&surface, down(0x0D)));
++    assert_eq!(events(&surface, EventKind::KeyCommand), [ROOT_ID]);
++    assert!(events(&surface, EventKind::Press).is_empty());
++    crate::keymap::clear(&surface);
++    text_input::window_focus(&surface, false);
++    assert!(!activate_key(&surface, &down(0x20)));
++    assert!(!tab(&surface, &down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(button));
++    text_input::window_focus(&surface, true);
++    assert!(key(&surface, down(0x20)));
++    assert_eq!(events(&surface, EventKind::Press), [2]);
++}
++
++#[test]
++fn windows_modal_traps_and_restores_the_same_generic_owner() {
++    let surface = surface();
++    let button = stop(&surface.root, 2);
++    text_input::focus_view(&surface, &button);
++    let modal = NshView::new(4, ViewKind::Modal);
++    let inside = stop(&modal, 6);
++    crate::navigation::present(&surface, &modal);
++    assert!(text_input::owner(&surface).is_none());
++    assert!(!in_focus_scope(&surface, &button));
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(inside.clone()));
++    assert!(key(&surface, down(VK_TAB)));
++    assert_eq!(text_input::owner(&surface), Some(inside));
++    crate::navigation::dismiss(&surface, &modal);
++    assert_eq!(text_input::owner(&surface), Some(button));
++}
++
++#[test]
++fn windows_dynamic_exclusion_detach_and_stop_drop_focus() {
++    let surface = surface();
++    let button = stop(&surface.root, 2);
++    text_input::focus_view(&surface, &button);
++    button.state_mut().props.accessibility.state.disabled = true;
++    reconcile_focus(&surface);
++    assert!(text_input::owner(&surface).is_none());
++    button.state_mut().props.accessibility.state.disabled = false;
++    text_input::focus_view(&surface, &button);
++    button.unparent();
++    assert!(text_input::owner(&surface).is_none());
++    button.insert_before(&surface.root, None);
++    text_input::focus_view(&surface, &button);
++    surface.stop();
++    assert!(text_input::owner(&surface).is_none());
++}
+diff --git a/crates/nsh-platform-windows/src/input.rs b/crates/nsh-platform-windows/src/input.rs
+--- a/crates/nsh-platform-windows/src/input.rs
++++ b/crates/nsh-platform-windows/src/input.rs
+@@ -55,6 +55,19 @@
+ //! The decisions over plain data (what a pointer going down may start, a
+ //! press's events, hover changes, hit areas, pinches, wheel latching) are
+ //! [`nsh_core::input`]'s, shared by the desktop backends.
++//!
++//! Keyboard traversal cycles enabled fields and generic ViewProps focus stops
++//! in tree order within the newest modal. Hidden, concealed, disabled, removed,
++//! pointer-disabled and accessibility-excluded ancestors revoke admission.
++//! The text input module owns the single field-or-view focus slot; native
++//! commands, UIA, mouse focus, Tab and modal restoration use that same slot.
++//! Window shortcuts and system dialogs precede app keymaps and native menus.
++//! While an input composes, its editing keys precede app accelerators instead.
++//! Unmodified Enter/Space on a generic pressable emit one press sequence on
++//! initial key-down; repeats are consumed, key-up never activates again, and
++//! Space is consumed before scroll handling. Inputs retain their submit/IME
++//! behavior. Window focus loss suspends generic activation and traversal;
++//! invalidation at batch end and surface stop/destruction release ownership.
+ 
+ use std::{
+     cell::{Cell, RefCell},
+@@ -997,59 +1010,152 @@
+     let shortcut = surface.shortcuts.borrow().iter().any(|f| f(&event));
+     let handled = shortcut
+         || crate::system::key(surface, &event)
+-        || crate::keymap::key(surface, &event)
+-        || crate::chrome::shortcut(surface, &event)
+-        || crate::text_input::key(surface, &event)
+-        || crate::text::key(surface, &event)
+-        || crate::selectable_view::key(surface, &event)
+-        || crate::navigation::key_pressed(surface, &event)
+-        || {
+-            let (x, y) = input.last.get().unwrap_or((-1.0, -1.0));
+-            crate::scroll::key(surface, &event, x, y)
+-        }
+-        || tab(surface, &event);
++        || if crate::text_input::composing(surface) {
++            // IMM32 owns candidate navigation and the committing Return.
++            crate::text_input::key(surface, &event)
++        } else {
++            key_content(surface, &event)
++        };
+     if handled && event.modifiers.alt {
+         input.alt_combo.set(true);
+     }
+     handled
+ }
+ 
+-/// Tab and Shift + Tab move the keyboard focus between the text fields, in
+-/// tree order (GTK's focus chain does this on Linux), within the newest
+-/// modal: the views under it never get the focus. The field reached has
+-/// its text selected, as in Windows' dialogs.
++fn key_content(surface: &Rc<Surface>, event: &KeyEvent) -> bool {
++    crate::keymap::key(surface, event)
++        || crate::chrome::shortcut(surface, event)
++        || crate::text_input::key(surface, event)
++        || activate_key(surface, event)
++        || crate::text::key(surface, event)
++        || crate::selectable_view::key(surface, event)
++        || crate::navigation::key_pressed(surface, event)
++        || tab(surface, event)
++        || {
++            let (x, y) = surface.input.last.get().unwrap_or((-1.0, -1.0));
++            crate::scroll::key(surface, event, x, y)
++        }
++}
++
++/// Tab and Shift+Tab cycle fields and generic stops within the newest modal.
+ fn tab(surface: &Rc<Surface>, event: &KeyEvent) -> bool {
+     let m = event.modifiers;
+-    if event.vk != VK_TAB || m.ctrl || m.alt || m.meta {
++    if event.vk != VK_TAB || m.ctrl || m.alt || m.meta || !crate::text_input::window_active(surface)
++    {
+         return false;
+     }
+     let mut fields = Vec::new();
+-    collect_fields(&crate::navigation::focus_scope(surface), &mut fields);
++    collect_stops(&crate::navigation::focus_scope(surface), &mut fields);
+     let current =
+-        crate::text_input::focused(surface).and_then(|f| fields.iter().position(|v| *v == f));
++        crate::text_input::owner(surface).and_then(|f| fields.iter().position(|v| *v == f));
+     let Some(next) = input::tab_stop(current, fields.len(), m.shift, true) else {
+         return false;
+     };
+-    crate::text_input::tab_to(&fields[next]);
++    crate::text_input::tab_to(surface, &fields[next]);
++    crate::keymap::drop_char(surface);
+     true
+ }
+ 
+-/// The enabled text fields shown under `view`, in tree order.
+-fn collect_fields(view: &NshView, out: &mut Vec<NshView>) {
++/// Whether the view and its ancestors admit keyboard interaction.
++fn key_reachable(view: &NshView) -> bool {
++    if !view.attached() {
++        return false;
++    }
++    let mut current = Some(view.clone());
++    while let Some(view) = current {
++        let s = view.state();
++        if s.style.hidden
++            || s.concealed
++            || s.props.pointer_events == PointerEvents::None
++            || s.props.accessibility.state.disabled
++            || s.props.accessibility.hidden
++            || s.live.as_ref().is_some_and(|l| l.dying())
++        {
++            return false;
++        }
++        drop(s);
++        current = view.parent_view();
++    }
++    true
++}
++
++/// The same generic focus contract as ViewProps, including explicit opt-out.
++pub(crate) fn is_key_stop(view: &NshView) -> bool {
++    if !key_reachable(view) {
++        return false;
++    }
++    let s = view.state();
++    s.props.accessibility.accessible != Some(false)
++        && (if s.kind == ViewKind::Input {
++            s.props.focusable != Some(false)
++        } else {
++            s.props.focus_stop(s.events.contains(EventKind::Press))
++        })
++}
++
++/// Tests the authoritative modal ancestry, not the accessibility focus.
++pub(crate) fn in_focus_scope(surface: &Surface, view: &NshView) -> bool {
++    let scope = crate::navigation::focus_scope(surface);
++    chain(view).into_iter().any(|ancestor| ancestor == scope)
++}
++
++/// Clears stale ownership after props, handlers, navigation or removal change.
++pub(crate) fn reconcile_focus(surface: &Rc<Surface>) {
++    if let Some(view) = crate::text_input::owner(surface)
++        && (!is_key_stop(&view) || !in_focus_scope(surface, &view))
+     {
+-        let s = view.state();
+-        if s.style.hidden || s.concealed || s.props.pointer_events == PointerEvents::None {
++        crate::text_input::blur_all(surface);
++    }
++}
++
++fn collect_stops(view: &NshView, out: &mut Vec<NshView>) {
++    {
++        if !key_reachable(view) {
+             return;
+         }
+-        if s.kind == ViewKind::Input && !s.props.accessibility.state.disabled {
++        if is_key_stop(view) {
+             out.push(view.clone());
+         }
+     }
+     view.with_children(|children| {
+         for child in children {
+-            collect_fields(child, out);
++            collect_stops(child, out);
+         }
+     });
++}
++
++/// A plain Enter/Space belongs only to the current non-editing focus owner.
++fn activate_key(surface: &Rc<Surface>, event: &KeyEvent) -> bool {
++    let m = event.modifiers;
++    if !event.down
++        || m.ctrl
++        || m.alt
++        || m.meta
++        || m.shift
++        || !matches!(event.vk, 0x0D | 0x20)
++        || !crate::text_input::window_active(surface)
++    {
++        return false;
++    }
++    let Some(view) = crate::text_input::owner(surface) else {
++        return false;
++    };
++    if view.kind() == ViewKind::Input
++        || !is_key_stop(&view)
++        || !in_focus_scope(surface, &view)
++        || !view.state().events.contains(EventKind::Press)
++    {
++        return false;
++    }
++    crate::keymap::drop_char(surface);
++    if !event.repeat {
++        for kind in [EventKind::PressDown, EventKind::PressUp, EventKind::Press] {
++            if view.state().events.contains(kind) {
++                surface.event(view.id(), kind, EventPayload::None);
++            }
++        }
++    }
++    true
+ }
+ 
+ // --- Hit testing --------------------------------------------------------------------
+@@ -1296,6 +1402,14 @@
+         input.js_block.set(false);
+     }
+     let views = chain(&hit.view);
++    if !touch
++        && !native
++        && !selects
++        && let Some(view) = views.iter().find(|view| is_key_stop(view))
++        && in_focus_scope(surface, view)
++    {
++        crate::text_input::focus_view(surface, view);
++    }
+     // The gate follows the first pointer only, as on the other platforms.
+     let first = input.pointers.borrow().is_empty();
+     let options = GrabOptions::new(touch, native, selects, first);
+@@ -2310,6 +2424,10 @@
+ }
+ 
+ #[cfg(test)]
++#[path = "focus_tests.rs"]
++mod focus_tests;
++
++#[cfg(test)]
+ mod tests {
+     use nsh_core::{Bounds, EdgeInsets, Points, TransformKind};
+ 
+diff --git a/crates/nsh-platform-windows/src/keymap.rs b/crates/nsh-platform-windows/src/keymap.rs
+--- a/crates/nsh-platform-windows/src/keymap.rs
++++ b/crates/nsh-platform-windows/src/keymap.rs
+@@ -66,7 +66,10 @@
+ }
+ 
+ /// Removes the character `TranslateMessage` queued for the consumed key.
+-fn drop_char(surface: &Surface) {
++pub(crate) fn drop_char(surface: &Surface) {
++    if surface.hwnd().is_invalid() {
++        return;
++    }
+     let mut msg = MSG::default();
+     for kind in [WM_CHAR, WM_SYSCHAR] {
+         // SAFETY: a plain call with a local out value, for our own window.
+diff --git a/crates/nsh-platform-windows/src/mount.rs b/crates/nsh-platform-windows/src/mount.rs
+--- a/crates/nsh-platform-windows/src/mount.rs
++++ b/crates/nsh-platform-windows/src/mount.rs
+@@ -87,6 +87,7 @@
+         crate::selectable_view::end_batch(surface);
+         crate::navigation::end_batch(surface);
+         crate::system::end_batch(surface);
++        crate::input::reconcile_focus(surface);
+     }
+ 
+     fn get(&self, id: NodeId) -> Option<NshView> {
+@@ -437,10 +438,17 @@
+         let view = self.views.get(id);
+         let view = view.as_ref();
+         match command {
+-            Command::Focus => view.map_or((), crate::text_input::focus),
++            Command::Focus => {
++                if let Some(view) = view
++                    && crate::input::in_focus_scope(surface, view)
++                {
++                    crate::text_input::focus_view(surface, view);
++                }
++            }
+             Command::Blur => match view {
+-                Some(view) if view.kind() == ViewKind::Input => crate::text_input::blur(view),
+-                _ => crate::text_input::blur_all(surface),
++                Some(view) if view.id() != ROOT_ID => crate::text_input::blur(view),
++                Some(_) => crate::text_input::blur_all(surface),
++                None => {}
+             },
+             Command::SetSelection { start, end } => {
+                 if let Some(view) = view {
+diff --git a/crates/nsh-platform-windows/src/navigation.rs b/crates/nsh-platform-windows/src/navigation.rs
+--- a/crates/nsh-platform-windows/src/navigation.rs
++++ b/crates/nsh-platform-windows/src/navigation.rs
+@@ -151,7 +151,7 @@
+ /// Takes the keyboard focus away from a field inside `view` before it is
+ /// concealed or removed: typing must not go to a field nobody sees.
+ fn drop_focus(surface: &Surface, view: &NshView) {
+-    if let Some(field) = crate::text_input::focused(surface)
++    if let Some(field) = crate::text_input::owner(surface)
+         && is_ancestor(view, &field)
+     {
+         crate::text_input::blur(&field);
+@@ -1158,11 +1158,11 @@
+         set_fade(&view, 1.0);
+         if let Some(field) = restore
+             && field.attached()
+-            && crate::text_input::focused(surface).is_none()
++            && crate::text_input::owner(surface).is_none()
+             && is_ancestor(&self.focus_scope(surface), &field)
+         {
+             // Not while another modal still covers it.
+-            crate::text_input::focus(&field);
++            crate::text_input::focus_view(surface, &field);
+         }
+         match image {
+             Some(picture) => {
+@@ -1506,7 +1506,7 @@
+     }
+     // The field being typed in under the modal leaves it (until the modal
+     // closes); one of the modal's own keeps it.
+-    let field = crate::text_input::focused(surface).filter(|f| !is_ancestor(view, f));
++    let field = crate::text_input::owner(surface).filter(|f| !is_ancestor(view, f));
+     if let Some(field) = &field {
+         crate::text_input::blur(field);
+     }
+diff --git a/crates/nsh-platform-windows/src/surface.rs b/crates/nsh-platform-windows/src/surface.rs
+--- a/crates/nsh-platform-windows/src/surface.rs
++++ b/crates/nsh-platform-windows/src/surface.rs
+@@ -192,6 +192,8 @@
+     pub(crate) native: crate::native::NativeState,
+     /// The app's keyboard shortcuts ([`crate::keymap`]).
+     pub(crate) keymap: crate::keymap::KeymapState,
++    #[cfg(test)]
++    pub(crate) focus_test_events: RefCell<Vec<(NodeId, EventKind)>>,
+     /// Hosted items drawn by the last frame ([`Hosted::placed`]).
+     placed: RefCell<Vec<(Rc<dyn Hosted>, RECT)>>,
+     /// The window's composition while it has web views (each holds it).
+@@ -259,6 +261,8 @@
+             image_cache: RefCell::new(None),
+             native: Default::default(),
+             keymap: Default::default(),
++            #[cfg(test)]
++            focus_test_events: RefCell::default(),
+             placed: RefCell::default(),
+             composition: RefCell::default(),
+             composed: RefCell::default(),
+@@ -409,6 +413,7 @@
+ 
+     /// Stops the app and removes its views.
+     pub(crate) fn stop(&self) {
++        crate::text_input::clear(self);
+         // Dropping the engine joins its thread.
+         self.control.borrow_mut().take();
+         self.engine.borrow_mut().take();
+@@ -435,6 +440,8 @@
+ 
+     /// Sends an event to JS.
+     pub(crate) fn event(&self, id: NodeId, kind: EventKind, payload: EventPayload) {
++        #[cfg(test)]
++        self.focus_test_events.borrow_mut().push((id, kind));
+         self.control(|c| c.dispatch_event(id, kind, payload));
+     }
+ 
+@@ -873,6 +880,7 @@
+ 
+ impl Drop for Surface {
+     fn drop(&mut self) {
++        crate::text_input::clear(self);
+         let key = self.key;
+         let _ = SURFACES.try_with(|s| s.borrow_mut().remove(&key));
+     }
+diff --git a/crates/nsh-platform-windows/src/text_input.rs b/crates/nsh-platform-windows/src/text_input.rs
+--- a/crates/nsh-platform-windows/src/text_input.rs
++++ b/crates/nsh-platform-windows/src/text_input.rs
+@@ -21,7 +21,10 @@
+ //! never overwritten. Programmatic changes (JS values) report nothing but
+ //! the selection. Lengths and offsets JS sees are UTF-16 units.
+ //!
+-//! Focus is one field per surface. The window's focus is followed apart
++//! Focus has one owner (a field or an ordinary view) per surface.
++//! `owner` reads that slot; `focused` projects only its input, so a generic
++//! view never acquires text-editing shortcuts, a caret or an IME context.
++//! The window's focus is followed apart
+ //! from it, as on Linux: an inactive window keeps its focused field (with
+ //! no caret) and gets it back when activated. The IME is enabled only
+ //! while an editable, non-secure field has the focus
+@@ -771,7 +774,7 @@
+ 
+ // --- Focus -------------------------------------------------------------------
+ 
+-/// A surface's focused field, and whether its window is active.
++/// The single keyboard focus owner (field or ordinary view) of a surface.
+ #[derive(Default)]
+ struct Focus {
+     view: Option<NshView>,
+@@ -830,14 +833,20 @@
+ 
+ /// The field that has the keyboard focus.
+ pub(crate) fn focused(surface: &Surface) -> Option<NshView> {
++    owner(surface).filter(|view| view.state().input.is_some())
++}
++
++/// The keyboard focus owner, independent of whether it edits text.
++pub(crate) fn owner(surface: &Surface) -> Option<NshView> {
+     let view = FOCUS.with(|f| f.borrow().get(&surface.key()).and_then(|f| f.view.clone()))?;
+     // A field the app removed loses the focus quietly (its node is gone).
+-    if view.attached() && view.state().input.is_some() {
++    if view.attached() {
+         return Some(view);
+     }
+     if let Some(input) = input_of(&view) {
+         input.focused.set(false);
+     }
++    crate::input::set_state(surface, &view, state::FOCUSED, false);
+     FOCUS.with(|f| {
+         if let Some(f) = f.borrow_mut().get_mut(&surface.key()) {
+             f.view = None;
+@@ -848,14 +857,21 @@
+     None
+ }
+ 
+-fn window_active(surface: &Surface) -> bool {
++pub(crate) fn window_active(surface: &Surface) -> bool {
+     FOCUS.with(|f| f.borrow().get(&surface.key()).is_none_or(|f| !f.inactive))
++}
++
++/// A composition keeps its editing keys, ahead of application accelerators.
++pub(crate) fn composing(surface: &Surface) -> bool {
++    focused(surface)
++        .and_then(|view| input_of(&view))
++        .is_some_and(|input| input.model.borrow().composition.is_some())
+ }
+ 
+ /// Moves the surface's focus to `view` (or nowhere), reporting the blur of
+ /// the field that had it, then the focus of the new one.
+ fn set_focus(surface: &Rc<Surface>, view: Option<&NshView>) {
+-    let old = focused(surface);
++    let old = owner(surface);
+     if old.as_ref() == view {
+         return;
+     }
+@@ -873,14 +889,14 @@
+         send(surface, old, EventKind::Blur, || EventPayload::None);
+         old.changed();
+     }
+-    if let Some(view) = view
+-        && let Some(input) = input_of(view)
+-    {
++    if let Some(view) = view {
+         FOCUS.with(|f| f.borrow_mut().entry(surface.key()).or_default().view = Some(view.clone()));
+-        input.focused.set(true);
+-        input.active.set(window_active(surface));
+-        input.wake_caret();
+-        input.reveal();
++        if let Some(input) = input_of(view) {
++            input.focused.set(true);
++            input.active.set(window_active(surface));
++            input.wake_caret();
++            input.reveal();
++        }
+         crate::input::set_state(surface, view, state::FOCUSED, true);
+         send(surface, view, EventKind::Focus, || EventPayload::None);
+         // The scroll views around bring the field into view.
+@@ -1489,15 +1505,28 @@
+ /// `focus()`.
+ pub(crate) fn focus(view: &NshView) {
+     if let Some(surface) = surface_of(view) {
+-        set_focus(&surface, Some(view));
++        // Internal navigation restoration may hold the navigation borrow.
++        // The caller owns modal admission; generic commands check it too.
++        focus_view(&surface, view);
++    }
++}
++
++/// Focuses a field or a generic stop using the same owner and IME lifecycle.
++pub(crate) fn focus_view(surface: &Rc<Surface>, view: &NshView) {
++    if crate::input::is_key_stop(view) {
++        crate::native::take_keyboard(surface);
++        set_focus(surface, Some(view));
+     }
+ }
+ 
+ /// `blur()`.
+ pub(crate) fn blur(view: &NshView) {
+-    if let Some(surface) = surface_of(view)
+-        && focused(&surface).as_ref() == Some(view)
+-    {
++    let key = FOCUS.with(|f| {
++        f.borrow()
++            .iter()
++            .find_map(|(key, focus)| (focus.view.as_ref() == Some(view)).then_some(*key))
++    });
++    if let Some(surface) = key.and_then(Surface::by_key) {
+         set_focus(&surface, None);
+     }
+ }
+@@ -1509,16 +1538,13 @@
+ 
+ /// Focuses `view`, reached with Tab: as in Windows' dialogs, its text is
+ /// selected.
+-pub(crate) fn tab_to(view: &NshView) {
+-    let Some(surface) = surface_of(view) else {
+-        return;
+-    };
+-    set_focus(&surface, Some(view));
++pub(crate) fn tab_to(surface: &Rc<Surface>, view: &NshView) {
++    focus_view(surface, view);
+     if let Some(input) = input_of(view)
+         && input.focused.get()
+     {
+         input.model.borrow_mut().select_all();
+-        after_edit(&surface, view, &input, false);
++        after_edit(surface, view, &input, false);
+     }
+ }
+ 
+@@ -1574,6 +1600,24 @@
+         update_ime(surface);
+         place_ime(surface);
+     }
++    blink::update();
++}
++
++/// Drops retained views and the caret timer when an engine or surface stops.
++pub(crate) fn clear(surface: &Surface) {
++    let Ok(old) = FOCUS.try_with(|f| f.borrow_mut().remove(&surface.key())) else {
++        return;
++    };
++    if let Some(view) = old.and_then(|f| f.view)
++        && let Some(input) = input_of(&view)
++    {
++        cancel_composition(surface);
++        input.focused.set(false);
++        input.active.set(false);
++        input.drag.set(None);
++        input.model.borrow_mut().composition = None;
++    }
++    update_ime(surface);
+     blink::update();
+ }
+ 
+@@ -2065,14 +2109,17 @@
+                 .values()
+                 .filter(|f| !f.inactive)
+                 .filter_map(|f| f.view.clone())
++                .filter(|view| view.state().input.is_some())
+                 .collect()
+         })
+     }
+ 
+     /// Starts or stops the timer as fields gain and lose the focus.
+     pub(super) fn update() {
++        let Ok(timer) = TIMER.try_with(Cell::get) else {
++            return;
++        };
+         let wanted = !carets().is_empty();
+-        let timer = TIMER.with(Cell::get);
+         if wanted && timer == 0 {
+             restart();
+         } else if !wanted && timer != 0 {
+@@ -2114,6 +2161,98 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn windows_composing_input_keeps_return_tab_and_space_ahead_of_accelerators() {
++        use nsh_core::{
++            ViewKind,
++            keymap::{KeyBinding, Keymap, Keystroke, When},
++            platform::Os,
++        };
++        let surface = Surface::new(Default::default());
++        let view = NshView::new(2, ViewKind::Input);
++        view.insert_before(&surface.root, None);
++        create(&surface, &view);
++        for event in [EventKind::SubmitEditing, EventKind::Focus, EventKind::Blur] {
++            view.state_mut().events.set(event, true);
++        }
++        let input = input_of(&view).unwrap();
++        input.config.borrow_mut().submit_behavior = Some(SubmitBehavior::Submit);
++        focus_view(&surface, &view);
++        input.model.borrow_mut().composition = Some(Composition::new("候选".into(), 6, None));
++        let bindings = ["enter", "tab", "space"]
++            .into_iter()
++            .enumerate()
++            .map(|(id, key)| {
++                KeyBinding::new(
++                    id as u32,
++                    Keystroke::parse(key, Os::Windows).unwrap(),
++                    When::Always,
++                    false,
++                )
++            })
++            .collect();
++        crate::keymap::set(&surface, std::sync::Arc::new(Keymap::new(bindings)));
++        for vk in [0x0D, 0x09, 0x20] {
++            crate::input::key(
++                &surface,
++                KeyEvent {
++                    vk,
++                    down: true,
++                    repeat: false,
++                    modifiers: Modifiers::default(),
++                },
++            );
++        }
++        assert!(composing(&surface));
++        assert_eq!(owner(&surface), Some(view.clone()));
++        assert!(!surface.focus_test_events.borrow().iter().any(|(_, kind)| {
++            matches!(
++                kind,
++                EventKind::SubmitEditing | EventKind::KeyCommand | EventKind::Press
++            )
++        }));
++        input.model.borrow_mut().composition = None;
++        crate::keymap::clear(&surface);
++        assert!(crate::input::key(
++            &surface,
++            KeyEvent {
++                vk: 0x0D,
++                down: true,
++                repeat: false,
++                modifiers: Modifiers::default(),
++            }
++        ));
++        assert_eq!(
++            surface
++                .focus_test_events
++                .borrow()
++                .iter()
++                .filter(|(_, kind)| *kind == EventKind::SubmitEditing)
++                .count(),
++            1
++        );
++        let button = NshView::new(4, ViewKind::View);
++        button.state_mut().events.set(EventKind::Press, true);
++        button.insert_before(&surface.root, None);
++        focus_view(&surface, &button);
++        assert!(focused(&surface).is_none());
++        assert_eq!(owner(&surface), Some(button));
++        assert!(!input.focused.get());
++    }
++
++    #[test]
++    fn windows_surface_drop_releases_the_retained_focus_owner() {
++        let surface = Surface::new(Default::default());
++        let view = NshView::new(2, nsh_core::ViewKind::View);
++        view.state_mut().events.set(EventKind::Press, true);
++        view.insert_before(&surface.root, None);
++        focus_view(&surface, &view);
++        let key = surface.key();
++        assert!(FOCUS.with(|f| f.borrow().contains_key(&key)));
++        drop(surface);
++        assert!(!FOCUS.with(|f| f.borrow().contains_key(&key)));
++    }
+ 
+     #[test]
+     fn alignment() {
+diff --git a/crates/nsh-testing/src/headless/keyboard.rs b/crates/nsh-testing/src/headless/keyboard.rs
+--- a/crates/nsh-testing/src/headless/keyboard.rs
++++ b/crates/nsh-testing/src/headless/keyboard.rs
+@@ -6,7 +6,7 @@
+ //! focus is reports `onKeyCommand`. Else Tab moves the keyboard focus
+ //! between the inputs and the views that are its stops (those that take
+ //! presses, and `focusable` ones that take none) where the platform
+-//! does (macOS, the web), Return and Space press the pressable it is on,
++//! does (macOS, Windows, the web), Return and Space press the pressable it is on,
+ //! the focused input takes the keys that edit it, and Escape goes back.
+ 
+ use nsh_core::{
+@@ -57,6 +57,12 @@
+     pub fn press_key(&mut self, keys: &str) -> Result<(), String> {
+         self.step(format!("keyboard.press({keys})"));
+         let stroke = Keystroke::parse(keys, self.environment.os).map_err(|e| e.to_string())?;
++        if self.environment.os == Os::Windows {
++            if self.environment.lifecycle != nsh_core::platform::Lifecycle::Active {
++                return self.done();
++            }
++            self.reconcile_windows_focus();
++        }
+         let editing = self.screen.focused().is_some();
+         // A hardware keyboard fires the app's shortcuts (`on_key`,
+         // `keymap.bind`), on every platform.
+@@ -115,21 +121,36 @@
+     }
+ 
+     /// Whether Tab stops at views (not only inputs), as on macOS and the
+-    /// web (the other platforms move it between fields only).
++    /// web and Windows (the other platforms move it between fields only).
+     fn tabs_to_views(&self) -> bool {
+-        matches!(self.environment.os, Os::MacOs | Os::Web)
++        matches!(self.environment.os, Os::MacOs | Os::Windows | Os::Web)
+     }
+ 
+     /// Tab (`back`: Shift+Tab): the keyboard focus moves to the next stop
+     /// ([`crate::screen::Screen::tab_stops`]), around from the last.
+     fn tab(&mut self, back: bool) {
+-        let stops = self.screen.tab_stops();
++        let stops = self.keyboard_stops();
+         let current = self.screen.focused().or(self.screen.key_focus());
+         let at = current.and_then(|id| stops.iter().position(|s| *s == id));
+         let Some(next) = nsh_core::input::tab_stop(at, stops.len(), back, true) else {
+             return;
+         };
+         self.move_focus(Some(stops[next]));
++    }
++
++    fn keyboard_stops(&self) -> Vec<NodeId> {
++        if self.environment.os == Os::Windows {
++            self.screen.windows_tab_stops()
++        } else {
++            self.screen.tab_stops()
++        }
++    }
++
++    fn reconcile_windows_focus(&mut self) {
++        let current = self.screen.focused().or(self.screen.key_focus());
++        if current.is_some_and(|id| !self.screen.windows_tab_stops().contains(&id)) {
++            self.move_focus(None);
++        }
+     }
+ 
+     /// Moves the keyboard focus to `to` (an input or a view), telling
+@@ -194,7 +215,7 @@
+                     to = None;
+                     key = None;
+                 }
+-                Command::Focus if id != ROOT_ID && self.screen.tab_stops().contains(&id) => {
++                Command::Focus if id != ROOT_ID && self.keyboard_stops().contains(&id) => {
+                     to = Some(Some(id));
+                     key = Some(id);
+                 }
+@@ -202,11 +223,18 @@
+                     to = Some(None);
+                     key = None;
+                 }
++                Command::Blur if id == ROOT_ID && self.environment.os == Os::Windows => {
++                    to = Some(None);
++                    key = None;
++                }
+                 _ => {}
+             }
+         }
+         if let Some(to) = to {
+             self.move_focus(to);
++        }
++        if self.environment.os == Os::Windows {
++            self.reconcile_windows_focus();
+         }
+     }
+ 
+diff --git a/crates/nsh-testing/src/headless/mod.rs b/crates/nsh-testing/src/headless/mod.rs
+--- a/crates/nsh-testing/src/headless/mod.rs
++++ b/crates/nsh-testing/src/headless/mod.rs
+@@ -2630,6 +2630,44 @@
+             .unwrap();
+     }
+ 
++    #[test]
++    fn windows_generic_tab_reverse_activation_and_lifecycle() {
++        use nsh_core::platform::{Lifecycle, Os};
++        let mut config = EngineConfig::new(Root::of::<FocusStops>());
++        config.environment.os = Os::Windows;
++        let mut app = Headless::start(config).unwrap();
++        app.first_render().unwrap();
++        app.press_key("tab").unwrap();
++        app.press_key("enter").unwrap();
++        app.wait_for("Opens 1 presses 0 steps 0 focused false")
++            .unwrap();
++        app.press_key("tab").unwrap();
++        app.press_key("enter").unwrap();
++        app.press_key("space").unwrap();
++        app.press_key("right").unwrap();
++        app.wait_for("Opens 1 presses 0 steps 1 focused true")
++            .unwrap();
++        app.press_key("tab").unwrap();
++        app.press_key("space").unwrap();
++        app.wait_for("Opens 1 presses 1 steps 1 focused false")
++            .unwrap();
++        app.press_key("tab").unwrap();
++        app.press_key("shift+tab").unwrap();
++        app.press_key("enter").unwrap();
++        app.wait_for("Opens 1 presses 2 steps 1 focused false")
++            .unwrap();
++        app.set_environment("background", |env| env.lifecycle = Lifecycle::Background)
++            .unwrap();
++        app.press_key("enter").unwrap();
++        app.wait_for("Opens 1 presses 2 steps 1 focused false")
++            .unwrap();
++        app.set_environment("foreground", |env| env.lifecycle = Lifecycle::Active)
++            .unwrap();
++        app.press_key("enter").unwrap();
++        app.wait_for("Opens 1 presses 3 steps 1 focused false")
++            .unwrap();
++    }
++
+     #[cfg(feature = "js")]
+     #[test]
+     fn a_step_fails_when_the_app_throws() {
+diff --git a/crates/nsh-testing/src/screen.rs b/crates/nsh-testing/src/screen.rs
+--- a/crates/nsh-testing/src/screen.rs
++++ b/crates/nsh-testing/src/screen.rs
+@@ -188,6 +188,10 @@
+     /// `focusable`: `Some(true)` makes it a stop of Tab, `Some(false)` keeps
+     /// a pressable out ([`nsh_core::ViewProps::focus_stop`]).
+     focusable: Option<bool>,
++    /// Windows keyboard traversal honors accessibility exclusion separately
++    /// from visual visibility, as the native focus owner does.
++    accessibility_hidden: bool,
++    accessible: Option<bool>,
+     /// It is selected (`selected`, its accessibility state; a canvas node's
+     /// `selected`).
+     selected: bool,
+@@ -360,6 +364,9 @@
+                 if self.focused == Some(*id) {
+                     self.focused = None;
+                 }
++                if self.key_focus == Some(*id) {
++                    self.key_focus = None;
++                }
+             }
+             MountItem::ScreenConfig { id, config } => {
+                 self.nodes.entry(*id).or_default().prevent_back = config.prevent_back;
+@@ -387,6 +394,8 @@
+                 view.role = props.accessibility.role;
+                 view.disabled = props.accessibility.state.disabled;
+                 view.focusable = props.focusable;
++                view.accessibility_hidden = props.accessibility.hidden;
++                view.accessible = props.accessibility.accessible;
+                 view.selected = props.accessibility.state.selected;
+                 view.accessibility_state = props.accessibility.state;
+                 view.level = props.accessibility.level;
+@@ -1823,6 +1832,39 @@
+             .collect()
+     }
+ 
++    /// Windows stops in the foremost modal, with ancestor interaction gates.
++    pub(crate) fn windows_tab_stops(&self) -> Vec<NodeId> {
++        let top = self
++            .shown()
++            .into_iter()
++            .rev()
++            .find(|id| self.kind(*id) == Some(ViewKind::Modal));
++        self.tab_stops()
++            .into_iter()
++            .filter(|id| {
++                if top.is_some_and(|top| *id != top && !self.is_inside(*id, top)) {
++                    return false;
++                }
++                if self.nodes.get(id).is_none_or(|view| {
++                    view.accessible == Some(false) || view.focusable == Some(false)
++                }) {
++                    return false;
++                }
++                let mut current = Some(*id);
++                while let Some(id) = current {
++                    let Some(view) = self.nodes.get(&id) else {
++                        break;
++                    };
++                    if view.accessibility_hidden || view.pointer_events == PointerEvents::None {
++                        return false;
++                    }
++                    current = view.parent;
++                }
++                true
++            })
++            .collect()
++    }
++
+     pub(crate) fn scroll(&self, id: NodeId) -> Option<&Scroll> {
+         self.nodes.get(&id)?.scroll.as_ref()
+     }
+@@ -1858,6 +1900,59 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn windows_keyboard_stops_filter_ax_pointer_ancestors_and_modal_scope() {
++        let mut screen = Screen::default();
++        screen.apply(&batch(vec![
++            create(2, ViewKind::View),
++            create(4, ViewKind::View),
++            create(6, ViewKind::View),
++            create(8, ViewKind::View),
++            frame(2, 0.0, 0.0, 100.0, 30.0),
++            frame(4, 0.0, 0.0, 100.0, 30.0),
++            frame(6, 0.0, 0.0, 100.0, 30.0),
++            frame(8, 0.0, 0.0, 100.0, 30.0),
++            insert(1, 2),
++            insert(1, 4),
++            insert(1, 6),
++            insert(6, 8),
++        ]));
++        for id in [2, 4, 6, 8] {
++            screen
++                .nodes
++                .get_mut(&id)
++                .unwrap()
++                .events
++                .set(EventKind::Press, true);
++        }
++        assert_eq!(screen.windows_tab_stops(), [2, 4, 6, 8]);
++        screen.nodes.get_mut(&4).unwrap().accessible = Some(false);
++        screen.nodes.get_mut(&6).unwrap().accessibility_hidden = true;
++        assert_eq!(screen.windows_tab_stops(), [2]);
++        screen.nodes.get_mut(&6).unwrap().accessibility_hidden = false;
++        screen.nodes.get_mut(&6).unwrap().pointer_events = PointerEvents::None;
++        assert_eq!(screen.windows_tab_stops(), [2]);
++        screen.nodes.get_mut(&6).unwrap().pointer_events = PointerEvents::Auto;
++        screen.nodes.get_mut(&6).unwrap().disabled = true;
++        assert_eq!(screen.windows_tab_stops(), [2]);
++        screen.apply(&batch(vec![
++            create(10, ViewKind::Modal),
++            create(12, ViewKind::View),
++            frame(12, 0.0, 0.0, 100.0, 30.0),
++            insert(1, 10),
++            insert(10, 12),
++        ]));
++        screen
++            .nodes
++            .get_mut(&12)
++            .unwrap()
++            .events
++            .set(EventKind::Press, true);
++        assert_eq!(screen.windows_tab_stops(), [12]);
++        screen.close(10);
++        assert_eq!(screen.windows_tab_stops(), [2]);
++    }
+ 
+     /// A canvas over a pressable pad, both inside a plain container.
+     fn canvas_screen() -> Screen {

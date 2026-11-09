@@ -3,6 +3,9 @@ import { settingsDict } from './uk.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': 'Не вдалося відновити попереднє місце. Поточна сторінка залишилася без змін.',
+  'sessions.navigation.saveFailed': 'Не вдалося зберегти навігацію. Останнє збережене місце залишилося незмінним.',
+  'sessions.navigation.restoreBlocked': 'Зараз неможливо відновити попереднє місце. Поточна сторінка залишилася без змін.',
   'mobile.instances.nativeEditor.invalid': 'Введіть назву завдовжки від 1 до 120 символів і дійсну адресу сервера.',
   'mobile.instances.nativeEditor.missing': 'Цього збереженого підключення більше немає.',
   'mobile.instances.nativeEditor.stale': 'Це підключення змінилося. Закрийте й знову відкрийте редактор перед збереженням.',
@@ -1675,6 +1678,10 @@ export const dict: Record<I18nKey, string> = {
   "chat.goal.action.save": "Зберегти ціль",
   "chat.goal.action.start": "Розпочати ціль",
   "chat.goal.toast.actionFailed": "Не вдалося оновити ціль",
+  "chat.gitContext.replaceDraftTitle": "Замінити поточну чернетку?",
+  "chat.gitContext.replaceDraftBody": "Текст і посилання поточної чернетки буде замінено збереженим контекстом Git. Вкладення буде збережено. Цю дію неможливо скасувати.",
+  "chat.gitContext.replaceDraftAction": "Замінити чернетку",
+  "chat.gitContext.stagingFailed": "Не вдалося підготувати контекст Git. Поточну чернетку збережено.",
   "chat.goal.toast.distillFallback": "Ціль перевищила ліміт і її не вдалося стиснути — аудитор використовує скорочену версію",
   "chat.goal.row.aria": "Ціль сесії — відкрити деталі",
   "chat.goal.button.createAria": "Встановити ціль сесії",

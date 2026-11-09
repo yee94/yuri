@@ -56,6 +56,21 @@ test('short Agent tap cycles without opening a sheet, reveals then retracts labe
   ]);
 }, 75_000);
 
+test('desktop Agent click opens the actual selector without cycling; inactive model selection is disabled', () => {
+  run([
+    'await app.press("id:fixture-desktop");',
+    'await app.type("id:fixture-composer", "Desktop retained draft");',
+    'await app.press("id:chat-agent-selection");',
+    'await app.waitFor("id:model-agent-plan");',
+    'expect(app.shows("label:build")).toBe(true);',
+    'expect(app.shows("id:chat-agent-cycle-label")).toBe(false);',
+    'await app.back();',
+    'await app.press("id:fixture-hide");',
+    'expect(app.enabled("id:chat-selection")).toBe(false);',
+    'expect(app.value("id:fixture-composer")).toBe("Desktop retained draft");',
+  ]);
+}, 75_000);
+
 test('pending Agent write rejects reentry and reads authority after settlement', () => {
   run([
     'await app.press("id:chat-agent-selection");',

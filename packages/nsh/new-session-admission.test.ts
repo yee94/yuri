@@ -7,6 +7,7 @@ const harness = vi.hoisted(() => ({
   cleanups: [] as Array<() => void>, stops: [] as Array<() => void>,
 }));
 vi.mock('nsh', () => ({
+  platform: { os: 'ios', desktop: false },
   batch: <T>(work: () => T) => work(), untracked: <T>(work: () => T) => work(),
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   Storage: { getItem: harness.get, setItem: harness.set }, lifecycle: () => 'active',

@@ -37,7 +37,7 @@ vi.mock('nsh', () => {
     } };
     h.stops.push(() => { reaction.stopped = true; pending.delete(reaction); reaction.deps.forEach(deps => deps.delete(reaction)); untracked(() => reaction.dispose?.()); }); reaction.run();
   }
-  return { signal, effect, untracked, lifecycle: () => 'active', cleanup: (work: () => void) => h.cleanups.push(work),
+  return { signal, effect, untracked, context: (initial: unknown) => () => initial, lifecycle: () => 'active', cleanup: (work: () => void) => h.cleanups.push(work),
     batch: <T>(work: () => T) => { h.depth++; try { return work(); } finally { h.depth--; flush(); } },
     Storage: { getItem: async () => null, setItem: async () => {} }, host: { available: () => true, call: h.call, on: () => () => {} },
     Text: 'Text', View: 'View', Image: 'Image', Scroll: 'Scroll', openUrl: async () => { throw new Error('Real browser forbidden'); } };
@@ -61,6 +61,7 @@ async function pageFixture(kind: 'github' | 'git-credentials' | 'about') {
   h.call.mockImplementation(async (name, input) => host.call(name, input));
   expect(state.captureHostOperation().current()).toBe(true);
   const modules: Record<string, unknown> = { nsh, 'nsh/base': { Button: 'Button' }, './state': state, './runtime': runtime,
+    './native-select': { NativeSelect: 'Select' },
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './settings-protocol': protocol,
     './settings-github-core': githubCore, './settings-github-protocol': gitProtocol, './settings-git-credentials-core': credentialsCore,
     './settings-about-core': aboutCore, './settings-about-diagnostics': diagnostics, './settings-target': { SettingsTarget: 'Target' },
@@ -82,6 +83,8 @@ async function pageFixture(kind: 'github' | 'git-credentials' | 'about') {
       require(id: string) { if (!(id in modules)) throw new Error('Unexpected module ' + id); return modules[id]; } });
     return exports as T;
   }
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   modules['./settings-controls'] = evaluate('settings-controls.tsx');
   const github = evaluate<typeof import('./settings-github')>('settings-github.tsx'); modules['./settings-github'] = github;
   const tree = kind === 'github' ? github.SettingsGitHub({ active: true, open: async url => host.call('github.fixture.open', { url }) })

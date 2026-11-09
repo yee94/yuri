@@ -6,7 +6,9 @@ import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
 import { createProjectsAttention, createProjectsAttentionSource, isProjectsAttentionEvent } from './projects-attention';
 import { readProjectsBlocking } from './projects-attention-blocking';
-import { runtimeEventFrom } from './model';
+import { eventBusy, eventSessionID, record, runtimeEventFrom } from './model';
+import { runtimeScopeFrom, sameRuntimeScope } from './runtime-scope';
+import { desktopSidebarSessionStateKey } from './desktop-sidebar-projection';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const file = ts.createSourceFile('state.ts', readFileSync(path.join(root, 'state.ts'), 'utf8'), ts.ScriptTarget.ES2023, true);
@@ -22,15 +24,20 @@ function fixture(onEvent?: (event: ReturnType<typeof runtimeEventFrom>, scope: {
       : path.startsWith('/api/form?') ? { data: [{ id: 'pending', sessionID: 'root', metadata: { kind: 'question' } }] } : { data: [] };
   });
   const host = { on: vi.fn((_name: string, listener: typeof event) => { event = listener; return vi.fn(); }) };
-  const context = vm.createContext({ exports: {}, generation: 1, switching: false, app: { connection: () => ({ id: 'host' }), sessions: () => [] },
+  const nativeScope = { hostID: 'host', lease: 'fixture-lease' };
+  let live = new Map();
+  const context = vm.createContext({ exports: {}, generation: 1, switching: false, app: { connection: () => ({ id: 'host' }), sessions: () => [], runtimeScope: () => nativeScope },
     createProjectsAttentionSource, isProjectsAttentionEvent, projectsAttention: attention, request: send,
+    captureHostRequest: () => send, runtimeReady: () => true, eventBusy, eventSessionID, record, sameRuntimeScope, desktopSidebarSessionStateKey,
+    workStatusEventScope: (payload: unknown) => runtimeScopeFrom(record(payload).expectedHost), notifyWorkStatusChildren: vi.fn(), revokeWorkStatusChildActivity: vi.fn(),
+    sidebarLive: Object.assign(() => live, { set: (value: typeof live) => { live = value; } }), sidebarUnseen: { set: vi.fn() },
     effect: (work: () => void) => { effects.push(work); work(); }, untracked: (work: () => void) => work(), lifecycle: () => active ? 'active' : 'background',
     host, runtimeEventFrom, catalogDomains: () => [], report: (failure: unknown) => { throw failure; }, cleanup: (work: () => void) => cleanup.push(work),
     setTimeout, clearTimeout, dirtyDomains: new Set(), onEvent,
   });
   vm.runInContext(compiled + '\nexports.observeRuntime(() => {}, onEvent);', context);
   return { attention, send, host, context, effects, cleanup, hide: () => { active = false; effects.forEach(work => work()); }, show: () => { active = true; effects.forEach(work => work()); },
-    emit: (type: string, data: Record<string, unknown> = {}, key = 'global') => event({ key, data: JSON.stringify({ directory: '/repo', payload: { type, data } }) }) };
+    emit: (type: string, data: Record<string, unknown> = {}, key = 'global') => event({ key, expectedHost: nativeScope, data: JSON.stringify({ directory: '/repo', payload: { type, data } }) }) };
 }
 it('the sole production sink forwards global and Chat events, but not hidden or switching scopes', () => {
   const sink = vi.fn(), f = fixture(sink);

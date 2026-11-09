@@ -9,6 +9,7 @@ export function createHost() {
   const present = row => row.files.length > 0 || row.credentials.length > 0 || ['environment', 'runtime'].includes(row.id);
   const connections = row => [...row.credentials.map(id => ({ type: 'credential', id, method: 'key', label: 'Fixture account' })), ...(row.id === 'environment' ? [{ type: 'env', name: 'FIXTURE_KEY' }] : [])];
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'provider-removal-fixture', runtimeScope: { hostID: 'provider-removal-fixture', lease: 'synthetic-provider-removal-lease' }, connections: [{ id: 'provider-removal-fixture', label: 'Synthetic Provider Host', url: 'https://providers.example.invalid', lastUsedAt: 0 }] };
     if (name !== 'runtime.request') throw new Error('Unexpected provider-removal native call');
     const route = fixtureRequest(input), { path, method, params } = route;
     if (input.path.endsWith('?') || input.body !== undefined) throw new Error('Unexpected provider-removal fixture query/body');

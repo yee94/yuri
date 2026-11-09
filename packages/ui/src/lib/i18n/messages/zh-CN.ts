@@ -3,6 +3,9 @@ import { settingsDict } from './zh-CN.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': '未能恢复上次的位置，当前页面已保留。',
+  'sessions.navigation.saveFailed': '未能保存导航位置，上次保存的位置仍保留。',
+  'sessions.navigation.restoreBlocked': '暂时无法恢复上次的位置，当前页面已保留。',
   'chat.newSessionDraft.capturedInput': '首次发送的已保存内容。后续编辑会保留为下一份草稿。',
   'chat.newSessionDraft.unknownTitle': '无法确认会话是否已创建',
   'chat.newSessionDraft.unknownBody': '草稿和发送 ID 已保留。再次创建可能产生重复会话。请选择本次创建的空会话，或先返回会话列表核对。',
@@ -1642,6 +1645,10 @@ export const dict: Record<I18nKey, string> = {
   'chat.goal.action.save': '保存目标',
   'chat.goal.action.start': '启动目标',
   'chat.goal.toast.actionFailed': '目标更新失败',
+  'chat.gitContext.replaceDraftTitle': '替换当前草稿？',
+  'chat.gitContext.replaceDraftBody': '当前草稿的文本和引用将被已捕获的 Git 上下文替换，附件会保留。此操作无法撤销。',
+  'chat.gitContext.replaceDraftAction': '替换草稿',
+  'chat.gitContext.stagingFailed': '无法准备 Git 上下文，当前草稿已保留。',
   'chat.goal.toast.distillFallback': '目标超出限制且无法提炼 — 审核将使用节选版本',
   'chat.goal.row.aria': '会话目标 — 打开详情',
   'chat.goal.button.createAria': '设置会话目标',

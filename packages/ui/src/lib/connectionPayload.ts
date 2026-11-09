@@ -46,7 +46,7 @@ const globalWithBuffer = globalThis as typeof globalThis & {
 
 const base64UrlEncode = (value: string): string => {
   if (globalWithBuffer.Buffer) {
-    return globalWithBuffer.Buffer.from(value, 'utf8').toString('base64url');
+    return globalWithBuffer.Buffer.from(value, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
   const bytes = new TextEncoder().encode(value);
   let binary = '';
@@ -58,10 +58,10 @@ const base64UrlEncode = (value: string): string => {
 
 const base64UrlDecode = (value: string): string | null => {
   try {
-    if (globalWithBuffer.Buffer) {
-      return globalWithBuffer.Buffer.from(value, 'base64url').toString('utf8');
-    }
     const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+    if (globalWithBuffer.Buffer) {
+      return globalWithBuffer.Buffer.from(padded, 'base64').toString('utf8');
+    }
     const binary = atob(padded);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);

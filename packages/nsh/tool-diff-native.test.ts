@@ -1,15 +1,29 @@
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 
 function run(steps: string[], ios = false) {
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'tool-diff-fixture.tsx', ...(ios ? ['--target', 'ios'] : [])], {
-    cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: 'utf8', timeout: 90_000,
-    input: [`const capture = ${ios && process.env.NSH_TOOL_DIFF_SCREENSHOTS === '1'};`, 'await app.waitFor("text:TOOL DIFF READY");', 'if (capture) await app.screenshot("../../.scratch/nsh/chat-frames/tools-chrome-uikit.png");', ...steps].join('\n'),
-  });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const root = path.dirname(fileURLToPath(import.meta.url)), parent = process.env.OPENCODE_TMP_DIR || path.join(tmpdir(), 'opencode');
+  mkdirSync(parent, { recursive: true });
+  const directory = mkdtempSync(path.join(parent, 'tool-diff-native-'));
+  try {
+    writeFileSync(path.join(directory, 'nsh.json'), JSON.stringify({ name: 'Historical diff fixture', id: 'example.yuri.tool-diff', version: '0.1.0', build: 1, theme: path.join(root, 'theme.json'), capabilities: { host: ['connection.list'] } }));
+    writeFileSync(path.join(directory, 'App.tsx'), `import { loadConnections } from ${JSON.stringify(path.join(root, 'state.ts'))}; void loadConnections().then(() => import(${JSON.stringify(path.join(root, 'tool-diff-fixture.tsx'))}));\n`);
+    writeFileSync(path.join(directory, 'host.js'), `export function createHost() { return { call(name) {
+      if (name !== 'connection.list') throw new Error('Historical diff must not request runtime data: ' + name);
+      return { selected: 'history-fixture', runtimeScope: { hostID: 'history-fixture', lease: 'history-fixture-lease' }, connections: [{ id: 'history-fixture', url: 'https://history.example.invalid', lastUsedAt: 1 }] };
+    } }; }\n`);
+    const commands = [`const capture = ${ios && process.env.NSH_TOOL_DIFF_SCREENSHOTS === '1'};`, 'await app.waitFor("text:TOOL DIFF READY");', 'if (capture) await app.screenshot("../../.scratch/nsh/chat-frames/tools-chrome-uikit.png");', ...steps]
+      .map(step => step.replaceAll('../../.scratch/nsh/chat-frames/', path.join(root, '../../.scratch/nsh/chat-frames/')));
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'App.tsx', '--web-host', 'host.js', ...(ios ? ['--target', 'ios'] : [])], {
+      cwd: directory, encoding: 'utf8', timeout: 90_000, input: commands.join('\n'),
+    });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
 const steps = [

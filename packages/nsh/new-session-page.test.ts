@@ -11,6 +11,7 @@ const harness = vi.hoisted(() => ({
 }));
 function source<T>(initial: T) { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); }
 vi.mock('nsh', () => ({
+  platform: { os: 'ios', desktop: false },
   batch: <T>(work: () => T) => work(), untracked: <T>(work: () => T) => work(),
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   effect: (work: () => void | (() => void)) => { harness.effects.push(work); const stop = work(); if (stop) harness.stops.push(stop); },
@@ -59,7 +60,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const uiRequest = vi.fn(async (path: string, method?: string, body?: unknown) => uiResponse(path, method, body));
   const keyboard = { trigger: () => null, commandTrigger: () => null, dismiss: () => {}, ref: () => {}, selectedRange: () => undefined, onFocus: () => {}, onBlur: () => {}, submitBehavior: () => 'newline', onSubmit: () => {}, onSelectionChange: () => {}, onCompositionChange: () => {}, beforeChange: () => {}, refresh: () => {} };
   const imports: Record<string, unknown> = {
-    nsh: { keymap: { bind: () => () => {} }, signal: source, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), token: (name: string) => name, cleanup: (work: () => void) => callbacks.push(work), effect: (work: () => void) => { effects.push(work); work(); }, lifecycle, platform: { os: 'ios' }, nativeComponent: (name: string, spec: unknown) => {
+    nsh: { batch: <T>(work: () => T) => work(), keymap: { bind: () => () => {} }, signal: source, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), token: (name: string) => name, cleanup: (work: () => void) => callbacks.push(work), effect: (work: () => void) => { effects.push(work); work(); }, lifecycle, platform: { os: 'ios' }, nativeComponent: (name: string, spec: unknown) => {
       if (name !== 'yuri.sheet.presentation') throw new Error(`Unexpected native leaf ${name}`);
       expect(spec).toEqual({ props: ['generation', 'detents', 'initialDetent', 'dismissible'], events: ['ready', 'opened', 'dismissed', 'cancel'] });
       return name;
@@ -70,10 +71,17 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
     './new-session-selection': { createNewSessionCatalog: (directory: string, current: () => boolean) => selection.createNewSessionCatalog(directory, current, uiRequest) },
     './composer-controls': { NativeCommandSuggestions: 'CommandSuggestions' }, './composer-reference-keyboard-native': { createNativeReferenceKeyboard: () => keyboard }, './composer-references-controls': { NativeReferencePicker: 'ReferencePicker' },
     './composer-surface': await import('./composer-surface'), './composer-commands-model': await import('./composer-commands-model'),
+    './new-session-local-commands': {},
     './composer-send': { NativeComposerSend: (props: Node['props']) => h('Button', { ...props, testID: 'send' }) }, './Icon': { Icon: 'Icon' }, './i18n': { t: (key: string) => key }, './model': model,
     './new-session': { ...api, createNativeNewSessionOwnership: (...args: Parameters<typeof api.createNativeNewSessionOwnership>) => { const owner = api.createNativeNewSessionOwnership(...args); owners.push(owner); return owner; } },
     './new-session-copy': { newSessionText: (key: string) => key }, './new-session-models': { NativeNewSessionModels: 'Models' }, './runtime': { native: async () => null, request: uiRequest }, './state': { ...state, captureHostRequest: () => uiRequest },
     './new-session-native-owners': { NativeNewSessionPresentation: 'NativePresentation', NativeNewSessionInputAX: 'NativeInputAX' },
+    './desktop-attachments': await import('./desktop-attachments'),
+    './desktop-attachments-recovery': await import('./desktop-attachments-recovery'),
+    './desktop-composer-actions': await import('./desktop-composer-actions'),
+    './page-operations': await import('./page-operations'),
+    './new-session-writer': await import('./new-session-writer'),
+    './new-session-directory': await import('./new-session-directory'),
   };
   const sourceFile = readFileSync(fileURLToPath(new URL('./new-session-page.tsx', import.meta.url)), 'utf8');
   // Observe the actual production expressions lazily, as NSH's signal-bound
@@ -107,7 +115,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const exports: { NativeNewSessionPage?: (props: Record<string, unknown>) => Node } = {};
   vm.runInNewContext(js, { exports, ...ports }, { filename: 'new-session-page.tsx' });
   const props = { project, get active() { return active(); }, onBack, onOpenChat: (_target: unknown, next: NativeNewSessionPageHandoff) => { receipt = next; } };
-  const root = exports.NativeNewSessionPage!(props); await owners[0]!.owner.ready;
+  const root = exports.NativeNewSessionPage!(props);
   const cache = new Map<Node['type'], Map<unknown, unknown>>();
   const eachCache = new WeakMap<Node, Map<unknown, unknown>>();
   const readyLeaves = new WeakSet<Node>();
@@ -135,6 +143,8 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
     }
     return [node, ...nodes(node.children)];
   }
+  nodes(root);
+  await owners[0]!.owner.ready;
   const tree = nodes(root);
   await flush();
   const find = (id: string) => { const result = nodes(root).find(node => node.props.testID === id); if (!result) throw new Error(`Missing page node: ${id}`); return result; };
@@ -260,7 +270,7 @@ describe('production page → system sheet native leaf callback boundary (not UI
     call(page.find('new-session-directory-choose'), 'onPress'); await flush(); page.runEffects();
     expect(page.owners).toHaveLength(1); expect(sheet.props.open).toBe(false); expect(dialog.props.open).toBe(true);
     expect(page.nativeCommand).toHaveBeenCalledWith('dismiss', { generation: native.props.generation }); expect(page.owners).toHaveLength(1);
-    expect(dialog.props.onClose).toBeUndefined(); dismissed(page, native); await flush(); expect(page.owners).toHaveLength(2);
+    expect(dialog.props.onClose).toBeUndefined(); dismissed(page, native); await flush(); page.render(); await flush(); expect(page.owners).toHaveLength(2);
     expect(page.onBack).not.toHaveBeenCalled(); expect(requests()).toEqual([]); page.unmount();
   });
   it('presets uses the same lifecycle and a retained add callback cannot write settings after cancellation', async () => {

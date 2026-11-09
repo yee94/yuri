@@ -1,0 +1,18 @@
+{
+  "name": "Synthetic Git application regression",
+  "id": "example.yuri.git-application-test",
+  "version": "0.1.0",
+  "build": 1,
+  "theme": "../../theme.json",
+  "capabilities": {
+    "clipboard": true,
+    "host": [
+      "connection.list", "appearance.reset", "appearance.apply",
+      "desktop.writer.capabilities", "desktop.writer.acquire", "desktop.writer.release", "desktop.writer.renew",
+      "native.diagnostics.status", "notification.status", "notification.launch.peek", "notification.configure",
+      "speech.prepare", "speech.stop", "speech.release",
+      "desktop.files.journal.snapshot", "desktop.files.journal.commit", "desktop.files.journal.sync",
+      "runtime.request", "runtime.stream", "runtime.stop", "git.test.storage"
+    ]
+  }
+}

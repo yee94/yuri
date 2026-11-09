@@ -26,6 +26,7 @@ export function createHost() {
   const ok = body => ({ status: 200, body });
   const inventory = () => ({ data: [{ source: { type: 'package', target: 'example-plugin@latest', version: pluginUpdated ? '2.0.0' : '1.0.0', outdated: !pluginUpdated, updating: false }, state: pluginUpdated ? { status: 'active' } : { status: 'failed', error: 'Fixture load failure\nSecond detail\nThird detail', ref: 'fixture-reference' } }] });
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'collections-fixture', runtimeScope: { hostID: 'collections-fixture', lease: 'synthetic-collections-lease' }, connections: [{ id: 'collections-fixture', label: 'Synthetic Collections Host', url: 'https://collections.example.invalid', lastUsedAt: 0 }] };
     if (name === 'collections.fixture.audit') return { permissionDeletes, agentWrites, mcpWrites, reloads, checks, updates };
     if (name !== 'runtime.request') throw new Error('Unexpected collections fixture call');
     const { path, method, body } = input;

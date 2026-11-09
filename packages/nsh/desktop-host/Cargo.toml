@@ -1,0 +1,22 @@
+[package]
+name = "yuri-nsh-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+nsh-core = "=0.4.0"
+nsh-engine = { version = "=0.4.0", features = ["net"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = "=0.4.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nsh-platform-windows = "=0.4.0"
+
+[profile.release]
+lto = "thin"
+strip = true

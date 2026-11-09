@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "version": "0.4.0",
+  "revision": "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3",
+  "file": "list-scroll-snapshot-contract-fix.patch",
+  "sha256": "5e83490bd17df64e1d1206b50da823468639bbaac772c1379a6db25eb510f887",
+  "cargoLockSha256": "3e613f0b6940be5d83676f48771b461b122e0732f652ce4de20b4978b2015d34",
+  "basePreparationDigest": "8a261f52b450ac75cc77225f2751bda1dc59097dd1e48ac5677f67d3ad77ff25",
+  "baselineSourceSha256": "5764bf7d27dd530634a007ec2ca2df8d37b63903584f9b47401a1238e875b4d1",
+  "files": [
+    {
+      "path": "crates/nsh-core/src/js/host.rs",
+      "beforeExists": true,
+      "beforeSha256": "603e1488a37baa4ca7a1913de1bc3e64bd6f9b70504f743d41275b354ddac488",
+      "afterSha256": "9e7f2a5dd7d990023a2c817e53b187c02c01ff532e35837a04b7c5176e9011b4"
+    },
+    {
+      "path": "crates/nsh-core/src/js/mod.rs",
+      "beforeExists": true,
+      "beforeSha256": "1835b8fc6a6f20a4b456467878bfe54d0c58599c4aa04e73a02a30b7568d73f0",
+      "afterSha256": "3adfce1cd27e8e574e5476792c67d31726292f8b3068ccb4c0b0196e64f15d33"
+    },
+    {
+      "path": "crates/nsh-core/unitless.txt",
+      "beforeExists": true,
+      "beforeSha256": "770a2b9b41202f9ffef32bffea40a261596f7bd2cc7bcb7266679a16ffdc6e1e",
+      "afterSha256": "17d8c10fb889bc19c47346408a101594abacae2ece196962676da794669cfd6c"
+    }
+  ]
+}

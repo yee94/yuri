@@ -1,6 +1,7 @@
 export function createHost() {
   let writes = 0;
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'task-fixture', connections: [{ id: 'task-fixture', label: 'Fixture', url: 'https://host.example', lastUsedAt: 0 }], runtimeScope: { hostID: 'task-fixture', lease: 'synthetic-mobile-task-editor' } };
     if (name !== 'runtime.request' || !input || typeof input.path !== 'string') throw new Error('Unexpected task bridge');
     // Self-contained NSH Host: no URL/URLSearchParams, Node APIs or imported modules.
     const pieces = input.path.split('?'), path = pieces[0], query = Object.create(null);

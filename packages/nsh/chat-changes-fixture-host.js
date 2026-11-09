@@ -2,7 +2,9 @@
 export function createHost() {
   let statusReads = 0, diffReads = 0;
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'changes-fixture', runtimeScope: { hostID: 'changes-fixture', lease: 'changes-fixture-lease' }, connections: [{ id: 'changes-fixture', label: 'Changes fixture', url: 'https://changes.example', lastUsedAt: 1 }] };
     if (name !== 'runtime.request') throw new Error('Unexpected native call: ' + name);
+    if (input.expectedHost?.hostID !== 'changes-fixture' || input.expectedHost?.lease !== 'changes-fixture-lease') throw new Error('Wrong Changes fixture authority');
     if (input.method !== 'GET') throw new Error('Changes fixture permits read-only requests only');
     if (input.path.startsWith('/api/git/status?directory=%2Ffixture')) {
       statusReads++;

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "producer": "dev-bundle-frame-limit-worker",
+  "version": "0.4.0",
+  "revision": "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3",
+  "file": "dev-bundle-frame-limit.patch",
+  "sha256": "86eee6d37cd33a8c74a469a25e72b4a1114b2502f5867b20c1c0c1d3655946af",
+  "cargoLockSha256": "3e613f0b6940be5d83676f48771b461b122e0732f652ce4de20b4978b2015d34",
+  "integrationStatus": "frozen-candidate-awaiting-unique-preparer",
+  "basePreparationDigest": "f7dedc80f52dec12c4055a93b6c9cbdc437d038727f5120817e33db9a6eb0a1d",
+  "baseManifestSha256": "9575d98e1d0076b471a294f62a776fd2e3d96c1ae72df3fe4e39a8630776a532",
+  "baselineSourceSha256": "5764bf7d27dd530634a007ec2ca2df8d37b63903584f9b47401a1238e875b4d1",
+  "baselineSourceFileCount": 1740,
+  "sharedFilesWithOtherPatches": {},
+  "files": [
+    {
+      "path": "crates/nsh-dev/src/client.rs",
+      "beforeExists": true,
+      "beforeSha256": "541352e633968e5ff9dc3fa6d5f3ace8fef5cfb42465d623a2d19331b71d1edb",
+      "afterExists": true,
+      "afterSha256": "e0569ceb144b832082ee12600afb2d073857f4db5a2c2e369da99ae05caf4714"
+    },
+    {
+      "path": "crates/nsh-dev/tests/roundtrip.rs",
+      "beforeExists": true,
+      "beforeSha256": "b4b5fcdc8ba628dab768744fc2e13d899081a092c605d1382f767bea4c021fa2",
+      "afterExists": true,
+      "afterSha256": "d81903b146a14e47dd735bc3827e07adc4702081eb78a03d78636e1960531a7a"
+    }
+  ]
+}

@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Yuri native client built with NSH; iOS first",
+  "description": "Yuri native client built with NSH for iOS and experimental macOS/Windows desktop",
   "scripts": {
     "nsh:check": "node scripts/nsh.mjs check .",
     "nsh:bundle": "node scripts/nsh.mjs build App.tsx --release --out .nsh/bundle",
     "ios:build": "node scripts/build-ios.mjs",
     "ios:build:device": "node scripts/build-ios.mjs --device",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:build:debug": "node scripts/build-desktop.mjs --debug",
+    "desktop:check": "node scripts/build-desktop.mjs --check-host",
+    "desktop:test": "node scripts/build-desktop.mjs --test-host",
     "test:native": "bun scripts/check-native-bridge.mjs",
     "test": "bunx --package vitest@4.1.11 vitest run --root ../.. --config packages/nsh/vitest.config.ts"
   }

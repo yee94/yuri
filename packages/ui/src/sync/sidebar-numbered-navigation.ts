@@ -1,4 +1,4 @@
-import type { SessionNavigationTarget } from './session-navigation';
+import type { SessionNavigationTarget } from './session-navigation-core';
 
 const MAX_NUMBERED_SIDEBAR_SESSIONS = 9;
 

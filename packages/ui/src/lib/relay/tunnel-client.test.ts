@@ -406,6 +406,38 @@ const track = (client: RelayTunnelClient): RelayTunnelClient => {
 };
 
 describe('createRelayTunnelClient', () => {
+  test.each([false, true])('default native wire adapter preserves 50 mixed view messages and encrypted order (batch=%s)', async batch => {
+    const hostKeys = await generateEcdhKeyPair();
+    const frames: TunnelFrame[] = [];
+    class NativeWire extends FakeEndpoint {
+      binaryType = 'blob';
+      constructor(_url: string) {
+        super(); const host = new FakeEndpoint(); this.peer = host; host.peer = this;
+        attachMiniHost(host, hostKeys.privateKey, { batch, recordFrame: frame => frames.push(frame) });
+        queueMicrotask(() => this.onopen?.());
+      }
+    }
+    vi.stubGlobal('WebSocket', NativeWire);
+    const client = track(createRelayTunnelClient({ relayUrl: 'wss://relay.example/ws', serverId: 'synthetic',
+      hostEncPubJwk: await exportPublicKeyJwk(hostKeys.publicKey), batch, batchWindowMs: 1, pingIntervalMs: 60_000 }));
+    await vi.waitFor(() => expect(client.getStatus().state).toBe('connected'));
+    const socket = client.openWebSocket('/api/remote-desktop/ws');
+    const echoes: Array<string | ArrayBuffer> = []; socket.onmessage = event => echoes.push(event.data);
+    await vi.waitFor(() => expect(socket.readyState).toBe(1));
+    const backing = new Uint8Array([91, 92, 1, 2, 3, 4, 93, 94]);
+    const shared = new SharedArrayBuffer(8); new Uint8Array(shared).set(backing);
+    const inputs = ['text', backing.buffer, backing.subarray(2, 6), new DataView(backing.buffer, 2, 4), new DataView(shared, 2, 4)];
+    for (let index = 0; index < 50; index++) socket.send(inputs[index % inputs.length]);
+    await vi.waitFor(() => expect(echoes).toHaveLength(50));
+    echoes.forEach((value, index) => {
+      if (index % inputs.length === 0) expect(value).toBe('echo:text');
+      else if (typeof value === 'string') throw new Error('Expected binary echo');
+      else expect(new Uint8Array(value)).toEqual(index % inputs.length === 1 ? backing : new Uint8Array([1, 2, 3, 4]));
+    });
+    expect(frames.filter(frame => frame.frameType === TunnelFrameType.WsText || frame.frameType === TunnelFrameType.WsBinary)).toHaveLength(50);
+    expect(client.getStatus().state).toBe('connected');
+    socket.close(); expect(() => socket.send(new DataView(shared, 2, 4))).toThrow('not open');
+  });
   test('decompresses negotiated JSON and rejects corrupt compressed bodies', async () => {
     const payload = { sessions: Array.from({ length: 128 }, (_, id) => ({ id, title: 'Session' })) };
     const { client } = await setupClient({ compressedBody: gzipSync(JSON.stringify(payload)) });

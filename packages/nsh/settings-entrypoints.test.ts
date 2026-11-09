@@ -13,7 +13,8 @@ describe('Settings public entrypoint and trigger structure (not an engine test)'
     const basics = source('settings-basics.tsx');
     const forward = basics.indexOf('return <SettingsPreferences {...props} />');
     expect(forward).toBeGreaterThan(basics.indexOf('export function SettingsBasics('));
-    expect(forward).toBeLessThan(basics.indexOf('const state = settingsLifetime()'));
+    const lifetime = basics.indexOf('const state = settingsOperationLifetime(');
+    expect(lifetime).toBeGreaterThan(0); expect(forward).toBeLessThan(lifetime);
     expect(basics.slice(basics.indexOf('export function SettingsBasics('), forward)).toContain("props.page === 'appearance'");
     expect(basics.slice(basics.indexOf('export function SettingsBasics('), forward)).toContain("props.page === 'chat'");
     expect(source('appearance-settings-test-app.tsx')).toContain('<SettingsBasics page="appearance"');
@@ -27,7 +28,8 @@ describe('Settings public entrypoint and trigger structure (not an engine test)'
     const basics = source('settings-basics.tsx');
     const forward = basics.indexOf('return <SettingsAbout target={props.target} active={props.active} />');
     expect(forward).toBeGreaterThan(basics.indexOf('export function SettingsBasics('));
-    expect(forward).toBeLessThan(basics.indexOf('const state = settingsLifetime()'));
+    const lifetime = basics.indexOf('const state = settingsOperationLifetime(');
+    expect(lifetime).toBeGreaterThan(0); expect(forward).toBeLessThan(lifetime);
     expect(basics).not.toContain("request('/api/system/info')");
     const settings = source('settings.tsx');
     expect(settings).toContain("props.page === 'about'}><SettingsAbout");
@@ -38,9 +40,10 @@ describe('Settings public entrypoint and trigger structure (not an engine test)'
 describe('Actual Settings outer fixture catalog wire (pure injected transport)', () => {
   const setup = () => {
     const host = createHost(), paths: string[] = [];
+    const { runtimeScope: expectedHost } = host.call('connection.list');
     const send = async (path: string, method = 'GET', body?: unknown) => {
       paths.push(path);
-      const result = host.call('runtime.request', { path, method, body });
+      const result = host.call('runtime.request', { path, method, body, expectedHost });
       if (result.status < 200 || result.status >= 300) throw new Error(`HTTP ${result.status}`);
       return result.body;
     };

@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { RESOURCE_BINARY_LIMIT, RESOURCE_TEXT_LIMIT, resourceCanPreview, resourceEntries, resourceFence, resourceFindRoute, resourceKind, resourceParent, resourcePath, resourceSearchEntries, resourceServeRoute, resourceWithin } from './resources-model';
+import { RESOURCE_BINARY_LIMIT, RESOURCE_TEXT_LIMIT, resourceCanPreview, resourceEntries, resourceFence, resourceFindRoute, resourceKind, resourceParent, resourcePath, resourceResolve, resourceSearchEntries, resourceServeRoute, resourceWithin } from './resources-model';
 
 describe('native resource contracts', () => {
+  it('uses the shared drive-letter identity while retaining Windows roots and UNC shares', () => {
+    expect(resourcePath('c:\\work\\app\\src\\..\\file.ts')).toBe('C:/work/app/file.ts');
+    expect(resourcePath('c:\\')).toBe('C:/');
+    expect(resourcePath('\\\\server\\share\\app\\file.ts')).toBe('//server/share/app/file.ts');
+    expect(resourceResolve('c:\\work\\app\\file.ts', 'C:/work/app')).toBe('C:/work/app/file.ts');
+    expect(resourceResolve('src/file.ts', 'C:/work/app')).toBe('C:/work/app/src/file.ts');
+    expect(resourceResolve('file.ts', '/')).toBe('/file.ts');
+    expect(resourceResolve('file.ts', 'C:/')).toBe('C:/file.ts');
+    expect(resourceWithin('c:\\work\\app\\file.ts', 'C:/work/app')).toBe(true);
+    expect(resourceWithin('C:/other/file.ts', 'C:/work/app')).toBe(false);
+    expect(resourceWithin('D:/work/app/file.ts', 'C:/work/app')).toBe(false);
+    expect(resourceWithin('//server/share-two/file', '//server/share')).toBe(false);
+    expect(resourceWithin('C:/work/app', '/')).toBe(false);
+    expect(() => resourceResolve('../other/file.ts', 'C:/work/app')).toThrow();
+    expect(() => resourcePath('C:relative')).toThrow();
+    expect(() => resourcePath('\\\\?\\C:\\work')).toThrow();
+    expect(resourceParent('C:/work', 'C:/')).toBe('C:/');
+    expect(resourceParent('C:/', 'C:/')).toBeNull();
+    expect(resourceParent('//server/share/app', '//server/share')).toBe('//server/share');
+    expect(resourceServeRoute('C:/work/a #?.ts')).toBe('/api/fs/serve/C%3A/work/a%20%23%3F.ts');
+    expect(resourceServeRoute('//server/share/a.ts')).toBe('/api/fs/serve//server/share/a.ts');
+  });
   it('uses the installed official file.find route and real Host response envelope', () => {
     expect(resourceFindRoute('/fixture', 'source')).toBe('/api/fs/find?location%5Bdirectory%5D=%2Ffixture&query=source&limit=40&type=file');
     expect(resourceSearchEntries({ location: { directory: '/fixture' }, data: [{ path: 'sub/source.ts', type: 'file' }] }, '/fixture', '/fixture')).toEqual([{ path: '/fixture/sub/source.ts', name: 'source.ts', isDirectory: false }]);

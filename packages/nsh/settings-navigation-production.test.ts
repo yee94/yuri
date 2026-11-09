@@ -141,7 +141,7 @@ function collectionEditorCallbacks(fixture: ReturnType<typeof evaluateHost>, pag
   vm.runInContext(ts.transpileModule(declaration.getText(stateSyntax), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, operationContext);
   const captureHostOperation = operationExports.captureHostOperation!;
   const modules: Record<string, unknown> = {
-    nsh: { signal, cleanup: (work: () => void) => cleanups.push(work), effect, untracked, Scroll: 'Scroll', Text: 'Text', View: 'View' },
+    nsh: { signal, context: (initial: unknown) => () => initial, cleanup: (work: () => void) => cleanups.push(work), effect, untracked, Scroll: 'Scroll', Text: 'Text', View: 'View' },
     'nsh/base': { Button: 'Button', Input: 'Input', Select: 'Select', Switch: 'Switch', TextView: 'TextView', AlertDialog: {} },
     './native-select': { NativeSelect: 'NativeSelect' },
     './model': model, './runtime': fixture.runtime, './state': { captureHostRequest: () => fixture.runtime.bindRequest(runtimeScope()), captureHostOperation, epoch: generation, app: { connection, runtimeScope } },
@@ -165,6 +165,8 @@ function collectionEditorCallbacks(fixture: ReturnType<typeof evaluateHost>, pag
     vm.runInNewContext(source, { exports, jsx, If: 'If', Each: 'Each', require: (id: string) => { if (!(id in modules)) throw new Error('Unexpected callback dependency: ' + id); return modules[id]; } });
     return exports;
   };
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   const controls = evaluate('settings-controls.tsx');
   const createLifetime = controls.settingsPageLifetime as (active?: () => boolean) => Lifetime;
   modules['./settings-controls'] = { ...controls, settingsPageLifetime: (current?: () => boolean) => { lifetime = createLifetime(current); return lifetime; } };
@@ -187,7 +189,7 @@ function collectionEditorCallbacks(fixture: ReturnType<typeof evaluateHost>, pag
 
 describe('hardware shortcut driver contracts (pure; no NSH or browser module execution)', () => {
   it('guards the exact Web defaults by reading only shortcut metadata strings', () => {
-    const filename = path.join(root, '../ui/src/lib/shortcuts.ts');
+    const filename = path.join(root, '../ui/src/lib/shortcuts-core.ts');
     const syntax = ts.createSourceFile(filename, readFileSync(filename, 'utf8'), ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS);
     const declaration = syntax.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]).find(node => ts.isIdentifier(node.name) && node.name.text === 'SHORTCUT_ACTIONS');
     const initializer = declaration?.initializer && ts.isAsExpression(declaration.initializer) ? declaration.initializer.expression : declaration?.initializer;

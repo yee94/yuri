@@ -7,6 +7,7 @@ import { createRetentionController, type RetentionController, type RetentionPref
 import { createRetentionScheduler } from './settings-retention-scheduler';
 import type { RetentionAction, RetentionRequest } from './settings-retention-core';
 import { RETENTION_DEFAULT_DAYS, RETENTION_MAX_DAYS, RETENTION_MIN_DAYS } from '../ui/src/lib/session-retention-policy';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 const nativeOwners = new Map<string, () => boolean>();
 
@@ -55,6 +56,10 @@ export function SettingsSessionRetentionSection(props: { controller: RetentionCo
   effect(() => { const active = props.active; untracked(() => { if (active) void refresh(); else controller.cancel(); }); });
   const disabled = () => !props.active || state().busy || confirming();
   const controlsDisabled = () => disabled() || !state().ready;
+  publishSettingsEditor({ current: () => props.active && controller.captureLane()?.current() === true, scope: controller.captureLane,
+    pending: () => state().busy || confirming(), dirty: () => dirty() && (enabled() !== state().preferences.autoDeleteEnabled || days() !== String(state().preferences.autoDeleteAfterDays) || action() !== state().preferences.sessionRetentionAction),
+    stamp: () => [enabled(), days(), action()],
+  });
   const admissionBlocked = () => state().admission === 'server-atomic-required';
   const edit = () => { dirty.set(true); formError.set(false); controller.cancel(); };
   async function save() {

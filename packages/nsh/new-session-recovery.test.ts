@@ -46,7 +46,7 @@ const root = vi.hoisted(() => {
   }
   return { connection, scope, epoch, ready, lifecycle, requests, respond, captureHostOperation };
 });
-vi.mock('nsh', () => ({ ...reactive, Storage: { getItem: reactive.get, setItem: reactive.set }, lifecycle: root.lifecycle, cleanup: (work: () => void) => reactive.cleanups.push(work) }));
+vi.mock('nsh', () => ({ ...reactive, platform: { os: 'ios', desktop: false }, Storage: { getItem: reactive.get, setItem: reactive.set }, lifecycle: root.lifecycle, cleanup: (work: () => void) => reactive.cleanups.push(work) }));
 vi.mock('./state', () => ({ app: { connection: root.connection, runtimeScope: root.scope }, epoch: root.epoch,
   captureHostOperation: root.captureHostOperation, captureHostRequest: () => root.captureHostOperation().request,
   isCurrentHostScope: (generation: number, hostID: string) => root.epoch() === generation && root.connection().id === hostID,

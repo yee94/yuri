@@ -11,19 +11,19 @@ it('native engine renders real AssistantHome and details without React/DOM; loca
   mkdirSync(parent, { recursive: true });
   const fixture = mkdtempSync(path.join(parent, 'nsh-assistants-'));
   const entry = path.join(fixture, 'App.tsx'), host = path.join(fixture, 'host.js');
-  writeFileSync(path.join(fixture, 'nsh.json'), JSON.stringify({ capabilities: { host: ['runtime.*'] } }));
+  writeFileSync(path.join(fixture, 'nsh.json'), JSON.stringify({ capabilities: { host: ['connection.list', 'runtime.*'] } }));
   writeFileSync(entry, `
     import { mount, signal, View, Text } from 'nsh';
     import { createNavStack, NavStack, NavPage } from 'nsh/base';
     import { AssistantHome, AssistantDetails } from ${JSON.stringify(path.join(directory, 'assistants'))};
-    import { app } from ${JSON.stringify(path.join(directory, 'state'))};
+    import { app, loadConnections } from ${JSON.stringify(path.join(directory, 'state'))};
     import { language } from ${JSON.stringify(path.join(directory, 'i18n'))};
     language.set('en'); app.connection.set({id:'fixture', label:'Fixture', url:'https://host.example', lastUsedAt:1}); app.tab.set(1);
-    mount(() => { const nav=createNavStack([{kind:'root'}]), opened=signal(''); return <View class="flex-1"><NavStack state={nav} class="flex-1">{route=>route.kind==='root'?<NavPage><AssistantHome onCreate={()=>{}} onEdit={bot=>nav.push({kind:'detail',bot})} onOpenChat={target=>opened.set(target.id)} /><Text testID="opened">{opened()}</Text></NavPage>:<AssistantDetails bot={route.bot} onDone={()=>nav.pop()} />}</NavStack></View>; });
+    void loadConnections().then(() => mount(() => { const nav=createNavStack([{kind:'root'}]), opened=signal(''); return <View class="flex-1"><NavStack state={nav} class="flex-1">{route=>route.kind==='root'?<NavPage><AssistantHome onCreate={()=>{}} onEdit={bot=>nav.push({kind:'detail',bot})} onOpenChat={target=>opened.set(target.id)} /><Text testID="opened">{opened()}</Text></NavPage>:<AssistantDetails bot={route.bot} onDone={()=>nav.pop()} />}</NavStack></View>; }));
   `);
   writeFileSync(host, `export function createHost(){
     const bots=[{id:'a',revision:1,name:'Research Bot',defaultPrompt:'Never use personality as preview',providerID:'fixture',modelID:'model',workspacePath:null,effectiveWorkspacePath:'/workspace',pinnedAt:null,unreadCount:2,latestMessagePreview:{text:'Authoritative latest reply',createdAt:Date.now(),fallbackKind:null}},{id:'b',revision:2,name:'Review Bot',pinnedAt:3,unreadCount:0,latestMessagePreview:{text:'Review ready',createdAt:2}}];
-    return {call(name,input){if(name!=='runtime.request')return true;const p=input.path;let body;
+    return {call(name,input){if(name==='connection.list')return {selected:'fixture',connections:[{id:'fixture',label:'Fixture',url:'https://host.example',lastUsedAt:1}],runtimeScope:{hostID:'fixture',lease:'synthetic-assistants-mobile'}};if(name!=='runtime.request')return true;const p=input.path;let body;
       if(p==='/api/yuri/assistants/a' && input.method==='DELETE')return {status:500,body:{message:'delete_test_failure'}};
       if(p.endsWith('/capability'))body={supported:true,enabled:true,sharingAvailable:true};
       else if(p.endsWith('/snapshot'))body={enabled:true,revision:3,assistants:bots};

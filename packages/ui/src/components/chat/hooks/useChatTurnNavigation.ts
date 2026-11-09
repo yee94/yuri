@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveTurnOffsetTarget } from './chatTurnNavigationCore';
 
 type ChatHashTarget =
     | { kind: 'turn'; id: string }
@@ -21,41 +22,6 @@ const parseChatHashTarget = (hashValue: string): ChatHashTarget | null => {
     }
 
     return null;
-};
-
-type TurnOffsetTarget =
-    | { kind: 'noop' }
-    | { kind: 'resume' }
-    | { kind: 'turn'; turnId: string };
-
-const resolveTurnOffsetTarget = (
-    turnIds: string[],
-    activeTurnId: string | null,
-    offset: number,
-): TurnOffsetTarget => {
-    if (offset === 0) {
-        return { kind: 'noop' };
-    }
-
-    if (turnIds.length === 0) {
-        return { kind: 'noop' };
-    }
-
-    const baseIndex = activeTurnId ? turnIds.indexOf(activeTurnId) : turnIds.length - 1;
-    const normalizedBase = baseIndex >= 0 ? baseIndex : turnIds.length - 1;
-    const targetIndex = normalizedBase + offset;
-
-    if (targetIndex >= turnIds.length) {
-        return { kind: 'resume' };
-    }
-
-    const clampedTarget = Math.max(0, targetIndex);
-    const targetTurnId = turnIds[clampedTarget];
-    if (!targetTurnId) {
-        return { kind: 'noop' };
-    }
-
-    return { kind: 'turn', turnId: targetTurnId };
 };
 
 const setHash = (hash: string | null): void => {

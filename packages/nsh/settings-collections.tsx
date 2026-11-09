@@ -12,8 +12,9 @@ import { SettingsMcpLive } from './settings-mcp-live';
 import { SettingsPluginRuntime } from './settings-plugin-runtime';
 import { SettingsMcpImport } from './settings-mcp-import';
 import { nativeAgentEditor, nativeAgentPatch, nativeCollectionChanges } from './settings-collections-core';
-import { SettingsChoice, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
+import { SettingsChoice, SettingsEntityLayout, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsEntitySplit, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { readSettingsCollection, scopedSettingsPath, settingsMutation, settingsObject, settingsSkillReadOnly, type SettingsDomain } from './settings-protocol';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 type Props = SettingsCallbacks & SettingsRoute & { directory?: string; active?: boolean };
 const collectionRevision = signal({ key: '', revision: 0 });
@@ -23,11 +24,12 @@ export function SettingsCollection(props: Props) {
   const directory = props.directory;
   const state = settingsPageLifetime(), rows = signal<Row[]>([]), draft = signal<Row>({ scope: 'user', name: '', type: 'local', enabled: true, mode: 'primary' });
 
-  const changed = signal<Row>({}), original = signal<Row>({}), initial = signal<Row>({});
+  const changed = signal<Row>({}), original = signal<Row>({}), initial = signal<Row>(props.create ? draft() : {});
   const name = signal(props.create ? '' : props.entity || '');
   const options = signal('{}'), committed = signal(false);
   const importing = signal(false), pluginBusy = signal(false);
   const editing = !!props.entity || !!props.create;
+  const split = settingsEntitySplit();
   const revisionKey = `${state.identityKey}:${domain}:${directory || ''}`;
   const invalidate = () => collectionRevision.set({ key: revisionKey, revision: collectionRevision().revision + 1 });
   const readOnly = () => domain === 'skills.installed' && settingsSkillReadOnly(original());
@@ -35,6 +37,10 @@ export function SettingsCollection(props: Props) {
   const current = () => state.current() && props.directory === directory;
   const locked = () => !current() || state.busy() || pluginBusy() || !state.ready() || committed() || readOnly();
   const changes = () => nativeCollectionChanges(draft(), initial(), changed());
+  publishSettingsEditor({ current, scope: state.operation, pending: () => state.busy() || pluginBusy(), nestedPickerOpen: importing,
+    dirty: () => editing && !committed() && (Object.keys(changes()).length > 0 || !!props.create && !!name() || domain === 'plugins' && options() !== JSON.stringify(original().options || {}, null, 2)),
+    stamp: () => [draft(), name(), options(), committed()],
+  });
   function set(key: string, value: unknown) { if (locked()) return; draft.set({ ...draft(), [key]: value }); changed.set({ ...changed(), [key]: value }); }
   function field(key: string, title: I18nKey, multiline = false) {
     if (readOnly()) return <View class="gap-2"><Text class="text-sm text-foreground">{t(title)}</Text><TextView markdown={value(key)} selectable class="text-foreground" /></View>;
@@ -47,12 +53,12 @@ export function SettingsCollection(props: Props) {
   async function load(operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
     await state.perform(async (operation) => {
-      if (props.create) { state.ready.set(true); return; }
+      if (props.create) { state.ready.set(true); if (!split) return; }
       if (!(operation.current() && current())) return;
       const loaded = await readSettingsCollection(operation.request, domain, directory);
       if (!(operation.current() && current())) return;
       rows.set(loaded);
-      if (editing && !state.ready()) {
+      if (editing && !props.create && !state.ready()) {
         let item = loaded.find(row => String(row.id || row.name) === props.entity);
         if (!item) throw new Error(t('settings.agents.sidebar.toast.definitionNotFound'));
         if (domain === 'skills.installed') {
@@ -131,17 +137,33 @@ export function SettingsCollection(props: Props) {
       state.notice.set(t(result.requiresManualRestart ? 'settings.agents.page.toast.savedManualRestart' : result.reloadFailed ? 'settings.mcp.page.toast.savedReloadFailed' : success));
     }, operation);
   }
+  async function remove() {
+    if (locked()) return;
+    let removed = false;
+    await state.perform(async operation => {
+      if (readOnly()) return;
+      const choice = await AlertDialog.show({ title: t('settings.mcp.page.deleteDialog.title', { name: name() }), actions: [{ id: 'cancel', label: t('settings.plugins.dialog.add.action.cancel'), role: 'cancel' }, { id: 'delete', label: t('mobile.instances.delete'), role: 'destructive' }] });
+      if (choice.action !== 'delete' || !(operation.current() && current())) return;
+      const mutation = settingsMutation(domain, name(), {}, false, directory);
+      const path = original().file ? scopedSettingsPath(`/api/config/plugins/file/${encodeURIComponent(name())}`, directory) : mutation.path;
+      await operation.transaction(path, 'DELETE', domain === 'agents' ? { scope: draft().scope } : undefined);
+      if (!(operation.current() && current())) return;
+      committed.set(true); invalidate(); removed = true;
+    });
+    if (removed && current()) props.onBack();
+  }
   const title = () => domain === 'mcp' ? t('settings.mcp.page.server.title') : domain === 'plugins' ? t('settings.plugins.page.header.entry') : domain === 'commands' ? t('settings.commands.page.section.identity') : t('settings.agents.page.section.identityRole');
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  const collectionList = () => <Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
-    <If when={!editing}>
       <If when={domain === 'agents'}><SettingsSavedPermissions directory={props.directory} /></If>
       <Button testID="settings-refresh" class={settingsAction} accessibilityLabel={t('sidebarFilesTree.actions.refreshTitle')} disabled={state.busy()} onPress={() => { void load(); }}><Icon name="refresh" /></Button>
-      <Button class={settingsAction} onPress={() => props.onOpen({ page: props.page, create: true })}><Text class="text-foreground">{t('settings.plugins.dialog.add.action.submit')}</Text></Button>
-      <SettingsGroup title={title()}><Each of={rows()}>{item => <Button class="min-h-12 py-3 gap-1 border-b border-border" onPress={() => props.onOpen({ page: props.page, entity: text(item().id) || text(item().name) })}>
+      <Button testID="settings-entity-create" class={settingsAction} disabled={!current() || state.busy()} onPress={() => { if (current()) props.onOpen({ page: props.page, create: true }); }}><Text class="text-foreground">{t('settings.plugins.dialog.add.action.submit')}</Text></Button>
+      <SettingsGroup title={title()}><Each of={rows()}>{item => <Button testID={`settings-entity-${text(item().id) || text(item().name)}`} selected={props.entity === (text(item().id) || text(item().name))} disabled={!current() || state.busy()} class="min-h-12 py-3 gap-1 border-b border-border selected:bg-accent" onPress={() => { if (current()) props.onOpen({ page: props.page, entity: text(item().id) || text(item().name) }); }}>
         <Text class="text-base text-foreground">{text(item().name) || text(item().spec) || text(item().filename) || text(item().id)}</Text><Text class="text-xs text-muted-foreground">{text(item().description) || text(item().scope)}</Text>
       </Button>}</Each><If when={state.ready() && !rows().length}><Text class="text-muted-foreground">{t('settings.plugins.page.empty.add')}</Text></If></SettingsGroup>
-    </If>
+  </Scroll>;
+  return <SettingsEntityLayout editing={editing} list={collectionList}><Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
+    <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
     <If when={editing && state.ready()}>
       <SettingsGroup title={title()}>
         <If when={domain !== 'plugins' || !!original().file}><SettingsInput title={t(domain === 'commands' ? 'settings.commands.page.field.commandName' : domain === 'mcp' ? 'settings.mcp.page.server.name' : domain === 'skills.installed' ? 'settings.skills.page.field.skillNameLocation' : domain === 'plugins' ? 'settings.plugins.page.field.fileName' : 'settings.agents.page.field.agentName')} value={name()} disabled={!props.create || state.busy() || committed()} onChange={next => name.set(next)} /></If>
@@ -180,7 +202,7 @@ export function SettingsCollection(props: Props) {
       <If when={domain === 'mcp' && !props.create && !committed()}><SettingsMcpLive name={name()} directory={props.directory} disabled={state.busy() || Object.keys(changed()).length > 0} /></If>
        <If when={!committed() && !readOnly()}><Button class={settingsAction} disabled={locked() || importing() || (!props.create && !Object.keys(changes()).length && (domain !== 'plugins' || options() === JSON.stringify(original().options || {}, null, 2)))} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
       <If when={committed()}><Button class={settingsAction} onPress={props.onBack}><Text class="text-foreground">{t('gitView.common.done')}</Text></Button></If>
-      <If when={!props.create && !committed() && !readOnly()}><Button class={settingsAction} disabled={locked()} onPress={() => { if (locked()) return; void state.perform(async (operation) => { if (readOnly()) return; const choice = await AlertDialog.show({ title: t('settings.mcp.page.deleteDialog.title', { name: name() }), actions: [{ id: 'cancel', label: t('settings.plugins.dialog.add.action.cancel'), role: 'cancel' }, { id: 'delete', label: t('mobile.instances.delete'), role: 'destructive' }] }); if (choice.action !== 'delete' || !(operation.current() && current())) return; const mutation = settingsMutation(domain, name(), {}, false, directory); const path = original().file ? scopedSettingsPath(`/api/config/plugins/file/${encodeURIComponent(name())}`, directory) : mutation.path; await operation.transaction(path, 'DELETE', domain === 'agents' ? { scope: draft().scope } : undefined); if (!(operation.current() && current())) return; invalidate(); props.onBack(); }); }}><Text class="text-destructive">{t('mobile.instances.delete')}</Text></Button></If>
+      <If when={!props.create && !committed() && !readOnly()}><Button class={settingsAction} disabled={locked()} onPress={() => { if (!locked()) void remove(); }}><Text class="text-destructive">{t('mobile.instances.delete')}</Text></Button></If>
     </If>
-  </Scroll>;
+  </Scroll></SettingsEntityLayout>;
 }

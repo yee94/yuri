@@ -15,6 +15,8 @@ vi.mock('@/lib/i18n', async (importOriginal) => {
 });
 import { CommandAutocomplete, type CommandAutocompleteHandle } from './CommandAutocomplete';
 import { useUIStore } from '@/stores/useUIStore';
+import { getComposerLocalCommandMetadata } from '@/lib/composer-local-commands-core';
+import { dict } from '@/lib/i18n/messages/en';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
@@ -75,4 +77,18 @@ test.each(['touch', 'Enter', 'native'] as const)('/new submits exactly once from
     }
   });
   expect(select).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'new', source: 'yuri' }), true);
+});
+
+test('production fallback uses the same canonical metadata, copy and availability policy as the normal path', async () => {
+  useUIStore.setState({ isMobile: false });
+  const broken = { name: 'broken', isBuiltIn: false };
+  Object.defineProperty(broken, 'name', { get() { throw new Error('synthetic metadata failure'); } });
+  fixtures.commands = [broken];
+  let ids: string[] = [];
+  await act(async () => root.render(<CommandAutocomplete searchQuery="" onCommandSelect={() => {}} onClose={() => {}}
+    commandContext={{ sessionID: 'session', hasMessages: true, hasNewDraft: false }} commandPolicy={command => command.name !== 'fork'}
+    onRowsChange={value => { ids = value.rows.map(row => row.id); }} />));
+  const expected = getComposerLocalCommandMetadata({ hasSession: true, hasMessages: true, canStartSessionCommand: true, reloadEnabled: false }, key => dict[key]).filter(command => command.name !== 'fork');
+  expect(new Set(ids)).toEqual(new Set(expected.map(command => command.id)));
+  for (const command of expected) expect(document.body.textContent).toContain(command.description);
 });

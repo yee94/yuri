@@ -2,6 +2,8 @@ import { runtimeScopeFrom, sameRuntimeScope, type RuntimeScope } from './runtime
 import { terminalCatalogFrom, terminalCatalogValue, type TerminalCatalog } from './terminal-catalog';
 import { createTerminalPreviewScanner, terminalPreviewURL, terminalActionURL, extractTerminalActionURL } from './terminal-preview';
 import { terminalActionInput, type TerminalAction } from './terminal-actions';
+import { terminalDirectoryPath } from './terminal-path';
+export { terminalDirectory } from './terminal-path';
 /** Native-issued opaque snapshot; never infer a lease from a JS generation. */
 export type TerminalScope = RuntimeScope;
 export type TerminalSize = { cols: number; rows: number };
@@ -30,10 +32,6 @@ export function terminalKeySequence(key: TerminalKey, modifier: TerminalModifier
 }
 export function terminalModifiedText(data: string, modifier: TerminalModifier): string {
   return modifier && /^[a-z]/i.test(data) ? String.fromCharCode(data[0].toUpperCase().charCodeAt(0) & 31) : data;
-}
-export function terminalDirectory(value: string): boolean {
-  return value.startsWith('/') && !value.startsWith('//') && !/[\\\x00-\x1f\x7f]/.test(value)
-    && (value === '/' || !value.slice(1).split('/').some(part => !part || part === '.' || part === '..'));
 }
 export function terminalSize(value: TerminalSize): boolean {
   return Number.isInteger(value.cols) && Number.isInteger(value.rows) && value.cols >= 2 && value.cols <= 1000 && value.rows >= 1 && value.rows <= 1000;
@@ -249,7 +247,9 @@ export function createTerminalWorkspace(options: {
   return {
     snapshot,
     setDirectory(path: string) {
-      if (!valid() || !terminalDirectory(path)) return false;
+      const normalized = terminalDirectoryPath(path);
+      if (!valid() || normalized === null) return false;
+      path = normalized;
       if (!directories.has(path) && directories.size >= 128) return false;
       if (path !== directory) detach();
       directory = path;
@@ -343,7 +343,11 @@ export function createTerminalWorkspace(options: {
       } catch { if (valid()) { tab.actionStatus = 'unknown'; tab.error = 'action_stop_unknown'; publish(); } return false; }
       finally { stops.delete(id); }
     },
-    openPreview(id: string) { const tab = find(id); return tab?.previewUrl ? preview(tab, tab.previewUrl) : Promise.resolve(false); },
+    openPreview(id: string, url?: string, mode: 'preview' | 'external' = 'preview') {
+      const tab = find(id), candidate = url ?? tab?.previewUrl;
+      const normalized = candidate && terminalActionURL(candidate);
+      return tab && normalized && (mode === 'preview' || mode === 'external') ? preview(tab, normalized, false, mode) : Promise.resolve(false);
+    },
     async restart() {
       const tab = selected(); if (!valid() || !active || !tab || tab.phase === 'creating' || tab.phase === 'closing') return false;
       const path = directory, size = tab.size;

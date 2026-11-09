@@ -1,4 +1,4 @@
-import { isAbsoluteFilePath, normalizeFilePath } from '@/lib/path-utils';
+import { isAbsoluteFilePath, normalizeFilePath } from '../../lib/path-utils';
 
 export type ParsedFileReference = {
     path: string;

@@ -19,7 +19,9 @@ export function createHost() {
     fontSize: 100, defaultModel: '', defaultVariant: 'old-variant', defaultAgent: '',
   };
   let content = 'Original rules\n';
-  return { call(name, input) {
+  const scope = { hostID: 'outer-settings-fixture', lease: 'synthetic-outer-settings-lease' };
+  return { call(name, input = {}) {
+    if (name === 'connection.list') return { selected: scope.hostID, runtimeScope: scope, connections: [{ id: scope.hostID, label: 'Synthetic settings Host', url: 'https://settings.example.invalid', lastUsedAt: 0 }] };
     if (name === 'notification.status' || name === 'notification.openSettings') {
       if (Object.keys(input).length !== 0) throw new Error('Notification permission call carried unexpected data');
       if (name === 'notification.openSettings') { authorization = 'authorized'; return null; }
@@ -27,11 +29,12 @@ export function createHost() {
     }
     if (name === 'notification.configure') {
       const expected = notificationEvents.filter((_, index) => index === 1 ? settings.notifyOnSubtasks === true : settings[notificationFields[index + 1]] !== false);
-      if (Object.keys(input).sort().join(',') !== 'enabled,events,hostID,language,mode' || input.hostID !== 'outer-settings-fixture' || input.language !== 'en' || input.mode !== 'hidden-only' || input.enabled !== settings.nativeNotificationsEnabled || JSON.stringify(input.events) !== JSON.stringify(expected)) throw new Error('Invalid synthetic notification configuration');
+      if (Object.keys(input).sort().join(',') !== 'enabled,events,hostID,language,mode' || input.hostID !== 'outer-settings-fixture' || input.language !== 'en' || input.mode !== settings.notificationMode || input.enabled !== settings.nativeNotificationsEnabled || JSON.stringify(input.events) !== JSON.stringify(expected)) throw new Error('Invalid synthetic notification configuration');
       notificationConfigurations++;
       return { lease: 'outer-settings-memory-lease' };
     }
     if (name !== 'runtime.request') throw new Error('Unexpected outer settings native call');
+    if (input.path !== '/fixture/notifications/audit' && (input.expectedHost?.hostID !== scope.hostID || input.expectedHost?.lease !== scope.lease)) throw new Error('Outer fixture request lacks admitted scope');
     const { path, method, body } = input;
     if (path === '/fixture/notifications/audit' && method === 'GET') return { status: 200, body: { enabled: settings.nativeNotificationsEnabled, notificationMode: settings.notificationMode, template: settings.notificationTemplates.completion, writes: notificationWrites, configurations: notificationConfigurations, authorization } };
     if (path === '/api/config/settings') {
@@ -48,6 +51,9 @@ export function createHost() {
         if (Object.keys(body).length !== 1 || !body.hiddenModels.some(item => item.providerID === 'unrelated' && item.modelID === 'preserved')) throw new Error('Provider model preference overwrote another provider');
         if (visibilityAttempts === 1) return { status: 409, body: { error: 'Fixture visibility conflict' } };
         settings = { ...settings, ...body };
+      } else if (method === 'PUT' && 'notificationMode' in body) {
+        if (Object.keys(body).length !== 1 || !['always', 'hidden-only'].includes(body.notificationMode)) throw new Error('Notification mode write changed unrelated settings');
+        notificationWrites++; settings = { ...settings, ...body };
       } else if (method === 'PUT' && Object.keys(body).some(key => notificationFields.includes(key))) {
         if (!Object.keys(body).length || Object.keys(body).some(key => !notificationFields.includes(key) || typeof body[key] !== 'boolean')) throw new Error('Native notification write changed Web-only or unrelated settings');
         notificationWrites++;

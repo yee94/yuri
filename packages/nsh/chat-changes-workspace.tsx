@@ -1,31 +1,28 @@
-import { cleanup, computed, signal, Text, untracked, View, windowSize, List } from 'nsh';
+import { cleanup, computed, Text, View, windowSize, List } from 'nsh';
 import { AlertDialog, Button, Input } from 'nsh/base';
 import { buildChangesTree, flattenChangesTree, type ChangesTreeDirectoryNode, type FlattenedTreeRow } from './chat-changes-tree.js';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { captureHostRequest } from './state';
-import { changeGroups, type ChangesReader } from './chat-changes-model';
-import { createChangesActions } from './chat-changes-actions';
+import { changeGroups } from './chat-changes-model';
+import type { NativeChangesOwner } from './chat-changes';
 
-type Owner = { reader: ChangesReader; state: () => ReturnType<ChangesReader['state']> };
+type Owner = NativeChangesOwner;
 type PanelRow = { key: string; staged: boolean; kind: 'header'; count: number; paths: string[] } | { key: string; staged: boolean; kind: 'entry'; row: FlattenedTreeRow };
 const iconAction = 'min-h-9 min-w-9 items-center justify-center rounded-lg active:bg-accent disabled:opacity-40';
 const action = 'min-h-11 px-3 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
 
 export function NativeWorkspaceChanges(props: { owner: Owner }) {
-  const request = captureHostRequest();
   const { reader, state } = props.owner;
-  const version = signal(0), tree = signal(true), collapsed = signal(new Set<string>()), collapsedGroups = signal(new Set<boolean>()), message = signal(''), inputHeight = signal(88);
+  const { tree, collapsed, collapsedGroups, message, inputHeight, uncertain } = props.owner.workspace;
   let alive = true, resize: { y: number; height: number } | undefined;
   const current = () => alive && reader.current();
-  const actions = createChangesActions(reader, request, current, () => untracked(() => version.set(version() + 1)));
-  const status = () => { version(); return actions.state(); };
-  cleanup(() => { alive = false; actions.cancel(); });
+  cleanup(() => { alive = false; });
+  const actions = props.owner.actions, status = actions.state;
   const snapshot = computed(() => state().snapshot);
   const groups = computed(() => changeGroups(snapshot()));
   const paths = computed(() => [...new Set(groups().flatMap(group => group.files.map(file => file.path)))]);
   const stagedCount = computed(() => groups().find(group => group.staged)?.files.length ?? 0);
-  const disabled = () => status().pending || state().loading || !!state().error || !state().snapshot;
+  const disabled = () => !props.owner.ready() || uncertain() || status().pending || state().loading || !!state().error || !state().snapshot;
   const trees = computed(() => groups().map(group => ({ ...group, tree: buildChangesTree(group.files) })));
   const rows = computed(() => {
     const result: PanelRow[] = [];
@@ -45,18 +42,16 @@ export function NativeWorkspaceChanges(props: { owner: Owner }) {
   function toggleDirectory(staged: boolean, path: string) { const key = (staged ? 'staged' : 'working') + ':' + path, next = new Set(collapsed()); if (next.has(key)) next.delete(key); else next.add(key); collapsed.set(next); }
   async function revert(selected: string[], directory?: string) {
     if (disabled() || !current()) return;
+    const lane = props.owner.operation();
     const count = selected.length;
     const result = await AlertDialog.show({ title: t(directory ? 'gitView.changes.revertDirectoryDialogTitle' : 'gitView.changes.revertAllDialogTitle'), description: directory ? t(count === 1 ? 'gitView.changes.revertDirectoryDescriptionSingle' : 'gitView.changes.revertDirectoryDescriptionPlural', { count, path: directory }) : t(count === 1 ? 'gitView.changes.revertAllDescriptionSingle' : 'gitView.changes.revertAllDescriptionPlural', { count }), actions: [
       { id: 'revert', label: t('gitView.changes.revertAll'), role: 'destructive' },
       { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' },
     ] });
-    if (current() && result.action === 'revert') await actions.revert(selected, true);
+    if (current() && props.owner.operation() === lane && result.action === 'revert') await actions.revert(selected, true);
   }
   async function commit(pushAfter: boolean) {
-    const draft = message();
-    await actions.commit(draft, pushAfter);
-    // A sync failure must never invite re-committing a confirmed successful commit.
-    if (current() && actions.state().committed && message() === draft) message.set('');
+    await actions.commit(message(), pushAfter);
   }
   const actionError = () => status().error === 'mobile.changes.noRemote' ? t('mobile.changes.noRemote') : status().error === 'gitView.toast.commitOrStashBeforeSync' ? t('gitView.toast.commitOrStashBeforeSync') : status().error;
   return <View class="flex-1">
@@ -65,6 +60,7 @@ export function NativeWorkspaceChanges(props: { owner: Owner }) {
       <If when={state().loading || status().pending}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If>
       <If when={!!state().error}><Text role="alert" class="text-sm text-destructive">{state().error}</Text></If>
       <If when={!!status().error}><Text role="alert" class="text-sm text-destructive">{actionError()}</Text></If>
+      <If when={uncertain()}><Text testID="changes-write-unknown" role="alert" class="text-sm text-destructive">{t('settings.yuri.sessionRetention.result.uncertain')}</Text></If>
       <If when={status().failedPaths.length > 0}><Button testID="changes-retry-failed" class={action} disabled={disabled()} onPress={() => { void revert(status().failedPaths); }}><Text>{t('diffView.actions.retry')}</Text></Button></If>
     </View>
     <List testID="changes-workspace-list" class="flex-1" each={rows()} keyExtractor={row => row.key}>{item => <View>

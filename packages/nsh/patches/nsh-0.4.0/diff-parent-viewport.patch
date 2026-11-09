@@ -1,0 +1,1494 @@
+--- a/crates/nsh-base/src/diff/controller.rs
++++ b/crates/nsh-base/src/diff/controller.rs
+@@ -681,6 +681,8 @@
+ /// The diff view's controller: a clone shares everything.
+ #[derive(Clone)]
+ pub(crate) struct Dv {
++    pub(crate) parent: bool,
++    pub(crate) parent_viewport: Signal<Option<nsh_core::element::ParentViewport>>,
+     pub(crate) st: Rc<RefCell<State>>,
+     pub(crate) props: DiffViewProps,
+     cx: Scope<DiffViewEvent>,
+@@ -700,6 +702,7 @@
+     pub(crate) selection: Signal<Option<DiffLineRange>>,
+     /// The press selecting lines, while it lasts.
+     pub(crate) line_drag: Rc<Cell<Option<super::review::LineDrag>>>,
++    pub(crate) drag_epoch: Rc<Cell<u64>>,
+     /// Where a Shift-press extends the selection from: its side and line.
+     pub(crate) anchor: Rc<Cell<Option<(DiffSide, usize)>>>,
+     /// The row and side the pointer is over.
+@@ -725,6 +728,8 @@
+             line_height: props.line_height.get_untracked(),
+         };
+         let dv = Dv {
++            parent: props.viewport.get_untracked() == super::DiffViewport::Parent,
++            parent_viewport: signal(None),
+             st: Rc::new(RefCell::new(State::new(font))),
+             props,
+             cx,
+@@ -738,6 +743,7 @@
+             geo: signal(0),
+             selection: signal(None),
+             line_drag: Rc::default(),
++            drag_epoch: Rc::default(),
+             anchor: Rc::default(),
+             hover: signal(None),
+             hover_keys: Rc::default(),
+@@ -749,6 +755,25 @@
+         dv.follow_props();
+         dv.report_scroll();
+         dv.report_hunk_bounds();
++        if dv.parent {
++            let parent = dv.clone();
++            let target = dv.vscroll;
++            nsh_core::element::watch_parent_viewport(
++                move || target.node(),
++                move |input| {
++                    parent.parent_viewport.set(input);
++                    if let Some(input) = input {
++                        parent.scroll_y.set(input.offset);
++                        parent.viewport.set(input.size);
++                        parent.parent_scrolled(input);
++                        parent.follow_parent_drag();
++                        parent.schedule_highlight();
++                    } else {
++                        parent.viewport.set(Size::default());
++                    }
++                },
++            );
++        }
+         dv
+     }
+ 
+@@ -840,7 +865,18 @@
+         let st = self.st.borrow();
+         let lh = st.font.line_height.max(px(1.0));
+         let y = self.scroll_y.get().max(Points::ZERO);
+-        let height = self.viewport.get().height.max(lh * 40.0);
++        let height = if self.parent {
++            let Some(input) = self.parent_viewport.get() else {
++                return 0..0;
++            };
++            let bottom = (input.offset + input.size.height).min(st.geometry.height());
++            if bottom <= y {
++                return 0..0;
++            }
++            bottom - y
++        } else {
++            self.viewport.get().height.max(lh * 40.0)
++        };
+         let visible = st.geometry.range(y, height, 0);
+         self.rows_window.rows(visible, st.geometry.rows())
+     }
+@@ -1054,9 +1090,17 @@
+             else {
+                 return;
+             };
+-            st.font.line_height * row as f32
+-        };
+-        self.vscroll.scroll_to(point(px(0.0), y), true);
++            if self.parent {
++                st.geometry.top(row)
++            } else {
++                st.font.line_height * row as f32
++            }
++        };
++        if self.parent {
++            self.vscroll.scroll_parent_to(y, true);
++        } else {
++            self.vscroll.scroll_to(point(px(0.0), y), true);
++        }
+     }
+ 
+     // Highlighting.
+--- a/crates/nsh-base/src/diff/mod.rs
++++ b/crates/nsh-base/src/diff/mod.rs
+@@ -18,6 +18,17 @@
+ pub use parts::{DiffViewClasses, DiffViewPart, DiffViewStyles};
+ 
+ use self::controller::Dv;
++
++/// The vertical viewport of a [`DiffView`], fixed at mount time.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PropEnum)]
++pub enum DiffViewport {
++    /// An independent scroll view (the default).
++    #[default]
++    Own,
++    /// Natural row-geometry height, virtualized against the nearest
++    /// vertical scroll ancestor, which also owns navigation and dragging.
++    Parent,
++}
+ 
+ /// How a [`DiffView`] lays the two texts out.
+ #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PropEnum)]
+@@ -248,6 +259,10 @@
+ /// app's `renderHunkActions` calls; `onChange` reports the texts then.
+ #[derive(Clone, Copy, PartialEq, Props)]
+ pub struct DiffViewProps {
++    /// The vertical scroll owner, fixed when mounted (default `own`).
++    /// `parent` keeps natural height without materializing offscreen rows.
++    #[prop(default)]
++    pub viewport: Prop<DiffViewport>,
+     /// The old text.
+     pub old_value: Prop<Option<SharedString>>,
+     /// The new text.
+--- /dev/null
++++ b/crates/nsh-base/src/diff/parent_tests.rs
+@@ -0,0 +1,560 @@
++//! Parent viewport vertical slice, on the actual Rust component and core.
++use std::{cell::RefCell, collections::HashMap, ops::Range};
++
++use super::*;
++use crate::{DiffLayout, DiffView, DiffViewApi, DiffViewport, diff_view};
++use nsh_core::{
++    ApproxTextEngine, Core, EventKind, EventPayload, MountItem, NodeId, ViewKind,
++    element::{JsEvent, Root},
++    platform::{Idiom, Os},
++};
++
++#[derive(Default, Clone, Debug)]
++struct Readout {
++    offset: f32,
++    height: f32,
++    viewport: f32,
++    range: Range<usize>,
++    selected: Option<DiffLineRange>,
++    copied: String,
++    hunk: Option<usize>,
++    target: f32,
++    vertical: NodeId,
++    horizontal: [NodeId; 2],
++}
++
++thread_local! { static READ: RefCell<Readout> = RefCell::default(); }
++
++#[derive(Clone, PartialEq, Props)]
++struct FixtureProps {
++    count: usize,
++    layout: DiffLayout,
++    viewport: DiffViewport,
++    list: bool,
++}
++
++#[component]
++fn Fixture(p: FixtureProps) -> impl IntoElement {
++    let wrap = signal(false);
++    let all = signal(true);
++    let layout = signal(p.layout);
++    let dv = component_ref::<DiffView>();
++    let source = (0..p.count)
++        .map(|i| format!("line {i} {}", "abcdefgh ".repeat(12)))
++        .collect::<Vec<_>>();
++    let old = source.join("\n");
++    let mut source = source;
++    source[10] = "changed first".into();
++    source[p.count - 5] = "changed last".into();
++    let new = source.join("\n");
++    let api = move |f: &dyn Fn(&DiffViewApi)| {
++        f(&dv.api::<DiffViewApi>().expect("mounted diff"));
++    };
++    let button = move |id: &'static str, f: Box<dyn Fn(&DiffViewApi)>| {
++        view().test_id(id).h(px(1.0)).on_press(move || api(&*f))
++    };
++    let mut el = diff_view()
++        .viewport(p.viewport)
++        .layout(move || layout.get())
++        .soft_wrap(move || wrap.get())
++        .expand_all(move || all.get())
++        .old_value(old)
++        .new_value(new)
++        .component_ref(&dv);
++    if p.viewport == DiffViewport::Own {
++        el = el.h(px(400.0));
++    }
++    let el = el.into_element();
++    let body = if p.list {
++        let held = RefCell::new(Some(el));
++        nsh_core::element::virtual_list(1usize, move |_| {
++            view().child(view().flex_none().h(px(100.0))).child(
++                held.borrow_mut()
++                    .take()
++                    .expect("the single List row stays mounted"),
++            )
++        })
++        .test_id("outer")
++        .w(relative(1.0))
++        .h(px(400.0))
++        .footer(view().h(px(200.0)))
++        .into_element()
++    } else {
++        scroll()
++            .test_id("outer")
++            .w(relative(1.0))
++            .h(px(400.0))
++            .child(view().flex_none().h(px(100.0)))
++            .child(el)
++            .child(view().flex_none().h(px(200.0)))
++            .into_element()
++    };
++    view()
++        .child(body)
++        .child(button(
++            "inspect",
++            Box::new(move |a| {
++                let d = &a.dv;
++                let st = d.st.borrow();
++                let target = st
++                    .model
++                    .hunks
++                    .len()
++                    .checked_sub(1)
++                    .and_then(|i| crate::diff::layout::hunk_row(&st.rows, i))
++                    .map(|r| st.geometry.top(r).0)
++                    .unwrap_or_default();
++                READ.with(|r| {
++                    *r.borrow_mut() = Readout {
++                        offset: d.scroll_y.get_untracked().0,
++                        height: st.geometry.height().0,
++                        viewport: d.viewport.get_untracked().height.0,
++                        range: d.visible_rows(),
++                        selected: a.selected_lines(),
++                        copied: a.selected_text(),
++                        hunk: d.current_hunk(),
++                        target,
++                        vertical: d.vscroll.node().unwrap(),
++                        horizontal: d.hscroll.map(|h| h.node().unwrap_or(0)),
++                    }
++                });
++            }),
++        ))
++        .child(button(
++            "end",
++            Box::new(|a| a.set_scroll_offset(point(px(0.0), px(1e9)))),
++        ))
++        .child(button(
++            "target",
++            Box::new(|a| a.go_to_hunk(a.hunks().len() as u32 - 1)),
++        ))
++        .child(button(
++            "copy",
++            Box::new(|a| {
++                let mut range = DiffLineRange::default();
++                range.side = DiffSide::New;
++                range.end = u32::MAX;
++                a.set_selected_lines(Some(range));
++            }),
++        ))
++        .child(button(
++            "wrap",
++            Box::new(move |_| wrap.set(!wrap.get_untracked())),
++        ))
++        .child(button(
++            "collapse",
++            Box::new(move |_| all.set(!all.get_untracked())),
++        ))
++        .child(button(
++            "separator",
++            Box::new(|a| a.expand(1, Some(crate::DiffExpand::All), None)),
++        ))
++        .child(button(
++            "layout",
++            Box::new(move |_| {
++                layout.set(if layout.get_untracked() == DiffLayout::Split {
++                    DiffLayout::Unified
++                } else {
++                    DiffLayout::Split
++                })
++            }),
++        ))
++        .child(button(
++            "horizontal",
++            Box::new(|a| a.dv.side_scrolled(DiffSide::Old, px(70.0))),
++        ))
++        .child(button(
++            "drag",
++            Box::new(|a| {
++                let y = a.dv.scroll_y.get_untracked().max(Points::ZERO) + px(5.0);
++                a.dv.line_press(
++                    point(px(5.0), y),
++                    point(px(5.0), px(5.0)),
++                    DiffSide::New,
++                    true,
++                    false,
++                    true,
++                );
++                a.dv.line_drag_to(point(px(5.0), px(450.0)));
++                a.dv.parent_drag_scroll();
++            }),
++        ))
++        .child(button("release", Box::new(|a| a.dv.line_release(false))))
++}
++
++type TestCore = Core<ApproxTextEngine>;
++
++fn settle(c: &mut TestCore) -> Vec<MountItem> {
++    let mut items = Vec::new();
++    for _ in 0..20 {
++        if let Some(batch) = c.commit() {
++            items.extend(batch.items);
++        }
++        let mut events = Vec::new();
++        c.take_events(&mut events);
++        if events.is_empty() {
++            break;
++        }
++        for event in events {
++            match event {
++                JsEvent::LayoutListener {
++                    host,
++                    id,
++                    listener,
++                    frame,
++                } => c.component_layout(host, id, &listener, frame),
++                JsEvent::Event(id, kind, payload) => {
++                    c.component_event(id, kind, &payload);
++                }
++                _ => {}
++            }
++        }
++    }
++    items
++}
++
++fn start(
++    count: usize,
++    layout: DiffLayout,
++    viewport: DiffViewport,
++    os: Os,
++) -> (TestCore, HashMap<String, NodeId>, Vec<MountItem>) {
++    start_with_list(count, layout, viewport, os, false)
++}
++
++fn start_with_list(
++    count: usize,
++    layout: DiffLayout,
++    viewport: DiffViewport,
++    os: Os,
++    list: bool,
++) -> (TestCore, HashMap<String, NodeId>, Vec<MountItem>) {
++    let mut c = Core::new(ApproxTextEngine, size(px(800.0), px(600.0)));
++    c.set_environment(nsh_core::element::Environment {
++        os,
++        idiom: Idiom::Desktop,
++        ..Default::default()
++    });
++    c.mount_root(&Root::new::<Fixture>(move || FixtureProps {
++        count,
++        layout,
++        viewport,
++        list,
++    }));
++    let items = settle(&mut c);
++    let ids = items
++        .iter()
++        .filter_map(|i| match i {
++            MountItem::ViewProps { id, props } => {
++                props.test_id.as_ref().map(|name| (name.to_string(), *id))
++            }
++            _ => None,
++        })
++        .collect();
++    (c, ids, items)
++}
++
++fn press(c: &mut TestCore, ids: &HashMap<String, NodeId>, id: &str) -> Vec<MountItem> {
++    assert!(c.component_event(ids[id], EventKind::Press, &EventPayload::None));
++    settle(c)
++}
++
++fn read(c: &mut TestCore, ids: &HashMap<String, NodeId>) -> Readout {
++    press(c, ids, "inspect");
++    READ.with(|r| r.borrow().clone())
++}
++
++#[test]
++fn parent_rows_follow_actual_ancestor_offset_with_bounded_nodes_and_complete_copy() {
++    for os in [Os::MacOs, Os::Windows] {
++        for layout in [DiffLayout::Split, DiffLayout::Unified] {
++            let mut counts = Vec::new();
++            for count in [400, 12000] {
++                let (mut c, ids, items) = start(count, layout, DiffViewport::Parent, os);
++                let initial = read(&mut c, &ids);
++                assert_eq!(initial.offset, -100.0);
++                assert_eq!(initial.viewport, 400.0);
++                assert!(initial.height >= count as f32 * 20.0);
++                assert!(initial.range.len() < 100);
++                assert!(c.node_count() < 2000, "{}", c.node_count());
++                let creates = items
++                    .iter()
++                    .filter(|i| matches!(i, MountItem::Create { .. }))
++                    .count();
++                assert!(creates < 2000, "{creates}");
++                counts.push((creates, items.len()));
++                assert!(items.iter().any(|i| matches!(i, MountItem::Create { id, kind: ViewKind::View } if *id == initial.vertical)));
++                c.set_scroll_offset(ids["outer"], point(px(0.0), px(2100.0)), 0);
++                settle(&mut c);
++                let moved = read(&mut c, &ids);
++                assert_eq!(moved.offset, 2000.0);
++                assert!(
++                    moved.range.start >= 70 && moved.range.end < 160,
++                    "{moved:?}"
++                );
++                press(&mut c, &ids, "copy");
++                let copied = read(&mut c, &ids);
++                assert!(copied.copied.ends_with(&format!(
++                    "line {} {}",
++                    count - 1,
++                    "abcdefgh ".repeat(12)
++                )));
++                let command = press(&mut c, &ids, "end");
++                assert!(command.iter().any(|i| matches!(i, MountItem::Command { id, command: nsh_core::Command::ScrollTo { .. } } if *id == ids["outer"])));
++                let end = read(&mut c, &ids);
++                assert!(end.range.end >= count - 1);
++                assert_eq!(end.selected, copied.selected);
++                assert!(c.node_count() < 2000);
++            }
++            assert!(counts[1].0 <= counts[0].0 + 12, "{counts:?}");
++            assert!(counts[1].1 <= counts[0].1 + 64, "{counts:?}");
++        }
++    }
++}
++
++#[test]
++fn parent_resize_wrap_collapse_target_and_split_scroll_keep_selection() {
++    for os in [Os::MacOs, Os::Windows] {
++        let (mut c, ids, _) = start(400, DiffLayout::Split, DiffViewport::Parent, os);
++        press(&mut c, &ids, "copy");
++        let selected = read(&mut c, &ids).selected;
++        press(&mut c, &ids, "wrap");
++        c.set_viewport(size(px(500.0), px(600.0)));
++        settle(&mut c);
++        let wrapped = read(&mut c, &ids);
++        assert!(wrapped.height > 8000.0);
++        assert_eq!(wrapped.selected, selected);
++        press(&mut c, &ids, "collapse");
++        let collapsed = read(&mut c, &ids);
++        assert!(collapsed.height < wrapped.height);
++        assert_eq!(collapsed.selected, selected);
++        press(&mut c, &ids, "separator");
++        let expanded = read(&mut c, &ids);
++        assert!(expanded.height > collapsed.height);
++        assert_eq!(expanded.selected, selected);
++        press(&mut c, &ids, "collapse");
++        let command = press(&mut c, &ids, "target");
++        assert!(
++            command
++                .iter()
++                .any(|i| matches!(i, MountItem::Command { id, .. } if *id == ids["outer"]))
++        );
++        let target = read(&mut c, &ids);
++        assert_eq!(target.hunk, Some(1));
++        assert!((target.offset - target.target).abs() < 1.0, "{target:?}");
++        assert_eq!(target.selected, selected);
++        press(&mut c, &ids, "wrap");
++        let sides = read(&mut c, &ids).horizontal;
++        let horizontal = press(&mut c, &ids, "horizontal");
++        assert!(horizontal.iter().any(|i| matches!(i, MountItem::Command { id, command: nsh_core::Command::ScrollTo { x, .. } } if *id == sides[1] && x.0 == 70.0)));
++        press(&mut c, &ids, "layout");
++        assert_eq!(read(&mut c, &ids).selected, selected);
++    }
++}
++
++#[component]
++fn FilesFixture() -> impl IntoElement {
++    let dv = component_ref::<DiffView>();
++    let mut annotation = crate::DiffAnnotation::default();
++    annotation.id = "note".into();
++    annotation.side = DiffSide::New;
++    annotation.line = 0;
++    let long = "a long changed line with words ".repeat(10);
++    let patch = format!(
++        "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+{long}\ndiff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-before\n+after\n"
++    );
++    let api = move |f: &dyn Fn(&DiffViewApi)| f(&dv.api::<DiffViewApi>().unwrap());
++    let button = move |id: &'static str, f: Box<dyn Fn(&DiffViewApi)>| {
++        view().test_id(id).h(px(1.0)).on_press(move || api(&*f))
++    };
++    view()
++        .child(
++            scroll()
++                .test_id("outer")
++                .w(px(500.0))
++                .h(px(200.0))
++                .child(view().h(px(100.0)).flex_none())
++                .child(
++                    diff_view()
++                        .viewport(DiffViewport::Parent)
++                        .patch(patch)
++                        .soft_wrap(true)
++                        .annotations(vec![annotation])
++                        .render_annotation(|_: &crate::DiffAnnotation| {
++                            view().h(px(60.0)).child(text("annotation"))
++                        })
++                        .component_ref(&dv),
++                )
++                .child(view().h(px(1000.0)).flex_none()),
++        )
++        .child(button(
++            "inspect",
++            Box::new(|a| {
++                let d = &a.dv;
++                let st = d.st.borrow();
++                let row = st
++                    .files
++                    .index("b.rs")
++                    .and_then(|i| crate::diff::files::file_row(&st.rows, i))
++                    .unwrap();
++                READ.with(|r| {
++                    *r.borrow_mut() = Readout {
++                        height: st.geometry.height().0,
++                        offset: d.scroll_y.get_untracked().0,
++                        selected: a.selected_lines(),
++                        copied: a.selected_text(),
++                        target: st.geometry.top(row).0,
++                        ..Default::default()
++                    }
++                });
++            }),
++        ))
++        .child(button(
++            "file",
++            Box::new(|a| a.scroll_to_file("b.rs".into())),
++        ))
++        .child(button(
++            "collapse-file",
++            Box::new(|a| a.collapse_file("a.rs".into())),
++        ))
++        .child(button(
++            "expand-file",
++            Box::new(|a| a.expand_file("a.rs".into())),
++        ))
++        .child(button(
++            "copy",
++            Box::new(|a| {
++                let mut r = DiffLineRange::default();
++                r.side = DiffSide::New;
++                r.end = 1;
++                a.set_selected_lines(Some(r));
++            }),
++        ))
++}
++
++#[test]
++fn parent_file_navigation_uses_wrapped_annotation_geometry_and_keeps_full_selection() {
++    for os in [Os::MacOs, Os::Windows] {
++        let mut c = Core::new(ApproxTextEngine, size(px(800.0), px(600.0)));
++        c.set_environment(nsh_core::element::Environment {
++            os,
++            idiom: Idiom::Desktop,
++            ..Default::default()
++        });
++        c.mount_root(&Root::new::<FilesFixture>(|| ()));
++        let items = settle(&mut c);
++        let ids = items
++            .iter()
++            .filter_map(|i| match i {
++                MountItem::ViewProps { id, props } => {
++                    props.test_id.as_ref().map(|name| (name.to_string(), *id))
++                }
++                _ => None,
++            })
++            .collect();
++        press(&mut c, &ids, "copy");
++        let initial = read(&mut c, &ids);
++        assert!(
++            initial.target > 120.0,
++            "wrapping and annotation heights participate: {initial:?}"
++        );
++        assert!(initial.copied.ends_with("\nafter"));
++        let command = press(&mut c, &ids, "file");
++        assert!(command.iter().any(|m| matches!(m, MountItem::Command { id, command: nsh_core::Command::ScrollTo { y, .. } } if *id == ids["outer"] && (y.0 - initial.target - 100.0).abs() < 1.0)));
++        assert!((read(&mut c, &ids).offset - initial.target).abs() < 1.0);
++        press(&mut c, &ids, "collapse-file");
++        let collapsed = read(&mut c, &ids);
++        assert!(collapsed.height < initial.height);
++        assert_eq!(collapsed.selected, initial.selected);
++        assert_eq!(collapsed.copied, initial.copied);
++        press(&mut c, &ids, "expand-file");
++        let expanded = read(&mut c, &ids);
++        assert_eq!(expanded.height, initial.height);
++        assert_eq!(expanded.selected, initial.selected);
++    }
++}
++
++#[test]
++fn parent_drag_autoscroll_uses_the_ancestor_and_own_stays_independent() {
++    let (mut c, ids, _) = start(400, DiffLayout::Split, DiffViewport::Parent, Os::Windows);
++    c.set_scroll_offset(ids["outer"], point(px(0.0), px(1100.0)), 0);
++    settle(&mut c);
++    let command = press(&mut c, &ids, "drag");
++    assert!(
++        command
++            .iter()
++            .any(|i| matches!(i, MountItem::Command { id, .. } if *id == ids["outer"]))
++    );
++    let after = read(&mut c, &ids);
++    assert!(after.offset > 1000.0);
++    assert!(after.selected.is_some_and(|r| r.end > r.start));
++    press(&mut c, &ids, "release");
++    let (mut own, ids, _) = start(400, DiffLayout::Split, DiffViewport::Own, Os::Ios);
++    let initial = read(&mut own, &ids);
++    own.set_scroll_offset(ids["outer"], point(px(0.0), px(100.0)), 0);
++    settle(&mut own);
++    assert_eq!(read(&mut own, &ids).offset, initial.offset);
++    let command = press(&mut own, &ids, "target");
++    assert!(
++        command
++            .iter()
++            .any(|i| matches!(i, MountItem::Command { id, .. } if *id == initial.vertical))
++    );
++}
++
++#[test]
++fn parent_viewport_is_in_the_generated_public_types() {
++    let spec = crate::registry()
++        .specs()
++        .into_iter()
++        .find(|s| s.export == "DiffView")
++        .unwrap();
++    let prop = spec.props.iter().find(|p| p.name == "viewport").unwrap();
++    assert!(prop.optional && prop.decode.is_some());
++    assert_eq!(prop.ts, "DiffViewport");
++    let dts = nsh_core::element::declarations(&crate::registry(), &[]);
++    assert!(
++        dts.contains("viewport?: DiffViewport")
++            && dts.contains("type DiffViewport = \"own\" | \"parent\""),
++        "{dts}"
++    );
++}
++
++#[test]
++fn parent_diff_inside_a_real_list_uses_the_same_owner_for_window_and_navigation() {
++    for os in [Os::MacOs, Os::Windows] {
++        let (mut c, ids, _) =
++            start_with_list(12000, DiffLayout::Split, DiffViewport::Parent, os, true);
++        let initial = read(&mut c, &ids);
++        assert_eq!(initial.offset, -100.0);
++        assert_eq!(initial.viewport, 400.0);
++        assert!(c.node_count() < 2000);
++        c.set_scroll_offset(ids["outer"], point(px(0.0), px(2100.0)), 0);
++        settle(&mut c);
++        let moved = read(&mut c, &ids);
++        assert_eq!(moved.offset, 2000.0);
++        assert!(moved.range.start >= 70 && moved.range.end < 160);
++        let commands = press(&mut c, &ids, "target");
++        let y = commands
++            .iter()
++            .find_map(|m| match m {
++                MountItem::Command {
++                    id,
++                    command: nsh_core::Command::ScrollTo { y, .. },
++                } if *id == ids["outer"] => Some(*y),
++                _ => None,
++            })
++            .expect("the List receives the actual target");
++        c.set_scroll_offset(ids["outer"], point(px(0.0), y), 1);
++        settle(&mut c);
++        let target = read(&mut c, &ids);
++        assert_eq!(target.hunk, Some(1));
++        // The real List limits include the 200pt footer: no fake bottom
++        // padding is introduced just to put the final hunk at the top.
++        assert!(
++            (target.offset - target.target.min(target.height - 200.0)).abs() < 1.0,
++            "{target:?}"
++        );
++        assert!(c.node_count() < 2000);
++    }
++}
+--- a/crates/nsh-base/src/diff/review.rs
++++ b/crates/nsh-base/src/diff/review.rs
+@@ -16,6 +16,7 @@
+ /// A press selecting lines on their numbers, while it lasts.
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub(crate) struct LineDrag {
++    page: Point<Points>,
+     /// The side it selects on.
+     side: DiffSide,
+     /// The line the selection extends from.
+@@ -187,6 +188,7 @@
+         self.select(Some(range(side, anchor, line)));
+         if drag {
+             self.line_drag.set(Some(LineDrag {
++                page,
+                 side,
+                 anchor,
+                 head: line,
+@@ -195,6 +197,19 @@
+                 moved: false,
+                 extended: shift,
+             }));
++            if self.parent {
++                let epoch = self.drag_epoch.get().wrapping_add(1);
++                self.drag_epoch.set(epoch);
++                let dv = self.clone();
++                spawn(async move {
++                    while dv.drag_epoch.get() == epoch && dv.line_drag.get().is_some() {
++                        next_frame().await;
++                        if dv.drag_epoch.get() == epoch {
++                            dv.parent_drag_scroll();
++                        }
++                    }
++                });
++            }
+         } else if !shift {
+             self.line_number_press(side, line);
+         }
+@@ -222,6 +237,8 @@
+         let Some(mut drag) = self.line_drag.get() else {
+             return;
+         };
++        drag.page = page;
++        self.line_drag.set(Some(drag));
+         let y = page.y + drag.shift + (self.scroll_y.get_untracked() - drag.scroll);
+         let line = {
+             let st = self.st.borrow();
+@@ -242,6 +259,7 @@
+     /// The press on the numbers ended (`pressed`: where it began, a press
+     /// of its number unless it dragged or extended).
+     pub(crate) fn line_release(&self, pressed: bool) {
++        self.drag_epoch.set(self.drag_epoch.get().wrapping_add(1));
+         let Some(drag) = self.line_drag.take() else {
+             return;
+         };
+@@ -262,10 +280,36 @@
+     /// Other texts: no lines are selected any more (reported), and
+     /// navigation starts from the view again.
+     pub(crate) fn texts_changed(&self) {
++        self.drag_epoch.set(self.drag_epoch.get().wrapping_add(1));
+         self.anchor.set(None);
+         self.line_drag.set(None);
+         self.nav.set(None);
+         self.select(None);
++    }
++
++    pub(crate) fn follow_parent_drag(&self) {
++        if let Some(drag) = self.line_drag.get() {
++            self.line_drag_to(drag.page);
++        }
++    }
++
++    fn parent_drag_scroll(&self) {
++        let (Some(drag), Some(input)) =
++            (self.line_drag.get(), self.parent_viewport.get_untracked())
++        else {
++            return;
++        };
++        let pointer = drag.page.y + drag.shift - drag.scroll;
++        let over = if pointer < Points::ZERO {
++            pointer
++        } else {
++            (pointer - input.size.height).max(Points::ZERO)
++        };
++        let step = over.clamp(px(-24.0), px(24.0));
++        let to = (input.offset + step).clamp(input.min_offset, input.max_offset);
++        if to != input.offset {
++            self.vscroll.scroll_parent_to(to, false);
++        }
+     }
+ 
+     pub(crate) fn set_selected_lines(&self, range: Option<DiffLineRange>) {
+@@ -478,6 +522,15 @@
+     /// Scrolls `y` to the top of the view (as far as the rows go), with
+     /// an animation: to change `hunk`, which navigation goes on from.
+     pub(crate) fn scroll_to_y(&self, y: Points, hunk: Option<usize>) {
++        if self.parent {
++            self.nav.set(hunk.map(|hunk| Nav {
++                hunk,
++                y,
++                reached: false,
++            }));
++            self.vscroll.scroll_parent_to(y, true);
++            return;
++        }
+         let max = {
+             let st = self.st.borrow();
+             (st.geometry.height() - self.viewport.get_untracked().height).max(Points::ZERO)
+@@ -504,6 +557,14 @@
+         } else if nav.reached || off > self.viewport.get_untracked().height.max(px(1.0)) {
+             self.nav.set(None);
+         }
++    }
++
++    pub(crate) fn parent_scrolled(&self, input: nsh_core::element::ParentViewport) {
++        if let Some(mut nav) = self.nav.get() {
++            nav.y = nav.y.clamp(input.min_offset, input.max_offset);
++            self.nav.set(Some(nav));
++        }
++        self.scrolled_to(input.offset);
+     }
+ 
+     /// Reports where the rows are scrolled, their size and the
+@@ -557,6 +618,10 @@
+ 
+     /// Scrolls `y` to the top of the view (as far as the rows go) at once.
+     pub(crate) fn set_scroll_offset(&self, y: Points) {
++        if self.parent {
++            self.vscroll.scroll_parent_to(y, false);
++            return;
++        }
+         let max = {
+             let st = self.st.borrow();
+             (st.geometry.height() - self.viewport.get_untracked().height).max(Points::ZERO)
+@@ -631,6 +696,10 @@
+         follower.scroll_to(point(x, px(0.0)), false);
+     }
+ }
++
++#[cfg(test)]
++#[path = "parent_tests.rs"]
++mod parent_tests;
+ 
+ #[cfg(test)]
+ mod tests {
+--- a/crates/nsh-base/src/diff/view.rs
++++ b/crates/nsh-base/src/diff/view.rs
+@@ -98,61 +98,65 @@
+     let rows = visible_rows(dv.clone());
+     let split_dv = dv.clone();
+     let unified_dv = dv.clone();
+-    view()
++    let content = view()
++        .relative()
++        .h(move || Length::from(height()))
++        .child(
++            when(
++                move || props.layout.get() == DiffLayout::Split,
++                move || {
++                    view()
++                        .absolute()
++                        .inset_0()
++                        .flex_row()
++                        .child(
++                            side(split_dv.clone(), Column::Old, rows)
++                                .border_r_1()
++                                .border_color(move || theme().border),
++                        )
++                        .child(side(split_dv.clone(), Column::New, rows))
++                },
++            )
++            .otherwise(move || {
++                view().absolute().inset_0().flex_row().child(side(
++                    unified_dv.clone(),
++                    Column::Both,
++                    rows,
++                ))
++            }),
++        )
++        .child(separators(dv.clone(), rows))
++        .child(super::files::headers(dv.clone(), rows))
++        .child(hunk_actions(dv.clone(), rows))
++        .child(annotations(dv.clone()))
++        .child(add_controls(dv.clone()));
++    let body = if dv.parent {
++        content.flex_none().element_ref(&dv.vscroll).into_element()
++    } else {
++        scroll()
++            .element_ref(&dv.vscroll)
++            .absolute()
++            .inset_0()
++            .on_scroll(move |e: &ScrollEvent| {
++                scroll_dv.scroll_y.set(e.offset.y);
++                scroll_dv.viewport.set(e.size);
++                // Lines scrolled into view far past the parse are guessed.
++                scroll_dv.schedule_highlight();
++                scroll_dv.scrolled_to(e.offset.y);
++            })
++            .on_layout(move |b: &Bounds<Points>| layout_dv.viewport.set(b.size))
++            .child(content)
++            .into_element()
++    };
++    let root = view()
+         .relative()
+         .overflow_hidden()
+         .text_color(move || theme().foreground)
+         .font_family(move || font_a().family)
+         .text_size(move || Length::from(font_b().size))
+         .line_height(move || nsh_core::LineHeight::from(font_c().line_height))
+-        .child(
+-            scroll()
+-                .element_ref(&dv.vscroll)
+-                .absolute()
+-                .inset_0()
+-                .on_scroll(move |e: &ScrollEvent| {
+-                    scroll_dv.scroll_y.set(e.offset.y);
+-                    scroll_dv.viewport.set(e.size);
+-                    // Lines scrolled into view far past the parse are guessed.
+-                    scroll_dv.schedule_highlight();
+-                    scroll_dv.scrolled_to(e.offset.y);
+-                })
+-                .on_layout(move |b: &Bounds<Points>| layout_dv.viewport.set(b.size))
+-                .child(
+-                    view()
+-                        .relative()
+-                        .h(move || Length::from(height()))
+-                        .child(
+-                            when(
+-                                move || props.layout.get() == DiffLayout::Split,
+-                                move || {
+-                                    view()
+-                                        .absolute()
+-                                        .inset_0()
+-                                        .flex_row()
+-                                        .child(
+-                                            side(split_dv.clone(), Column::Old, rows)
+-                                                .border_r_1()
+-                                                .border_color(move || theme().border),
+-                                        )
+-                                        .child(side(split_dv.clone(), Column::New, rows))
+-                                },
+-                            )
+-                            .otherwise(move || {
+-                                view().absolute().inset_0().flex_row().child(side(
+-                                    unified_dv.clone(),
+-                                    Column::Both,
+-                                    rows,
+-                                ))
+-                            }),
+-                        )
+-                        .child(separators(dv.clone(), rows))
+-                        .child(super::files::headers(dv.clone(), rows))
+-                        .child(hunk_actions(dv.clone(), rows))
+-                        .child(annotations(dv.clone()))
+-                        .child(add_controls(dv.clone())),
+-                ),
+-        )
++        .child(body);
++    if dv.parent { root.flex_none() } else { root }
+ }
+ 
+ fn line_height(dv: &Dv) -> impl Fn() -> Points + Clone + 'static {
+--- a/crates/nsh-base/src/lib.rs
++++ b/crates/nsh-base/src/lib.rs
+@@ -144,7 +144,7 @@
+         DiffAnnotation, DiffChange, DiffExpand, DiffFile, DiffFileStatus, DiffHunk, DiffHunkBounds,
+         DiffIndicators, DiffInline, DiffLayout, DiffLine, DiffLineRange, DiffSeparator, DiffSide,
+         DiffStats, DiffView, DiffViewApi, DiffViewClasses, DiffViewElement, DiffViewEvent,
+-        DiffViewPart, DiffViewProps, DiffViewStyles, diff_view,
++        DiffViewPart, DiffViewProps, DiffViewStyles, DiffViewport, diff_view,
+     },
+     dock::{DockArea, DockAreaElement, DockAreaEvent, DockAreaProps, dock_area},
+     editor::{
+--- a/crates/nsh-core/src/core/components.rs
++++ b/crates/nsh-core/src/core/components.rs
+@@ -4933,6 +4933,9 @@
+             Action::Command(id, command) => {
+                 let _ = self.apply_op(Op::Command { id, command });
+             }
++            Action::ScrollParent(id, offset, animated) => {
++                self.parent_scrolls.push((id, offset, animated));
++            }
+             Action::Dialog(mut dialog, answer) => {
+                 dialog.id = self.components.next_dialog;
+                 self.components.next_dialog += 1;
+--- a/crates/nsh-core/src/core/mod.rs
++++ b/crates/nsh-core/src/core/mod.rs
+@@ -995,6 +995,10 @@
+     /// The lists in their parent's viewport (`viewport="parent"`), outer
+     /// ones first ([`Core::resolve_outer`]).
+     parent_lists: Vec<Key>,
++    /// Non-list views borrowing the same ancestor viewport machinery.
++    watched_parents: Vec<(NodeId, NodeId)>,
++    /// Parent-scroll requests resolved after the current layout.
++    parent_scrolls: Vec<(NodeId, Points, bool)>,
+     /// Views moved in a tree with such lists: their views are found again.
+     outer_moved: bool,
+     /// Such a list changed length: the commit lays the page out again.
+@@ -1218,6 +1222,8 @@
+             components: components::Components::for_viewport(viewport),
+             lists: Vec::new(),
+             parent_lists: Vec::new(),
++            watched_parents: Vec::new(),
++            parent_scrolls: Vec::new(),
+             outer_moved: false,
+             extent_changed: false,
+             outer_asked: Vec::new(),
+@@ -2305,6 +2311,9 @@
+             self.mount.push(MountItem::Command { id, command });
+         }
+         self.commands.append(&mut kept);
++        for (id, offset, animated) in std::mem::take(&mut self.parent_scrolls) {
++            self.scroll_parent(id, offset, animated);
++        }
+     }
+ 
+     #[inline]
+@@ -4727,6 +4736,7 @@
+             self.forget_outer(key);
+             self.parent_lists.retain(|&k| k != key);
+         }
++        self.forget_watched_parent(key);
+         let node = self.nodes.remove(key as usize);
+         self.ch_readers -= usize::from(node.reads_ch);
+         self.slots[id as usize] = 0;
+--- a/crates/nsh-core/src/core/parent_viewport.rs
++++ b/crates/nsh-core/src/core/parent_viewport.rs
+@@ -252,6 +252,10 @@
+     /// view it is in; `None` out of the tree.
+     fn find_outer(&self, key: Key) -> Option<Outer> {
+         let horizontal = self.nodes[key as usize].list.as_ref()?.horizontal;
++        self.find_outer_axis(key, horizontal)
++    }
++
++    pub(super) fn find_outer_axis(&self, key: Key, horizontal: bool) -> Option<Outer> {
+         let mut depth = 0;
+         let mut k = self.nodes[key as usize].parent;
+         while k != NO_KEY {
+@@ -435,6 +439,16 @@
+         let list = node.list.as_ref()?;
+         let outer = list.outer?;
+         let horizontal = list.horizontal;
++        self.viewport_input(key, outer, horizontal)
++    }
++
++    pub(super) fn viewport_input(
++        &self,
++        key: Key,
++        outer: Outer,
++        horizontal: bool,
++    ) -> Option<OuterInput> {
++        let node = &self.nodes[key as usize];
+         let l = self.rounded_layout(node.layout?);
+         let (inset, cross) = if horizontal {
+             (
+@@ -502,6 +516,21 @@
+             inset,
+             cross: cross.max(0.0),
+         })
++    }
++
++    pub(super) fn scroll_parent(&mut self, id: crate::NodeId, offset: Points, animated: bool) {
++        let Some(key) = self.key(id).ok() else { return };
++        let Some(outer) = self.find_outer_axis(key, false) else {
++            return;
++        };
++        if !outer.scrolls {
++            return;
++        }
++        let Some(input) = self.viewport_input(key, outer, false) else {
++            return;
++        };
++        let to = (input.start + offset.0).clamp(0.0, input.max);
++        self.ask_outer(input.view, Some((to, animated)), 0.0);
+     }
+ 
+     /// A parent-viewport list asks its view to scroll to `to` (animated or
+--- a/crates/nsh-core/src/core/tests.rs
++++ b/crates/nsh-core/src/core/tests.rs
+@@ -21,6 +21,153 @@
+ struct FakeLayout {
+     chars: usize,
+     points: Vec<Option<Point<Points>>>,
++}
++
++mod borrowed_parent_viewport {
++    use super::*;
++    use crate::element::{
++        Element, ElementRef, ParentElement, ParentViewport, Root, Styled, component, element_ref,
++        scroll, view, watch_parent_viewport,
++    };
++
++    thread_local! {
++        static REFS: Cell<Option<[ElementRef; 3]>> = const { Cell::new(None) };
++        static LAST: Cell<Option<ParentViewport>> = const { Cell::new(None) };
++    }
++
++    #[component]
++    fn Borrowed() -> impl crate::element::IntoElement {
++        let outer = element_ref();
++        let other = element_ref();
++        let target = element_ref();
++        REFS.with(|r| r.set(Some([outer, other, target])));
++        watch_parent_viewport(move || target.node(), |input| LAST.with(|v| v.set(input)));
++        view()
++            .child(
++                scroll()
++                    .element_ref(&outer)
++                    .w(px(800.0))
++                    .h(px(300.0))
++                    .child(view().h(px(100.0)))
++                    .child(view().element_ref(&target).h(px(5000.0))),
++            )
++            .child(scroll().element_ref(&other).w(px(800.0)).h(px(300.0)))
++    }
++
++    #[test]
++    fn borrowed_viewport_reuses_ancestry_coordinates_pending_replay_and_revocation() {
++        let mut c = core();
++        c.mount_root(&Root::new::<Borrowed>(|| ()));
++        c.commit().unwrap();
++        let refs = REFS.with(Cell::get).unwrap();
++        let nodes = {
++            let _entered = c.components.runtime.enter();
++            refs.map(|r| r.node().unwrap())
++        };
++        assert_eq!(LAST.with(Cell::get).unwrap().offset, px(-100.0));
++        c.set_scroll_offset(nodes[0], point(px(0.0), px(2100.0)), 0);
++        c.commit();
++        assert_eq!(LAST.with(Cell::get).unwrap().offset, px(2000.0));
++        {
++            let _entered = c.components.runtime.enter();
++            refs[2].scroll_parent_to(px(3000.0), false);
++        }
++        let batch = c.commit().unwrap();
++        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Command { id, command: Command::ScrollTo { y, .. } } if *id == nodes[0] && *y == px(3100.0))));
++        assert_eq!(LAST.with(Cell::get).unwrap().offset, px(3000.0));
++        c.set_scroll_offset(nodes[0], point(px(0.0), px(100.0)), 0);
++        c.commit();
++        assert_eq!(
++            LAST.with(Cell::get).unwrap().offset,
++            px(3000.0),
++            "a stale native report cannot undo a pending command"
++        );
++        c.set_scroll_offset(nodes[0], point(px(0.0), px(3100.0)), 1);
++        c.commit();
++        assert_eq!(LAST.with(Cell::get).unwrap().offset, px(3000.0));
++        c.apply_op(Op::Insert {
++            parent: nodes[1],
++            child: nodes[2],
++            before: None,
++        })
++        .unwrap();
++        c.commit();
++        assert_eq!(LAST.with(Cell::get).unwrap().offset, px(0.0));
++        let first = c.key(nodes[0]).unwrap();
++        let second = c.key(nodes[1]).unwrap();
++        let target = c.key(nodes[2]).unwrap();
++        assert!(
++            !c.nodes[first as usize]
++                .scroll
++                .as_ref()
++                .unwrap()
++                .dependents
++                .contains(&target)
++        );
++        assert!(
++            c.nodes[second as usize]
++                .scroll
++                .as_ref()
++                .unwrap()
++                .dependents
++                .contains(&target)
++        );
++        c.apply_op(Op::Release { id: nodes[2] }).unwrap();
++        c.commit();
++        assert!(LAST.with(Cell::get).is_none());
++        assert!(
++            c.nodes[second as usize]
++                .scroll
++                .as_ref()
++                .unwrap()
++                .dependents
++                .is_empty()
++        );
++    }
++
++    #[test]
++    fn borrowed_ancestry_skips_horizontal_scrollers_and_stops_at_roots() {
++        let mut c = core();
++        for (id, tag) in [
++            (2, Tag::Scroll),
++            (4, Tag::Scroll),
++            (6, Tag::View),
++            (8, Tag::Screen),
++        ] {
++            c.apply_op(Op::Create { id, tag }).unwrap();
++        }
++        c.apply_op(Op::SetProp {
++            id: 4,
++            prop: Prop::Horizontal(true),
++        })
++        .unwrap();
++        for (parent, child) in [(ROOT_ID, 2), (2, 4), (4, 6)] {
++            c.apply_op(Op::Insert {
++                parent,
++                child,
++                before: None,
++            })
++            .unwrap();
++        }
++        let found = c.find_outer_axis(c.key(6).unwrap(), false).unwrap();
++        assert_eq!(found.view, c.key(2).unwrap());
++        assert!(found.scrolls);
++        c.apply_op(Op::Insert {
++            parent: 4,
++            child: 8,
++            before: None,
++        })
++        .unwrap();
++        c.apply_op(Op::Insert {
++            parent: 8,
++            child: 6,
++            before: None,
++        })
++        .unwrap();
++        let found = c.find_outer_axis(c.key(6).unwrap(), false).unwrap();
++        assert_eq!(found.view, c.key(8).unwrap());
++        assert!(!found.scrolls);
++    }
+ }
+ 
+ impl TextEngine for FakeEngine {
+--- a/crates/nsh-core/src/core/watch.rs
++++ b/crates/nsh-core/src/core/watch.rs
+@@ -43,13 +43,119 @@
+ }
+ 
+ impl<M: TextEngine> Core<M> {
++    pub(super) fn forget_watched_parent(&mut self, key: Key) {
++        let id = self.nodes[key as usize].id;
++        let owners: Vec<_> = self
++            .watched_parents
++            .iter()
++            .filter(|(node, _)| *node == id)
++            .map(|(_, owner)| *owner)
++            .collect();
++        for owner in owners {
++            if let Ok(view) = self.key(owner)
++                && let Some(scroll) = self.nodes[view as usize].scroll.as_mut()
++            {
++                scroll.dependents.retain(|&d| d != key);
++                if scroll.dependents.is_empty() {
++                    scroll.pending.clear();
++                }
++            }
++        }
++        self.watched_parents
++            .retain(|&(node, owner)| node != id && owner != id);
++    }
++
+     /// Resolves the watches' targets and runs those whose target moved, was
+     /// laid out again or was found; whether a handler ran (another round
+     /// sends what it changed).
+     pub(super) fn sync_watches(&mut self) -> bool {
+         let ordered = self.sync_orders();
+         let focused = self.sync_focus_watches();
+-        self.sync_scroll_watches() || ordered || focused
++        let parent = self.sync_parent_watches();
++        self.sync_scroll_watches() || ordered || focused || parent
++    }
++
++    fn sync_parent_watches(&mut self) -> bool {
++        use crate::element::{ParentViewport, watch::ParentHandler};
++        let previous = std::mem::take(&mut self.watched_parents);
++        let watches = self.components.executor.watches.clone();
++        type SeenParent = (
++            u32,
++            Rc<dyn Fn() -> Option<NodeId>>,
++            ParentHandler,
++            Option<ParentViewport>,
++        );
++        let seen: Vec<SeenParent> = watches
++            .borrow()
++            .parents
++            .iter()
++            .map(|w| (w.id, w.target.clone(), w.handler.clone(), w.last))
++            .collect();
++        if seen.is_empty() && previous.is_empty() {
++            return false;
++        }
++        let _entered = self.components.runtime.enter();
++        let mut ran = false;
++        for (id, target, handler, last) in seen {
++            let now = untracked(|| target())
++                .and_then(|id| self.key(id).ok())
++                .and_then(|key| {
++                    if !self.nodes[key as usize].created {
++                        return None;
++                    }
++                    let outer = self.find_outer_axis(key, false)?;
++                    let input = self.viewport_input(key, outer, false)?;
++                    if outer.scrolls {
++                        let s = self.nodes[outer.view as usize].scroll.as_mut()?;
++                        if !s.dependents.contains(&key) {
++                            s.dependents.push(key);
++                        }
++                        self.watched_parents.push((
++                            self.nodes[key as usize].id,
++                            self.nodes[outer.view as usize].id,
++                        ));
++                    }
++                    Some(ParentViewport {
++                        offset: crate::Points(input.offset - input.start),
++                        size: crate::geometry::size_pt(input.cross, input.viewport),
++                        min_offset: crate::Points(-input.start),
++                        max_offset: crate::Points(input.max - input.start),
++                    })
++                });
++            if now == last {
++                continue;
++            }
++            if let Some(w) = watches.borrow_mut().parents.iter_mut().find(|w| w.id == id) {
++                w.last = now;
++            }
++            if let Err(message) = caught(|| handler(now)) {
++                log::error!(target: "js", "a parent viewport watch failed: {message}");
++            }
++            self.apply_actions();
++            ran = true;
++        }
++        // Only retired registrations leave their owners. In particular an
++        // unchanged watch keeps pending-command replay between rounds.
++        for (node, owner) in previous {
++            if self.watched_parents.contains(&(node, owner)) {
++                continue;
++            }
++            let (Ok(key), Ok(view)) = (self.key(node), self.key(owner)) else {
++                continue;
++            };
++            let still_list = self.nodes[key as usize]
++                .list
++                .as_ref()
++                .and_then(|l| l.outer)
++                .is_some_and(|o| o.view == view);
++            if !still_list && let Some(s) = self.nodes[view as usize].scroll.as_mut() {
++                s.dependents.retain(|&d| d != key);
++                if s.dependents.is_empty() {
++                    s.pending.clear();
++                }
++            }
++        }
++        ran
+     }
+ 
+     /// Tells the focus watches whose element the focus came into or left
+--- a/crates/nsh-core/src/element/ambient.rs
++++ b/crates/nsh-core/src/element/ambient.rs
+@@ -1147,6 +1147,27 @@
+     let owner = Owner::current();
+     let handler = Rc::new(move |e: &crate::element::ScrollEvent| owner.run(|| handler(e)));
+     add_watch(Rc::new(target), handler);
++}
++
++/// Watches the nearest vertical scroll ancestor of an element, using the
++/// same ancestry and coordinate conversion as `List`'s parent viewport.
++/// Root boundaries stop the search. Changes are delivered within the
++/// current commit; `None` revokes a previously resolved viewport.
++pub fn watch_parent_viewport(
++    target: impl Fn() -> Option<NodeId> + 'static,
++    handler: impl Fn(Option<super::ParentViewport>) + 'static,
++) {
++    let owner = Owner::current();
++    let handler = Rc::new(move |e| owner.run(|| handler(e)));
++    let watches = executor().watches.clone();
++    let id = watches.borrow_mut().add_parent(Rc::new(target), handler);
++    let weak = Rc::downgrade(&watches);
++    cleanup(move || {
++        if let Some(watches) = weak.upgrade() {
++            let removed = watches.borrow_mut().remove_parent(id);
++            drop(removed);
++        }
++    });
+ }
+ 
+ impl super::ElementRef {
+--- a/crates/nsh-core/src/element/element_ref.rs
++++ b/crates/nsh-core/src/element/element_ref.rs
+@@ -186,6 +186,13 @@
+             y: offset.y,
+             animated,
+         });
++    }
++
++    /// Scrolls the nearest vertical scroll ancestor so the element's
++    /// content offset is at its top. Uses the ancestor's real limits and
++    /// pending-command replay; does nothing across a root boundary.
++    pub fn scroll_parent_to(&self, offset: Points, animated: bool) {
++        self.reach(|node, executor| executor.act(Action::ScrollParent(node, offset, animated)));
+     }
+ 
+     /// Scrolls a list to `offset` along its axis.
+--- a/crates/nsh-core/src/element/mod.rs
++++ b/crates/nsh-core/src/element/mod.rs
+@@ -180,7 +180,7 @@
+     tokens::{FONT_MONO, FONT_SANS, ThemeTokens, Token, TokenSource, Tokens},
+     value::{JsValue, NodeRef, PropEnum, PropError, SharedString, TsType, TsTypes, ts_of},
+     virtual_list::{ListLayout, ViewableItems, VirtualList, virtual_list},
+-    watch::OrderWatch,
++    watch::{OrderWatch, ParentViewport},
+ };
+ pub(crate) use self::{
+     animated::LiveNode,
+--- a/crates/nsh-core/src/element/task.rs
++++ b/crates/nsh-core/src/element/task.rs
+@@ -25,7 +25,7 @@
+ use tokio::runtime::Handle;
+ 
+ use crate::{
+-    Command, Dialog, NodeId, ROOT_ID, StatusBarSetting,
++    Command, Dialog, NodeId, Points, ROOT_ID, StatusBarSetting,
+     geometry::{DevicePixels, Size},
+     time::Instant,
+ };
+@@ -64,6 +64,8 @@
+ /// What a component or a task asks of the platform, applied by the core.
+ pub(crate) enum Action {
+     Command(NodeId, Command),
++    /// Scroll an element's vertical ancestor in its local coordinates.
++    ScrollParent(NodeId, Points, bool),
+     /// A dialog; its answer resolves the slot.
+     Dialog(Dialog, Rc<RefCell<Output<i32>>>),
+     /// The result of a module function JS waits for.
+--- a/crates/nsh-core/src/element/watch.rs
++++ b/crates/nsh-core/src/element/watch.rs
+@@ -39,6 +39,29 @@
+ /// A scroll watch's handler.
+ pub(crate) type ScrollHandler = Rc<dyn Fn(&ScrollEvent)>;
+ 
++/// A vertical ancestor viewport in the watched element's content coordinates.
++/// Offsets may be negative when the element starts below the viewport.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct ParentViewport {
++    /// The ancestor's top, relative to the element's content origin.
++    pub offset: crate::Points,
++    /// The element's content width and the ancestor viewport's height.
++    pub size: crate::Size<crate::Points>,
++    /// The smallest reachable local offset.
++    pub min_offset: crate::Points,
++    /// The largest reachable local offset.
++    pub max_offset: crate::Points,
++}
++
++pub(crate) type ParentHandler = Rc<dyn Fn(Option<ParentViewport>)>;
++
++pub(crate) struct ParentWatch {
++    pub(crate) id: u32,
++    pub(crate) target: Rc<dyn Fn() -> Option<NodeId>>,
++    pub(crate) handler: ParentHandler,
++    pub(crate) last: Option<ParentViewport>,
++}
++
+ /// One view's watch of a node.
+ pub(crate) struct Watch {
+     pub(crate) id: u32,
+@@ -95,9 +118,31 @@
+     pub(crate) list: Vec<Watch>,
+     pub(crate) orders: Vec<Order>,
+     pub(crate) focus: Vec<FocusWatch>,
++    pub(crate) parents: Vec<ParentWatch>,
+ }
+ 
+ impl Watches {
++    pub(crate) fn add_parent(
++        &mut self,
++        target: Rc<dyn Fn() -> Option<NodeId>>,
++        handler: ParentHandler,
++    ) -> u32 {
++        let id = self.next;
++        self.next += 1;
++        self.parents.push(ParentWatch {
++            id,
++            target,
++            handler,
++            last: None,
++        });
++        id
++    }
++
++    pub(crate) fn remove_parent(&mut self, id: u32) -> Option<ParentWatch> {
++        let i = self.parents.iter().position(|w| w.id == id)?;
++        Some(self.parents.remove(i))
++    }
++
+     /// Adds a watch; its id.
+     pub(crate) fn add(
+         &mut self,

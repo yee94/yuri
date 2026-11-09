@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, keymap, signal, untracked, type InputRef } from 'nsh';
+import { cleanup, computed, effect, keymap, platform, signal, untracked, type InputRef } from 'nsh';
 import { sameReferenceScope, type ReferenceCandidate, type ReferenceScope } from './composer-references';
 import { createAutocompleteKeyboard, createReferenceKeyboard, type ReferenceKeyboardContext, type ReferenceKeyboardState } from './composer-reference-keyboard';
 import { resolveComposerAutocompleteTrigger } from '../ui/src/lib/composer-autocomplete/trigger';
@@ -10,6 +10,7 @@ export function createNativeReferenceKeyboard(options: {
   scope: () => ReferenceScope;
   text: () => string;
   insert: (candidate: ReferenceCandidate, start: number, end: number) => boolean;
+  onSubmit?: () => void;
   chooseCommand?: (command: NativeSlashCommand, submit: boolean, context: ReferenceKeyboardContext) => boolean | void;
 }) {
   const caret = signal<{ start: number; end: number } | null>(null), composing = signal(false), focused = signal(false);
@@ -93,8 +94,13 @@ export function createNativeReferenceKeyboard(options: {
     onCompositionChange: (event: { composing: boolean }) => { composing.set(event.composing); refresh(); },
     onSelectionChange: (range: { start: number; end: number }) => { selectedRange.set(undefined); caret.set(range); refresh(); },
     beforeChange: () => { selectedRange.set(undefined); caret.set(null); dismissed.set(null); },
-    onSubmit: () => { currentCore().key('enter'); refresh(); },
-    submitBehavior: () => editing() ? 'submit' as const : 'newline' as const,
+    onSubmit: () => {
+      if (!options.active() || !focused() || composing()) return;
+      if (editing()) currentCore().key('enter');
+      else if (platform.desktop) options.onSubmit?.();
+      refresh();
+    },
+    submitBehavior: () => editing() || platform.desktop && !!options.onSubmit ? 'submit' as const : 'newline' as const,
     choose: (id: string) => { const accepted = core.choose(id); refresh(); return accepted; },
     chooseCommand: (id: string, submit = true) => { const accepted = commandCore.choose(id, submit); refresh(); return accepted; },
   };

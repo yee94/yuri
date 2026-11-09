@@ -4,32 +4,151 @@ import { NativeSheet as Sheet } from './native-sheet';
 import { extractGitChangedFiles, summarizeGitChangedFiles } from '../ui/src/components/chat/changedFiles';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { captureHostRequest, epoch } from './state';
-import { createPageOperations } from './page-operations';
+import { app } from './state';
+import { createPageOperations, type PageOperation } from './page-operations';
 import { runtimeEventFrom } from './model';
 import { nativeChatTextStyle } from './appearance';
 import { createChangesReader, nativeChangeLocation, nativeSourceHunks, type ChangesSource, type HistoricalChange } from './chat-changes-model';
 import { NativeWorkspaceChanges } from './chat-changes-workspace';
+import { createChangesActions } from './chat-changes-actions';
 
 function createOwner(source: ChangesSource, current: () => boolean) {
   const operations = createPageOperations(current);
-  const revision = signal(0);
-  let reader = createChangesReader(source, captureHostRequest(), () => false);
-  let retained: ReturnType<typeof reader.state>['snapshot'] = null;
+  const revision = signal(0), actionRevision = signal(0), lane = signal<PageOperation | null>(null), statusLane = signal<PageOperation | null>(null);
+  const workspace = { tree: signal(true), collapsed: signal(new Set<string>()), collapsedGroups: signal(new Set<boolean>()), message: signal(''), inputHeight: signal(88), uncertain: signal(false) };
+  let alive = true, assigned: PageOperation | null = null, actionLane: PageOperation | null = null, writePending = false;
+  let mutation: object | null = null;
+  let committing: { message: string; lane: PageOperation } | undefined;
+  const valid = () => alive && assigned?.current() === true && current();
+  const raw = createChangesReader(source, async path => {
+    const captured = assigned;
+    if (!captured || !valid()) throw new Error('page_operation_stale');
+    const value = await captured.request(path, 'GET');
+    if (assigned !== captured || !valid()) throw new Error('page_operation_stale');
+    return value;
+  }, valid, () => revision.set(revision() + 1));
+  const reader = { ...raw, async refresh() {
+    const captured = assigned;
+    if (!captured || !valid()) return;
+    await raw.refresh();
+    if (captured === assigned && valid() && !raw.state().loading && !raw.state().error && raw.state().snapshot) statusLane.set(captured);
+  } };
+  const actions = createChangesActions(reader, async (path, method = 'GET', body) => {
+    const captured = actionLane;
+    if (!captured || captured !== assigned || !valid()) throw new Error('page_operation_stale');
+    const write = method !== 'GET';
+    if (write) writePending = true;
+    try {
+      const value = await captured.request(path, method, body);
+      if (captured !== assigned || !valid()) throw new Error('page_operation_stale');
+      if (write) writePending = false;
+      return value;
+    } catch (cause) {
+      if (write) {
+        const status = cause && typeof cause === 'object' && 'status' in cause ? Number(cause.status) : NaN;
+        if (!Number.isInteger(status)) workspace.uncertain.set(true);
+        writePending = false;
+      }
+      throw cause;
+    }
+  }, () => actionLane !== null && actionLane === assigned && valid(), () => {
+    actionRevision.set(actionRevision() + 1);
+    // Clear only the exact draft whose commit was acknowledged on this lane,
+    // before any follow-up sync/status await can suspend the presentation.
+    if (committing && committing.lane === assigned && valid() && actions.state().committed && workspace.message() === committing.message) workspace.message.set('');
+  });
+  function cancel() {
+    if (writePending) workspace.uncertain.set(true);
+    mutation = null; actionLane = null; committing = undefined; actions.cancel(); raw.cancel(); statusLane.set(null);
+  }
+  async function perform(work: () => Promise<boolean>, message?: string) {
+    const captured = assigned;
+    if (!captured || !valid() || workspace.uncertain() || actions.state().pending || statusLane() !== captured) return false;
+    const ticket = {}; mutation = ticket;
+    actionLane = captured;
+    committing = message === undefined ? undefined : { message, lane: captured };
+    try { return await work(); }
+    finally { if (mutation === ticket) { mutation = null; committing = undefined; actionLane = null; } }
+  }
   effect(() => {
-    const lane = operations.operation();
+    const next = operations.operation();
     untracked(() => {
-      retained = reader.state().snapshot ?? retained; reader.cancel();
-      reader = createChangesReader(source, lane?.request ?? (() => Promise.reject(new Error('page_operation_stale'))), () => lane?.current() === true && current(), () => revision.set(revision() + 1));
-      revision.set(revision() + 1);
+      if (assigned === next) return;
+      cancel(); assigned = next; lane.set(next);
     });
   });
-  const state = () => { operations.operation(); revision(); const next = reader.state(); return { ...next, snapshot: next.snapshot ?? retained }; };
+  cleanup(operations.onRetire(cancel));
+  cleanup(() => { alive = false; cancel(); });
+  const state = () => { revision(); return reader.state(); };
   const snapshot = computed(() => state().snapshot);
-  return { get reader() { operations.operation(); return reader; }, state, snapshot };
+  return { reader, operation: lane, state, snapshot, workspace, cancel,
+    canLeave: () => !workspace.message() && !workspace.uncertain() && !writePending && !actions.state().pending,
+    ready: () => lane() !== null && statusLane() === lane() && valid(),
+    actions: { state: () => { actionRevision(); return actions.state(); },
+      move: (paths: string[], staged: boolean) => perform(() => actions.move(paths, staged)),
+      revert: (paths: string[], confirmed: boolean) => perform(() => actions.revert(paths, confirmed)),
+      commit: (message: string, pushAfter: boolean) => perform(() => actions.commit(message, pushAfter), message),
+      sync: () => perform(actions.sync),
+    },
+  };
 }
-type Owner = ReturnType<typeof createOwner>;
+export type NativeChangesOwner = ReturnType<typeof createOwner>;
+type Owner = NativeChangesOwner;
 type ChangesSheetProps = { source: ChangesSource; open: boolean; active: boolean; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; owner?: Owner };
+export type NativeChangesPresentationHandle = { canLeave: () => boolean; source: () => ChangesSource | null };
+type ChangesPresentationProps = {
+  source: ChangesSource | null; open: boolean; active: boolean; current: () => boolean;
+  onClose: () => void;
+  onOpenPreview?: (path: string, line: number | undefined, source: ChangesSource) => void;
+  onHandle?: (handle: NativeChangesPresentationHandle | null) => void;
+  onBlocked?: (source: ChangesSource) => void;
+};
+function sourceIdentity(source: ChangesSource) {
+  return JSON.stringify(source.kind === 'workspace' ? ['workspace', source.directory] : ['turn', source.directory, source.sessionID, source.messageID, source.revision]);
+}
+function hostIdentity() { const value = app.connection(); return JSON.stringify([value?.id, value?.url, value?.authorizationID]); }
+
+/** Mount once outside source presence: the sole business owner outlives its Sheet. */
+export function NativeChangesPresentation(props: ChangesPresentationProps) {
+  type Entry = { source: ChangesSource; host: string; identity: string; owner?: Owner };
+  const entry = signal<Entry | null>(null);
+  let alive = true;
+  const handle: NativeChangesPresentationHandle = { canLeave: () => entry()?.owner?.canLeave() ?? true, source: () => entry()?.source ?? null };
+  props.onHandle?.(handle);
+  cleanup(() => { alive = false; props.onHandle?.(null); });
+  effect(() => {
+    const source = props.source, authority = hostIdentity();
+    untracked(() => {
+      if (!source || !alive) return;
+      const previous = entry(), identity = sourceIdentity(source);
+      if (previous?.host === authority && previous.identity === identity) return;
+      if (previous?.owner && !previous.owner.canLeave()) {
+        previous.owner.cancel(); props.onBlocked?.(previous.source); props.onClose(); return;
+      }
+      entry.set({ source, host: authority, identity });
+    });
+  });
+  return <Each of={entry() ? [entry()!] : []} key={value => value}>{value => {
+    const retained = value();
+    const matches = computed(() => !!props.source && retained.host === hostIdentity() && retained.identity === sourceIdentity(props.source));
+    const current = computed(() => alive && entry() === retained && matches() && props.open && props.active && props.current() && lifecycle() === 'active');
+    const initial = retained.source;
+    // The invocation captures exactly one accepted historical loader. A later
+    // source/Host cannot lend its authority to the old closure's completion.
+    const source: ChangesSource = initial.kind === 'turn' && initial.loadFile ? { ...initial, loadFile: async path => {
+      if (!current()) throw new Error('page_operation_stale');
+      const accepted = props.source;
+      if (accepted?.kind !== 'turn' || !accepted.loadFile) throw new Error('Historical diff body unavailable');
+      const result = await accepted.loadFile(path);
+      if (!current()) throw new Error('page_operation_stale');
+      return result;
+    } } : initial;
+    const owner = createOwner(source, current); retained.owner = owner;
+    cleanup(() => { retained.owner = undefined; });
+    return <NativeChangesSheetPage source={matches() ? props.source! : retained.source} owner={owner} managed open={current()} active={props.active} onClose={props.onClose}
+      onOpenPreview={props.onOpenPreview ? (path, line) => { if (alive && entry() === retained && retained.host === hostIdentity() && props.current()) props.onOpenPreview?.(path, line, retained.source); } : undefined} />;
+  }}</Each>;
+}
 const action = 'min-h-11 px-3 flex-row items-center justify-center gap-2 rounded-xl bg-secondary active:bg-accent disabled:opacity-40';
 
 /** Same authoritative workspace status and pure summary rules as PendingChangesBar. */
@@ -53,10 +172,10 @@ export function NativeComposerChanges(props: {
   const current = () => alive && operations.current() && lifecycle() === 'active' && props.directory === directory;
   const owner = createOwner({ kind: 'workspace', directory }, current);
   effect(() => {
-    const visible = current();
+    const lane = owner.operation(), visible = current() && lane?.current() === true;
     untracked(() => {
       if (visible) void owner.reader.refresh();
-      else { owner.reader.cancel(); setExpanded(false); opened.set(false); }
+      else { owner.cancel(); setExpanded(false); opened.set(false); }
     });
   });
   const unsubscribe = host.on('runtime.event', payload => {
@@ -65,7 +184,7 @@ export function NativeComposerChanges(props: {
     if (event.type !== 'reconnected' && !/^(vcs\.|yuri:git-|yuri:workspace-)/.test(event.type)) return;
     timer = setTimeout(() => { timer = undefined; void owner.reader.refresh(); }, 120);
   });
-  cleanup(() => { alive = false; owner.reader.cancel(); unsubscribe(); if (timer) clearTimeout(timer); });
+  cleanup(() => { alive = false; owner.cancel(); unsubscribe(); if (timer) clearTimeout(timer); });
   const summary = computed(() => {
     const value = owner.snapshot();
     return value && !value.isClean ? summarizeGitChangedFiles(value.files, value.diffStats) : { count: 0, insertions: 0, deletions: 0 };
@@ -94,47 +213,53 @@ export function NativeComposerChanges(props: {
       </View>
     </If>
     <If when={!!owner.state().error && !owner.state().snapshot && !expanded()}><Button testID="composer-changes-retry" class="min-h-6 px-3 flex-row items-center gap-1" disabled={owner.state().loading} onPress={() => { void owner.reader.refresh(); }}><Text class="text-xs text-muted-foreground">{t('mobile.menu.changes')} · {t('common.unavailable')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
-    <NativeChangesSheet source={owner.reader.source} owner={owner} open={opened()} active={props.active} onClose={() => { opened.set(false); owner.reader.cancel(); }} onOpenPreview={props.onOpenPreview} />
+    <NativeChangesSheet source={owner.reader.source} owner={owner} open={opened()} active={props.active} onClose={() => { opened.set(false); owner.cancel(); }} onOpenPreview={props.onOpenPreview} />
   </View>;
 }
 
 /** Workspace, staged, historical turn and Host identities own separate lifetimes. */
 export function NativeChangesSheet(props: ChangesSheetProps) {
-  const identity = (source: ChangesSource) => JSON.stringify([epoch(), source.kind, source.directory, source.path, source.targetLine, source.kind === 'workspace' ? source.staged : [source.sessionID, source.messageID, source.revision]]);
+  const identity = (source: ChangesSource) => { const host = app.connection(); return JSON.stringify([host?.id, host?.url, host?.authorizationID, source.kind, source.directory, source.path, source.targetLine, source.kind === 'workspace' ? source.staged : [source.sessionID, source.messageID, source.revision]]); };
   return <Each of={[props.source]} key={identity}>{source => <NativeChangesSheetPage source={source()} open={props.open} active={props.active} onClose={props.onClose} onOpenPreview={props.onOpenPreview} owner={props.owner} />}</Each>;
 }
 
-function NativeChangesSheetPage(props: ChangesSheetProps) {
-  const generation = epoch(); let alive = true, wasOpen = false;
+function NativeChangesSheetPage(props: ChangesSheetProps & { managed?: boolean }) {
+  let alive = true, wasOpen = false;
   const height = signal<number | null>(null);
   const available = () => Math.max(0, windowSize().height - safeArea().top - 8 - keyboardFrame().height);
   let resizeStart = 0;
-  const current = () => alive && epoch() === generation && props.open && props.active && lifecycle() === 'active';
+  const current = () => alive && props.open && props.active && lifecycle() === 'active';
   const owner = props.owner ?? createOwner(props.source, current);
+  const visible = computed(() => props.open && props.active && lifecycle() === 'active');
+  const selection = computed(() => JSON.stringify([props.source.path, props.source.kind === 'workspace' && props.source.staged === true]));
   effect(() => {
-    const visible = props.open && props.active && lifecycle() === 'active';
-    if (!visible) { untracked(() => { if (wasOpen) owner.reader.cancel(); wasOpen = false; if (props.open) props.onClose(); }); return; }
+    const displayed = visible(), lane = owner.operation(), opening = !wasOpen;
+    const [path, staged] = JSON.parse(selection()) as [string | undefined, boolean];
+    if (!displayed) { untracked(() => { if (wasOpen) owner.cancel(); wasOpen = false; if (props.open) props.onClose(); }); return; }
     wasOpen = true;
     untracked(() => {
-      height.set(null);
-      Keyboard.dismiss();
-      if (!props.owner) {
-        owner.reader.back(); void owner.reader.refresh();
-        if (props.source.path) void owner.reader.select(props.source.path, props.source.kind === 'workspace' && props.source.staged === true);
+      if (opening) { height.set(null); Keyboard.dismiss(); }
+      if (!props.owner || props.managed) {
+        if (opening) owner.reader.back();
+        if (!lane?.current()) return;
+        void owner.reader.refresh();
+        const selected = owner.reader.state();
+        const target = path || selected.path;
+        if (target) void owner.reader.select(target, props.source.kind === 'workspace' && (path ? staged : selected.staged));
       }
     });
   });
-  cleanup(() => { alive = false; owner.reader.cancel(); });
+  cleanup(() => { alive = false; owner.cancel(); });
   function resize(dy: number, ended = false) {
     const next = Math.max(available() * .42, Math.min(available(), resizeStart - dy));
     height.set(ended ? [.42, .72, 1].map(ratio => ratio * available()).sort((a, b) => Math.abs(a - next) - Math.abs(b - next))[0] : next);
   }
-  return <Sheet detents={[.42, .72, 1]} initialDetent={2} open={props.open && props.active} closeOnSwipe onOpenChange={event => { if (!event.open) { owner.reader.cancel(); props.onClose(); } }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: Math.min(height() ?? available(), available()), marginBottom: keyboardFrame().height }} backdropClass="bg-background/50">
-    <If when={props.open && props.active}><View testID="native-changes-sheet" class="flex-1 bg-background" style={{ paddingBottom: keyboardFrame().height > 0 ? 0 : safeArea().bottom, paddingLeft: safeArea().left, paddingRight: safeArea().right }}><NativeChangesContent owner={owner} onClose={props.onClose} onOpenPreview={props.onOpenPreview ? (path, line) => { props.onClose(); props.onOpenPreview?.(path, line); } : undefined} onResizeStart={() => { resizeStart = height() ?? available(); }} onResize={resize} /></View></If>
+  return <Sheet detents={[.42, .72, 1]} initialDetent={2} open={props.open && props.active} closeOnSwipe onOpenChange={event => { if (!event.open) { owner.cancel(); props.onClose(); } }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: Math.min(height() ?? available(), available()), marginBottom: keyboardFrame().height }} backdropClass="bg-background/50">
+    <If when={props.open && props.active}><View testID="native-changes-sheet" class="flex-1 bg-background" style={{ paddingBottom: keyboardFrame().height > 0 ? 0 : safeArea().bottom, paddingLeft: safeArea().left, paddingRight: safeArea().right }}><NativeChangesContent owner={owner} targetLine={props.source.targetLine} onClose={props.onClose} onOpenPreview={props.onOpenPreview ? (path, line) => { if (!owner.reader.current()) return; props.onClose(); props.onOpenPreview?.(path, line); } : undefined} onResizeStart={() => { resizeStart = height() ?? available(); }} onResize={resize} /></View></If>
   </Sheet>;
 }
 
-function NativeChangesContent(props: { owner: Owner; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; onResizeStart: () => void; onResize: (dy: number, ended?: boolean) => void }) {
+function NativeChangesContent(props: { owner: Owner; targetLine?: number; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; onResizeStart: () => void; onResize: (dy: number, ended?: boolean) => void }) {
   const { reader, state } = props.owner;
   let resizeY = 0;
   const history = computed(() => reader.source.kind === 'turn' ? [...reader.source.files].sort((a, b) => a.path.localeCompare(b.path)) : []);
@@ -149,11 +274,11 @@ function NativeChangesContent(props: { owner: Owner; onClose: () => void; onOpen
     <If when={!state().path}>
       <If when={reader.source.kind === 'turn'}><List class="flex-1" each={history()} keyExtractor={file => file.path}>{file => <Button class="min-h-11 px-4 flex-row items-center gap-2 active:bg-accent" onPress={() => { void reader.select(file().path); }}><Icon name="file-edit" size={16} /><Text class="text-sm text-foreground">{file().path}</Text></Button>}</List><If when={history().length === 0}><Text class="p-4 text-muted-foreground">{t('diffView.state.noLastTurnChanges')}</Text></If></If>
     </If>
-    <If when={!!state().path}><NativeChangeDiff owner={props.owner} onOpenPreview={props.onOpenPreview} /></If>
+    <If when={!!state().path}><NativeChangeDiff owner={props.owner} targetLine={props.targetLine} onOpenPreview={props.onOpenPreview} /></If>
   </View>;
 }
 
-function NativeChangeDiff(props: { owner: Owner; onOpenPreview?: (path: string, line?: number) => void }) {
+function NativeChangeDiff(props: { owner: Owner; targetLine?: number; onOpenPreview?: (path: string, line?: number) => void }) {
   const { reader, state } = props.owner;
   const copyError = signal(''), viewError = signal(''), ready = signal(false), hunks = signal<DiffHunk[]>([]);
   let diffView: DiffViewRef | undefined;
@@ -171,7 +296,7 @@ function NativeChangeDiff(props: { owner: Owner; onOpenPreview?: (path: string, 
     <If when={!!state().diffError || !!copyError() || !!viewError()}><Text role="alert" class="px-4 text-sm text-destructive">{state().diffError || copyError() || viewError()}</Text></If>
     <If when={state().diff?.isBinary}><Text class="p-4 text-muted-foreground">{t('diffView.binary.unavailable')}</Text></If>
     <If when={!!state().diff && !state().diff?.isBinary}>
-      <Each of={state().diff ? [state().diff!] : []} key={diff => diff}>{diff => <NativeDiffDocument diff={diff()} current={() => reader.current() && state().diff === diff()} targetLine={reader.source.targetLine} onReady={(ref, value) => { diffView = ref; hunks.set(value); ready.set(true); viewError.set(''); }} onError={() => viewError.set(t('diffView.state.failedToLoadDiff'))} />}</Each>
+      <Each of={state().diff ? [state().diff!] : []} key={diff => diff}>{diff => <NativeDiffDocument diff={diff()} current={() => reader.current() && state().diff === diff()} targetLine={props.targetLine} onReady={(ref, value) => { diffView = ref; hunks.set(value); ready.set(true); viewError.set(''); }} onError={() => viewError.set(t('diffView.state.failedToLoadDiff'))} />}</Each>
       <If when={ready() && !first()}><Text class="p-4 text-muted-foreground">{t('diffView.state.cleanWorkingTree')}</Text></If>
     </If>
   </View>;
@@ -189,6 +314,7 @@ function NativeDiffDocument(props: { diff: HistoricalChange; current: () => bool
     const location = nativeChangeLocation(hunks, props.targetLine);
     if (location) { initialized = true; ref.goToHunk(location.index); }
   }
+  effect(() => { props.targetLine; untracked(() => { initialized = false; ready(); }); });
   async function readHunks() {
     const view = ref;
     if (!view) return;

@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "version": "0.4.0",
+  "revision": "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3",
+  "source": {
+    "roots": [
+      ".cargo",
+      "crates",
+      "examples",
+      "tests",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "README.md",
+      "LICENSE-APACHE"
+    ],
+    "sha256": "5764bf7d27dd530634a007ec2ca2df8d37b63903584f9b47401a1238e875b4d1",
+    "files": [
+      {
+        "path": "Cargo.lock",
+        "sha256": "3e613f0b6940be5d83676f48771b461b122e0732f652ce4de20b4978b2015d34"
+      },
+      {
+        "path": "Cargo.toml",
+        "sha256": "49c7d58a342e27c3be52ee32cd14e2a5a1ddbb97abca0bb7a115751152461dad"
+      },
+      {
+        "path": "crates/nsh-core/src/image/cache.rs",
+        "sha256": "35a895691d99b1775d9a5d5a9e3bd244ce08462d524ab466bef4c56a5b8c1f29"
+      },
+      {
+        "path": "crates/nsh-core/src/image/cache/tests.rs",
+        "sha256": "71d10a0bc2240f975e14cf1d2d2b2168a6cb3778622766cce14c8c38b60f4f8e"
+      },
+      {
+        "path": "crates/nsh-platform-macos/src/chrome.rs",
+        "sha256": "769ae6e23168caffc7f46b4330c85cfa6aea8c0dc851ea6479207f661b2a2559"
+      }
+    ]
+  },
+  "patches": [
+    {
+      "file": "appkit-shift.patch",
+      "sha256": "885e8881f6b68fa7026be02930c17ca0db6781d33994581b05386e0900c16458",
+      "files": [
+        {
+          "path": "crates/nsh-platform-macos/src/chrome.rs",
+          "beforeSha256": "769ae6e23168caffc7f46b4330c85cfa6aea8c0dc851ea6479207f661b2a2559",
+          "afterSha256": "4cb7ea74712d4fec8968d415a2738493badb7fc9105e6253369c83e724b06c31"
+        }
+      ]
+    },
+    {
+      "file": "diff-parent-viewport.patch",
+      "sha256": "202591f994247fc2eb5ab5c560a0c31a2ccaa3998ea8ce1d9aa0e9c1f480e258",
+      "files": [
+        {
+          "path": "crates/nsh-base/src/diff/controller.rs",
+          "beforeSha256": "eb807451b5bc17a92fa91319eb6dd17fd95c885bd0b2a1597dc2d16459687a97",
+          "afterSha256": "8c3d02547cae823babda1d1de473fad032f88b0830940e67e41b39b0c8d0386c"
+        },
+        {
+          "path": "crates/nsh-base/src/diff/mod.rs",
+          "beforeSha256": "6d81a96cfc22ff5d7d9cfc969d717134c27b6a239b93e581b5db8ca1d9630349",
+          "afterSha256": "c43bdffe19ced2b7303346a1ac5166a2b721bf95cb5e95a29692f1aadcf41d3d"
+        },
+        {
+          "path": "crates/nsh-base/src/diff/parent_tests.rs",
+          "beforeExists": false,
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "e91c4fc5bcf89d51e21b35ef51d99dc0b801cdc874f95f188c5e869dcf50fce5"
+        },
+        {
+          "path": "crates/nsh-base/src/diff/review.rs",
+          "beforeSha256": "e7ccfdfa168f13539fbf6703d26b4c3aa711abf7f8bd98a4adf5835b53418af4",
+          "afterSha256": "49365d3cd8720c60e106cf133c60440fc3f42402aeed2b89665fdcf85e168225"
+        },
+        {
+          "path": "crates/nsh-base/src/diff/view.rs",
+          "beforeSha256": "2da19fd75999f8c90903a85f51d9fa071c2f1b65e280860a05f2290ff554ad3b",
+          "afterSha256": "a0825a69fe0cf7dbbd0d01877e79d237682a729446bea2484bdd6d59edf62671"
+        },
+        {
+          "path": "crates/nsh-base/src/lib.rs",
+          "beforeSha256": "7cdcf7dfc8b5be4dd1c992911c59bba3d83fda4d76b318aa970d0e01efc8bc2a",
+          "afterSha256": "aa07132ef47a39f8e66bd22c5801de08137acf333dda83abacd66b03df4548f8"
+        },
+        {
+          "path": "crates/nsh-core/src/core/components.rs",
+          "beforeSha256": "e3f5bb1053940efab843d8d5e0b5169907dec2d9f7d82612d65dac6cc456080e",
+          "afterSha256": "397d26e778061aa530da4acce90034dd016513b80e150fe0958abbae74c47374"
+        },
+        {
+          "path": "crates/nsh-core/src/core/mod.rs",
+          "beforeSha256": "b28c31c11f803ea27c1e4355100f10efcb248c7881ac46536f704449097f28a0",
+          "afterSha256": "3e0b302d162073982eda271ef51a0a295e95b00f14c68067839e96105ecfac64"
+        },
+        {
+          "path": "crates/nsh-core/src/core/parent_viewport.rs",
+          "beforeSha256": "968cefd5117ef42b61c12e76920ad20ee52c58682a548e102381f4041c3b6dbc",
+          "afterSha256": "79bb2f95f67e788305dfe60459b1675a8ff7ac0ddabe86f03b62ec79267527c6"
+        },
+        {
+          "path": "crates/nsh-core/src/core/tests.rs",
+          "beforeSha256": "aecf927aa3e544c2766cdddea35dd16ade992b2e845ecb4a0cacd2669f8b6359",
+          "afterSha256": "196f4e3b7add4de8af4ad50c1544bcec228aff384b63410d2acfbc6c77d5c08b"
+        },
+        {
+          "path": "crates/nsh-core/src/core/watch.rs",
+          "beforeSha256": "55ee26c70da4083e119cdf8299bdae930facf16e8334c2db82e571cfe2e7379d",
+          "afterSha256": "602a9df323f762cb68720378a983c1545dac8928768734b616d2d3bca01da5b3"
+        },
+        {
+          "path": "crates/nsh-core/src/element/ambient.rs",
+          "beforeSha256": "bf11e6356c59804db89f027618b74f325b13a0ce09b51637b06f78f1c6b56e2d",
+          "afterSha256": "7938ff20c8ae618e81052e78a18726181a356e81fa155684ef11b510b2c1a991"
+        },
+        {
+          "path": "crates/nsh-core/src/element/element_ref.rs",
+          "beforeSha256": "525887176fc058b7106220aaa70c82841ee79b6ff1a4c98422a020c95d747b0e",
+          "afterSha256": "777b8f872d5f7d50d549113b920a9ccfc2d73827153da3e0202abce768ed3aec"
+        },
+        {
+          "path": "crates/nsh-core/src/element/mod.rs",
+          "beforeSha256": "ef589bb141062985995677d140fac2776a03f734df825104e25dda3e35c13e37",
+          "afterSha256": "ec7971018b2f9efa7dfa6e89f6cecc2d41ee6cae9dbae9d3c28abb8c203743f4"
+        },
+        {
+          "path": "crates/nsh-core/src/element/task.rs",
+          "beforeSha256": "0a8bd5a053b96a858d23314527cdc50b669119ea4468ccf0c075306af655c63b",
+          "afterSha256": "a109b671624aeaaad062518f8cfad94a2c5fd94b59bd7ac21fe9bdc1486389a8"
+        },
+        {
+          "path": "crates/nsh-core/src/element/watch.rs",
+          "beforeSha256": "ba2633101b17d6244b0cd7f58190dd91901475c68bde4bedc48e6031882ffe46",
+          "afterSha256": "ffc7369082746a5e073c35aa64942e7ebd8beb1f64d5abdcf9799edb35453931"
+        }
+      ]
+    },
+    {
+      "file": "list-scroll-snapshot.patch",
+      "sha256": "a68c39e74ab98f2685b12464086796f644bceea5281a62180295feff5270e674",
+      "files": [
+        {
+          "path": "crates/nsh-core/src/core/components.rs",
+          "beforeExists": true,
+          "beforeSha256": "397d26e778061aa530da4acce90034dd016513b80e150fe0958abbae74c47374",
+          "afterSha256": "6554aee8d3021943b1c9767df39f3db54f5bb25135e11bf147fea7803dad3ece"
+        },
+        {
+          "path": "crates/nsh-core/src/core/mod.rs",
+          "beforeExists": true,
+          "beforeSha256": "3e0b302d162073982eda271ef51a0a295e95b00f14c68067839e96105ecfac64",
+          "afterSha256": "6112086fa4a5b505ac22516f3fbfac35b17a85a8c032cc524147fa1a5dd2f9ec"
+        },
+        {
+          "path": "crates/nsh-core/src/core/scroll_snapshot.rs",
+          "beforeExists": false,
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "429aa039831e15449f3c38ec99c118999b79e390d5d558184358ce3faf68ddc2"
+        },
+        {
+          "path": "crates/nsh-core/src/core/tests.rs",
+          "beforeExists": true,
+          "beforeSha256": "196f4e3b7add4de8af4ad50c1544bcec228aff384b63410d2acfbc6c77d5c08b",
+          "afterSha256": "345850d83064d2719e336e3ff4a8bb3678f371c0368929907cec68486847f14d"
+        },
+        {
+          "path": "crates/nsh-core/src/core/tests/list_scroll_snapshot.rs",
+          "beforeExists": false,
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "852662bd30ba014bcb70f82babd54b2b11a6acb66f2440e9cb29312e2a8305f3"
+        },
+        {
+          "path": "crates/nsh-core/src/lib.rs",
+          "beforeExists": true,
+          "beforeSha256": "6f6b2ef69c25886b036950e8c3ae06109dc40d5f83b01927f9c2392d913be5c1",
+          "afterSha256": "7c85ad7b8eb3d4c0856d47b15bd75758519d7764a05273ea86113d4a278d28ad"
+        },
+        {
+          "path": "crates/nsh-core/src/ops.rs",
+          "beforeExists": true,
+          "beforeSha256": "85f7da0fa8d793d6399714f824ee5a467a03415179742cddeca107fc5f866e06",
+          "afterSha256": "7ff3cade8768bcb5a7a20b6aac99767f7fc2801fc340c704eaf7a6ddebf11307"
+        },
+        {
+          "path": "crates/nsh-js/src/components.rs",
+          "beforeExists": true,
+          "beforeSha256": "0f0f14bc400eb44398c0884da7239d76830e921377ddb857028338bee9148222",
+          "afterSha256": "a4bd6e4de05e42fcad743c19f962d694e67e0cd5487e66d5729dfef024fd86d6"
+        },
+        {
+          "path": "crates/nsh-js/src/declarations.rs",
+          "beforeExists": true,
+          "beforeSha256": "28a13211c689bf48f4caf98f75a624426bf9a3e0b77b719b74224a3709e2b879",
+          "afterSha256": "9d7f7c604245ccb301a9d81706c4b2e850ff31b11d8dca228ad119833f813163"
+        },
+        {
+          "path": "crates/nsh-js/src/dom.rs",
+          "beforeExists": true,
+          "beforeSha256": "a3d43566efe71853a2d9b8ce1d372a05d056a7d3d0d13869c45d6b487ed0025f",
+          "afterSha256": "f20793ab17ba8c2a5fb7a0d5a47ec92762a5e53a1258fbfb39dd8c32e2bbfb0f"
+        },
+        {
+          "path": "crates/nsh-platform-android/src/encode.rs",
+          "beforeExists": true,
+          "beforeSha256": "23606bcf4a17fc6e22dee79f3d64ce4ac1e97eb2c86e964dca24bdb21b351fa3",
+          "afterSha256": "10e8458e765f65c823c2f99c0d281f1e3a09e5e1489f4efa1a7335f8b70b2189"
+        },
+        {
+          "path": "crates/nsh-platform-macos/src/mount.rs",
+          "beforeExists": true,
+          "beforeSha256": "151c66235015e3a3e4df0bee497e9b9d68b01f4a37ebbcfb08528d4dac8ac04e",
+          "afterSha256": "97b5b27338dfba38946cb84cd80c140cb72f2c8276dbb2ddcb1fdeaca11eb0ef"
+        },
+        {
+          "path": "crates/nsh-platform-macos/src/scroll.rs",
+          "beforeExists": true,
+          "beforeSha256": "6415acf084c9ca8b939bb6c3ff83a53936416a134a454a9c73634f29bb0bea53",
+          "afterSha256": "16370c6e93f42201d403c44ff34d38d8c408cab2b0241f954e0cbfbbe786e9b7"
+        },
+        {
+          "path": "crates/nsh-platform-web/web/browser/dom.js",
+          "beforeExists": true,
+          "beforeSha256": "db7a1ad76837ccdad74df0547128fbd5488f156eb8c4af810a776e8027beaaed",
+          "afterSha256": "fdbf20c14565f278be7b40d095963214c6470efe3d76de336e0c4cfde16d429b"
+        },
+        {
+          "path": "crates/nsh-platform-windows/src/mount.rs",
+          "beforeExists": true,
+          "beforeSha256": "c13c8e609f3e6b5d93606cf29e5f9312297f1148a64095455c210a077ea6f0a9",
+          "afterSha256": "a4151bac92a984f0e33f6214e253390182c1fd65231e7c77f87d4c84366020d7"
+        },
+        {
+          "path": "crates/nsh-platform-windows/src/scroll.rs",
+          "beforeExists": true,
+          "beforeSha256": "dd80b10ec3af2aefc73eaa702c816f19f3cd796548d82f2498b66ea7c19afc02",
+          "afterSha256": "a5b74598401137a4522a15eff76246584c39ea4348c2611dd999cd8f1645a3d8"
+        },
+        {
+          "path": "crates/nsh-testing/src/headless/mod.rs",
+          "beforeExists": true,
+          "beforeSha256": "c56b812f2fe749c9c7357f0d5b5e6afbc05a31e956f25965051836002657f09b",
+          "afterSha256": "7555333cb02a8a8500db48524c4db7fece47034ef0bf344fc98da4c1390ff38b"
+        },
+        {
+          "path": "crates/nsh-testing/src/screen.rs",
+          "beforeExists": true,
+          "beforeSha256": "bdd3b2d47023294382ac1cfbf8a945ad042e6bb4d9c920907837bac84ca0a46b",
+          "afterSha256": "0636bf5c23869ed79d51e3843b75ab2565266e2936df9e6d706f00b0b985a5c9"
+        },
+        {
+          "path": "crates/nsh-testing/tests/testing/list-scroll-snapshot/App.test.tsx",
+          "beforeExists": false,
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "2bd5a60d7e58fde9f7393ac3e3c1847221543bbd6aeb37e0a209e15ea3b902d1"
+        },
+        {
+          "path": "crates/nsh-testing/tests/testing/list-scroll-snapshot/App.tsx",
+          "beforeExists": false,
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "0e4b331e899785ad1a395c7e5f1ec4bc532a6ce61f766e2a847403f744ee6533"
+        },
+        {
+          "path": "crates/nsh-testing/tests/testing/main.rs",
+          "beforeExists": true,
+          "beforeSha256": "a14ecedef6165b35e8a5f6527ad680dcb91ba4b25ab791e804f79120cf9ae9c6",
+          "afterSha256": "70926c41cae891077c961fd64f3acbe2d2f4bf1ccfc9d9472c993a01c8189c4f"
+        }
+      ]
+    },
+    {
+      "file": "dev-bundle-frame-limit.patch",
+      "sha256": "86eee6d37cd33a8c74a469a25e72b4a1114b2502f5867b20c1c0c1d3655946af",
+      "files": [
+        {
+          "path": "crates/nsh-dev/src/client.rs",
+          "beforeExists": true,
+          "beforeSha256": "541352e633968e5ff9dc3fa6d5f3ace8fef5cfb42465d623a2d19331b71d1edb",
+          "afterSha256": "e0569ceb144b832082ee12600afb2d073857f4db5a2c2e369da99ae05caf4714"
+        },
+        {
+          "path": "crates/nsh-dev/tests/roundtrip.rs",
+          "beforeExists": true,
+          "beforeSha256": "b4b5fcdc8ba628dab768744fc2e13d899081a092c605d1382f767bea4c021fa2",
+          "afterSha256": "d81903b146a14e47dd735bc3827e07adc4702081eb78a03d78636e1960531a7a"
+        }
+      ]
+    },
+    {
+      "file": "list-scroll-snapshot-contract-fix.patch",
+      "sha256": "5e83490bd17df64e1d1206b50da823468639bbaac772c1379a6db25eb510f887",
+      "files": [
+        {
+          "path": "crates/nsh-core/src/js/host.rs",
+          "beforeExists": true,
+          "beforeSha256": "603e1488a37baa4ca7a1913de1bc3e64bd6f9b70504f743d41275b354ddac488",
+          "afterSha256": "9e7f2a5dd7d990023a2c817e53b187c02c01ff532e35837a04b7c5176e9011b4"
+        },
+        {
+          "path": "crates/nsh-core/src/js/mod.rs",
+          "beforeExists": true,
+          "beforeSha256": "1835b8fc6a6f20a4b456467878bfe54d0c58599c4aa04e73a02a30b7568d73f0",
+          "afterSha256": "3adfce1cd27e8e574e5476792c67d31726292f8b3068ccb4c0b0196e64f15d33"
+        },
+        {
+          "path": "crates/nsh-core/unitless.txt",
+          "beforeExists": true,
+          "beforeSha256": "770a2b9b41202f9ffef32bffea40a261596f7bd2cc7bcb7266679a16ffdc6e1e",
+          "afterSha256": "17d8c10fb889bc19c47346408a101594abacae2ece196962676da794669cfd6c"
+        }
+      ]
+    },
+    {
+      "file": "diff-scroll-pin-and-shrink.patch",
+      "sha256": "b1383f6332d20836d18a52aab7ea25d8d8b93d2a1a58f48e57ee9da907bbdc33",
+      "files": [
+        {
+          "path": "crates/nsh-core/src/core/list.rs",
+          "beforeExists": true,
+          "beforeSha256": "e3c3d9a975668cc8bc5544aaeb607a16183cc520227ae6cce971cf5b45c7074c",
+          "afterSha256": "1951fc130d338116fd2c4c7759ee1ef3ca354bf272743d7643fa53756e9cd2d3"
+        },
+        {
+          "path": "crates/nsh-testing/src/screen.rs",
+          "beforeExists": true,
+          "beforeSha256": "0636bf5c23869ed79d51e3843b75ab2565266e2936df9e6d706f00b0b985a5c9",
+          "afterSha256": "7f4f772355af2c5ae9d05f25708788b2167a21e77a33020ad325ba1d3ca24877"
+        }
+      ]
+    }
+  ]
+}

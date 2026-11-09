@@ -1,20 +1,6 @@
 import { isVSCodeRuntime } from '@/lib/desktop';
-
-export const LOCAL_CHAT_COMMANDS = new Set([
-  'new', 'fork', 'compact', 'reload', 'undo', 'redo', 'timeline', 'model', 'summary', 'workspace-review', 'craft-goal', 'catch-up', 'debug', 'weigh', 'explore', 'btw',
-]);
-
-export const IMMEDIATE_LOCAL_CHAT_COMMANDS = new Set([
-  'new', 'compact', 'reload', 'fork', 'undo', 'redo',
-]);
-
-/** Optional reserved icon em-space between `/` and the command name. */
-const SLASH_COMMAND_HEAD = /^\/\u2003?([^\s]+)/i;
-
-export type LocalChatCommandOptions = {
-  /** `/reload` stays a local command only in VS Code. Other runtimes use Settings. */
-  reloadEnabled?: boolean;
-};
+import { getLocalChatCommand as classifyLocalChatCommand, IMMEDIATE_LOCAL_CHAT_COMMANDS, type LocalChatCommandOptions } from '@/lib/composer-local-commands-core';
+export { LOCAL_CHAT_COMMANDS, IMMEDIATE_LOCAL_CHAT_COMMANDS, type LocalChatCommandOptions } from '@/lib/composer-local-commands-core';
 
 const reloadCommandEnabled = (options?: LocalChatCommandOptions): boolean => (
   options?.reloadEnabled ?? isVSCodeRuntime()
@@ -25,11 +11,7 @@ export const getLocalChatCommand = (
   inputMode: 'normal' | 'shell',
   options?: LocalChatCommandOptions,
 ): string | null => {
-  if (inputMode !== 'normal') return null;
-  const command = text.trimStart().match(SLASH_COMMAND_HEAD)?.[1]?.toLowerCase();
-  if (!command || !LOCAL_CHAT_COMMANDS.has(command)) return null;
-  if (command === 'reload' && !reloadCommandEnabled(options)) return null;
-  return command;
+  return classifyLocalChatCommand(text, inputMode, { reloadEnabled: reloadCommandEnabled(options) });
 };
 
 export const preservesComposerResources = (

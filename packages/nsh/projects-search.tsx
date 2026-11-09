@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, List, signal, Text, untracked, View } from 'nsh';
+import { cleanup, computed, effect, keymap, List, signal, Text, untracked, View, type ListRef } from 'nsh';
 import { Button, Input, NavPage } from 'nsh/base';
 import { Icon } from './Icon';
 import { t } from './i18n';
@@ -15,8 +15,8 @@ const speaker = (row: SearchRow) => row.heading ? '' : row.speaker;
 const quiet = 'min-h-11 px-3 py-2 rounded-xl active:bg-accent items-center justify-center';
 
 /** Each authority settles independently: one failed domain must not erase successful results. */
-export function createProjectsSearchController(focusDirectory: () => string | undefined) {
-  const operations = createPageOperations();
+export function createProjectsSearchController(focusDirectory: () => string | undefined, active: () => boolean = () => true) {
+  const operations = createPageOperations(active);
   const term = signal(''), sessions = signal<SearchSession[]>([]), messages = signal<SearchMessage[]>([]), files = signal<SearchFile[]>([]);
   const pending = signal<Domain[]>([]), errors = signal<Partial<Record<Domain, string>>>({});
   let revision = 0, alive = true, fileDirectory: string | undefined;
@@ -71,15 +71,31 @@ export interface ProjectsSearchProps {
   onOpenProject?: (project: Project) => void;
   onOpenChat: (target: ChatTarget, options?: { messageID?: string }) => void;
   onOpenFile: (directory: string, path: string) => void;
+  /** Actual displayed route/modal admission, not merely mounted content. */
+  active?: boolean;
+  /** Close this surface only. Desktop must not pop the product NavStack. */
+  onClose?: () => void;
 }
 
 export function ProjectsSearchPage(props: ProjectsSearchProps) {
-  const controller = createProjectsSearchController(() => props.focusDirectory), input = signal('');
-  const expanded = signal<SearchGroup[]>([]);
+  const content = ProjectsSearchContent(props);
+  return <NavPage title={t('commandPalette.title')} headerBackTitle="" class="flex-1 bg-background">{content}</NavPage>;
+}
+
+export type ProjectsSearchContentProps = ProjectsSearchProps & { presentation?: 'page' | 'dialog'; onCompositionChange?: (composing: boolean) => void };
+
+/** One search/controller/row owner for iOS navigation and the desktop Dialog. */
+export function ProjectsSearchContent(props: ProjectsSearchContentProps) {
+  const controller = createProjectsSearchController(() => props.focusDirectory, () => props.active !== false), input = signal('');
+  const expanded = signal<SearchGroup[]>([]), composing = signal(false), highlighted = signal<string | null>(null);
+  const active = () => props.active !== false && controller.current();
+  let list: ListRef | undefined, moved = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  effect(() => { const active = controller.current(); props.focusDirectory; untracked(() => { if (timer) clearTimeout(timer); if (active) void controller.search(input()); }); });
-  cleanup(() => { if (timer) clearTimeout(timer); });
-  function select(work: () => void) { if (timer) clearTimeout(timer); controller.cancel(); work(); }
+  function cancel() { if (timer) clearTimeout(timer); timer = undefined; controller.cancel(); }
+  effect(() => { const current = active(); props.focusDirectory; untracked(() => { cancel(); if (current) void controller.search(input()); }); });
+  cleanup(() => { if (timer) clearTimeout(timer); props.onCompositionChange?.(false); });
+  function close() { if (!active() || composing()) return; cancel(); props.onClose?.(); }
+  function select(work: () => void) { if (!active() || composing()) return; cancel(); props.onClose?.(); work(); }
   const groups = computed(() => {
     const settledQuery = controller.current() && input().trim() === controller.term();
     return projectSearchGroups({ query: input(), commands: props.commands, projects: props.onOpenProject ? props.projects ?? app.projects() : [], sessions: settledQuery ? controller.sessions() : [], messages: settledQuery ? controller.messages() : [], files: settledQuery ? controller.files().filter(row => row.directory === props.focusDirectory?.trim()) : [] });
@@ -103,28 +119,52 @@ export function ProjectsSearchPage(props: ProjectsSearchProps) {
     }
     return result;
   });
-  return <NavPage title={t('commandPalette.title')} headerBackTitle="" class="flex-1 bg-background">
-    <View class="p-4 gap-2">
-      <Input testID="projects-global-search" class="min-h-12 px-3 py-3 rounded-xl bg-secondary text-foreground" value={input()} placeholder={t('commandPalette.input.placeholder')} onChange={event => { input.set(event.value); expanded.set([]); controller.cancel(); if (timer) clearTimeout(timer); timer = setTimeout(() => { void controller.search(input()); }, 250); }} />
+  function choose(key: string | null) {
+    if (!active() || composing()) return;
+    const item = rows().find(row => row.key === key);
+    if (!item || item.heading) return;
+    if (item.key.startsWith('more:')) item.select(); else select(item.select);
+  }
+  function move(direction: -1 | 1) {
+    const candidates = rows().filter(row => !row.heading);
+    if (!candidates.length) return;
+    const current = candidates.findIndex(row => row.key === highlighted());
+    const index = current < 0 ? direction === 1 ? 0 : candidates.length - 1 : (current + direction + candidates.length) % candidates.length;
+    const next = candidates[index]!;
+    moved = true; highlighted.set(next.key);
+    list?.scrollToIndex({ index: rows().indexOf(next), animated: false, viewPosition: .5 });
+  }
+  effect(() => {
+    const source = rows();
+    untracked(() => { if (!moved || !source.some(row => row.key === highlighted() && !row.heading)) highlighted.set(source.find(row => !row.heading)?.key ?? null); });
+  });
+  effect(() => {
+    if (props.presentation !== 'dialog' || !active() || composing()) return;
+    cleanup(keymap.bind({ up: () => untracked(() => move(-1)), down: () => untracked(() => move(1)), enter: () => untracked(() => choose(highlighted())), escape: () => untracked(close) }, { when: 'always', repeat: true }));
+  });
+  function schedule() { cancel(); if (active() && !composing()) timer = setTimeout(() => { timer = undefined; if (active() && !composing()) void controller.search(input()); }, 250); }
+  const desktop = () => props.presentation === 'dialog';
+  return <View class="flex-1 min-h-0" accessibilityLabel={t('commandPalette.title')}>
+    <View class={desktop() ? 'p-3 gap-2' : 'p-4 gap-2'}>
+      <Input testID="projects-global-search" class={`${desktop() ? 'min-h-10' : 'min-h-12'} px-3 py-3 rounded-xl bg-secondary text-foreground`} value={input()} placeholder={t('commandPalette.input.placeholder')} accessibilityLabel={t('commandPalette.input.placeholder')} autoFocus={desktop()} disabled={!active()}
+        onCompositionChange={event => { composing.set(event.composing); props.onCompositionChange?.(event.composing); if (event.composing) cancel(); else schedule(); }} onSubmit={() => choose(highlighted())}
+        onChange={event => { input.set(event.value); expanded.set([]); moved = false; schedule(); }} />
       <Each of={Object.entries(visibleErrors())}>{entry => <View class="gap-1"><Text class="text-sm text-destructive">{t(entry()[0] === 'sessions' ? 'commandPalette.error.sessions' : entry()[0] === 'messages' ? 'commandPalette.error.messages' : 'commandPalette.error.files')}</Text><Text class="text-xs text-muted-foreground">{entry()[1]}</Text></View>}</Each>
-      <If when={Object.keys(visibleErrors()).length > 0}><Button testID="projects-search-retry" class={quiet} onPress={() => { if (timer) clearTimeout(timer); void controller.search(input()); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
+      <If when={Object.keys(visibleErrors()).length > 0}><Button testID="projects-search-retry" class={quiet} disabled={!active() || composing()} onPress={() => { cancel(); if (active() && !composing()) void controller.search(input()); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></If>
     </View>
-    <List testID="projects-search-results" class="flex-1" contentClass="px-4 pb-6 gap-2" each={rows()} keyExtractor={row => row.key}>{row =>
+    <List testID="projects-search-results" ref={node => { list = node; }} role={desktop() ? 'listbox' : undefined} class="flex-1" contentClass={desktop() ? 'px-3 pb-3' : 'px-4 pb-6 gap-2'} each={rows()} keyExtractor={row => row.key}>{row =>
       <If when={row().heading} else={
-        <Button testID={`projects-search-${row().key}`} class="min-h-14 rounded-xl bg-card p-3 gap-1" onPress={() => {
-          const item = row();
-          if (item.heading) return;
-          if (item.key.startsWith('more:')) item.select(); else select(item.select);
-        }}>
+        <Button testID={`projects-search-${row().key}`} role={desktop() ? 'option' : undefined} selected={desktop() && highlighted() === row().key} disabled={!active() || composing()}
+          class={desktop() ? 'min-h-10 rounded-lg px-3 py-2 gap-1 active:bg-accent selected:bg-accent' : 'min-h-14 rounded-xl bg-card p-3 gap-1'} onPress={() => choose(row().key)}>
           <Text class="text-foreground" style={{ numberOfLines: 1 }}>{row().title}</Text>
           <If when={subtitle(row())}><View class="gap-1">
             <If when={speaker(row())}><Text class="text-xs text-muted-foreground">{speaker(row())}</Text></If>
-            <Text class="text-xs text-muted-foreground" style={{ numberOfLines: 3 }}>{subtitle(row())}</Text>
+            <Text class="text-xs text-muted-foreground" style={{ numberOfLines: desktop() ? 1 : 3 }}>{subtitle(row())}</Text>
           </View></If>
         </Button>
       }><Text testID={`projects-search-${row().key}`} class="text-xs text-muted-foreground pt-3 px-1">{row().title}</Text></If>
     }</List>
     <If when={controller.pending().length > 0}><View class="p-4 flex-row gap-2"><Icon name="loader-4" size={16} /><Text class="text-muted-foreground">{t('common.loading')}</Text></View></If>
     <If when={controller.pending().length === 0 && Object.keys(controller.errors()).length === 0 && rows().length === 0}><Text class="p-4 text-muted-foreground">{t('commandPalette.empty.noResults')}</Text></If>
-  </NavPage>;
+  </View>;
 }

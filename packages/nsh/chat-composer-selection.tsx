@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, host, safeArea, signal, Text, View } from 'nsh';
+import { cleanup, computed, effect, host, platform, safeArea, signal, Text, untracked, View } from 'nsh';
 import { Button } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
 import { getProviderModelDisplayName } from '../ui/src/lib/modelDisplay';
@@ -11,6 +11,7 @@ import { t } from './i18n';
 import { createPageOperations } from './page-operations';
 import { assistantPath, query, sessionPath } from './runtime';
 import { eventSessionID, list, record, runtimeEventFrom, text, unwrap, type ChatTarget, type Row } from './model';
+import { createNativeDesktopComposerShortcutOwner, nativeDesktopNextModelVariant, type NativeDesktopComposerShortcutPublisher } from './desktop-composer-actions';
 
 export function NativeComposerSelection(props: {
   target: ChatTarget;
@@ -19,6 +20,11 @@ export function NativeComposerSelection(props: {
   onOpenChange: (value: 'model' | 'agent' | null) => void;
   onAssistantEdit: () => void;
   onSelection?: (authority: Row) => void;
+  /** Already-resolved presentation from this existing catalog owner; no new lookup. */
+  onModelLabel?: (value: { providerID: string; modelID: string; label: string }) => void;
+  /** Selection-only actions; Chat retains editor, submit, stop and IME ownership. */
+  onDesktopShortcuts?: NativeDesktopComposerShortcutPublisher;
+  presentation?: 'desktop' | 'mobile';
 }) {
   const operations = createPageOperations(() => props.active);
   const selected = signal<Row>({}), providers = signal<Row[]>([]), agents = signal<Row[]>([]), error = signal('');
@@ -62,7 +68,7 @@ export function NativeComposerSelection(props: {
       applyAuthority(authority);
       if (catalog !== undefined) {
         const body = record(catalog);
-        if (body.schemaVersion !== 1 || !Array.isArray(body.providers)) throw new Error(t('common.unavailable'));
+        if (body.schemaVersion !== 1 || body.ok === false || !Array.isArray(body.providers)) throw new Error(t('common.unavailable'));
         providers.set(list(body.providers));
       }
       if (agentCatalog !== undefined) {
@@ -96,47 +102,72 @@ export function NativeComposerSelection(props: {
   const agentLabel = () => agent() ? getAgentDisplayName(primaryAgents(), agent()) : t('chat.modelControls.selectAgent');
   const modelID = () => text(model().id);
   const providerID = () => text(model().providerID);
+  const nextVariant = computed(() => nativeDesktopNextModelVariant(providers(), model()));
+  const controlHeight = () => props.presentation === 'desktop' ? 24 : 26;
   const displayName = () => getProviderModelDisplayName(providers().find(provider => provider.id === providerID()), modelID());
+  effect(() => {
+    const value = { providerID: providerID(), modelID: modelID(), label: displayName() };
+    if (ready() && value.providerID && value.modelID) untracked(() => props.onModelLabel?.(value));
+  });
   function open(mode: 'model' | 'agent') {
     if (!current()) return;
     if (props.target.kind === 'assistant') props.onAssistantEdit();
     else props.onOpenChange(mode);
   }
-  async function cycleAgent() {
-    if (!operations.current() || pending() || !ready() || props.open !== null) return;
+  async function saveSelection(body: { agent?: string; model?: Row }) {
+    if (!current() || pending() || !ready() || props.open !== null) return;
     const lane = operations.capture(), request = lane.request;
-    const current = (ticket = page) => alive && lane.current() && ticket === page;
-    const next = getCycledPrimaryAgentName(primaryAgents(), agent());
-    if (!next) return;
+    const valid = (ticket: number) => current(ticket) && lane.current();
     const ticket = page, operation = ++mutation;
     pending.set(true); error.set('');
     try {
-      if (props.target.kind === 'session') await request(`${sessionPath(props.target.id, 'agent')}?${query(props.target.directory)}`, 'POST', { agent: next });
+      if (scope.kind === 'session') await request(`${sessionPath(scope.id, body.model ? 'model' : 'agent')}?${query(scope.directory)}`, 'POST', body);
       else {
         if (typeof selected().revision !== 'number') throw new Error(t('assistants.composer.selectionSaveFailed'));
-        await request(assistantPath(props.target.id, '').replace(/\/$/, ''), 'PATCH', { expectedRevision: selected().revision, agent: next });
+        await request(assistantPath(scope.id, '').replace(/\/$/, ''), 'PATCH', { expectedRevision: selected().revision,
+          ...(body.model ? { providerID: body.model.providerID, modelID: body.model.id, variant: text(body.model.variant) } : { agent: body.agent }) });
       }
-      if (!current(ticket) || operation !== mutation) return;
+      if (!valid(ticket) || operation !== mutation) return;
       // A completed write is not the display authority; always read it back.
       if (!await load()) throw new Error(t('assistants.composer.selectionSaveFailed'));
     } catch (cause) {
-      if (current(ticket) && operation === mutation) {
+      if (valid(ticket) && operation === mutation) {
         error.set(cause instanceof Error ? cause.message : String(cause));
         await load(false, true);
       }
-    } finally { if (current(ticket) && operation === mutation) pending.set(false); }
+    } finally { if (valid(ticket) && operation === mutation) pending.set(false); }
+  }
+  async function cycleAgent(direction: -1 | 1 = 1) {
+    if (!current() || pending() || !ready() || props.open !== null) return;
+    const next = getCycledPrimaryAgentName(primaryAgents(), agent(), direction);
+    if (next) await saveSelection({ agent: next });
+  }
+  async function cycleVariant() {
+    if (!current() || pending() || !ready() || props.open !== null) return;
+    const value = model(), variant = nativeDesktopNextModelVariant(providers(), value);
+    if (variant !== undefined) await saveSelection({ model: { providerID: value.providerID, id: value.id, variant } });
+  }
+  if (platform?.desktop && props.onDesktopShortcuts) {
+    const shortcuts = createNativeDesktopComposerShortcutOwner({ current, composing: () => false, overlayOpen: () => props.open !== null, actions: {
+      open_model_selector: { get enabled() { return ready() && !pending(); }, run: () => open('model') },
+      open_agent_selector: { get enabled() { return ready() && !pending(); }, run: () => open('agent') },
+      cycle_agent: { get enabled() { return ready() && !pending() && primaryAgents().length > 1; }, run: intent => cycleAgent(intent?.direction ?? 1) },
+      cycle_thinking_variant: { get enabled() { return ready() && !pending() && nextVariant() !== undefined; }, run: cycleVariant },
+    } });
+    untracked(() => props.onDesktopShortcuts?.({ type: 'register', owner: shortcuts.owner }));
+    cleanup(() => { shortcuts.retire(); untracked(() => props.onDesktopShortcuts?.({ type: 'retire', owner: shortcuts.owner })); });
   }
   return <View class="flex-row items-center gap-1.5" style={{ flexShrink: 1, minWidth: 0 }}>
     <View focusable={false} onTouchStartCapture={event => { touchOrigin = { x: event.pageX, y: event.pageY }; }} onTouchMoveCapture={event => { if (event.touches.length > 1 || touchOrigin && Math.hypot(event.pageX - touchOrigin.x, event.pageY - touchOrigin.y) > LONG_PRESS_MOVE_PX) cancelHold(); }} onTouchCancel={cancelHold} onMouseLeave={cancelHold}>
-    <Button testID="chat-agent-selection" class="flex-row items-center rounded-lg active:bg-accent disabled:opacity-40" style={{ height: 26, minHeight: 26, maxHeight: 26 }} hitSlop={6} disabled={pending() || !ready() || !props.active} accessibilityLabel={agent() || t('sessions.scheduledTasks.editor.agent.label')}
-      onPressDown={() => { clearHold(); suppressPress = false; const ticket = page; holdTimer = setTimeout(() => { holdTimer = undefined; suppressPress = true; if (current(ticket) && !pending()) open('agent'); }, LONG_PRESS_MS); }} onPressUp={clearHold} onPress={() => { if (!suppressPress) void cycleAgent(); }}>
-      <View class="items-center justify-center" style={{ width: 24, height: 26 }}><NativeAgentAvatar name={agent()} size={16} /></View>
+    <Button testID="chat-agent-selection" class="flex-row items-center rounded-lg active:bg-accent disabled:opacity-40" style={{ height: controlHeight(), minHeight: controlHeight(), maxHeight: controlHeight() }} hitSlop={6} disabled={pending() || !ready() || !props.active} accessibilityLabel={agent() || t('sessions.scheduledTasks.editor.agent.label')}
+      onPressDown={() => { clearHold(); suppressPress = false; if (props.presentation === 'desktop') return; const ticket = page; holdTimer = setTimeout(() => { holdTimer = undefined; suppressPress = true; if (current(ticket) && !pending()) open('agent'); }, LONG_PRESS_MS); }} onPressUp={clearHold} onPress={() => { if (props.presentation === 'desktop') { if (current() && ready() && !pending()) open('agent'); } else if (!suppressPress) void cycleAgent(); }}>
+      <View class="items-center justify-center" style={{ width: 24, height: controlHeight() }}><NativeAgentAvatar name={agent()} size={props.presentation === 'desktop' ? 20 : 16} /></View>
       <View testID={labelVisible() ? 'chat-agent-cycle-label' : undefined} accessibilityElementsHidden={!labelVisible()} style={{ maxWidth: labelVisible() ? 160 : 0, opacity: labelVisible() ? 1 : 0, overflow: 'hidden', transitionProperty: 'all', transitionDuration: 280, transitionTimingFunction: 'ease-in-out' }}><Text class="text-xs pl-1 pr-0.5" style={{ color: nativeAgentAccent(agent()), numberOfLines: 1 }}>{agentLabel()}</Text></View>
     </Button>
     </View>
-    <Button testID="chat-selection" class="max-w-36 flex-row items-center gap-1 rounded-lg active:bg-accent" style={{ height: 26, minHeight: 26, maxHeight: 26, flexShrink: 1, minWidth: 0 }} hitSlop={6} accessibilityLabel={`${displayName() || t('chat.modelControls.selectModel')}${text(model().variant) ? ` ${formatEffortLabel(text(model().variant))}` : ''}`} onPress={() => open('model')}>
+    <Button testID="chat-selection" class="flex-row items-center gap-1 rounded-lg active:bg-accent disabled:opacity-40" style={{ height: controlHeight(), minHeight: controlHeight(), maxHeight: controlHeight(), maxWidth: props.presentation === 'desktop' ? 260 : 144, flexShrink: 1, minWidth: 0 }} hitSlop={6} disabled={!props.active || pending() || !ready()} accessibilityLabel={`${displayName() || t('chat.modelControls.selectModel')}${text(model().variant) ? ` ${formatEffortLabel(text(model().variant))}` : ''}`} onPress={() => open('model')}>
       <NativeModelLogo modelID={modelID()} providerID={providerID()} size={16} />
-      <Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', maxWidth: 96, minWidth: 0, flexShrink: 1, numberOfLines: 1 }}>{error() || displayName() || t('sessions.scheduledTasks.editor.model.label')}</Text>
+      <Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', maxWidth: props.presentation === 'desktop' ? 220 : 96, minWidth: 0, flexShrink: 1, numberOfLines: 1 }}>{error() || displayName() || t('sessions.scheduledTasks.editor.model.label')}</Text>
       <If when={!!model().variant}><Text class="text-muted-foreground" style={{ fontSize: 11, lineHeight: 14 }}>{formatEffortLabel(text(model().variant))}</Text></If>
     </Button>
     <Sheet detents={[.72, .98]} open={props.open !== null && props.active} closeOnSwipe onOpenChange={event => { if (!event.open) props.onOpenChange(null); }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: sheet.height() }} backdropClass="bg-background/50">

@@ -34,7 +34,7 @@ async function fixture() {
     if (input.method === 'PUT') configured = true;
     return { status: 200, body: await (input.method === 'GET' ? holdRead ?? { configured } : holdWrite ?? { configured }) };
   };
-  const ports = { signal, effect, untracked, cleanup: (work: () => void) => cleanups.push(work), lifecycle: () => foreground() ? 'active' : 'background' };
+  const ports = { signal, effect, untracked, context: (initial: unknown) => () => initial, cleanup: (work: () => void) => cleanups.push(work), lifecycle: () => foreground() ? 'active' : 'background' };
   const modules: Record<string, unknown> = { nsh: { ...ports, host: { available: () => true, call: native } }, 'nsh/base': {}, './model': { record: (value: unknown) => value ?? {} }, './runtime-scope': scopes, './i18n': { t: (key: string) => key }, './settings-protocol': { createSettingsTransaction: () => () => { throw new Error('No Settings transaction expected'); } } };
   // This harness invokes only the Settings operation lifetime, never a Select or its UI.
   modules['./native-select'] = { NativeSelect: () => { throw new Error('Quota recovery must not render a native Select'); } };
@@ -52,11 +52,13 @@ async function fixture() {
   vm.runInContext(ts.transpileModule(declaration.getText(stateSyntax), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, stateContext);
   const captureHostOperation = (stateContext.exports as typeof import('./state')).captureHostOperation;
   modules['./state'] = { app: { connection, runtimeScope }, epoch: generation, captureHostOperation, captureHostRequest: () => runtime.bindRequest(runtimeScope()) };
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  const publisher = evaluate<typeof import('./desktop-settings-publisher')>('desktop-settings-publisher.tsx'); modules['./desktop-settings-publisher'] = publisher;
   const controls = evaluate<typeof import('./settings-controls')>('settings-controls.tsx');
   const quotaSyntax = ts.createSourceFile('settings-quota-credentials.tsx', readFileSync(path.join(root, 'settings-quota-credentials.tsx'), 'utf8'), ts.ScriptTarget.ES2023, true, ts.ScriptKind.TSX);
   const owner = quotaSyntax.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'quotaOwner')!;
   type Owner = { controller: ReturnType<typeof core.createQuotaCredentials>; state: () => core.QuotaCredentialsState };
-  const quota = evaluate<{ quotaOwner: (props: object, form: boolean) => Owner }>('owner.ts', 'export ' + owner.getText(quotaSyntax), { ...ports, ...core, ...controls, ...runtime, ...(modules['./state'] as object) }).quotaOwner({ providerId: 'cursor', get active() { return active(); } }, true);
+  const quota = evaluate<{ quotaOwner: (props: object, form: boolean) => Owner }>('owner.ts', 'export ' + owner.getText(quotaSyntax), { ...ports, ...core, ...controls, ...publisher, ...runtime, ...(modules['./state'] as object) }).quotaOwner({ providerId: 'cursor', get active() { return active(); } }, true);
   const flush = async () => { for (let index = 0; index < 40; index++) await Promise.resolve(); };
   await flush();
   return { quota, calls, flush,

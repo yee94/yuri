@@ -1,4 +1,7 @@
 import type { ScopedReferenceDocument } from './composer-references';
+import type { AssistantAttachmentDescriptor } from './assistant-attachment-model';
+import type { AssistantContactMessage } from '../ui/src/queries/assistantDTO';
+import { readSessionChangeSummary, readSessionModelLabel, type SessionChangeSummary } from '../ui/src/lib/sessionChangeSummary';
 
 export type Row = Record<string, unknown>;
 export const record = (value: unknown): Row => value && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
@@ -9,12 +12,13 @@ export const nameOf = (path: string): string => path.replace(/\/$/, '').split('/
 export const id = (): string => `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
 export type Connection = { id: string; label: string; url: string; lastUsedAt: number; authorizationID?: string };
 export type Project = { id: string; name: string; path: string };
-export type Session = { id: string; title: string; directory: string; updated: number; parentID?: string };
+export type Session = { id: string; title: string; directory: string; updated: number; parentID?: string; hasChildren?: boolean; model?: string; summary?: SessionChangeSummary };
 export type ChatTarget = { kind: 'session' | 'assistant'; id: string; title: string; directory: string };
-export type Message = { id: string; role: string; text: string; reasoning: string; tools: Row[]; cards: Row[]; files: Row[]; error: string; ordinal?: number; content?: Row[]; projectionInfo?: Row; modelID?: string; providerID?: string; modelName?: string; variant?: string; agent?: string; finish?: string; time?: { created?: number; streamed?: number; completed?: number }; tokens?: { output?: number; reasoning?: number }; contextRaw?: Row; contextOrigin?: 'projection' | 'stream'; contextLive?: boolean; contextContent?: readonly Row[] };
+export type ContactMessageMetadata = { kind: AssistantContactMessage['role'] } & Partial<Pick<AssistantContactMessage, 'assistantID' | 'turnID' | 'bubbleIndex' | 'createdAt' | 'status' | 'fromAssistantID' | 'fromAssistantName'>>;
+export type Message = { id: string; role: string; text: string; reasoning: string; tools: Row[]; cards: Row[]; files: Row[]; error: string; contact?: ContactMessageMetadata; ordinal?: number; content?: Row[]; projectionInfo?: Row; modelID?: string; providerID?: string; modelName?: string; variant?: string; agent?: string; finish?: string; time?: { created?: number; streamed?: number; completed?: number }; tokens?: { output?: number; reasoning?: number }; contextRaw?: Row; contextOrigin?: 'projection' | 'stream'; contextLive?: boolean; contextContent?: readonly Row[] };
 export type MessagePage = { messages: Message[]; cursor: string | null; complete: boolean; generation?: number; revision?: number };
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
-export type Attachment = { uri: string; name: string; mime: string };
+export type Attachment = { uri: string; name: string; mime: string; contact?: AssistantAttachmentDescriptor };
 export type SlashCommand = { name: string; text: string };
 export type CompiledSubmission = {
   text: string;
@@ -34,12 +38,19 @@ export type RuntimeEvent = { key: 'global' | 'chat'; type: string; body: Row; di
 export function projectsFrom(settings: unknown): Project[] {
   return list(record(unwrap(settings)).projects).map(p => ({ id: text(p.id), path: text(p.path), name: text(p.label) || text(p.name) || nameOf(text(p.path)) })).filter(p => p.id && p.path);
 }
+/** Whitelisted display metadata from the existing session read, never raw history or execution authority. */
+export function sessionDisplayMetadata(value: unknown): Pick<Session, 'model' | 'summary'> {
+  const model = readSessionModelLabel(value), summary = readSessionChangeSummary(value);
+  return { ...(model ? { model } : {}), ...(summary ? { summary } : {}) };
+}
 export function sessionsFrom(snapshot: unknown): Session[] {
   const value = record(snapshot);
   if (value.available !== true || !Array.isArray(value.directories)) throw new Error('Session index unavailable');
   return list(value.directories).flatMap(d => list(d.sessions).map(s => ({
     id: text(s.id), title: text(s.title) || text(s.id), directory: text(d.directory),
     updated: Number(record(s.time).updated) || 0, parentID: text(s.parentID) || undefined,
+    ...(typeof s.hasChildren === 'boolean' ? { hasChildren: s.hasChildren } : {}),
+    ...sessionDisplayMetadata(s),
   }))).filter(s => !s.parentID).sort((a, b) => b.updated - a.updated);
 }
 export function messageFrom(raw: Row): Message | null {
@@ -88,12 +99,38 @@ export function messagesFrom(payload: unknown, contact: boolean, limit = contact
   const body = record(payload);
   const rows = contact ? body.messages : body.data;
   if (!Array.isArray(rows)) throw new Error('Invalid message page');
-  const messages = list(rows).map(messageFrom).filter((m): m is Message => !!m && !!m.id);
+  const messages = list(rows).map(contact ? contactMessageFrom : messageFrom).filter((m): m is Message => !!m && !!m.id);
   if (!contact) messages.reverse();
-  if (contact) messages.sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (contact && messages.every(message => typeof message.ordinal === 'number' && Number.isFinite(message.ordinal))) messages.sort((a, b) => a.ordinal! - b.ordinal!);
   const cursor = contact ? text(body.nextCursor) || null : text(record(body.cursor).next) || text(body.cursor) || null;
   const complete = contact ? body.complete === true || !cursor : !cursor || rows.length < limit;
   return { messages, cursor: complete ? null : cursor, complete, generation: typeof body.generation === 'number' ? body.generation : undefined, revision: typeof body.revision === 'number' ? body.revision : undefined };
+}
+/** Contact identity is separate from the backwards-compatible Session role. */
+export function contactMessageFrom(raw: Row): Message | null {
+  if (raw.role !== 'user' && raw.role !== 'assistant' && raw.role !== 'peer') return null;
+  const message = messageFrom(raw);
+  if (!message) return null;
+  const content = Array.isArray(raw.parts) ? list(raw.parts) : list(raw.content);
+  const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+  const contact: ContactMessageMetadata = {
+    kind: raw.role,
+    ...(typeof raw.assistantID === 'string' ? { assistantID: raw.assistantID } : {}),
+    ...(typeof raw.turnID === 'string' ? { turnID: raw.turnID } : {}),
+    ...(finite(raw.bubbleIndex) ? { bubbleIndex: raw.bubbleIndex } : {}),
+    ...(finite(raw.createdAt) ? { createdAt: raw.createdAt } : {}),
+    ...(typeof raw.status === 'string' ? { status: raw.status } : {}),
+    ...(typeof raw.fromAssistantID === 'string' || raw.fromAssistantID === null ? { fromAssistantID: raw.fromAssistantID } : {}),
+    ...(typeof raw.fromAssistantName === 'string' || raw.fromAssistantName === null ? { fromAssistantName: raw.fromAssistantName } : {}),
+  };
+  return {
+    ...message, contact, content, contextContent: content,
+    ordinal: finite(raw.ordinal) ? raw.ordinal : undefined,
+    time: { ...message.time, ...(contact.createdAt === undefined ? {} : { created: contact.createdAt }) },
+    text: typeof raw.text === 'string' ? raw.text : content.filter(part => part.type === 'text').map(part => text(part.text)).join(''),
+    cards: content.some(part => part.type === 'card') ? content.filter(part => part.type === 'card') : list(raw.cards),
+    error: text(record(raw.error).message) || text(raw.error) || (raw.status === 'error' || raw.status === 'failed' ? text(raw.text) || message.text : ''),
+  };
 }
 /** Failed/malformed authority is never an empty successful list. */
 export function rowsFrom(payload: unknown): Row[] {

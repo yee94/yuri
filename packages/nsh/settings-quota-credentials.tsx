@@ -7,6 +7,7 @@ import { app, captureHostOperation, epoch } from './state';
 import { SettingsGroup, SettingsInput, settingsAction, settingsOperationLifetime } from './settings-controls';
 import { SettingsTarget } from './settings-target';
 import { createQuotaCredentials, quotaCredentialFields, quotaCredentialResponse, type QuotaCredentialAction, type QuotaCredentialField, type QuotaCredentialProvider, type QuotaCredentialsDependencies, type QuotaCredentialsState } from './settings-quota-credentials-core';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 export type SettingsQuotaCredentialsProps = {
   providerId: QuotaCredentialProvider; providerName: string; active: boolean;
@@ -30,6 +31,11 @@ function quotaOwner(props: SettingsQuotaCredentialsProps, form: boolean) {
     changed: next => state.set(next),
   });
   const state = signal<QuotaCredentialsState>(controller.state());
+  const navigation = publishSettingsEditor({ current: () => current() && props.active, scope: lifetime.operation,
+    pending: () => state().loading || !!state().busy || state().recovery === 'read-required',
+    dirty: () => form && state().open && Object.entries(state().values).some(([key, value]) => key === 'workspaceId' ? value !== (state().status?.workspaceId ?? '') : !!value),
+    stamp: () => [state().values],
+  });
   async function refresh() {
     await controller.read();
     if (form && !controller.state().open && (!controller.state().notice || controller.state().notice === 'validate')) controller.open();
@@ -67,7 +73,7 @@ function quotaOwner(props: SettingsQuotaCredentialsProps, form: boolean) {
     });
   });
   cleanup(() => { alive = false; controller.dispose(); });
-  return { controller, state, refresh };
+  return { controller, state, refresh, navigation };
 }
 function statusLabel(state: QuotaCredentialsState) {
   return t(state.error === 'load' ? 'settings.providers.quota.loadFailed' : state.loading || !state.status
@@ -93,10 +99,10 @@ export function SettingsQuotaCredentialsPage(props: SettingsQuotaCredentialsProp
   onBack: () => void;
   onSaved?: (status: NonNullable<QuotaCredentialsState['status']>, action: 'save' | 'import' | 'delete') => void;
 }) {
-  const { controller, state, refresh } = quotaOwner(props, true);
+  const { controller, state, refresh, navigation } = quotaOwner(props, true);
   const blocked = () => !props.active || lifecycle() !== 'active' || !!state().busy || state().loading || !state().open
     || state().error === 'load' || state().recovery === 'read-required';
-  const close = () => { controller.close(); props.onBack(); };
+  const close = () => { void navigation.requestLeave().then(allowed => { if (allowed) { controller.close(); props.onBack(); } }); };
   async function perform(action: QuotaCredentialAction) {
     if (blocked()) return;
     const current = controller.captureOperation();

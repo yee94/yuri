@@ -1,0 +1,22 @@
+{
+  "hostID": "synthetic-host",
+  "revision": 7,
+  "mode": "system",
+  "cssVars": {
+    "light": {
+      "background": "#FFF", "foreground": "#212121", "card": "#FFFFFF", "card-foreground": "#212121",
+      "primary": "#212121", "primary-foreground": "#FFF", "secondary": "#F7F8FA", "secondary-foreground": "#212121",
+      "muted": "#F7F8FA", "muted-foreground": "#404040", "accent": "#DFE1E5", "accent-foreground": "#000000",
+      "border": "#cfd3de", "input": "#cfd3de", "ring": "#0055FF40", "destructive": "#CE0606", "success": "#077D18",
+      "chat-user": "#E8F1FF", "chat-user-foreground": "#212121", "chat-assistant": "#F7F8FA", "chat-assistant-foreground": "#212121"
+    },
+    "dark": {
+      "background": "#1E1F22", "foreground": "#DFE1E5", "card": "#2B2D30", "card-foreground": "#DFE1E5",
+      "primary": "#DFE1E5", "primary-foreground": "#1E1F22", "secondary": "#26282B", "secondary-foreground": "#DFE1E5",
+      "muted": "#26282B", "muted-foreground": "#9fa0a2", "accent": "#43454A", "accent-foreground": "#DFE1E5",
+      "border": "#474a51", "input": "#474a51", "ring": "#6796f550", "destructive": "#FA6675", "success": "#57965D",
+      "chat-user": "#3a5b9d76", "chat-user-foreground": "#DFE1E5", "chat-assistant": "#1E1F22", "chat-assistant-foreground": "#DFE1E5"
+    }
+  },
+  "fonts": { "ui": "system-ui", "mono": "monospace", "assistantLight": "JetBrains Mono", "assistantDark": "JetBrains Mono" }
+}

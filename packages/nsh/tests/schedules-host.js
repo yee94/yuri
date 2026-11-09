@@ -9,6 +9,7 @@ export function createHost() {
   let tasks = [makeTask('daily', 'Native daily schedule', true), makeTask('paused', 'Native paused schedule', false)];
   const run = id => ({ id, projectId: 'project', taskId: 'daily', taskName: `Native history ${id}`, trigger: 'manual', status: 'success', sessionId: `session-${id}`, directory: '/workspace/recorded-worktree', error: null, startedAt: 1700000000000, finishedAt: 1700000005000, durationMs: 5000 });
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'schedule-host', connections: [{ id: 'schedule-host', url: 'https://host.example', label: 'Test', lastUsedAt: 0 }], runtimeScope: { hostID: 'schedule-host', lease: 'synthetic-schedules-mobile' } };
     if (name !== 'runtime.request') throw new Error(`Unexpected native call: ${name}`);
     const { path, method, body } = input;
     if (path === '/api/yuri/scheduled-tasks') return { status: 200, body: { tasks: tasks.map(task => ({ projectId: 'project', task })), failedProjectIds: [] } };

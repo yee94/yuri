@@ -16,18 +16,11 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 
 import { getAllSyncSessions, getSyncSessions } from './sync-refs';
 import { useSessionUIStore } from './session-ui-store';
+import { cycleNavigationTargets, type SessionNavigationTarget } from './session-navigation-core';
+export { cycleNavigationTargets, findCurrentNavigationTargetIndex } from './session-navigation-core';
+export type { SessionNavigationTarget } from './session-navigation-core';
 
 type SessionWithParent = Session & { parentID?: string | null };
-
-export type SessionNavigationTarget = Readonly<{
-  scope: SessionFocusScope;
-  sessionId: string;
-  projectId: string | null;
-  directory: string | null;
-  groupKey?: string | null;
-  folderAncestorIds?: readonly string[];
-  visibleIndex?: number;
-}>;
 
 type SessionNavigationSnapshot = Readonly<{
   pinned: readonly SessionNavigationTarget[];
@@ -226,65 +219,11 @@ const getNavigationSessionUniverse = (): Session[] => {
   return syncAll.length > 0 ? syncAll : getSyncSessions();
 };
 
-const findCurrentNavigationTargetIndex = (
-  targets: readonly SessionNavigationTarget[],
-  rootSessionId: string | null,
-  focus: SessionFocusIdentity | null,
-): number => {
-  if (!rootSessionId) {
-    return -1;
-  }
-
-  // Duplicate session IDs can exist across pinned and project rows in the
-  // published snapshot. Prefer the exact focus surface, then the owning
-  // project, so wrap/cross-section jumps land on the row the user came from.
-  if (focus?.scope) {
-    const scopedMatch = targets.findIndex((target) => (
-      target.scope === focus.scope
-      && target.sessionId === rootSessionId
-      && (focus.projectId ? target.projectId === focus.projectId : true)
-    ));
-    if (scopedMatch >= 0) {
-      return scopedMatch;
-    }
-  }
-
-  if (focus?.projectId) {
-    const projectMatch = targets.findIndex((target) => (
-      target.sessionId === rootSessionId && target.projectId === focus.projectId
-    ));
-    if (projectMatch >= 0) {
-      return projectMatch;
-    }
-  }
-
-  return targets.findIndex((target) => target.sessionId === rootSessionId);
-};
-
 const getCombinedNavigationTargets = (
   snapshot: SessionNavigationSnapshot,
 ): readonly SessionNavigationTarget[] => (
   [...snapshot.pinned, ...snapshot.project]
 );
-
-const cycleNavigationTargets = (
-  targets: readonly SessionNavigationTarget[],
-  direction: -1 | 1,
-  rootSessionId: string | null,
-  focus: SessionFocusIdentity | null,
-): SessionNavigationTarget | null => {
-  if (targets.length === 0) {
-    return null;
-  }
-
-  const currentIndex = findCurrentNavigationTargetIndex(targets, rootSessionId, focus);
-  if (currentIndex < 0) {
-    return direction > 0 ? targets[0] ?? null : targets[targets.length - 1] ?? null;
-  }
-
-  const nextIndex = (currentIndex + direction + targets.length) % targets.length;
-  return targets[nextIndex] ?? null;
-};
 
 /**
  * Resolve the next target in sidebar order: published pinned rows, then

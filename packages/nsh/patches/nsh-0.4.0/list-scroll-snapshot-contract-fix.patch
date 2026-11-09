@@ -1,0 +1,31 @@
+--- a/crates/nsh-core/src/js/host.rs
++++ b/crates/nsh-core/src/js/host.rs
+@@ -945,6 +945,8 @@
+     EventKind::ImageInfo,
+     EventKind::Clipboard,
+     EventKind::Host,
++    // `ListRef.getScrollSnapshot`'s asynchronous read-only reply, never a prop.
++    EventKind::ScrollSnapshot,
+     EventKind::Pick,
+     EventKind::OpenUrl,
+     EventKind::ScreenColor,
+--- a/crates/nsh-core/src/js/mod.rs
++++ b/crates/nsh-core/src/js/mod.rs
+@@ -235,6 +235,7 @@
+             "tailwindTheme?",
+             "headerSlot?",
+             "onChangeText?",
++            "onScrollSnapshot?",
+             "onDismiss?",
+             "onRequestClose?",
+             "selectionColor?",
+--- a/crates/nsh-core/unitless.txt
++++ b/crates/nsh-core/unitless.txt
+@@ -70,6 +70,7 @@
+ core::Core::scroll_listener ->                                   # time and a zoom scale factor (the sizes it gives are typed)
+ core::Core::set_font_scale(scale)                                # a font scale factor
+ core::Core::set_zoom(scale)                                      # a zoom scale factor
++core::scroll_snapshot::ScrollSnapshot.zoom_scale                 # a dimensionless zoom scale factor (zoomed extent / unzoomed extent), as ScrollEvent.zoom_scale
+ css::Color::with_alpha(factor)                                   # an opacity factor
+ effects::Filter::Brightness.0                                    # a filter amount (1 leaves the image as it is)
+ effects::Filter::Contrast.0                                      # a filter amount (1 leaves the image as it is)

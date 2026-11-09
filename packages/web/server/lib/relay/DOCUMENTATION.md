@@ -45,6 +45,27 @@ Client side (`packages/ui/src/lib/relay/`):
 - `tunnel-client.ts` — the client tunnel: exposes a `fetch()`-compatible and a WebSocket-compatible surface backed by the encrypted tunnel. Transient closures (including `4029` capacity/pending timeout and replacement) retry indefinitely at a fixed 3-second foreground cadence, or 60 seconds while hidden/offline. Online, visibility-visible and system-resume interrupt retry waits; an apparently connected tunnel is probed immediately. Authentication rejection stays terminal and later requests fail explicitly rather than waiting forever. Keepalive tracks send and receive separately: outbound requests cannot conceal a dead return path, and inbound-only SSE still sends pings so the Host idle reaper does not evict a healthy client. Reset fails every old stream; retries never replay mutation requests automatically.
 - `tunnel-payloads.ts`, `runtime-tunnel.ts`, `runtime-socket.ts` — payload helpers, the active-tunnel singleton, and the shared "open a runtime WebSocket the right way" helper.
 
+The two native-WebSocket send adapters in `tunnel-client.ts` share one byte-ownership
+boundary. Strings, raw ArrayBuffers and ArrayBuffer-backed views pass through with
+their original identity, byteOffset and byteLength: no replacement view, allocation
+or byte copy. The public socket contract also accepts SharedArrayBuffer-backed
+views, so only those views are copied synchronously into an exact-length unshared
+Uint8Array before native `send`; DataView and typed-array offsets are byte ranges,
+not element ranges. The intrinsic ArrayBuffer byteLength getter checks backing-buffer
+brands across realms without relying on `instanceof`, constructor names or spoofable
+toString tags. No SharedArrayBuffer constructor/browser object is newly required at
+module import, and native send errors propagate unchanged. This copy is not an atomic
+snapshot against concurrent worker writes.
+
+This reconciles the installed TypeScript 5.9.3 declarations with NSH's TypeScript
+7.0.2 DOM declarations: the latter's WebSocket `send(BufferSource | Blob | string)`
+uses `BufferSource = ArrayBufferView<ArrayBuffer> | ArrayBuffer`, excluding shared
+backing storage. A BufferSource/any cast would hide the actual runtime distinction.
+The normalization is only at native send boundaries; encrypted-frame serialization,
+counter/IV order, wire codec, handshake and allowlists are unchanged. Focused tests
+exercise actual adapters and the default wire with an in-memory E2EE peer, including
+offset/DataView/shared views, cross-realm brands, errors and a 50-send zero-copy guard.
+
 Relay is not a separate link format: it is one transport candidate inside the unified **pairing v2** payload (`packages/ui/src/lib/connectionPayload.ts`). A relay candidate is `{ type: 'relay', relayUrl, serverId, hostEncPubJwk }` — no embedded token; the client redeems the one-time pairing secret over the tunnel like any other candidate.
 
 ## What travels the tunnel

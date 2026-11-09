@@ -12,6 +12,7 @@ import * as credentialsCore from './settings-git-credentials-core';
 import * as aboutCore from './settings-about-core';
 import * as diagnostics from './settings-about-diagnostics';
 import * as model from './model';
+import * as writerCore from './desktop-writer-core';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const flush = async () => { for (let index = 0; index < 150; index++) await Promise.resolve(); };
@@ -74,10 +75,11 @@ function fixture(page: 'github' | 'git-credentials' | 'about') {
   const openUrl = vi.fn(async () => ({ opened: true }));
   const answer = vi.fn(async (): Promise<{ action: string }> => ({ action: 'cancel' }));
   const modules: Record<string, unknown> = {
-    nsh: { signal, effect, untracked, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native }, openUrl, Scroll: 'Scroll', Text: 'Text', View: 'View', Image: 'Image' },
+    nsh: { signal, effect, untracked, platform: { desktop: false }, context: (initial: unknown) => () => initial, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native }, openUrl, Scroll: 'Scroll', Text: 'Text', View: 'View', Image: 'Image' },
     'nsh/base': { ...Object.fromEntries(['Button', 'Input', 'Select', 'Switch', 'Progress'].map(key => [key, key])), AlertDialog: { show: answer } },
+    './native-select': { NativeSelect: 'Select' },
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './settings-protocol': protocol,
-    './runtime-scope': scopeCore, './model': model, './settings-github-core': githubCore, './settings-github-protocol': gitProtocol,
+    './runtime-scope': scopeCore, './desktop-writer-core': writerCore, './model': model, './settings-github-core': githubCore, './settings-github-protocol': gitProtocol,
     './settings-git-credentials-core': credentialsCore, './settings-about-core': aboutCore, './settings-about-diagnostics': diagnostics,
     './settings-target': { SettingsTarget: 'SettingsTarget' }, './settings-search-core': { createSettingsTargetNavigation: () => ({ reveal() {}, onScroll() {} }) },
   };
@@ -99,6 +101,8 @@ function fixture(page: 'github' | 'git-credentials' | 'about') {
   Object.defineProperty(context, 'generation', { get: generation });
   vm.runInContext(ts.transpileModule(declaration.getText(syntax), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, context);
   modules['./state'] = { captureHostOperation: exports.captureHostOperation, captureHostRequest: () => runtime.bindRequest(scope()), epoch: generation, app: { connection, runtimeScope: scope } };
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   modules['./settings-controls'] = evaluate('settings-controls.tsx');
   const github = evaluate<typeof import('./settings-github')>('settings-github.tsx'); modules['./settings-github'] = github;
   const props = { get active() { return active(); } };

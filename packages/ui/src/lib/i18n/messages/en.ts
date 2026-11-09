@@ -2,6 +2,9 @@ import { settingsDict } from './en.settings';
 import { tourMessages } from './tour';
 
 export const dict = {
+  'sessions.navigation.restoreFailed': 'Could not restore your last location. Your current page is unchanged.',
+  'sessions.navigation.saveFailed': 'Could not save your navigation. Your last saved location is preserved.',
+  'sessions.navigation.restoreBlocked': 'Your last location cannot be restored right now. Your current page is unchanged.',
   'chat.newSessionDraft.capturedInput': 'Saved first input. Later edits are kept for your next draft.',
   'chat.newSessionDraft.unknownTitle': 'Session creation could not be confirmed',
   'chat.newSessionDraft.unknownBody': 'Your draft and send ID are saved. Creating again could make a duplicate. Select the empty session created by this attempt, or leave and check your sessions first.',
@@ -1677,6 +1680,10 @@ export const dict = {
   'chat.goal.action.save': 'Save goal',
   'chat.goal.action.start': 'Start goal',
   'chat.goal.toast.actionFailed': 'Goal update failed',
+  'chat.gitContext.replaceDraftTitle': 'Replace the current draft?',
+  'chat.gitContext.replaceDraftBody': 'The current draft text and references will be replaced by the captured Git context. Attachments will be kept. This cannot be undone.',
+  'chat.gitContext.replaceDraftAction': 'Replace draft',
+  'chat.gitContext.stagingFailed': 'Could not prepare the Git context. Your current draft is preserved.',
   "chat.goal.toast.distillFallback": "Objective exceeded the limit and couldn't be distilled — a trimmed version is used for the auditor",
   'chat.goal.row.aria': 'Session goal — open details',
   'chat.goal.button.createAria': 'Set a session goal',

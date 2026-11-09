@@ -5,11 +5,18 @@ import { t } from './i18n';
 import { text, type Row } from './model';
 import { SettingsFeedback, SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { scopedSettingsPath, settingsObject } from './settings-protocol';
+import { publishSettingsEditor, publishSettingsPicker } from './desktop-settings-publisher';
 
 export function SettingsSkillFiles(props: { name: string; directory?: string; files: Row[]; create?: boolean; disabled?: boolean; readOnly?: boolean; onDraft: (files: { path: string; content: string }[]) => void }) {
   const state = settingsPageLifetime(), files = signal(props.files), editor = signal(false), path = signal(''), content = signal(''), existing = signal(false);
 
   const pending = signal<{ path: string; content: string }[]>([]);
+  const initial = signal({ path: '', content: '' });
+  const navigation = publishSettingsEditor({ current: state.current, scope: state.operation, pending: state.busy,
+    dirty: () => editor() && !props.readOnly && (path() !== initial().path || content() !== initial().content), stamp: () => [path(), content(), editor()],
+  });
+  publishSettingsPicker(editor);
+  async function close() { if (await navigation.requestLeave()) editor.set(false); }
   const endpoint = (file: string) => scopedSettingsPath(`/api/config/skills/${encodeURIComponent(props.name)}/files/${encodeURIComponent(file)}`, props.directory);
   async function open(file?: Row, operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
@@ -24,7 +31,7 @@ export function SettingsSkillFiles(props: { name: string; directory?: string; fi
           content.set(text(body.content));
         }
       }
-      editor.set(true);
+      initial.set({ path: path(), content: content() }); editor.set(true);
     }, operation);
   }
   async function save(operation: SettingsOperation | null = state.operation()) {
@@ -56,13 +63,13 @@ export function SettingsSkillFiles(props: { name: string; directory?: string; fi
       }); }}><Text class="text-destructive">{t('settings.common.actions.delete')}</Text></Button></If></View>}</Each>
       <If when={!props.readOnly}><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void open(); }}><Text class="text-foreground">{t('settings.skills.page.actions.addFile')}</Text></Button></If>
     </If>
-    <Sheet open={editor()} onOpenChange={event => editor.set(event.open)} closeOnSwipe popupClass="bg-background rounded-t-3xl" popupStyle={{ height: '80%' }} backdropClass="bg-background/50"><Scroll class="flex-1" contentClass="p-5 gap-4 pb-10">
+    <Sheet open={editor()} closeOnSwipe={false} closeOnEscape={false} closeOnBackdropPress={false} onCancel={() => { void close(); }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: '80%' }} backdropClass="bg-background/50"><Scroll class="flex-1" contentClass="p-5 gap-4 pb-10">
       <Text class="text-lg font-semibold text-foreground">{t('settings.skills.page.section.supportingFiles')}</Text>
       <SettingsFeedback state={state} />
-      <SettingsInput title={t('settings.skills.page.fileDialog.field.filePath')} value={path()} disabled={existing() || state.busy()} onChange={next => path.set(next)} />
+      <SettingsInput testID="settings-skill-file-path" title={t('settings.skills.page.fileDialog.field.filePath')} value={path()} disabled={existing() || state.busy()} onChange={next => path.set(next)} />
       <If when={props.readOnly}><TextView markdown={content()} selectable class="text-foreground" /></If>
-      <If when={!props.readOnly}><SettingsInput title={t('settings.skills.page.fileDialog.field.content')} value={content()} multiline disabled={state.busy() || props.disabled} onChange={next => content.set(next)} /><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
-      <Button class={settingsAction} disabled={state.busy()} onPress={() => editor.set(false)}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>
+      <If when={!props.readOnly}><SettingsInput testID="settings-skill-file-content" title={t('settings.skills.page.fileDialog.field.content')} value={content()} multiline disabled={state.busy() || props.disabled} onChange={next => content.set(next)} /><Button class={settingsAction} disabled={state.busy() || props.disabled} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
+      <Button testID="settings-skill-file-cancel" class={settingsAction} disabled={state.busy()} onPress={() => { void close(); }}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>
     </Scroll></Sheet>
   </SettingsGroup>;
 }

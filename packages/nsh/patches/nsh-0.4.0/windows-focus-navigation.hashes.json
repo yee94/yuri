@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "producer": "windows-focus-worker",
+  "version": "0.4.0",
+  "revision": "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3",
+  "file": "windows-focus-navigation.patch",
+  "sha256": "b56462d863852674108ace1295db8783311e46cca783d575e61184d3af35eeea",
+  "cargoLockSha256": "3e613f0b6940be5d83676f48771b461b122e0732f652ce4de20b4978b2015d34",
+  "integrationStatus": "blocked-on-shared-file-seam",
+  "sharedFilesWithOtherPatches": {
+    "list-scroll-snapshot.patch": [
+      "crates/nsh-platform-windows/src/mount.rs",
+      "crates/nsh-testing/src/headless/mod.rs",
+      "crates/nsh-testing/src/screen.rs"
+    ]
+  },
+  "files": [
+    {
+      "path": "crates/nsh-platform-windows/src/access.rs",
+      "beforeExists": true,
+      "beforeSha256": "f2eb4e5a242fd8f87eea72c89787d08bf9232e01a666c4c4531cca50597ab574",
+      "afterExists": true,
+      "afterSha256": "d6272a4c2a42e2c6c8d948b493abbd5f26739736f646662131fe3929d487eaf2"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/access/uia.rs",
+      "beforeExists": true,
+      "beforeSha256": "4f4d9f6f5f51a26a3d49935f07383b7adcd5ee8d527762d1104083865c73a42f",
+      "afterExists": true,
+      "afterSha256": "d3ff5089eeddd365237c2bea2d127e59f8bf8d5aa8a9ed6e02e067731985f438"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/chrome.rs",
+      "beforeExists": true,
+      "beforeSha256": "1d7cddfb2cbcb9e6fd0c02e4ff72ee468caf89871142c3a6a8ffb5207e9717e0",
+      "afterExists": true,
+      "afterSha256": "e7d1f13d5fd8b9375c51b2d9008ad086640528d8853d20bb354c678a28a713e8"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/focus_tests.rs",
+      "beforeExists": false,
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterExists": true,
+      "afterSha256": "db9a1cbd3a5f728d008fa5852fa00506adadccd241bc9bdc8757735bbd8e6abd"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/input.rs",
+      "beforeExists": true,
+      "beforeSha256": "01c37ab4b97ff484ad2944dead45281e30a58af2f1ad851e96723186ac22c53d",
+      "afterExists": true,
+      "afterSha256": "6c63edc9847396991c9d1e9ddd1999b426654e0269c84fa3e9426d6b157e381f"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/keymap.rs",
+      "beforeExists": true,
+      "beforeSha256": "2dc3b8fa2ba316dfb5c884d9b3a017af6cc1ae23edd31da019323a2ad80e1132",
+      "afterExists": true,
+      "afterSha256": "5b5098d832126c71ead598f57a7c302f17396e5ebaccbd0feb2cd6a2e3b405e4"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/mount.rs",
+      "beforeExists": true,
+      "beforeSha256": "c13c8e609f3e6b5d93606cf29e5f9312297f1148a64095455c210a077ea6f0a9",
+      "afterExists": true,
+      "afterSha256": "d864a092d5a80fd83e72b78b400eaae5da5347d57660b786dbf6f8b599d1c5a5"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/navigation.rs",
+      "beforeExists": true,
+      "beforeSha256": "8383b681a962bf249b3f95578837ab921e99350f93f810530d93eba153d2236d",
+      "afterExists": true,
+      "afterSha256": "d43da00eb0685d8c791964d83843c324de16b5c7efad0d95f299ff014ee8f682"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/surface.rs",
+      "beforeExists": true,
+      "beforeSha256": "84d4d014654a52cf43c4d962cb0fae84b9b9ae0c4512c328da82399f57aba839",
+      "afterExists": true,
+      "afterSha256": "1c1e2f8b1755caef342e8e431487c65fd49813ce94b35954425153390abb4ea9"
+    },
+    {
+      "path": "crates/nsh-platform-windows/src/text_input.rs",
+      "beforeExists": true,
+      "beforeSha256": "67d6c4c19b42c370b1442c15beeee45664bd2e490f804543ae5c839c388c0fda",
+      "afterExists": true,
+      "afterSha256": "4c4835dd8f326ea63ec44dd1e25a947073b759ca175b8bc91c1eba3793877b46"
+    },
+    {
+      "path": "crates/nsh-testing/src/headless/keyboard.rs",
+      "beforeExists": true,
+      "beforeSha256": "622d147111b653e488828bd3e315bba7b46ce71f6bf3e741f4840581d824ca52",
+      "afterExists": true,
+      "afterSha256": "33d80b01d14b871d38cb421774c50e60c5483a8b01dff6784ce3895493f0d07b"
+    },
+    {
+      "path": "crates/nsh-testing/src/headless/mod.rs",
+      "beforeExists": true,
+      "beforeSha256": "c56b812f2fe749c9c7357f0d5b5e6afbc05a31e956f25965051836002657f09b",
+      "afterExists": true,
+      "afterSha256": "b0d9e48568a8635b1444267c151b9945b7d95475c3658d0a851efba24f990e90"
+    },
+    {
+      "path": "crates/nsh-testing/src/screen.rs",
+      "beforeExists": true,
+      "beforeSha256": "bdd3b2d47023294382ac1cfbf8a945ad042e6bb4d9c920907837bac84ca0a46b",
+      "afterExists": true,
+      "afterSha256": "bd7af57702e6defec46c90eea5e07fffef257c8f2c50d4c100483b52b4a17aef"
+    }
+  ],
+  "consumerFiles": [
+    {
+      "path": "packages/nsh/tests/desktop-windows-focus/Contracts.test.tsx",
+      "sha256": "49d2ef4191d82b5f0c71a5a7fc86402903f0fb38443ea0cf71491037b635d6dd"
+    },
+    {
+      "path": "packages/nsh/tests/desktop-windows-focus/Contracts.tsx",
+      "sha256": "f16632da2ecf892293c3670d8e93c057e0f7362946e6450d14fae9e8b2fe6037"
+    },
+    {
+      "path": "packages/nsh/tests/desktop-windows-focus/Focus.test.tsx",
+      "sha256": "259ee36f55ad3707e0add919a8ebd01ee9c20c7d041ec48bd3e339996d7d3295"
+    },
+    {
+      "path": "packages/nsh/tests/desktop-windows-focus/Focus.tsx",
+      "sha256": "2d23557e430058673a8a921c4193f2cc611b982730a0715f0f9d183a5b03e66b"
+    },
+    {
+      "path": "packages/nsh/tests/desktop-windows-focus/WindowsFocusNavigation.md",
+      "sha256": "7433d5af4e14d37ebf2c41e2472baef6e66a532ad328e929826124927674e9ff"
+    }
+  ]
+}

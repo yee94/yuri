@@ -200,6 +200,14 @@ and hint rendering; visual checks must additionally cover production CSS in
 light/dark and a narrow window. Component/source checks alone cannot prove glass,
 alignment, scrollbar geometry or packaged-runtime behavior.
 
+Keyboard help's five ordered sections and 41 entries live in the environment-free
+`src/lib/help-shortcuts-core.ts`, shared with the NSH desktop help Dialog. The
+action catalog remains the only default-key/alias source; help also resolves the
+current leader remap. Web keeps its existing VS Code row exclusion, mobile/default
+presentation, picker surface and read-only interaction. `help-shortcuts-core.test.ts`
+guards the complete catalog and `HelpDialog.catalog.test.tsx` checks the actual
+Web consumer; native support labels do not filter Web help or replace its UI.
+
 # Anchored popup surfaces
 
 Menus (including submenus and context menus), desktop Select, Changed files,

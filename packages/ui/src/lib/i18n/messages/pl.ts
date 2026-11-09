@@ -3,6 +3,9 @@ import { settingsDict } from './pl.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': 'Nie udało się przywrócić ostatniej lokalizacji. Bieżąca strona pozostaje bez zmian.',
+  'sessions.navigation.saveFailed': 'Nie udało się zapisać nawigacji. Ostatnio zapisana lokalizacja została zachowana.',
+  'sessions.navigation.restoreBlocked': 'Nie można teraz przywrócić ostatniej lokalizacji. Bieżąca strona pozostaje bez zmian.',
   'chat.newSessionDraft.capturedInput': 'Zapisana treść pierwszego wysłania. Późniejsze zmiany zostaną zachowane jako kolejny szkic.',
   'chat.newSessionDraft.unknownTitle': 'Nie udało się potwierdzić utworzenia sesji',
   'chat.newSessionDraft.unknownBody': 'Szkic i identyfikator wysyłki zostały zapisane. Ponowne utworzenie sesji może spowodować duplikat. Wybierz pustą sesję utworzoną podczas tej próby lub wróć i sprawdź listę sesji.',
@@ -2662,6 +2665,10 @@ export const dict: Record<I18nKey, string> = {
   'chat.goal.action.save': 'Zapisz cel',
   'chat.goal.action.start': 'Rozpocznij cel',
   'chat.goal.toast.actionFailed': 'Nie udało się zaktualizować celu',
+  'chat.gitContext.replaceDraftTitle': 'Zastąpić bieżący szkic?',
+  'chat.gitContext.replaceDraftBody': 'Tekst i odwołania bieżącego szkicu zostaną zastąpione przechwyconym kontekstem Git. Załączniki zostaną zachowane. Tej operacji nie można cofnąć.',
+  'chat.gitContext.replaceDraftAction': 'Zastąp szkic',
+  'chat.gitContext.stagingFailed': 'Nie udało się przygotować kontekstu Git. Bieżący szkic został zachowany.',
   'chat.goal.toast.distillFallback': 'Cel przekroczył limit i nie udało się go skondensować — audytor używa skróconej wersji',
   'chat.goal.row.aria': 'Cel sesji — otwórz szczegóły',
   'chat.goal.button.createAria': 'Ustaw cel sesji',

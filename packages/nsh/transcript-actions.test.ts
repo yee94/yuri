@@ -9,19 +9,22 @@ const target = { kind: 'session' as const, id: 's/one', title: 'Neutral session'
 const root = '/api/session/s%2Fone/';
 const raw = { id: 'message/one', type: 'user', content: [{ type: 'text', text: 'Authoritative input' }, { type: 'file', source: { type: 'uri', uri: 'file:///host/upload.txt' }, filename: 'upload.txt', mime: 'text/plain' }] };
 let selected: Message | undefined, current: boolean, busy: boolean;
+let generation = 0;
 let handle: (path: string, method: string, body: unknown) => unknown;
 const requests = () => host.call.mock.calls.map(([, input]) => input as { path: string; method: string; body?: Row });
 function setup(extra: Partial<Parameters<typeof createTranscriptActions>[0]> = {}) {
   const onEditDraft = vi.fn(), onRevert = vi.fn(), onChanged = vi.fn(), onOpenChat = vi.fn();
   const send = async (path: string, method = 'GET', body?: unknown) => (await host.call('runtime.request', { path, method, ...(body === undefined ? {} : { body }) })).body;
-  const actions = createTranscriptActions({ target, send, scope: { key: 'fixture-host-generation', current: () => current, busy: () => busy, message: () => selected }, onEditDraft, onRevert, onChanged, onOpenChat, ...extra });
+  const actions = createTranscriptActions({ target, send, scope: { key: `fixture-host-generation-${generation}`, current: () => current, busy: () => busy, message: () => selected }, onEditDraft, onRevert, onChanged, onOpenChat, ...extra });
   return { actions, onEditDraft, onRevert, onChanged, onOpenChat };
 }
 beforeEach(() => {
+  generation++;
   selected = messageFrom({ ...raw, content: [{ type: 'text', text: 'Stale visible input' }] })!;
   current = true; busy = false;
   handle = (path, method, body) => {
     if (path === '/api/session/active') return { data: {} };
+    if (path.startsWith('/api/session/s%2Fone?')) return { id: target.id, directory: target.directory };
     if (path.startsWith(`${root}message/message%2Fone?`)) return { data: raw };
     if (path.startsWith(`${root}revert/stage?`)) return { data: { messageID: (body as Row).messageID, files: [] } };
     if (method === 'DELETE') return null;
@@ -63,7 +66,7 @@ describe('production transcript actions with fixture-only Host requests', () => 
   it('does not change draft/history on server rejection; releases the mutation lock for retry', async () => {
     const { actions, onEditDraft, onRevert } = setup();
     const original = handle;
-    handle = (path, method, body) => { if (path.includes('/revert/stage?')) throw new Error('Neutral fixture busy'); return original(path, method, body); };
+    handle = (path, method, body) => { if (path.includes('/revert/stage?')) throw Object.assign(new Error('Neutral fixture busy'), { status: 409 }); return original(path, method, body); };
     await expect(actions.edit()).rejects.toThrow('fixture busy');
     expect(onEditDraft).not.toHaveBeenCalled(); expect(onRevert).not.toHaveBeenCalled(); expect(actions.pending()).toBe(false);
     handle = original; await actions.edit(); expect(onEditDraft).toHaveBeenCalledOnce();
@@ -165,9 +168,66 @@ describe('production transcript actions with fixture-only Host requests', () => 
   });
   it('refuses to fork an incomplete live turn', async () => {
     busy = true; selected = messageFrom({ id: 'answer', type: 'assistant' })!;
-    handle = path => path.includes('/message/answer?') ? { id: 'answer', type: 'assistant' } : { data: [{ id: 'answer', type: 'assistant' }] };
+    handle = path => path.startsWith('/api/session/s%2Fone?') ? { id: target.id, directory: target.directory } : path.includes('/message/answer?') ? { id: 'answer', type: 'assistant' } : { data: [{ id: 'answer', type: 'assistant' }] };
     await expect(setup().actions.fork()).rejects.toThrow('still running');
     expect(requests().some(input => input.method === 'POST')).toBe(false);
+  });
+  it.each(['stage', 'fork', 'clear'] as const)('returns unknown for lost %s ACK and blocks every other history writer', async kind => {
+    const original = handle;
+    handle = (path, method, body) => {
+      if (path.includes('/fork?') || method === 'DELETE' || path.includes('/revert/stage?')) throw new Error('Lost acknowledgement');
+      return original(path, method, body);
+    };
+    const onPending = vi.fn(), onUncertain = vi.fn();
+    const { actions } = setup({ onPending, onUncertain });
+    const outcome = kind === 'stage' ? await actions.stage() : kind === 'fork' ? await actions.forkAt(null) : await actions.clear();
+    expect(outcome.status).toBe('unknown'); expect(actions.unknown()).toBe(true);
+    expect(onPending.mock.calls).toEqual([[true]]); expect(onUncertain).toHaveBeenCalledOnce();
+    const writes = requests().filter(row => row.method !== 'GET').length;
+    expect((await setup().actions.clear()).status).toBe('rejected');
+    expect(requests().filter(row => row.method !== 'GET')).toHaveLength(writes);
+  });
+  it.each([400, 403, 404, 409, 422])('returns rejected for explicit HTTP %s without retaining unknown', async status => {
+    const original = handle;
+    handle = (path, method, body) => method === 'DELETE' ? Promise.reject(Object.assign(new Error('Rejected'), { status })) : original(path, method, body);
+    const { actions } = setup();
+    expect((await actions.clear()).status).toBe('rejected'); expect(actions.pending()).toBe(false);
+  });
+  it('rejects pre-dispatch failures and does not create a fork after failed exact authority', async () => {
+    const { actions } = setup({ onDispatch: async () => { throw new Error('Storage unavailable'); } });
+    expect((await actions.stage()).status).toBe('rejected');
+    expect(requests().some(row => row.method !== 'GET')).toBe(false);
+    const original = handle;
+    handle = (path, method, body) => path.startsWith('/api/session/s%2Fone?') ? { id: target.id, directory: '/other' } : original(path, method, body);
+    expect((await actions.forkAt(null)).status).toBe('rejected');
+    expect(requests().some(row => row.method !== 'GET')).toBe(false);
+  });
+  it.each(['stage', 'clear'] as const)('never changes an acknowledged %s to retryable failure when refresh fails', async kind => {
+    const { actions } = setup({ onChanged: async () => { throw new Error('Read failed after ACK'); } });
+    expect((await (kind === 'stage' ? actions.stage() : actions.clear())).status).toBe('accepted');
+    expect(actions.unknown()).toBe(false); expect(actions.pending()).toBe(false);
+  });
+  it('preserves an acknowledged fork even when the navigation callback fails', async () => {
+    const original = handle;
+    handle = (path, method, body) => path.includes('/fork?') ? { id: 'forked', directory: target.directory } : original(path, method, body);
+    const { actions } = setup({ onOpenChat: () => { throw new Error('Navigation unavailable'); } });
+    const outcome = await actions.forkAt(null);
+    expect(outcome.status).toBe('accepted'); expect(outcome.target?.id).toBe('forked');
+    expect(requests().filter(row => row.method === 'POST')).toHaveLength(1);
+  });
+  it('fork-current uses exact session authority and the existing Host fork endpoint', async () => {
+    const original = handle;
+    handle = (path, method, body) => path.includes('/fork?') ? { id: 'forked', directory: target.directory } : original(path, method, body);
+    const { actions, onOpenChat } = setup();
+    expect((await actions.forkAt(null)).status).toBe('accepted');
+    expect(requests().filter(row => row.method === 'POST')).toEqual([{ path: `${root}fork?directory=%2Fworkspace%2Fspace%20one`, method: 'POST', body: {} }]);
+    expect(requests().some(row => row.path.includes('/message'))).toBe(false); expect(onOpenChat).toHaveBeenCalledOnce();
+  });
+  it('does not dispatch after invocation retirement during preparation', async () => {
+    let admitted = true;
+    const { actions } = setup({ onDispatch: async () => { admitted = false; } });
+    expect((await actions.stage(true, { current: () => admitted })).status).toBe('rejected');
+    expect(requests().some(row => row.method !== 'GET')).toBe(false);
   });
 });
 

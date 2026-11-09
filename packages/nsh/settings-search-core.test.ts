@@ -4,6 +4,13 @@ import { settingsPreferenceFields } from './settings-preferences-core';
 import { settingsBasicSections, settingsBasicTarget } from './settings-basics-core';
 
 describe('Native Settings field search', () => {
+  it('excludes iOS/browser-only appearance entries from desktop search and global config from iOS', () => {
+    for (const os of ['macos', 'windows']) {
+      for (const query of ['iosNativeUiEnabled', 'pwaAppName', 'mobileKeyboardMode']) expect(searchSettingsFields(query, key => key, os)).toEqual([]);
+      expect(searchSettingsFields('opencode.jsonc', key => key, os).map(item => item.id)).toEqual(['global-config.editor']);
+    }
+    expect(searchSettingsFields('opencode.jsonc', key => key, 'ios')).toEqual([]);
+  });
   it('matches translated field labels and technical synonyms, not only page titles', () => {
     const t = (key: string) => key.endsWith('section.messageStreamTransport') ? '消息流传输' : key;
     expect(searchSettingsFields('消息流', t).map(item => item.id)).toEqual(['chat.message-transport']);

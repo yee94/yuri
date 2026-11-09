@@ -8,8 +8,11 @@ const harness = vi.hoisted(() => {
     app: { connection: signal<{ id: string } | null>({ id: 'host' }), tasks: signal<Row[]>([]), projects: signal([{ id: 'p /', name: 'Project', path: '/workspace/project' }]) },
   };
 });
-vi.mock('nsh', () => ({ signal: harness.signal, cleanup: (work: () => void) => harness.cleanups.push(work) }));
-vi.mock('./state', () => ({ app: harness.app, epoch: () => harness.generation }));
+vi.mock('nsh', () => ({ signal: harness.signal, cleanup: (work: () => void) => harness.cleanups.push(work), lifecycle: () => 'active', effect: (work: () => void) => work(), untracked: (work: () => unknown) => work() }));
+vi.mock('./state', () => ({ app: { ...harness.app, runtimeScope: () => null }, epoch: () => harness.generation, captureHostOperation: () => {
+  const generation = harness.generation, connection = harness.app.connection();
+  return { current: () => generation === harness.generation && connection === harness.app.connection(), request: harness.request };
+} }));
 vi.mock('./runtime', () => ({ request: harness.request }));
 vi.mock('./i18n', () => ({ t: (key: string) => key }));
 const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -22,6 +25,19 @@ beforeEach(() => {
 });
 
 describe('scheduled task catalog native authority', () => {
+  it.each(['read', 'write'] as const)('explicit dispose fences the captured %s lane without late catalog/loading/pending/notice writes', async kind => {
+    const { createScheduledCatalog } = await import('./schedules-state'); const catalog = createScheduledCatalog(), pending = deferred();
+    const captured = catalog.capture();
+    harness.request.mockReturnValueOnce(pending.promise);
+    const flight = kind === 'read' ? catalog.load() : catalog.mutate(task(), 'toggle');
+    catalog.dispose();
+    const before = { tasks: harness.app.tasks(), loading: catalog.loading(), pending: catalog.pending(), notice: catalog.notice(), error: catalog.error() };
+    expect(captured.current()).toBe(false); expect(() => catalog.capture()).toThrow('page_operation_stale');
+    pending.resolve(kind === 'read' ? { tasks: [], failedProjectIds: [] } : { tasks: [], schedulerSynced: true }); await flight;
+    expect({ tasks: harness.app.tasks(), loading: catalog.loading(), pending: catalog.pending(), notice: catalog.notice(), error: catalog.error() }).toEqual(before);
+    harness.request.mockClear(); await expect(captured.request('/late')).rejects.toThrow('page_operation_stale');
+    expect(harness.request).not.toHaveBeenCalled();
+  });
   it('uses the Web enabled-first/name order without mutating authority or ordering by task id', async () => {
     const { sortScheduledTasks } = await import('./schedules-state');
     const source = [task('z', 'p /', false), task('later-id'), task('earlier-id')];
@@ -140,17 +156,27 @@ describe('scheduled task catalog native authority', () => {
 });
 
 describe('scheduled run history native paging', () => {
+  it('explicit dispose fences both the captured wire and all late history publications', async () => {
+    const { createScheduledHistory } = await import('./schedules-state'); const history = createScheduledHistory(), pending = deferred();
+    harness.request.mockResolvedValueOnce({ runs: [run()], nextCursor: 'opaque', complete: false }); await history.load();
+    harness.request.mockReturnValueOnce(pending.promise); const read = history.load(true);
+    history.dispose();
+    const before = { runs: history.runs(), loading: history.loading(), loaded: history.loaded(), complete: history.complete(), error: history.error() };
+    pending.resolve({ runs: [run('late')], nextCursor: null, complete: true }); await read;
+    expect({ runs: history.runs(), loading: history.loading(), loaded: history.loaded(), complete: history.complete(), error: history.error() }).toEqual(before);
+    harness.request.mockClear(); await history.retry(); expect(harness.request).not.toHaveBeenCalled();
+  });
   it('paginates global history with opaque encoded cursor, stable order and deduplication', async () => {
     const { createScheduledHistory } = await import('./schedules-state'); const history = createScheduledHistory();
     harness.request.mockResolvedValueOnce({ runs: [run()], nextCursor: 'opaque+/=', complete: false }); await history.load();
     harness.request.mockResolvedValueOnce({ runs: [run(), run('older')], nextCursor: null, complete: true }); await history.load(true);
-    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=opaque%2B%2F%3D');
+    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=opaque%2B%2F%3D', undefined, undefined);
     expect(history.runs().map(value => value.id)).toEqual(['newest', 'older']); expect(history.complete()).toBe(true);
   });
   it('scopes single-task history by both projectId and taskId', async () => {
     const { createScheduledHistory } = await import('./schedules-state'); const history = createScheduledHistory({ projectId: 'p /', taskId: 't /' });
     harness.request.mockResolvedValueOnce({ runs: [run()], nextCursor: null, complete: true }); await history.load();
-    expect(harness.request).toHaveBeenCalledWith('/api/yuri/scheduled-task-runs?limit=20&projectId=p%20%2F&taskId=t%20%2F');
+    expect(harness.request).toHaveBeenCalledWith('/api/yuri/scheduled-task-runs?limit=20&projectId=p%20%2F&taskId=t%20%2F', undefined, undefined);
     harness.request.mockResolvedValueOnce({ runs: [{ ...run(), projectId: 'other' }], nextCursor: null, complete: true }); await history.load();
     expect(history.runs()).toEqual([run()]); expect(history.error()).not.toBe('');
   });
@@ -186,7 +212,7 @@ describe('scheduled run history native paging', () => {
     expect(history.runs().map(value => value.id)).toEqual(['latest', 'newest', 'older']);
     expect(history.runs()[1]?.error).toBe('updated');
     harness.request.mockResolvedValueOnce({ runs: [run('oldest')], nextCursor: null, complete: true }); await history.load(true);
-    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=page-3');
+    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=page-3', undefined, undefined);
     expect(history.runs().map(value => value.id)).toEqual(['latest', 'newest', 'older', 'oldest']);
   });
   it('does not silently bridge a missing refresh gap or revive history after an explicit logical failure', async () => {
@@ -211,7 +237,7 @@ describe('scheduled run history native paging', () => {
     pending.resolve({ runs: [], nextCursor: null, complete: true }); await read;
     expect(history.runs()).toEqual([run()]); expect(history.loading()).toBe(false); expect(history.complete()).toBe(false);
     harness.request.mockResolvedValueOnce({ runs: [run('older')], nextCursor: null, complete: true }); await history.load(true);
-    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=opaque');
+    expect(harness.request).toHaveBeenLastCalledWith('/api/yuri/scheduled-task-runs?limit=20&before=opaque', undefined, undefined);
   });
   it('opens historical sessions using recorded directory first and never invents missing sessions', async () => {
     const { scheduledRunTarget } = await import('./schedules-state');

@@ -9,7 +9,7 @@
 - `applicationWillTerminate` 调用 controller 的同一个 `shutdown`；root controller deinit 把 bridge、notification、diagnostics 强引用交给 `Task @MainActor`，再走同一 shutdown。正常路径调用 `RuntimeBridge.stop()` 复用现有清理链；未完成装配时直接清 notification/diagnostics。不新增生命周期 owner，不在 resign-active/分享失活时清理。iOS 强杀或挂起后杀进程不保证执行 terminate/deinit，不能把这些 hook 写成强杀保证。
 - 生产 `nsh.json` 已加入且仅加入六个通知 capability：`notification.status/request/openSettings/configure/live/test`。原 Diagnostics/连接/资源等 capability 保留。
 - 生产 `scripts/build-ios.mjs` 已链接 `UserNotifications`；原动态 Swift sources 自动包含新桥。没有新增 APNs entitlement、background mode 或通知 usage-description。
-- `settings-basics.tsx` 的 notifications 分支委托给 `SettingsNotifications`；About 和其他分支保持。原始总开关替换为真实系统权限组件，八类 Host 开关完整保留。focused/template 控件在 native 隐藏，旧搜索 focused target 定位到明确说明，不显示一个无效开关。Host 上的 Web mode/templates 不删除、不回写、不传给 native。
+- `settings-basics.tsx` 的 notifications 分支委托给 `SettingsNotifications`；About 和其他分支保持。原始总开关替换为真实系统权限组件，八类 Host 开关完整保留。iOS 强制 `hidden-only`，focused target 定位到规则说明；桌面 focused 开关真实读写 Host `notificationMode`，并交给现有 native configure 的 `always/hidden-only` consumer。两端均不删除或回写模板，也不把模板传给 native；模板 consumer 仍未完成。
 
 ## application 单根基线（需补下文 catalog props）
 
@@ -38,12 +38,14 @@ const NotificationFeedback = notifications.Feedback;
 
 `notification-runtime.ts` 是 root/Basic 共用的单一 transport+delivery lease，import 本身不发请求。root 的 scope/settingsRead/call 是依赖注入；Basic 默认仍使用原 `request('/api/config/settings')` 与 partial `PUT` 协议。
 
-1. root 启动/前台恢复、语言或 Host/generation 改变时，单次 GET 成功后投影九个 Boolean notification preferences，再配置 native。无 GET 成功不创建“空成功”。同时在途的相同 scope/language GET 复用同一个 promise。
+1. root 启动/前台恢复、语言或 Host/generation 改变时，单次 GET 成功后投影九个 Boolean notification preferences（桌面另保留有效 mode），再配置 native。无 GET 成功不创建“空成功”。同时在途的相同 scope/language GET 仅在原请求 admission 仍有效时复用 promise；恢复页不能接管已退休页面的读取。
 2. 普通 refresh 失败保留上次确认的偏好与 native lease，显示错误及手动重试；语言变更先作废旧读取，不把失败当成配置关闭。Host/generation 变化立即使旧 JS lease/catalog 失效，native 的真实 onInvalidate 同步废弃 receipt/fence 并请求 OS 清理旧通知。
 3. Basic 的未保存 draft 只在页面 controller 中，不 configure、不发布全局通知状态。Save 在顶部，写入/系统权限操作期间禁用；权限被拒不把总开关草稿改成 true。关闭已启用的 Host 偏好不依赖 iOS 授权。
-4. 保存只 PUT 用户实际修改的受控 Boolean 字段；不回写默认值，不覆盖其他 Host 设置、Web mode 或模板。ACK 后仍需要一次 GET 对比 submitted patch。只有该 GET 的冻结 snapshot（transport 的 WeakMap receipt）能用于 native configure；不能把 draft 或伪造的 snapshot 交给 synchronize。
+4. 保存只 PUT 用户实际修改的受控 Boolean 字段，桌面允许独立的 mode patch；iOS controller 和 transport 均拒绝 mode 写入。不回写默认值、不覆盖其他 Host 设置或模板。ACK 后仍需要一次 GET 对比 submitted patch。只有该 GET 的冻结 snapshot（transport 的 WeakMap receipt）能用于 native configure；不能把 draft 或伪造的 snapshot 交给 synchronize。
 5. PUT 成功后回读/原生配置失败，只重试读回与同步，不自动重放 PUT。未知结果先回读：值一致则确认；不一致保留 draft 和错误，只有用户再次明确 Save 才重写。读取失败保留上一 snapshot。
 6. Basic 已确认配置后，通过 transport 的**进程内、当前 scope、受控 preferences** confirmation 通知 root；不传播 raw settings、凭据或模板，也不造成第二次 GET。页面也接纳 root 已确认的 snapshot，保留未保存 edit；初次进入可复用同 scope 的已确认 snapshot，而不重复 GET。native 对同一个仍有效 scope 的相同配置幂等返回原 lease，不因无变化刷新删除已有 receipt。
+7. 页面使用 `settingsPageLifetime` 的同身份 operation lane；覆盖、后台和 readiness/lease gap 退休 controller revision 并释放 busy，恢复只 GET。未结束 PUT 的 journal 保持 unknown，期间的读取不清写锁；迟到 ACK/GET/native-sync 与旧 finally 不得改新 lane。原请求结束后继续只读核验，不自动重发。换 Host/origin/authorization 永久退休原页面。权限 UI 同样释放 busy 并 fence 迟到权限回执，失效后的 status 不能再触发 permission request。
+8. 搜索命中事件字段而总开关关闭时，只呈现禁用事件区以提供真实定位 target；不会启用通知、修改草稿或写 Host。
 
 文案全部使用正式的十种 `*.settings.ts` 字典和 NSH `i18n.t`。`notification-messages.ts` 只保留 key manifest，不再维护平行词典。
 

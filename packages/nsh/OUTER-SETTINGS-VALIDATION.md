@@ -160,7 +160,7 @@ chat-changes-workspace.tsx
 | questionAutoDelegateEnabled | **Host真实消费者** `feature-routes-runtime.js:onSettingsPersisted` → `questionAutoDelegateRuntime.applyEnabled` | 不标作“仅存无消费”；Native问答/权限表现由对应owner验收 |
 | terminalFontSize/padding/inputBarOffset/weekStartPreference | Host可存；Native当前没有相应字段消费者证据 | 扩展真实terminal/layout/日历等owner；每项未接前保持Native不可用标识 |
 | messageStreamTransport | Host可存；Native传输固定策略未消费该偏好 | runtime/Swift owner消费auto/ws/sse（auto真实fallback）；不得只更新UI标签 |
-| diffLayoutPreference | Host可存；Native diff尚未消费 | diff owner实现dynamic/inline/side-by-side真实布局，不用记录字段替代 |
+| diffLayoutPreference | 现已通过唯一 device-local owner 接真实 Settings/工作台 Diff，不发 Host PUT；mobile 仍 unavailable | root registration/close 接线及 API ACK、真实磁盘/多 Engine 的未验边界见 `desktop-diff-preferences-DOCUMENTATION.md` |
 | sessionGoalEnabled/followUpBehavior/showAssistantTps/collapsibleThinkingBlocks | Host可存；本线核对未发现对应Native偏好消费者 | 分别接Goal入口/发送delivery/真实TPS及折叠详情；不能删除这些范围 |
 | pwaAppName/pwaOrientation/mobileKeyboardMode | Host真实浏览器偏好；不是UIKit安装包/键盘API | 本页明确Host保存与Native不可用；不要把PWA orientation误改为iOS系统旋转控制 |
 | codeFontSize/editorFontSize/fileEditorKeymap/allowPromptingSubagentSessions/persistChatDraft | **不在Host GET/PUT合同**，Web本地偏好 | 需main确认Native设备偏好持久化owner/消费者后再接可编辑控件，禁止虚假Host PUT |

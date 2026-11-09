@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "version": "0.4.0",
+  "revision": "e626a8dd8f8d8b277b9507cfd5ac74d0e67020f3",
+  "file": "diff-scroll-pin-and-shrink.patch",
+  "sha256": "b1383f6332d20836d18a52aab7ea25d8d8b93d2a1a58f48e57ee9da907bbdc33",
+  "cargoLockSha256": "3e613f0b6940be5d83676f48771b461b122e0732f652ce4de20b4978b2015d34",
+  "basePreparationDigest": "9b0dad8e9d209839e2b2de3004f5b0c4ed496f1df4098158cba4bb350c9f6c3f",
+  "baselineSourceSha256": "5764bf7d27dd530634a007ec2ca2df8d37b63903584f9b47401a1238e875b4d1",
+  "files": [
+    {
+      "path": "crates/nsh-core/src/core/list.rs",
+      "beforeExists": true,
+      "beforeSha256": "e3c3d9a975668cc8bc5544aaeb607a16183cc520227ae6cce971cf5b45c7074c",
+      "afterSha256": "1951fc130d338116fd2c4c7759ee1ef3ca354bf272743d7643fa53756e9cd2d3"
+    },
+    {
+      "path": "crates/nsh-testing/src/screen.rs",
+      "beforeExists": true,
+      "beforeSha256": "0636bf5c23869ed79d51e3843b75ab2565266e2936df9e6d706f00b0b985a5c9",
+      "afterSha256": "7f4f772355af2c5ae9d05f25708788b2167a21e77a33020ad325ba1d3ca24877"
+    }
+  ]
+}

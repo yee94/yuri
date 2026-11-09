@@ -1,4 +1,4 @@
-import { cleanup, computed, locale, signal, Scroll, Text, token, View } from 'nsh';
+import { cleanup, computed, effect, locale, platform, signal, Scroll, Text, token, untracked, View } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { NativeAgentAvatar, NativeModelLogo } from './chat-identity';
 import { contextLabel, modelCapabilities, modelKey, modelLabel, modelMatches, modelRefs, modelVariants, pickerLists, pickerModels, pickerPreferences, resolvedVariant, sameModel, type ModelRef, type PickerModel } from './chat-models-helpers';
@@ -24,6 +24,10 @@ export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwne
   let retryOperation: (() => Promise<void>) | undefined;
   cleanup(catalog.dispose);
   void catalog.load(props.mode).then(() => { if (props.owner.current() && props.owner.selection().model) expanded.set([props.owner.selection().model!.providerID]); });
+  effect(() => {
+    const active = props.active();
+    if (platform?.desktop && active) untracked(() => { if (!catalog.resolved() && !catalog.busy()) void catalog.load(props.mode); });
+  });
   const selected = (): ModelRef => ({ providerID: props.owner.selection().model?.providerID ?? '', modelID: props.owner.selection().model?.id ?? '', variant: props.owner.selection().model?.variant });
   const entries = computed(() => props.mode === 'model' && catalog.resolved() ? pickerModels(catalog.providers(), catalog.preferences()) : []);
   const favorites = computed(() => pickerLists(entries(), catalog.preferences(), selected()).favorites.filter(entry => modelMatches(entry, search())));
@@ -107,7 +111,8 @@ export function NativeNewSessionModels(props: { owner: Pick<NativeNewSessionOwne
     <If when={effort() === `${prefix}:${modelKey(entry)}`}><NativeModelVariants entry={entry} selected={displayVariant(entry, prefix)} disabled={saving() || catalog.busy() || !!retryOperation} id={`new-session-variant-${prefix}-${entry.providerID}-${entry.modelID}`} onSelect={variant => { void choose(entry, variant); }} onMore={() => variantTarget.set({ ...entry, variant: displayVariant(entry, prefix) })} /></If>
   </View>;
   return <View class="flex-1 gap-2" role="group" accessible={false} accessibilityLabel={t(props.mode === 'model' ? 'chat.modelControls.selectModel' : 'chat.modelControls.selectAgent')}>
-    <NativeModelPickerHandle sheet={props.sheet} />
+    <If when={!platform?.desktop}><NativeModelPickerHandle sheet={props.sheet} /></If>
+    <If when={platform?.desktop && !variantTarget()}><Text class="px-2 py-1 text-sm text-foreground font-semibold">{t(props.mode === 'model' ? 'chat.modelControls.selectModel' : 'chat.modelControls.selectAgent')}</Text></If>
     <If when={variantTarget()}><NativeModelVariantHeader entry={variantTarget()!} onBack={() => variantTarget.set(null)} onClose={props.onDone} /></If>
     <View class="px-2 gap-2"><If when={!variantTarget()}><View class="rounded-xl border border-border/40 bg-card px-2 flex-row items-center gap-1.5"><View style={{ opacity: 0.6 }}><Icon name="search" size={14} /></View><Input testID="new-session-selection-search" class="flex-1 min-h-9 text-sm text-foreground" value={search()} autoCapitalize="none" autoCorrect={false} placeholder={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} accessibilityLabel={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} onChange={event => { search.set(event.value); effort.set(''); }} /><NativeNewSessionInputAX field="selection" label={t(props.mode === 'model' ? 'chat.modelControls.searchProvidersOrModels' : 'chat.modelControls.searchAgents')} /><If when={search()}><Button testID="new-session-search-clear" class="min-h-9 min-w-6 items-center justify-center" accessibilityLabel={t('chat.modelControls.clearSearch')} onPress={() => { search.set(''); effort.set(''); }}><Icon name="close-circle" size={16} /></Button></If></View></If>
       <If when={catalog.error() || error()}><Text class="text-sm text-destructive">{error() || t('common.unavailable')}</Text><Button testID="new-session-catalog-retry" class="min-h-11 px-3 rounded-xl bg-secondary" disabled={catalog.busy() || saving()} onPress={() => { void retry(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>

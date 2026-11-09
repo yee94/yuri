@@ -26,10 +26,10 @@ test('native header opens real metadata, refreshes, closes, and preserves both t
     'await app.type("id:unrelated-input", "Fifty unrelated characters must never fetch metadata");',
     'await app.press("id:request-count");',
     'expect(app.texts()).toContain(beforeTyping);',
-    'for (const option of ["new-session", "files", "changes", "mcp", "refresh"]) {',
+    'for (const option of ["new-session", "files", "changes", "mcp", "remote-desktop", "refresh"]) {',
     'await app.press("id:chat-header-options");',
     'await app.waitFor("id:chat-menu-files");',
-    'expect(app.texts()).not.toContain("Remote Desktop");',
+    'expect(app.shows("id:chat-menu-remote-desktop")).toBe(true);',
     'expect(app.texts()).not.toContain("Model / Agent settings");',
     'await app.press("id:chat-menu-" + option);',
     'await app.waitFor("text:Options " + option);',
@@ -57,8 +57,8 @@ test('Chat delegates back/title to the system navigation bar and puts only conte
   const source = readFileSync(path.join(directory, 'application.tsx'), 'utf8').split('function Chat(props:')[1].split('function ResourceCard(')[0];
   expect(source).not.toContain('headerVisible={false}');
   expect(source).not.toContain('headerBackVisible={false}');
-  expect(source).toContain('headerRight={<ChatHeaderActions');
-  expect(source).toContain('header={<NativeChatHeader');
+  expect(source).toContain('headerRight={platform.desktop ? undefined : <ChatHeaderActions');
+  expect(source).toContain('header={platform.desktop ? undefined : <NativeChatHeader');
   expect(source).toContain('<NativeChatHeader');
   expect(source).not.toContain('headerLeft=');
   expect(source).not.toContain('headerRightSymbol');

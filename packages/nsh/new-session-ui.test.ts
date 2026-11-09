@@ -136,7 +136,8 @@ describe('new-session composer selection notification (no native engine)', () =>
     const readSelection = vi.fn(() => selection);
     const untracked = vi.fn((work: () => void) => work());
     const factory = componentClosures('new-session-page.tsx', 'NewSessionBody', '', {
-      ...basePorts, captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}),
+      ...basePorts, platform: { os: 'ios', desktop: false }, app: { connection: () => ({ id: 'selection-fixture', url: 'https://selection.example.invalid' }) },
+      captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}),
     });
     factory({ ownership: { owner: { directory, current: () => currentHost, selection: readSelection, durable: { draft } } }, active: () => active, switching: () => switching, onSelection: publish });
     return { run: effects[0], dispose: cleanups[0], publish, request, draft, readSelection, untracked,

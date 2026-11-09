@@ -1,4 +1,4 @@
-import { AssistantAPIError, isAbortError, type AssistantContactFilePart, type AssistantContactMessage, type AssistantContactPart, type AssistantContactTextPart } from '@/queries/assistantDTO';
+import { AssistantAPIError, isAbortError, type AssistantContactFilePart, type AssistantContactMessage, type AssistantContactPart, type AssistantContactTextPart } from '../../queries/assistantDTO';
 
 type ContactComposerSendPart = AssistantContactTextPart | AssistantContactFilePart;
 

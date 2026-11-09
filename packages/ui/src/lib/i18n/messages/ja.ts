@@ -3,6 +3,9 @@ import { settingsDict } from './ja.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': '前回の表示位置を復元できませんでした。現在のページは変更されていません。',
+  'sessions.navigation.saveFailed': '表示位置を保存できませんでした。前回保存した位置は保持されています。',
+  'sessions.navigation.restoreBlocked': '現在、前回の表示位置を復元できません。現在のページは変更されていません。',
   'chat.newSessionDraft.capturedInput': '最初の送信内容は保存されています。その後の編集は次の下書きとして保持されます。',
   'chat.newSessionDraft.unknownTitle': 'セッションの作成を確認できません',
   'chat.newSessionDraft.unknownBody': '下書きと送信 ID は保存されています。再作成すると重複する可能性があります。今回作成した空のセッションを選ぶか、戻ってセッション一覧を確認してください。',
@@ -1672,6 +1675,10 @@ export const dict: Record<I18nKey, string> = {
   'chat.goal.action.save': 'ゴールを保存',
   'chat.goal.action.start': 'ゴールを開始',
   'chat.goal.toast.actionFailed': 'ゴールの更新に失敗しました',
+  'chat.gitContext.replaceDraftTitle': '現在の下書きを置き換えますか？',
+  'chat.gitContext.replaceDraftBody': '現在の下書きのテキストと参照は、取得済みの Git コンテキストに置き換えられます。添付ファイルは保持されます。この操作は元に戻せません。',
+  'chat.gitContext.replaceDraftAction': '下書きを置き換える',
+  'chat.gitContext.stagingFailed': 'Git コンテキストを準備できませんでした。現在の下書きは保持されています。',
   'chat.goal.toast.distillFallback': '目標が上限を超え、要約もできませんでした — 監査には抜粋版を使用します',
   'chat.goal.row.aria': 'セッションゴール — 詳細を開く',
   'chat.goal.button.createAria': 'セッションゴールを設定',

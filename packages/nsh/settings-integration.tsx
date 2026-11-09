@@ -6,6 +6,7 @@ import { SettingsFeedback, SettingsGroup, SettingsInput, settingsAction, setting
 import { integrationPayload, integrationSettingsPath, settingsAuthorizationCode, settingsRows } from './settings-protocol';
 import { integrationForm, type IntegrationFormDraft, type IntegrationFormValue } from './settings-integration-form';
 import { SettingsIntegrationFields } from './settings-integration-fields';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 /** Official integration transport. OAuth URLs and user-entered secrets live only in this page. */
 export function SettingsIntegration(props: { integrationID: string; directory?: string; disabled?: boolean; onSaved?: () => void }) {
@@ -22,6 +23,9 @@ export function SettingsIntegration(props: { integrationID: string; directory?: 
   const fields = (method: Row) => method.form === undefined ? [] : settingsRows(method.form);
   const disabled = () => state.busy() || !!props.disabled || !!attempt();
   const attemptPath = (value: Row, suffix = '') => path(`/connect/${value.kind === 'command' ? 'command' : 'oauth'}/${encodeURIComponent(text(value.attemptID))}${suffix}`);
+  publishSettingsEditor({ current: state.current, scope: state.operation, pending: () => state.busy() || !!attempt(),
+    dirty: () => !!key() || !!code() || Object.values(answers()).some(fields => Object.keys(fields).length > 0), stamp: () => [key(), code(), answers()],
+  });
   async function snapshot(operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
     const value = integrationPayload(await operation.request(path()));

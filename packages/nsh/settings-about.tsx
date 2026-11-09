@@ -1,4 +1,4 @@
-import { cleanup, effect, lifecycle, openUrl, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
+import { cleanup, effect, lifecycle, openUrl, platform, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
 import { AlertDialog, Button, Progress } from 'nsh/base';
 import { t } from './i18n';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
@@ -7,11 +7,12 @@ import { app } from './state';
 import { SettingsGroup, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { SettingsTarget } from './settings-target';
 import { createSettingsTargetNavigation } from './settings-search-core';
-import { aboutReadResponse, aboutSubmitResponse, aboutUpdateActive, createSettingsAbout, type AboutState, type AboutDependencies } from './settings-about-core';
+import { aboutReadResponse, aboutSubmitResponse, aboutUpdateActive, createSettingsAbout, type AboutState, type AboutDependencies, type SettingsAboutController } from './settings-about-core';
 import { aboutDiagnosticsCall } from './settings-about-diagnostics';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 /** Main owns route registration. No request, event or timer is added to the root. */
-export function SettingsAbout(props: { target?: string; active?: boolean; dependencies?: Omit<AboutDependencies, 'changed'> }) {
+export function SettingsAbout(props: { target?: string; active?: boolean; dependencies?: Omit<AboutDependencies, 'changed'>; owner?: SettingsAboutController }) {
   const lifetime = settingsPageLifetime(() => props.active !== false && lifecycle() === 'active');
   let authority: object | null = null;
   const dependencies = (op: SettingsOperation | null): AboutDependencies => {
@@ -26,7 +27,7 @@ export function SettingsAbout(props: { target?: string; active?: boolean; depend
     };
     return { current, hostID: op?.scope?.hostID ?? null,
       read: async path => aboutReadResponse(path, await raw(path)),
-      submitUpdate: async body => aboutSubmitResponse(await raw('/api/system/update', 'POST', body)),
+      ...(!platform.desktop ? { submitUpdate: async (body: Parameters<NonNullable<AboutDependencies['submitUpdate']>>[0]) => aboutSubmitResponse(await raw('/api/system/update', 'POST', body)) } : {}),
       call: (name, body) => aboutDiagnosticsCall(async (method, input) => {
         if (!current()) throw new Error('settings_operation_stale');
         const result = await native(method, input);
@@ -38,20 +39,29 @@ export function SettingsAbout(props: { target?: string; active?: boolean; depend
   const pageCurrent = () => lifetime.current() && props.active !== false;
   let scroll!: ScrollRef;
   const navigation = createSettingsTargetNavigation(() => scroll, lifetime.current);
-  const controller = createSettingsAbout({
-    ...(props.dependencies ?? dependencies(lifetime.operation())), changed: next => state.set(next),
-  });
+  const controller = props.owner ?? createSettingsAbout(props.dependencies ?? dependencies(lifetime.operation()));
   const state = signal<AboutState>(controller.state());
-  cleanup(() => controller.dispose());
-  let assigned = lifetime.operation(), loaded = false;
+  cleanup(controller.subscribe(next => state.set(next)));
+  publishSettingsEditor({ current: pageCurrent, scope: lifetime.operation, dirty: () => false, stamp: () => [],
+    pending: () => state().updateBusy || state().updateUncertain || state().diagnosticsBusy || state().exporting || !!state().updateConfirm || Object.values({ client: state().client, host: state().host, opencode: state().opencode, diagnostics: state().diagnostics, hostUpdate: state().hostUpdate }).some(value => value.refreshing),
+  });
+  cleanup(() => { if (!props.owner) controller.dispose(); });
+  let assigned = lifetime.operation(), loaded = false, refreshSharedStatus = false;
   effect(() => {
     const op = lifetime.current() ? lifetime.operation() : null;
     untracked(() => {
-      if (!props.dependencies && assigned !== op) {
-        assigned = op; loaded = false; controller.replaceLane({ ...dependencies(op), changed: next => state.set(next) });
+      if (assigned !== op) {
+        assigned = op; loaded = false; refreshSharedStatus = true;
+        if (!props.owner && !props.dependencies) controller.replaceLane(dependencies(op));
       }
       if (props.active === false || !op?.current() || loaded) return;
-      loaded = true; void controller.refresh();
+      loaded = true;
+      // A shared Header read already owns this status flight/snapshot. Mounting About
+      // is not a second refresh; the explicit Refresh action still reads every resource.
+      if (props.owner) void Promise.all([controller.client(), controller.host(), controller.opencode(), controller.diagnostics(),
+        refreshSharedStatus || controller.state().hostUpdate.status === 'unknown' ? controller.hostUpdate() : Promise.resolve()]);
+      else void controller.refresh();
+      refreshSharedStatus = false;
     });
   });
   effect(() => {
@@ -117,6 +127,8 @@ export function SettingsAbout(props: { target?: string; active?: boolean; depend
     return value.currentVersion && value.available === false ? t('settings.yuri.about.state.upToDate') : unknown();
   };
   const failedVersion = () => (['client', 'host', 'opencode', 'diagnostics'] as const).some(key => state()[key].status === 'failed');
+  const updateEnabled = () => { state(); return controller.updateAvailable(); };
+  const updateWritable = () => { state(); return controller.updateWritable(); };
   return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
     <View class="items-center gap-3"><Text class="text-2xl font-semibold text-foreground">Yuri</Text></View>
     <SettingsGroup title={t('settings.page.about.title')}>
@@ -131,12 +143,13 @@ export function SettingsAbout(props: { target?: string; active?: boolean; depend
     <SettingsTarget id="about.host-update" target={props.target} onReveal={navigation.reveal}><SettingsGroup title={t('settings.yuri.about.hostUpdate.title')}>
       <Text testID="about-host-update-status" class="text-sm text-foreground">{updateLabel()}</Text>
       <Text class="text-xs text-muted-foreground">{t('settings.yuri.about.hostUpdate.description')}</Text>
+      <If when={!updateWritable()}><Text testID="about-host-update-unavailable" class="text-xs text-muted-foreground">{t('settings.view.unavailable.description')}</Text></If>
       <If when={aboutUpdateActive(state().hostUpdate.value)}><Progress testID="about-host-progress" value={state().hostUpdate.value?.task?.progress ?? undefined} indeterminate={state().hostUpdate.value?.task?.progress == null} accessibilityLabel={updateLabel()} trackClass="h-1 overflow-hidden rounded-full bg-border" indicatorClass={state().hostUpdate.value?.task?.progress == null ? 'h-full w-1/3 rounded-full bg-foreground' : 'h-full rounded-full bg-foreground'} /></If>
       <If when={!!state().hostUpdate.value?.plan}><Text class="text-sm text-foreground">{state().hostUpdate.value?.plan?.version} · {state().hostUpdate.value?.channel} · {state().hostUpdate.value?.plan ? t(`settings.yuri.about.hostUpdate.kind.${state().hostUpdate.value!.plan!.kind}`) : ''}</Text><Text class="text-sm text-muted-foreground">{state().hostUpdate.value?.plan?.releaseNotes || t('settings.yuri.about.hostUpdate.noNotes')}</Text><If when={state().hostUpdate.value?.plan?.rollback}><Text class="text-sm text-destructive">{t('settings.yuri.about.hostUpdate.downgrade')}</Text></If></If>
       <If when={state().updateFailed}><Text testID="about-host-update-error" class="text-sm text-destructive">{t('settings.yuri.about.hostUpdate.status.failed')}</Text></If>
       <If when={state().updateUncertain || state().hostUpdate.status === 'failed' && aboutUpdateActive(state().hostUpdate.value)}><Text class="text-xs text-muted-foreground">{t('settings.yuri.about.hostUpdate.reconnecting')}</Text></If>
       <Button testID="about-host-check" class={settingsAction} disabled={state().hostUpdate.refreshing || state().updateBusy || props.active === false} onPress={() => { void controller.reconcileUpdate(); }}><Text class="text-foreground">{t(state().hostUpdate.refreshing ? 'settings.yuri.about.state.checking' : 'settings.yuri.about.actions.checkForUpdates')}</Text></Button>
-      <If when={!aboutUpdateActive(state().hostUpdate.value) && (state().hostUpdate.value?.plan || state().hostUpdate.value?.operation === 'failed')}><Button testID="about-host-update" class={settingsAction} disabled={state().updateBusy || state().updateUncertain || !!state().updateConfirm || state().hostUpdate.refreshing || props.active === false} onPress={() => { void update(); }}><Text class="text-foreground">{t(state().hostUpdate.value?.operation === 'failed' ? 'settings.voice.volcengine.retry' : 'settings.yuri.about.hostUpdate.confirm')}</Text></Button></If>
+      <If when={!aboutUpdateActive(state().hostUpdate.value) && (state().hostUpdate.value?.plan || state().hostUpdate.value?.operation === 'failed')}><Button testID="about-host-update" class={settingsAction} disabled={!updateEnabled() || props.active === false} onPress={() => { void update(); }}><Text class="text-foreground">{t(state().hostUpdate.value?.operation === 'failed' ? 'settings.voice.volcengine.retry' : 'settings.yuri.about.hostUpdate.confirm')}</Text></Button></If>
     </SettingsGroup></SettingsTarget>
     <SettingsGroup title={t('settings.yuri.about.field.clientVersion')}>
       <SettingsTarget id="about.check-updates" target={props.target} onReveal={navigation.reveal}><Button testID="about-client-update" class={settingsAction} disabled={state().client.refreshing || props.active === false} onPress={() => { void controller.client(); }}><Text class="text-foreground">{t('settings.usage.sidebar.actions.refreshTitle')}</Text></Button></SettingsTarget>

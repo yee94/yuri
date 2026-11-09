@@ -7,6 +7,7 @@ import { Icon } from './Icon';
 import { createSettingsVoiceTestController, type VoiceTestAsrAdapter, type VoiceTestConfirmation, type VoiceTestKind, type VoiceTestState } from './settings-voice-test-core';
 import { voiceTestAsrAction, voiceTestErrorLabels } from './settings-voice-test-labels';
 import { voiceTestTranscriptDocument } from './settings-voice-test-presentation';
+import { publishSettingsPending, publishSettingsPicker } from './desktop-settings-publisher';
 
 let owners = 0;
 export type SettingsVoiceTestProps = {
@@ -32,6 +33,8 @@ export function SettingsVoiceTests(props: SettingsVoiceTestProps) {
     changed: value => state.set(value),
   });
   const state = signal(controller.snapshot());
+  publishSettingsPending(() => ['saving', 'loading', 'playing', 'stopping'].includes(state().tts) || ['saving', 'starting', 'recording', 'processing', 'stopping'].includes(state().asr));
+  publishSettingsPicker(() => state().asrOpen);
   const subscriptions = ['speech.playing', 'speech.invalidated'].map(name => host.on(name, value => controller.event(name, value)));
   effect(() => {
     const active = props.active !== false && lifecycle() === 'active' && props.current();

@@ -23,6 +23,7 @@ export function createSettingsVoiceConfirmation(input: {
   invalidField?: (key: string) => string;
 }) {
   let state: SettingsVoiceConfirmationState = { data: {}, changes: {}, draftRevision: 0, ready: false };
+  let baseline: Draft = {};
   let edits: Record<string, number> = {}, pending: Pending | null = null, busy: object | null = null, disposed = false, readSequence = 0, active = false, generation = 0;
   let lane: Lane | null = { send: input.send, current: input.current };
   const current = (captured = lane) => !!captured && captured === lane && !disposed && active && captured.current() && input.active();
@@ -37,6 +38,7 @@ export function createSettingsVoiceConfirmation(input: {
   const apply = (full: SpeechSettings, confirmed: Pending | null) => {
     const changes = { ...state.changes }, data: Draft = {};
     for (const field of fields) data[field.key] = speechSecretFields.has(field.key) ? '' : full[field.key as keyof SpeechSettings];
+    baseline = { ...data };
     if (confirmed) for (const key of Object.keys(confirmed.patch)) {
       if (edits[key] === confirmed.edits[key]) delete changes[key];
     }
@@ -63,6 +65,13 @@ export function createSettingsVoiceConfirmation(input: {
   });
   return {
     snapshot: () => state,
+    pending: () => pending !== null,
+    dirty: () => Object.entries(state.changes).some(([key, value]) => {
+      if (speechSecretFields.has(key)) return true;
+      const field = fields.find(field => field.key === key);
+      const normalized = field?.kind === 'number' && value !== '' ? Number(value) : value;
+      return !Object.is(normalized, baseline[key]);
+    }),
     replaceLane(next: Lane | null) {
       if (disposed || lane === next) return;
       lane = next; generation++; readSequence++; busy = null;
@@ -119,6 +128,6 @@ export function createSettingsVoiceConfirmation(input: {
         return { settings: full, draftRevision: state.draftRevision };
       } finally { if (busy === flight) busy = null; }
     },
-    dispose() { disposed = true; readSequence++; pending = null; edits = {}; state = { ...state, data: {}, changes: {} }; },
+    dispose() { disposed = true; readSequence++; pending = null; edits = {}; baseline = {}; state = { ...state, data: {}, changes: {} }; },
   };
 }

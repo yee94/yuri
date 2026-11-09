@@ -1,31 +1,59 @@
-import { Scroll, signal, Storage, Text, type ScrollRef } from 'nsh';
-import { Button } from 'nsh/base';
+import { platform, Scroll, signal, Storage, Text, type ScrollRef } from 'nsh';
+import { AlertDialog, Button } from 'nsh/base';
 import { language, t } from './i18n';
 import { text, type Row } from './model';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
-import { nativeAppearance, refreshNativeAppearance, saveNativeAppearanceMode } from './appearance';
+import { nativeAppearance, nativeCodeFontSize, nativeCodeFontUnconfirmed, loadNativeCodeFontSize, saveNativeCodeFontSize, refreshNativeAppearance, saveNativeAppearanceMode } from './appearance';
 import { nativeAppearanceModeFromSettings } from './appearance-core';
 import { settingsObject, settingsRows } from './settings-protocol';
 import { SettingsChoice, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
-import { settingsPreferenceFields, settingsPreferencePatch } from './settings-preferences-core';
+import { settingsCodeFontSize, settingsPreferenceAvailable, settingsPreferenceFields, settingsPreferencePatch, settingsPreferenceVisible } from './settings-preferences-core';
 import { SettingsTarget } from './settings-target';
 import { createSettingsTargetNavigation } from './settings-search-core';
-import { CODE_FONT_OPTIONS, DEFAULT_MONO_FONT } from '../ui/src/lib/fontOptions';
+import { CODE_FONT_OPTIONS, DEFAULT_MONO_FONT, UI_FONT_OPTIONS, DEFAULT_UI_FONT } from '../ui/src/lib/fontOptions';
 import { themes } from '../ui/src/lib/theme/themes';
 import { isValidTheme } from '../ui/src/contexts/theme-validation';
 import type { Theme } from '../ui/src/types/theme';
+import { publishSettingsNavigationOwner } from './desktop-settings-publisher';
+import { nativeDesktopDiffPreferences } from './desktop-diff-preferences';
+import { desktopDiffLayoutPreference } from './desktop-diff-preferences-core';
 
-export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute) {
+export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute & { codeTypographyReady?: boolean }) {
   const state = settingsPageLifetime(), settings = signal<Row>({}), changes = signal<Row>({});
 
   let scroll!: ScrollRef;
   const navigation = createSettingsTargetNavigation(() => scroll, state.current, () => state.operation()?.current ?? (() => false));
   const customThemes = signal<Theme[]>([]), themeError = signal(''), themeBusy = signal(false);
-  const fields = settingsPreferenceFields.filter(field => field.page === props.page);
-  const initial = (key: string) => settings()[key] ?? settingsPreferenceFields.find(field => field.key === key)?.initial;
+  const confirming = signal(false);
+  const fields = settingsPreferenceFields.filter(field => field.page === props.page && settingsPreferenceVisible(field.key, platform.os));
+  const diffPreferences = () => platform.desktop ? nativeDesktopDiffPreferences() : null;
+  const available = (key: string) => settingsPreferenceAvailable(key, platform.os, props.codeTypographyReady, diffPreferences()?.available());
+  const fontOptions = (key: string) => key === 'uiFont' ? UI_FONT_OPTIONS : key === 'monoFont' ? CODE_FONT_OPTIONS : undefined;
+  const defaultFont = (key: string) => key === 'uiFont' ? DEFAULT_UI_FONT : DEFAULT_MONO_FONT;
+  const initial = (key: string) => key === 'codeFontSize' ? nativeCodeFontSize() : key === 'diffLayoutPreference' ? diffPreferences()?.state().value.layoutPreference ?? 'inline' : settings()[key] ?? settingsPreferenceFields.find(field => field.key === key)?.initial;
   const value = (key: string) => key in changes() ? changes()[key] : initial(key);
-  const disabled = () => state.busy() || !state.ready();
-  function update(key: string, next: unknown) { changes.set({ ...changes(), [key]: next }); }
+  const disabled = () => state.busy() || !state.ready() || confirming() || platform.desktop && nativeCodeFontUnconfirmed();
+  const pending = () => state.busy() || themeBusy() || nativeAppearance.saving() || platform.desktop && nativeCodeFontUnconfirmed() || props.page === 'chat' && !!diffPreferences() && (diffPreferences()!.state().writing || diffPreferences()!.state().error === 'unknown');
+  function dirty() {
+    try { return Object.entries(changes()).some(([key, next]) => !Object.is(key === 'codeFontSize' ? settingsCodeFontSize(next) : key === 'diffLayoutPreference' ? desktopDiffLayoutPreference(next) : settingsPreferencePatch({ [key]: next })[key], initial(key))); }
+    catch { return Object.keys(changes()).length > 0; }
+  }
+  async function requestLeave(): Promise<boolean> {
+    if (confirming() || pending()) return false;
+    if (!dirty()) return true;
+    const operation = state.operation(), captured = changes();
+    if (!operation?.current()) return false;
+    confirming.set(true);
+    try {
+      const answer = await AlertDialog.show({ title: t('filesView.unsaved.title'), description: t('sessions.scheduledTasks.workspace.confirm.discardChanges'), actions: [
+        { id: 'cancel', label: t('settings.common.actions.cancel'), role: 'cancel' },
+        { id: 'discard', label: t('filesView.unsaved.discard'), role: 'destructive' },
+      ] });
+      return answer.action === 'discard' && operation.current() && changes() === captured && !pending();
+    } finally { confirming.set(false); }
+  }
+  publishSettingsNavigationOwner({ dirty, pending, nestedPickerOpen: () => false, requestLeave, stamp: () => [changes(), settings(), state.operation()], scope: state.operation });
+  function update(key: string, next: unknown) { if (available(key) && !disabled()) changes.set({ ...changes(), [key]: next }); }
   async function loadThemes(operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
     if (themeBusy() || !operation.current()) return;
@@ -43,6 +71,7 @@ export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute) {
     if (!operation?.current()) return;
     await state.perform(async (operation) => {
       const result = settingsObject(await operation.request('/api/config/settings'));
+      if (props.page === 'appearance' && platform.desktop) await loadNativeCodeFontSize();
       if (!operation.current()) return;
       settings.set(result); state.ready.set(true);
     }, operation);
@@ -54,12 +83,31 @@ export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute) {
     if (!operation?.current()) return;
     await state.perform(async (operation) => {
       let patch: Row;
-      try { patch = settingsPreferencePatch(changes()); }
+      const draft = changes();
+      let localCodeSize: number | undefined;
+      let localDiffLayout: ReturnType<typeof desktopDiffLayoutPreference> | undefined;
+      try {
+        for (const key of Object.keys(draft)) if (!available(key)) throw new Error(key);
+        patch = settingsPreferencePatch(Object.fromEntries(Object.entries(draft).filter(([key]) => key !== 'codeFontSize' && key !== 'diffLayoutPreference')));
+        if ('codeFontSize' in draft) localCodeSize = settingsCodeFontSize(draft.codeFontSize);
+        if ('diffLayoutPreference' in draft) localDiffLayout = desktopDiffLayoutPreference(draft.diffLayoutPreference);
+      }
       catch (failure) {
         const field = fields.find(item => item.key === (failure instanceof Error ? failure.message : ''));
         throw new Error(`${field ? t(field.title) : t('common.unavailable')}${field?.kind === 'number' ? `: ${field.min}–${field.max}` : ''}`);
       }
-      if (!Object.keys(patch).length) return;
+      if (localCodeSize !== undefined) {
+        await saveNativeCodeFontSize(localCodeSize);
+        if (!operation.current()) return;
+        const { codeFontSize: _saved, ...remaining } = changes(); changes.set(remaining);
+      }
+      if (localDiffLayout !== undefined) {
+        const owner = diffPreferences();
+        if (!owner || !await owner.save({ layoutPreference: localDiffLayout })) throw new Error(t('filesView.toast.saveFailed'));
+        if (!operation.current()) return;
+        const { diffLayoutPreference: _saved, ...remaining } = changes(); changes.set(remaining);
+      }
+      if (!Object.keys(patch).length) { state.notice.set(t('filesView.editor.saved')); return; }
       await operation.transaction('/api/config/settings', 'PUT', patch);
       // The write is committed. A failed native refresh must not replay it or erase the draft.
       if (!operation.current()) return;
@@ -90,8 +138,10 @@ export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute) {
   const special = props.page === 'appearance' ? ['appearance.theme-mode', 'appearance.light-theme', 'appearance.dark-theme', 'appearance.language'] : [];
   const ordered = [...special, ...fields.map(field => field.id)];
   return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
-    <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
+    <SettingsFeedback state={state} retry={props.page === 'chat' && !!diffPreferences()?.state().error ? undefined : () => { void load(); }} />
+    <If when={props.page === 'chat' && !!diffPreferences()?.state().error}><Text testID="settings-diff-preferences-error" class="text-sm text-destructive">{t('common.unavailable')}</Text><Button testID="settings-diff-preferences-retry" class={settingsAction} disabled={state.busy() || diffPreferences()?.state().writing || diffPreferences()?.state().error === 'unsupported' || diffPreferences()?.state().error === 'conflict'} onPress={() => { void state.perform(async () => { if (!await diffPreferences()?.retry()) throw new Error(t('filesView.toast.saveFailed')); }); }}><Text>{t('diffView.actions.retry')}</Text></Button></If>
     <If when={!!nativeAppearance.error()}><Text class="text-sm text-destructive">{t('chat.chatInput.toast.reloadFailed')}</Text><Button class={settingsAction} disabled={state.busy()} onPress={() => { void refreshNativeAppearance(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
+    <If when={props.page === 'appearance' && !!nativeAppearance.current()?.unsupportedFonts.length}><Text class="text-sm text-muted-foreground">{t('common.unavailable')}: {nativeAppearance.current()?.unsupportedFonts.join(', ')}</Text></If>
     <If when={state.ready()}><Each of={ordered}>{id => <SettingsTarget id={id()} target={props.target} onReveal={node => { void navigation.reveal(node); }}>
       <If when={id() === 'appearance.theme-mode'}><SettingsGroup title={t('settings.yuri.visual.section.colorMode')}><SettingsChoice title={t('settings.yuri.visual.field.themeMode')} value={nativeAppearance.current()?.mode ?? nativeAppearanceModeFromSettings(settings())} disabled={disabled() || nativeAppearance.saving()} items={(['system', 'light', 'dark'] as const).map(value => ({ value, title: t(`settings.yuri.visual.option.themeMode.${value}`) }))} onChange={next => { void state.perform(async (operation) => {
         if (next !== 'system' && next !== 'light' && next !== 'dark') return;
@@ -106,16 +156,13 @@ export function SettingsPreferences(props: SettingsCallbacks & SettingsRoute) {
       </SettingsGroup></If>
       <Each of={fields.filter(field => field.id === id())}>{field => <SettingsGroup title={t(field().title)}>
         <If when={field().consumer === 'host-runtime'}><Text class="text-xs text-muted-foreground">{t('settings.gitIdentities.editor.field.host')}</Text></If>
-        <If when={field().consumer === 'host-only' || field().consumer === 'unconnected'}><Text class="text-xs text-muted-foreground">{t('settings.yuri.visual.field.iosNativeUi')} · {t('common.unavailable')}</Text></If>
-        <If when={field().local}><Text class="text-sm text-muted-foreground">{t('settings.view.unavailable.description')}</Text></If>
-        <If when={!field().local}>
-          <If when={field().kind === 'boolean'}><SettingsToggle testID={`settings-preference-${field().key}`} title={t(field().title)} value={value(field().key) === true} disabled={disabled()} onChange={next => update(field().key, next)} /></If>
-          <If when={!!field().options || field().key === 'monoFont'}><SettingsChoice title={t(field().title)} value={text(value(field().key)) || (field().key === 'monoFont' ? DEFAULT_MONO_FONT : '')} items={field().key === 'monoFont' ? CODE_FONT_OPTIONS.map(option => ({ value: option.id, title: option.label })) : (field().options || []).map(option => ({ value: option.value, title: t(option.title) }))} disabled={disabled()} onChange={next => update(field().key, next)} /></If>
-          <If when={field().kind !== 'boolean' && !field().options && field().key !== 'monoFont'}><SettingsInput testID={`settings-basics-${field().key}`} title={t(field().title) + (field().kind === 'number' ? ` (${field().min}–${field().max})` : '')} value={value(field().key) === undefined ? '' : String(value(field().key))} disabled={disabled()} onChange={next => update(field().key, next)} /></If>
-          <If when={field().page === 'appearance' && (field().kind === 'number' || field().key === 'monoFont')}><Button class={settingsAction} disabled={disabled()} onPress={() => update(field().key, field().key === 'monoFont' ? DEFAULT_MONO_FONT : field().initial)}><Text class="text-foreground">{t('settings.common.actions.reset')}</Text></Button></If>
-        </If>
+        <If when={!available(field().key)}><Text class="text-xs text-muted-foreground">{t('settings.view.unavailable.description')}</Text></If>
+        <If when={field().kind === 'boolean'}><SettingsToggle testID={`settings-preference-${field().key}`} title={t(field().title)} value={value(field().key) === true} disabled={disabled() || !available(field().key)} onChange={next => update(field().key, next)} /></If>
+        <If when={!!field().options || !!fontOptions(field().key)}><SettingsChoice testID={`settings-preference-${field().key}`} title={t(field().title)} value={text(value(field().key)) || (fontOptions(field().key) ? defaultFont(field().key) : '')} items={fontOptions(field().key)?.map(option => ({ value: option.id, title: option.id === 'system' || option.id === 'system-mono' ? t('settings.yuri.visual.option.themeMode.system') : option.label })) ?? (field().options || []).map(option => ({ value: option.value, title: t(option.title) }))} disabled={disabled() || !available(field().key)} onChange={next => update(field().key, next)} /></If>
+        <If when={field().kind !== 'boolean' && !field().options && !fontOptions(field().key)}><SettingsInput testID={`settings-basics-${field().key}`} title={t(field().title) + (field().kind === 'number' ? ` (${field().min}–${field().max})` : '')} value={value(field().key) == null ? '' : String(value(field().key))} disabled={disabled() || !available(field().key)} onChange={next => update(field().key, next)} /></If>
+        <If when={available(field().key) && field().page === 'appearance' && (field().kind === 'number' || !!fontOptions(field().key))}><Button class={settingsAction} disabled={disabled()} onPress={() => update(field().key, fontOptions(field().key) ? defaultFont(field().key) : field().initial)}><Text class="text-foreground">{t('settings.common.actions.reset')}</Text></Button></If>
       </SettingsGroup>}</Each>
     </SettingsTarget>}</Each>
-    <Button testID="settings-preferences-save" class={settingsAction} disabled={disabled() || !Object.keys(changes()).length} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')} · {t('settings.gitIdentities.editor.field.host')}</Text></Button></If>
+    <Button testID="settings-preferences-save" class={settingsAction} disabled={disabled() || !dirty()} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.plugins.page.action.save')}</Text></Button></If>
   </Scroll>;
 }

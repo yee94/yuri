@@ -1,19 +1,24 @@
 import { accountHeadingForWindows, tagWindowsWithAccount } from '../ui/src/lib/quota/accountGroups';
 import { QUOTA_PROVIDERS } from '../ui/src/lib/quota/providers';
-import { getDisplayModelName } from '../ui/src/lib/quota/model-families';
-import type { UsageWindow } from '../ui/src/types/quota';
+import { getDisplayModelName, getAllModelFamilies, groupModelsByFamilyWithGetter, sortModelFamilies } from '../ui/src/lib/quota/model-families';
+import type { QuotaProviderId, UsageWindow } from '../ui/src/types/quota';
 import { record, text, type Row } from './model';
 
 export type HeaderQuotaRow = { key: string; label: string; subtitle?: string; window: UsageWindow; accountHeading?: string; stale?: boolean; accountError?: string };
-export type HeaderQuotaGroup = { id: string; name: string; logoID: string; sourceId?: string; rows: HeaderQuotaRow[]; error?: string; stale?: boolean; fetchedAt?: number };
-export type HeaderQuotaSnapshot = { loading: boolean; groups: HeaderQuotaGroup[]; errors: string[]; displayMode: 'usage' | 'remaining'; timeFormat: 'auto' | '12h' | '24h'; loaded?: boolean };
+export type HeaderQuotaDesktopModel = { modelKey: string; windowKey: string; row: HeaderQuotaRow };
+export type HeaderQuotaDesktop = {
+  entries: HeaderQuotaRow[];
+  families: { id: string | null; label: string | null; models: HeaderQuotaDesktopModel[] }[];
+};
+export type HeaderQuotaGroup = { id: string; name: string; logoID: string; sourceId?: string; rows: HeaderQuotaRow[]; desktop?: HeaderQuotaDesktop; error?: string; stale?: boolean; fetchedAt?: number };
+export type HeaderQuotaSnapshot = { loading: boolean; groups: HeaderQuotaGroup[]; errors: string[]; displayMode: 'usage' | 'remaining'; timeFormat: 'auto' | '12h' | '24h'; loaded?: boolean; showPredValues?: boolean; lastUpdated?: number | null };
 const knownProviders = new Map(QUOTA_PROVIDERS.map(provider => [provider.id as string, provider.name]));
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
 function windowFrom(value: unknown): UsageWindow {
   const row = record(value);
-  return { usedPercent: finite(row.usedPercent), remainingPercent: finite(row.remainingPercent), windowSeconds: finite(row.windowSeconds), resetAfterSeconds: finite(row.resetAfterSeconds), resetAt: finite(row.resetAt), resetAtFormatted: text(row.resetAtFormatted) || null, resetAfterFormatted: text(row.resetAfterFormatted) || null, ...(typeof row.valueLabel === 'string' ? { valueLabel: row.valueLabel } : {}), ...(text(row.label) ? { label: text(row.label) } : {}), ...(text(row.accountName) ? { accountName: text(row.accountName) } : {}) };
+  return { usedPercent: finite(row.usedPercent), remainingPercent: finite(row.remainingPercent), windowSeconds: finite(row.windowSeconds), resetAfterSeconds: finite(row.resetAfterSeconds), resetAt: finite(row.resetAt), resetAtFormatted: text(row.resetAtFormatted) || null, resetAfterFormatted: text(row.resetAfterFormatted) || null, ...(typeof row.valueLabel === 'string' ? { valueLabel: row.valueLabel } : {}), ...(text(row.label) ? { label: text(row.label) } : {}), ...(text(row.accountName) ? { accountName: text(row.accountName) } : {}), ...(typeof row.disablePace === 'boolean' ? { disablePace: row.disablePace } : {}) };
 }
 
 /** Keep only presentation fields in memory. No credentials, account payload dump, storage or logs. */
@@ -24,11 +29,16 @@ export function headerQuotaGroup(payload: unknown, selectedModels: Row = {}, now
   const usage = record(result.usage), accounts = Array.isArray(usage.accounts) ? usage.accounts.map(record).slice(0, 200) : [];
   const entries: [string, UsageWindow][] = Object.entries(record(usage.windows)).slice(0, 1000).map(([key, value]) => [key, windowFrom(value)]);
   const rows: HeaderQuotaRow[] = tagWindowsWithAccount(entries, accounts.map(account => ({ name: text(account.name) }))).map(([key, window]) => ({ key, label: window.label || key, window }));
+  const aggregateRows = rows.slice(), models: HeaderQuotaDesktopModel[] = [];
   const selected = selectedModels[text(result.providerId)];
   for (const [name, value] of Object.entries(record(usage.models)).slice(0, 500)) {
     if (Array.isArray(selected) && selected.length && !selected.includes(name)) continue;
     const first = Object.entries(record(record(value).windows))[0];
-    if (first) { const window = windowFrom(first[1]); rows.push({ key: `model:${name}:${first[0]}`, label: window.label || first[0], subtitle: getDisplayModelName(name), window }); }
+    if (first) {
+      const window = windowFrom(first[1]);
+      const row = { key: `model:${name}:${first[0]}`, label: window.label || first[0], subtitle: getDisplayModelName(name), window };
+      rows.push(row); models.push({ modelKey: name, windowKey: first[0], row });
+    }
   }
   const windows = rows.map(row => row.window);
   rows.forEach((row, index) => {
@@ -37,7 +47,19 @@ export function headerQuotaGroup(payload: unknown, selectedModels: Row = {}, now
     row.stale = account?.stale === true || (row.window.resetAt !== null && row.window.resetAt <= now);
     row.accountError = text(account?.error) || undefined;
   });
-  return { id: text(result.providerId), name: text(result.providerName) || text(result.providerId), logoID: text(result.upstreamProviderId) || text(result.providerId), ...(text(result.sourceId) ? { sourceId: text(result.sourceId) } : {}), rows, stale: rows.some(row => row.stale), ...(result.ok === false ? { error: text(result.error) || 'Unable to refresh quota' } : {}), fetchedAt: finite(result.fetchedAt) ?? undefined };
+  const providerID = text(result.providerId) as QuotaProviderId;
+  const grouped = groupModelsByFamilyWithGetter(models, model => model.modelKey, providerID);
+  const families: HeaderQuotaDesktop['families'] = [];
+  for (const family of sortModelFamilies(getAllModelFamilies(providerID))) {
+    const members = grouped.get(family.id);
+    if (members?.length) families.push({ id: family.id, label: family.label, models: members });
+  }
+  const other = grouped.get(null);
+  if (other?.length) families.push({ id: null, label: null, models: other });
+  // Mobile keeps the original combined rows/order/headings. Desktop headings only span aggregate entries.
+  const aggregateWindows = aggregateRows.map(row => row.window);
+  const desktop: HeaderQuotaDesktop = { entries: aggregateRows.map((row, index) => ({ ...row, accountHeading: accountHeadingForWindows(aggregateWindows, index) || undefined })), families };
+  return { id: text(result.providerId), name: text(result.providerName) || text(result.providerId), logoID: text(result.upstreamProviderId) || text(result.providerId), ...(text(result.sourceId) ? { sourceId: text(result.sourceId) } : {}), rows, desktop, stale: rows.some(row => row.stale), ...(result.ok === false ? { error: text(result.error) || 'Unable to refresh quota' } : {}), fetchedAt: finite(result.fetchedAt) ?? undefined };
 }
 
 function quotaPreferences(payload: unknown): Row {
@@ -47,6 +69,7 @@ function quotaPreferences(payload: unknown): Row {
     usageDisplayMode: value.usageDisplayMode === 'remaining' ? 'remaining' : 'usage',
     timeFormatPreference: value.timeFormatPreference === '12h' || value.timeFormatPreference === '24h' ? value.timeFormatPreference : 'auto',
     usageSelectedModels: models,
+    usageShowPredValues: value.usageShowPredValues === true,
     ...(Array.isArray(value.usageDropdownProviders) ? { usageDropdownProviders: value.usageDropdownProviders.filter(item => typeof item === 'string').slice(0, 200) } : {}),
     magpieHiddenProviders: Array.isArray(value.magpieHiddenProviders) ? value.magpieHiddenProviders.filter(item => typeof item === 'string').slice(0, 200) : [],
   };
@@ -70,6 +93,7 @@ export function createHeaderQuotas(options: { directory: string; read: (path: st
       ]);
       if (!valid(revision)) return;
       const errors: string[] = [];
+      let succeeded = false;
       if (settings.status === 'fulfilled') preferences = quotaPreferences(settings.value);
       else errors.push(errorText(settings.reason));
       const dropdown = Array.isArray(preferences.usageDropdownProviders) ? preferences.usageDropdownProviders.filter(value => typeof value === 'string') : [...knownProviders.keys()];
@@ -97,6 +121,7 @@ export function createHeaderQuotas(options: { directory: string; read: (path: st
             if (record(result.value).providerId !== id) throw new Error('Invalid quota provider identity');
             if (record(result.value).ok === false && record(result.value).configured === false && text(record(result.value).error)) throw new Error(text(record(result.value).error));
             const group = headerQuotaGroup(result.value, record(preferences.usageSelectedModels), options.now?.());
+            if (record(result.value).ok === true) succeeded = true;
             if (group) next.set(id, group); else next.delete(id);
           } catch (cause) {
             const previous = next.get(id);
@@ -122,6 +147,7 @@ export function createHeaderQuotas(options: { directory: string; read: (path: st
               if (item.source !== 'magpie' || item.sourceId !== sourceId || !text(item.providerId).startsWith(`magpie:${sourceId}:`)) throw new Error('Invalid Magpie quota identity');
               if (hidden.includes(item.providerId)) continue;
               const group = headerQuotaGroup(item, record(preferences.usageSelectedModels), options.now?.());
+              if (item.ok === true) succeeded = true;
               if (group) staged.push(group);
             } catch (cause) { sourceErrors.push(errorText(cause)); }
           }
@@ -141,7 +167,7 @@ export function createHeaderQuotas(options: { directory: string; read: (path: st
       }
       for (const [id] of next) if (hidden.includes(id)) next.delete(id);
       if (!valid(revision)) return;
-      publish({ loading: false, loaded: true, groups: [...next.values()], errors, displayMode: preferences.usageDisplayMode === 'remaining' ? 'remaining' : 'usage', timeFormat: preferences.timeFormatPreference === '12h' || preferences.timeFormatPreference === '24h' ? preferences.timeFormatPreference : 'auto' });
+      publish({ loading: false, loaded: true, groups: [...next.values()], errors, displayMode: preferences.usageDisplayMode === 'remaining' ? 'remaining' : 'usage', timeFormat: preferences.timeFormatPreference === '12h' || preferences.timeFormatPreference === '24h' ? preferences.timeFormatPreference : 'auto', showPredValues: preferences.usageShowPredValues === true, lastUpdated: succeeded ? (options.now?.() ?? Date.now()) : snapshot.lastUpdated ?? null });
     })();
     flight = work;
     try { await work; } finally { if (flight === work) flight = undefined; }

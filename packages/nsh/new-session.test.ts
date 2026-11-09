@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NativeNewSessionHandoff } from './new-session';
 import type { Row } from './model';
+import type { NativeLocalCommandInvocation } from './composer-local-commands';
 
 const harness = vi.hoisted(() => ({
   storage: new Map<string, string>(), get: vi.fn(), set: vi.fn(), call: vi.fn(),
   cleanups: [] as Array<() => void>, disposers: [] as Array<() => void>,
 }));
 vi.mock('nsh', () => ({
+  platform: { os: 'ios', desktop: false },
   batch: <T>(work: () => T) => work(), untracked: <T>(work: () => T) => work(),
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   Storage: { getItem: harness.get, setItem: harness.set }, lifecycle: () => 'active',
+  locale: () => 'en',
   effect: (work: () => void | (() => void)) => { const stop = work(); if (stop) harness.disposers.push(stop); },
   cleanup: (work: () => void) => harness.cleanups.push(work),
   host: { available: () => true, call: harness.call, on: () => () => {} },
@@ -59,6 +62,65 @@ beforeEach(async () => {
 afterEach(async () => {
   harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop());
   await Promise.allSettled(stores.map(store => store.close())); await flush(); vi.useRealTimers();
+});
+
+function magicInvocation(draft: Draft): NativeLocalCommandInvocation {
+  const selection = draft.selection();
+  return { command: 'explore', tail: '', resourcePolicy: 'preserve', current: draft.current, snapshot: {
+    scope: draft.durable.scope, authority: 'draft-page', target: { kind: 'draft', id: 'new-session-draft', directory: draft.directory },
+    revision: draft.composerRevision(), text: draft.durable.draft(), inputMode: 'normal', active: true, ready: true, pending: false, unknown: false, sending: false, queueEditing: false, hasReferences: !!draft.durable.references().length, hasMessages: false,
+    selection: { ...(selection.agent ? { agent: selection.agent } : {}), ...(selection.model ? { model: { providerID: selection.model.providerID, modelID: selection.model.id, variant: selection.model.variant } } : {}) },
+  } };
+}
+describe('local magic new-session admission', () => {
+  it('uses existing create/handoff and preserves the source document/resources after actual Chat admission', async () => {
+    const draft = await open(); await draft.ready; draft.setDraftText('/explore '); draft.insertReference({ kind: 'skill', value: 'keep', label: 'Keep' }); draft.setAttachments([file]);
+    const context = { kind: 'checks' as const, instructionsText: 'keep context', payloadText: '{}' }; draft.durable.context.set(context);
+    await draft.select({ agent: 'build', model: { providerID: 'p', id: 'm', variant: 'high' } });
+    const document = draft.durable.document(), outcome = await draft.admitLocalMagic({ text: 'compiled only', files: [] }, magicInvocation(draft));
+    expect(outcome.status).toBe('accepted'); expect(outcome.handoff).toBeDefined(); expect(creates()).toHaveLength(1); expect(prompts()).toEqual([]);
+    expect(draft.durable.pendingSend()?.localMagic).toMatchObject({ resourcePolicy: 'preserve', selection: { agent: 'build', model: { modelID: 'm' } } });
+    const chat = await mountChat(outcome.handoff!); expect(chat.draft()).toBe(''); expect(chat.attachments()).toEqual([]); expect(chat.references()).toEqual([]);
+    expect(await chat.send()).toBe(false); expect(prompts()).toEqual([]);
+    const api = await import('./new-session'); expect(await api.sendNewSessionHandoff(chat, outcome.handoff!)).toBe(true);
+    expect(prompts()).toHaveLength(1); expect(prompts()[0].body).toMatchObject({ text: 'compiled only', delivery: 'steer' }); expect(prompts()[0].body.files).toBeUndefined(); expect(prompts()[0].body.skills).toBeUndefined();
+    await draft.complete(outcome.handoff!); expect(draft.durable.document()).toEqual(document); expect(draft.durable.attachments()).toEqual([file]); expect(draft.durable.context()).toEqual(context); expect(draft.durable.pendingSend()).toBeNull(); expect(draft.phase()).toBe('draft');
+  });
+  it('unknown creation persists the preserving marker across restart and never repeats create', async () => {
+    const draft = await open(); await draft.ready; draft.setDraftText('/explore'); draft.setAttachments([file]); const normal = handle;
+    handle = (path, method, body) => { if (path === '/api/session') throw new Error('lost'); return normal(path, method, body); };
+    expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(draft))).toEqual({ status: 'unknown' });
+    await draft.close(); vi.resetModules(); const state = await import('./state'); await state.loadConnections();
+    const next = await open(); await next.ready; expect(next.creationUnknown()).toBe(true); expect(next.durable.pendingSend()?.localMagic?.resourcePolicy).toBe('preserve');
+    expect(await next.admitLocalMagic({ text: 'compiled AGAIN', files: [] }, magicInvocation(next))).toEqual({ status: 'rejected' });
+    await expect(next.submit()).rejects.toThrow('create-outcome-unknown'); expect(creates()).toHaveLength(1); expect(next.durable.attachments()).toEqual([file]);
+  });
+  it('rejects text ABA, hidden owner, wrong selection and failed durability before creation', async () => {
+    let active = true; const draft = await open({ project, active: () => active }); await draft.ready; draft.setDraftText('/explore');
+    const old = magicInvocation(draft); draft.setDraftText('different'); draft.setDraftText('/explore');
+    expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, old)).toEqual({ status: 'rejected' });
+    const selected = magicInvocation(draft); await draft.select({ agent: 'plan' }); expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, selected)).toEqual({ status: 'rejected' });
+    active = false; expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(draft))).toEqual({ status: 'rejected' }); active = true;
+    harness.set.mockRejectedValueOnce(new Error('disk')); expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(draft))).toEqual({ status: 'rejected' });
+    expect(creates()).toEqual([]); expect(draft.durable.draft()).toBe('/explore'); expect(draft.durable.pendingSend()).toBeNull();
+  });
+  it('an unknown target prompt cannot be replayed through ordinary send or handoff after reopen', async () => {
+    const draft = await open(); await draft.ready; draft.setDraftText('/explore');
+    const outcome = await draft.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(draft)), chat = await mountChat(outcome.handoff!);
+    const normal = handle; handle = (path, method, body) => { if (path.includes('/prompt?')) throw new Error('lost'); return normal(path, method, body); };
+    const api = await import('./new-session'); expect(await api.sendNewSessionHandoff(chat, outcome.handoff!)).toBe(false); await chat.flushDraft(); await draft.close();
+    harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); harness.disposers = []; harness.cleanups = []; await flush();
+    vi.resetModules(); const state = await import('./state'); await state.loadConnections(); const next = await open(); await next.ready; const restored = (await next.submit())!, nextChat = await mountChat(restored);
+    const nextAPI = await import('./new-session'); expect(await nextAPI.sendNewSessionHandoff(nextChat, restored)).toBe(false); await nextChat.retrySend();
+    expect(creates()).toHaveLength(1); expect(prompts()).toHaveLength(1); expect(next.durable.draft()).toBe('/explore');
+  });
+  it('definitive creation rejection resets the same receipt while preserving source resources', async () => {
+    const draft = await open(); await draft.ready; draft.setDraftText('/explore'); draft.setAttachments([file]); const normal = handle;
+    handle = (path, method, body) => { if (path === '/api/session') throw Object.assign(new Error('private validation details'), { status: 400 }); return normal(path, method, body); };
+    expect(await draft.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(draft))).toEqual({ status: 'rejected' });
+    expect(draft.phase()).toBe('draft'); expect(draft.durable.pendingSend()).toBeNull(); expect(draft.error()).not.toContain('private validation');
+    expect(draft.durable.draft()).toBe('/explore'); expect(draft.durable.attachments()).toEqual([file]); expect(creates()).toHaveLength(1);
+  });
 });
 
 describe('native new-session durable draft and handoff', () => {

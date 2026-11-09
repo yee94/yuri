@@ -2,6 +2,9 @@ import { settingsDict } from './fr.settings';
 import { tourMessages } from './tour';
 
 export const dict = {
+  'sessions.navigation.restoreFailed': 'Impossible de restaurer votre dernière position. La page actuelle reste inchangée.',
+  'sessions.navigation.saveFailed': 'Impossible d’enregistrer votre navigation. Votre dernière position enregistrée est conservée.',
+  'sessions.navigation.restoreBlocked': 'Votre dernière position ne peut pas être restaurée pour le moment. La page actuelle reste inchangée.',
   'chat.newSessionDraft.capturedInput': 'Premier envoi enregistré. Les modifications suivantes sont conservées pour votre prochain brouillon.',
   'chat.newSessionDraft.unknownTitle': 'La création de la session n’a pas pu être confirmée',
   'chat.newSessionDraft.unknownBody': 'Votre brouillon et son identifiant d’envoi sont enregistrés. Une nouvelle création pourrait produire un doublon. Sélectionnez la session vide créée lors de cette tentative, ou revenez vérifier la liste des sessions.',
@@ -1426,6 +1429,10 @@ export const dict = {
   'chat.goal.action.save': 'Enregistrer l\'objectif',
   'chat.goal.action.start': 'Lancer l\'objectif',
   'chat.goal.toast.actionFailed': 'Échec de la mise à jour de l\'objectif',
+  'chat.gitContext.replaceDraftTitle': 'Remplacer le brouillon actuel ?',
+  'chat.gitContext.replaceDraftBody': 'Le texte et les références du brouillon actuel seront remplacés par le contexte Git capturé. Les pièces jointes seront conservées. Cette action est irréversible.',
+  'chat.gitContext.replaceDraftAction': 'Remplacer le brouillon',
+  'chat.gitContext.stagingFailed': 'Impossible de préparer le contexte Git. Votre brouillon actuel est conservé.',
   "chat.goal.toast.distillFallback": "L'objectif dépassait la limite et n'a pas pu être condensé — l'auditeur utilise une version tronquée",
   'chat.goal.row.aria': 'Objectif de session — ouvrir les détails',
   'chat.goal.button.createAria': 'Définir un objectif de session',

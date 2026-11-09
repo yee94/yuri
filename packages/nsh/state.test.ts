@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NativeLocalCommandInvocation } from './composer-local-commands';
 
 const harness = vi.hoisted(() => ({
   listeners: new Map<string, Set<(payload: unknown) => void>>(), cleanups: [] as Array<() => void>,
@@ -10,6 +11,7 @@ vi.mock('nsh', () => ({
   Storage: { getItem: harness.getItem, setItem: harness.setItem },
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
   lifecycle: () => harness.lifecycle,
+  locale: () => 'en', computed: <T>(work: () => T) => work,
   untracked: <T>(work: () => T) => work(),
   effect: (work: () => void | (() => void)) => { harness.effects.push(work); const stop = work(); if (stop) harness.disposers.push(stop); },
   cleanup: (work: () => void) => harness.cleanups.push(work),
@@ -21,8 +23,8 @@ vi.mock('nsh', () => ({
     },
   },
 }));
-const emit = (type: string, body: Record<string, unknown>, key = 'chat') => {
-  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key, data: JSON.stringify({ type, data: body }) });
+const emit = (type: string, body: Record<string, unknown>, key = 'chat', metadata?: { directory?: string; expectedHost?: { hostID: string; lease: string } }) => {
+  for (const listener of harness.listeners.get('runtime.event') ?? []) listener({ key, ...(metadata?.expectedHost ? { expectedHost: metadata.expectedHost } : {}), data: JSON.stringify({ type, data: body, ...(metadata?.directory ? { location: { directory: metadata.directory } } : {}) }) });
 };
 const flush = async () => { for (let count = 0; count < 40; count++) await Promise.resolve(); };
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
@@ -54,12 +56,232 @@ beforeEach(() => {
 afterEach(() => { harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); vi.useRealTimers(); });
 const requests = () => harness.call.mock.calls.filter(([name]) => name === 'runtime.request').map(([, input]) => input);
 
+function magicInvocation(chat: ReturnType<(typeof import('./state'))['createChat']>): NativeLocalCommandInvocation {
+  return { command: 'explore', tail: '', resourcePolicy: 'preserve', current: () => chat.active(), snapshot: {
+    scope: chat.referenceScope, authority: 'test-page', target, revision: chat.composerRevision(), text: chat.draft(), inputMode: 'normal', active: true, ready: true,
+    pending: false, unknown: false, sending: false, queueEditing: false, hasReferences: !!chat.references().length, hasMessages: false, selection: {},
+  } };
+}
+function compactInvocation(chat: ReturnType<(typeof import('./state'))['createChat']>): NativeLocalCommandInvocation {
+  const invocation = magicInvocation(chat); return { ...invocation, command: 'compact' };
+}
+describe('local compact uses the existing writer and native inbox barrier', () => {
+  it('POSTs only id/delivery, persists write-ahead, validates the typed receipt and preserves all current resources', async () => {
+    const state = await import('./state'); await state.loadConnections(); const authorityKey = (await import('./desktop-git-dispatch')).desktopGitDraftAuthority(state.app.connection()!);
+    const chat = state.createChat(target, { draftAuthorityKey: authorityKey }); await chat.draftReady; await flush();
+    const normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.includes('/compact?')) {
+        const wire = body as { id: string; delivery: string }; inputID = wire.id;
+        expect(Object.keys(wire).sort()).toEqual(['delivery', 'id']); expect(wire.delivery).toBe('steer');
+        expect([...harness.storage.values()].map(value => JSON.parse(value)).find(value => value.pendingSend?.id === inputID).pendingSend).toMatchObject({ text: '', files: [], uncertain: true, localCompact: { version: 1, resourcePolicy: 'preserve' } });
+        return { data: { id: wire.id, sessionID: 's', type: 'compaction', delivery: 'steer' } };
+      }
+      return normal(path, method, body);
+    };
+    const context = { kind: 'checks' as const, instructionsText: 'retained context', payloadText: '{}' };
+    expect(await chat.stageContext({ hostID: 'one', lease: 'one-lease', authorityKey, directory: target.directory, sessionID: target.id, visibleText: '/compact', context })).toEqual({ status: 'staged' });
+    const file = { uri: 'attachment://keep', name: 'keep', mime: 'text/plain' }; chat.attachments.set([file]); chat.busy.set(true);
+    const invocation = compactInvocation(chat); invocation.snapshot.selection = { model: { providerID: 'do-not-set', modelID: 'do-not-borrow' } };
+    expect(await chat.admitLocalCompact(invocation)).toEqual({ status: 'accepted' });
+    expect(chat.draft()).toBe('/compact'); expect(chat.attachments()).toEqual([file]); expect(chat.pendingSend()).toBeNull(); expect(chat.compactionBarrier()).toBe(true);
+    expect(chat.context()).toEqual(context);
+    const posts = requests().filter(input => input.method === 'POST'); expect(posts).toHaveLength(1); expect(posts[0].path).toContain('/compact?'); expect(inputID).not.toBe('');
+    await chat.retrySend(); expect(requests().filter(input => input.method === 'POST')).toHaveLength(1);
+  });
+  it('accepts the exact shared-registry bare-command consumption and never consumes later edits after ACK', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle, gate = deferred<unknown>();
+    let sentID = ''; handle = (path, method, body) => { if (path.includes('/compact?')) { sentID = (body as { id: string }).id; return gate.promise; } return normal(path, method, body); };
+    chat.setDraftText('/compact'); const outcomes: unknown[] = [], { createNativeLocalCommands } = await import('./composer-local-commands');
+    const registry = createNativeLocalCommands({ t: key => key, read: () => compactInvocation(chat).snapshot, replaceText: (snapshot, value) => chat.compareAndSetDraftText(snapshot.revision, value), actions: { compact: { run: invocation => chat.admitLocalCompact(invocation) } }, onBlocked: vi.fn(), onConflict: vi.fn(), onOutcome: (_invocation, outcome) => outcomes.push(outcome) });
+    expect(registry.submit().kind).toBe('started'); await flush(); expect(sentID).not.toBe(''); expect(chat.draft()).toBe('');
+    chat.setDraftText('later input'); gate.resolve({ id: sentID, sessionID: 's', type: 'compaction' }); await registry.settled();
+    expect(outcomes).toEqual([{ status: 'accepted' }]); expect(chat.draft()).toBe('later input'); registry.dispose();
+  });
+  it('unknown survives module restart and ordinary send/retry only reads exact compaction authority', async () => {
+    let state = await import('./state'); await state.loadConnections(); const first = state.createChat(target); await first.draftReady; await flush(); const normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.includes('/compact?')) { inputID = (body as { id: string }).id; throw new Error('private lost compact'); }
+      if (path.includes('/message/msg_')) throw Object.assign(new Error('missing'), { status: 404 });
+      return normal(path, method, body);
+    };
+    first.setDraftText('/compact'); expect(await first.admitLocalCompact(compactInvocation(first))).toEqual({ status: 'unknown' }); expect(first.error()).not.toContain('private lost'); await first.flushDraft();
+    harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); harness.disposers = []; harness.cleanups = []; await flush();
+    vi.resetModules(); state = await import('./state'); await state.loadConnections(); const second = state.createChat(target); await second.draftReady; await flush(); second.setDraftText('new draft');
+    expect(second.pendingSend()?.id).toBe(inputID); await second.send(); await second.retrySend(); expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+    handle = (path, method, body) => path.includes('/inbox?') ? [{ id: inputID, sessionID: 's', type: 'user', payload: { text: 'wrong type' } }] : path.includes(`/message/${inputID}?`) ? { id: inputID, sessionID: 's', type: 'user' } : normal(path, method, body);
+    expect(await second.recoverPendingSend()).toBe(false); expect(second.pendingSend()?.id).toBe(inputID);
+    handle = (path, method, body) => path.includes(`/message/${inputID}?`) ? { id: inputID, sessionID: 's', type: 'compaction', status: 'completed' } : normal(path, method, body);
+    expect(await second.recoverPendingSend()).toBe(true); expect(second.pendingSend()).toBeNull(); expect(second.draft()).toBe('new draft'); expect(second.compactionBarrier()).toBe(false);
+  });
+  it.each([null, { id: 'wrong-id', sessionID: 's', type: 'compaction' }, { id: 'other', sessionID: 'other-session', type: 'compaction' }])('missing/coalesced/wrong-session compact ACK stays unknown: %s', async response => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle;
+    handle = (path, method, body) => path.includes('/compact?') ? response : normal(path, method, body); chat.setDraftText('/compact');
+    expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'unknown' }); expect(chat.pendingSend()?.localCompact?.resourcePolicy).toBe('preserve');
+    expect(chat.compactionBarrier()).toBe(response?.sessionID === 's' && response.type === 'compaction');
+    await chat.retrySend();
+    expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+  });
+  it.each([400, 408, 429, 503])('classifies HTTP %s without assuming all dispatch failures are rejections', async status => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle;
+    handle = (path, method, body) => { if (path.includes('/compact?')) throw Object.assign(new Error('unsafe server details'), { status }); return normal(path, method, body); }; chat.setDraftText('/compact');
+    expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: status === 400 ? 'rejected' : 'unknown' }); expect(chat.draft()).toBe('/compact');
+    expect(!!chat.pendingSend()).toBe(status !== 400); expect(chat.error()).not.toContain('unsafe server');
+  });
+  it('fences ABA, hidden/read-only, queue edit, tail text and failed write-ahead before compact POST', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); chat.setDraftText('/compact'); const old = compactInvocation(chat);
+    chat.setDraftText('other'); chat.setDraftText('/compact'); expect(await chat.admitLocalCompact(old)).toEqual({ status: 'rejected' });
+    chat.setDraftText('/compact unconfirmed tail'); expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'rejected' }); chat.setDraftText('/compact');
+    chat.queueEdit.set({ id: 'queue', text: 'queued', files: [] }); expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'rejected' }); chat.queueEdit.set(null);
+    chat.active.set(false); expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'rejected' }); chat.active.set(true);
+    harness.setItem.mockRejectedValueOnce(new Error('disk')); expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'rejected' });
+    const display = state.createChat(target, { readOnly: true }); expect(await display.admitLocalCompact(compactInvocation(display))).toEqual({ status: 'rejected' });
+    expect(requests().filter(input => input.method === 'POST')).toEqual([]); expect(chat.draft()).toBe('/compact');
+  });
+  it('shares inbox and live compaction barrier with steer promotion, and ignores stale terminal events', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle;
+    const user = { id: 'queued', sessionID: 's', type: 'user', delivery: 'queue', payload: { text: 'queue text' } }; let compact = true;
+    handle = (path, method, body) => path.includes('/inbox?') ? [...(compact ? [{ id: 'compaction-current', sessionID: 's', type: 'compaction' }] : []), user] : normal(path, method, body);
+    expect(await chat.steerInbox('queued')).toBe(false); expect(chat.compactionBarrier()).toBe(true); expect(requests().some(input => input.method === 'PATCH')).toBe(false);
+    await chat.load(false, ['inbox']); expect(chat.inbox().map(item => item.id)).toEqual(['queued']);
+    emit('session.compaction.ended', { sessionID: 's', inputID: 'older-compaction' }); expect(chat.compactionBarrier()).toBe(true);
+    compact = false; emit('session.compaction.ended', { sessionID: 's', inputID: 'compaction-current' }); expect(chat.compactionBarrier()).toBe(false);
+    expect(await chat.steerInbox('queued')).toBe(true); expect(requests().filter(input => input.method === 'PATCH')).toHaveLength(1);
+  });
+  it('ACK is final despite failed refresh and empty inbox does not erase a running native barrier', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle; let acknowledged = false;
+    handle = (path, method, body) => { if (path.includes('/compact?')) { acknowledged = true; return { id: (body as { id: string }).id, sessionID: 's', type: 'compaction' }; } if (acknowledged && path.includes('/message?')) throw new Error('read failed'); return normal(path, method, body); };
+    chat.setDraftText('/compact'); expect(await chat.admitLocalCompact(compactInvocation(chat))).toEqual({ status: 'accepted' }); expect(chat.pendingSend()).toBeNull(); expect(chat.compactionBarrier()).toBe(true);
+    await chat.load(false, ['inbox']); expect(chat.compactionBarrier()).toBe(true); await chat.retrySend(); expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+  });
+  it('a previous completed checkpoint cannot clear a newer pending compaction from the same authoritative inbox', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle;
+    handle = (path, method, body) => path.includes('/inbox?') ? [{ id: 'new-pending', sessionID: 's', type: 'compaction' }] : path.includes('/message?') ? { data: [{ id: 'old-completed', sessionID: 's', type: 'compaction', status: 'completed' }] } : normal(path, method, body);
+    await chat.load(false, ['inbox']); await chat.load(false, ['messages']); expect(chat.compactionBarrier()).toBe(true);
+    emit('session.compaction.ended', { sessionID: 's', inputID: 'old-completed' }); expect(chat.compactionBarrier()).toBe(true);
+    emit('session.compaction.failed', { sessionID: 's', inputID: 'new-pending' }); expect(chat.compactionBarrier()).toBe(false);
+  });
+  it('late inbox reads cannot re-activate a compaction after its exact live terminal event', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle, gate = deferred<unknown>();
+    handle = (path, method, body) => path.includes('/inbox?') ? gate.promise : normal(path, method, body);
+    const loading = chat.load(false, ['inbox']); await flush(); emit('session.compaction.started', { sessionID: 's', inputID: 'current' }); emit('session.compaction.ended', { sessionID: 's', inputID: 'current' });
+    gate.resolve([{ id: 'current', sessionID: 's', type: 'compaction' }]); await loading; expect(chat.compactionBarrier()).toBe(false);
+  });
+});
+describe('local magic real writer admission', () => {
+  it('dispatches a stable steer receipt through history authority without consuming any composer resources or inbox', async () => {
+    const state = await import('./state'); await state.loadConnections(); const authorityKey = (await import('./desktop-git-dispatch')).desktopGitDraftAuthority(state.app.connection()!);
+    const chat = state.createChat(target, { draftAuthorityKey: authorityKey }); await chat.draftReady; await flush();
+    const normal = handle;
+    const existingQueue = [{ id: 'existing', sessionID: 's' }];
+    handle = (path, method, body) => path.includes('/prompt?') ? { id: (body as Record<string, unknown>).id, sessionID: target.id } : path.includes('/inbox?') ? existingQueue : normal(path, method, body);
+    const context = { kind: 'checks' as const, instructionsText: 'keep context', payloadText: '{}' };
+    expect(await chat.stageContext({ hostID: 'one', authorityKey, lease: 'one-lease', directory: target.directory, sessionID: target.id, visibleText: '/explore ', context })).toEqual({ status: 'staged' });
+    chat.insertReference({ kind: 'skill', value: 'review', label: 'Review' });
+    const file = { uri: 'attachment://keep', name: 'keep.txt', mime: 'text/plain' }; chat.attachments.set([file]); chat.busy.set(true);
+    const document = chat.referenceDocument(); chat.inbox.set(existingQueue);
+    expect(await chat.admitLocalMagic({ text: '/goal NOT A COMMAND', files: [] }, magicInvocation(chat))).toEqual({ status: 'accepted' });
+    const posts = requests().filter(input => input.method === 'POST');
+    expect(posts).toHaveLength(1); expect(posts[0].path).toContain('/prompt?');
+    expect(posts[0].body).toMatchObject({ text: '/goal NOT A COMMAND', delivery: 'steer' });
+    expect(posts[0].body.files).toBeUndefined(); expect(posts[0].body.skills).toBeUndefined();
+    expect(chat.referenceDocument()).toEqual(document); expect(chat.attachments()).toEqual([file]); expect(chat.pendingSend()).toBeNull();
+    expect(chat.context()).toEqual(context); expect(chat.inbox()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'existing' })]));
+  });
+  it('rejects ABA and resource-bearing compiled output before any write dispatch', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush();
+    chat.setDraftText('/explore'); const invocation = magicInvocation(chat); chat.setDraftText('changed'); chat.setDraftText('/explore');
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, invocation)).toEqual({ status: 'rejected' });
+    for (const compiled of [{ text: 'compiled' }, { text: 'compiled', files: [{ uri: 'file:///borrowed' }] }, { text: 'compiled', files: [], agents: [{ name: 'borrowed' }] }]) {
+      expect(await chat.admitLocalMagic(compiled, magicInvocation(chat))).toEqual({ status: 'rejected' });
+    }
+    expect(requests().filter(input => input.method === 'POST')).toEqual([]); expect(chat.pendingSend()).toBeNull();
+  });
+  it('journals unknown before POST, survives module restart, and ordinary send/retry performs only exact reads', async () => {
+    let state = await import('./state'); await state.loadConnections(); const first = state.createChat(target); await first.draftReady; await flush();
+    const normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.includes('/prompt?')) {
+        inputID = (body as { id: string }).id;
+        expect([...harness.storage.values()].map(value => JSON.parse(value)).find(value => value.pendingSend?.id === inputID).pendingSend).toMatchObject({ uncertain: true, localMagic: { version: 1, resourcePolicy: 'preserve' }, compiled: { text: 'compiled', files: [] } });
+        throw new Error('private unsafe error');
+      }
+      if (path.includes('/message/msg_')) throw Object.assign(new Error('not found'), { status: 404 });
+      return normal(path, method, body);
+    };
+    first.setDraftText('/explore'); expect(await first.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(first))).toEqual({ status: 'unknown' });
+    expect(first.error()).not.toContain('private unsafe'); await first.flushDraft();
+    harness.disposers.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); harness.disposers = []; harness.cleanups = []; await flush();
+    vi.resetModules(); state = await import('./state'); await state.loadConnections(); const second = state.createChat(target); await second.draftReady; await flush();
+    expect(second.pendingSend()?.id).toBe(inputID); second.setDraftText('new edit'); await second.send(); await second.retrySend();
+    expect(requests().filter(input => input.path.includes('/prompt?'))).toHaveLength(1);
+    handle = (path, method, body) => path.includes(`/message/${inputID}?`) ? { id: inputID, sessionID: 's' } : normal(path, method, body);
+    expect(await second.recoverPendingSend()).toBe(true); expect(second.draft()).toBe('new edit'); expect(second.pendingSend()).toBeNull();
+  });
+  it('distinguishes definitive 400 from a void or mismatched prompt receipt', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); const normal = handle;
+    chat.setDraftText('/explore'); handle = (path, method, body) => { if (path.includes('/prompt?')) throw Object.assign(new Error('denied'), { status: 400 }); return normal(path, method, body); };
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' }); expect(chat.pendingSend()).toBeNull();
+    handle = (path, method, body) => path.includes('/prompt?') ? undefined : normal(path, method, body);
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'unknown' }); expect(chat.pendingSend()?.uncertain).toBe(true);
+  });
+  it('rechecks document and hidden authority after asynchronous pre-dispatch work', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush();
+    const normal = handle, gate = deferred<unknown>();
+    handle = (path, method, body) => path.startsWith('/api/session/s?') ? gate.promise : normal(path, method, body);
+    chat.setDraftText('/explore'); const flight = chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat)); await flush();
+    chat.setDraftText('new'); chat.setDraftText('/explore'); gate.resolve({ id: 's' });
+    expect(await flight).toEqual({ status: 'rejected' }); expect(chat.pendingSend()).toBeNull(); expect(requests().filter(input => input.method === 'POST')).toEqual([]);
+    chat.active.set(false); expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' });
+  });
+  it('readonly display cannot mutate or steal a journal through the new writer port', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target, { readOnly: true }); await chat.draftReady; await flush();
+    const before = harness.setItem.mock.calls.length;
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' });
+    expect(await chat.dispatchLocalMagicHandoff('forged')).toEqual({ status: 'rejected' });
+    expect(harness.setItem.mock.calls).toHaveLength(before); expect(requests().filter(input => input.method === 'POST')).toEqual([]);
+  });
+  it('failed write-ahead rejects without a POST or consuming resources', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush();
+    chat.setDraftText('/explore'); harness.setItem.mockRejectedValueOnce(new Error('disk'));
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' });
+    expect(chat.draft()).toBe('/explore'); expect(chat.pendingSend()).toBeNull(); expect(requests().filter(input => input.method === 'POST')).toEqual([]);
+  });
+  it('rejects resource ABA and existing pending/queue-edit locks without mutating their owners', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); chat.setDraftText('/explore');
+    const invocation = magicInvocation(chat), file = { uri: 'attachment://temp', name: 'temp', mime: 'text/plain' };
+    chat.attachments.set([file]); chat.attachments.set([]);
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, invocation)).toEqual({ status: 'rejected' });
+    chat.queueEdit.set({ id: 'queued', text: 'original queue', files: [] });
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' }); expect(chat.queueEdit()?.id).toBe('queued');
+    chat.queueEdit.set(null); chat.pendingSend.set({ id: 'previous', text: 'old', files: [], uncertain: true, delivery: 'queue' });
+    expect(await chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat))).toEqual({ status: 'rejected' }); expect(chat.pendingSend()?.id).toBe('previous');
+    expect(requests().filter(input => input.method === 'POST')).toEqual([]);
+  });
+  it('uses the original staged-history commit and fences late repair before the prompt dispatch', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush();
+    const normal = handle, gate = deferred<unknown>(); let committed = false;
+    handle = (path, method, body) => {
+      if (path.startsWith('/api/session/s?')) return { id: 's', ...(committed ? {} : { revert: { messageID: 'not-loaded-boundary' } }) };
+      if (path.includes('/revert/commit?')) { committed = true; return undefined; }
+      if (path.includes('/message?') && committed) return gate.promise;
+      return normal(path, method, body);
+    };
+    chat.setDraftText('/explore'); const flight = chat.admitLocalMagic({ text: 'compiled', files: [] }, magicInvocation(chat)); await flush();
+    expect(committed).toBe(true); chat.setDraftText('new edit during repair'); gate.resolve({ data: [], complete: true });
+    expect(await flight).toEqual({ status: 'rejected' }); expect(chat.draft()).toBe('new edit during repair'); expect(chat.pendingSend()).toBeNull();
+    expect(requests().filter(input => input.method === 'POST').map(input => input.path)).toEqual([expect.stringContaining('/revert/commit?')]);
+  });
+});
+
 describe('root Projects attention observer', () => {
   it('1000-session root: 50 token events and draft events do zero identity lookups, index scans or requests', async () => {
     const state = await import('./state'); await state.loadConnections();
     const attention = await import('./projects-attention');
-    let scans = 0, rowReads = 0, lookups = 0;
-    const catalog = new Proxy(Array.from({ length: 1000 }, (_, index) => ({ id: `root-${index}`, title: `Root ${index}`, directory: '/repo', updated: index })), { get(rows, key, receiver) {
+    const metadata = { directory: '/repo', expectedHost: { hostID: 'one', lease: 'one-lease' } };
+    const rootEvent = (type: string, body: Record<string, unknown>) => emit(type, body, 'global', metadata);
+    let scans = 0, rowReads = 0, lookups = 0, directoryReads = 0;
+    const catalog = new Proxy(Array.from({ length: 1000 }, (_, index) => ({ id: `root-${index}`, title: `Root ${index}`, get directory() { directoryReads++; return '/repo'; }, updated: index })), { get(rows, key, receiver) {
       if (key === Symbol.iterator) scans++;
       if (typeof key === 'string' && /^\d+$/.test(key)) rowReads++;
       return Reflect.get(rows, key, receiver);
@@ -68,17 +290,26 @@ describe('root Projects attention observer', () => {
     await flush(); expect(requests()).toEqual([expect.objectContaining({ path: '/api/debug/location', method: 'GET' })]); harness.call.mockClear();
     const originalGet = Map.prototype.get;
     const get = vi.spyOn(Map.prototype, 'get').mockImplementation(function (this: Map<unknown, unknown>, key: unknown) { if (key === 'root-500') lookups++; return originalGet.call(this, key); });
+    const key = JSON.stringify([state.epoch(), state.app.connection()?.id]), unreadChanged = vi.fn();
+    const stop = attention.projectsAttention.observe(key, unreadChanged);
     try {
-      for (let index = 0; index < 50; index++) { emit('session.text.delta', { sessionID: 'root-500', text: String(index) }, 'global'); emit('draft.changed', { sessionID: 'root-500' }, 'global'); }
+      for (let index = 0; index < 50; index++) { rootEvent('session.text.delta', { sessionID: 'root-500', text: String(index) }); rootEvent('draft.changed', { sessionID: 'root-500' }); }
       expect({ scans, rowReads, lookups }).toEqual({ scans: 0, rowReads: 0, lookups: 0 }); expect(requests()).toEqual([]); expect(changed).not.toHaveBeenCalled();
-      emit('session.execution.started', { sessionID: 'root-500' }, 'global');
+      rootEvent('session.execution.started', { sessionID: 'root-500' });
       expect({ scans, rowReads, lookups }).toEqual({ scans: 1, rowReads: 1000, lookups: 1 });
-      for (let index = 0; index < 50; index++) emit('session.execution.failed', { sessionID: 'root-500', error: { message: 'Failed fixture turn' } }, 'global');
-      expect({ scans, rowReads, lookups }).toEqual({ scans: 1, rowReads: 1000, lookups: 51 });
-      const key = JSON.stringify([state.epoch(), state.app.connection()?.id]); expect(attention.projectsAttention.snapshot(key).unseenBySession).toEqual({ 'root-500': 1 });
-      state.app.sessions.set([]); emit('session.execution.started', { sessionID: 'root-500' }, 'global');
-      expect(lookups).toBe(52); expect(requests()).toEqual([]);
-    } finally { get.mockRestore(); }
+      expect(directoryReads).toBe(0);
+      expect(unreadChanged).not.toHaveBeenCalled();
+      const running = state.desktopSidebarAuthority();
+      rootEvent('session.execution.started', { sessionID: 'root-500' }); expect(state.desktopSidebarAuthority()).toBe(running);
+      expect({ scans, rowReads, lookups }).toEqual({ scans: 1, rowReads: 1000, lookups: 2 });
+      for (let index = 0; index < 50; index++) rootEvent('session.execution.failed', { sessionID: 'root-500', error: { message: 'Failed fixture turn' } });
+      expect({ scans, rowReads, lookups }).toEqual({ scans: 1, rowReads: 1000, lookups: 52 });
+      expect(attention.projectsAttention.snapshot(key).unseenBySession).toEqual({ 'root-500': 1 }); expect(unreadChanged).toHaveBeenCalledTimes(1);
+      const settled = state.desktopSidebarAuthority(); rootEvent('session.idle', { sessionID: 'root-500' }); expect(state.desktopSidebarAuthority()).toBe(settled);
+      expect(unreadChanged).toHaveBeenCalledTimes(1); expect(directoryReads).toBe(0);
+      state.app.sessions.set([]); rootEvent('session.execution.started', { sessionID: 'root-500' });
+      expect(lookups).toBe(54); expect(requests()).toEqual([]); expect(changed).not.toHaveBeenCalled();
+    } finally { stop(); get.mockRestore(); }
   });
   it('the root observer deduplicates no-ID error aliases, honors real viewed/foreground and never invents unknown parents', async () => {
     const state = await import('./state'); await state.loadConnections(); const { projectsAttention } = await import('./projects-attention');
@@ -98,6 +329,31 @@ describe('root Projects attention observer', () => {
     expect(projectsAttention.snapshot(scope).unseenBySession).toEqual({});
     emit('session.status', { sessionID: 's', status: { type: 'busy' } }, 'global'); emit('session.execution.failed', { sessionID: 's' }, 'global');
     expect(projectsAttention.snapshot(scope).unseenBySession).toEqual({ s: 1 }); expect(requests()).toEqual([]);
+  });
+  it('directory-less compatibility builds its own fallback only once; scoped Location events never warm that index', async () => {
+    const state = await import('./state'); await state.loadConnections(); const { projectsAttention } = await import('./projects-attention');
+    const metadata = { directory: '/repo', expectedHost: { hostID: 'one', lease: 'one-lease' } };
+    let scans = 0, directoryReads = 0;
+    const catalog = new Proxy(Array.from({ length: 1000 }, (_, index) => ({ id: `root-${index}`, title: `Root ${index}`, get directory() { directoryReads++; return '/repo'; }, updated: index })), { get(rows, key, receiver) { if (key === Symbol.iterator) scans++; return Reflect.get(rows, key, receiver); } });
+    state.app.sessions.set(catalog); state.observeRuntime(vi.fn()); await flush(); harness.call.mockClear();
+    const scope = JSON.stringify([state.epoch(), state.app.connection()?.id]), notified = vi.fn(), stop = projectsAttention.observe(scope, notified);
+    const { desktopSidebarSessionStateKey } = await import('./desktop-sidebar-projection');
+    const liveKey = desktopSidebarSessionStateKey({ id: 'root-500', directory: '/repo' });
+    try {
+      emit('session.execution.started', { sessionID: 'root-500' }, 'global', metadata);
+      expect({ scans, directoryReads }).toEqual({ scans: 1, directoryReads: 0 });
+      // First missing-Location event pays one separate directory fallback build, not another attention build.
+      emit('session.execution.failed', { sessionID: 'root-500' }, 'global');
+      expect({ scans, directoryReads }).toEqual({ scans: 2, directoryReads: 1000 });
+      expect(state.desktopSidebarAuthority()?.sessions?.get(liveKey)?.running).toBe(false);
+      const settled = state.desktopSidebarAuthority();
+      for (let i = 0; i < 50; i++) emit('session.execution.failed', { sessionID: 'root-500' }, 'global');
+      expect(state.desktopSidebarAuthority()).toBe(settled); expect({ scans, directoryReads }).toEqual({ scans: 2, directoryReads: 1000 });
+      expect(projectsAttention.snapshot(scope).unseenBySession).toEqual({ 'root-500': 1 }); expect(notified).toHaveBeenCalledTimes(1);
+      state.app.sessions.set([]); emit('session.execution.started', { sessionID: 'root-500' }, 'global');
+      expect(state.desktopSidebarAuthority()?.sessions?.get(liveKey)?.running).toBe(false);
+      expect(requests()).toEqual([]);
+    } finally { stop(); }
   });
   it('root Host-generation changes retire the old source and release it after the final Projects listener detaches', async () => {
     const state = await import('./state'); await state.loadConnections(); const { projectsAttention } = await import('./projects-attention');
@@ -125,6 +381,513 @@ describe('root Projects attention observer', () => {
     emit('yuri:project-order-changed', {}, 'global'); harness.lifecycle = 'active'; await vi.advanceTimersByTimeAsync(120); expect(changed).toHaveBeenCalledTimes(1);
     emit('yuri:project-order-changed', {}, 'global');
     await state.loadConnections({ forceReconnect: true }); await vi.advanceTimersByTimeAsync(120); expect(changed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('original Chat safe writer retirement', () => {
+  async function start() { const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); return { state, chat }; }
+  it('flushes the original draft/attachment journal, ignores server busy, pauses new writes and can cancel without closing the draft owner', async () => {
+    const { chat } = await start(); chat.setDraftText('Keep the original draft'); chat.attachments.set([{ uri: 'attachment://kept', name: 'kept', mime: 'text/plain' }]); chat.busy.set(true);
+    expect(chat.canReleaseWriter()).toBe(false); expect(chat.writerRetirement().needsFlush).toBe(true);
+    expect(await chat.prepareWriterRetirement()).toBe(true); expect(chat.canReleaseWriter()).toBe(true);
+    expect([...harness.storage.values()].map(value => JSON.parse(value))).toContainEqual(expect.objectContaining({ draft: 'Keep the original draft', attachments: [{ uri: 'attachment://kept', name: 'kept', mime: 'text/plain' }] }));
+    const before = requests().length; expect(chat.setDraftText('cannot replace')).toBe(false); expect(await chat.send()).toBe(false); expect(requests()).toHaveLength(before);
+    chat.cancelWriterRetirement(); expect(chat.canReleaseWriter()).toBe(false); expect(chat.setDraftText('Resume same owner')).toBe(true);
+    expect(await chat.prepareWriterRetirement()).toBe(true); expect(chat.draft()).toBe('Resume same owner');
+    expect(harness.call.mock.calls.some(([name]) => String(name).includes('writer'))).toBe(false);
+  });
+  it.each(['pending-send', 'queue-edit', 'sending', 'history-unresolved', 'queue-busy'] as const)('preserves the original %s protection instead of cleaning up to gain release', async reason => {
+    const { chat } = await start();
+    if (reason === 'pending-send') chat.pendingSend.set({ id: 'uncertain', text: 'uncertain', files: [], delivery: 'steer', uncertain: true });
+    if (reason === 'queue-edit') chat.queueEdit.set({ id: 'editing', text: 'retained', files: [] });
+    if (reason === 'sending') chat.sending.set(true);
+    if (reason === 'history-unresolved') chat.historyBusy.set(true);
+    if (reason === 'queue-busy') chat.queueBusy.set('item');
+    const before = [chat.pendingSend(), chat.queueEdit(), chat.sending(), chat.historyBusy(), chat.queueBusy()];
+    expect(await chat.prepareWriterRetirement()).toBe(false); expect(chat.writerRetirement().reasons).toContain(reason);
+    expect([chat.pendingSend(), chat.queueEdit(), chat.sending(), chat.historyBusy(), chat.queueBusy()]).toEqual(before);
+  });
+  it('does not accept a stale flush ACK or failure; explicit retry keeps the original resources and owner', async () => {
+    const { chat } = await start(), gate = deferred<void>(); let entered = false;
+    harness.setItem.mockImplementationOnce(async (key: string, value: string) => { entered = true; await gate.promise; harness.storage.set(key, value); });
+    chat.setDraftText('before flush'); const pending = chat.prepareWriterRetirement(); await flush(); expect(entered).toBe(true);
+    chat.draft.set('changed during native flush'); gate.resolve(); expect(await pending).toBe(false); expect(chat.writerRetirement().needsFlush).toBe(true);
+    harness.setItem.mockRejectedValueOnce(new Error('Synthetic Storage unavailable'));
+    expect(await chat.prepareWriterRetirement()).toBe(false); expect(chat.draft()).toBe('changed during native flush'); expect(chat.draftStatus()).toBe('error');
+    await chat.retryDraft(); expect(await chat.prepareWriterRetirement()).toBe(true);
+  });
+  it.each([undefined, 403] as const)('covers a real interrupt in-flight and distinguishes unknown transport from explicit rejection %s', async status => {
+    const { chat } = await start(), gate = deferred<unknown>(), normal = handle;
+    handle = (path, method, body) => path.includes('/interrupt?') ? gate.promise : normal(path, method, body);
+    const stopping = chat.stop(); await flush(); expect(chat.writerRetirement().reasons).toContain('write-in-flight'); expect(await chat.prepareWriterRetirement()).toBe(false);
+    gate.resolve(Promise.reject(Object.assign(new Error('Synthetic interrupt response lost'), status === undefined ? {} : { status })));
+    await expect(stopping).rejects.toThrow();
+    expect(chat.writerRetirement().reasons.includes('write-unconfirmed')).toBe(status === undefined);
+    expect(await chat.prepareWriterRetirement()).toBe(status !== undefined);
+  });
+  it('reuses pendingSend recovery rather than retaining a second unknown journal after authoritative admission', async () => {
+    const { chat } = await start(), normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.includes('/prompt?')) { inputID = (body as { id: string }).id; throw new Error('Synthetic lost admission'); }
+      return normal(path, method, body);
+    };
+    chat.setDraftText('Recover once'); expect(await chat.send()).toBe(false); expect(chat.pendingSend()?.uncertain).toBe(true);
+    expect(await chat.prepareWriterRetirement()).toBe(false); expect(chat.writerRetirement().reasons).not.toContain('write-unconfirmed');
+    handle = (path, method, body) => path.includes(`/message/${inputID}?`) ? { id: inputID } : normal(path, method, body);
+    expect(await chat.recoverPendingSend()).toBe(true); expect(chat.pendingSend()).toBeNull(); expect(await chat.prepareWriterRetirement()).toBe(true);
+  });
+});
+
+describe('original Chat verified native writer consumer', () => {
+  async function start(kind: 'session' | 'assistant' = 'session', readOnly = false, contactOptimistic = false) {
+    const { StrictWriterHost } = await import('./desktop-writer-test-host'), core = await import('./desktop-writer-core');
+    const producer = new StrictWriterHost(); let ownerLive = true;
+    const client = (await core.loadDesktopWriterClient({ source: () => producer, current: () => true }))!;
+    const entity = { ...target, kind, id: kind === 'session' ? 's' : 'bot' };
+    const claim = client.claim({ expectedHost: producer.scope, target: { kind, id: entity.id }, current: () => ownerLive });
+    expect(await claim.ready()).not.toBeNull();
+    const grant = vi.fn(claim.grant), unknown = vi.fn(claim.markUnknown);
+    const queued = ['q1', 'q2', 'q3'].map(id => ({ id, sessionID: entity.id, type: 'user', delivery: 'queue', payload: { text: 'Queued ' + id } }));
+    handle = (path, method, body) => {
+      if (path === '/api/session/active') return {};
+      if (path.startsWith('/api/rpc/opencode.goal/get?')) return { output: null };
+      if (path.includes('/message?')) return { data: [], cursor: { next: null } };
+      if (path.includes('/message/')) throw Object.assign(new Error('Synthetic exact message not found'), { status: 404 });
+      if (path.includes('/contact/messages')) return { messages: [], complete: true, generation: 1, revision: 1 };
+      if (path.endsWith('/assistants/snapshot')) return { assistants: [{ id: 'bot', sessionID: 'assistant-bound', sessionGeneration: 2, working: false }] };
+      if (path.includes('/messages') && method === 'POST') return { admitted: true, messageID: (body as { messageID: string }).messageID };
+      if (path.includes('/prompt?')) return { id: (body as { id: string }).id, sessionID: entity.id, type: 'user', payload: { text: (body as { text: string }).text } };
+      if (path.includes('/compact?')) return { id: (body as { id: string }).id, sessionID: entity.id, type: 'compaction', delivery: 'steer' };
+      if (method === 'DELETE' && /\/inbox\/[^?]+\?/.test(path)) { const index = queued.findIndex(item => path.includes(`/inbox/${item.id}?`)); if (index >= 0) queued.splice(index, 1); return null; }
+      if (path.includes('/inbox?')) return queued;
+      if (path.startsWith('/api/session/s?')) return { id: 's', location: { directory: '/repo' } };
+      if (path.startsWith('/api/command?')) return [{ name: 'build' }];
+      if (method === 'GET') return [];
+      return null;
+    };
+    harness.call.mockImplementation(async (name, input) => {
+      if (name === 'connection.list') return { connections: [{ id: producer.scope.hostID, url: 'https://fixture.invalid', authorizationID: 'fixture-auth' }], selected: producer.scope.hostID, runtimeScope: producer.scope };
+      if (name === 'runtime.request') { await producer.call(name, input); return { status: 200, body: await handle(input.path, input.method, input.body) }; }
+      if (name === 'runtime.stream' || name === 'runtime.stop') return true;
+      throw new Error('Unexpected Chat writer native call: ' + name);
+    });
+    const state = await import('./state'); await state.loadConnections();
+    let recoveryReadOperation: ReturnType<typeof state.captureHostOperation> | null = null;
+    const setReadAdmission = (enabled: boolean) => {
+      if (!enabled) { recoveryReadOperation = null; return; }
+      const captured = state.captureHostOperation();
+      const assigned = Object.freeze({ ...captured, current: () => recoveryReadOperation === assigned && captured.current() }); recoveryReadOperation = assigned;
+    };
+    setReadAdmission(true);
+    const chat = state.createChat(entity, { readOnly, contactOptimistic, writerGrant: grant, writerUnknown: unknown, recoveryReadOperation: () => recoveryReadOperation }); await chat.draftReady; await flush();
+    return { state, chat, claim, client, producer, grant, unknown, setReadAdmission, ownerOff: () => { ownerLive = false; } };
+  }
+  async function localUnknown(kind: 'compact' | 'magic', malformedACK = false) {
+    const f = await start(), normal = handle; let causalID = '';
+    handle = (path, method, body) => {
+      if (method === 'POST' && (path.includes('/compact?') || path.includes('/prompt?'))) { causalID = (body as { id: string }).id; if (malformedACK) return {}; throw new Error('Synthetic lost local command ACK'); }
+      return normal(path, method, body);
+    };
+    if (kind === 'compact') { f.chat.setDraftText('/compact'); expect((await f.chat.admitLocalCompact(compactInvocation(f.chat))).status).toBe('unknown'); }
+    else { f.chat.setDraftText('/explore retained'); expect((await f.chat.admitLocalMagic({ text: 'Compiled magic', files: [] }, magicInvocation(f.chat))).status).toBe('unknown'); }
+    expect(f.chat.pendingSend()?.id).toBe(causalID); expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true });
+    f.chat.active.set(false); f.chat.syncActive.set(false);
+    const receipt = () => kind === 'compact' ? { id: causalID, sessionID: 's', type: 'compaction', status: 'completed' } : { id: causalID, sessionID: 's', type: 'user', delivery: 'steer', payload: { text: 'Compiled magic' } };
+    return { ...f, normal, causalID, receipt };
+  }
+  it.each(['prompt', 'command', 'shell', 'goal', 'compact', 'revert-commit', 'interrupt', 'permission', 'form-reply', 'form-cancel', 'queue-cancel', 'queue-steer', 'queue-edit'] as const)('forwards the verified producer grant through the original %s lane without acquiring per send', async action => {
+    const f = await start();
+    if (action === 'prompt') { f.chat.setDraftText('Original wire text'); expect(await f.chat.send()).toBe(true); }
+    if (action === 'command') expect(await f.chat.command('build', 'original args')).toBe(true);
+    if (action === 'shell') { f.chat.setDraftText('printf fixture'); expect(await f.chat.send({ inputMode: 'shell' })).toBe(true); }
+    if (action === 'goal') expect(await f.chat.command('goal', 'pause')).toBe(true);
+    if (action === 'compact') { f.chat.setDraftText('/compact'); expect((await f.chat.admitLocalCompact(compactInvocation(f.chat))).status).toBe('accepted'); }
+    if (action === 'revert-commit') {
+      const normal = handle; let staged = true;
+      handle = (path, method, body) => { if (path.startsWith('/api/session/s?')) return { id: 's', ...(staged ? { revert: { messageID: 'staged-boundary' } } : {}) }; if (path.includes('/revert/commit?')) { staged = false; return null; } return normal(path, method, body); };
+      f.chat.setDraftText('Commit original staged revert'); expect(await f.chat.send()).toBe(true);
+      expect(requests().some(input => input.path.includes('/revert/commit?') && input.method === 'POST')).toBe(true);
+    }
+    if (action === 'interrupt') await f.chat.stop();
+    if (action === 'permission') await f.chat.replyPermission('permission/a', 'once');
+    if (action === 'form-reply') await f.chat.replyForm('form/a', { answers: [] });
+    if (action === 'form-cancel') await f.chat.cancelForm('form/a');
+    if (action === 'queue-cancel') expect(await f.chat.cancelInbox('q1')).toBe(true);
+    if (action === 'queue-steer') expect(await f.chat.steerInbox('q2')).toBe(true);
+    if (action === 'queue-edit') { expect(await f.chat.editInbox('q3')).toBe(true); expect(f.chat.draft()).toBe('Queued q3'); expect(f.chat.queueEdit()).toBeNull(); }
+    const writes = requests().filter(input => input.method !== 'GET' && !input.path.startsWith('/api/rpc/opencode.goal/get?'));
+    expect(writes.length).toBeGreaterThan(0);
+    const nativeID = [...f.producer.ledger.rows.values()][0].grantID;
+    expect(writes.every(input => input.writerGrant === nativeID && JSON.stringify(input.expectedHost) === JSON.stringify(f.producer.scope))).toBe(true);
+    expect(requests().filter(input => input.method === 'GET').every(input => input.writerGrant === undefined)).toBe(true);
+    expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.')).map(call => call.name)).toEqual(['desktop.writer.capabilities', 'desktop.writer.acquire']);
+    expect(f.unknown).not.toHaveBeenCalled(); expect(f.claim.status()).toMatchObject({ pending: 0, unknown: false });
+  });
+  it('assistant messages/abort use their verified target and keep the original request bodies', async () => {
+    const f = await start('assistant'); f.chat.setDraftText('Assistant payload'); expect(await f.chat.send()).toBe(true); await f.chat.stop();
+    const writes = requests().filter(input => input.method !== 'GET');
+    expect(writes.map(input => [input.path, input.body])).toEqual([
+      ['/api/yuri/assistants/bot/messages', { messageID: expect.any(String), parts: [{ type: 'text', text: 'Assistant payload' }], language: 'en' }],
+      ['/api/yuri/assistants/bot/session/abort', { sessionID: 'assistant-bound', sessionGeneration: 2 }],
+    ]);
+    expect(writes.every(input => input.writerGrant === [...f.producer.ledger.rows.values()][0].grantID)).toBe(true);
+  });
+  it('contact optimistic user row keeps the original message ID through admission, failed refresh and authoritative reconciliation', async () => {
+    const f = await start('assistant', false, true), normal = handle, ack = deferred<unknown>();
+    let inputID = '', failedRead = false, authoritative = false;
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST') { inputID = (body as { messageID: string }).messageID; return ack.promise; }
+      if (path.includes('/contact/messages')) {
+        if (failedRead) throw new Error('Synthetic read failure');
+        return { generation: 1, revision: 2, complete: true, messages: authoritative ? [{ messageID: inputID, role: 'user', assistantID: 'bot', turnID: inputID, ordinal: 9, createdAt: 1234, status: 'complete', parts: [{ type: 'text', text: 'Original user message' }] }] : [] };
+      }
+      return normal(path, method, body);
+    };
+    f.chat.setDraftText('Original user message'); const sending = f.chat.send(); await flush();
+    expect(f.chat.messages()).toEqual([]);
+    expect(f.chat.visibleMessages()).toMatchObject([{ id: inputID, contact: { kind: 'user', status: 'sending' }, content: [{ type: 'text', text: 'Original user message' }] }]);
+    expect(f.chat.contactReadPosition()).toBeNull();
+    f.chat.setDraftText('New draft during flight'); ack.resolve({ admitted: true, messageID: inputID }); expect(await sending).toBe(true);
+    expect(f.chat.visibleMessages()[0]).toMatchObject({ id: inputID, contact: { status: 'admitted' } }); expect(f.chat.draft()).toBe('New draft during flight');
+    failedRead = true; await f.chat.load(false, ['messages']); expect(f.chat.visibleMessages()).toHaveLength(1);
+    failedRead = false; authoritative = true; await f.chat.load(false, ['messages']);
+    expect(f.chat.visibleMessages()).toHaveLength(1); expect(f.chat.visibleMessages()[0]).toBe(f.chat.messages()[0]);
+    expect(f.chat.contactOptimistic()).toEqual([]); expect(f.chat.contactReadPosition()).toEqual({ generation: 1, ordinal: 9, messageID: inputID });
+  });
+  it('message-scoped contact retry only proves the exact lost ACK and never replays it or restores an unknown writer', async () => {
+    const f = await start('assistant', false, true), normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST') { inputID = (body as { messageID: string }).messageID; throw new Error('Synthetic lost message ACK'); }
+      return normal(path, method, body);
+    };
+    f.chat.setDraftText('Original contact intent'); expect(await f.chat.send()).toBe(false);
+    expect(f.chat.visibleMessages()[0]).toMatchObject({ id: inputID, contact: { kind: 'user', status: 'failed' } });
+    expect(f.chat.error()).toBe('');
+    expect(f.claim.status().unknown).toBe(true); f.chat.active.set(false);
+    handle = (path, method, body) => path.includes('/contact/messages?messageID=' + encodeURIComponent(inputID)) ? { generation: 1, revision: 2, complete: true, messages: [{ messageID: inputID, role: 'user', ordinal: 4, parts: [{ type: 'text', text: 'Original contact intent' }] }] } : normal(path, method, body);
+    expect(await f.chat.retryContactMessage('different-input')).toBe(false);
+    expect(await f.chat.retryContactMessage(inputID)).toBe(true);
+    expect(f.chat.pendingSend()).toBeNull(); expect(f.chat.contactOptimistic()[0].status).toBe('admitted');
+    expect(requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'))).toHaveLength(1);
+    expect(f.claim.status().unknown).toBe(true); expect(f.claim.grant()).toBeNull();
+  });
+  it('contact retry preserves captured attachment parts and a later draft after a proven native rejection', async () => {
+    const f = await start('assistant', false, true), normal = handle;
+    const contact = { type: 'file' as const, assistantID: 'bot', attachmentID: 'original', sha256: 'a'.repeat(64), size: 17, mime: 'text/plain', filename: 'original.txt' };
+    const { assistantAttachmentURI } = await import('./assistant-attachment-model');
+    const file = { uri: assistantAttachmentURI('bot', 'original'), name: 'original.txt', mime: contact.mime, contact };
+    let reject = true;
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST' && reject) throw Object.assign(new Error('native_host_busy'), { code: 'ERR_NSH_HOST_ERROR' });
+      return normal(path, method, body);
+    };
+    f.chat.attachments.set([file]); expect(await f.chat.send()).toBe(false);
+    const messageID = f.chat.contactOptimistic()[0].messageID;
+    expect(f.chat.pendingSend()).toBeNull(); expect(f.chat.error()).toBe(''); expect(f.claim.status().unknown).toBe(false);
+    f.chat.setDraftText('A later draft'); reject = false;
+    expect(await f.chat.retryContactMessage(messageID)).toBe(true);
+    const writes = requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'));
+    expect(writes).toHaveLength(2); expect(writes[1].body).toEqual(writes[0].body);
+    expect(f.chat.draft()).toBe('A later draft'); expect(f.chat.attachments()).toEqual([]);
+    expect(f.chat.contactOptimistic()).toHaveLength(1); expect(f.chat.contactOptimistic()[0].status).toBe('admitted');
+    expect(await f.chat.retryContactMessage(messageID)).toBe(false);
+    expect(requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'))).toHaveLength(2);
+  });
+  it.each(['peer', 'assistant', 'other-assistant'] as const)('contact lost-ACK readback rejects a same-ID %s record without clearing pending or unlocking the writer', async wrong => {
+    const f = await start('assistant', false, true), normal = handle; let inputID = '';
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST') { inputID = (body as { messageID: string }).messageID; throw new Error('Synthetic lost ACK'); }
+      if (path.includes('/contact/messages?messageID=')) return { generation: 1, revision: 2, complete: true, messages: [{ messageID: inputID, role: wrong === 'other-assistant' ? 'user' : wrong, assistantID: wrong === 'other-assistant' ? 'elsewhere' : 'bot', ordinal: 4, parts: [{ type: 'text', text: 'Not the owned user receipt' }] }] };
+      return normal(path, method, body);
+    };
+    f.chat.setDraftText('Keep exact intent'); expect(await f.chat.send()).toBe(false);
+    const pending = f.chat.pendingSend();
+    expect(await f.chat.retryContactMessage(inputID)).toBe(false); expect(f.chat.pendingSend()).toBe(pending);
+    expect(f.chat.contactOptimistic()[0].status).toBe('failed'); expect(f.claim.status().unknown).toBe(true);
+    expect(requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'))).toHaveLength(1);
+  });
+  it('contact lost-ACK proof with a failed journal ACK retains the exact pending for read-only recovery', async () => {
+    const f = await start('assistant', false, true), normal = handle; let inputID = '', rejectFlush = false;
+    const persist = harness.setItem.getMockImplementation()!;
+    harness.setItem.mockImplementation(async (key: string, value: string) => {
+      if (rejectFlush && key.startsWith('nsh:chat-draft:') && JSON.parse(value).pendingSend === null) throw new Error('Synthetic recovery journal failure');
+      return persist(key, value);
+    });
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST') { inputID = (body as { messageID: string }).messageID; throw new Error('Synthetic lost ACK'); }
+      if (path.includes('/contact/messages?messageID=')) return { generation: 1, revision: 2, complete: true, messages: [{ messageID: inputID, role: 'user', assistantID: 'bot', ordinal: 4, parts: [{ type: 'text', text: 'Keep exact intent' }] }] };
+      return normal(path, method, body);
+    };
+    f.chat.setDraftText('Keep exact intent'); expect(await f.chat.send()).toBe(false);
+    const pending = f.chat.pendingSend(); rejectFlush = true;
+    await expect(f.chat.retryContactMessage(inputID)).rejects.toThrow('recovery journal failure'); expect(f.chat.pendingSend()).toBe(pending);
+    rejectFlush = false; expect(await f.chat.retryContactMessage(inputID)).toBe(true); expect(f.chat.pendingSend()).toBeNull();
+    expect(f.claim.status().unknown).toBe(true); expect(f.claim.grant()).toBeNull();
+    expect(requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'))).toHaveLength(1);
+  });
+  it('an acknowledged contact with a failed journal flush stays admitted and retries only exact readback, not the message POST', async () => {
+    const f = await start('assistant', false, true), normal = handle; let inputID = '', rejectFlush = false;
+    const persist = harness.setItem.getMockImplementation()!;
+    harness.setItem.mockImplementation(async (key: string, value: string) => {
+      if (rejectFlush && key.startsWith('nsh:chat-draft:') && JSON.parse(value).pendingSend === null) throw new Error('Synthetic journal commit failure');
+      return persist(key, value);
+    });
+    handle = (path, method, body) => {
+      if (path.endsWith('/bot/messages') && method === 'POST') { inputID = (body as { messageID: string }).messageID; rejectFlush = true; }
+      if (path.includes('/contact/messages?messageID=')) return { generation: 1, revision: 2, complete: true, messages: [{ messageID: inputID, role: 'user', ordinal: 4, parts: [{ type: 'text', text: 'Original journal intent' }] }] };
+      return normal(path, method, body);
+    };
+    f.chat.setDraftText('Original journal intent'); expect(await f.chat.send()).toBe(false);
+    expect(f.chat.contactOptimistic()[0].status).toBe('admitted'); expect(f.chat.pendingSend()).toMatchObject({ id: inputID, uncertain: true });
+    expect(f.chat.error()).toContain('journal commit failure'); expect(f.claim.status().unknown).toBe(false);
+    rejectFlush = false; expect(await f.chat.retrySend()).toBe(true);
+    expect(f.chat.pendingSend()).toBeNull(); expect(await f.chat.retryContactMessage(inputID)).toBe(false);
+    expect(requests().filter(input => input.method === 'POST' && input.path.endsWith('/bot/messages'))).toHaveLength(1);
+  });
+  it('contact shadow admission is bounded without dropping unconfirmed rows; a real new history generation clears old shadows', async () => {
+    const f = await start('assistant', false, true), normal = handle;
+    for (let index = 0; index < 64; index++) { f.chat.setDraftText('Contact ' + index); expect(await f.chat.send()).toBe(true); }
+    expect(f.chat.contactOptimistic()).toHaveLength(64); expect(f.chat.visibleMessages()).toHaveLength(64);
+    const before = requests().length;
+    f.chat.setDraftText('Retain overflow'); expect(await f.chat.send()).toBe(false);
+    expect(f.chat.draft()).toBe('Retain overflow'); expect(f.chat.contactOptimistic()).toHaveLength(64); expect(requests()).toHaveLength(before);
+    handle = (path, method, body) => path.includes('/contact/messages') ? { generation: 2, revision: 1, complete: true, messages: [] } : normal(path, method, body);
+    await f.chat.load(false, ['messages']); expect(f.chat.contactOptimistic()).toEqual([]); expect(f.chat.contactReadPosition()).toBeNull();
+    expect(await f.chat.send()).toBe(true); expect(f.chat.contactOptimistic()).toHaveLength(1);
+  });
+  it.each(['system', 'ja', 'zh-TW'])('assistant sends current %s locale and canonical attachment references through its original grant', async selected => {
+    const f = await start('assistant'); const { language } = await import('./i18n'); language.set(selected);
+    const { assistantAttachmentURI } = await import('./assistant-attachment-model');
+    const contact = { type: 'file' as const, assistantID: 'bot', attachmentID: 'uploaded', sha256: 'a'.repeat(64), size: 17, mime: 'text/plain', filename: 'note.txt' };
+    f.chat.attachments.set([{ uri: assistantAttachmentURI('bot', 'uploaded'), name: 'note.txt', mime: contact.mime, contact }]);
+    expect(await f.chat.send()).toBe(true);
+    const writes = requests().filter(input => input.method !== 'GET');
+    expect(writes).toHaveLength(1); const { assistantID: _owner, ...part } = contact;
+    expect(writes[0].body).toEqual({ messageID: expect.any(String), parts: [part], language: selected === 'system' ? 'en' : selected });
+    expect(writes[0].writerGrant).toBe([...f.producer.ledger.rows.values()][0].grantID);
+  });
+  it.each(['other-bot', 'local-uri', 'legacy'] as const)('assistant rejects %s attachments before any native write and retains the draft', async invalid => {
+    const f = await start('assistant');
+    const contact = { type: 'file' as const, assistantID: invalid === 'other-bot' ? 'other-bot' : 'bot', attachmentID: 'uploaded', sha256: 'a'.repeat(64), size: 17, mime: 'text/plain' };
+    const file = { uri: invalid === 'local-uri' ? 'file:///bad' : '/api/yuri/assistants/' + contact.assistantID + '/contact/attachments/uploaded', name: 'note.txt', mime: contact.mime, ...(invalid === 'legacy' ? {} : { contact }) };
+    f.chat.setDraftText('Retain this'); f.chat.attachments.set([file]);
+    expect(await f.chat.send()).toBe(false);
+    expect(requests().filter(input => input.method !== 'GET')).toEqual([]);
+    expect(f.chat.draft()).toBe('Retain this'); expect(f.chat.attachments()).toEqual([file]);
+    expect(f.unknown).not.toHaveBeenCalled();
+  });
+  it('fifty draft/GET updates never read the grant; readOnly never reads it or writes even when one is mistakenly injected', async () => {
+    const f = await start(); f.grant.mockClear(); const before = f.producer.calls.filter(call => call.name.startsWith('desktop.writer.')).length;
+    for (let i = 0; i < 50; i++) { f.chat.setDraftText('draft ' + i); await f.chat.load(false, ['status']); }
+    await f.chat.goal.controller.refresh(); expect(f.grant).not.toHaveBeenCalled();
+    expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.'))).toHaveLength(before);
+    const readOnlyGrant = vi.fn(f.claim.grant), state = f.state;
+    const reader = state.createChat(target, { readOnly: true, writerGrant: readOnlyGrant, writerUnknown: f.unknown }); await reader.draftReady; await flush();
+    const writes = requests().filter(input => input.method !== 'GET').length;
+    expect(await reader.send()).toBe(false); await reader.stop(); await expect(reader.replyPermission('p', 'once')).rejects.toThrow('read_only');
+    await reader.load(false, ['status']); expect(readOnlyGrant).not.toHaveBeenCalled(); expect(requests().filter(input => input.method !== 'GET')).toHaveLength(writes);
+  });
+  it.each(['prompt', 'assistant', 'compact'] as const)('a 2xx malformed %s domain ACK marks the same native claim sticky unknown and cleanup never releases it', async kind => {
+    const f = await start(kind === 'assistant' ? 'assistant' : 'session'), normal = handle;
+    handle = (path, method, body) => method === 'POST' && (/\/(prompt|messages|compact)(\?|$)/.test(path)) ? {} : normal(path, method, body);
+    if (kind === 'compact') { f.chat.setDraftText('/compact'); expect((await f.chat.admitLocalCompact(compactInvocation(f.chat))).status).toBe('unknown'); }
+    else { f.chat.setDraftText('Keep unknown'); expect(await f.chat.send()).toBe(false); }
+    expect(f.unknown).toHaveBeenCalledTimes(1); expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true }); expect(f.claim.grant()).toBeNull();
+    expect(f.chat.pendingSend()?.uncertain).toBe(true); expect(await f.chat.prepareWriterRetirement()).toBe(false);
+    harness.cleanups.forEach(stop => stop()); harness.cleanups = [];
+    expect(f.claim.phase()).toBe('unknown'); expect(f.producer.ledger.rows.size).toBe(1); expect(f.producer.calls.filter(call => call.name === 'desktop.writer.release')).toEqual([]);
+  });
+  it('passive renew preserves one original draft owner; null renewal gap is not unknown and new-scope send uses the renewed grant', async () => {
+    const f = await start(), { writerDeferred } = await import('./desktop-writer-test-host');
+    f.chat.setDraftText('Retained through renew'); const draftReady = f.chat.draftReady;
+    const before = harness.effects.length; f.state.runtimeLifecycle(); await flush(); const lifecycle = harness.effects[before]!;
+    harness.lifecycle = 'background'; lifecycle();
+    f.producer.scope = { ...f.producer.scope, lease: 'lease-two' };
+    const gate = writerDeferred(); f.producer.gates['desktop.writer.renew'] = gate.promise;
+    const renewing = f.claim.renew({ expectedHost: f.producer.scope }); expect(f.claim.grant()).toBeNull();
+    harness.lifecycle = 'active'; lifecycle(); await flush();
+    const count = requests().filter(input => input.method !== 'GET').length;
+    expect(await f.chat.send()).toBe(false); expect(requests().filter(input => input.method !== 'GET')).toHaveLength(count); expect(f.claim.status().unknown).toBe(false);
+    expect(f.chat.pendingSend()).toBeNull(); expect(f.chat.writerRetirement().reasons).not.toContain('write-unconfirmed');
+    gate.resolve(); expect(await renewing).not.toBeNull(); expect(f.chat.draftReady).toBe(draftReady); expect(f.chat.draft()).toBe('Retained through renew');
+    expect(await f.chat.send()).toBe(true); expect(requests().filter(input => input.method === 'POST' && input.path.includes('/prompt?')).at(-1).expectedHost).toEqual(f.producer.scope);
+    expect(f.producer.calls.filter(call => call.name === 'desktop.writer.acquire')).toHaveLength(1);
+  });
+  it.each([true, false])('committed same-authority lease renew causality: original resume before ACK=%s, scopeReady is explicit and never remounts/restores', async resumeBeforeACK => {
+    const f = await start(), { writerDeferred } = await import('./desktop-writer-test-host');
+    f.chat.setDraftText('Exact original draft'); f.chat.attachments.set([{ uri: 'attachment://original', name: 'original', mime: 'text/plain' }]); await f.chat.flushDraft();
+    const ready = f.chat.draftReady, referenceScope = f.chat.referenceScope, files = f.chat.attachments(), oldScope = f.chat.messageScope, oldGrant = f.claim.grant();
+    const restores = harness.getItem.mock.calls.length, ownerID = f.claim.ownerID;
+    f.producer.scope = { ...f.producer.scope, lease: 'lease-two' };
+    const gate = writerDeferred(); f.producer.gates['desktop.writer.renew'] = gate.promise;
+    const renewing = f.claim.renew({ expectedHost: f.producer.scope }); expect(f.claim.grant()).toBeNull();
+    await f.state.loadConnections(); expect(f.state.app.runtimeScope()).toEqual(f.producer.scope);
+    if (resumeBeforeACK) expect(f.state.resumeChatOperations()).toBe(1);
+    const beforeACK = f.chat.messageScope, writes = requests().filter(input => input.method !== 'GET').length;
+    if (resumeBeforeACK) { await expect(f.chat.stop()).rejects.toThrow('desktop_writer_required'); expect(beforeACK.generation).toBe(f.state.epoch()); }
+    else await f.chat.stop();
+    expect(requests().filter(input => input.method !== 'GET')).toHaveLength(writes); expect(f.claim.status().unknown).toBe(false);
+    gate.resolve(); expect(await renewing).not.toBeNull(); expect(f.claim.grant()).not.toBe(oldGrant);
+    expect(f.chat.rebuildOperationLane()).toBe(!resumeBeforeACK);
+    const rebound = f.chat.messageScope; expect(rebound.generation).toBe(f.state.epoch()); expect(rebound.generation).not.toBe(oldScope.generation);
+    if (resumeBeforeACK) expect(rebound).toBe(beforeACK);
+    await f.state.loadConnections(); expect(f.chat.rebuildOperationLane()).toBe(false); expect(f.chat.messageScope).toBe(rebound);
+    expect(f.chat.draftReady).toBe(ready); expect(f.chat.referenceScope).toBe(referenceScope); expect(f.chat.attachments()).toBe(files); expect(f.chat.draft()).toBe('Exact original draft');
+    expect(harness.getItem.mock.calls).toHaveLength(restores); expect(f.claim.ownerID).toBe(ownerID);
+    await f.chat.stop(); expect(requests().filter(input => input.path.includes('/interrupt?')).at(-1).expectedHost).toEqual(f.producer.scope); expect(f.chat.workStatus().activity).toBe('idle');
+    expect(await f.chat.send()).toBe(true); expect(await f.chat.command('goal', 'pause')).toBe(true);
+    expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.')).map(call => call.name)).toEqual(['desktop.writer.capabilities', 'desktop.writer.acquire', 'desktop.writer.renew']);
+  });
+  it.each(['origin', 'authorization'] as const)('a new lease with changed %s never reuses the original Chat/draft authority', async field => {
+    const f = await start(); f.chat.setDraftText('Prior authority draft'); await f.chat.flushDraft();
+    const nativeDispatch = harness.call.getMockImplementation()!, initialScope = f.chat.messageScope, ready = f.chat.draftReady, restores = harness.getItem.mock.calls.length;
+    f.producer.scope = { ...f.producer.scope, lease: 'lease-two' }; f.producer.authority = 'https://changed.invalid|changed-native-authorization';
+    harness.call.mockImplementation(async (name, input) => {
+      const result = await nativeDispatch(name, input);
+      if (name !== 'connection.list') return result;
+      return { ...result, connections: result.connections.map(connection => ({ ...connection, ...(field === 'origin' ? { url: 'https://changed.invalid' } : { authorizationID: 'changed-auth' }) })) };
+    });
+    await f.state.loadConnections(); expect(f.state.resumeChatOperations()).toBe(0); expect(f.chat.rebuildOperationLane()).toBe(false); expect(f.chat.messageScope).toBe(initialScope);
+    const writes = requests().filter(input => input.method !== 'GET').length; expect(await f.chat.send()).toBe(false); await f.chat.stop(); expect(requests().filter(input => input.method !== 'GET')).toHaveLength(writes);
+    expect(f.chat.draft()).toBe('Prior authority draft'); expect(f.chat.draftReady).toBe(ready); expect(harness.getItem.mock.calls).toHaveLength(restores);
+    expect(f.producer.calls.filter(call => call.name === 'desktop.writer.acquire')).toHaveLength(1);
+    expect(await f.claim.renew({ expectedHost: f.producer.scope })).toBeNull(); expect(f.claim.status().unknown).toBe(true);
+  });
+  it('same-authority lease rebind preserves pending, queue-edit and old history unknown protection without an extra restore or renewed authority', async () => {
+    const f = await start(); f.chat.setDraftText('Unresolved original owner');
+    f.chat.pendingSend.set({ id: 'unknown-original', text: 'Unresolved original owner', files: [], delivery: 'steer', uncertain: true });
+    f.chat.queueEdit.set({ id: 'unknown-queue', text: 'Queued original', files: [] }); f.chat.historyBusy.set(true); await f.chat.flushDraft();
+    f.claim.markUnknown(new Error('Synthetic original history receipt unresolved'));
+    const pending = f.chat.pendingSend(), edit = f.chat.queueEdit(), ready = f.chat.draftReady, restores = harness.getItem.mock.calls.length;
+    f.producer.scope = { ...f.producer.scope, lease: 'lease-two' }; await f.state.loadConnections();
+    expect(f.state.resumeChatOperations()).toBe(1); expect(f.chat.pendingSend()).toBe(pending); expect(f.chat.queueEdit()).toBe(edit);
+    expect(f.chat.writerRetirement().reasons).toEqual(expect.arrayContaining(['pending-send', 'queue-edit', 'history-unresolved']));
+    expect(f.chat.rebuildOperationLane()).toBe(false); expect(await f.chat.prepareWriterRetirement()).toBe(false);
+    expect(f.chat.pendingSend()).toBe(pending); expect(f.chat.queueEdit()).toBe(edit); expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true });
+    expect(f.chat.draftReady).toBe(ready); expect(harness.getItem.mock.calls).toHaveLength(restores);
+    expect(await f.claim.renew({ expectedHost: f.producer.scope })).toBeNull(); expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.'))).toHaveLength(2);
+  });
+  it('a same-authority rebind cannot wash a real in-flight write; a confirmed old ACK still leaves the original pending receipt for explicit reconciliation', async () => {
+    const f = await start(), gate = deferred<void>(), normal = handle; let entered = false;
+    handle = async (path, method, body) => { if (path.includes('/prompt?')) { entered = true; await gate.promise; } return normal(path, method, body); };
+    f.chat.setDraftText('In-flight original send'); const sending = f.chat.send(); await flush(); expect(entered).toBe(true); expect(f.claim.status().pending).toBe(1);
+    const pending = f.chat.pendingSend(); f.producer.scope = { ...f.producer.scope, lease: 'lease-two' }; await f.state.loadConnections(); expect(f.state.resumeChatOperations()).toBe(1);
+    expect(f.chat.writerRetirement().reasons).toContain('write-in-flight'); expect(f.chat.pendingSend()).toBe(pending); expect(await f.chat.prepareWriterRetirement()).toBe(false);
+    expect(await f.claim.renew({ expectedHost: f.producer.scope })).toBeNull(); expect(f.producer.calls.filter(call => call.name === 'desktop.writer.renew')).toEqual([]);
+    gate.resolve(); expect(await sending).toBe(false); expect(f.chat.pendingSend()).toBe(pending); expect(f.chat.pendingSend()?.uncertain).toBe(true); expect(f.chat.canReleaseWriter()).toBe(false);
+  });
+  it('a held old-scope preparation cannot dispatch with the renewed grant; the same original pending draft retries on the new lane', async () => {
+    const f = await start(), preparing = deferred<{ text: string }>(); f.chat.setDraftText('Captured before lease change');
+    const sending = f.chat.send({ prepare: () => preparing.promise }); await flush(); expect(f.chat.pendingSend()).not.toBeNull();
+    const before = harness.effects.length; f.state.runtimeLifecycle(); await flush(); const lifecycle = harness.effects[before]!;
+    harness.lifecycle = 'background'; lifecycle(); f.producer.scope = { ...f.producer.scope, lease: 'lease-two' };
+    expect(await f.claim.renew({ expectedHost: f.producer.scope })).not.toBeNull();
+    harness.lifecycle = 'active'; lifecycle(); await flush();
+    const writes = requests().filter(input => input.method !== 'GET').length;
+    preparing.resolve({ text: 'Late compiled body' }); expect(await sending).toBe(false);
+    expect(requests().filter(input => input.method !== 'GET')).toHaveLength(writes); expect(f.chat.pendingSend()?.uncertain).toBe(false);
+    expect(await f.chat.retrySend()).toBe(true);
+    expect(requests().filter(input => input.method === 'POST' && input.path.includes('/prompt?')).at(-1).expectedHost).toEqual(f.producer.scope);
+    expect(f.producer.calls.filter(call => call.name === 'desktop.writer.acquire')).toHaveLength(1);
+  });
+  it('a wrong-target verified producer grant is not guessed into a claim, not dispatched and not marked unknown', async () => {
+    const f = await start();
+    const other = f.client.claim({ expectedHost: f.producer.scope, target: { kind: 'session', id: 'different-session' }, current: () => true }); expect(await other.ready()).not.toBeNull();
+    f.grant.mockImplementation(other.grant); const before = requests().filter(input => input.method !== 'GET').length;
+    await expect(f.chat.stop()).rejects.toThrow('desktop_writer_required');
+    expect(requests().filter(input => input.method !== 'GET')).toHaveLength(before); expect(other.status().unknown).toBe(false); expect(f.unknown).not.toHaveBeenCalled();
+    expect(f.chat.writerRetirement().reasons).not.toContain('write-unconfirmed');
+  });
+  it('Host retirement fences a held original send and never dispatches through an owner that has retired', async () => {
+    const f = await start(), preparing = deferred<unknown>(); f.chat.setDraftText('Original pending'); f.chat.attachments.set([{ uri: 'attachment://retained', name: 'retained', mime: 'text/plain' }]);
+    const sending = f.chat.send({ prepare: () => preparing.promise as Promise<{ text: string }> }); await flush();
+    const before = requests().filter(input => input.method !== 'GET').length;
+    f.ownerOff(); await f.state.loadConnections({ forceReconnect: true });
+    preparing.resolve({ text: 'Late compiled text' }); expect(await sending).toBe(false);
+    expect(requests().filter(input => input.method !== 'GET')).toHaveLength(before); expect(f.chat.pendingSend()).not.toBeNull(); expect(f.chat.canReleaseWriter()).toBe(false);
+    expect(f.chat.draft()).toBe('Original pending'); expect(f.chat.attachments()).toEqual([{ uri: 'attachment://retained', name: 'retained', mime: 'text/plain' }]);
+  });
+  it('a verified native not-dispatched rejection retains the draft and permits a later send without sticky unknown', async () => {
+    const f = await start(), { writerNativeError } = await import('./desktop-writer-test-host');
+    const nativeDispatch = harness.call.getMockImplementation()!; let blocked = true;
+    harness.call.mockImplementation(async (name, input) => { if (blocked && name === 'runtime.request' && input.method === 'POST' && input.path.includes('/prompt?')) { blocked = false; throw writerNativeError('native_host_busy'); } return nativeDispatch(name, input); });
+    f.chat.setDraftText('Retry original draft');
+    expect(await f.chat.send()).toBe(false); expect(f.claim.status().unknown).toBe(false); expect(f.chat.pendingSend()).toBeNull(); expect(f.chat.draft()).toBe('Retry original draft');
+    expect(f.chat.writerRetirement().reasons).not.toContain('write-unconfirmed'); expect(f.unknown).not.toHaveBeenCalled();
+    expect(f.grant).toHaveBeenCalledTimes(1); expect(await f.chat.send()).toBe(true);
+  });
+  it.each(['compact', 'magic'] as const)('lost %s ACK can verify the same causal receipt while writable active is false, without replay or native unlock', async kind => {
+    const f = await localUnknown(kind);
+    handle = (path, method, body) => path.includes('/inbox?') ? [f.receipt()] : f.normal(path, method, body);
+    const writes = requests().filter(input => input.method !== 'GET').length, nativeCalls = f.producer.calls.filter(call => call.name.startsWith('desktop.writer.')).length;
+    f.grant.mockClear(); expect(await f.chat.retrySend()).toBe(true); expect(f.chat.pendingSend()).toBeNull();
+    expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true }); expect(f.claim.grant()).toBeNull(); expect(f.claim.canRelease()).toBe(false);
+    expect(f.grant).not.toHaveBeenCalled(); expect(requests().filter(input => input.method !== 'GET')).toHaveLength(writes);
+    expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.'))).toHaveLength(nativeCalls);
+    expect(await f.chat.send()).toBe(false); expect(f.chat.draft()).toBe(kind === 'compact' ? '/compact' : '/explore retained');
+    expect(await f.chat.prepareWriterRetirement()).toBe(true); expect(f.chat.canReleaseWriter()).toBe(true);
+    expect(await f.claim.release({ allowed: () => true })).toBe(false); expect(f.claim.status().unknown).toBe(true); expect(f.producer.calls.filter(call => call.name.startsWith('desktop.writer.'))).toHaveLength(nativeCalls);
+  });
+  for (const kind of ['compact', 'magic'] as const) {
+    it.each(['promoted', '404', 'offline', 'wrong-session', 'wrong-causal', 'malformed'] as const)(kind + ' read-only receipt verification distinguishes %s without clearing unknown on failure', async outcome => {
+      const f = await localUnknown(kind), pending = f.chat.pendingSend(), before = requests().length;
+      handle = (path, method, body) => {
+        if (path.includes('/inbox?')) { if (outcome === 'offline') throw new Error('Synthetic receipt offline'); return []; }
+        if (path.includes(`/message/${f.causalID}?`)) {
+          if (outcome === 'offline') throw new Error('Synthetic receipt offline');
+          if (outcome === '404') throw Object.assign(new Error('Synthetic missing receipt'), { status: 404 });
+          if (outcome === 'malformed') return {};
+          return { ...f.receipt(), ...(outcome === 'wrong-session' ? { sessionID: 'other' } : {}), ...(outcome === 'wrong-causal' ? { id: 'other-causal-id' } : {}) };
+        }
+        return f.normal(path, method, body);
+      };
+      f.grant.mockClear();
+      if (outcome === 'offline') await expect(f.chat.recoverPendingSend()).rejects.toThrow('offline');
+      else expect(await f.chat.recoverPendingSend()).toBe(outcome === 'promoted');
+      expect(f.chat.pendingSend()).toBe(outcome === 'promoted' ? null : pending); expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true });
+      expect(requests().slice(before).every(input => input.method === 'GET' && input.writerGrant === undefined && JSON.stringify(input.expectedHost) === JSON.stringify(f.producer.scope))).toBe(true); expect(f.grant).not.toHaveBeenCalled();
+    });
+    it.each(['background', 'Settings', 'other-route', 'scope', 'origin', 'authorization'] as const)(kind + ' recovery refuses %s admission before GET and keeps the exact pending', async boundary => {
+      const f = await localUnknown(kind), pending = f.chat.pendingSend(); handle = (path, method, body) => path.includes('/inbox?') ? [f.receipt()] : f.normal(path, method, body);
+      if (boundary === 'background') harness.lifecycle = 'background';
+      if (boundary === 'Settings') f.setReadAdmission(false);
+      if (boundary === 'other-route') { f.state.createChat({ ...target, id: 'another-route' }); await flush(); }
+      if (boundary === 'scope') f.state.app.runtimeScope.set({ ...f.producer.scope, lease: 'not-captured-lease' });
+      if (boundary === 'origin') f.state.app.connection.set({ ...f.state.app.connection()!, url: 'https://other.invalid' });
+      if (boundary === 'authorization') f.state.app.connection.set({ ...f.state.app.connection()!, authorizationID: 'other-auth' });
+      const before = requests().length; f.grant.mockClear(); expect(await f.chat.retrySend()).toBe(false); expect(requests()).toHaveLength(before); expect(f.chat.pendingSend()).toBe(pending); expect(f.grant).not.toHaveBeenCalled();
+    });
+    it.each([false, true])(kind + ' held GET loses admission across a modal/route retirement; resumed=%s cannot adopt old proof', async resume => {
+      const f = await localUnknown(kind), pending = f.chat.pendingSend(), gate = deferred<unknown>(); let entered = false;
+      handle = (path, method, body) => { if (path.includes('/inbox?')) { entered = true; return gate.promise; } return f.normal(path, method, body); };
+      const recovery = f.chat.recoverPendingSend(); await flush(); expect(entered).toBe(true); const before = requests().length;
+      f.setReadAdmission(false); if (resume) f.setReadAdmission(true); gate.resolve([f.receipt()]);
+      expect(await recovery).toBe(false); expect(f.chat.pendingSend()).toBe(pending); expect(requests()).toHaveLength(before); expect(f.claim.status().unknown).toBe(true);
+    });
+    it(kind + ' valid causal proof clears only its pending journal, preserves unrelated edits/history unknown and cannot unlock a malformed domain ACK', async () => {
+      const f = await localUnknown(kind, true); f.chat.draft.set('Unrelated later draft'); f.chat.attachments.set([{ uri: 'attachment://later', name: 'later', mime: 'text/plain' }]); f.chat.historyBusy.set(true);
+      handle = (path, method, body) => path.includes('/inbox?') ? [f.receipt()] : f.normal(path, method, body);
+      expect(await f.chat.recoverPendingSend()).toBe(true); expect(f.chat.pendingSend()).toBeNull(); expect(f.chat.draft()).toBe('Unrelated later draft'); expect(f.chat.attachments()).toHaveLength(1); expect(f.chat.historyBusy()).toBe(true);
+      expect(f.chat.writerRetirement().reasons).toEqual(expect.arrayContaining(['write-unconfirmed', 'history-unresolved'])); expect(await f.chat.prepareWriterRetirement()).toBe(false);
+      expect(f.claim.status()).toMatchObject({ unknown: true, hasGrant: true }); expect(await f.claim.release({ allowed: f.chat.canReleaseWriter })).toBe(false); expect(f.producer.calls.filter(call => call.name === 'desktop.writer.release')).toEqual([]);
+    });
+    it(kind + ' failed journal flush restores the original local pending instead of claiming read-only recovery completed', async () => {
+      const f = await localUnknown(kind), pending = f.chat.pendingSend(); handle = (path, method, body) => path.includes('/inbox?') ? [f.receipt()] : f.normal(path, method, body);
+      harness.setItem.mockRejectedValueOnce(new Error('Synthetic recovery journal offline'));
+      await expect(f.chat.recoverPendingSend()).rejects.toThrow('journal offline'); expect(f.chat.pendingSend()).toBe(pending); expect(f.claim.status().unknown).toBe(true); expect(f.chat.canReleaseWriter()).toBe(false);
+    });
+    it(kind + ' held receipt cannot clear a replaced pending object even when its causal ID is the same', async () => {
+      const f = await localUnknown(kind), pending = f.chat.pendingSend()!, gate = deferred<unknown>();
+      handle = (path, method, body) => path.includes('/inbox?') ? gate.promise : f.normal(path, method, body);
+      const recovery = f.chat.recoverPendingSend(); await flush(); const replacement = { ...pending, preparedText: 'Updated original journal' }; f.chat.pendingSend.set(replacement); gate.resolve([f.receipt()]);
+      expect(await recovery).toBe(false); expect(f.chat.pendingSend()).toBe(replacement); expect(f.claim.status().unknown).toBe(true);
+    });
+  }
+  it('a readOnly/shared Chat never receives receipt-recovery ownership, reads admission or clears the original pending', async () => {
+    const f = await localUnknown('compact'), pending = f.chat.pendingSend(), admission = vi.fn(() => f.state.captureHostOperation());
+    const reader = f.state.createChat(target, { readOnly: true, writerGrant: f.grant, recoveryReadOperation: admission }); await reader.draftReady; await flush();
+    const before = requests().length; f.grant.mockClear(); expect(await reader.recoverPendingSend()).toBe(false); expect(await reader.retrySend()).toBe(false);
+    expect(requests()).toHaveLength(before); expect(admission).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled(); expect(f.chat.pendingSend()).toBe(pending);
   });
 });
 
@@ -769,18 +1532,31 @@ describe('native chat authority and lifecycle', () => {
     let page = { messages: [{ messageID: 'a', role: 'user', ordinal: 1, parts: [{ type: 'text', text: 'old' }] }], complete: true, generation: 1, revision: 1 };
     handle = (path, method, body) => path.includes('/contact/messages') ? page : normal(path, method, body);
     const chat = state.createChat({ ...target, kind: 'assistant', id: 'bot' }); await flush(); expect(chat.messages()).toHaveLength(1);
+    expect(chat.contactReadPosition()).toEqual({ generation: 1, ordinal: 1, messageID: 'a' });
     page = { ...page, messages: [], generation: 2, revision: 2 }; await chat.load(); expect(chat.messages()).toEqual([]);
+    expect(chat.contactReadPosition()).toBeNull();
     page = { ...page, messages: [{ messageID: 'stale', role: 'user', ordinal: 1, parts: [] }], generation: 1, revision: 3 };
     await chat.load(); expect(chat.messages()).toEqual([]);
+    expect(chat.contactReadPosition()).toBeNull();
   });
   it('keeps newer contact stream text when an older GET resolves', async () => {
     const state = await import('./state'); await state.loadConnections(); const chat = state.createChat({ ...target, kind: 'assistant', id: 'bot' }); await flush();
     const late = deferred<unknown>(), normal = handle;
     handle = (path, method, body) => path.includes('/contact/messages') ? late.promise : normal(path, method, body);
     const read = chat.load();
-    emit('yuri:contact-bubble-delta', { assistantID: 'bot', turnID: 'turn', bubbleIndex: 0, delta: 'new text', done: false }, 'global');
+    emit('yuri:contact-bubble-delta', { assistantID: 'bot', turnID: 'turn', bubbleIndex: 0, delta: 'new text', done: false, occurredAt: 1234 }, 'global');
     late.resolve({ messages: [{ messageID: 'turn:bubble:1', role: 'assistant', ordinal: 1, parts: [{ type: 'text', text: 'old' }] }], complete: true, generation: 1, revision: 2 });
     await read; expect(chat.messages()[0]?.text).toBe('new text');
+    expect(chat.messages()[0]).toMatchObject({ contact: { kind: 'assistant', assistantID: 'bot', turnID: 'turn', bubbleIndex: 0, createdAt: 1234, status: 'streaming' }, content: [{ type: 'text', text: 'new text' }] });
+  });
+  it('keeps authoritative contact wire order across tail overlap with tied ordinals instead of ranking identities', async () => {
+    const state = await import('./state'); await state.loadConnections(); const normal = handle;
+    const row = (messageID: string, ordinal: number) => ({ messageID, role: 'assistant', ordinal, parts: [{ type: 'text', text: messageID }] });
+    let page = { messages: [row('z-first', 1), row('a-second', 1), row('tail', 2)], nextCursor: 'older', complete: false, generation: 1, revision: 1 };
+    handle = (path, method, body) => path.includes('/contact/messages') ? page : normal(path, method, body);
+    const chat = state.createChat({ ...target, kind: 'assistant', id: 'bot' }); await flush();
+    page = { ...page, messages: [row('a-second', 1), row('tail', 2), row('new', 3)], revision: 2 };
+    await chat.load(); expect(chat.messages().map(message => message.id)).toEqual(['z-first', 'a-second', 'tail', 'new']);
   });
   it('catalog tips fetch only their owning domain; token events never fetch catalogs', async () => {
     const state = await import('./state'); await state.loadConnections(); state.observeRuntime(() => { void state.refresh(); });

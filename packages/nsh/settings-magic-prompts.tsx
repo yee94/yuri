@@ -2,9 +2,10 @@ import { Scroll, signal, Text, View } from 'nsh';
 import { Button } from 'nsh/base';
 import { t } from './i18n';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
-import { SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime } from './settings-controls';
+import { SettingsEntityLayout, SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime } from './settings-controls';
 import { nativeMagicDescriptions, nativeMagicPlaceholders } from './settings-magic-defaults';
 import { createMagicPromptsEditor, emptyMagicPromptsSnapshot, magicPromptGroups, type MagicPromptEntry } from './settings-magic-state';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 export function SettingsMagicPrompts(props: SettingsCallbacks & SettingsRoute) {
   const lifetime = settingsPageLifetime(), snapshot = signal(emptyMagicPromptsSnapshot());
@@ -13,15 +14,24 @@ export function SettingsMagicPrompts(props: SettingsCallbacks & SettingsRoute) {
   lifetime.observeOperation(operation => { editor.replaceLane(operation); if (operation) void editor.load(); });
   const entry = magicPromptGroups.flatMap(group => [...group.entries]).find(item => item.id === props.entity);
   const disabled = () => !!snapshot().busy;
+  publishSettingsEditor({ current: lifetime.current, scope: lifetime.operation, pending: disabled,
+    dirty: () => { snapshot(); return Object.keys(snapshot().drafts).some(id => editor.dirty(id)); }, stamp: () => [snapshot().drafts],
+  });
   void editor.load();
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  const feedback = () => <View class="gap-2">
     <If when={snapshot().busy === 'load'}><Text class="text-muted-foreground">{t('settings.magicPrompts.page.loading.text')}</Text></If>
     <If when={!!snapshot().error}><View class="gap-2"><Text class="text-sm text-destructive">{t(snapshot().error!)}</Text><If when={!!snapshot().detail}><Text class="text-xs text-destructive">{snapshot().detail}</Text></If><If when={!snapshot().ready}><Button class={settingsAction} disabled={disabled()} onPress={() => { void editor.load(); }}><Text class="text-foreground">{t('settings.voice.volcengine.retry')}</Text></Button></If></View></If>
     <If when={!!snapshot().notice}><Text class="text-sm text-muted-foreground">{t(snapshot().notice!)}</Text></If>
-    <If when={!props.entity}><View class="gap-5">
-      <Text class="text-sm text-muted-foreground">{t('settings.magicPrompts.sidebar.description')}</Text>
-      <Each of={magicPromptGroups}>{group => <SettingsGroup title={t(`settings.magicPrompts.sidebar.group.${group().group}`)}><Each of={group().entries as readonly MagicPromptEntry[]}>{item => <Button testID={`magic-group-${item().id}`} class="min-h-12 py-3" onPress={() => props.onOpen({ page: 'magic-prompts', entity: item().id })}><Text class="text-foreground">{t(`settings.magicPrompts.sidebar.item.${item().label}`)}</Text></Button>}</Each></SettingsGroup>}</Each>
-    </View></If>
+  </View>;
+  const resetAll = () => <Button testID="magic-reset-all" class={settingsAction} disabled={!snapshot().ready || disabled() || !Object.keys(snapshot().overrides).length} onPress={() => { void editor.resetAll(); }}><Text class="text-foreground">{t(snapshot().busy === 'all' ? 'settings.magicPrompts.page.actions.resetting' : 'settings.magicPrompts.page.actions.resetAllOverrides')}</Text></Button>;
+  const promptList = () => <Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
+    <If when={!props.entity}>{feedback()}</If>
+    <Text class="text-sm text-muted-foreground">{t('settings.magicPrompts.sidebar.description')}</Text>
+    <Each of={magicPromptGroups}>{group => <SettingsGroup title={t(`settings.magicPrompts.sidebar.group.${group().group}`)}><Each of={group().entries as readonly MagicPromptEntry[]}>{item => <Button testID={`magic-group-${item().id}`} selected={props.entity === item().id} disabled={!lifetime.current() || disabled()} class="min-h-12 py-3 selected:bg-accent" onPress={() => { if (lifetime.current()) props.onOpen({ page: 'magic-prompts', entity: item().id }); }}><Text class="text-foreground">{t(`settings.magicPrompts.sidebar.item.${item().label}`)}</Text></Button>}</Each></SettingsGroup>}</Each>
+    <If when={!props.entity}>{resetAll()}</If>
+  </Scroll>;
+  return <SettingsEntityLayout editing={!!props.entity} list={promptList}><Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
+    {feedback()}
     <If when={!!props.entity && !entry}><Text class="text-destructive">{t('settings.view.unavailable.description')}</Text></If>
     <If when={!!entry && snapshot().ready}>
       <View class="gap-2"><Text class="text-xl font-semibold text-foreground">{entry ? t(`settings.magicPrompts.page.group.${entry.section}.title`) : ''}</Text><Text class="text-sm text-muted-foreground">{entry ? t(`settings.magicPrompts.page.group.${entry.section}.description`) : ''}</Text></View>
@@ -41,6 +51,6 @@ export function SettingsMagicPrompts(props: SettingsCallbacks & SettingsRoute) {
         </SettingsGroup>;
       }}</Each>
     </If>
-    <Button testID="magic-reset-all" class={settingsAction} disabled={!snapshot().ready || disabled() || !Object.keys(snapshot().overrides).length} onPress={() => { void editor.resetAll(); }}><Text class="text-foreground">{t(snapshot().busy === 'all' ? 'settings.magicPrompts.page.actions.resetting' : 'settings.magicPrompts.page.actions.resetAllOverrides')}</Text></Button>
-  </Scroll>;
+    {resetAll()}
+  </Scroll></SettingsEntityLayout>;
 }

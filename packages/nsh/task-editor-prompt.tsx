@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, keymap, lifecycle, List, signal, Text, untracked, View, windowSize, type InputRef, type ListRef } from 'nsh';
+import { cleanup, computed, effect, keymap, lifecycle, List, Overlay, signal, Text, untracked, View, windowSize, type InputRef, type ListRef } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { language, t } from './i18n';
 import { Icon } from './Icon';
@@ -11,12 +11,13 @@ import { createTaskPromptSearch, insertTaskPromptChoice, taskPromptTrigger, type
 /** Plain scheduled prompt text, not a Chat reference document or submission compiler. */
 export function TaskEditorPrompt(props: {
   value: string; onChange: (value: string) => void; fieldClass: string; disabled: boolean;
-  scope: ReferenceScope; active?: boolean; current: () => boolean; commandContext?: TaskCommandContext;
+  scope: ReferenceScope; active?: boolean; current: () => boolean; commandContext?: TaskCommandContext; presentation?: 'mobile' | 'desktop';
 }) {
   const request = captureHostRequest();
   let input: InputRef | undefined, list: ListRef | undefined;
   const caret = signal<{ start: number; end: number } | null>(null), selection = signal<{ start: number } | undefined>(undefined);
   const focused = signal(false), composing = signal(false), dismissed = signal(''), retry = signal(0), activeID = signal('');
+  const width = signal(0);
   const state = signal<TaskPromptState>({ rows: [], busy: false, failed: false });
   const owner = signal<TaskPromptSnapshot | null>(null);
   const enabled = () => (props.active ?? true) && lifecycle() === 'active' && props.current() && !props.disabled;
@@ -63,7 +64,7 @@ export function TaskEditorPrompt(props: {
     return keymap.bind({ up: () => key('up'), down: () => key('down'), enter: () => key('enter'), tab: () => key('tab'), escape: () => key('escape') }, { when: 'always', repeat: true });
   });
   cleanup(search.dispose);
-  return <View class="gap-2">
+  if (props.presentation !== 'desktop') return <View class="gap-2">
     <Input testID="features-task-prompt" ref={node => { input = node; }} class={props.fieldClass + ' min-h-36'} multiline value={props.value} disabled={props.disabled} selectedRange={selection()} onSelectionChange={range => { selection.set(undefined); caret.set(range); }} onCompositionChange={event => composing.set(event.composing)} onFocus={() => focused.set(true)} onBlur={() => focused.set(false)} submitBehavior={snapshot() ? 'submit' : 'newline'} onSubmit={() => key('enter')} onChange={event => { selection.set(undefined); caret.set(null); dismissed.set(''); props.onChange(event.value); }} placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')} accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')} />
     <If when={!!snapshot()}><View testID="task-editor-autocomplete" class="bg-card rounded-2xl border border-border/30 gap-1 py-2">
       <View class="flex-row items-center justify-between px-3"><Text class="text-xs text-muted-foreground">{t(snapshot()?.trigger.kind === 'slash-command' ? 'chat.autocomplete.tabs.commands' : 'chat.autocomplete.tabs.files')}</Text><Button testID="task-editor-autocomplete-close" class="min-h-8 min-w-8 items-center justify-center" accessibilityLabel={t('gitView.common.close')} onPress={dismiss}><Text class="text-foreground">×</Text></Button></View>
@@ -72,5 +73,18 @@ export function TaskEditorPrompt(props: {
       <If when={!!state().rows.length}><List testID="task-editor-autocomplete-list" ref={node => { list = node; }} keyboardDismissMode="none" each={state().rows} keyExtractor={row => row.presentation.id} style={{ height: referencePanelMetrics(state().rows, windowSize().height).listHeight }}>{row => <View testID={`task-editor-choice-${row().candidate?.kind ?? 'command'}-${row().candidate?.value ?? row().command}`} role="button" accessible focusable={false} accessibilityState={{ selected: activeID() === row().presentation.id }} class="active:bg-accent rounded-lg px-3 py-2 flex-row items-center gap-2" style={{ minHeight: referenceRowDensity.minHeight }} onPress={() => choose(row().presentation.id)}><Icon name={row().presentation.iconName} size={16} /><View class="flex-1"><Text class="text-foreground" style={referenceTitleStyle}>{row().presentation.title}</Text><If when={!!row().presentation.subtitle}><Text class="text-muted-foreground" style={{ ...referenceDescriptionStyle, numberOfLines: 1 }}>{row().presentation.subtitle}</Text></If></View><If when={!!row().presentation.badge}><Text class="text-xs text-muted-foreground">{row().presentation.badge}</Text></If></View>}</List></If>
       <If when={!state().busy && !state().rows.length && !state().failed}><Text class="px-3 text-xs text-muted-foreground">{t(snapshot()?.trigger.kind === 'slash-command' ? 'chat.commandAutocomplete.empty' : 'chat.fileMentionAutocomplete.empty')}</Text></If>
     </View></If>
+  </View>;
+  function Suggestions() {
+    return <View testID="task-editor-autocomplete" class="bg-card rounded-xl border border-border/30 gap-1 py-2">
+      <View class="flex-row items-center justify-between px-3"><Text class="text-xs text-muted-foreground">{t(snapshot()?.trigger.kind === 'slash-command' ? 'chat.autocomplete.tabs.commands' : 'chat.autocomplete.tabs.files')}</Text><Button testID="task-editor-autocomplete-close" class="min-h-8 min-w-8 items-center justify-center" accessibilityLabel={t('gitView.common.close')} onPress={dismiss}><Text class="text-foreground">×</Text></Button></View>
+      <If when={state().busy && !state().rows.length}><Text class="px-3 text-xs text-muted-foreground">{t('common.loading')}</Text></If>
+      <If when={state().failed}><Button testID="task-editor-autocomplete-retry" class="min-h-11 px-3" onPress={() => retry.set(retry() + 1)}><Text class="text-xs text-destructive">{t('common.unavailable')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
+      <If when={!!state().rows.length}><List testID="task-editor-autocomplete-list" ref={node => { list = node; }} keyboardDismissMode="none" each={state().rows} keyExtractor={row => row.presentation.id} style={{ height: referencePanelMetrics(state().rows, windowSize().height).listHeight }}>{row => <View testID={`task-editor-choice-${row().candidate?.kind ?? 'command'}-${row().candidate?.value ?? row().command}`} role="button" accessible focusable={false} accessibilityState={{ selected: activeID() === row().presentation.id }} class="active:bg-accent rounded-lg px-3 py-2 flex-row items-center gap-2" style={{ minHeight: referenceRowDensity.minHeight }} onPress={() => choose(row().presentation.id)}><Icon name={row().presentation.iconName} size={16} /><View class="flex-1"><Text class="text-foreground" style={referenceTitleStyle}>{row().presentation.title}</Text><If when={!!row().presentation.subtitle}><Text class="text-muted-foreground" style={{ ...referenceDescriptionStyle, numberOfLines: 1 }}>{row().presentation.subtitle}</Text></If></View><If when={!!row().presentation.badge}><Text class="text-xs text-muted-foreground">{row().presentation.badge}</Text></If></View>}</List></If>
+      <If when={!state().busy && !state().rows.length && !state().failed}><Text class="px-3 text-xs text-muted-foreground">{t(snapshot()?.trigger.kind === 'slash-command' ? 'chat.commandAutocomplete.empty' : 'chat.fileMentionAutocomplete.empty')}</Text></If>
+    </View>;
+  }
+  return <View class="gap-2" onLayout={event => { if (event.bounds.size.width !== width()) width.set(event.bounds.size.width); }}>
+    <Input testID="features-task-prompt" ref={node => { input = node; }} class={props.fieldClass} style={{ height: 256 }} multiline value={props.value} disabled={props.disabled} selectedRange={selection()} onSelectionChange={range => { selection.set(undefined); caret.set(range); }} onCompositionChange={event => composing.set(event.composing)} onFocus={() => focused.set(true)} onBlur={() => focused.set(false)} submitBehavior={snapshot() ? 'submit' : 'newline'} onSubmit={() => key('enter')} onChange={event => { if (!enabled()) return; selection.set(undefined); caret.set(null); dismissed.set(''); props.onChange(event.value); }} placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')} accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')} />
+    <If when={!!snapshot()}><Overlay anchor={input} placement="top" align="start" offset={6} margin={12} style={{ width: width() }} onCancel={dismiss} onPressOutside={dismiss}><Suggestions /></Overlay></If>
   </View>;
 }

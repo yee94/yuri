@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["desktop-terminal.tsx", "desktop-terminal-core.ts", "desktop-terminal-fixture.tsx", "desktop-terminal-signals.fixture.tsx", "desktop-terminal-dock-preview.fixture.tsx"],
+  "exclude": ["*.test.ts", "tests"]
+}

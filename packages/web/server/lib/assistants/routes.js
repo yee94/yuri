@@ -1,5 +1,5 @@
 import { AssistantError, createAssistantsService } from './service.js';
-import { isSafeInlineImageMime } from './contact-attachments.js';
+import { sendContactAttachment } from './contact-attachment-response.js';
 import { createChatCompletion } from '../llm/completions.js';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
 import path from 'node:path';
@@ -89,22 +89,7 @@ export const registerAssistantRoutes = (app, dependencies) => {
   app.get('/api/yuri/assistants/:assistantID/contact/attachments/:attachmentID', (req, res) => {
     Promise.resolve()
       .then(() => service.getAssistantContactAttachment(req.params.assistantID, req.params.attachmentID))
-      .then((file) => {
-        res.status(200);
-        res.setHeader('Content-Type', file.mime || 'application/octet-stream');
-        res.setHeader('Content-Length', String(file.size));
-        res.setHeader('ETag', file.etag || `"${file.sha256}"`);
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        // App owns cache; do not let browsers/CDNs immutable-cache attachment bodies.
-        res.setHeader('Cache-Control', 'private, no-store');
-        const safeInline = isSafeInlineImageMime(file.mime);
-        const name = file.filename ? encodeURIComponent(file.filename) : 'attachment';
-        res.setHeader(
-          'Content-Disposition',
-          `${safeInline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
-        );
-        res.end(file.buffer);
-      })
+      .then((file) => sendContactAttachment(req, res, file))
       .catch((error) => {
         const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error';
         const status = code === 'not_found' ? 404

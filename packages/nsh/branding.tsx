@@ -6,8 +6,8 @@ import wordmarkWhite from './assets/brand/yuri-wordmark-white.svg';
 
 /** Brand dimensions in native points, shared by welcome and About surfaces. */
 export const yuriBrandSizes = {
-  mark: { compact: 32, standard: 64, hero: 96 },
-  wordmark: { compact: 80, standard: 112, hero: 160 },
+  mark: { compact: 24, standard: 64, hero: 96 },
+  wordmark: { compact: 36, standard: 112, hero: 160 },
 } as const;
 
 export interface YuriBrandProps {

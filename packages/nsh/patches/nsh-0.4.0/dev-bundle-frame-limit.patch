@@ -1,0 +1,195 @@
+--- a/crates/nsh-dev/src/client.rs
++++ b/crates/nsh-dev/src/client.rs
+@@ -6,7 +6,7 @@
+     time::Duration,
+ };
+ 
+-use tungstenite::{Message, WebSocket, stream::MaybeTlsStream};
++use tungstenite::{Message, WebSocket, protocol::WebSocketConfig, stream::MaybeTlsStream};
+ 
+ use crate::protocol::{
+     BundleFormat, ClientMessage, HostPlatform, LogLevel, PROTOCOL_VERSION, ServerMessage,
+@@ -159,7 +159,10 @@
+                     if let Err(TryRecvError::Disconnected) = log_rx.try_recv() {
+                         return;
+                     }
+-                    match tungstenite::connect(url.as_str()) {
++                    // The dev server sends whole bundles as single frames. Match its
++                    // 64 MiB message bound without allowing unbounded frames.
++                    let config = WebSocketConfig::default().max_frame_size(Some(64 << 20));
++                    match tungstenite::client::connect_with_config(url.as_str(), Some(config), 3) {
+                         Ok((socket, _)) => {
+                             backoff = Duration::from_millis(100);
+                             on_event(DevEvent::Connected);
+--- a/crates/nsh-dev/tests/roundtrip.rs
++++ b/crates/nsh-dev/tests/roundtrip.rs
+@@ -460,3 +460,169 @@
+         ["Create { id: 2, kind: View }"]
+     );
+ }
++
++#[test]
++fn the_default_socket_rejects_a_bundle_above_16_mib() {
++    use nsh_dev::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
++    use tungstenite::{Message, error::CapacityError, stream::MaybeTlsStream};
++
++    let server = DevServer::start("127.0.0.1:0".parse().unwrap(), "bc-1", None, |_| {}).unwrap();
++    let size = 17 << 20;
++    server.publish(
++        vec![0x5a; size],
++        "source".into(),
++        None,
++        AppInfo::default(),
++        None,
++        Vec::new(),
++    );
++    let (mut socket, _) =
++        tungstenite::connect(format!("ws://{}{WS_PATH}", server.local_addr())).unwrap();
++    if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
++        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
++        stream.set_write_timeout(Some(TIMEOUT)).unwrap();
++    }
++    let hello = ClientMessage::Hello {
++        protocol: PROTOCOL_VERSION,
++        bytecode_version: "bc-1".into(),
++        device: "default-frame-limit-test".into(),
++        platform: Some(HostPlatform::MacOs),
++        ui_sets: Some(Vec::new()),
++        tests: false,
++    };
++    socket
++        .send(Message::Text(serde_json::to_string(&hello).unwrap().into()))
++        .unwrap();
++    for is_bundle in [false, true] {
++        let Message::Text(text) = socket.read().unwrap() else {
++            panic!("expected the protocol announcement");
++        };
++        let message: ServerMessage = serde_json::from_str(&text).unwrap();
++        assert_eq!(matches!(message, ServerMessage::Bundle { .. }), is_bundle);
++    }
++    assert!(matches!(
++        socket.read(),
++        Err(tungstenite::Error::Capacity(CapacityError::MessageTooLong {
++            size: actual,
++            max_size,
++        })) if actual == size && max_size == 16 << 20
++    ));
++}
++
++#[test]
++fn a_large_bundle_round_trips_through_a_redirect() {
++    let server = DevServer::start("127.0.0.1:0".parse().unwrap(), "bc-1", None, |_| {}).unwrap();
++    let size = 17 << 20;
++    server.publish(
++        vec![0x5a; size],
++        "source".into(),
++        Some("{\"version\":3}".into()),
++        AppInfo::default(),
++        None,
++        Vec::new(),
++    );
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let url = format!("ws://{}{WS_PATH}", listener.local_addr().unwrap());
++    let destination = format!("ws://{}{WS_PATH}", server.local_addr());
++    let redirect = std::thread::spawn(move || {
++        let (stream, _) = listener.accept().unwrap();
++        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
++        stream.set_write_timeout(Some(TIMEOUT)).unwrap();
++        let result =
++            tungstenite::accept_hdr(stream, |_: &tungstenite::handshake::server::Request, _| {
++                Err(tungstenite::http::Response::builder()
++                    .status(307)
++                    .header("Location", destination)
++                    .body(None)
++                    .unwrap())
++            });
++        assert!(matches!(
++            result,
++            Err(tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response)))
++                if response.status() == 307
++        ));
++    });
++    let (tx, rx) = mpsc::channel();
++    let _client = DevClient::start(url, host("large-bundle-test", "bc-1"), move |e| {
++        let _ = tx.send(e);
++    })
++    .unwrap();
++    assert!(matches!(
++        rx.recv_timeout(TIMEOUT).unwrap(),
++        DevEvent::Connected
++    ));
++    match rx.recv_timeout(TIMEOUT).unwrap() {
++        DevEvent::Bundle {
++            version: 1,
++            format: BundleFormat::Bytecode,
++            bytes,
++            source_map,
++            ..
++        } => {
++            assert_eq!(bytes.len(), size);
++            assert!(bytes.iter().all(|&byte| byte == 0x5a));
++            assert_eq!(source_map.as_deref(), Some("{\"version\":3}"));
++        }
++        other => panic!("large bundle was not delivered: {other:?}"),
++    }
++    redirect.join().unwrap();
++}
++
++#[test]
++fn the_64_mib_limit_accepts_its_boundary_rejects_overflow_and_recovers() {
++    let server = DevServer::start("127.0.0.1:0".parse().unwrap(), "bc-1", None, |_| {}).unwrap();
++    let limit = 64 << 20;
++    server.publish(
++        vec![0x5a; limit],
++        "source".into(),
++        None,
++        AppInfo::default(),
++        None,
++        Vec::new(),
++    );
++    let url = format!("ws://{}{WS_PATH}", server.local_addr());
++    let (tx, rx) = mpsc::channel();
++    let _client = DevClient::start(url, host("bounded-bundle-test", "bc-1"), move |e| {
++        let _ = tx.send(e);
++    })
++    .unwrap();
++    assert!(matches!(
++        rx.recv_timeout(TIMEOUT).unwrap(),
++        DevEvent::Connected
++    ));
++    match rx.recv_timeout(TIMEOUT).unwrap() {
++        DevEvent::Bundle {
++            version: 1, bytes, ..
++        } => {
++            assert_eq!(bytes.len(), limit);
++            assert!(bytes.iter().all(|&byte| byte == 0x5a));
++        }
++        other => panic!("exactly 64 MiB was not delivered: {other:?}"),
++    }
++    server.publish(
++        vec![0x5a; limit + 1],
++        "source".into(),
++        None,
++        AppInfo::default(),
++        None,
++        Vec::new(),
++    );
++    assert!(matches!(
++        rx.recv_timeout(TIMEOUT).unwrap(),
++        DevEvent::Disconnected
++    ));
++    server.publish(
++        vec![1, 2, 3],
++        "small source".into(),
++        None,
++        AppInfo::default(),
++        None,
++        Vec::new(),
++    );
++    match next_non_status(&rx) {
++        DevEvent::Bundle {
++            version: 3, bytes, ..
++        } => assert_eq!(bytes, [1, 2, 3]),
++        other => panic!("small bundle after reconnect was not delivered: {other:?}"),
++    }
++}

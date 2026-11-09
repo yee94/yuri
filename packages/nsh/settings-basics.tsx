@@ -23,6 +23,7 @@ import { SettingsVoiceTests } from './settings-voice-test';
 import { createSettingsVoiceConfirmation } from './settings-voice-confirm';
 import { createSettingsVoiceRecognitionAdapter } from './settings-voice-recognition';
 import type { VoiceTestAsrAdapter, VoiceTestConfirmation, VoiceTestKind } from './settings-voice-test-core';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 function optionTitle(key: string, value: string) {
   const labels: Record<string, Record<string, I18nKey>> = {
@@ -53,6 +54,7 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
   let scroll!: ScrollRef;
   const navigation = createSettingsTargetNavigation(() => scroll, state.current, () => state.operation()?.current ?? (() => false));
   const prompt = signal(''), initialPrompt = signal('');
+  const initialData = signal<Row>({});
   const pageFields = settingsBasicFields(props.page);
    const isLocalPage = ['instances', 'assistants', 'summary-ai'].includes(props.page);
   const supported = isLocalPage || !!pageFields.length;
@@ -64,6 +66,10 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
     changed: value => { data.set(value.data); changes.set(value.changes); voiceRevision.set(value.draftRevision); state.ready.set(value.ready); },
     invalidField: key => { const field = pageFields.find(field => field.key === key)!; return `${t(field.title)}: ${field.min ?? 0}–${field.max ?? '∞'}`; },
   }) : null;
+  publishSettingsEditor({ current: state.current, scope: state.operation, pending: () => state.busy() || voice?.pending() === true,
+    dirty: () => { const edits = changes(); return prompt() !== initialPrompt() || (voice ? voice.dirty() : Object.entries(edits).some(([key, value]) => !Object.is(value, initialData()[key]))); },
+    stamp: () => [changes(), prompt()],
+  });
   type RecognitionAdapter = Awaited<ReturnType<typeof createSettingsVoiceRecognitionAdapter>>;
   let recognition: RecognitionAdapter | null = null, recognitionGeneration = 0;
   const retiredRecognition = new Set<RecognitionAdapter>();
@@ -114,6 +120,7 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
       else if (supported) {
         const result = settingsObject(await operation.request(props.page === 'voice' ? '/api/voice/settings' : '/api/config/settings'));
         if (!operation.current()) return;
+        initialData.set(result);
         data.set({ ...Object.fromEntries(pageFields.filter(field => field.kind !== 'secret').map(field => field.key).filter(key => key in result).map(key => [key, result[key]])), ...changes() });
         if (props.page === 'behavior') {
           const document = settingsObject(await operation.request('/api/behavior/agents-md'));
@@ -208,6 +215,7 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
       }
       if (Object.keys(snapshot).length) await operation.transaction(props.page === 'voice' ? '/api/voice/settings' : '/api/config/settings', 'PUT', snapshot);
       if (!operation.current()) return;
+      initialData.set({ ...initialData(), ...snapshot });
       for (const field of pageFields) if (field.kind === 'secret') data.set({ ...data(), [field.key]: '' });
       changes.set({}); initialPrompt.set(prompt());
       state.notice.set(t(props.page === 'behavior' ? 'settings.behavior.page.toast.saved' : 'filesView.editor.saved'));

@@ -8,19 +8,25 @@ import { createScheduledCatalog, createScheduledHistory, scheduledRunTarget, sor
 import { AssistantAvatar } from './assistants-avatar-live';
 import { assistantContacts, readAssistantSnapshot, snapshotBots } from './assistants-core';
 import { formatCompactRunDuration, resolveRunDurationMs } from '../ui/src/lib/scheduledTaskRunDuration';
+import { DesktopScheduleHistory, DesktopScheduleWorkspace, type DesktopSchedulePresentation } from './desktop-schedules';
 
 const quiet = 'min-h-11 min-w-11 px-2 rounded-full items-center justify-center active:bg-accent disabled:opacity-40';
 const action = 'min-h-11 px-4 py-3 rounded-2xl bg-secondary active:bg-accent items-center justify-center disabled:opacity-40';
 const card = 'bg-card border border-border/30 rounded-[22px] shadow-sm';
 type Catalog = ReturnType<typeof createScheduledCatalog>;
 type Filter = 'all' | 'active' | 'paused';
-export type ScheduledHomeProps = {
+export type ScheduledHomeProps = DesktopSchedulePresentation & {
   onCreate: () => void;
   onEdit: (item: Row) => void;
   onOpenSession: (target: ChatTarget) => void;
   onOpenTask?: (item: Row) => void;
   onOpenAssistant?: (target: ChatTarget) => void;
   active?: boolean;
+  presentation?: 'mobile' | 'desktop';
+  interactive?: boolean;
+  /** Window owner may commit this navigation only after the existing editor's
+   * departure guard. Ordinary history controls retain changeView admission. */
+  onHistoryCommit?: (commit: ((item: Row | null) => void) | null) => void;
 };
 export type ScheduledTaskDetailProps = { item: Row; onEdit: (item: Row) => void; onOpenSession: (target: ChatTarget) => void; onDeleted?: () => void; active?: boolean };
 
@@ -148,7 +154,7 @@ function RunCard(props: { run: ScheduledTaskRun; now: number; current: () => boo
   </View>;
 }
 
-function History(props: { identity?: TaskIdentity; header?: JSX.Element; onOpenSession: (target: ChatTarget) => void; active?: boolean }) {
+function History(props: { identity?: TaskIdentity; header?: JSX.Element; onOpenSession: (target: ChatTarget) => void; active?: boolean; interactive?: boolean; presentation?: 'mobile' | 'desktop'; editorOpen?: boolean }) {
   const history = createScheduledHistory(props.identity);
   const active = () => history.current() && props.active !== false && lifecycle() === 'active', now = signal(Date.now());
   effect(() => { const visible = active(); untracked(() => { if (visible) void history.load(); else history.suspend(); }); });
@@ -159,6 +165,7 @@ function History(props: { identity?: TaskIdentity; header?: JSX.Element; onOpenS
     return () => clearInterval(timer);
   });
   observeRuns(active, () => { void history.load(); });
+  if (props.presentation === 'desktop') return <DesktopScheduleHistory history={history} active={active()} interactive={props.interactive !== false} editorOpen={props.editorOpen} now={now()} onOpenSession={props.onOpenSession} />;
   return <List testID="scheduled-history" class="flex-1" contentClass="px-[18px] pt-4 pb-8 gap-4" each={history.runs()} keyExtractor={run => run.id}
     refreshing={history.loading()} onRefresh={() => { void history.load(); }}
     header={() => <View class="gap-3">{props.header}<If when={!!history.error()}><View class="gap-2">
@@ -210,6 +217,41 @@ function ScopedHome(props: ScheduledHomeProps) {
   const openHistory = (item: Row) => { if (!catalog.current()) return; historyTask.set(item); view.set('history'); };
   effect(() => { const visible = active(); untracked(() => { if (visible) void catalog.load(); else catalog.suspend(); }); });
   observeRuns(active, () => { void catalog.load(); });
+  if (props.presentation === 'desktop') {
+    const historyStarted = signal(false), contractError = signal('');
+    const admitted = () => active() && props.interactive !== false;
+    let interactionRevision = 0;
+    effect(() => { if (!admitted()) interactionRevision++; });
+    const invoke = (work: () => void) => { if (admitted()) work(); };
+    props.onHistoryCommit?.(item => { if (admitted()) { historyTask.set(item); historyStarted.set(true); view.set('history'); } });
+    cleanup(() => props.onHistoryCommit?.(null));
+    function changeView(commit: () => void) {
+      if (!admitted()) return;
+      const revision = interactionRevision;
+      const complete = () => { if (admitted() && revision === interactionRevision) { contractError.set(''); commit(); } };
+      if (props.requestViewChange) { props.requestViewChange(complete); return; }
+      if (props.editorOpen) { contractError.set(t('common.unavailable')); return; }
+      complete();
+    }
+    async function action(item: Row, kind: 'run' | 'toggle' | 'delete') {
+      if (!admitted() || catalog.busy(item)) return;
+      const operation = catalog.capture(), revision = interactionRevision;
+      if (kind === 'delete') {
+        const answer = await AlertDialog.show({ title: t('sessions.scheduledTasks.dialog.actions.delete'), description: t('sessions.scheduledTasks.dialog.confirm.deleteTask', { taskName: text(record(item.task).name) }), actions: [{ id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }, { id: 'delete', label: t('sessions.scheduledTasks.dialog.actions.delete'), role: 'destructive' }] });
+        if (answer.action !== 'delete') return;
+      }
+      if (!admitted() || !operation.current() || revision !== interactionRevision) return;
+      const latest = catalog.latest(item); if (!latest) return;
+      // Desktop Web Run now acknowledges the run in place; only history opens a session.
+      await catalog.mutate(latest, kind);
+    }
+    return <DesktopScheduleWorkspace {...props} catalog={catalog} active={active()} interactive={admitted()} tasks={filtered()} view={view()} filter={filter()} search={search()} historyTask={historyTask()} contractError={contractError()} scheduleLabel={scheduleSummary}
+      onView={next => { if (next === view()) return; changeView(() => { view.set(next); if (next === 'history') historyStarted.set(true); }); }}
+      onFilter={next => invoke(() => filter.set(next))} onSearch={next => invoke(() => search.set(next))}
+      onCreate={() => invoke(() => { if (app.projects().length) props.onCreate(); })} onEdit={item => invoke(() => { const latest = catalog.latest(item); if (latest) props.onEdit(latest); })}
+      onHistory={item => changeView(() => { historyTask.set(item); historyStarted.set(true); view.set('history'); })} onAction={(item, kind) => { void action(item, kind); }}
+      history={<If when={historyStarted()}><Each of={[historyTask()]} key={item => item ? taskKey(item) : 'global'}>{selected => <History presentation="desktop" active={active() && view() === 'history'} interactive={admitted()} editorOpen={props.editorOpen} identity={selected() ? taskIdentity(selected()!) : undefined} onOpenSession={target => invoke(() => props.onOpenSession(target))} />}</Each></If>} />;
+  }
   return <View class="flex-1 bg-background">
     <View class="px-[18px] pt-5 gap-7">
       <View class="flex-row items-center gap-3"><Text role="header" class="flex-1 font-semibold text-foreground" style={{ fontSize: 32 }}>{t('sessions.scheduledTasks.dialog.title')}</Text><If when={!!props.onOpenAssistant && active()}><ScheduleAssistant onOpen={target => props.onOpenAssistant?.(target)} current={active} /></If></View>

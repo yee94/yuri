@@ -18,7 +18,7 @@ import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerCommonRequestMiddleware } from '../opencode/core-routes.js';
 import { applyRuntimeCorsHeaders } from '../request-cors.js';
-import { isSafeInlineImageMime } from './contact-attachments.js';
+import { sendContactAttachment } from './contact-attachment-response.js';
 import { AssistantError, createAssistantsService } from './service.js';
 
 const require = createRequire(import.meta.url);
@@ -124,21 +124,7 @@ const buildApp = (directory, serviceOverrides = {}) => {
   app.get('/api/yuri/assistants/:assistantID/contact/attachments/:attachmentID', (req, res) => {
     Promise.resolve()
       .then(() => service.getAssistantContactAttachment(req.params.assistantID, req.params.attachmentID))
-      .then((file) => {
-        res.status(200);
-        res.setHeader('Content-Type', file.mime || 'application/octet-stream');
-        res.setHeader('Content-Length', String(file.size));
-        res.setHeader('ETag', file.etag || `"${file.sha256}"`);
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'private, no-store');
-        const safeInline = isSafeInlineImageMime(file.mime);
-        const name = file.filename ? encodeURIComponent(file.filename) : 'attachment';
-        res.setHeader(
-          'Content-Disposition',
-          `${safeInline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
-        );
-        res.end(file.buffer);
-      })
+      .then((file) => sendContactAttachment(req, res, file))
       .catch((error) => {
         const code = error instanceof AssistantError ? error.code : error?.code || 'internal_error';
         const status = code === 'not_found' ? 404 : 400;
@@ -273,6 +259,23 @@ describe('contact attachments real HTTP (core-routes + assistants routes)', () =
     expect(gotJson.equals(jsonBytes)).toBe(true);
     expect(getJson.headers.get('content-disposition')).toMatch(/^attachment/i);
     expect(getJson.headers.get('cache-control')).toMatch(/no-store/i);
+
+    const jsonURL = `${base}/api/yuri/assistants/${encodeURIComponent(assistant.id)}/contact/attachments/${encodeURIComponent(jsonDesc.attachmentID)}`;
+    const partial = await fetch(jsonURL, { headers: { Range: 'bytes=7-', 'If-Range': getJson.headers.get('etag') } });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe(`bytes 7-${jsonBytes.length - 1}/${jsonBytes.length}`);
+    expect(partial.headers.get('content-length')).toBe(String(jsonBytes.length - 7));
+    expect(partial.headers.get('etag')).toBe(getJson.headers.get('etag'));
+    const resumed = Buffer.concat([jsonBytes.subarray(0, 7), Buffer.from(await partial.arrayBuffer())]);
+    expect(resumed.equals(jsonBytes)).toBe(true);
+    expect(createHash('sha256').update(resumed).digest('hex')).toBe(jsonDesc.sha256);
+    const wrongValidator = await fetch(jsonURL, { headers: { Range: 'bytes=7-', 'If-Range': '"other-object"' } });
+    expect(wrongValidator.status).toBe(200);
+    expect(Buffer.from(await wrongValidator.arrayBuffer()).equals(jsonBytes)).toBe(true);
+    const wrongAssistant = await fetch(`${base}/api/yuri/assistants/other-assistant/contact/attachments/${encodeURIComponent(jsonDesc.attachmentID)}`, {
+      headers: { Range: 'bytes=7-', 'If-Range': getJson.headers.get('etag') },
+    });
+    expect(wrongAssistant.status).toBe(404);
 
     expect(directory.startsWith(os.tmpdir()) || directory.includes('/T/')).toBe(true);
   });

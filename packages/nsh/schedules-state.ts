@@ -32,7 +32,18 @@ function scope() {
   let alive = true;
   const dispose = () => { alive = false; };
   cleanup(dispose);
-  return { current: () => alive && operations.current(), capture: operations.capture, onRetire: operations.onRetire, dispose };
+  function capture() {
+    if (!alive) throw new Error('page_operation_stale');
+    const lane = operations.capture();
+    const current = () => alive && lane.current();
+    return { ...lane, current, request: async (...args: Parameters<typeof lane.request>) => {
+      if (!current()) throw new Error('page_operation_stale');
+      const result = await lane.request(...args);
+      if (!current()) throw new Error('page_operation_stale');
+      return result;
+    } };
+  }
+  return { current: () => alive && operations.current(), capture, onRetire: operations.onRetire, dispose };
 }
 
 function isRun(value: unknown): value is ScheduledTaskRun {

@@ -12,6 +12,7 @@ import * as indicator from '../ui/src/mobile/projects/mobileSessionIndicator';
 import * as summary from '../ui/src/lib/sessionChangeSummary';
 import * as orderGesture from './projects-order-gesture';
 import * as orderTouch from './projects-order-touch';
+import * as sidebar from './projects-sidebar';
 
 const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'projects.tsx'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2023 } }).outputText;
@@ -46,7 +47,8 @@ beforeEach(() => {
        captureHostOperation: () => { const captured = generation, id = app.connection().id; return { current: () => captured === generation && id === app.connection().id, request: async (path: string, method?: string, body?: unknown) => { if (captured !== generation || id !== app.connection().id) throw new Error('host_operation_stale'); return body !== undefined ? request(path, method, body) : method !== undefined ? request(path, method) : request(path); } }; },
      },
      './projects-order-gesture': orderGesture,
-     './projects-order-touch': orderTouch,
+      './projects-order-touch': orderTouch,
+      './projects-sidebar': sidebar,
      './projects-delete': deletion, './projects-attention': { ...attention, projectsAttention: attentionStore }, '../ui/src/lib/sessionChangeSummary': summary,
      './projects-attention-blocking': blocking, './projects-attention-indicator': {}, '../ui/src/mobile/projects/mobileSessionIndicator': indicator,
   };
@@ -60,6 +62,45 @@ beforeEach(() => {
 afterEach(() => { dispose.forEach(stop => stop()); vi.useRealTimers(); });
 
 describe('native projects authority', () => {
+  it('exposes only retained authoritative parents/children to the lazy switcher, never the cold app seed', async () => {
+    app.sessions.set([{ id: 'cold', title: 'Cold partial startup', directory: '/repo', updated: 100 }]);
+    const controller = module.createProjectsController();
+    expect(controller.catalogReady()).toBe(false); expect(controller.retainedSessions()).toEqual([]);
+    const normal = handle;
+    handle = path => path.startsWith('/api/session?') ? { data: [{ ...row('child'), parentID: 'head' }], cursor: {} } : normal(path);
+    await controller.refresh(); expect(controller.catalogReady()).toBe(true);
+    const loaded = handle, delayed = deferred();
+    handle = () => delayed.promise;
+    const paging = controller.loadDirectory('/repo'); expect(controller.catalogLoading()).toBe(true);
+    delayed.resolve({ data: [], cursor: {} }); await paging; expect(controller.catalogLoading()).toBe(false);
+    handle = loaded;
+    await controller.sidebar.loadChildren(controller.sessions().find(row => row.id === 'head')!);
+    const before = request.mock.calls.length;
+    for (let i = 0; i < 50; i++) expect(controller.retainedSessions().map(row => row.id)).toEqual(['head', 'child']);
+    expect(request).toHaveBeenCalledTimes(before);
+    handle = () => { throw new Error('offline'); }; await controller.refresh();
+    expect(controller.catalogReady()).toBe(true); expect(controller.error()).toContain('offline');
+    expect(controller.retainedSessions().map(row => row.id)).toEqual(['head', 'child']);
+    controller.dispose(); expect(controller.retainedSessions()).toEqual([]);
+  });
+  it('keeps initial readiness unknown on failed/partial index and resolves pinned metadata from the owning Host', async () => {
+    app.sessions.set([{ id: 'pin', title: 'Cold seed', directory: '/repo', updated: 1 }]);
+    const controller = module.createProjectsController(), normal = handle;
+    handle = path => path === '/api/yuri/session-index' ? { available: true, directories: [], pinnedSessionIds: ['pin'], sync: { failedDirectories: ['/failed'] } }
+      : path === '/api/yuri/session-index/session/pin' ? { session: { ...row('pin'), title: 'Host title', time: { created: 123, updated: 200 }, metadata: { yuri: { titleRefresh: { activityUpdatedAt: 300 } } } } } : normal(path);
+    await controller.refresh();
+    expect(controller.catalogReady()).toBe(false); expect(controller.error()).toContain('failed directories');
+    expect(controller.retainedSessions()[0]).toMatchObject({ id: 'pin', title: 'Host title', created: 123, activity: 300 });
+    expect(request.mock.calls.filter(([path]) => path === '/api/yuri/session-index/session/pin')).toHaveLength(1);
+  });
+  it('distinguishes an initial read failure from an authoritative successful empty retained catalog', async () => {
+    const controller = module.createProjectsController(), normal = handle;
+    handle = () => { throw new Error('offline'); }; await controller.refresh();
+    expect(controller.catalogReady()).toBe(false); expect(controller.retainedSessions()).toEqual([]);
+    handle = path => path === '/api/yuri/session-index' ? { available: true, directories: [], pinnedSessionIds: [] } : normal(path);
+    await controller.refresh(); expect(controller.catalogReady()).toBe(true); expect(controller.error()).toBe('');
+    expect(controller.retainedSessions()).toEqual([]);
+  });
   it('enumerates the complete subtree, masks every surface without DELETE, and restores after snapshot eviction on Undo', async () => {
     vi.useFakeTimers();
     const controller = module.createProjectsController(); await controller.refresh(); const root = controller.sessions()[0]!;
@@ -138,8 +179,10 @@ describe('native projects authority', () => {
     expect(request.mock.calls.some(([, method]) => method === 'DELETE')).toBe(false);
   });
   it('projects authoritative created/changes and pinned creation rank instead of activity rank', () => {
-    const page = module.projectsSessionPage({ data: [{ ...row('older'), time: { created: 1, updated: 100 }, summary: { additions: 5, deletions: 3 } }, { ...row('newer'), time: { created: 2, updated: 10 } }], cursor: {} });
+    const page = module.projectsSessionPage({ data: [{ ...row('older'), time: { created: 1, updated: 100 }, model: { providerID: 'provider', id: 'model' }, summary: { additions: 5, deletions: 3, files: 2 }, metadata: { private: 'not-display' } }, { ...row('newer'), time: { created: 2, updated: 10 } }], cursor: {} });
     expect(page.sessions[0]?.changes).toBe('+5 −3');
+    expect(page.sessions[0]).toMatchObject({ model: 'provider/model', summary: { additions: 5, deletions: 3, files: 2 } });
+    expect(page.sessions[0]).not.toHaveProperty('metadata'); expect(page.sessions[1]).not.toHaveProperty('model'); expect(page.sessions[1]).not.toHaveProperty('summary');
     expect(module.orderedProjectSessions(page.sessions, '__pinned__', null, ['older', 'newer']).map(row => row.id)).toEqual(['newer', 'older']);
   });
   it('never ingests attention from a Projects listener, consumes the sole root source, and preserves repeated running membership', async () => {
@@ -543,6 +586,19 @@ describe('native projects authority', () => {
     app.connection.set({ id: 'different-host' });
     const before = request.mock.calls.length; await vi.advanceTimersByTimeAsync(120);
     expect(request.mock.calls).toHaveLength(before);
+  });
+  it('a hidden desktop owner skips per-project rank fanout, while the iOS default remains enabled', async () => {
+    let detail = false;
+    const controller = module.createProjectsController({ detailReads: () => detail });
+    controller.worktrees.set({ '/repo': [] });
+    handle = path => path.includes('worktrees/order') ? { projectDirectory: '/repo', revision: 1, orderedPaths: [] } : path === '/api/session-folders/order' ? { revision: 0, sessionOrderByScope: {}, sessionOrderActivityByScope: {} } : { available: true, directories: [], pinnedSessionIds: [] };
+    emit({ key: 'global', data: JSON.stringify({ type: 'yuri:message-queue-changed', data: {} }) });
+    await vi.advanceTimersByTimeAsync(120);
+    expect(request.mock.calls.some(([path]) => path.includes('worktrees/order'))).toBe(false);
+    detail = true;
+    emit({ key: 'global', data: JSON.stringify({ type: 'yuri:message-queue-changed', data: {} }) });
+    await vi.advanceTimersByTimeAsync(120);
+    expect(request.mock.calls.filter(([path]) => path.includes('worktrees/order'))).toHaveLength(1);
   });
   it('rejects cross-directory and pinned-to-unpinned drop identities without writes', async () => {
     const controller = module.createProjectsController();

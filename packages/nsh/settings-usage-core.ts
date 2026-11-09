@@ -116,6 +116,7 @@ export function createSettingsUsage(dependencies: UsageDependencies) {
   let state: UsageState = { settings: null, results: [], errors: {}, refreshing: false, writing: false, settingsFailed: false, preferenceFailed: false, draft: null, recovery: false, now: Date.now(), selectedProviderId: usageProviderChoice(dependencies.selectedProviderId ?? null, []), magpieSources: [] };
   let active = false, disposed = false, revision = 0, queued = false, pending: Promise<void> | null = null;
   let intent: UsageIntent | null = null;
+  let inlineDefaultsPending = false;
   const defaultAttempts = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined, autoKey = '', nextAuto = Infinity, nextClock = Infinity;
   function schedule() {
@@ -161,7 +162,7 @@ export function createSettingsUsage(dependencies: UsageDependencies) {
     const token = revision;
     const lane = transport.capture(); if (!lane) return Promise.resolve(); lanes.set(token, lane);
     let flight!: Promise<void>;
-    flight = (async () => { try { await work(token); } finally { const own = pending === flight, valid = current(token); if (lanes.get(token) === lane && (own || token !== revision)) lanes.delete(token); if (own) { pending = null; if (valid) publish({ refreshing: false, writing: false }); if (queued && active && !disposed && transport.capture()?.current()) { queued = false; void refresh(); } } } })();
+    flight = (async () => { try { await work(token); } finally { const own = pending === flight, valid = current(token); if (lanes.get(token) === lane && (own || token !== revision)) lanes.delete(token); if (own) { pending = null; if (valid) publish({ refreshing: false, writing: false }); if (queued && active && !disposed && transport.capture()?.current()) { queued = false; void refresh(); } else if (valid && inlineDefaultsPending) applySelectedDefaults(); } } })();
     pending = flight;
     return pending;
   };
@@ -232,12 +233,8 @@ export function createSettingsUsage(dependencies: UsageDependencies) {
       const selected = usageProviderChoice(state.selectedProviderId ?? dependencies.selectedProviderId ?? null, state.results);
       if (selected !== state.selectedProviderId) publish({ selectedProviderId: selected });
       if (selected) dependencies.onSelectedProvider?.(selected);
-      const result = state.results.find(result => result.providerId === selected);
-      if (!resumed && dependencies.defaultsEnabled && state.settings && !state.settingsFailed && !state.draft && !intent && result?.ok && !state.errors[result.providerId] && !state.errors[result.sourceId ?? result.providerId] && !defaultAttempts.has(result.providerId)) {
-        const models = Object.entries(result.usage?.models ?? {}).filter(([, model]) => Object.keys(model.windows).length).map(([id]) => id);
-        const patch = defaultUsageSelectedModels(state.settings.usageSelectedModels ?? {}, result.providerId, getDefaultModels(result.providerId, models));
-        if (patch) { defaultAttempts.add(result.providerId); await commit({ defaults: result.providerId, models }, token); }
-      }
+      const defaults = !resumed ? selectedDefaults() : null;
+      if (defaults) { defaultAttempts.add(defaults.defaults); await commit(defaults, token); }
     });
   }
   function patchFor(settings: UsageSettings, desired: UsageIntent): Record<string, unknown> | null {
@@ -277,14 +274,29 @@ export function createSettingsUsage(dependencies: UsageDependencies) {
     if (!active || disposed || !transport.capture()?.current() || pending || !state.settings || state.recovery) return;
     return start(token => commit(desired, token));
   }
+  function selectedDefaults(): Extract<UsageIntent, { defaults: QuotaProviderId }> | null {
+    const result = state.results.find(result => result.providerId === state.selectedProviderId);
+    if (!dependencies.defaultsEnabled || !state.settings || state.settingsFailed || state.draft || intent || !result?.ok || state.errors[result.providerId] || state.errors[result.sourceId ?? result.providerId] || defaultAttempts.has(result.providerId)) return null;
+    const models = Object.entries(result.usage?.models ?? {}).filter(([, model]) => Object.keys(model.windows).length).map(([id]) => id);
+    if (!defaultUsageSelectedModels(state.settings.usageSelectedModels ?? {}, result.providerId, getDefaultModels(result.providerId, models))) return null;
+    return { defaults: result.providerId, models };
+  }
+  function applySelectedDefaults() {
+    if (!active || disposed || pending || state.recovery || !transport.capture()?.current()) return;
+    inlineDefaultsPending = false;
+    const desired = selectedDefaults();
+    if (!desired) return;
+    defaultAttempts.add(desired.defaults);
+    void write(desired);
+  }
   return {
     replaceLane(next: SettingsRequestLane | null) {
-      transport.replaceLane(next); resumed = true; revision++; active = false; queued = false; pending = null;
+      transport.replaceLane(next); resumed = true; revision++; active = false; queued = false; pending = null; inlineDefaultsPending = false;
       state = { ...state, refreshing: false, writing: false }; dependencies.changed?.(state); schedule();
     },
     state: () => state, refresh,
-    setActive(next: boolean) { if (disposed || active === next) return; active = next; revision++; if (active) publish({ now: Date.now() }); else schedule(); if (!active) { queued = false; return; } if (pending) queued = true; else void refresh(); },
-    selectProvider(provider: QuotaProviderId) { if (!QUOTA_PROVIDERS.some(item => item.id === provider) && !state.results.some(result => result.providerId === provider)) return; publish({ selectedProviderId: provider }); dependencies.onSelectedProvider?.(provider); },
+    setActive(next: boolean) { if (disposed || active === next) return; active = next; revision++; if (active) publish({ now: Date.now() }); else schedule(); if (!active) { queued = false; inlineDefaultsPending = false; return; } if (pending) queued = true; else void refresh(); },
+    selectProvider(provider: QuotaProviderId, inlineDefaults = false) { if (inlineDefaults && (!active || disposed || !transport.capture()?.current()) || !QUOTA_PROVIDERS.some(item => item.id === provider) && !state.results.some(result => result.providerId === provider)) return; publish({ selectedProviderId: provider }); dependencies.onSelectedProvider?.(provider); if (inlineDefaults) { inlineDefaultsPending = true; applySelectedDefaults(); } },
     selectModel(provider: QuotaProviderId, model: string, enabled: boolean) { const result = state.results.find(result => result.providerId === provider); if (!result || !Object.prototype.hasOwnProperty.call(result.usage?.models ?? {}, model)) return Promise.resolve(); return write({ provider, model, enabled }); },
     selectHeader(header: QuotaProviderId, enabled: boolean) { if (!state.results.some(result => result.providerId === header)) return Promise.resolve(); return write({ header, enabled }); },
     setPreference(patch: UsagePreferencePatch) {

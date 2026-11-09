@@ -1,9 +1,11 @@
-import { signal, View, type JSX } from 'nsh';
+import { platform, signal, View, type JSX } from 'nsh';
 import type { ChatChromeState } from './chat-chrome';
 import { nativeComposerSurface } from './composer-surface';
 
 /** Keep the expanded footprint: chrome motion must not resize the inverted List. */
 export function NativeComposerChrome(props: { state: ChatChromeState; bottom: number; children: JSX.Element; compact: JSX.Element; onHeight?: (height: number) => void }) {
+  if (platform.desktop) return <View testID="chat-composer-desktop" class="w-full self-center" style={{ maxWidth: 800 }}
+    onLayout={event => { if (event.bounds.size.height > 0) props.onHeight?.(event.bounds.size.height); }}>{props.children}</View>;
   const height = signal(120);
   const expanded = () => Math.min(1, props.state.swap.progress * 2);
   const compact = () => Math.max(0, props.state.swap.progress * 2 - 1);

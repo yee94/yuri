@@ -40,12 +40,21 @@ test('ACK followed by failed or incomplete GET can only retry GET; the secret cl
   const h = fixture(); await h.owner.load(); h.owner.update('apiKey', 'synthetic-new-key');
   h.read(async () => { throw new Error('Synthetic GET failed'); });
   await expect(h.owner.confirm('asr')).rejects.toThrow();
+  expect(h.owner.pending()).toBe(true); expect(h.owner.dirty()).toBe(true);
   expect(h.owner.snapshot().data.apiKey).toBe('synthetic-new-key');
   h.read(async () => { const full: Partial<SpeechSettings> = { ...h.settings }; delete full.sttLanguage; return full; });
   await expect(h.owner.confirm('asr')).rejects.toThrow('Invalid speech settings');
   h.read(null); const receipt = await h.owner.confirm('asr');
+  expect(h.owner.pending()).toBe(false); expect(h.owner.dirty()).toBe(false);
   expect(receipt!.settings.apiKey).toBe(''); expect(h.owner.snapshot().data.apiKey).toBe('');
   expect(h.calls.map(call => call.method)).toEqual(['GET', 'PUT', 'GET', 'GET', 'GET']);
+});
+
+test('real navigation dirtiness uses confirmed values, including reverted numeric input and explicit credential clearing', async () => {
+  const h = fixture(); await h.owner.load(); expect(h.owner.dirty()).toBe(false);
+  h.owner.update('speechRate', '1.25'); expect(h.owner.dirty()).toBe(true);
+  h.owner.update('speechRate', String(h.settings.speechRate)); expect(h.owner.dirty()).toBe(false);
+  h.owner.update('apiKey', ''); expect(h.owner.dirty()).toBe(true);
 });
 
 test.each([null, {}, true, { ok: true }])('unknown PUT ACK %j is never treated as a receipt or blindly replayed', async ack => {

@@ -3,6 +3,9 @@ import { settingsDict } from './es.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': 'No se pudo restaurar la ubicación anterior. La página actual no ha cambiado.',
+  'sessions.navigation.saveFailed': 'No se pudo guardar la navegación. Se conserva la última ubicación guardada.',
+  'sessions.navigation.restoreBlocked': 'La ubicación anterior no se puede restaurar ahora. La página actual no ha cambiado.',
   'mobile.instances.nativeEditor.invalid': 'Introduce un nombre de 1 a 120 caracteres y una dirección de servidor válida.',
   'mobile.instances.nativeEditor.missing': 'Esta conexión guardada ya no existe.',
   'mobile.instances.nativeEditor.stale': 'Esta conexión ha cambiado. Cierra y vuelve a abrir el editor antes de guardar.',
@@ -1675,6 +1678,10 @@ export const dict: Record<I18nKey, string> = {
   "chat.goal.action.save": "Guardar objetivo",
   "chat.goal.action.start": "Iniciar objetivo",
   "chat.goal.toast.actionFailed": "No se pudo actualizar el objetivo",
+  "chat.gitContext.replaceDraftTitle": "¿Reemplazar el borrador actual?",
+  "chat.gitContext.replaceDraftBody": "El texto y las referencias del borrador actual se reemplazarán por el contexto de Git capturado. Los archivos adjuntos se conservarán. Esta acción no se puede deshacer.",
+  "chat.gitContext.replaceDraftAction": "Reemplazar borrador",
+  "chat.gitContext.stagingFailed": "No se pudo preparar el contexto de Git. Se ha conservado el borrador actual.",
   "chat.goal.toast.distillFallback": "El objetivo superó el límite y no se pudo destilar — el auditor usa una versión recortada",
   "chat.goal.row.aria": "Objetivo de sesión — abrir detalles",
   "chat.goal.button.createAria": "Definir un objetivo de sesión",

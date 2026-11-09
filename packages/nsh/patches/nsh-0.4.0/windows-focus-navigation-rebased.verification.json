@@ -1,0 +1,787 @@
+{
+  "schemaVersion": 1,
+  "file": "windows-focus-navigation-rebased.patch",
+  "sha256": "d6f8bd8433482f1b68e5d0be34c6795bdc0ae24137b91e76b2a825a1298bc795",
+  "hashFileSha256": "e5a90f7d8b7ab0197a46adfc4988f02f5be28e47308edc04e16d32b609d1cc41",
+  "parentDigest": "8a261f52b450ac75cc77225f2751bda1dc59097dd1e48ac5677f67d3ad77ff25",
+  "parentTreeUnchanged": true,
+  "originalCandidateUnchanged": true,
+  "strictPreparerParserAndEveryAfterSha256": true,
+  "sharedFiles": [
+    {
+      "path": "crates/nsh-platform-windows/src/mount.rs",
+      "parentSha256": "a4151bac92a984f0e33f6214e253390182c1fd65231e7c77f87d4c84366020d7",
+      "afterSha256": "6ea39d3833f0d5f41923bbe700ff10a5421d2fcec6876833e7fbb2aeb911ae0d"
+    },
+    {
+      "path": "crates/nsh-testing/src/headless/mod.rs",
+      "parentSha256": "7555333cb02a8a8500db48524c4db7fece47034ef0bf344fc98da4c1390ff38b",
+      "afterSha256": "3c6670cefa59c7797fb5ff234ff450a38c72634903b1cdf281c910b16453f960"
+    },
+    {
+      "path": "crates/nsh-testing/src/screen.rs",
+      "parentSha256": "0636bf5c23869ed79d51e3843b75ab2565266e2936df9e6d706f00b0b985a5c9",
+      "afterSha256": "10208fba9b2f38a3d12d93f5ea7f9db8a9780828b94062b82dae7e9784b5bd4f"
+    }
+  ],
+  "listWin32CommandArmPreservedExactly": true,
+  "listHeadlessPathsPreservedExactly": [
+    {
+      "path": "crates/nsh-testing/src/headless/mod.rs",
+      "anchor": "for payload in self.screen.take_scroll_snapshots()",
+      "preservedSha256": "e958ad877b89fdd1101779744bf4a6a792278f4495c693acf007c117652380ed"
+    },
+    {
+      "path": "crates/nsh-testing/src/screen.rs",
+      "anchor": "pub(crate) fn take_scroll_snapshots(",
+      "preservedSha256": "fd4204cdfd95f6daddff351ac6f35f2ac81dec5d4df0afe5af74d12173e84597"
+    },
+    {
+      "path": "crates/nsh-testing/src/screen.rs",
+      "anchor": "Command::ReadScrollSnapshot { call } => {",
+      "preservedSha256": "bcd3c8d78f4dde5c1745f3348db6a70a199e37bf17260cc7bf4f9053177be4f7"
+    }
+  ],
+  "preparerSha256": "c8c7175aecb293561216f8be23bc4862d03e734044962f8b95408afb1a7b0611",
+  "frozenConsumersUnchanged": true,
+  "rebasedAssertionsIdentical": true,
+  "fixtureApiCorrectionsOnly": true,
+  "upcomingContractFix": {
+    "file": "list-scroll-snapshot-contract-fix.patch",
+    "sha256": "5e83490bd17df64e1d1206b50da823468639bbaac772c1379a6db25eb510f887",
+    "overlap": [],
+    "beforeChainConfirmed": true,
+    "files": [
+      {
+        "path": "crates/nsh-core/src/js/host.rs",
+        "beforeSha256": "603e1488a37baa4ca7a1913de1bc3e64bd6f9b70504f743d41275b354ddac488",
+        "expectedAfterSha256": "9e7f2a5dd7d990023a2c817e53b187c02c01ff532e35837a04b7c5176e9011b4"
+      },
+      {
+        "path": "crates/nsh-core/src/js/mod.rs",
+        "beforeSha256": "1835b8fc6a6f20a4b456467878bfe54d0c58599c4aa04e73a02a30b7568d73f0",
+        "expectedAfterSha256": "3adfce1cd27e8e574e5476792c67d31726292f8b3068ccb4c0b0196e64f15d33"
+      },
+      {
+        "path": "crates/nsh-core/unitless.txt",
+        "beforeSha256": "770a2b9b41202f9ffef32bffea40a261596f7bd2cc7bcb7266679a16ffdc6e1e",
+        "expectedAfterSha256": "17d8c10fb889bc19c47346408a101594abacae2ece196962676da794669cfd6c"
+      }
+    ]
+  },
+  "originalToolsVerifiedUnchanged": {
+    "digest": "8a261f52b450ac75cc77225f2751bda1dc59097dd1e48ac5677f67d3ad77ff25",
+    "files": [
+      {
+        "path": "bin/nsh",
+        "sha256": "3e8819b606a7f44150c5f3bcb34a36e6c23871c76eb362b8a5ffdfab94f14866"
+      },
+      {
+        "path": "runtime/macos/nsh-macos-host",
+        "sha256": "d21e6a12eb20410ab68865a24393841ebdccd2f2ec9ec63cf3986d5c6e08ba35"
+      }
+    ]
+  },
+  "parentHeadlessRed": {
+    "status": 1,
+    "expected": "calls:1",
+    "actual": "calls:0",
+    "log": ".nsh/compat-win-focus-rebased-work/parent-baseline.log",
+    "logSha256": "65eb6e63579fbad13b2528f7178cf25e8c2162b04abbf45dc144bd981b620ee4"
+  },
+  "localCli": {
+    "path": ".nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+    "sha256": "8a17dcb416861af5f33b8cef83100b7646d3d44bf7109374f9c2a9b64e738782",
+    "compiledInIndependentCopy": true,
+    "nativeRuntimeUsed": false
+  },
+  "headlessPassed": true,
+  "relatedRegressionsPassed": true,
+  "coreFailures": [
+    "geometry::unit_types::public_api_is_typed",
+    "js::tests::every_event_is_typed_or_internal"
+  ],
+  "onlyKnownParentCoreFailures": true,
+  "consumerTypesPassed": true,
+  "regressionStatus": "focus-headless-verified-parent-core-still-red",
+  "commands": [
+    {
+      "name": "cache-cow-clone",
+      "command": "/bin/cp",
+      "args": [
+        "-cR",
+        "$PROJECT/packages/nsh/.nsh/compat-target/8a261f52b450ac75cc77225f2751bda1dc59097dd1e48ac5677f67d3ad77ff25/darwin-arm64",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/cache-cow-clone.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": []
+    },
+    {
+      "name": "rust-toolchain",
+      "command": "rustc",
+      "args": [
+        "--version"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/rust-toolchain.log",
+      "logSha256": "4ad84f16acc2f3bdcfbc7b0788f1e74a4e649b962154a585b8f8d0b28eb0dd06",
+      "summaries": []
+    },
+    {
+      "name": "headless-unit-first",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-testing",
+        "--lib",
+        "windows_",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/headless-unit-first.log",
+      "logSha256": "f9e2e87942aaeb7527975915650f69025bfbf7bc0934d1224c91e0cc1029402e",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "headless-unit",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-testing",
+        "--features",
+        "bundle",
+        "--lib",
+        "--",
+        "--test-threads=1",
+        "--skip",
+        "net_fetch_tests"
+      ],
+      "status": 101,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/headless-unit.log",
+      "logSha256": "388e88240946ac8ea7164ae88f8d6c37a9d08ae2f01ba922f26d63bb8e83fdf8",
+      "summaries": [
+        {
+          "result": "FAILED",
+          "passed": 48,
+          "failed": 1,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "core-lib",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-core",
+        "--lib",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": 101,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/core-lib.log",
+      "logSha256": "c7c2da882bf8a448d20644500710e9575867fa76e8618032da35e34d8d144deb",
+      "summaries": [
+        {
+          "result": "FAILED",
+          "passed": 989,
+          "failed": 2,
+          "ignored": 9
+        }
+      ]
+    },
+    {
+      "name": "base-focus-aborted",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-base",
+        "--lib",
+        "focus",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": null,
+      "error": "ENOSPC: exit status could not be persisted; raw compiler failure log retained",
+      "log": ".nsh/compat-win-focus-rebased-work/base-focus.log",
+      "logSha256": "73699a002dbb80122825b3997145e254dfa91a7d2fc2c9eaed223940c35232f8",
+      "summaries": []
+    },
+    {
+      "name": "clean-owned-generated-target",
+      "command": "cargo",
+      "args": [
+        "clean",
+        "--offline",
+        "--locked",
+        "--target-dir",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target"
+      ],
+      "status": 101,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/clean-owned-generated-target.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "e9483781327f8d43b897248811805f16880a3927c75ae62d2426104b3aba9e46",
+      "summaries": []
+    },
+    {
+      "name": "clean-owned-generated-target-recovery",
+      "command": "$NODE",
+      "args": [
+        "$TEMP/windows-focus-clean-owned.mjs"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/clean-owned-generated-target-recovery.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "643f821b650223c0428975c454cc9abc4a888384b27fb085bbccf89a0b7bc7fa",
+      "summaries": []
+    },
+    {
+      "name": "headless-unit-declarations",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-testing",
+        "--features",
+        "bundle,nsh-core/declarations",
+        "--lib",
+        "--",
+        "--test-threads=1",
+        "--skip",
+        "net_fetch_tests"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/headless-unit-declarations.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "0bcc0f19da2a040bcc5054ea62680c8e6248a72437a96ed7f503398bb2d9656a",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 49,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "base-focus-retry",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-base",
+        "--no-default-features",
+        "--lib",
+        "focus",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/base-focus-retry.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "34a0ff2b5a25be65a845cdfcf456a1a5772946c8b162f13b46fcbf396411c39c",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "js-declarations",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-js",
+        "--lib",
+        "declarations",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/js-declarations.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "fd0e7263e1d0881bc1ae5a43784430f4ebb1bf19e64ebc57c4b977f07e68ebef",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 17,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "list-headless",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-testing",
+        "--features",
+        "bundle,nsh-core/declarations",
+        "--test",
+        "testing",
+        "list_scroll_snapshot_native",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/list-headless.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "fd75975e6a1850ccdf92b4912a1c35ba1bf220a3491fdfe68020d9b5e3a755a9",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "cli-build",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-cli"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/cli-build.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "f2cccdca508563adde2c328a4d7669826afaebdb10d7fab1ced4c9adf6abe3e8",
+      "summaries": []
+    },
+    {
+      "name": "focus-consumers",
+      "command": "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+      "args": [
+        "test",
+        "tests/desktop-windows-focus"
+      ],
+      "status": 1,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/focus-consumers.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "18b8818101026bf7b1047aa9658994239366dcf7c602132d43cefdbd3ddb0517",
+      "summaries": []
+    },
+    {
+      "name": "windows-target-check",
+      "command": "cargo",
+      "args": [
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-platform-windows",
+        "--target",
+        "x86_64-pc-windows-msvc",
+        "--no-default-features"
+      ],
+      "status": 101,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/windows-target-check.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "d9fb4fb20d55c94c35bfd963550a10836b39e81ae78ad6f6d5d7f50115b9647f",
+      "summaries": []
+    },
+    {
+      "name": "installed-targets",
+      "command": "rustup",
+      "args": [
+        "target",
+        "list",
+        "--installed"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/installed-targets.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "dacaa8db1a207e4dbe39b769ce426bfe48411ea606bf4ade955946a00acb0c13",
+      "summaries": []
+    },
+    {
+      "name": "rustfmt-final",
+      "command": "rustfmt",
+      "args": [
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "crates/nsh-platform-windows/src/access.rs",
+        "crates/nsh-platform-windows/src/access/uia.rs",
+        "crates/nsh-platform-windows/src/chrome.rs",
+        "crates/nsh-platform-windows/src/focus_tests.rs",
+        "crates/nsh-platform-windows/src/input.rs",
+        "crates/nsh-platform-windows/src/keymap.rs",
+        "crates/nsh-platform-windows/src/mount.rs",
+        "crates/nsh-platform-windows/src/navigation.rs",
+        "crates/nsh-platform-windows/src/surface.rs",
+        "crates/nsh-platform-windows/src/text_input.rs",
+        "crates/nsh-testing/src/headless/keyboard.rs",
+        "crates/nsh-testing/src/headless/mod.rs",
+        "crates/nsh-testing/src/screen.rs"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/rustfmt-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": []
+    },
+    {
+      "name": "rustfmt-check-final",
+      "command": "rustfmt",
+      "args": [
+        "--check",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "crates/nsh-platform-windows/src/access.rs",
+        "crates/nsh-platform-windows/src/access/uia.rs",
+        "crates/nsh-platform-windows/src/chrome.rs",
+        "crates/nsh-platform-windows/src/focus_tests.rs",
+        "crates/nsh-platform-windows/src/input.rs",
+        "crates/nsh-platform-windows/src/keymap.rs",
+        "crates/nsh-platform-windows/src/mount.rs",
+        "crates/nsh-platform-windows/src/navigation.rs",
+        "crates/nsh-platform-windows/src/surface.rs",
+        "crates/nsh-platform-windows/src/text_input.rs",
+        "crates/nsh-testing/src/headless/keyboard.rs",
+        "crates/nsh-testing/src/headless/mod.rs",
+        "crates/nsh-testing/src/screen.rs"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/rustfmt-check-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": []
+    },
+    {
+      "name": "headless-unit-declarations-final",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-testing",
+        "--features",
+        "bundle,nsh-core/declarations",
+        "--lib",
+        "--",
+        "--test-threads=1",
+        "--skip",
+        "net_fetch_tests"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/headless-unit-declarations-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "d5fedddfa63761cd86f989b5f8f37e32a98cc96e9729dbfd61518a2cf6498a95",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 49,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "base-focus-default-final",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-base",
+        "--lib",
+        "focus",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/base-focus-default-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "005ff9a7bd26a12179ce305dc8e13805039092c6b882f2e8703fb9c9deadcae7",
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "cli-build-final",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--offline",
+        "--locked",
+        "-p",
+        "nsh-cli"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/cli-build-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "132f53efa811d536e231605e0298b212623590ac45b0f2b9366ea1a03d3458cf",
+      "summaries": []
+    },
+    {
+      "name": "consumer-types",
+      "command": "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+      "args": [
+        "check",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/consumer/Contracts.tsx",
+        "--tsc",
+        "$PROJECT/node_modules/.bin/tsc"
+      ],
+      "status": 1,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/consumer-types.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "6a8c9b8dabb5020b681ecd3abd5bb981f08d2371399b203e1a625b021ca197a2",
+      "summaries": []
+    },
+    {
+      "name": "focus-consumers-final",
+      "command": "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+      "args": [
+        "test",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/consumer"
+      ],
+      "status": 1,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/focus-consumers-final.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "b5ba2fd18cb30465825ba690f2e61534000a18aa8fca2bc8f74a0b8dda3b53a6",
+      "summaries": [],
+      "consumerSummary": {
+        "total": 8,
+        "passed": 1,
+        "failed": 7
+      }
+    },
+    {
+      "name": "consumer-types-corrected",
+      "command": "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+      "args": [
+        "check",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/consumer/Contracts.tsx",
+        "--tsc",
+        "$PROJECT/node_modules/.bin/tsc"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/consumer-types-corrected.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "summaries": []
+    },
+    {
+      "name": "focus-consumers-corrected",
+      "command": "$PROJECT/.nsh/compat-win-focus-rebased-work/copy/target/debug/nsh",
+      "args": [
+        "test",
+        "$PROJECT/.nsh/compat-win-focus-rebased-work/consumer"
+      ],
+      "status": 0,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/focus-consumers-corrected.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "5853d4300e538ff02940cd849f2ab74452dc4abb1a2d870533379522403da605",
+      "summaries": [],
+      "consumerSummary": {
+        "total": 8,
+        "passed": 8,
+        "failed": 0
+      }
+    },
+    {
+      "name": "dead-code-offline",
+      "command": "bun",
+      "args": [
+        "x",
+        "--no-install",
+        "knip@5.80.0",
+        "--no-exit-code",
+        "--include",
+        "files,exports,nsExports,types,nsTypes,enumMembers,duplicates"
+      ],
+      "status": 2,
+      "signal": null,
+      "log": ".nsh/compat-win-focus-rebased-work/dead-code-offline.log",
+      "buildEnvironment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "2"
+      },
+      "logSha256": "d105bf1bf5ddc325f3a143357e51e0a63cc8b42abca8ca43a843e04a743f883e",
+      "summaries": []
+    }
+  ],
+  "releaseAllowed": false,
+  "macOSWindowsOpened": false,
+  "WindowsNativeCompiled": false,
+  "WindowsPhysicalVerified": false,
+  "explicitTabIndex": "not-implemented",
+  "knownParentCoreFailures": [
+    "js::tests::every_event_is_typed_or_internal",
+    "geometry::unit_types::public_api_is_typed"
+  ]
+}

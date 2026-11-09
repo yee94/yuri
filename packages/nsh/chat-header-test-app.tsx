@@ -4,8 +4,14 @@ import { ChatHeaderActions, NativeChatHeader } from './chat-header';
 import { language } from './i18n';
 import { request } from './runtime';
 import { headerQuotaReset } from './chat-header-quota';
+import { loadConnections } from './state';
 
 export default function HeaderTestApp() {
+  const ready = signal(false);
+  void loadConnections().then(() => ready.set(true));
+  return <If when={ready()}><HeaderContent /></If>;
+}
+function HeaderContent() {
   language.set('en');
   const back = signal(false), options = signal(''), draft = signal(''), count = signal(-1), native = signal(false), anchorError = signal('');
   return <View class="flex-1 bg-background p-4 gap-4">

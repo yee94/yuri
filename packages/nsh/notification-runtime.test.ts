@@ -3,7 +3,7 @@ import { bindNativeNotificationRoot, nativeNotificationAuthorization, nativeNoti
 
 const state = vi.hoisted(() => ({ hostID: 'host-a', generation: 1, runtime: { hostID: 'host-a', lease: 'native-a' } as { hostID: string; lease: string } | null,
   captures: 0, auth: 'authorization-a', calls: [] as [string, Record<string, unknown>][], pending: null as (() => Promise<void>) | null }));
-vi.mock('nsh', () => ({ locale: () => 'en', host: { available: () => true, call: async (name: string, body: Record<string, unknown>) => {
+vi.mock('nsh', () => ({ locale: () => 'en', platform: { os: 'ios', desktop: false }, host: { available: () => true, call: async (name: string, body: Record<string, unknown>) => {
   state.calls.push([name, body]);
   if (name === 'runtime.request') {
     const expected = body.expectedHost as { hostID: string; lease: string } | undefined;

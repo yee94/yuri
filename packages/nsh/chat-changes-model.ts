@@ -1,3 +1,6 @@
+import { resourceResolve } from './resources-model';
+import { isImageFile } from '../ui/src/lib/toolHelpers';
+
 export type ChangesSnapshot = {
   isClean: boolean;
   current?: string;
@@ -74,11 +77,50 @@ export function patchLines(patch: string): PatchLine[] {
   });
 }
 
-type ChangesState = { snapshot: ChangesSnapshot | null; loading: boolean; error: string; path: string; staged: boolean; diff: HistoricalChange | null; diffLoading: boolean; diffError: string };
+type ChangesState = { snapshot: ChangesSnapshot | null; loading: boolean; error: string; path: string; staged: boolean; diff: HistoricalChange | null; diffLoading: boolean; diffError: string;
+  fullContext: HistoricalChange | null; fullContextLoading: boolean; fullContextError: string };
+
+/** file-diff currently reads HEAD -> index (staged), or HEAD -> filesystem.
+ * A working patch is index -> filesystem: only a verified unchanged index can
+ * use that route. Renames have no original-path field in the public DTO. */
+function fullContextFile(value: unknown, directory: string, path: string, staged: boolean, patch: HistoricalChange) {
+  const body = object(value);
+  if (body.complete === false || body.partial === true) throw new Error('full_context_status_incomplete');
+  const snapshot = changesSnapshot(value), target = resourceResolve(path, directory);
+  const files = snapshot.files.filter(file => { try { return resourceResolve(file.path, directory) === target; } catch { return false; } });
+  if (files.length !== 1) throw new Error('full_context_status_unknown');
+  const file = files[0], index = file.index.trim(), working = file.working_dir.trim();
+  if (/[RC]/.test(index + working) || /^(rename|copy) (from|to) /m.test(patch.patch ?? '')) throw new Error('full_context_rename_unsupported');
+  if (index === 'U' || working === 'U' || !['', '?', 'M', 'A', 'D'].includes(index) || !['', '?', 'M', 'A', 'D'].includes(working)) throw new Error('full_context_status_unknown');
+  if (staged ? !['M', 'A', 'D'].includes(index) : index !== '' && index !== '?') throw new Error(staged ? 'full_context_status_unknown' : 'full_context_index_baseline_unsupported');
+  return { identity: JSON.stringify([file.path, file.index, file.working_dir]), added: index === 'A' || index === '?', deleted: staged ? index === 'D' : working === 'D' };
+}
+
+/** Validate the actual GET DTO; absent/failed original must not become empty success. */
+function fullContextBody(value: unknown, path: string, patch: HistoricalChange, file: { added: boolean; deleted: boolean }): HistoricalChange {
+  const body = object(value);
+  if (body.path !== path || typeof body.original !== 'string' || typeof body.modified !== 'string' || typeof body.isBinary !== 'boolean') throw new Error('full_context_invalid_response');
+  if (body.isBinary !== !!patch.isBinary) throw new Error('full_context_binary_changed');
+  if (!body.isBinary) {
+    if (file.added && body.original !== '' || file.deleted && body.modified !== '') throw new Error('full_context_file_kind_mismatch');
+    if (body.original === '' && !file.added) {
+      const headers = [...(patch.patch ?? '').matchAll(/^@@ -(\d+)(?:,(\d+))? \+/gm)];
+      if (!headers.length || headers.some(header => header[1] !== '0' || header[2] !== '0')) throw new Error('full_context_empty_original_unproven');
+    }
+    const lines = patchLines(patch.patch ?? '');
+    const before = body.original.split('\n'), after = body.modified.split('\n');
+    for (const line of lines) {
+      const text = line.text.slice(1).replace(/\r$/, '');
+      if (line.oldLine !== null && (body.original === '' || before[line.oldLine - 1] !== text)
+        || line.newLine !== null && (body.modified === '' || after[line.newLine - 1] !== text)) throw new Error('full_context_patch_mismatch');
+    }
+  }
+  return { path, before: body.original, after: body.modified, isBinary: body.isBinary };
+}
 /** A page-owned reader, not a second cache: close/Host/selection fences all awaits. */
 export function createChangesReader(source: ChangesSource, read: ChangesRead, current: () => boolean = () => true, notify: () => void = () => {}) {
-  let state: ChangesState = { snapshot: null, loading: false, error: '', path: '', staged: false, diff: null, diffLoading: false, diffError: '' };
-  let statusSerial = 0, diffSerial = 0;
+  let state: ChangesState = { snapshot: null, loading: false, error: '', path: '', staged: false, diff: null, diffLoading: false, diffError: '', fullContext: null, fullContextLoading: false, fullContextError: '' };
+  let statusSerial = 0, diffSerial = 0, fullSerial = 0;
   const update = (next: Partial<ChangesState>) => { state = { ...state, ...next }; notify(); };
   const failure = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
   async function refresh() {
@@ -94,8 +136,9 @@ export function createChangesReader(source: ChangesSource, read: ChangesRead, cu
   async function select(path: string, staged = false) {
     if (!current()) return;
     const serial = ++diffSerial;
+    fullSerial++;
     const same = state.path === path && state.staged === staged;
-    update({ path, staged, diff: same ? state.diff : null, diffLoading: true, diffError: '' });
+    update({ path, staged, diff: same ? state.diff : null, diffLoading: true, diffError: '', fullContext: same ? state.fullContext : null, fullContextLoading: false, fullContextError: '' });
     try {
       let diff: HistoricalChange;
       if (source.kind === 'workspace') {
@@ -109,13 +152,36 @@ export function createChangesReader(source: ChangesSource, read: ChangesRead, cu
         diff = hasBody(file) ? file : source.loadFile ? await source.loadFile(path) : await historicalFile(source, path, read, () => current() && serial === diffSerial);
         if (diff.path !== path || !hasBody(diff)) throw new Error('Historical diff body unavailable');
       }
-      if (current() && serial === diffSerial) update({ diff, diffError: '' });
+      if (current() && serial === diffSerial) update({ diff, diffError: '', fullContext: null, fullContextError: '' });
     } catch (cause) { if (current() && serial === diffSerial) update({ diffError: failure(cause) }); }
     finally { if (current() && serial === diffSerial) update({ diffLoading: false }); }
   }
+  async function loadFullContext() {
+    if (!current() || source.kind !== 'workspace' || !state.diff || state.diffLoading || state.fullContextLoading) return;
+    const serial = ++fullSerial, selected = diffSerial, directory = source.directory, { path, staged, diff } = state;
+    const valid = () => current() && source.directory === directory && serial === fullSerial && selected === diffSerial && state.path === path && state.staged === staged && state.diff === diff;
+    update({ fullContextLoading: true, fullContextError: '' });
+    try {
+      if (isImageFile(path)) throw new Error('full_context_image_unsupported');
+      const statusRoute = `/api/git/status?directory=${encodeURIComponent(directory)}&mode=light`;
+      const first = await read(statusRoute);
+      if (!valid()) return;
+      const file = fullContextFile(first, directory, path, staged, diff);
+      const result = await read(`/api/git/file-diff?directory=${encodeURIComponent(directory)}&path=${encodeURIComponent(path)}${staged ? '&staged=true' : ''}`);
+      if (!valid()) return;
+      const fullContext = fullContextBody(result, path, diff, file);
+      const last = await read(statusRoute);
+      if (!valid()) return;
+      if (file.identity !== fullContextFile(last, directory, path, staged, diff).identity) throw new Error('full_context_status_changed');
+      update({ fullContext, fullContextError: '' });
+    } catch (cause) { if (valid()) update({ fullContextError: failure(cause) }); }
+    finally { if (valid()) update({ fullContextLoading: false }); }
+  }
   return { source, current, state: () => state, refresh, select, retryDiff: () => select(state.path, state.staged),
-    back() { diffSerial++; update({ path: '', diff: null, diffLoading: false, diffError: '' }); },
-    cancel() { statusSerial++; diffSerial++; update({ loading: false, diffLoading: false }); },
+    loadFullContext,
+    cancelFullContext() { fullSerial++; update({ fullContextLoading: false }); },
+    back() { diffSerial++; fullSerial++; update({ path: '', diff: null, diffLoading: false, diffError: '', fullContext: null, fullContextLoading: false, fullContextError: '' }); },
+    cancel() { statusSerial++; diffSerial++; fullSerial++; update({ loading: false, diffLoading: false, fullContextLoading: false }); },
   };
 }
 export type ChangesReader = ReturnType<typeof createChangesReader>;

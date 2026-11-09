@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { mergeHistoryMessages, stableHistoryMessages } from './history-messages';
-import { messageFrom, type Message, type Row } from './model';
+import { contactMessageFrom, messageFrom, messagesFrom, type Message, type Row } from './model';
 import { hasSlimActivity } from './transcript-materialization';
 const message = (id: string, text = id): Message => ({ id, role: 'user', text, reasoning: '', tools: [], cards: [], files: [], error: '' });
 
@@ -48,4 +48,26 @@ it('successful complete empty snapshots clear and repeated complete snapshots re
   const previous = [message('one')];
   expect(stableHistoryMessages(previous, [message('one')])).toBe(previous);
   expect(stableHistoryMessages(previous, [])).toEqual([]);
+});
+it('contact pagination and overlapping authority retain exact peer identity, clocks and latest status', () => {
+  const peer = contactMessageFrom({ messageID: 'z-peer', role: 'peer', turnID: 'dm', ordinal: 2, createdAt: 500, fromAssistantID: 'sender', fromAssistantName: 'Sender', status: 'complete', text: 'hello' })!;
+  const older = messagesFrom({ generation: 3, revision: 11, complete: true, messages: [
+    { messageID: 'earlier', role: 'user', turnID: 'first', ordinal: 1, createdAt: 100, text: 'before' },
+    { messageID: 'z-peer', role: 'peer', turnID: 'dm', ordinal: 2, createdAt: 400, fromAssistantID: 'stale-sender', status: 'error', text: 'stale' },
+  ] }, true);
+  const paged = mergeHistoryMessages([peer], older.messages, true);
+  expect(paged.map(message => message.id)).toEqual(['earlier', 'z-peer']); expect(paged[1]).toBe(peer);
+  const incoming = contactMessageFrom({ messageID: 'z-peer', role: 'peer', turnID: 'dm', ordinal: 2, createdAt: 500, fromAssistantID: 'sender', fromAssistantName: 'Renamed', status: 'complete', text: 'updated' })!;
+  const settled = mergeHistoryMessages(paged, [incoming]);
+  expect(settled[1]?.contact).toEqual(incoming.contact); expect(settled[1]?.time?.created).toBe(500);
+  expect(stableHistoryMessages(settled, [...settled])).toBe(settled);
+});
+it('contact identity reconciliation preserves original cards/files and metadata on a no-op snapshot', () => {
+  const card = { type: 'card', cardType: 'session', sessionID: 's' }, file = { type: 'file', mime: 'text/plain', url: 'data:text/plain,body' };
+  const raw = { messageID: 'contact', role: 'assistant', createdAt: 100, turnID: 'turn', status: 'complete', parts: [card, file] };
+  const previous = contactMessageFrom(raw)!;
+  const poll = contactMessageFrom({ ...raw })!;
+  const messages = [previous], next = stableHistoryMessages(messages, [poll]);
+  expect(next).toBe(messages); expect(next[0]?.contact).toEqual(poll.contact);
+  expect(next[0]?.cards).toEqual([card]); expect(next[0]?.files).toEqual([file]); expect(next[0]?.contextRaw).toBe(raw);
 });

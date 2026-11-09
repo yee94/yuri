@@ -2,10 +2,12 @@
 export function createHost() {
   let requests = 0, failAnchor = false;
   return { call(name, input) {
+    if (name === 'connection.list') return { selected: 'header-fixture', runtimeScope: { hostID: 'header-fixture', lease: 'header-fixture-lease' }, connections: [{ id: 'header-fixture', label: 'Header fixture', url: 'https://header.example', lastUsedAt: 1 }] };
     if (name === 'navigation.anchor') return failAnchor ? null : { origin: { x: 350, y: 68 }, size: { width: 32, height: 32 } };
     if (name !== 'runtime.request') throw new Error('Unexpected call');
     if (input.path === '/fixture/fail-anchor') { failAnchor = true; return { status: 200, body: true }; }
     if (input.path === '/fixture/request-count') return { status: 200, body: requests };
+    if (input.method !== 'GET' || input.body !== undefined || input.expectedHost?.hostID !== 'header-fixture' || input.expectedHost?.lease !== 'header-fixture-lease') throw new Error('Wrong header fixture authority');
     requests++;
     const path = input.path;
     let body;

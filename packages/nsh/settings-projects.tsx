@@ -6,19 +6,30 @@ import { Icon } from './Icon';
 import { projectsFrom, record, text, type Row } from './model';
 import { app } from './state';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
-import { SettingsChoice, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
+import { SettingsChoice, SettingsEntityLayout, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { readSettingsCollection, settingsObject, settingsRows } from './settings-protocol';
 import { settingsProjectColors, settingsProjectIcons, settingsProjectPatch } from './settings-projects-core';
 import { createProjectSettingsEditor, emptyProjectSettings, projectSettingsActionIcons, projectSettingsActionsValid, projectSettingsErrorKey, projectSettingsIdentityMatches, projectSettingsSetupEditable, type ProjectSettingsAction, type ProjectSettingsSection } from './project-settings';
+import { publishSettingsNavigationOwner } from './desktop-settings-publisher';
 
 const projectSettingsRevision = signal(0);
 
 type ProjectsProps = SettingsCallbacks & SettingsRoute & { directory?: string };
-export type ProjectSettingsNavigation = { blocked: boolean; back: () => void };
+export type ProjectSettingsNavigation = {
+  blocked: boolean;
+  pending: boolean;
+  dirty: boolean;
+  /** Only overlays owned here are observable. SettingsChoice's Select state
+   * is not exposed yet; false must not be treated as complete picker coverage. */
+  nestedPickerOpen: boolean;
+  pickerCoverage: 'explicit-only';
+  requestLeave: () => Promise<boolean>;
+  back: () => void;
+};
 
 /** The route owner must use this page rather than wrapping the content in another NavPage. */
 export function SettingsProjectsPage(props: ProjectsProps) {
-  const navigation = signal<ProjectSettingsNavigation>({ blocked: false, back: () => undefined });
+  const navigation = signal<Pick<ProjectSettingsNavigation, 'blocked' | 'back'>>({ blocked: false, back: () => undefined });
   return <NavPage title={t('settings.page.projects.title')} headerBackTitle="" class="flex-1 bg-background" popOnBack={!navigation().blocked} popOnSwipe={!navigation().blocked} onBackPress={() => { if (navigation().blocked) navigation().back(); }}>
     <SettingsProjects {...props} onNavigation={next => navigation.set(next)} />
   </NavPage>;
@@ -40,6 +51,7 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
   const auxiliaryDisabled = (section: ProjectSettingsSection) => busy() || !auxiliary().ready[section] || !!auxiliary().pending;
   const setupInputDisabled = () => confirming() || !projectSettingsSetupEditable(auxiliary());
   const dirty = () => { auxiliary(); return Object.keys(changes()).length > 0 || !!editor?.dirty('actions') || !!editor?.dirty('setup') || !!auxiliary().pending || identityReadback(); };
+  const navigationPending = () => state.busy() || !!auxiliary().busy || !!auxiliary().pending || identityReadback();
   function update(key: string, next: unknown) {
     if (disabled()) return;
     draft.set({ ...draft(), [key]: next }); changes.set({ ...changes(), [key]: next });
@@ -93,20 +105,25 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
     seenRevision = revision;
     if (!editing) untracked(() => { if (state.current()) void load(); });
   });
-  async function back(operation: SettingsOperation | null = state.operation()) {
-    if (!operation?.current()) return;
-    if (busy()) return;
-    if (!dirty()) { props.onBack(); return; }
+  async function requestLeave(operation: SettingsOperation | null = state.operation()): Promise<boolean> {
+    if (!operation?.current() || confirming() || navigationPending() || iconPicker()) return false;
+    if (!dirty()) return true;
     confirming.set(true);
+    let approved = false;
     try {
       const answer = await AlertDialog.show({ title: t('filesView.unsaved.title'), description: t('sessions.scheduledTasks.workspace.confirm.discardChanges'), actions: [
         { id: 'cancel', label: t('settings.common.actions.cancel'), role: 'cancel' },
         { id: 'discard', label: t('filesView.unsaved.discard'), role: 'destructive' },
       ] });
-      if (operation.current() && answer.action === 'discard') props.onBack();
+      approved = operation.current() && answer.action === 'discard' && !state.busy() && !auxiliary().busy && !auxiliary().pending && !identityReadback() && !iconPicker();
     } finally { if (operation.current()) confirming.set(false); }
+    return approved;
   }
-  effect(() => { props.onNavigation?.({ blocked: busy() || dirty(), back: () => { void back(); } }); });
+  async function back(operation: SettingsOperation | null = state.operation()) {
+    if (await requestLeave(operation) && operation?.current()) props.onBack();
+  }
+  publishSettingsNavigationOwner({ dirty, pending: navigationPending, nestedPickerOpen: () => !!iconPicker(), requestLeave, stamp: () => [changes(), auxiliary(), state.operation()], scope: state.operation });
+  effect(() => { props.onNavigation?.({ blocked: busy() || navigationPending() || dirty() || !!iconPicker(), pending: navigationPending(), dirty: dirty(), nestedPickerOpen: !!iconPicker(), pickerCoverage: 'explicit-only', requestLeave, back: () => { void back(); } }); });
   for (const section of ['actions', 'setup'] as const) effect(() => {
     const operation = state.operation();
     const snapshot = auxiliary();
@@ -178,12 +195,13 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
   }
   const none = () => ({ value: '', title: t('settings.projects.page.field.none') });
   const modelOptions = () => [none(), ...models(), ...(value('defaultModel') && !models().some(item => item.value === value('defaultModel')) ? [{ value: value('defaultModel'), title: value('defaultModel') }] : [])];
-  return <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+  const projectList = () => <Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
-    <If when={!editing}>
       <Button testID="settings-project-refresh" class={settingsAction} disabled={state.busy()} accessibilityLabel={t('sidebarFilesTree.actions.refreshTitle')} onPress={() => { void load(); }}><Icon name="refresh" /></Button>
-      <SettingsGroup title={t('settings.page.projects.title')}><Each of={projects()}>{project => <Button class="min-h-12 py-3 gap-1" onPress={() => props.onOpen({ page: 'projects', entity: text(project().id) })}><Text class="text-base text-foreground">{text(project().label) || text(project().name) || text(project().path)}</Text><Text class="text-xs text-muted-foreground">{text(project().path)}</Text></Button>}</Each><If when={state.ready() && !projects().length}><Text class="text-muted-foreground">{t('settings.projects.page.empty.noProjects')}</Text></If></SettingsGroup>
-    </If>
+      <SettingsGroup title={t('settings.page.projects.title')}><Each of={projects()}>{project => <Button testID={`settings-entity-${text(project().id)}`} selected={props.entity === text(project().id)} disabled={!state.current() || busy()} class="min-h-12 py-3 gap-1 selected:bg-accent" onPress={() => { if (state.current()) props.onOpen({ page: 'projects', entity: text(project().id) }); }}><Text class="text-base text-foreground">{text(project().label) || text(project().name) || text(project().path)}</Text><Text class="text-xs text-muted-foreground">{text(project().path)}</Text></Button>}</Each><If when={state.ready() && !projects().length}><Text class="text-muted-foreground">{t('settings.projects.page.empty.noProjects')}</Text></If></SettingsGroup>
+  </Scroll>;
+  return <SettingsEntityLayout editing={editing} list={projectList}><Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
+    <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
     <If when={editing && state.ready()}>
       <Text class="text-sm text-muted-foreground">{value('path')}</Text>
       <SettingsGroup title={t('settings.page.projects.title')}>
@@ -233,5 +251,5 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
         <If when={!!iconPicker()}><Text class="text-base text-foreground">{t('settings.projects.actions.field.selectIconAria')}</Text><View class="flex-row flex-wrap gap-2"><Each of={projectSettingsActionIcons}>{icon => <Button testID={`project-action-icon-${icon().key}`} class={'min-h-11 min-w-11 items-center justify-center rounded-xl ' + ((auxiliary().actions.find(action => action.id === iconPicker())?.icon || 'play') === icon().key ? 'bg-accent' : 'bg-secondary')} disabled={auxiliaryDisabled('actions')} accessibilityLabel={t('settings.projects.actions.field.iconAria', { icon: icon().key })} onPress={() => { const id = iconPicker(); if (id) actionUpdate(id, { icon: icon().key }); iconPicker.set(null); }}><Icon name={icon().Icon} /></Button>}</Each></View><Button class={settingsAction} onPress={() => iconPicker.set(null)}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button></If>
       </Sheet>
     </If>
-  </Scroll>;
+  </Scroll></SettingsEntityLayout>;
 }

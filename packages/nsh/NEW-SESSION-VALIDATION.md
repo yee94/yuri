@@ -1,5 +1,26 @@
 # Native new-session 页面、handoff 与验收
 
+## 2026-11-08：桌面 native writer consumer
+
+冻结 Page getter、真实 session claim handoff、retained source 生命周期、source 关窗 prepare/cancel/final guard 及独立验收，见 [new-session-writer-DOCUMENTATION.md](./new-session-writer-DOCUMENTATION.md)。不改 application/state/drafts/runtime/desktop-writer/Host。
+
+桌面明确目录先只读 canonical GET 和 native acquire ACK，再构造原 durable owner；无目录为正常 Choose a project + readonly Composer，零 durable/claim。真实 create receipt 后先 acquire session，原同一 claim 交 Chat；source grant 到 Chat admission 后原 source 清理/flush/settle 完成才安全 release。pending/unknown、inputID、附件与 submission 锁不由 cleanup 洗掉。iOS 保持原路径，零 writer/capability I/O。
+
+本轮新 NSH **27 场景**、既有本地命令 NSH **12 场景**通过；历史实际根指定的 macOS Header clean switch / dirty-file Cancel+Discard 两条通过（本次未重跑）。纯回归 **18 文件 / 391 项通过**（directory、writer、local-page、原 new-session/recovery/page/admission/folder/selection/UI/copy/modal-owner/UI-helpers/Host/UI-Host/UIKit-admission/UIKit-Host/starters-drag）。不把 headless 测试当作物理 OS/真实 Host 的证据。独立严格及最终全包 tsc 通过；dead-code 仍被既有 vite-plugin-pwa 缺失阻断。下方历史移动端未签/失败账本不因此被清零。
+
+窗口内离页采用最小显式两阶段端口：`prepareWriterRetirement/canReleaseWriter` → `releaseWriter(): Promise<boolean>` → 原 route commit。releaseWriter 不 close durable、不置 owner alive=false，unknown 保原稿/receipt 且不自动重发；最终 route unmount 的 `close()` 识别原 source 已 released，幂等本地 close 一次。native 关窗仅 prepare/final canRelease，仍不提前 release；veto cancel 原 owner。installed/pending source 仍须先完成 Chat admission/source.complete，generic close 不能清锁。
+
+新增 `onWriterAdmissionGuard?: (guard: NewSessionWriterAdmissionGuard) => void | (() => void)`；Slot 在 resolve/acquire 前登记，root 只关联 route。pending/unknown/held ACK-before-source veto；无 selected/client/unsupported/denied 且零自身 held claim 可安全通过；release 仅 prepared 安全无 authority 的 noop。onRetainedOwner 接手后才注销等待 guard，不持第二 claim、不向 root 暴露 grant。same-Host modal/50 输入不重登记，iOS 零 observer 调用。具体安全判定、接线和测试边界见 writer 文档。Folder unknown 两平台旧 Engine 持锁导致 restored=open 为 Unavailable 的冷恢复缺口留 main，未改其 fixture/锁/unknown receipt。
+
+新旧桌面真实引擎回归命令：
+
+```sh
+NSH_BIN=/path/to/nsh/bin/nsh bunx --no-install vitest run \
+  --config packages/nsh/vitest.config.ts \
+  packages/nsh/new-session-writer-native.test.ts \
+  packages/nsh/new-session-local-page-native.test.ts
+```
+
 ## 2026-11-07：retained source / operation-only 恢复合同（本轮优先）
 
 本轮只改 `new-session.ts`、`new-session-admission.ts`、`new-session-page.tsx`、`new-session-fixture.tsx` 及其测试和本文；未改 application、state、runtime、Swift、composer 或外部 input/selection 模块。application 由 Tour owner 独占，下面接线交 main 协调。下文历史记录中的“未知后再次 POST”不再适用：未知首次 admission 一经记账，只允许按原 target/inputID 只读核验。

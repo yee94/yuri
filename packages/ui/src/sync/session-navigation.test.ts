@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from 'bun:test';
 import type { Session } from '@/lib/opencode/v2-types'
 
 import {
+  cycleNavigationTargets,
   clearSessionNavigationSnapshot,
   getNavigableRootSessions,
   isSubtaskSession,
@@ -12,6 +13,7 @@ import {
   resolveRootSessionId,
   type SessionNavigationTarget,
 } from './session-navigation';
+import { cycleNavigationTargets as sharedCycle } from './session-navigation-core';
 import { setSyncRefs } from './sync-refs';
 import { ChildStoreManager } from './child-store';
 import { INITIAL_STATE } from './types';
@@ -20,6 +22,17 @@ import type { SessionIndexSnapshot } from '@/lib/session-index-api';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionFocusStore } from '@/stores/useSessionFocusStore';
+
+test('Web keeps the native-shared pure navigation implementation, not a parallel copy', () => {
+  expect(cycleNavigationTargets).toBe(sharedCycle);
+  const targets: SessionNavigationTarget[] = [
+    { scope: 'pinned', sessionId: 'z', projectId: null, directory: '/synthetic' },
+    { scope: 'project', sessionId: 'a', projectId: 'project', directory: '/synthetic' },
+    { scope: 'project', sessionId: 'z', projectId: 'project', directory: '/synthetic' },
+  ];
+  expect(cycleNavigationTargets(targets, 1, 'z', { scope: 'project', sessionId: 'z', projectId: 'project' })).toBe(targets[0]);
+  expect(cycleNavigationTargets(targets, -1, 'z', { scope: 'pinned', sessionId: 'z', projectId: null })).toBe(targets[2]);
+});
 
 const makeSession = (
   id: string,

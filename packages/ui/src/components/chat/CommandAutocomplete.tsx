@@ -16,6 +16,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
 import { isVSCodeRuntime } from '@/lib/desktop';
+import { getComposerLocalCommandMetadata } from '@/lib/composer-local-commands-core';
 import { shouldSubmitCommandOnSelection } from './commandSelection';
 import { ComposerAutocompleteLayer } from './ComposerAutocompleteLayer';
 import {
@@ -198,56 +199,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
           }];
         });
 
-        const builtInCommands: CommandInfo[] = [
-          { id: 'yuri:new', name: 'new', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.newDescription'), isBuiltIn: true },
-          ...(hasSession && !hasMessagesInCurrentSession
-            ? [{ id: 'yuri:init', name: 'init', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
-            : []
-          ),
-          ...(hasSession  // Show when session exists, not when hasMessages
-            ? [
-                { id: 'yuri:btw', name: 'btw', source: 'yuri' as const, description: t('chat.btw.description'), isBuiltIn: true },
-                { id: 'yuri:undo', name: 'undo', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
-                { id: 'yuri:redo', name: 'redo', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
-                { id: 'yuri:fork', name: 'fork', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.forkDescription'), isBuiltIn: true },
-                { id: 'yuri:timeline', name: 'timeline', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
-              ]
-            : []
-          ),
-          { id: 'yuri:model', name: 'model', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.modelDescription'), isBuiltIn: true },
-          { id: 'yuri:compact', name: 'compact', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
-          ...(isVSCodeRuntime()
-            ? [{ id: 'yuri:reload', name: 'reload', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.reloadDescription'), isBuiltIn: true }]
-            : []),
-          ...(hasSession
-            ? [{ id: 'yuri:summary', name: 'summary', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:workspace-review', name: 'workspace-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:craft-goal', name: 'craft-goal', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:catch-up', name: 'catch-up', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:debug', name: 'debug', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:weigh', name: 'weigh', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:explore', name: 'explore', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isYuri: true }]
-            : []
-          ),
-        ];
+        const builtInCommands: CommandInfo[] = getComposerLocalCommandMetadata({ hasSession, hasMessages: hasMessagesInCurrentSession, canStartSessionCommand, reloadEnabled: isVSCodeRuntime() }, t);
         const allCommands = [...builtInCommands, ...customCommands];
 
         const allowInitCommand = !hasMessagesInCurrentSession;
@@ -259,56 +211,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
       } catch {
 
         const allowInitCommand = !hasMessagesInCurrentSession;
-        const builtInCommands: CommandInfo[] = [
-          { id: 'yuri:new', name: 'new', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.newDescription'), isBuiltIn: true },
-          ...(hasSession && !hasMessagesInCurrentSession
-            ? [{ id: 'yuri:init', name: 'init', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
-            : []
-          ),
-          ...(hasSession  // Show when session exists, not when hasMessages
-            ? [
-                { id: 'yuri:btw', name: 'btw', source: 'yuri' as const, description: t('chat.btw.description'), isBuiltIn: true },
-                { id: 'yuri:undo', name: 'undo', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
-                { id: 'yuri:redo', name: 'redo', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
-                { id: 'yuri:fork', name: 'fork', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.forkDescription'), isBuiltIn: true },
-                { id: 'yuri:timeline', name: 'timeline', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
-              ]
-            : []
-          ),
-          { id: 'yuri:model', name: 'model', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.modelDescription'), isBuiltIn: true },
-          { id: 'yuri:compact', name: 'compact', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
-          ...(isVSCodeRuntime()
-            ? [{ id: 'yuri:reload', name: 'reload', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.reloadDescription'), isBuiltIn: true }]
-            : []),
-          ...(hasSession
-            ? [{ id: 'yuri:summary', name: 'summary', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:workspace-review', name: 'workspace-review', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:craft-goal', name: 'craft-goal', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:catch-up', name: 'catch-up', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:debug', name: 'debug', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:weigh', name: 'weigh', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isYuri: true }]
-            : []
-          ),
-          ...(canStartSessionCommand
-            ? [{ id: 'yuri:explore', name: 'explore', source: 'yuri' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isYuri: true }]
-            : []
-          ),
-        ];
+        const builtInCommands: CommandInfo[] = getComposerLocalCommandMetadata({ hasSession, hasMessages: hasMessagesInCurrentSession, canStartSessionCommand, reloadEnabled: isVSCodeRuntime() }, t);
 
         const eligible = builtInCommands.filter(
           (cmd) => (allowInitCommand || cmd.name !== 'init') && (commandPolicy?.(cmd) ?? true),

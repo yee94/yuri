@@ -3,12 +3,16 @@ import { gitHubAccountKey, gitHubComplete, gitHubCurrentSelection, gitHubFlow, g
 type GitHubIssue = 'read' | 'start' | 'expired' | 'denied' | 'unknown' | 'open' | 'identity' | 'unsupported' | null;
 type Pending = { kind: 'connect' } | { kind: 'activate'; key: string } | { kind: 'remove'; key: string } | { kind: 'cli'; disabled: boolean };
 export type GitHubState = {
-  status: GitHubStatus | null; refreshing: boolean; busy: boolean; issue: GitHubIssue;
+  status: GitHubStatus | null; stale: boolean; refreshing: boolean; busy: boolean; issue: GitHubIssue;
   flow: { userCode: string; url: string; cancellable: boolean } | null; removal: GitHubAccount | null;
   cancellation: 'stopping' | 'cancelled' | 'unknown' | 'unsupported' | null;
   pending: Pending | null; reconciled: boolean; connected: boolean; exchanging: boolean; needsReadback: boolean;
 };
-export type GitHubDependencies = { request: GitSettingsRequest; current: () => boolean; open: (url: string) => Promise<boolean>; changed?: (state: GitHubState) => void };
+export type GitHubStatusSnapshot = Readonly<{ status: GitHubStatus | null; stale: boolean }>;
+export type GitHubDependencies = {
+  request: GitSettingsRequest; current: () => boolean; open: (url: string) => Promise<boolean>; changed?: (state: GitHubState) => void;
+  sharedStatus?: { snapshot: () => GitHubStatusSnapshot | null; subscribe: (listener: (value: GitHubStatusSnapshot) => void) => () => void };
+};
 
 /** One captured Host generation. No storage, credentials, runtime globals, or automatic write retry. */
 export function createSettingsGitHub(deps: GitHubDependencies) {
@@ -29,7 +33,7 @@ export function createSettingsGitHub(deps: GitHubDependencies) {
   };
 }
 function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubState; removalExpected: GitHubSelection | null }) {
-  let state: GitHubState = { status: null, refreshing: false, busy: false, issue: null, flow: null, removal: null, cancellation: null, pending: null, reconciled: false, connected: false, exchanging: false, needsReadback: false };
+  let state: GitHubState = { status: null, stale: false, refreshing: false, busy: false, issue: null, flow: null, removal: null, cancellation: null, pending: null, reconciled: false, connected: false, exchanging: false, needsReadback: false };
   let active = false, disposed = false, revision = 0, readVersion = 0;
   let lease: { wire: GitHubFlow; deadline: number; interval: number; polls: number; revision: number } | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined, expiry: ReturnType<typeof setTimeout> | undefined;
@@ -39,6 +43,15 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
   const current = () => !disposed && deps.current();
   const available = () => current() && active;
   const publish = (patch: Partial<GitHubState>) => { state = { ...state, ...patch }; if (current()) deps.changed?.(state); };
+  const adoptSharedStatus = (value: GitHubStatusSnapshot | null, notify: boolean) => {
+    if (!value?.status || !current()) return;
+    let status: GitHubStatus;
+    try { status = gitHubStatus(value.status); } catch { return; }
+    const patch = { status, stale: value.stale === true };
+    if (notify) publish(patch); else state = { ...state, ...patch };
+  };
+  adoptSharedStatus(deps.sharedStatus?.snapshot() ?? null, false);
+  const unsubscribeStatus = deps.sharedStatus?.subscribe(value => adoptSharedStatus(value, true));
   function invalidateReads() { readVersion++; publish({ refreshing: false }); }
   function timers() { clearTimeout(timer); clearTimeout(expiry); timer = undefined; expiry = undefined; }
   function clearLease() { timers(); if (lease) { lease.wire.deviceCode = ''; lease.wire.userCode = ''; } lease = null; revision++; publish({ flow: null }); }
@@ -78,8 +91,8 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
       const value = gitHubStatus(await deps.request('/api/github/auth/status'));
       if (!available() || version !== readVersion) return;
       const resolved = pendingResolved(value);
-      publish({ status: value, needsReadback: false, reconciled: !!state.pending, ...(resolved ? { pending: null } : {}), issue: state.pending && !resolved ? 'unknown' : !resolved && (state.issue === 'expired' || state.issue === 'denied') ? state.issue : null });
-    } catch { if (available() && version === readVersion) publish({ issue: state.pending ? 'unknown' : 'read' }); }
+      publish({ status: value, stale: false, needsReadback: false, reconciled: !!state.pending, ...(resolved ? { pending: null } : {}), issue: state.pending && !resolved ? 'unknown' : !resolved && (state.issue === 'expired' || state.issue === 'denied') ? state.issue : null });
+    } catch { if (available() && version === readVersion) publish({ stale: true, issue: state.pending ? 'unknown' : 'read' }); }
     finally { if (current() && version === readVersion) publish({ refreshing: false }); }
   }
   function schedule() {
@@ -121,7 +134,7 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
     catch { if (available() && lease === captured) publish({ issue: 'open' }); }
   }
   async function connect() {
-    if (!available() || state.busy || state.refreshing || state.pending || state.needsReadback || !state.status || lease || completing) return;
+    if (!available() || state.busy || state.refreshing || state.pending || state.needsReadback || !state.status || deps.sharedStatus && state.stale || lease || completing) return;
     const ticket = ++revision;
     cancellationVersion++;
     publish({ busy: true, issue: null, connected: false, cancellation: null });
@@ -141,7 +154,7 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
     await stopOnHost(wire);
   }
   async function mutate(pending: Pending, path: string, method: string, body: unknown, validate: (result: unknown) => void) {
-    if (!available() || state.busy || state.refreshing || state.pending || state.needsReadback || !state.status || lease || completing) return;
+    if (!available() || state.busy || state.refreshing || state.pending || state.needsReadback || !state.status || deps.sharedStatus && state.stale || lease || completing) return;
     publish({ busy: true, issue: null, reconciled: false, pending });
     try {
       const value = await deps.request(path, method, body);
@@ -172,7 +185,7 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
     await mutate({ kind: 'activate', key: gitHubAccountKey(account) }, '/api/github/auth/activate', 'POST', { accountId: account.id }, result => { const next = gitHubStatus(result); if (current()) publish({ status: next }); });
   }
   function requestRemoval(account: GitHubAccount) {
-    if (!available() || state.busy || state.pending || state.needsReadback || lease || completing) return;
+    if (!available() || state.busy || state.pending || state.needsReadback || deps.sharedStatus && state.stale || lease || completing) return;
     if (!state.status?.capabilities?.exactAccountRemoval) { publish({ issue: 'unsupported' }); return; }
     const found = state.status.accounts.find(item => item.source === 'oauth' && gitHubAccountKey(item) === gitHubAccountKey(account));
     const expected = gitHubCurrentSelection(state.status);
@@ -216,6 +229,6 @@ function createGitHubLane(deps: GitHubDependencies, retained?: { state: GitHubSt
       if (!current()) { clearLease(); return; }
       schedule(); await refresh();
     },
-    dispose(release = true) { const wire = cancellationWire(); timers(); if (lease) { lease.wire.deviceCode = ''; lease.wire.userCode = ''; } lease = null; revision++; readVersion++; active = false; disposed = true; state = { ...state, flow: null, removal: null }; if (release) void stopOnHost(wire, false); },
+    dispose(release = true) { const wire = cancellationWire(); timers(); if (lease) { lease.wire.deviceCode = ''; lease.wire.userCode = ''; } lease = null; revision++; readVersion++; active = false; disposed = true; unsubscribeStatus?.(); state = { ...state, flow: null, removal: null }; if (release) void stopOnHost(wire, false); },
   };
 }

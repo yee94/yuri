@@ -6,8 +6,11 @@ export function createHost() {
   let magicAttempts = 0;
   let magicResets = 0;
   let magicOverrides = { 'git.commit.generate.visible': 'Fixture visible override', 'git.commit.generate.instructions': 'Fixture instructions' };
-  return { call(name, input) {
+  const scope = { hostID: 'settings-ui-fixture', lease: 'synthetic-only-lease' };
+  return { call(name, input = {}) {
+    if (name === 'connection.list') return { selected: scope.hostID, runtimeScope: scope, connections: [{ id: scope.hostID, label: 'Synthetic Host', url: 'https://settings.example.invalid', lastUsedAt: 0 }] };
     if (name !== 'runtime.request') throw new Error('Unexpected settings native call');
+    if (input.expectedHost?.hostID !== scope.hostID || input.expectedHost?.lease !== scope.lease) throw new Error('Unadmitted synthetic scope');
     if (input.path === '/api/magic-prompts') {
       if (input.method === 'DELETE') magicOverrides = {};
       return { status: 200, body: { version: 1, overrides: { ...magicOverrides } } };

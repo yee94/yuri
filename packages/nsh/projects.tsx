@@ -3,7 +3,7 @@ import { AlertDialog, Button, Input, NavPage } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
 import { Icon } from './Icon';
 import { t } from './i18n';
-import { activeFrom, eventBusy, eventSessionID, list, messagesFrom, nameOf, projectsFrom, record, runtimeEventFrom, text, unwrap, type ChatTarget, type Project, type Session } from './model';
+import { activeFrom, eventBusy, eventSessionID, list, messagesFrom, nameOf, projectsFrom, record, runtimeEventFrom, sessionDisplayMetadata, text, unwrap, type ChatTarget, type Project, type Session } from './model';
 import { query, sessionPath } from './runtime';
 import { app, captureHostRequest, createSession, epoch } from './state';
 import { createPageOperations } from './page-operations';
@@ -15,6 +15,7 @@ import { resolveMobileSessionIndicator } from '../ui/src/mobile/projects/mobileS
 import { formatSessionChangeCounts, readSessionChangeSummary } from '../ui/src/lib/sessionChangeSummary';
 import { createProjectsOrderGesture, type ProjectsOrderGeometry } from './projects-order-gesture';
 import { createProjectsSessionDrag, type ProjectsSessionGeometry, type ProjectsSessionDragProjection, type ProjectsOrderScroll } from './projects-order-touch';
+import { createProjectsSidebar, sidebarSessionKey, type SidebarWriteJournal } from './projects-sidebar';
 
 export interface ProjectsNavigation {
   onOpenChat: (target: ChatTarget) => void;
@@ -46,6 +47,7 @@ const treeOrderRoute = '/api/yuri/message-queue/worktrees/order';
 const worktreeArchiveJournals = new Map<string, Map<string, ProjectSession[]>>();
 const worktreeRemovalFlights = new Set<string>();
 let deletionJournal: { key: string; controller: ReturnType<typeof createProjectsDeletes<ProjectSession>> } | undefined;
+let sidebarJournal: { key: string; writes: SidebarWriteJournal } | undefined;
 function projectsDeleteJournal() {
   const captured = epoch(), hostID = app.connection()?.id, key = JSON.stringify([captured, hostID]);
   if (deletionJournal?.key === key) return deletionJournal.controller;
@@ -88,6 +90,8 @@ function sessionFrom(value: unknown, directory = ''): ProjectSession {
   if (!text(row.id) || !path) throw new Error('Invalid session identity');
   return { id: text(row.id), title: text(row.title), directory: path, updated: Number(time.updated) || Number(time.created) || 0,
     parentID: text(row.parentID) || undefined, pinned: !!time.pinned, archived: Number(time.archived) > 0,
+    ...(typeof row.hasChildren === 'boolean' ? { hasChildren: row.hasChildren } : {}),
+    ...sessionDisplayMetadata(row),
     created: Number(time.created) || 0, changes: formatSessionChangeCounts(readSessionChangeSummary(row)) ?? undefined,
     activity: Number(record(record(record(row.metadata).yuri).titleRefresh).activityUpdatedAt) || Number(time.updated) || Number(time.created) || 0 };
 }
@@ -139,7 +143,7 @@ function merge(previous: ProjectSession[], next: ProjectSession[]) {
 }
 
 /** Page-owned authority: neither the twenty-row index nor failed reads mean a complete directory. */
-export function createProjectsController() {
+export function createProjectsController(options: { detailReads?: () => boolean } = {}) {
   const operations = createPageOperations();
   const buckets = signal<Record<string, Bucket>>({}), pins = signal<string[]>([]), running = signal<string[]>([]);
   const worktrees = signal<Record<string, Worktree[]>>({}), error = signal(''), loading = signal(false), pending = signal<string[]>([]);
@@ -148,6 +152,7 @@ export function createProjectsController() {
   const remoteDeletes = signal<Array<{ project: Project; tree: Worktree }>>([]);
   const order = signal<OrderSnapshot | null>(null), undoRows = signal<ProjectSession[]>([]);
   const notice = signal('');
+  const catalogReady = signal(false);
   const archiveFailures = signal<ProjectSession[]>([]);
   const archiveOperations = new Map<string, ProjectSession[]>();
   const searchResults = signal<ProjectSession[]>([]), searchMore = signal(false), searching = signal(false);
@@ -181,19 +186,49 @@ export function createProjectsController() {
     for (const [directory, rows] of index) index.set(directory, orderedProjectSessions(rows, directory, order(), pins()));
     return index;
   });
+  const sidebarRevision = signal(0);
+  const sidebarKey = JSON.stringify([captured, app.connection()?.id, app.connection()?.url, app.connection()?.authorizationID]);
+  if (sidebarJournal?.key !== sidebarKey) sidebarJournal = { key: sidebarKey, writes: new Map() };
+  const sidebarOwner = createProjectsSidebar({ capture: operations.capture, current,
+    changed: () => sidebarRevision.set(sidebarRevision() + 1), session: sessionFrom,
+    visible: value => visibleSession({ ...record(value), parentID: undefined }),
+    projects: rows => app.projects.set(rows), journal: sidebarJournal.writes,
+    directories: scope => {
+      if (scope.startsWith('__archived__:')) {
+        const project = app.projects().find(project => `__archived__:${project.path}` === scope);
+        return project ? [project.path, ...orderedWorktrees(project).map(tree => tree.path)] : [];
+      }
+      const paths = app.projects().flatMap(project => [project.path, ...orderedWorktrees(project).map(tree => tree.path)]);
+      return paths.some(path => normalizePath(path) === normalizePath(scope)) ? [scope] : [];
+    },
+    restored: restored => {
+      if (!current()) return;
+      catalogRevision++;
+      const old = buckets()[restored.directory];
+      buckets.set({ ...buckets(), [restored.directory]: { sessions: merge(old?.sessions ?? [], [restored]), cursor: old?.cursor ?? null, loaded: old?.loaded ?? false, hasMore: old?.hasMore ?? true } });
+    },
+  });
+  const sidebar = { ...sidebarOwner, snapshot: () => { sidebarRevision(); return sidebarOwner.snapshot(); } };
+  function retainedSessions() {
+    if (!current()) return [];
+    const hidden = deletedIDs(), children = Object.values(sidebar.snapshot().children).flatMap(page => page.rows);
+    return [...new Map([...Object.values(buckets()).flatMap(bucket => bucket.sessions), ...children]
+      .filter(row => !row.archived && !hidden.has(row.id)).map(row => [sidebarSessionKey(row), row])).values()];
+  }
+  operations.onRetire(() => sidebarOwner.pause());
   async function loadOrder() {
     const request = operations.capture().request;
     const valid = scope(), value = orderSnapshot(await request('/api/session-folders/order'));
     if (valid() && (!order() || value.revision >= order()!.revision)) order.set(value);
   }
-  async function reorder(scopeKey: string, activeID: string, overID: string) {
+  async function reorder(scopeKey: string, activeID: string, overID: string, sourceRows?: ProjectSession[]) {
     const request = operations.capture().request;
     if (!current() || pending().includes(`order:${scopeKey}`) || activeID === overID) return;
     const valid = scope(); error.set(''); pending.set([...pending(), `order:${scopeKey}`]);
     try {
       // Read the shared Host rank before writing so unloaded/hidden ranks are retained.
       await loadOrder(); if (!valid()) return;
-      const rows = scopeKey === '__pinned__' ? orderedProjectSessions(sessions().filter(row => pins().includes(row.id)), scopeKey, order(), pins()) : byDirectory().get(scopeKey) ?? [];
+      const rows = sourceRows ? orderedProjectSessions(sourceRows, scopeKey, order(), pins()) : scopeKey === '__pinned__' ? orderedProjectSessions(sessions().filter(row => pins().includes(row.id)), scopeKey, order(), pins()) : byDirectory().get(scopeKey) ?? [];
       const ids = rows.map(row => row.id), from = ids.indexOf(activeID), to = ids.indexOf(overID);
       if (from < 0 || to < 0) return;
       ids.splice(from, 1); ids.splice(to, 0, activeID);
@@ -206,6 +241,7 @@ export function createProjectsController() {
   }
   function removeRows(ids: Set<string>) {
     catalogRevision++;
+    sidebarOwner.remove(ids);
     const next = { ...buckets() };
     for (const [path, bucket] of Object.entries(next)) next[path] = { ...bucket, sessions: bucket.sessions.filter(item => !ids.has(item.id)) };
     buckets.set(next); pins.set(pins().filter(id => !ids.has(id)));
@@ -349,13 +385,18 @@ export function createProjectsController() {
     buckets.set(next);
     if (Array.isArray(value.pinnedSessionIds)) pins.set(value.pinnedSessionIds.filter((id): id is string => typeof id === 'string'));
     // Pins outside the bounded index are resolved explicitly; one miss never clears other rows.
-    await Promise.allSettled(pins().filter(id => !sessions().some(row => row.id === id)).map(async id => {
+    const pinResults = await Promise.allSettled(pins().filter(id => !Object.values(buckets()).some(bucket => bucket.sessions.some(row => row.id === id))).map(async id => {
       const hit = record(await request(`/api/yuri/session-index/session/${encodeURIComponent(id)}`));
       const row = sessionFrom(hit.session);
       if (!valid() || revision !== catalogRevision) return;
       const old = buckets()[row.directory];
       buckets.set({ ...buckets(), [row.directory]: { sessions: merge(old?.sessions ?? [], [row]), cursor: old?.cursor ?? null, loaded: old?.loaded ?? false, hasMore: old?.hasMore ?? true } });
     }));
+    if (!valid() || revision !== catalogRevision) return;
+    const pinFailure = pinResults.find(result => result.status === 'rejected');
+    if (pinFailure?.status === 'rejected') throw pinFailure.reason;
+    if (failed.size) throw new Error('Session index has failed directories');
+    catalogReady.set(true);
   }
   async function refresh() {
     if (!current()) return;
@@ -664,10 +705,10 @@ export function createProjectsController() {
     const event = runtimeEventFrom(payload); if (!event) return;
     const busy = eventBusy(event), id = eventSessionID(event);
     if (id && busy !== undefined) { activityRevision++; if (busy !== running().includes(id)) running.set(busy ? [...running(), id] : running().filter(item => item !== id)); }
-    if (event.key === 'global' && ['yuri:message-queue-changed', 'reconnected'].includes(event.type) && !treeOrderTimer) {
+    if (options.detailReads?.() !== false && event.key === 'global' && ['yuri:message-queue-changed', 'reconnected'].includes(event.type) && !treeOrderTimer) {
       treeOrderTimer = setTimeout(() => {
         treeOrderTimer = undefined;
-        if (!current() || lifecycle() !== 'active') return;
+        if (!current() || lifecycle() !== 'active' || options.detailReads?.() === false) return;
         const valid = scope();
         void (async () => { const paths = Object.keys(worktrees()); for (let i = 0; i < paths.length && valid(); i += 2) await Promise.all(paths.slice(i, i + 2).map(path => loadTreeOrder({ id: path, path, name: path }).catch(failure => { if (valid()) fail(failure); }))); })();
       }, 120);
@@ -679,9 +720,9 @@ export function createProjectsController() {
     if (event.key !== 'global' || !['reconnected', 'yuri:session-index-changed'].includes(event.type) || timer) return;
     timer = setTimeout(() => { timer = undefined; if (current()) void refresh(); }, record(event.body.sync).active ? 1000 : 120);
   });
-  const dispose = () => { alive = false; searchRevision++; stop(); stopDeletes(); stopAttention(); if (timer) clearTimeout(timer); if (treeOrderTimer) clearTimeout(treeOrderTimer); };
+  const dispose = () => { alive = false; sidebarOwner.dispose(); searchRevision++; stop(); stopDeletes(); stopAttention(); if (timer) clearTimeout(timer); if (treeOrderTimer) clearTimeout(treeOrderTimer); };
   cleanup(dispose);
-  return { buckets, pins, running, worktrees, branches, order, treeOrders, dirty, remoteDeletes, orderedWorktrees, loadTreeOrder, reorderWorktree, loadWorktreeStatus, deleteRemote, undoRows, archiveFailures, deleteBatches, undoDelete, retryDelete: (id: string) => deletes.retry(id), attention, markViewed, notice, error, loading, pending, sessions, byDirectory, searchResults: () => searchResults().filter(row => !deletedIDs().has(row.id)), searchMore, searching, current, refresh, loadOrder, reorder, undoArchive, smartTitle, syncMessages, updateProjectCatalog, syncProject, loadDirectory, search, cancelSearch, loadWorktrees, loadBranches, loadRepository, removeWorktree, mutate, createWorktree, dispose };
+  return { sidebar, catalogReady, catalogLoading: () => loading() || pending().some(key => flights.has(key)), retainedSessions, hiddenSessionIDs: deletedIDs, buckets, pins, running, worktrees, branches, order, treeOrders, dirty, remoteDeletes, orderedWorktrees, loadTreeOrder, reorderWorktree, loadWorktreeStatus, deleteRemote, undoRows, archiveFailures, deleteBatches, undoDelete, retryDelete: (id: string) => deletes.retry(id), attention, markViewed, notice, error, loading, pending, sessions, byDirectory, searchResults: () => searchResults().filter(row => !deletedIDs().has(row.id)), searchMore, searching, current, refresh, loadOrder, reorder, undoArchive, smartTitle, syncMessages, updateProjectCatalog, syncProject, loadDirectory, search, cancelSearch, loadWorktrees, loadBranches, loadRepository, removeWorktree, mutate, createWorktree, dispose };
 }
 type Controller = ReturnType<typeof createProjectsController>;
 

@@ -22,21 +22,31 @@ export const resourceCanPreview = (content: ResourceContent): boolean => content
   ? content.preview !== 'unsupported'
   : content.kind === 'image' || content.kind === 'pdf';
 export function resourcePath(value: string): string {
-  const path = value.replace(/\\/g, '/');
-  if (!path.startsWith('/') || path.includes('\0')) throw new Error('Invalid resource path');
-  const segments: string[] = [];
-  for (const part of path.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') segments.pop(); else segments.push(part);
-  }
-  return '/' + segments.join('/');
+  if (!resourceIsAbsolute(value) || /[\x00-\x1f\x7f]/.test(value)) throw new Error('Invalid resource path');
+  const path = normalizePath(value);
+  if (!path || /^\/\/[?.](?:\/|$)/.test(path)) throw new Error('Invalid resource path');
+  return /^[A-Z]:$/.test(path) ? path + '/' : path;
+}
+export const resourceIsAbsolute = (path: string): boolean => /^(?:[\\/]|[a-zA-Z]:[\\/])/.test(path);
+export function resourceResolve(path: string, root: string): string {
+  root = resourcePath(root);
+  const absolute = resourcePath(resourceIsAbsolute(path) ? path : root + (root.endsWith('/') ? '' : '/') + path);
+  if (!resourceWithin(absolute, root)) throw new Error('File outside project');
+  return absolute;
 }
 export const resourceName = (path: string) => resourcePath(path).split('/').pop() || '/';
-export const resourceWithin = (path: string, root: string) => root === '/' || path === root || path.startsWith(root + '/');
+export function resourceWithin(path: string, root: string): boolean {
+  try {
+    path = resourcePath(path); root = resourcePath(root);
+    return path === root || (root === '/' ? path.startsWith('/') && !path.startsWith('//') : path.startsWith(root.replace(/\/$/, '') + '/'));
+  } catch { return false; }
+}
 export function resourceParent(path: string, root: string): string | null {
   path = resourcePath(path); root = resourcePath(root);
-  const parent = path.slice(0, path.lastIndexOf('/')) || '/';
-  return path !== root && resourceWithin(parent, root) ? parent : null;
+  if (path === root) return null;
+  const segment = path.slice(0, path.lastIndexOf('/'));
+  const parent = resourcePath(/^[A-Z]:$/.test(segment) ? segment + '/' : segment || '/');
+  return resourceWithin(parent, root) ? parent : null;
 }
 export function resourceEntries(value: unknown, root: string): ResourceEntry[] {
   if (!value || typeof value !== 'object' || !('entries' in value) || !Array.isArray(value.entries)) throw new Error('Invalid file listing');
@@ -53,7 +63,8 @@ export function resourceFence(currentHost: () => number) {
   return { begin() { const host = currentHost(), token = ++revision; return () => token === revision && host === currentHost(); }, cancel() { revision++; } };
 }
 export function resourceServeRoute(path: string): string {
-  return '/api/fs/serve' + resourcePath(path).split('/').map(encodeURIComponent).join('/');
+  const normalized = resourcePath(path);
+  return '/api/fs/serve' + (normalized.startsWith('/') ? '' : '/') + normalized.split('/').map(encodeURIComponent).join('/');
 }
 export const resourceFindRoute = (directory: string, query: string) => `/api/fs/find?location%5Bdirectory%5D=${encodeURIComponent(directory)}&query=${encodeURIComponent(query)}&limit=40&type=file`;
 export function resourceSearchEntries(value: unknown, directory: string, root: string): ResourceEntry[] {
@@ -65,3 +76,4 @@ export function resourceSearchEntries(value: unknown, directory: string, root: s
     return { path, name: resourceName(path), isDirectory: item.type === 'directory' };
   });
 }
+import { normalizePath } from '../ui/src/lib/pathNormalization';

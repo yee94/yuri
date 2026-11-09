@@ -1,0 +1,849 @@
+--- a/crates/nsh-core/src/core/components.rs
++++ b/crates/nsh-core/src/core/components.rs
+@@ -4600,6 +4600,10 @@
+     /// A native event on node `id`: true when a component handled it (its
+     /// own parts' events never reach JS, which does not know them).
+     pub fn component_event(&mut self, id: NodeId, kind: EventKind, payload: &EventPayload) -> bool {
++        if id == crate::ROOT_ID && kind == EventKind::ScrollSnapshot {
++            self.answer_scroll_snapshot(payload);
++            return true;
++        }
+         let _entered = self.components.runtime.enter();
+         let handled = self.dispatch_event(id, kind, payload);
+         self.flush_component_emits();
+--- a/crates/nsh-core/src/core/mod.rs
++++ b/crates/nsh-core/src/core/mod.rs
+@@ -8,6 +8,7 @@
+ mod overlay;
+ mod parent_viewport;
+ mod renders;
++mod scroll_snapshot;
+ mod scrollbars;
+ mod services;
+ mod slots;
+@@ -24,6 +25,7 @@
+ use taffy::{AvailableSpace, NodeId as LayoutId, Overflow, Position};
+ 
+ pub use self::measure::Measurement;
++pub use self::scroll_snapshot::ScrollSnapshot;
+ use self::{
+     layout_tree::LayoutTree,
+     list::{ExtraKind, Follow, ListState, PendingScroll, PinTarget},
+@@ -992,6 +994,8 @@
+     attachment_blocks: Vec<Key>,
+     /// Live list nodes.
+     lists: Vec<Key>,
++    /// Explicit native snapshot requests, fenced to their original List and extent.
++    scroll_snapshot_calls: rustc_hash::FxHashMap<u32, scroll_snapshot::PendingSnapshot>,
+     /// The lists in their parent's viewport (`viewport="parent"`), outer
+     /// ones first ([`Core::resolve_outer`]).
+     parent_lists: Vec<Key>,
+@@ -1221,6 +1225,7 @@
+             speech: None,
+             components: components::Components::for_viewport(viewport),
+             lists: Vec::new(),
++            scroll_snapshot_calls: rustc_hash::FxHashMap::default(),
+             parent_lists: Vec::new(),
+             watched_parents: Vec::new(),
+             parent_scrolls: Vec::new(),
+@@ -2017,6 +2022,13 @@
+             // A released node: no layout, but the call is answered.
+             Op::Command {
+                 id,
++                command: Command::ReadScrollSnapshot { call },
++            } if self.key(id).is_err() => {
++                self.settle(call, Ok(Box::new(crate::JsonValue::Null)));
++                Ok(())
++            }
++            Op::Command {
++                id,
+                 command: Command::Measure { call },
+             } if self.key(id).is_err() => {
+                 self.answer_measure(id, call);
+@@ -2168,6 +2180,12 @@
+             // are gone or not shown).
+             if let Command::Measure { call } = command {
+                 self.answer_measure(id, call);
++                continue;
++            }
++            if let Command::ReadScrollSnapshot { call } = command {
++                if self.begin_scroll_snapshot(id, call) {
++                    self.mount.push(MountItem::Command { id, command });
++                }
+                 continue;
+             }
+             let Ok(key) = self.key(id) else { continue };
+@@ -4586,6 +4604,7 @@
+     /// Unlinks `key` from its parent's children, layout and (optionally)
+     /// native hierarchy.
+     fn unlink(&mut self, key: Key, emit_remove: bool) {
++        self.cancel_scroll_snapshots(key);
+         let parent = self.nodes[key as usize].parent;
+         let siblings = &mut self.nodes[parent as usize].children;
+         let pos = siblings
+@@ -4725,6 +4744,8 @@
+         if self.nodes[key as usize].parent != NO_KEY {
+             // Deleting the view also detaches it natively.
+             self.unlink(key, false);
++        } else {
++            self.cancel_scroll_snapshots(key);
+         }
+         // Out of the view it was virtualized against, before its key is
+         // free for another node.
+--- /dev/null
++++ b/crates/nsh-core/src/core/scroll_snapshot.rs
+@@ -0,0 +1,158 @@
++//! Explicit, read-only List snapshots from the platform's live scroll owner.
++//! Never replay a pending core scroll or raise a scroll/pagination event.
++
++use super::{Core, Key, Kind};
++use crate::{EventPayload, JsonValue, NodeId, Point, Points, Size, platform::Os, text::TextEngine};
++
++/// A platform's actual scroll frame, in points, with the same coordinates as `onScroll`.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct ScrollSnapshot {
++    /// Actual platform-reported physical offset, not a core replay target.
++    pub offset: Point<Points>,
++    /// Actual content extent, zoomed as in `onScroll`.
++    pub content_size: Size<Points>,
++    /// Native viewport extent in points.
++    pub size: Size<Points>,
++    /// Native zoom scale; macOS and Windows currently support only one.
++    pub zoom_scale: f32,
++}
++
++impl ScrollSnapshot {
++    fn valid(&self) -> bool {
++        let values = [
++            self.offset.x.0,
++            self.offset.y.0,
++            self.content_size.width.0,
++            self.content_size.height.0,
++            self.size.width.0,
++            self.size.height.0,
++            self.zoom_scale,
++        ];
++        values.iter().all(|value| value.is_finite()) && values[2..].iter().all(|value| *value > 0.0)
++    }
++
++    fn json(self) -> JsonValue {
++        serde_json::json!({
++            "offset": { "x": self.offset.x.0, "y": self.offset.y.0 },
++            "contentSize": { "width": self.content_size.width.0, "height": self.content_size.height.0 },
++            "size": { "width": self.size.width.0, "height": self.size.height.0 },
++            "zoomScale": self.zoom_scale,
++        })
++    }
++
++    /// The private platform reply; it is not an `onScroll` event.
++    pub fn reply(call: u32, snapshot: Option<Self>) -> EventPayload {
++        EventPayload::Json(serde_json::json!({
++            "call": call,
++            "snapshot": snapshot.filter(Self::valid).map(Self::json),
++        }))
++    }
++
++    fn parse(value: &JsonValue) -> Option<Self> {
++        let number = |field: &str, member: &str| {
++            value
++                .get(field)?
++                .get(member)?
++                .as_f64()
++                .map(|v| Points(v as f32))
++        };
++        let result = Self {
++            offset: Point::new(number("offset", "x")?, number("offset", "y")?),
++            content_size: Size::new(
++                number("contentSize", "width")?,
++                number("contentSize", "height")?,
++            ),
++            size: Size::new(number("size", "width")?, number("size", "height")?),
++            zoom_scale: value.get("zoomScale")?.as_f64()? as f32,
++        };
++        result.valid().then_some(result)
++    }
++}
++
++pub(super) struct PendingSnapshot {
++    node: NodeId,
++    size: Size<Points>,
++    content: Size<Points>,
++}
++
++impl<M: TextEngine> Core<M> {
++    pub(super) fn cancel_scroll_snapshots(&mut self, subtree: Key) {
++        let calls: Vec<_> = self
++            .scroll_snapshot_calls
++            .iter()
++            .filter_map(|(&call, pending)| {
++                self.key(pending.node)
++                    .ok()
++                    .filter(|&key| self.is_ancestor(subtree, key))
++                    .map(|_| call)
++            })
++            .collect();
++        for call in calls {
++            self.scroll_snapshot_calls.remove(&call);
++            self.settle(call, Ok(Box::new(JsonValue::Null)));
++        }
++    }
++
++    fn snapshot_target(&self, id: NodeId) -> Option<(Size<Points>, Size<Points>)> {
++        if !matches!(self.components.environment.os, Os::MacOs | Os::Windows) {
++            return None;
++        }
++        let key = self.key(id).ok()?;
++        let node = &self.nodes[key as usize];
++        if node.kind != Kind::List
++            || !node.created
++            || node.layout.is_none()
++            || !self.in_tree(key)
++            || node.list.as_ref()?.parent
++        {
++            return None;
++        }
++        Some((node.frame.size, node.scroll.as_ref()?.content?))
++    }
++
++    pub(super) fn begin_scroll_snapshot(&mut self, id: NodeId, call: u32) -> bool {
++        let Some((size, content)) = self.snapshot_target(id) else {
++            self.settle(call, Ok(Box::new(JsonValue::Null)));
++            return false;
++        };
++        self.scroll_snapshot_calls.insert(
++            call,
++            PendingSnapshot {
++                node: id,
++                size,
++                content,
++            },
++        );
++        true
++    }
++
++    pub(super) fn answer_scroll_snapshot(&mut self, payload: &EventPayload) {
++        let EventPayload::Json(value) = payload else {
++            return;
++        };
++        let Some(call) = value
++            .get("call")
++            .and_then(JsonValue::as_u64)
++            .and_then(|n| u32::try_from(n).ok())
++        else {
++            return;
++        };
++        let Some(pending) = self.scroll_snapshot_calls.remove(&call) else {
++            return;
++        };
++        let snapshot = value
++            .get("snapshot")
++            .and_then(ScrollSnapshot::parse)
++            .filter(|snapshot| {
++                self.snapshot_target(pending.node) == Some((pending.size, pending.content))
++                    && snapshot.size == pending.size
++                    && snapshot.content_size == pending.content * snapshot.zoom_scale
++            });
++        self.settle(
++            call,
++            Ok(Box::new(
++                snapshot.map_or(JsonValue::Null, ScrollSnapshot::json),
++            )),
++        );
++    }
++}
+--- a/crates/nsh-core/src/core/tests.rs
++++ b/crates/nsh-core/src/core/tests.rs
+@@ -1,4 +1,6 @@
+ use std::cell::Cell;
++
++mod list_scroll_snapshot;
+ 
+ use super::*;
+ use crate::{
+--- /dev/null
++++ b/crates/nsh-core/src/core/tests/list_scroll_snapshot.rs
+@@ -0,0 +1,213 @@
++//! Private native replies, including late/absent refs and physical-point units.
++use super::*;
++use crate::{
++    JsonValue, ScrollSnapshot,
++    element::{Environment, json_host::JsonHost},
++    platform::Os,
++};
++
++fn fixture() -> Core<FakeEngine> {
++    let mut c = core();
++    c.set_environment(Environment {
++        os: Os::MacOs,
++        pixel_ratio: 2.5,
++        ..Environment::default()
++    });
++    apply(
++        &mut c,
++        vec![
++            Op::Create {
++                id: 2,
++                tag: Tag::List,
++            },
++            style_op(
++                2,
++                &[
++                    ("width", StyleValue::Number(320.0)),
++                    ("height", StyleValue::Number(300.0)),
++                ],
++            ),
++            Op::SetProp {
++                id: 2,
++                prop: Prop::Count(30),
++            },
++            Op::SetProp {
++                id: 2,
++                prop: Prop::Inverted(true),
++            },
++            Op::SetProp {
++                id: 2,
++                prop: Prop::EstimatedItemSize(px(40.0)),
++            },
++            Op::Insert {
++                parent: ROOT_ID,
++                child: 2,
++                before: None,
++            },
++        ],
++    );
++    c.commit();
++    c.events.clear();
++    c
++}
++
++fn native(c: &Core<FakeEngine>) -> ScrollSnapshot {
++    let node = &c.nodes[c.key(2).unwrap() as usize];
++    ScrollSnapshot {
++        offset: point(px(0.0), px(37.5)),
++        content_size: node.scroll.as_ref().unwrap().content.unwrap(),
++        size: node.frame.size,
++        zoom_scale: 1.0,
++    }
++}
++
++fn reply(c: &mut Core<FakeEngine>, call: u32) -> JsonValue {
++    let host = JsonHost::default();
++    let at = c.events.iter().position(|event| matches!(event, crate::element::JsEvent::Reply { call: current, .. } if *current == call)).expect("reply");
++    let crate::element::JsEvent::Reply { result, .. } = c.events.remove(at) else {
++        unreachable!()
++    };
++    host.read(result.unwrap().to_js_value(&host).unwrap())
++        .unwrap()
++}
++
++#[test]
++fn list_scroll_snapshot_uses_native_points_not_core_defaults_replay_or_pixel_ratio() {
++    let mut c = fixture();
++    let mut actual = native(&c);
++    let key = c.key(2).unwrap();
++    c.nodes[key as usize]
++        .list
++        .as_mut()
++        .unwrap()
++        .issue_scroll_to(1234.0);
++    assert!(c.begin_scroll_snapshot(2, 40));
++    actual.offset.y = px(19.25);
++    assert!(c.component_event(
++        ROOT_ID,
++        EventKind::ScrollSnapshot,
++        &ScrollSnapshot::reply(40, Some(actual))
++    ));
++    let value = reply(&mut c, 40);
++    assert_eq!(value["offset"]["y"], 19.25);
++    assert_eq!(value["size"]["width"], 320.0);
++    assert_eq!(value["size"]["height"], 300.0);
++    assert!(
++        !c.nodes[key as usize].list.as_ref().unwrap().settled(),
++        "read cannot apply or replay scrolls"
++    );
++    assert!(c.scroll_snapshot_calls.is_empty());
++}
++
++#[test]
++fn list_scroll_snapshot_keeps_zoomed_content_and_unscaled_viewport() {
++    let mut c = fixture();
++    let mut actual = native(&c);
++    assert!(c.begin_scroll_snapshot(2, 41));
++    actual.zoom_scale = 2.0;
++    actual.content_size = actual.content_size * 2.0;
++    c.answer_scroll_snapshot(&ScrollSnapshot::reply(41, Some(actual)));
++    let value = reply(&mut c, 41);
++    assert_eq!(value["contentSize"]["width"], 640.0);
++    assert_eq!(value["size"]["width"], 320.0);
++    assert_eq!(value["zoomScale"], 2.0);
++}
++
++#[test]
++fn list_scroll_snapshot_rejects_late_resize_content_and_detach_replies() {
++    for change in ["resize", "content", "detach", "release"] {
++        let mut c = fixture();
++        let actual = native(&c);
++        assert!(c.begin_scroll_snapshot(2, 42));
++        match change {
++            "resize" => c
++                .apply(style_op(2, &[("height", StyleValue::Number(220.0))]))
++                .unwrap(),
++            "content" => c
++                .apply(Op::SetProp {
++                    id: 2,
++                    prop: Prop::Count(100),
++                })
++                .unwrap(),
++            "detach" => c
++                .apply(Op::Remove {
++                    parent: ROOT_ID,
++                    child: 2,
++                })
++                .unwrap(),
++            "release" => c.apply(Op::Release { id: 2 }).unwrap(),
++            _ => unreachable!(),
++        }
++        c.commit();
++        c.answer_scroll_snapshot(&ScrollSnapshot::reply(42, Some(actual)));
++        assert_eq!(reply(&mut c, 42), JsonValue::Null, "{change}");
++        assert!(c.scroll_snapshot_calls.is_empty());
++    }
++}
++
++#[test]
++fn list_scroll_snapshot_invalid_and_wrong_sized_native_frames_are_null() {
++    for change in ["nan", "infinite", "zero", "wrong-size", "wrong-content"] {
++        let mut c = fixture();
++        let mut actual = native(&c);
++        assert!(c.begin_scroll_snapshot(2, 43));
++        match change {
++            "nan" => actual.offset.y = px(f32::NAN),
++            "infinite" => actual.content_size.height = px(f32::INFINITY),
++            "zero" => actual.size.height = px(0.0),
++            "wrong-size" => actual.size.height = px(200.0),
++            "wrong-content" => actual.content_size.height = px(1000.0),
++            _ => unreachable!(),
++        }
++        c.answer_scroll_snapshot(&ScrollSnapshot::reply(43, Some(actual)));
++        assert_eq!(reply(&mut c, 43), JsonValue::Null, "{change}");
++    }
++}
++
++#[test]
++fn list_scroll_snapshot_detach_settles_before_native_reply_and_cannot_revive_after_reattach() {
++    let mut c = fixture();
++    let actual = native(&c);
++    assert!(c.begin_scroll_snapshot(2, 46));
++    c.apply(Op::Remove {
++        parent: ROOT_ID,
++        child: 2,
++    })
++    .unwrap();
++    assert_eq!(reply(&mut c, 46), JsonValue::Null);
++    assert!(c.scroll_snapshot_calls.is_empty());
++    c.apply(Op::Insert {
++        parent: ROOT_ID,
++        child: 2,
++        before: None,
++    })
++    .unwrap();
++    c.commit();
++    c.answer_scroll_snapshot(&ScrollSnapshot::reply(46, Some(actual)));
++    assert!(
++        !c.events
++            .iter()
++            .any(|event| matches!(event, crate::element::JsEvent::Reply { call: 46, .. }))
++    );
++}
++
++#[test]
++fn list_scroll_snapshot_absent_unsupported_and_duplicate_replies_do_not_hang_or_raise_scroll_events()
++ {
++    let mut c = fixture();
++    assert!(!c.begin_scroll_snapshot(999, 44));
++    assert_eq!(reply(&mut c, 44), JsonValue::Null);
++    assert!(c.begin_scroll_snapshot(2, 47));
++    c.answer_scroll_snapshot(&ScrollSnapshot::reply(47, None));
++    assert_eq!(reply(&mut c, 47), JsonValue::Null);
++    c.components.environment.os = Os::Ios;
++    assert!(!c.begin_scroll_snapshot(2, 45));
++    assert_eq!(reply(&mut c, 45), JsonValue::Null);
++    c.answer_scroll_snapshot(&ScrollSnapshot::reply(45, None));
++    assert!(
++        !c.events
++            .iter()
++            .any(|event| matches!(event, crate::element::JsEvent::Reply { call: 45, .. }))
++    );
++    assert!(c.scroll_snapshot_calls.is_empty());
++}
+--- a/crates/nsh-core/src/lib.rs
++++ b/crates/nsh-core/src/lib.rs
+@@ -71,7 +71,7 @@
+ 
+ pub use crate::{
+     color::{Hsla, Rgba},
+-    core::{ApplyError, Core, ListBind, Measurement},
++    core::{ApplyError, Core, ListBind, Measurement, ScrollSnapshot},
+     effects::{
+         BackdropMaterial, BlendMode, BoxShadow, ColorStop, Cursor, Effects, Filter, GlassEffect,
+         Gradient, GradientKind, GradientSize, KeyframeAnimation, Keyframes, Outline, Transition,
+--- a/crates/nsh-core/src/ops.rs
++++ b/crates/nsh-core/src/ops.rs
+@@ -252,6 +252,7 @@
+     FileRequest = "onFileRequest": "A [`Command::FileRequest`] finished (root only; payload: [`EventPayload::FileRequest`]).",
+     Speech = "onSpeech": "A speech recognition session reported (root only; payload: [`EventPayload::Speech`]).",
+     Download = "onDownload": "A web view's download started, finished or failed (payload: `state`, `id`, `url`, `filename`, `path`; `bytes` once finished, `message` when it failed).",
++    ScrollSnapshot = "onScrollSnapshot" as "": "An explicit native List snapshot reply (root only; private, never an onScroll event).",
+ 
+ }
+ 
+@@ -1778,6 +1779,11 @@
+     /// when the view is not laid out); never mounted.
+     Measure {
+         /// The call to answer.
++        call: u32,
++    },
++    /// Explicit read of a List's native scroll owner; answered privately, without scrolling.
++    ReadScrollSnapshot {
++        /// The private promise to answer.
+         call: u32,
+     },
+     /// Put `text` on the system clipboard (on the root; `Clipboard.writeText`).
+--- a/crates/nsh-js/src/components.rs
++++ b/crates/nsh-js/src/components.rs
+@@ -166,6 +166,21 @@
+         Op::Command {
+             id,
+             command: Command::Measure { call },
++        },
++    ) {
++        return e;
++    }
++    promise(cx, call)
++}
++
++/// A read-only snapshot request, not a scroll command or synthetic scroll event.
++pub(crate) fn scroll_snapshot(cx: *mut JsContext, id: u32) -> JsValue {
++    let call = next_call(cx);
++    if let Err(e) = dom::push_op(
++        cx,
++        Op::Command {
++            id,
++            command: Command::ReadScrollSnapshot { call },
+         },
+     ) {
+         return e;
+--- a/crates/nsh-js/src/declarations.rs
++++ b/crates/nsh-js/src/declarations.rs
+@@ -283,7 +283,13 @@
+         "ListRef",
+         Some("ViewRef"),
+         "A `List`'s ref.",
+-        &["scrollTo", "scrollToOffset", "scrollToIndex", "scrollToEnd"],
++        &[
++            "scrollTo",
++            "scrollToOffset",
++            "scrollToIndex",
++            "scrollToEnd",
++            "getScrollSnapshot",
++        ],
+     ),
+     (
+         "WebViewRef",
+--- a/crates/nsh-js/src/dom.rs
++++ b/crates/nsh-js/src/dom.rs
+@@ -410,6 +410,12 @@
+         decl!("`WebView`: reloads the page."),
+     ),
+     (
++        "getScrollSnapshot",
++        0,
++        decl!("(): Promise<ScrollEvent | null>"),
++        decl!("Reads this mounted List's actual native scroll offset, content size, viewport size and zoom scale after the current commit. macOS/Windows only; null when absent, not laid out, unsupported or changed while awaiting the native reply. Read-only: does not scroll or raise onScroll/load-more events."),
++    ),
++    (
+         "goBack",
+         0,
+         decl!("(): void"),
+@@ -476,6 +482,9 @@
+     };
+     if name == "measure" {
+         return crate::components::measure(cx, id);
++    }
++    if name == "getScrollSnapshot" {
++        return crate::components::scroll_snapshot(cx, id);
+     }
+     let a0 = arg(argc, argv, 0);
+     let number = |v: JsValue| -> JsValue {
+--- a/crates/nsh-platform-android/src/encode.rs
++++ b/crates/nsh-platform-android/src/encode.rs
+@@ -673,6 +673,7 @@
+                     | Command::SetStatusBar(_)
+                     | Command::ScrollToIndex { .. }
+                     | Command::Measure { .. }
++                    | Command::ReadScrollSnapshot { .. }
+                     | Command::ScrollToEnd { .. }
+                     // Desktops only.
+                     | Command::Desktop(_)
+--- a/crates/nsh-platform-macos/src/mount.rs
++++ b/crates/nsh-platform-macos/src/mount.rs
+@@ -465,6 +465,14 @@
+     fn command(&self, surface: &Rc<Surface>, id: NodeId, command: &Command) {
+         let view = self.views.get(&id);
+         match command {
++            Command::ReadScrollSnapshot { call } => {
++                let snapshot = view.and_then(crate::scroll::snapshot);
++                surface.event(
++                    ROOT_ID,
++                    nsh_core::EventKind::ScrollSnapshot,
++                    nsh_core::ScrollSnapshot::reply(*call, snapshot),
++                );
++            }
+             // An input edits; a pressable takes the keyboard focus as Tab
+             // gives it.
+             Command::Focus => match view {
+--- a/crates/nsh-platform-macos/src/scroll.rs
++++ b/crates/nsh-platform-macos/src/scroll.rs
+@@ -262,6 +262,20 @@
+     )
+ }
+ 
++/// Reads the live native owner, including an initial short List that never moved.
++pub(crate) fn snapshot(view: &NshView) -> Option<nsh_core::ScrollSnapshot> {
++    let state = view.state();
++    let scroll = state.scroll.as_ref()?;
++    let (x, y) = reported(&state);
++    Some(nsh_core::ScrollSnapshot {
++        offset: point(Points(x), Points(y)),
++        content_size: Size::new(Points(scroll.content.0), Points(scroll.content.1)),
++        size: state.frame.size,
++        // AppKit scroll views do not implement zoom.
++        zoom_scale: 1.0,
++    })
++}
++
+ /// Milliseconds on the display link's clock.
+ pub(crate) fn now() -> f64 {
+     objc2_quartz_core::CACurrentMediaTime() * 1000.0
+--- a/crates/nsh-platform-web/web/browser/dom.js
++++ b/crates/nsh-platform-web/web/browser/dom.js
+@@ -13,6 +13,7 @@
+   prototype.command = function (name, args) { return call(314, [values.nodeIds.get(this), "native", { name, args }]); };
+   prototype.scrollToOffset = function (options) { return this.scrollTo({ x: options?.offset, y: options?.offset, animated: options?.animated }); };
+   prototype.measure = function () { return measure(this); };
++  prototype.getScrollSnapshot = function () { return Promise.resolve(null); };
+   const finalizers = new FinalizationRegistry(id => {
+     if (live()) { invoke(307, [id]); values.nodes.delete(id); wake(); }
+   });
+--- a/crates/nsh-platform-windows/src/mount.rs
++++ b/crates/nsh-platform-windows/src/mount.rs
+@@ -437,6 +437,14 @@
+         let view = self.views.get(id);
+         let view = view.as_ref();
+         match command {
++            Command::ReadScrollSnapshot { call } => {
++                let snapshot = view.and_then(crate::scroll::snapshot);
++                surface.event(
++                    ROOT_ID,
++                    nsh_core::EventKind::ScrollSnapshot,
++                    nsh_core::ScrollSnapshot::reply(*call, snapshot),
++                );
++            }
+             Command::Focus => view.map_or((), crate::text_input::focus),
+             Command::Blur => match view {
+                 Some(view) if view.kind() == ViewKind::Input => crate::text_input::blur(view),
+--- a/crates/nsh-platform-windows/src/scroll.rs
++++ b/crates/nsh-platform-windows/src/scroll.rs
+@@ -39,6 +39,19 @@
+ struct Host<'a> {
+     surface: &'a Rc<Surface>,
+     view: &'a NshView,
++}
++
++/// Reads the same live native owner that renders and reports wheel/touch offsets.
++pub(crate) fn snapshot(view: &NshView) -> Option<nsh_core::ScrollSnapshot> {
++    let state = view.state();
++    let scroll = state.scroll.as_ref()?;
++    Some(nsh_core::ScrollSnapshot {
++        offset: scroll.reported(state.frame.size),
++        content_size: scroll.content,
++        size: state.frame.size,
++        // Windows scroll views do not implement zoom.
++        zoom_scale: 1.0,
++    })
+ }
+ 
+ impl<'a> Host<'a> {
+--- a/crates/nsh-testing/src/headless/mod.rs
++++ b/crates/nsh-testing/src/headless/mod.rs
+@@ -749,6 +749,9 @@
+     /// animations.
+     fn react(&mut self) {
+         let control = self.engine.control();
++        for payload in self.screen.take_scroll_snapshots() {
++            control.dispatch_event(ROOT_ID, EventKind::ScrollSnapshot, payload);
++        }
+         for id in self.screen.take_scrolled() {
+             if let Some(scroll) = self.screen.scroll(id) {
+                 let (x, y) = (scroll.x, scroll.y);
+--- a/crates/nsh-testing/src/screen.rs
++++ b/crates/nsh-testing/src/screen.rs
+@@ -123,6 +123,8 @@
+     clipboard_reads: Vec<(u32, bool)>,
+     /// The `Image.getSize` / `Image.prefetch` requests to answer.
+     image_infos: Vec<u32>,
++    /// Explicit native snapshot replies captured at command application, never scroll events.
++    scroll_snapshots: Vec<nsh_core::EventPayload>,
+     /// The picks asked (`Picker.pickImages`), in order, and how many were
+     /// answered.
+     picks: Vec<(u32, nsh_core::picker::PickRequest)>,
+@@ -310,6 +312,10 @@
+ }
+ 
+ impl Screen {
++    pub(crate) fn take_scroll_snapshots(&mut self) -> Vec<nsh_core::EventPayload> {
++        std::mem::take(&mut self.scroll_snapshots)
++    }
++
+     /// Applies `batch`.
+     pub fn apply(&mut self, batch: &MountBatch) {
+         for item in &batch.items {
+@@ -506,6 +512,19 @@
+     /// keeps it.
+     fn command(&mut self, id: NodeId, command: &Command) {
+         match command {
++            Command::ReadScrollSnapshot { call } => {
++                let snapshot = self.nodes.get(&id).and_then(|view| {
++                    let scroll = view.scroll.as_ref()?;
++                    Some(nsh_core::ScrollSnapshot {
++                        offset: Point::new(scroll.x, scroll.y),
++                        content_size: scroll.content?,
++                        size: view.frame.size,
++                        zoom_scale: 1.0,
++                    })
++                });
++                self.scroll_snapshots
++                    .push(nsh_core::ScrollSnapshot::reply(*call, snapshot));
++            }
+             Command::Dialog(dialog) => self.dialogs.push((**dialog).clone()),
+             Command::SetClipboard(text) => self.clipboard = Some(text.clone()),
+             // An image replaces the text.
+--- /dev/null
++++ b/crates/nsh-testing/tests/testing/list-scroll-snapshot/App.test.tsx
+@@ -0,0 +1,45 @@
++import { expect, open, test } from 'nsh/test';
++
++const value = app => JSON.parse(app.texts().find(text => text.startsWith('snapshot:')).slice(9));
++const events = app => app.texts().find(text => text.startsWith('events:'));
++for (const platform of ['macos', 'windows']) {
++  test(platform + ' read-only initial actual short inverted snapshot, resize and cleanup', async () => {
++    const app = await open('./App.tsx', { platform, width: 400, height: 600, clock: {} });
++    await app.waitFor('id:list');
++    const before = events(app);
++    await app.press('id:read');
++    await app.waitUntil(() => !app.texts().includes('snapshot:unread'));
++    expect(value(app)).toEqual({ offset: { x: 0, y: 0 }, contentSize: { width: 320, height: 300 }, size: { width: 320, height: 300 }, zoomScale: 1 });
++    for (let index = 0; index < 50; index++) await app.press('id:read');
++    expect(events(app)).toBe(before);
++    await app.setViewport(500, 700); await app.press('id:read');
++    expect(value(app).size).toEqual({ width: 320, height: 300 });
++    await app.press('id:resize-list'); await app.press('id:read');
++    expect(value(app)).toEqual({ offset: { x: 0, y: 0 }, contentSize: { width: 240, height: 220 }, size: { width: 240, height: 220 }, zoomScale: 1 });
++    await app.press('id:normal'); await app.press('id:read');
++    expect(value(app)).toEqual({ offset: { x: 0, y: 0 }, contentSize: { width: 240, height: 40 }, size: { width: 240, height: 220 }, zoomScale: 1 });
++    await app.press('id:remove-read');
++    await app.waitUntil(() => app.texts().includes('snapshot:null'));
++    await app.press('id:read'); expect(value(app)).toBeNull();
++    expect(app.requests()).toEqual([]);
++  });
++  test(platform + ' actual physical offset follows long normal and inverted scrolls without read side effects', async () => {
++    const app = await open('./App.tsx', { platform, width: 400, height: 600, clock: {} });
++    await app.press('id:tall'); await app.scroll('id:list', -200);
++    await app.press('id:read');
++    const inverted = value(app);
++    expect(inverted.contentSize.height).toBe(1200);
++    expect(inverted.offset.y).toBe(700);
++    const before = events(app); await app.press('id:read'); expect(events(app)).toBe(before);
++    await app.press('id:normal'); await app.scroll('id:list', -200); await app.press('id:read');
++    expect(value(app).offset.y).toBe(500);
++    expect(value(app).size.height).toBe(300);
++    expect(app.requests()).toEqual([]);
++  });
++}
++test('ios existing List has no new scroll events and explicitly returns null for unsupported native snapshots', async () => {
++  const app = await open('./App.tsx', { platform: 'ios', width: 400, height: 600, clock: {} });
++  const before = events(app); await app.press('id:read');
++  await app.waitUntil(() => app.texts().includes('snapshot:null'));
++  expect(events(app)).toBe(before);
++});
+--- /dev/null
++++ b/crates/nsh-testing/tests/testing/list-scroll-snapshot/App.tsx
+@@ -0,0 +1,23 @@
++import { List, Text, View, mount, signal, type ListRef } from 'nsh';
++
++const rows = signal([0]), shown = signal(true), inverted = signal(true);
++const snapshot = signal('unread'), scrolls = signal(0), starts = signal(0), ends = signal(0);
++const dimensions = signal({ width: 320, height: 300 });
++let list: ListRef;
++async function read() { snapshot.set(JSON.stringify(await list.getScrollSnapshot())); }
++mount(() => <View>
++  {shown() && <List ref={value => { list = value; }} testID="list" each={rows()} inverted={inverted()}
++    style={dimensions()} estimatedItemSize={40}
++    onScroll={() => scrolls.update(value => value + 1)}
++    onLoadMore={() => ends.update(value => value + 1)}
++    onLoadMoreAtStart={() => starts.update(value => value + 1)}>
++    {row => <View style={{ height: 40 }}><Text>{'row-' + row()}</Text></View>}
++  </List>}
++  <View testID="read" onPress={() => { void read(); }}><Text>Read</Text></View>
++  <View testID="tall" onPress={() => rows.set(Array.from({ length: 30 }, (_, index) => index))}><Text>Tall</Text></View>
++  <View testID="normal" onPress={() => inverted.set(false)}><Text>Normal</Text></View>
++  <View testID="resize-list" onPress={() => dimensions.set({ width: 240, height: 220 })}><Text>Resize List</Text></View>
++  <View testID="remove-read" onPress={() => { const pending = list.getScrollSnapshot(); shown.set(false); void pending.then(value => snapshot.set(JSON.stringify(value))); }}><Text>Remove pending</Text></View>
++  <Text>{'snapshot:' + snapshot()}</Text>
++  <Text>{'events:' + [scrolls(), starts(), ends()].join(',')}</Text>
++</View>);
+--- a/crates/nsh-testing/tests/testing/main.rs
++++ b/crates/nsh-testing/tests/testing/main.rs
+@@ -7,6 +7,42 @@
+ 
+ fn todo() -> std::path::PathBuf {
+     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testing/todo")
++}
++
++#[test]
++fn list_scroll_snapshot_native_readonly_contract() {
++    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("tests/testing/list-scroll-snapshot/App.test.tsx");
++    let results = run_file(&test_run(None), &file, &mut |_| {}).unwrap();
++    assert_eq!(results.len(), 5);
++    for result in results {
++        assert_eq!(result.failure, None, "{result:?}");
++    }
++}
++
++#[test]
++fn list_scroll_snapshot_native_pixel_ratio_is_not_a_coordinate_multiplier() {
++    for ratio in [1.0, 2.0, 2.5, 3.0] {
++        let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
++            .join("tests/testing/list-scroll-snapshot/App.tsx");
++        let bundle = nsh_testing::compile_tsx(entry, &[]).unwrap();
++        let mut config = nsh_engine::EngineConfig::new(bundle);
++        config.viewport = nsh_core::Size::new(nsh_core::Points(400.0), nsh_core::Points(600.0));
++        config.environment.os = nsh_engine::Os::MacOs;
++        config.environment.pixel_ratio = ratio;
++        let mut app = nsh_testing::Headless::start(config).unwrap();
++        app.first_render().unwrap();
++        app.press("id:read").unwrap();
++        let texts = app.screen().texts();
++        let value = texts
++            .iter()
++            .find_map(|text| text.strip_prefix("snapshot:"))
++            .unwrap();
++        let snapshot: serde_json::Value = serde_json::from_str(value).unwrap();
++        assert_eq!(snapshot["size"]["width"], 320.0, "ratio {ratio}");
++        assert_eq!(snapshot["size"]["height"], 300.0, "ratio {ratio}");
++        assert_eq!(snapshot["offset"]["y"], 0.0, "ratio {ratio}");
++    }
+ }
+ 
+ fn test_run(filter: Option<&str>) -> TestRun {

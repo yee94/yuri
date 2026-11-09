@@ -7,15 +7,16 @@ import { request } from './runtime';
 function SelectionFixture() {
   const ready = signal(false);
   void loadConnections().then(() => ready.set(true));
-  const open = signal<'model' | 'agent' | null>(null), active = signal(true), draft = signal(''), blurs = signal(0);
+  const open = signal<'model' | 'agent' | null>(null), active = signal(true), draft = signal(''), blurs = signal(0), desktop = signal(false);
   return <View class="flex-1 p-4 gap-3">
     <Input testID="fixture-composer" value={draft()} onChange={event => draft.set(event.value)} onBlur={() => blurs.set(blurs() + 1)} />
     <Text>{`Input blur count: ${blurs()}`}</Text>
     <Button testID="fixture-hide" onPress={() => active.set(false)}><Text>Hide page</Text></Button>
+    <Button testID="fixture-desktop" onPress={() => desktop.set(true)}><Text>Desktop presentation</Text></Button>
     <Button testID="fixture-show" onPress={() => active.set(true)}><Text>Show page</Text></Button>
     <Button testID="fixture-host-change" onPress={() => { void loadConnections({ forceReconnect: true }); }}><Text>Change Host fixture</Text></Button>
     <Button testID="fixture-release" onPress={() => { void request('/fixture/release'); }}><Text>Release deferred write</Text></Button>
-    <If when={ready()}><NativeComposerSelection target={{ kind: 'session', id: 'selection-session', title: 'Selection fixture', directory: '/fixture/project' }} active={active()} open={open()} onOpenChange={value => open.set(value)} onAssistantEdit={() => {}} /></If>
+    <If when={ready()}><NativeComposerSelection presentation={desktop() ? 'desktop' : 'mobile'} target={{ kind: 'session', id: 'selection-session', title: 'Selection fixture', directory: '/fixture/project' }} active={active()} open={open()} onOpenChange={value => open.set(value)} onAssistantEdit={() => {}} /></If>
   </View>;
 }
 mount(SelectionFixture);

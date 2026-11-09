@@ -1,11 +1,16 @@
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
-import { settingsPreferenceFields } from './settings-preferences-core';
+import { settingsPreferenceFields, settingsPreferenceVisible } from './settings-preferences-core';
 import { settingsBasicSections, settingsBasicTarget } from './settings-basics-core';
 import { retentionSearchItems } from './settings-retention-search';
 
-export type SettingsSearchItem = { page: 'appearance' | 'chat' | 'sessions' | 'summary-ai' | 'notifications' | 'behavior' | 'voice' | 'about' | 'git'; id: string; title: I18nKey; keywords: string };
+export type SettingsSearchItem = { page: 'appearance' | 'chat' | 'sessions' | 'summary-ai' | 'notifications' | 'behavior' | 'voice' | 'about' | 'git' | 'global-config' | 'remote-instances' | 'skills.catalog'; id: string; title: I18nKey; keywords: string };
 export const settingsSearchItems: readonly SettingsSearchItem[] = [
   ...retentionSearchItems,
+  { page: 'global-config', id: 'global-config.editor', title: 'settings.globalConfig.title', keywords: 'opencode.json opencode.jsonc global configuration 全局 配置' },
+  { page: 'remote-instances', id: 'remote-instances.instances', title: 'settings.remoteInstances.direct.title', keywords: 'connect remote ssh host link 远程 连接 实例' },
+  { page: 'remote-instances', id: 'remote-instances.client-auth', title: 'settings.remoteInstances.clientAuth.title', keywords: 'pairing devices QR revoke relay 配对 设备 撤销 中继' },
+  { page: 'skills.catalog', id: 'skills.catalog.source', title: 'settings.skills.catalog.page.section.sourceRepository', keywords: 'catalog repository github install 市场 仓库 源 安装' },
+  { page: 'skills.catalog', id: 'skills.catalog.search', title: 'settings.skills.catalog.shared.field.searchSkillsPlaceholder', keywords: 'skills catalog search 搜索 技能 市场' },
   { page: 'git', id: 'git.github-account', title: 'settings.github.page.oauth.title', keywords: 'GitHub OAuth device account CLI 账户 授权' },
   { page: 'git', id: 'git.discovered-credentials', title: 'settings.gitIdentities.page.discoveredCredentials.title', keywords: 'git credentials token import discovered 凭据 导入' },
   ...settingsPreferenceFields.map(field => ({ page: field.page, id: field.id, title: field.title, keywords: `${field.key} ${field.id} ${(field.options || []).map(option => option.value).join(' ')}` })),
@@ -29,10 +34,13 @@ export const settingsSearchItems: readonly SettingsSearchItem[] = [
   { page: 'about', id: 'about.diagnostics', title: 'settings.yuri.about.diagnostics.label', keywords: 'diagnostics snapshot 诊断 快照' },
   { page: 'about', id: 'about.export-diagnostics', title: 'settings.yuri.about.diagnostics.export', keywords: 'export share diagnostics snapshot 导出 分享 诊断' },
 ];
-export function searchSettingsFields(query: string, translate: (key: I18nKey) => string): SettingsSearchItem[] {
+export function searchSettingsFields(query: string, translate: (key: I18nKey) => string, os?: string): SettingsSearchItem[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
   return settingsSearchItems.filter(item => {
+    if (os && item.page === 'global-config' && !['macos', 'windows', 'linux'].includes(os)) return false;
+    const preference = settingsPreferenceFields.find(field => field.id === item.id);
+    if (os && preference && !settingsPreferenceVisible(preference.key, os)) return false;
     const searchable = `${translate(item.title)} ${item.keywords}`.toLocaleLowerCase();
     return terms.every(term => searchable.includes(term));
   });

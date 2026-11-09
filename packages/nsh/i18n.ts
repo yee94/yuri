@@ -11,6 +11,7 @@ import { dict as ptBR } from "../ui/src/lib/i18n/messages/pt-BR";
 import { dict as uk } from "../ui/src/lib/i18n/messages/uk";
 
 export const language = signal("system");
+export const currentLocale = () => language() === 'system' ? locale() : language();
 const dictionaries: Record<string, Record<I18nKey, string>> = {
   en,
   "zh-CN": zhCN,
@@ -27,7 +28,7 @@ export function t(
   key: I18nKey,
   params: Record<string, string | number> = {},
 ): string {
-  const selected = language() === "system" ? locale() : language();
+  const selected = currentLocale();
   const normalized = selected.startsWith("zh")
     ? /TW|HK|Hant/.test(selected)
       ? "zh-TW"

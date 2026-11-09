@@ -3,6 +3,9 @@ import { settingsDict } from './zh-TW.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': '無法還原上次的位置，目前頁面保持不變。',
+  'sessions.navigation.saveFailed': '無法儲存導覽位置，上次儲存的位置仍會保留。',
+  'sessions.navigation.restoreBlocked': '目前無法還原上次的位置，目前頁面保持不變。',
   'chat.newSessionDraft.capturedInput': '首次傳送的已儲存內容。後續編輯會保留為下一份草稿。',
   'chat.newSessionDraft.unknownTitle': '無法確認對話是否已建立',
   'chat.newSessionDraft.unknownBody': '草稿和傳送 ID 已保留。再次建立可能產生重複對話。請選擇本次建立的空對話，或先返回對話清單核對。',
@@ -1646,6 +1649,10 @@ export const dict: Record<I18nKey, string> = {
   'chat.goal.action.save': '儲存目標',
   'chat.goal.action.start': '啟動目標',
   'chat.goal.toast.actionFailed': '目標更新失敗',
+  'chat.gitContext.replaceDraftTitle': '取代目前的草稿？',
+  'chat.gitContext.replaceDraftBody': '目前草稿的文字和參照將由已擷取的 Git 上下文取代，附件會保留。此操作無法復原。',
+  'chat.gitContext.replaceDraftAction': '取代草稿',
+  'chat.gitContext.stagingFailed': '無法準備 Git 上下文，目前的草稿已保留。',
   'chat.goal.toast.distillFallback': '目標超出限制且無法提煉 — 稽核將使用節錄版本',
   'chat.goal.row.aria': '工作階段目標 — 開啟詳細資訊',
   'chat.goal.button.createAria': '設定工作階段目標',

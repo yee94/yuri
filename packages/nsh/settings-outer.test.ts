@@ -1,13 +1,23 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { expect, test } from 'vitest';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-function nativeTest(steps: string[]) {
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'settings-outer-test-app.tsx', '--web-host', 'tests/settings-outer-host.js'], { cwd: directory, input: steps.join('\n'), encoding: 'utf8', timeout: 35_000 });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+function nativeTest(steps: string[], platform: 'ios' | 'macos' = 'ios') {
+  const parent = process.env.OPENCODE_TMP_DIR || path.join(tmpdir(), 'opencode');
+  mkdirSync(parent, { recursive: true });
+  const temporary = mkdtempSync(path.join(parent, 'settings-outer-'));
+  try {
+    writeFileSync(path.join(temporary, 'nsh.json'), JSON.stringify({ name: 'Outer Settings fixture', id: 'example.yuri.settings-outer', version: '0.1.0', build: 1, theme: path.join(directory, 'theme.json'), capabilities: { host: ['connection.list', 'runtime.request', 'notification.status', 'notification.openSettings', 'notification.configure'] } }));
+    writeFileSync(path.join(temporary, 'App.tsx'), `import ${JSON.stringify(path.join(directory, 'settings-outer-test-app.tsx'))};`);
+    writeFileSync(path.join(temporary, 'Outer.test.tsx'), `import { expect, open, test } from 'nsh/test';\ntest('outer Settings regression (${platform} headless)', async () => { const app = await open('./App.tsx', { platform: ${JSON.stringify(platform)} });\n${steps.join('\n')}\n});`);
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'Outer.test.tsx', '--web-host', path.join(directory, 'tests/settings-outer-host.js')], { cwd: temporary, encoding: 'utf8', timeout: 35_000 });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 
 test('project settings has a real list/editor, retains a failed draft and round-trips only its metadata', () => {
@@ -107,6 +117,19 @@ test('native notification permission and explicit saves preserve Web focus and t
   ]);
 }, 45_000);
 
+test('desktop focused notifications round-trip only their mode and configure the existing native consumer after save', () => {
+  nativeTest([
+    'await app.waitFor("text:Notifications"); await app.press("text:Notifications"); await app.waitUntil(() => app.enabled("id:settings-notifications-focused"));',
+    'expect(app.shows("id:notification-native-policy")).toBe(false); await app.press("id:settings-notifications-focused"); await app.waitUntil(() => app.enabled("id:settings-notifications-save"));',
+    'await app.press("id:settings-notifications-save"); await app.waitFor("text:Saved"); await app.back(); await app.press("id:settings-outer-audit");',
+    'await app.waitUntil(() => app.texts().some(text => text.includes("\\\"notificationMode\\\":\\\"always\\\"")));',
+    `const audit = JSON.parse(app.texts().find(text => text.startsWith(${JSON.stringify('{"enabled":')})));`,
+    'expect(audit).toEqual({enabled:true,notificationMode:"always",template:"Preserved Web template",writes:1,configurations:2,authorization:"denied"});',
+    'await app.press("text:Notifications"); await app.waitUntil(() => app.enabled("id:settings-notifications-focused")); expect(app.enabled("id:settings-notifications-save")).toBe(false);',
+    'await app.press("id:settings-notifications-focused"); await app.press("id:settings-notifications-save"); await app.waitFor("text:Saved");',
+  ], 'macos');
+}, 45_000);
+
 test('back from the native model editor dismisses only its Sheet and discards the unsaved edit', () => {
   nativeTest([
     'await app.waitFor("text:Providers");',
@@ -172,7 +195,7 @@ test('model Sheet shows a rejected save in place, preserves the draft and refres
   ]);
 }, 45_000);
 
-test('Summary AI model edits enable provider mode without rewriting its unrelated prompt', () => {
+test('macOS headless Summary AI model edits enable provider mode without rewriting its unrelated prompt', () => {
   nativeTest([
     'await app.waitFor("text:Summary AI");',
     'await app.press("text:Summary AI");',
@@ -180,6 +203,7 @@ test('Summary AI model edits enable provider mode without rewriting its unrelate
     'await app.waitUntil(() => app.enabled("id:settings-defaults-model"));',
     'await app.press("id:settings-defaults-model");',
     'await app.waitFor("text:Fixture provider / Fixture model");',
+    'await app.waitUntil(() => app.enabled("text:Fixture provider / Fixture model"));',
     'await app.press("text:Fixture provider / Fixture model");',
     'await app.waitFor("text:Saved");',
     'await app.back();',
@@ -187,7 +211,7 @@ test('Summary AI model edits enable provider mode without rewriting its unrelate
     'await app.waitFor("id:settings-defaults-model");',
     'await app.waitFor("text:Fixture provider / Fixture model");',
     'expect(app.value("id:settings-basics-summaryCommitPrompt")).toBe("Preserved prompt");',
-  ]);
+  ], 'macos');
 }, 45_000);
 
 test('Appearance keeps a rejected font draft, retries once and reopens its confirmed Host value', () => {
@@ -220,7 +244,7 @@ test('Settings field search carries a stable target into the real Chat preferenc
   ]);
 }, 45_000);
 
-test('Sessions defaults select real models, variants and visible subagents without free-form IDs', () => {
+test('macOS headless Sessions defaults select real models, variants and visible subagents without free-form IDs', () => {
   nativeTest([
     'await app.waitFor("text:Sessions");',
     'await app.press("text:Sessions");',
@@ -228,18 +252,21 @@ test('Sessions defaults select real models, variants and visible subagents witho
     'await app.waitUntil(() => app.enabled("id:settings-defaults-model"));',
     'await app.press("id:settings-defaults-model");',
     'await app.waitFor("text:Fixture provider / Fixture model");',
+    'await app.waitUntil(() => app.enabled("text:Fixture provider / Fixture model"));',
     'await app.press("text:Fixture provider / Fixture model");',
     'await app.waitFor("text:Saved");',
     'await app.waitUntil(() => app.enabled("id:settings-defaults-variant"));',
     'await app.press("id:settings-defaults-variant");',
     'await app.waitFor("text:high");',
+    'await app.waitUntil(() => app.enabled("text:high"));',
     'await app.press("text:high");',
     'await app.waitFor("text:Saved");',
     'await app.waitUntil(() => app.enabled("id:settings-defaults-agent"));',
     'await app.press("id:settings-defaults-agent");',
     'await app.waitFor("text:visible-subagent");',
+    'await app.waitUntil(() => app.enabled("text:visible-subagent"));',
     'expect(app.texts().includes("hidden-agent")).toBe(false);',
     'await app.press("text:visible-subagent");',
     'await app.waitFor("text:Saved");',
-  ]);
+  ], 'macos');
 }, 45_000);

@@ -35,10 +35,18 @@ const request = (host: Host, path: string, method = 'GET') => host.call('runtime
 function controllerFor(host: Host, focus: () => string | undefined) {
   const source = ts.transpileModule(readFileSync(path.join(root, 'projects-search.tsx'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React } }).outputText;
   const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set(next: T) { value = next; } }); };
+  const send = async (path: string) => { const response = request(host, path); if (response.status !== 200) throw new Error(`Fixture HTTP ${response.status}`); return response.body; };
+  const connection = { id: 'search-controller-fixture', url: 'https://host.example' };
   const imports: Record<string, unknown> = {
-    nsh: { signal, cleanup() {} }, 'nsh/base': {}, './Icon': {}, './i18n': {}, './model': model, './projects-search-core': core,
-    './state': { epoch: () => 1 }, './runtime': { request: async (path: string) => { const response = request(host, path); if (response.status !== 200) throw new Error(`Fixture HTTP ${response.status}`); return response.body; } },
+    nsh: { signal, cleanup() {}, effect: (work: () => void) => work(), untracked: (work: () => unknown) => work(), lifecycle: () => 'active' },
+    'nsh/base': {}, './Icon': {}, './i18n': {}, './model': model, './projects-search-core': core,
+    './state': { epoch: () => 1, app: { connection: () => connection, runtimeScope: () => null }, captureHostOperation: () => ({ generation: 1, scope: null, current: () => true, request: send }) },
+    './runtime': { request: send },
   };
+  const pageOperations = {};
+  const operationSource = ts.transpileModule(readFileSync(path.join(root, 'page-operations.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText;
+  vm.runInNewContext(operationSource, { exports: pageOperations, require: (id: string) => { if (!(id in imports)) throw new Error('Unexpected operation dependency: ' + id); return imports[id]; } });
+  imports['./page-operations'] = pageOperations;
   const exports: Record<string, unknown> = {};
   vm.runInNewContext(source, { exports, require: (id: string) => { if (!(id in imports)) throw new Error('Unexpected controller dependency: ' + id); return imports[id]; } });
   return (exports as unknown as typeof import('./projects-search')).createProjectsSearchController(focus);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { getCustomizableShortcutActions, getEffectiveShortcutCombo, getEffectiveShortcutCombos, getShortcutAction } from './shortcuts';
+import { getCustomizableShortcutActions, getEffectiveShortcutCombo, getEffectiveShortcutCombos, getShortcutAction, UNASSIGNED_SHORTCUT } from './shortcuts';
 
 describe('getEffectiveShortcutCombo', () => {
   test('does not expose or reactivate the removed go-to-line action from a saved override', () => {
@@ -16,6 +16,12 @@ describe('getEffectiveShortcutCombo', () => {
 
   test('uses mod+shift+c as the default open usage shortcut', () => {
     expect(getEffectiveShortcutCombo('open_usage')).toBe('mod+shift+c');
+  });
+
+  test('registers the leader agent action without introducing a new default binding', () => {
+    expect(getShortcutAction('open_agent_selector')?.id).toBe('open_agent_selector');
+    expect(getEffectiveShortcutCombo('open_agent_selector')).toBe(UNASSIGNED_SHORTCUT);
+    expect(getCustomizableShortcutActions().some(action => action.id === 'open_agent_selector')).toBe(false);
   });
 });
 

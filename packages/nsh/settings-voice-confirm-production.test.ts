@@ -14,6 +14,7 @@ import * as presentation from './settings-voice-test-presentation';
 import * as speech from '../ui/src/lib/voice/speechSettings';
 import * as model from './model';
 import * as runtimeScopeProtocol from './runtime-scope';
+import { createDesktopSettingsContentProtection } from './desktop-settings-content-core';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const flush = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
@@ -49,7 +50,9 @@ async function productionFixture(initialActive = true) {
   let nativeAdmissionScope: runtimeScopeProtocol.RuntimeScope = originalScope;
   let get: (() => Promise<unknown>) | null = null, put: (() => Promise<unknown>) | null = null;
   let capabilities: (() => Promise<unknown>) | null = null;
+  let segment: Promise<unknown> | null = null;
   const active = source(initialActive), foreground = source(true), ready = source(true), generation = source(1);
+  const protection = createDesktopSettingsContentProtection({ page: 'voice', active: () => active() && foreground(), changed() {}, unavailable: async () => { throw new Error('Voice owner must publish real protection'); } });
   const connection = source({ id: 'fixture-host', url: 'https://fixture.example.invalid', authorizationID: 'fixture-authorization' });
   const listeners = new Map<string, Set<(value: unknown) => void>>();
   const emit = (name: string, value: unknown) => [...listeners.get(name) ?? []].forEach(callback => callback(value));
@@ -83,7 +86,7 @@ async function productionFixture(initialActive = true) {
     if (name === 'voiceRecognition.cancel') { exact(input, 'owner,revision'); return null; }
     if (name === 'voiceRecognition.finish') { exact(input, 'owner,revision'); return { text: 'Synthetic authoritative transcript' }; }
     if (name === 'speech.prepare') { exact(input, 'owner'); return { visible: false, provider: settings.voiceProvider, mode: settings.ttsInputMode }; }
-    if (name === 'speech.segment') { exact(input, 'owner,revision,source,text'); if (input.source !== 'settings-preview') throw new Error('Unexpected speech source'); return null; }
+    if (name === 'speech.segment') { exact(input, 'owner,revision,source,text'); if (input.source !== 'settings-preview') throw new Error('Unexpected speech source'); return segment ? await segment : null; }
     if (name === 'speech.stop') { exact(input, 'owner,revision'); return null; }
     if (name === 'speech.release') { exact(input, 'owner'); return null; }
     throw new Error(`Unexpected production confirmation native call: ${name}`);
@@ -97,7 +100,7 @@ async function productionFixture(initialActive = true) {
   };
   const modules: Record<string, unknown> = {
     nsh: { signal: source, Scroll: 'Scroll', Text: 'Text', View: 'View', cleanup: (work: () => void) => cleanups.push(work),
-      effect, untracked, lifecycle: () => foreground() ? 'active' : 'inactive',
+      effect, untracked, context: () => () => protection, lifecycle: () => foreground() ? 'active' : 'inactive',
       host: { available: () => true, call: native, on: (name: string, callback: (value: unknown) => void) => { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); return () => set.delete(callback); } } },
     'nsh/base': Object.fromEntries(['AlertDialog', 'Button', 'Input', 'Select', 'Switch', 'Dialog', 'NavPage', 'NavStack', 'TextView'].map(name => [name, name])),
     './native-select': { NativeSelect: 'NativeSelect' },
@@ -144,6 +147,8 @@ async function productionFixture(initialActive = true) {
   vm.runInContext(ts.transpileModule(declaration.getText(stateSyntax), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, operationContext);
   const captureHostOperation = operationExports.captureHostOperation!;
   (modules['./state'] as Record<string, unknown>).captureHostOperation = captureHostOperation;
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   modules['./settings-controls'] = evaluate('settings-controls.tsx');
   const page = evaluate('settings-basics.tsx').SettingsBasics as (props: Record<string, unknown>) => Node;
   const tree = page({ page: 'voice', get active() { return active(); }, onBack() {} });
@@ -195,7 +200,7 @@ async function productionFixture(initialActive = true) {
     if (!found) throw new Error('Production action not found: ' + id);
     return found;
   };
-  return { settings, wire, runtimeWire, rejectedAdmissions, originalScope, nativeCalls, listeners, emit, voiceKey, mountTester,
+  return { protection, settings, wire, runtimeWire, rejectedAdmissions, originalScope, nativeCalls, listeners, emit, voiceKey, mountTester,
     props: () => one('SettingsVoiceTests').props,
     edit: (key: string, value: unknown) => {
       const field = nodes(tree).find(node => node.props.testID === `settings-basics-${key}`);
@@ -207,6 +212,7 @@ async function productionFixture(initialActive = true) {
     press: async (id: string) => { const action = button(id); expect(action.props.disabled).not.toBe(true); (action.props.onPress as () => void)(); await flush(); },
     button, get: (next: typeof get) => { get = next; }, put: (next: typeof put) => { put = next; },
     capabilities: (next: typeof capabilities) => { capabilities = next; }, refreshDiscovery: async () => { await flush(); },
+    segment: (next: typeof segment) => { segment = next; },
     setActive: async (value: boolean) => { active.set(value); await flush(); },
     setForeground: async (value: boolean) => {
       if (!value) { foreground.set(false); ready.set(false); generation.set(generation() + 1); runtimeScope.set(null); }
@@ -221,6 +227,25 @@ async function productionFixture(initialActive = true) {
     dispose: async () => { cleanups.slice().reverse().forEach(stop => stop()); await flush(); },
   };
 }
+
+test('real Voice publishers aggregate delayed save, ASR dialog and playback without inventing clean state', async () => {
+  const h = await productionFixture();
+  expect(h.protection.snapshot()).toMatchObject({ status: 'ready', dirty: false, pending: false, nestedPickerOpen: false });
+  h.edit('speechRate', 1.2); expect(h.protection.snapshot().dirty).toBe(true);
+  const gate = deferred<unknown>(); h.put(() => gate.promise);
+  const saving = h.confirm('tts'); await flush();
+  expect(h.protection.snapshot().pending).toBe(true); expect(await h.protection.requestLeave()).toBe(false);
+  gate.resolve({ ...h.settings }); await saving; await flush();
+  expect(h.protection.snapshot()).toMatchObject({ dirty: false, pending: false });
+  h.mountTester(); await h.press('settings-voice-asr-open');
+  expect(h.protection.snapshot().nestedPickerOpen).toBe(true); expect(await h.protection.requestLeave()).toBe(false);
+  (h.button('settings-voice-asr-dialog').props.onOpenChange as (event: { open: boolean }) => void)({ open: false }); await flush();
+  expect(h.protection.snapshot().nestedPickerOpen).toBe(false);
+  const audio = deferred<unknown>(); h.segment(audio.promise);
+  await h.press('settings-voice-preview'); expect(h.protection.snapshot().pending).toBe(true);
+  audio.resolve(null); await flush(); expect(h.protection.snapshot().pending).toBe(false);
+  await h.dispose();
+});
 
 test('actual Voice production field -> confirm prop -> complete receipt -> actual tester preview (no mocked save helper)', async () => {
   const h = await productionFixture();

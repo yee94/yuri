@@ -3,6 +3,9 @@ import { settingsDict } from './ko.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': '이전에 보던 위치를 복원하지 못했습니다. 현재 페이지는 그대로 유지됩니다.',
+  'sessions.navigation.saveFailed': '탐색 위치를 저장하지 못했습니다. 마지막으로 저장한 위치는 유지됩니다.',
+  'sessions.navigation.restoreBlocked': '지금은 이전에 보던 위치를 복원할 수 없습니다. 현재 페이지는 그대로 유지됩니다.',
   'chat.newSessionDraft.capturedInput': '저장된 첫 전송 내용입니다. 이후 수정 사항은 다음 초안으로 유지됩니다.',
   'chat.newSessionDraft.unknownTitle': '세션 생성 여부를 확인할 수 없습니다',
   'chat.newSessionDraft.unknownBody': '초안과 전송 ID는 저장되어 있습니다. 다시 생성하면 세션이 중복될 수 있습니다. 이번에 생성된 빈 세션을 선택하거나 돌아가서 세션 목록을 확인하세요.',
@@ -1678,6 +1681,10 @@ export const dict: Record<I18nKey, string> = {
   'chat.goal.action.save': '목표 저장',
   'chat.goal.action.start': '목표 시작',
   'chat.goal.toast.actionFailed': '목표 업데이트에 실패했습니다',
+  'chat.gitContext.replaceDraftTitle': '현재 초안을 바꾸시겠습니까?',
+  'chat.gitContext.replaceDraftBody': '현재 초안의 텍스트와 참조가 캡처된 Git 컨텍스트로 바뀝니다. 첨부 파일은 유지됩니다. 이 작업은 되돌릴 수 없습니다.',
+  'chat.gitContext.replaceDraftAction': '초안 바꾸기',
+  'chat.gitContext.stagingFailed': 'Git 컨텍스트를 준비하지 못했습니다. 현재 초안은 유지됩니다.',
   'chat.goal.toast.distillFallback': '목표가 제한을 초과했고 요약도 실패했습니다 — 감사에는 발췌본을 사용합니다',
   'chat.goal.row.aria': '세션 목표 — 세부 정보 열기',
   'chat.goal.button.createAria': '세션 목표 설정',

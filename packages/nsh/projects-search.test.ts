@@ -19,7 +19,19 @@ beforeEach(() => {
   generation = 1;
   handle = path => path.startsWith('/api/session?') ? { data: [session], cursor: {} } : path.includes('content-search') ? { hits: [message] } : { data: [{ path: 'src/file.ts' }] };
   request = vi.fn(async (path: string) => handle(path));
-  const exports = {}, imports: Record<string, unknown> = { nsh: { signal, cleanup: () => {} }, 'nsh/base': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model, './runtime': { request }, './state': { epoch: () => generation }, './projects-search-core': core };
+  const connection = { id: 'search-controller-test', url: 'https://host.example' };
+  const exports = {}, imports: Record<string, unknown> = {
+    nsh: { signal, cleanup: () => {}, effect: (work: () => void) => work(), untracked: (work: () => unknown) => work(), lifecycle: () => 'active' },
+    'nsh/base': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model, './runtime': { request },
+    './state': { epoch: () => generation, app: { connection: () => connection, runtimeScope: () => null }, captureHostOperation: () => {
+      const captured = generation;
+      return { generation: captured, scope: null, current: () => captured === generation, request: (path: string) => request(path) };
+    } }, './projects-search-core': core,
+  };
+  const pageOperations = {};
+  const operationSource = ts.transpileModule(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'page-operations.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText;
+  vm.runInNewContext(operationSource, { exports: pageOperations, require: (id: string) => { if (!(id in imports)) throw new Error(id); return imports[id]; } });
+  imports['./page-operations'] = pageOperations;
   vm.runInNewContext(compiled, { exports, require: (id: string) => { if (!(id in imports)) throw new Error(id); return imports[id]; }, console }); module = exports as typeof module;
 });
 describe('native global project search (no NSH engine)', () => {

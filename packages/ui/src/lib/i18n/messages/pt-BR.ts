@@ -3,6 +3,9 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'sessions.navigation.restoreFailed': 'Não foi possível restaurar sua última localização. A página atual permanece inalterada.',
+  'sessions.navigation.saveFailed': 'Não foi possível salvar sua navegação. A última localização salva foi preservada.',
+  'sessions.navigation.restoreBlocked': 'Sua última localização não pode ser restaurada agora. A página atual permanece inalterada.',
   'mobile.instances.nativeEditor.invalid': 'Digite um nome de 1 a 120 caracteres e um endereço de servidor válido.',
   'mobile.instances.nativeEditor.missing': 'Esta conexão salva não existe mais.',
   'mobile.instances.nativeEditor.stale': 'Esta conexão foi alterada. Feche e abra o editor novamente antes de salvar.',
@@ -1675,6 +1678,10 @@ export const dict: Record<I18nKey, string> = {
   "chat.goal.action.save": "Salvar objetivo",
   "chat.goal.action.start": "Iniciar objetivo",
   "chat.goal.toast.actionFailed": "Falha ao atualizar o objetivo",
+  "chat.gitContext.replaceDraftTitle": "Substituir o rascunho atual?",
+  "chat.gitContext.replaceDraftBody": "O texto e as referências do rascunho atual serão substituídos pelo contexto do Git capturado. Os anexos serão mantidos. Esta ação não pode ser desfeita.",
+  "chat.gitContext.replaceDraftAction": "Substituir rascunho",
+  "chat.gitContext.stagingFailed": "Não foi possível preparar o contexto do Git. Seu rascunho atual foi preservado.",
   "chat.goal.toast.distillFallback": "O objetivo excedeu o limite e não pôde ser destilado — o auditor usa uma versão recortada",
   "chat.goal.row.aria": "Objetivo da sessão — abrir detalhes",
   "chat.goal.button.createAria": "Definir um objetivo da sessão",

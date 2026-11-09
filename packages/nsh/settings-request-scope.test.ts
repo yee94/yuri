@@ -41,7 +41,7 @@ function productionPages() {
     const node = { type, props: props ?? {}, children }; nodes.push(node); return node;
   };
   const modules: Record<string, unknown> = {
-    nsh: { signal: source, cleanup: (work: () => void) => cleanups.push(work), effect: (work: () => void) => work(), untracked: (work: () => unknown) => work(), lifecycle: () => 'active', Scroll: 'Scroll', Text: 'Text', View: 'View', Storage: { getItem: async () => null, setItem: async () => undefined } },
+    nsh: { signal: source, context: (initial: unknown) => () => initial, cleanup: (work: () => void) => cleanups.push(work), effect: (work: () => void) => work(), untracked: (work: () => unknown) => work(), lifecycle: () => 'active', Scroll: 'Scroll', Text: 'Text', View: 'View', Storage: { getItem: async () => null, setItem: async () => undefined } },
     'nsh/base': Object.fromEntries(['Button', 'Input', 'Switch', 'Select', 'TextView', 'AlertDialog'].map(key => [key, key])),
     './native-select': { NativeSelect: 'Select' },
     './i18n': { t: (key: string) => key }, './model': model, './settings-protocol': protocol,
@@ -94,6 +94,8 @@ function productionPages() {
     }) });
   });
   Object.assign(modules['./state'] as object, { captureHostOperation, app: { connection: () => ({ id: connection }), runtimeScope: () => selected } });
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   const controls = evaluate<typeof import('./settings-controls')>('settings-controls.tsx');
   modules['./settings-controls'] = controls;
   const expanded = new Set<Node>();

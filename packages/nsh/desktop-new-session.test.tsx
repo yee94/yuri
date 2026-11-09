@@ -1,0 +1,54 @@
+import { expect, open, test } from 'nsh/test';
+
+test('desktop draft layout, local model/Agent pickers and Enter handoff', async () => {
+  const app = await open('desktop-new-session.fixture.tsx', { platform: 'macos', width: 1280, height: 800 });
+  await app.waitFor('id:desktop-new-session-welcome');
+  expect(app.shows('id:desktop-new-session-column')).toBe(true);
+  expect(app.shows('id:desktop-new-session-targets')).toBe(true);
+  await app.press('id:new-session-model');
+  await app.waitFor('id:new-session-effort-favorite-fixture-gpt-model');
+  expect(app.shows('id:model-picker-resize')).toBe(false);
+  await app.press('id:new-session-effort-favorite-fixture-gpt-model');
+  await app.press('id:new-session-variant-favorite-fixture-gpt-model-high');
+  await app.waitFor('id:new-session-selection-search', { state: 'gone' });
+  await app.wait(300);
+  expect(app.enabled('id:new-session-agent')).toBe(true);
+  await app.press('id:new-session-agent');
+  await app.waitFor('id:new-session-agent-plan');
+  await app.press('id:new-session-agent-plan');
+  await app.waitFor('id:new-session-selection-search', { state: 'gone' });
+  await app.wait(300);
+  await app.press('id:desktop-new-session-audit');
+  expect(app.texts().join('\n')).toContain('"creates":0');
+  const beforeTyping = JSON.parse(app.texts().find(value => value.startsWith('{"creates":'))!).requests;
+  await app.type('id:new-session-composer', 'x'.repeat(200));
+  await app.press('id:desktop-new-session-audit');
+  expect(JSON.parse(app.texts().find(value => value.startsWith('{"creates":'))!).requests).toBe(beforeTyping);
+  await app.clear('id:new-session-composer');
+  await app.type('id:new-session-composer', 'Send captured configuration');
+  await app.submit('id:new-session-composer');
+  await app.waitFor('text:complete');
+  await app.press('id:desktop-new-session-audit');
+  expect(app.texts().join('\n')).toContain('"creates":1');
+  expect(app.texts().join('\n')).toContain('"text":"Send captured configuration"');
+});
+
+test('desktop Escape, worktree retarget and narrow window', async () => {
+  const app = await open('desktop-new-session.fixture.tsx', { platform: 'macos', width: 680, height: 620 });
+  await app.waitFor('id:desktop-new-session-branch');
+  await app.type('id:new-session-composer', 'Keep this draft');
+  expect(app.value('id:new-session-composer')).toBe('Keep this draft');
+  await app.press('id:new-session-model');
+  await app.waitFor('id:new-session-selection-search');
+  await app.keyboard.press('escape');
+  await app.waitFor('id:new-session-selection-search', { state: 'gone' });
+  expect(app.value('id:new-session-composer')).toBe('Keep this draft');
+  await app.press('id:desktop-new-session-branch');
+  await app.waitFor('id:desktop-new-session-branch-/fixture/project/tree');
+  await app.press('id:desktop-new-session-branch-/fixture/project/tree');
+  await app.waitFor('id:desktop-new-session-branch-search', { state: 'gone' });
+  await app.type('id:new-session-composer', 'Worktree prompt');
+  await app.submit('id:new-session-composer');
+  await app.waitFor('text:complete');
+  expect(app.texts()).toContain('/fixture/project/tree');
+});

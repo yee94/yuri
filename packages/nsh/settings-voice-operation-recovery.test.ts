@@ -86,12 +86,12 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
   const on = (name: string, callback: (value: unknown) => void) => { const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set); return () => { set.delete(callback); }; };
   const lazyKeys = ['when', 'of', 'value', 'disabled', 'active', 'operationToken', 'dirty', 'draftRevision', 'selectedModel', 'voice', 'stt', 'tts'];
   const jsx = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): Node => {
-    const observed = { ...props };
+    const observed = Object.defineProperties({}, Object.getOwnPropertyDescriptors(props ?? {})) as Record<string, unknown>;
     for (const key of lazyKeys) if (typeof observed[key] === 'function') Object.defineProperty(observed, key, { get: observed[key] as () => unknown });
     return { type, props: observed, children };
   };
   const modules: Record<string, unknown> = {
-    nsh: { signal: source, effect, untracked, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native, on }, Scroll: 'Scroll', Text: 'Text', View: 'View' },
+    nsh: { signal: source, effect, untracked, context: (initial: unknown) => () => initial, platform: { os: 'macos' }, cleanup: (work: () => void) => cleanup.push(work), lifecycle: () => foreground() ? 'active' : 'inactive', host: { available: () => true, call: native, on }, Scroll: 'Scroll', Text: 'Text', View: 'View' },
     'nsh/base': Object.fromEntries(['AlertDialog', 'Button', 'Input', 'Select', 'Switch', 'Progress', 'Radio', 'RadioGroup', 'TextView', 'Sheet', 'NavPage'].map(key => [key, key])),
     './native-select': { NativeSelect: 'Select' },
     './native-sheet': { NativeSheet: 'Sheet' },
@@ -118,7 +118,8 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
     './settings-retention': { SettingsSessionRetentionSection: 'SettingsSessionRetentionSection' },
     './settings-voice-models': { SettingsVoiceModels: 'SettingsVoiceModels' }, './settings-voice-test': { SettingsVoiceTests: 'SettingsVoiceTests' },
     './settings-target': { SettingsTarget: 'SettingsTarget' }, './settings-defaults': { SettingsDefaults: 'SettingsDefaults' },
-    './settings-preferences': { SettingsPreferences: 'SettingsPreferences' }, './settings-about': { SettingsAbout: 'SettingsAbout' },
+    './settings-preferences': { SettingsPreferences: 'SettingsPreferences' }, './settings-about': { SettingsAbout: 'SettingsAbout' }, './settings-global-config': { SettingsGlobalConfig: 'SettingsGlobalConfig' },
+    './settings-skills-catalog': { SettingsSkillsCatalog: 'SettingsSkillsCatalog' }, './settings-remote-instances': { SettingsRemoteInstances: 'SettingsRemoteInstances' },
   };
   const lazy: ts.TransformerFactory<ts.SourceFile> = context => file => {
     const visit: ts.Visitor = node => {
@@ -130,11 +131,30 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
     };
     return ts.visitNode(file, visit) as ts.SourceFile;
   };
+  // NSH component spreads preserve getters; React JSX emit's object spread
+  // snapshots them. Keep that production forwarding contract in this harness.
+  const spreads: ts.TransformerFactory<ts.SourceFile> = context => file => {
+    const visit: ts.Visitor = node => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'jsx') {
+        const props = node.arguments[1];
+        if (props && ts.isObjectLiteralExpression(props) && props.properties.some(ts.isSpreadAssignment)) {
+          const sources = props.properties.map(property => ts.isSpreadAssignment(property)
+            ? property.expression : ts.factory.createObjectLiteralExpression([property]));
+          return ts.visitEachChild(ts.factory.updateCallExpression(node, node.expression, node.typeArguments,
+            [node.arguments[0], ts.factory.createCallExpression(ts.factory.createIdentifier('mergeProps'), undefined, sources), ...node.arguments.slice(2)]), visit, context);
+        }
+      }
+      return ts.visitEachChild(node, visit, context);
+    };
+    return ts.visitNode(file, visit) as ts.SourceFile;
+  };
+  const mergeProps = (...sources: Record<string, unknown>[]) => Object.defineProperties({},
+    Object.assign({}, ...sources.map(value => Object.getOwnPropertyDescriptors(value))));
   function evaluate<T>(filename: string): T {
     const output = ts.transpileModule(readFileSync(path.join(root, filename), 'utf8'), { fileName: filename,
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React, jsxFactory: 'jsx' }, transformers: { before: [lazy] } }).outputText;
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React, jsxFactory: 'jsx' }, transformers: { before: [lazy], after: [spreads] } }).outputText;
     const exports = {};
-    vm.runInNewContext(output, { exports, jsx, If: 'If', Each: 'Each', setTimeout, clearTimeout, require: (id: string) => { if (!(id in modules)) throw new Error('Unexpected dependency: ' + id); return modules[id]; } });
+    vm.runInNewContext(output, { exports, jsx, mergeProps, If: 'If', Each: 'Each', setTimeout, clearTimeout, require: (id: string) => { if (!(id in modules)) throw new Error('Unexpected dependency: ' + id); return modules[id]; } });
     return exports as T;
   }
   const runtime = evaluate<typeof import('./runtime')>('runtime.ts'); modules['./runtime'] = runtime;
@@ -148,6 +168,8 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
   vm.runInContext(ts.transpileModule(captureDeclaration.getText(stateSyntax), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, context);
   const captureHostOperation = operationExports.captureHostOperation!;
   modules['./state'] = { captureHostOperation, captureHostRequest: () => runtime.bindRequest(scope()), epoch: generation, app: { connection, runtimeScope: scope }, loadConnections() { throw new Error('Page must not acquire root authority'); } };
+  modules['./desktop-settings-content-core'] = evaluate('desktop-settings-content-core.ts');
+  modules['./desktop-settings-publisher'] = evaluate('desktop-settings-publisher.tsx');
   modules['./settings-controls'] = evaluate('settings-controls.tsx');
   if (options.rootToken && !options.initialTokenGap) token.set(captureHostOperation());
   let basics: ((props: Record<string, unknown>) => Node) | undefined;
@@ -157,14 +179,20 @@ async function fixture(options: { covered?: boolean; rootToken?: boolean; legacy
   }
   const surfaces = { collection: ['settings-collections.tsx', 'SettingsCollection'], integration: ['settings-integration.tsx', 'SettingsIntegration'], git: ['settings-git.tsx', 'SettingsGit'], projects: ['settings-projects.tsx', 'SettingsProjects'], downloads: ['settings-voice-models.tsx', 'SettingsVoiceModels'], archive: ['settings-archive.tsx', 'SettingsArchive'], providers: ['settings-providers.tsx', 'SettingsProviders'] } as const;
   const [filename, exportName] = options.throughSettingsPage ? ['settings.tsx', 'SettingsPage'] : options.surface ? surfaces[options.surface] : ['settings-basics.tsx', 'SettingsBasics'];
-  const page = evaluate<Record<string, (props: Record<string, unknown>) => Node>>(filename)[exportName];
+  const pageModule = evaluate<Record<string, (props: Record<string, unknown>) => Node>>(filename);
+  const page = pageModule[exportName], content = options.throughSettingsPage ? pageModule.SettingsPageContent : undefined;
   const tree = page({ page: 'voice', ...options.props, get active() { return active(); }, current: () => ready() && foreground(), get operationToken() { return options.rootToken ? token() : undefined; }, onOpen() {}, onBack() {} });
   const keyed = new Map<unknown, Node[]>();
   const mountedComponents = new Map<Node, Node>();
+  const mountedContent = new Map<Node, Node>();
   function nodes(value: unknown): Node[] {
     if (Array.isArray(value)) return value.flatMap(nodes);
     if (!value || typeof value !== 'object' || !('type' in value)) return [];
     const node = value as Node;
+    if (content && node.type === content) {
+      if (!mountedContent.has(node)) mountedContent.set(node, content(node.props));
+      return nodes(mountedContent.get(node));
+    }
     if (basics && node.type === basics) {
       if (!mountedComponents.has(node)) mountedComponents.set(node, basics(node.props));
       return nodes(mountedComponents.get(node));

@@ -1,10 +1,12 @@
 import { cleanup, effect, lifecycle, signal, untracked } from 'nsh';
 import { app, captureHostOperation, epoch } from './state';
+import { bindRequest } from './runtime';
+import type { VerifiedDesktopWriterGrant } from './desktop-writer-core';
 
 export type PageOperation = ReturnType<typeof captureHostOperation>;
 
 /** Display identity survives suspension. Only explicit operation objects may resume. */
-export function createPageOperations(active: () => boolean = () => true) {
+export function createPageOperations(active: () => boolean = () => true, writer?: () => VerifiedDesktopWriterGrant | null) {
   const connection = app.connection();
   const identity = connection && { id: connection.id, url: connection.url, authorizationID: connection.authorizationID };
   const operation = signal<PageOperation | null>(null);
@@ -36,10 +38,11 @@ export function createPageOperations(active: () => boolean = () => true) {
       if (previous?.current()) return;
       retire();
       const captured = candidate;
+      const request = writer ? bindRequest(captured.scope, writer) : captured.request;
       const current = () => displayCurrent() && operation() === assigned && captured.current() && active();
       const assigned: PageOperation = Object.freeze({ ...captured, current, request: async (path, method, body) => {
         if (!current()) throw new Error('page_operation_stale');
-        const result = await captured.request(path, method, body);
+        const result = await request(path, method, body);
         if (!current()) throw new Error('page_operation_stale');
         return result;
       } });

@@ -9,6 +9,8 @@ export type ChatHeaderMetadata = {
   branch?: string;
   repository?: boolean;
   dirty?: boolean;
+  changedFiles?: number;
+  gitStale?: boolean;
   model?: string;
   tokens?: number;
   limit?: number;
@@ -112,11 +114,13 @@ export function createChatHeaderMetadata(options: {
       next.contextStale = sessionValue === undefined || pageValue === undefined || modelValue === undefined;
       if (session && session.id !== target.id) { next.contextStale = true; next.errors.push('Invalid session metadata'); publish(next); return; }
       if (session) next.title = text(session.title) || target.title;
+      next.gitStale = gitValue === undefined;
       if (gitValue !== undefined) {
         const git = record(gitValue);
         next.branch = text(git.current) || undefined;
         next.repository = git.isGitRepository !== false;
-        next.dirty = Array.isArray(git.files) && git.files.length > 0;
+        next.changedFiles = Array.isArray(git.files) ? git.files.length : undefined;
+        next.dirty = next.changedFiles === undefined ? undefined : next.changedFiles > 0;
       }
       if (pageValue !== undefined && session) {
         try {

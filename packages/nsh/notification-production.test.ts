@@ -49,7 +49,8 @@ it('replaces only the Basic notification branch, puts confirmed-save controls fi
 });
 it('keeps permission gating and native suppression in the actual production paths', () => {
   const ui = read('notification.tsx'), swift = read('ios/NotificationBridge.swift');
-  expect(ui.indexOf('requestNotificationEnable(call)')).toBeLessThan(ui.indexOf('if (notificationAuthorized(nextStatus)) await props.onEnabledChange(true)'));
+  expect(ui).toContain("valid() ? call(name, body) : Promise.reject(new Error('notification_stale'))");
+  expect(ui.indexOf('requestNotificationEnable(scopedCall)')).toBeLessThan(ui.indexOf('if (notificationAuthorized(nextStatus)) await props.onEnabledChange(true)'));
   expect(ui).toContain('(!status() && !props.enabled)'); expect(ui).toContain('!notificationAuthorized(status()!)');
   expect(swift).toContain('test || (enabled && !active)');
   expect(swift).toContain('guard shouldPresent(entry) else'); expect(swift).toContain('let entry = entries[receipt], shouldPresent(entry)');

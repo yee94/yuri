@@ -3,7 +3,7 @@ import { getDefaultTheme, getThemeById } from '../ui/src/lib/theme/themes';
 import { withBaseTextFloor } from '../ui/src/lib/theme/baseTextColors';
 import { isValidTheme } from '../ui/src/contexts/theme-validation';
 import { UI_FONT_OPTIONS, CODE_FONT_OPTIONS, DEFAULT_UI_FONT, DEFAULT_MONO_FONT } from '../ui/src/lib/fontOptions';
-import { MOBILE_SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypographyKey } from '../ui/src/lib/typography';
+import { MOBILE_SEMANTIC_TYPOGRAPHY, SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypographyKey } from '../ui/src/lib/typography';
 import { agentAvatarThemeTokens } from '../ui/src/lib/agentAvatarPalette';
 import { DEFAULT_FOLLOW_UP_BEHAVIOR, isFollowUpBehavior, normalizeFollowUpBehavior, type FollowUpBehavior } from '../ui/src/lib/followUpBehavior';
 import { contextUsageThemeTokens, type ContextUsagePalette } from './context-usage-palette';
@@ -196,12 +196,12 @@ export function nativeFullThemeCSS(appearance: NativeAppearance | null, variant:
   return `:root {\n${vars}\n--font-sans: ${uiStack};\n--font-heading: ${uiStack};\n--font-family-sans: ${uiStack};\n--font-mono: ${monoStack};\n--font-family-mono: ${monoStack};\n--ui-regular-font-weight: 400;\n${typography}\n}\nbody { font-family: var(--font-sans); }`;
 }
 
-export function nativeTypographyStyle(appearance: AppliedNativeAppearance | null, role: SemanticTypographyKey) {
+export function nativeTypographyStyle(appearance: AppliedNativeAppearance | null, role: SemanticTypographyKey, desktop = false) {
   // codeFontSize is browser-local, not present in the Host settings GET contract.
   const scale = role === 'code' ? 1 : (appearance?.fontSize ?? 100) / 100;
   const style = {
     fontFamily: role === 'code' ? appearance?.monoFontFamily ?? 'monospace' : appearance?.uiFontFamily ?? 'system-ui',
-    fontSize: parseFloat(MOBILE_SEMANTIC_TYPOGRAPHY[role]) * 16 * scale,
+    fontSize: parseFloat((desktop ? SEMANTIC_TYPOGRAPHY : MOBILE_SEMANTIC_TYPOGRAPHY)[role]) * 16 * scale,
   };
   // Same leading-relaxed body contract as shared CSSVariableGenerator, in native points.
   return role === 'markdown' ? { ...style, lineHeight: style.fontSize * 1.625 } : style;

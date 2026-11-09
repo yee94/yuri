@@ -55,6 +55,20 @@ export interface TunnelWireSocket {
   onerror: (() => void) | null;
 }
 
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength')!.get!;
+const isUnsharedBufferView = (view: ArrayBufferView): view is ArrayBufferView<ArrayBuffer> => {
+  // The intrinsic getter checks the buffer's brand across realms, unlike instanceof
+  // or a spoofable @@toStringTag. It does not read/copy any payload bytes.
+  try { arrayBufferByteLength.call(view.buffer); return true; } catch { return false; }
+};
+
+const browserSocketSendData = (data: string | ArrayBuffer | ArrayBufferView): string | ArrayBuffer | ArrayBufferView<ArrayBuffer> => {
+  if (!ArrayBuffer.isView(data) || isUnsharedBufferView(data)) return data;
+  // Our socket contract accepts shared views; DOM BufferSource does not. Snapshot
+  // exactly this view's bytes, not the full backing buffer (DataView included).
+  return new Uint8Array(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+};
+
 const wrapNativeWebSocket = (ws: WebSocket): TunnelWireSocket => {
   ws.binaryType = 'arraybuffer';
   const wire: TunnelWireSocket = {
@@ -62,7 +76,7 @@ const wrapNativeWebSocket = (ws: WebSocket): TunnelWireSocket => {
       return ws.readyState;
     },
     send(data) {
-      ws.send(data);
+      ws.send(browserSocketSendData(data));
     },
     close(code, reason) {
       ws.close(code, reason);
@@ -121,7 +135,7 @@ export const wrapBrowserWebSocket = (ws: WebSocket): RelayTunnelWebSocket => {
     onerror: null,
     onclose: null,
     send(data) {
-      ws.send(data);
+      ws.send(browserSocketSendData(data));
     },
     close(code, reason) {
       ws.close(code, reason);

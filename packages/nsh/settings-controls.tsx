@@ -4,9 +4,26 @@ import { NativeSelect as Select } from './native-select';
 import { t } from './i18n';
 import { app, captureHostOperation, captureHostRequest, epoch } from './state';
 import { createSettingsTransaction } from './settings-protocol';
+import { DesktopSettingsPublisher, publishSettingsPending, publishSettingsPicker } from './desktop-settings-publisher';
 
 export const settingsAction = 'min-h-11 px-4 py-3 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
 export const settingsField = 'min-h-12 px-3 py-3 rounded-xl bg-secondary text-foreground';
+export const settingsEntitySplit = () => !!DesktopSettingsPublisher();
+/** Presentation only: both panes consume the page's existing collection/editor owner. */
+export function SettingsEntityLayout(props: { editing: boolean; list: () => JSX.Element; children?: JSX.Element }) {
+  if (!settingsEntitySplit()) return props.editing ? props.children : props.list();
+  const stacked = signal(false);
+  return <View testID="settings-entity-split" class={'flex-1 min-w-0 min-h-0 ' + (stacked() ? 'flex-col' : 'flex-row')}
+    onLayout={event => { const width = event.bounds.size.width; if (width > 0) stacked.set(width <= 768); }}>
+    <View testID="settings-entity-list" class={'min-w-0 min-h-0 bg-muted ' + (stacked() ? 'border-b border-border' : 'border-r border-border')} style={stacked() ? { height: '38%', width: '100%' } : { width: 304 }}>
+      {props.list()}
+    </View>
+    <View testID="settings-entity-detail" class="flex-1 min-w-0 min-h-0 bg-background">
+      <If when={props.editing}>{props.children}</If>
+      <If when={!props.editing}><Text class="p-5 text-sm text-muted-foreground">{t('settings.view.entity.selectHint')}</Text></If>
+    </View>
+  </View>;
+}
 export function SettingsGroup(props: { title: string; children?: JSX.Element }) {
   return <View class="gap-2"><Text class="text-xs text-muted-foreground px-1">{props.title}</Text><View class="rounded-2xl bg-card p-4 gap-3">{props.children}</View></View>;
 }
@@ -14,8 +31,10 @@ export function SettingsInput(props: { title: string; value: string; onChange: (
   return <View class="gap-2"><Text class="text-sm text-foreground">{props.title}</Text><Input testID={props.testID} class={settingsField + (props.multiline ? ' min-h-40' : '')} multiline={props.multiline} value={props.value} onChange={e => props.onChange(e.value)} disabled={props.disabled} masked={props.masked} autoCapitalize="none" autoCorrect={false} accessibilityLabel={props.title} /></View>;
 }
 export function SettingsChoice(props: { title: string; value: string; items: SelectItem[]; onChange: (value: string) => void; disabled?: boolean; testID?: string }) {
+  const pickerOpen = signal(false);
+  publishSettingsPicker(pickerOpen);
   // Select's component host is not the press target; the native select owns behavior on this trigger.
-  return <View class="gap-2"><Text class="text-sm text-foreground">{props.title}</Text><Select value={props.value} items={props.items} disabled={props.disabled} searchable accessibilityLabel={props.title} searchAccessibilityLabel={props.title} searchPlaceholder={props.title} popupClass="bg-card rounded-2xl p-3" listClass="bg-card" itemClass="min-h-12 p-3 rounded-xl text-foreground selected:bg-accent" searchClass={settingsField} onChange={e => props.onChange(e.value ?? '')} trigger={<View testID={props.testID} class={settingsField}><Text class="text-foreground">{props.items.find(item => item.value === props.value)?.title || props.value || props.title}</Text></View>} /></View>;
+  return <View class="gap-2"><Text class="text-sm text-foreground">{props.title}</Text><Select value={props.value} items={props.items} disabled={props.disabled} searchable accessibilityLabel={props.title} searchAccessibilityLabel={props.title} searchPlaceholder={props.title} popupClass="bg-card rounded-2xl p-3" listClass="bg-card" itemClass="min-h-12 p-3 rounded-xl text-foreground selected:bg-accent" searchClass={settingsField} onOpenChange={event => pickerOpen.set(event.open)} onClose={() => pickerOpen.set(false)} onChange={e => props.onChange(e.value ?? '')} trigger={<View testID={props.testID} class={settingsField}><Text class="text-foreground">{props.items.find(item => item.value === props.value)?.title || props.value || props.title}</Text></View>} /></View>;
 }
 export function SettingsToggle(props: { title: string; value: boolean; onChange: (value: boolean) => void; disabled?: boolean; testID?: string }) {
   return <Switch testID={props.testID} class="min-h-12 flex-row-reverse items-center gap-3" checked={props.value} disabled={props.disabled} onChange={event => props.onChange(event.checked)} accessibilityLabel={props.title} trackClass="w-11 rounded-full bg-secondary p-0.5 checked:bg-foreground disabled:opacity-40" thumbClass="size-5 rounded-full bg-background checked:translate-x-5"><Text class="flex-1 text-sm text-foreground">{props.title}</Text></Switch>;
@@ -27,6 +46,7 @@ export function settingsLifetime() {
   cleanup(() => { alive = false; });
   const current = () => alive && generation === epoch() && connection === app.connection()?.id;
   const busy = signal(false), error = signal(''), notice = signal(''), ready = signal(false);
+  publishSettingsPending(busy);
   const transaction = createSettingsTransaction(request, current);
   async function perform(work: () => Promise<void>) {
     if (busy() || !current()) return;
@@ -43,6 +63,7 @@ export type SettingsOperation = Readonly<SettingsHostOperation & { transaction: 
  * using this owner must capture an operation at every asynchronous entry. */
 export function settingsOperationLifetime(initial: SettingsHostOperation | null, active: () => boolean) {
   const busy = signal(false), error = signal(''), notice = signal(''), ready = signal(false);
+  publishSettingsPending(busy);
   const operation = signal<SettingsOperation | null>(null);
   let alive = true;
   function retireOperation() { operation.set(null); busy.set(false); }

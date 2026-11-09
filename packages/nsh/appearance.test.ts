@@ -5,7 +5,8 @@ const harness = vi.hoisted(() => ({
   lifecycle: 'active', connection: { id: 'one', url: 'https://one.example' } as { id: string; url: string } | null,
   epoch: 1, effects: [] as Array<() => void | (() => void)>, effectStops: [] as Array<() => void>,
   cleanups: [] as Array<() => void>, listeners: new Map<string, Set<(payload: unknown) => void>>(),
-  request: vi.fn(), native: vi.fn(), setColorScheme: vi.fn(), scheme: 'dark',
+  request: vi.fn(), native: vi.fn(), setColorScheme: vi.fn(), scheme: 'dark', desktop: false,
+  storageGet: vi.fn(), storageSet: vi.fn(),
 }));
 vi.mock('nsh', () => ({
   signal: <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); },
@@ -13,6 +14,8 @@ vi.mock('nsh', () => ({
   untracked: <T>(work: () => T) => work(),
   effect: (work: () => void | (() => void)) => { harness.effects.push(work); const stop = work(); if (stop) harness.effectStops.push(stop); },
   cleanup: (work: () => void) => harness.cleanups.push(work),
+  platform: { get desktop() { return harness.desktop; } },
+  Storage: { getItem: harness.storageGet, setItem: harness.storageSet },
   host: { on: (name: string, work: (payload: unknown) => void) => {
     const listeners = harness.listeners.get(name) ?? new Set(); listeners.add(work); harness.listeners.set(name, listeners);
     return () => { listeners.delete(work); };
@@ -38,12 +41,28 @@ beforeEach(() => {
   harness.request.mockReset().mockResolvedValue({ themeId: 'jetbrains-dark', themeVariant: 'dark', uiFont: 'system', monoFont: 'system-mono', fontSize: 125, timeFormatPreference: '24h' });
   harness.native.mockReset().mockImplementation(async (name) => name === 'appearance.reset' ? { revision: 1 } : { uiFontFamily: 'system-ui', monoFontFamily: 'monospace', assistantFontFamilies: { light: 'JetBrains Mono', dark: 'JetBrains Mono' }, unsupportedFonts: [] });
   harness.setColorScheme.mockReset();
+  harness.desktop = false; harness.storageGet.mockReset().mockResolvedValue(null); harness.storageSet.mockReset().mockResolvedValue(undefined);
 });
 afterEach(async () => {
   harness.effectStops.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); await flush(); vi.useRealTimers();
 });
 
 describe('NativeAppearanceSync root integration', () => {
+  it('loads desktop code scale once, applies acknowledged local saves to real text styles, and never PUTs it to Host', async () => {
+    harness.desktop = true; harness.storageGet.mockResolvedValue('125');
+    const appearance = await import('./appearance'); appearance.NativeAppearanceSync(); await flush();
+    expect(appearance.nativeChatTextStyle('code')).toMatchObject({ fontSize: 15, lineHeight: 24.375 });
+    expect(appearance.nativeChatTextStyle('user').fontSize).toBe(17.5);
+    expect(appearance.nativeChatTextStyle('composer')).toMatchObject({ fontSize: 14, lineHeight: 21 });
+    await appearance.saveNativeCodeFontSize(150);
+    expect(harness.storageSet).toHaveBeenCalledExactlyOnceWith('native-code-font-size', '150');
+    expect(appearance.nativeChatTextStyle('code')).toMatchObject({ fontSize: 18, lineHeight: 29.25 });
+    for (let i = 0; i < 200; i++) appearance.nativeChatTextStyle('code');
+    expect(harness.storageGet).toHaveBeenCalledTimes(1);
+    expect(harness.request.mock.calls.filter(([, method]) => method === 'PUT')).toHaveLength(0);
+    harness.desktop = false;
+    expect(appearance.nativeChatTextStyle('code').fontSize).toBe(13);
+  });
   it('mounts one lifetime, maps native text styles, and performs zero work for input/token events', async () => {
     const appearance = await import('./appearance');
     appearance.NativeAppearanceSync(); await flush();

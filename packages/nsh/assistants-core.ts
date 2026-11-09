@@ -12,7 +12,7 @@ export async function assistantRequest(fence: AssistantFence, path: string, meth
   assertAssistantScope(fence);
   const value = record(await fence.request(path, method, body));
   assertAssistantScope(fence);
-  if (value.ok === false || value.failed === true || value.partial === true) throw new Error(text(value.message) || text(value.error) || 'invalid_response');
+  if (value.ok === false || value.failed === true || value.partial === true || value.complete === false) throw new Error(text(value.message) || text(value.error) || 'invalid_response');
   return value;
 }
 

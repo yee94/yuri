@@ -5,6 +5,7 @@ import type { request } from './runtime';
 import { SettingsChoice, SettingsGroup, settingsAction, settingsPageLifetime } from './settings-controls';
 import { SettingsTarget } from './settings-target';
 import { createVoiceModelManager, voiceLocalModels, type VoiceModelStatus } from './settings-voice-models-core';
+import { publishSettingsPending } from './desktop-settings-publisher';
 
 const kokoroVoices = ['Alloy (af)', 'Bella (af)', 'Nicole (af)', 'Sarah (af)', 'Sky (af)', 'Adam (am)', 'Michael (am)', 'Emma (bf)', 'Isabella (bf)', 'George (bm)', 'Lewis (bm)'];
 
@@ -22,6 +23,7 @@ export function SettingsVoiceModels(props: {
   const manager = createVoiceModelManager({ send, current: props.send ? props.current : initial?.current ?? (() => false), changed: () => revision.set(revision() + 1) });
   lifetime.observeOperation(operation => { if (!props.send) manager.replaceLane(operation); });
   const snapshot = () => { revision(); return manager.snapshot(); };
+  publishSettingsPending(() => snapshot().loading || !!snapshot().pending);
   const failureText = (message?: string) => message?.startsWith('voice-model-') ? t('common.unavailable') : message ?? '';
   effect(() => {
     const active = (props.active ?? true) && lifecycle() === 'active' && (props.stt || props.tts) && props.current() && (props.send ? true : lifetime.current());

@@ -50,10 +50,12 @@ export function featureFixture(options: {
   const imports: Record<string, unknown> = {
     nsh: { cleanup: (callback: () => void) => cleanups.push(callback), effect: (run: () => void) => run(), locale: () => 'en', signal, computed: (read: () => unknown) => read, Text: 'Text', View: 'View', Scroll: 'Scroll' },
     'nsh/base': { ...controls, AlertDialog: { show: async (options: Row) => { dialogs.push(options); return { action: answer }; } } },
+    './native-select': { NativeSelect: 'Select' },
+    './native-date-picker': { NativeDatePicker: 'DatePicker' },
     './i18n': { t: (key: string) => key, language: () => 'en' },
     './model': model,
     './runtime': { request, native: async () => { throw new Error('No native date service in callback fixture'); }, query: (directory: string) => `directory=${encodeURIComponent(directory)}` },
-    './state': { app, epoch: () => generation, refresh: async () => { order.push('refresh'); await options.refresh?.(); } },
+    './state': { app, epoch: () => generation, captureHostRequest: () => request, refresh: async () => { order.push('refresh'); await options.refresh?.(); } },
     './assistants-core': { admitAssistantMutation: async () => {} },
     './assistants-avatar': { AssistantAvatarPicker: 'AssistantAvatarPicker' },
     './schedules-state': { noteScheduledCatalogWrite: () => order.push('invalidate') },
@@ -62,6 +64,8 @@ export function featureFixture(options: {
     './features-bot-defaults': botDefaults,
     './task-editor-defaults': taskDefaults,
     './task-editor-prompt': { TaskEditorPrompt: 'TaskEditorPrompt' },
+    './task-editor-owner': {},
+    './task-editor-desktop': { TaskEditorDesktop: 'TaskEditorDesktop' },
   };
   const source = readFileSync(fileURLToPath(new URL('../features.tsx', import.meta.url)), 'utf8');
   const javascript = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText;

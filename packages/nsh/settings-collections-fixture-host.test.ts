@@ -48,7 +48,7 @@ test('runner grants audit only in its own temporary config, without changing pro
   try {
     const fixture = prepareCollectionsFixture(root, temporary);
     const config = JSON.parse(readFileSync(path.join(temporary, 'nsh.json'), 'utf8'));
-    expect(config.capabilities).toEqual({ clipboard: true, host: ['runtime.request', 'collections.fixture.audit'] });
+    expect(config.capabilities).toEqual({ clipboard: true, host: ['connection.list', 'runtime.request', 'collections.fixture.audit'] });
     expect(config.theme).toBe(path.join(root, 'theme.json'));
     expect(readFileSync(path.join(temporary, fixture.entry), 'utf8')).toBe(`import ${JSON.stringify(path.join(root, 'settings-collections-fixture.tsx'))};\n`);
     expect(fixture.host).toBe(path.join(root, 'tests/settings-collections-host.js'));

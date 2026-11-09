@@ -1,0 +1,242 @@
+--- a/crates/nsh-core/src/core/list.rs
++++ b/crates/nsh-core/src/core/list.rs
+@@ -43,7 +43,9 @@
+ //! never rendered, so the first offset is off. Their target stays pinned:
+ //! after each round of measurements the list follows it (`follow_pin`),
+ //! retargeting an animated scroll in flight, until the rows in the
+-//! viewport are measured, the user scrolls away or the items change.
++//! viewport are measured and an index target actually overlaps that
++//! viewport. A clamp against still-short content does not count as
++//! arriving. The user scrolling away or the items changing still ends it.
+ //!
+ //! # In its parent's viewport
+ //!
+@@ -716,8 +718,10 @@
+ 
+     /// After measurements: where a pinned list goes for its target, which
+     /// moved as estimated sizes became real ones. The pin ends once the
+-    /// list is there and every item in the viewport is measured (nothing
+-    /// visible can move it any more).
++    /// list is there, every item in the viewport is measured (nothing
++    /// visible can move it any more) and an index target overlaps that
++    /// viewport. Landing on the clamped end while the target is still
++    /// below the short content does not end it.
+     pub(super) fn follow_pin(&mut self, anchored: f32) -> Follow {
+         let Some(mut pin) = self.pin else {
+             return Follow::Stay;
+@@ -744,12 +748,46 @@
+             self.jump(target);
+         }
+         pin.at = target;
+-        self.pin = (!self.viewport_measured()).then_some(pin);
++        let pending = self.index_pin_pending(&pin);
++        self.pin = pending.then_some(pin);
+         if delta == 0.0 {
+             Follow::Stay
+         } else {
+             Follow::By(delta)
+         }
++    }
++
++    /// Whether this index pin has not actually arrived. Overlapping the
++    /// clamped viewport is not arrival: the requested alignment can still
++    /// lie past the short content, and later growth then pushes the target
++    /// back out. The pin stays until that alignment fits and the target
++    /// row has a real size. `scrollToEnd` still ends once the viewport is
++    /// measured.
++    fn index_pin_pending(&self, pin: &Pin) -> bool {
++        if !self.viewport_measured() {
++            return true;
++        }
++        let PinTarget::Index {
++            index,
++            view_position,
++            view_offset,
++        } = pin.target
++        else {
++            return false;
++        };
++        if self.count == 0 {
++            return false;
++        }
++        let index = index.min(self.count - 1);
++        let row = self.row_of(index);
++        let start = (row * self.columns) as usize;
++        let end = (start + self.columns as usize).min(self.sizes.len());
++        if end <= start || !(start..end).all(|size| !self.sizes[size].is_nan()) {
++            return true;
++        }
++        let desired = self.unclamped_offset_for_index(index, view_position, view_offset);
++        let (min, max) = self.offset_limits();
++        desired < min - PIN_SLACK || desired > max + PIN_SLACK
+     }
+ 
+     /// Whether a scroll command's target is still followed.
+@@ -1207,19 +1245,24 @@
+     }
+ 
+     /// The content offset that shows item `index` at `view_position` (0:
+-    /// start of the viewport, 1: end) shifted by `view_offset`, clamped to
+-    /// the content.
+-    pub(super) fn offset_for_index(&self, index: u32, view_position: f32, view_offset: f32) -> f32 {
++    /// start of the viewport, 1: end) shifted by `view_offset`, before the
++    /// content limits are applied.
++    fn unclamped_offset_for_index(&self, index: u32, view_position: f32, view_offset: f32) -> f32 {
+         let index = index.min(self.count.saturating_sub(1));
+         let size = self.row_size(self.row_of(index));
+         let at = self.to_content(self.item_at(index), size);
+         let free = self.viewport - size;
+-        let offset = if self.inverted {
++        if self.inverted {
+             // Mirrored like the inverted list itself.
+             at - (1.0 - view_position) * free + view_offset
+         } else {
+             at - view_position * free - view_offset
+-        };
++        }
++    }
++
++    /// [`Self::unclamped_offset_for_index`] clamped to the content.
++    pub(super) fn offset_for_index(&self, index: u32, view_position: f32, view_offset: f32) -> f32 {
++        let offset = self.unclamped_offset_for_index(index, view_position, view_offset);
+         let (min, max) = self.offset_limits();
+         offset.clamp(min, max)
+     }
+@@ -2164,6 +2207,59 @@
+         assert!(!l.pinned());
+     }
+ 
++    #[test]
++    fn a_clamped_index_pin_follows_until_its_row_enters_the_viewport() {
++        let mut l = in_page(0.0, 0.0, 800.0);
++        l.pin(
++            Some(PinTarget::Index {
++                index: 40,
++                view_position: 0.0,
++                view_offset: 0.0,
++            }),
++            0.0,
++            false,
++        );
++        assert_eq!(l.follow_pin(0.0), Follow::By(800.0));
++        assert_eq!(l.offset, 800.0);
++        for i in 0..30 {
++            assert_eq!(l.measured(i, 50.0), 0.0);
++        }
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert!(l.pinned(), "row 40 is still below the clamped page");
++        l.set_outer(0.0, 800.0, 400.0, 5000.0, true);
++        assert_eq!(l.follow_pin(0.0), Follow::By(1200.0));
++        assert_eq!(l.offset, 2000.0);
++        assert!(l.pinned(), "the target row is not measured yet");
++        for i in 40..50 {
++            assert_eq!(l.measured(i, 50.0), 0.0);
++        }
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert!(!l.pinned(), "the requested alignment now fits");
++    }
++
++    #[test]
++    fn a_short_last_row_stays_pinned_when_only_the_clamped_edge_can_show_it() {
++        let mut l = in_page(0.0, 0.0, 4600.0);
++        l.pin(
++            Some(PinTarget::Index {
++                index: 99,
++                view_position: 0.0,
++                view_offset: 0.0,
++            }),
++            0.0,
++            false,
++        );
++        assert_eq!(l.follow_pin(0.0), Follow::By(4600.0));
++        for i in 92..100 {
++            assert_eq!(l.measured(i, 50.0), 0.0);
++        }
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert!(
++            l.pinned(),
++            "a 50pt last row cannot sit at the top of a 400pt viewport"
++        );
++    }
++
+     /// A list in its parent's viewport, 100 rows of 50, starting `start`
+     /// down a page of `max + 400` in a 400 pt viewport scrolled to
+     /// `offset`.
+--- a/crates/nsh-testing/src/screen.rs
++++ b/crates/nsh-testing/src/screen.rs
+@@ -444,8 +444,33 @@
+                 }
+             }
+             MountItem::ScrollContent { id, size } => {
++                // Real platforms clamp to the new content on this same
++                // update. The core sends a shrinking `ScrollBy` first when
++                // it already knows the offset is past the end; this still
++                // covers a shrink that arrives without one.
++                let frame = self.nodes.get(id).map(|view| view.frame.size);
++                let mut pulled = false;
+                 if let Some(scroll) = self.scroll_mut(*id) {
+                     scroll.content = Some(*size);
++                    if let Some(frame) = frame {
++                        let end = if scroll.horizontal {
++                            (size.width - frame.width).max(Points::ZERO)
++                        } else {
++                            (size.height - frame.height).max(Points::ZERO)
++                        };
++                        let offset = if scroll.horizontal {
++                            &mut scroll.x
++                        } else {
++                            &mut scroll.y
++                        };
++                        if *offset > end {
++                            *offset = end;
++                            pulled = true;
++                        }
++                    }
++                }
++                if pulled {
++                    self.scrolled.push(*id);
+                 }
+             }
+             MountItem::ScrollBy { id, dx, dy } => {
+@@ -2185,6 +2210,41 @@
+     }
+ 
+     #[test]
++    fn shrinking_content_clamps_the_offset_and_reports_it() {
++        let mut screen = Screen::default();
++        screen.apply(&batch(vec![
++            create(2, ViewKind::Scroll),
++            frame(2, 0.0, 0.0, 100.0, 400.0),
++            MountItem::ScrollContent {
++                id: 2,
++                size: Size::new(Points(100.0), Points(5000.0)),
++            },
++            MountItem::Command {
++                id: 2,
++                command: Command::ScrollTo {
++                    x: Points::ZERO,
++                    y: Points(4000.0),
++                    animated: false,
++                },
++            },
++        ]));
++        assert_eq!(screen.scroll(2).unwrap().y, Points(4000.0));
++        screen.take_scrolled();
++        screen.apply(&batch(vec![MountItem::ScrollContent {
++            id: 2,
++            size: Size::new(Points(100.0), Points(500.0)),
++        }]));
++        assert_eq!(screen.scroll(2).unwrap().y, Points(100.0));
++        assert_eq!(screen.take_scrolled(), vec![2]);
++        screen.apply(&batch(vec![MountItem::ScrollContent {
++            id: 2,
++            size: Size::new(Points(100.0), Points(800.0)),
++        }]));
++        assert_eq!(screen.scroll(2).unwrap().y, Points(100.0));
++        assert!(screen.take_scrolled().is_empty());
++    }
++
++    #[test]
+     fn spans_that_take_presses_are_found_by_their_characters() {
+         let mut screen = Screen::default();
+         let mut events = EventMask::default();

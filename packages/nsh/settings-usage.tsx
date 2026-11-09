@@ -14,6 +14,8 @@ import { createSettingsTargetNavigation } from './settings-search-core';
 import { createSettingsUsage, usageAccountRows, usageHeaderProviders, usageModelGroups, usageModelSelection, usageRefreshInterval, usageValueLabel, type UsageState } from './settings-usage-core';
 import { createUsageQuotaHelpers } from './settings-usage-quota';
 import { usageSemanticPalette, type UsagePalette } from './settings-usage-palette';
+import { DesktopSettingsPublisher, publishSettingsEditor } from './desktop-settings-publisher';
+import { DesktopUsage } from './desktop-usage';
 
 // Like Web's non-persisted quota store, only the selected identity survives page remounts.
 let rememberedProvider: QuotaProviderId | null = null;
@@ -50,12 +52,17 @@ function UsageWindowRow(props: { id: string; title: string; window: UsageWindow;
 
 /** Native Settings controls; projection, request budget and mutation recovery share one page owner. */
 export function SettingsUsage(props: SettingsCallbacks & SettingsRoute & { directory?: string; active?: boolean; dependencies?: Omit<Parameters<typeof createSettingsUsage>[0], 'changed'> }) {
+  const desktop = !!DesktopSettingsPublisher();
   const lifetime = settingsPageLifetime(() => props.active !== false && lifecycle() === 'active');
   const initialOperation = lifetime.operation();
-  const owner = createSettingsUsage({ selectedProviderId: props.entity ?? rememberedProvider, defaultsEnabled: !!props.entity, displayClock: !!props.entity, ...(props.dependencies ?? { send: initialOperation?.request ?? (async () => { throw new Error('Runtime changed'); }), current: initialOperation?.current ?? (() => false), directory: props.directory }), onSelectedProvider: provider => { rememberedProvider = provider; }, changed: next => state.set(next) });
+  const owner = createSettingsUsage({ selectedProviderId: props.entity ?? rememberedProvider, defaultsEnabled: desktop || !!props.entity, displayClock: desktop || !!props.entity, ...(props.dependencies ?? { send: initialOperation?.request ?? (async () => { throw new Error('Runtime changed'); }), current: initialOperation?.current ?? (() => false), directory: props.directory }), onSelectedProvider: provider => { rememberedProvider = provider; }, changed: next => state.set(next) });
   const state = signal<UsageState>(owner.state()), collapsed = signal<Record<string, boolean>>({});
   lifetime.observeOperation(operation => { if (!props.dependencies) owner.replaceLane(operation); });
   const manualMagpie = signal(false), magpieDraft = signal<string | null>(null);
+  publishSettingsEditor({ current: () => props.dependencies ? props.dependencies.current() : lifetime.current(), scope: lifetime.operation,
+    pending: () => state().writing || state().refreshing || state().recovery,
+    dirty: () => !!state().draft || magpieDraft() !== null && magpieDraft() !== String(state().settings?.magpieUsageUrl ?? ''), stamp: () => [state().draft, magpieDraft()],
+  });
   let scroll!: ScrollRef;
   const navigation = createSettingsTargetNavigation(() => scroll, lifetime.current, () => lifetime.operation()?.current ?? (() => false));
   const selected = computed(() => state().results.find(result => result.providerId === (state().selectedProviderId ?? props.entity)));
@@ -87,6 +94,10 @@ export function SettingsUsage(props: SettingsCallbacks & SettingsRoute & { direc
     if (!visible) return;
   });
   cleanup(() => owner.dispose());
+  if (desktop) return <DesktopUsage state={state()} owner={owner} active={props.active !== false && lifecycle() === 'active' && (props.dependencies ? props.dependencies.current() : lifetime.current())} target={props.target}
+    palette={palette()} manualMagpie={manualMagpie()} magpieDraft={magpieDraft()} onManualMagpie={() => manualMagpie.set(!manualMagpie())} onMagpieDraft={value => magpieDraft.set(value)} onSaveMagpie={() => { void saveMagpie(); }}
+    updated={updated} tone={helpers.resolveUsageTone} window={row => <UsageWindowRow {...row} />}
+    intervalItems={[{ value: '30000', title: new Intl.NumberFormat(intlLocale(), { style: 'unit', unit: 'second', unitDisplay: 'short' }).format(30) }, { value: '60000', title: new Intl.NumberFormat(intlLocale(), { style: 'unit', unit: 'minute', unitDisplay: 'short' }).format(1) }, { value: '300000', title: new Intl.NumberFormat(intlLocale(), { style: 'unit', unit: 'minute', unitDisplay: 'short' }).format(5) }]} />;
   return <Scroll testID="usage-scroll" ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
     <Button testID="usage-refresh" class={settingsAction} disabled={state().refreshing || state().writing || props.active === false || lifecycle() !== 'active'} onPress={() => { void owner.refresh(); }}><Text class="text-foreground">{t('settings.usage.sidebar.actions.refreshTitle')}</Text></Button>
     <If when={state().settingsFailed}><Text testID="usage-settings-error" class="text-sm text-destructive">{t('settings.usage.page.state.refreshFailedTitle')}</Text></If>

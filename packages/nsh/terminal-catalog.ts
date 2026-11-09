@@ -1,4 +1,5 @@
 import type { TerminalTab } from './terminal-core';
+import { terminalDirectoryPath } from './terminal-path';
 
 export type TerminalCatalog = { schema: 1; hostID: string; directories: { directory: string; activeId: string; tabs: {
   id: string; sessionId?: string; label?: string; iconKey?: string; lifecycle: 'idle' | 'running' | 'exited'; createUnknown?: boolean;
@@ -17,8 +18,8 @@ export function terminalCatalogFrom(value: unknown, hostID: string): TerminalCat
   if (data.schema !== 1 || data.hostID !== hostID || !Array.isArray(data.directories) || data.directories.length > 128) return null;
   const result: TerminalCatalog = { schema: 1, hostID, directories: [] }, allIDs = new Set<string>(), paths = new Set<string>();
   for (const item of data.directories) {
-    const entry = object(item), path = entry.directory;
-    if (typeof path !== 'string' || !path.startsWith('/') || /[\\\x00-\x1f\x7f]/.test(path) || path.includes('//') || path.split('/').some(part => part === '.' || part === '..')
+    const entry = object(item), path = typeof entry.directory === 'string' ? terminalDirectoryPath(entry.directory) : null;
+    if (path === null
       || paths.has(path) || !Array.isArray(entry.tabs) || !entry.tabs.length || entry.tabs.length > 64) return null;
     paths.add(path);
     const tabs: TerminalCatalog['directories'][number]['tabs'] = [];

@@ -9,36 +9,45 @@ import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 
 export { currentNotificationLanguage } from './notification-runtime';
 
-/** Replaces Basic's raw enable row. The native parent hides browser-only focused/template controls. */
+/** Replaces Basic's raw enable row. The parent owns platform-specific mode controls. */
 export function SettingsNativeNotifications(props: {
   hostID: string; enabled: boolean; active?: boolean; current: () => boolean;
   onEnabledChange: (enabled: boolean) => void | Promise<void>;
   disabled?: boolean; onBusyChange?: (busy: boolean) => void;
+  operationToken?: unknown;
   call?: NotificationCall;
 }) {
   const call: NotificationCall = props.call ?? native;
   const status = signal<NotificationStatus | null>(null), busy = signal(false), error = signal(''), notice = signal('');
-  let alive = true, refreshRevision = 0;
+  let alive = true, refreshRevision = 0, actionRevision = 0;
   const current = () => alive && props.current();
+  function captureCurrent() {
+    const operation = props.operationToken, revision = actionRevision;
+    return () => current() && props.active !== false && lifecycle() === 'active' && operation === props.operationToken && revision === actionRevision;
+  }
   const disabled = () => busy() || props.disabled === true || props.active === false;
-  cleanup(() => { alive = false; ++refreshRevision; });
+  cleanup(() => { alive = false; ++refreshRevision; ++actionRevision; props.onBusyChange?.(false); });
   async function refresh() {
     const turn = ++refreshRevision;
-    try { const next = notificationStatus(await call('notification.status')); if (current() && turn === refreshRevision) { status.set(next); error.set(''); } }
-    catch { if (current() && turn === refreshRevision) error.set(t('settings.notifications.page.toast.notificationsApiUnavailable')); }
+    const valid = captureCurrent();
+    try { const next = notificationStatus(await call('notification.status')); if (valid() && turn === refreshRevision) { status.set(next); error.set(''); } }
+    catch { if (valid() && turn === refreshRevision) error.set(t('settings.notifications.page.toast.notificationsApiUnavailable')); }
   }
-  async function perform(work: () => Promise<void>, failureKey: I18nKey = 'settings.notifications.page.toast.testNotificationFailed') {
+  async function perform(work: (valid: () => boolean) => Promise<void>, failureKey: I18nKey = 'settings.notifications.page.toast.testNotificationFailed') {
     if (!current() || disabled()) return;
+    const valid = captureCurrent();
+    if (!valid()) return;
     busy.set(true); props.onBusyChange?.(true); error.set(''); notice.set('');
-    try { await work(); }
-    catch { if (current()) error.set(t(failureKey)); }
-    finally { if (current()) { busy.set(false); props.onBusyChange?.(false); } }
+    try { await work(valid); }
+    catch { if (valid()) error.set(t(failureKey)); }
+    finally { if (valid()) { busy.set(false); props.onBusyChange?.(false); } }
   }
   async function enable(next: boolean) {
-    await perform(async () => {
+    await perform(async valid => {
       if (!next) { await props.onEnabledChange(false); return; }
-      const nextStatus = await requestNotificationEnable(call);
-      if (!current()) return;
+      const scopedCall: NotificationCall = (name, body) => valid() ? call(name, body) : Promise.reject(new Error('notification_stale'));
+      const nextStatus = await requestNotificationEnable(scopedCall);
+      if (!valid()) return;
       ++refreshRevision;
       status.set(nextStatus);
       if (notificationAuthorized(nextStatus)) await props.onEnabledChange(true);
@@ -46,15 +55,16 @@ export function SettingsNativeNotifications(props: {
     }, 'settings.notifications.page.toast.requestPermissionFailed');
   }
   async function test() {
-    await perform(async () => {
+    await perform(async valid => {
       const result = await call('notification.test', { hostID: props.hostID, language: currentNotificationLanguage() });
       if (!result || typeof result !== 'object' || (result as Record<string, unknown>).result !== 'scheduled') throw new Error('notification_not_scheduled');
-      if (current()) notice.set(t('settings.notifications.native.scheduled'));
+      if (valid()) notice.set(t('settings.notifications.native.scheduled'));
     });
   }
   effect(() => {
-    if (props.active === false || lifecycle() !== 'active') return;
-    untracked(() => { void refresh(); });
+    props.operationToken;
+    const active = props.active !== false && lifecycle() === 'active' && current();
+    untracked(() => { ++actionRevision; ++refreshRevision; busy.set(false); props.onBusyChange?.(false); if (active) void refresh(); });
   });
   const off = host.on('notification.status', () => { if (current() && props.active !== false && lifecycle() === 'active') void refresh(); });
   cleanup(off);

@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["../desktop-core.ts", "../desktop.tsx", "../desktop-fixture.tsx"],
+  "exclude": []
+}

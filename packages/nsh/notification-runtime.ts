@@ -1,4 +1,4 @@
-import { locale } from 'nsh';
+import { locale, platform } from 'nsh';
 import { language } from './i18n';
 import { native } from './runtime';
 import { app, captureHostRequest, epoch, isCurrentHostScope } from './state';
@@ -47,6 +47,7 @@ export function bindNativeNotificationRoot(input: NonNullable<typeof root>) {
   return () => { if (root === input) { nativeNotificationSettings.invalidate(); root = null; sender = null; } };
 }
 export const nativeNotificationSettings = createNotificationSettingsTransport({
+  desktop: platform?.desktop === true,
   scope: () => root ? root.scope() : nativeNotificationScope(), language: currentNotificationLanguage,
   call: (name, body) => root?.call ? root.call(name, body) : native(name, body),
   read: () => notificationScopedRequest()('/api/config/settings'),

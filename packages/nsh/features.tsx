@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, locale, Scroll, signal, Text, View, type JSX } from "nsh";
+import { cleanup, computed, effect, locale, Scroll, signal, Text, untracked, View, type JSX } from "nsh";
 import {
   AlertDialog,
   Button,
@@ -22,6 +22,8 @@ import { foundationCronPreview } from "./features-schedule-date";
 import { readBotCreationDefaults, type BotDefaultSelection } from './features-bot-defaults';
 import { taskEditorDirectory, taskEditorProject, taskEditorSelection, type TaskEditorCreationContext } from './task-editor-defaults';
 import { TaskEditorPrompt } from './task-editor-prompt';
+import { createTaskEditorOwner, type TaskEditorLeave, type TaskEditorWindowGuard } from './task-editor-owner';
+import { TaskEditorDesktop } from './task-editor-desktop';
 
 const action =
   "min-h-11 px-4 py-3 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center";
@@ -658,13 +660,22 @@ export function BotEditor(props: { bot?: Row; onDone: () => void; children?: JSX
   );
 }
 
-export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingDescription?: string; creationContext?: TaskEditorCreationContext; active?: boolean }) {
-  const state = editorState(props.onDone),
+export type TaskEditorProps = {
+  item?: Row; onDone: () => void; syncPendingDescription?: string; creationContext?: TaskEditorCreationContext; active?: boolean;
+  presentation?: 'mobile' | 'desktop'; interactive?: boolean; onClose?: () => void;
+  onNavigation?: (requestLeave: TaskEditorLeave | null) => void;
+  onWindowGuard?: (registration: TaskEditorWindowGuard | null) => void;
+  onOpenHistory?: () => void;
+};
+export function TaskEditor(props: TaskEditorProps) {
+  const desktop = props.presentation === 'desktop' ? createTaskEditorOwner(() => props.active !== false, () => props.interactive !== false, props.onDone) : null;
+  const state = desktop ?? editorState(props.onDone),
     request = state.request,
     task = record(props.item?.task),
     schedule = record(task.schedule),
     execution = record(task.execution);
   const taskID = signal(text(task.id));
+  const savedTask = signal(task);
   const creationID = `task_${id()}`;
   const creationContext = props.creationContext && { ...props.creationContext, selection: { ...props.creationContext.selection }, ...(props.creationContext.commandContext ? { commandContext: { ...props.creationContext.commandContext } } : {}) };
   const capturedHost = app.connection()?.id || '';
@@ -695,11 +706,17 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
       : [1],
   );
   const c = modelCatalog(state, { ...execution, ...taskEditorSelection(props.item, creationContext) });
-  const navigation = editorNavigation(state, props.onDone, () => ({
-    projectID: projectID(), name: name(), prompt: prompt(), enabled: enabled(), goalEnabled: goalEnabled(),
+  const snapshot = () => ({
+    projectID: projectID(), name: name(), prompt: prompt(), enabled: desktop && enabled() === savedTask().enabled ? null : enabled(), goalEnabled: goalEnabled(),
     kind: kind(), timezone: timezone(), times: times(), time: time(), date: date(), cron: cron(), weekdays: weekdays(),
     providerID: c.providerID(), modelID: c.modelID(), agent: c.agent(), variant: c.variant(),
-  }));
+  });
+  const desktopNavigation = desktop?.navigation(snapshot, () => props.onClose?.());
+  const navigation = desktopNavigation ?? editorNavigation(state, props.onDone, snapshot);
+  if (desktopNavigation) {
+    props.onNavigation?.(desktopNavigation.cancel); props.onWindowGuard?.(desktopNavigation.windowGuard);
+    cleanup(() => { props.onNavigation?.(null); props.onWindowGuard?.(null); });
+  }
   const cronValidation = computed(() => cron().trim() ? isValidCronExpression(cron()) : null);
   const nextPreview = signal<CronPreview | null>(null), previewLoading = signal(false);
   let previewSequence = 0;
@@ -735,7 +752,7 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
     taskEditorDirectory(projectID(), creationContext, app.projects());
   const base = () =>
     `/api/projects/${encodeURIComponent(projectID())}/scheduled-tasks`;
-  const disabled = () => state.busy() || state.committed();
+  const disabled = () => state.busy() || state.committed() || !!desktop && (!desktop.admitted() || desktop.unknown());
   const weekdayItems = () => [
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.sun"),
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.mon"),
@@ -745,7 +762,10 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.fri"),
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.sat"),
   ];
-  if (directory()) void c.load(directory());
+  if (desktop) {
+    const catalogDirectory = computed(directory);
+    effect(() => { const available = desktop.current(), value = catalogDirectory(); untracked(() => { if (available && value) void c.load(value); }); });
+  } else if (directory()) void c.load(directory());
   function buildSchedule() {
     if (!timezone().trim())
       throw new Error(
@@ -803,8 +823,10 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
           t("sessions.scheduledTasks.editor.toast.saveFailed"),
       );
     state.assertCurrent();
+    desktop?.acknowledge();
     noteScheduledCatalogWrite();
     if (!deleted) taskID.set(text(record(response.task).id));
+    if (desktop && !deleted) savedTask.set(record(response.task));
     state.committed.set(true);
     state.notice.set(
       t(
@@ -824,6 +846,7 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
       return;
     }
     await state.finish();
+    if (desktop && state.current() && !deleted) { state.committed.set(false); desktopNavigation?.pristine(); }
   }
   async function save() {
     await state.perform(async () => {
@@ -886,6 +909,57 @@ export function TaskEditor(props: { item?: Row; onDone: () => void; syncPendingD
       );
     });
   }
+  async function taskAction(kind: 'run' | 'toggle') {
+    if (!desktop) return;
+    await state.perform(async () => {
+      const previous = savedTask();
+      if (!taskID() || kind === 'run' && (previous.enabled !== true || record(previous.state).lastStatus === 'running')) throw new Error(t('sessions.scheduledTasks.dialog.toast.runFailed'));
+      const response = record(await request(kind === 'run' ? `${base()}/${encodeURIComponent(taskID())}/run` : base(), kind === 'run' ? 'POST' : 'PATCH', kind === 'toggle' ? { task: { id: taskID(), enabled: previous.enabled !== true } } : undefined));
+      const confirmed = record(response.task);
+      if (response.ok === false || response.failed === true || response.partial === true || text(confirmed.id) !== taskID() || kind === 'run' && response.ok !== true || kind === 'toggle' && confirmed.enabled !== (previous.enabled !== true)) throw new Error(t('sessions.scheduledTasks.dialog.toast.updateFailed'));
+      state.assertCurrent(); desktop.acknowledge(); noteScheduledCatalogWrite(); savedTask.set(confirmed);
+      state.notice.set(t(kind === 'run' ? 'sessions.scheduledTasks.dialog.toast.started' : 'sessions.scheduledTasks.dialog.toast.saved'));
+      if (kind === 'toggle') {
+        enabled.set(confirmed.enabled === true);
+        if (response.schedulerSynced === false) { state.committed.set(true); state.notice.set(state.notice() + ' · ' + (props.syncPendingDescription || t('common.unavailable'))); }
+      }
+      await refresh();
+    });
+  }
+  async function recover() {
+    if (!desktop) return;
+    await state.perform(async () => {
+      const receipt = desktop.receipt();
+      if (!receipt) return;
+      // Run history has no operation receipt/correlation ID. Never infer that an
+      // unknown run succeeded (or failed) from a nearby historical run.
+      if (receipt.path.endsWith('/run')) throw new Error(t('common.unavailable'));
+      const response = record(await request(base()));
+      if (response.ok === false || response.failed === true || response.partial === true || response.complete === false || !Array.isArray(response.tasks) || list(response.tasks).some(value => !text(value.id)) || new Set(list(response.tasks).map(value => value.id)).size !== list(response.tasks).length) throw new Error(t('common.unavailable'));
+      const expected = record(record(receipt.body).task), identity = text(expected.id) || taskID();
+      const found = list(response.tasks).find(value => value.id === identity);
+      if (receipt.method === 'DELETE') {
+        if (found) throw new Error(t('common.unavailable'));
+        await saved({ tasks: response.tasks, schedulerSynced: false }, true); return;
+      }
+      const matches = (actual: unknown, wanted: unknown, field = ''): boolean => {
+        // project-config.normalizeExecution omits empty variant/agent and false
+        // goalEnabled. These are schema defaults, not missing receipt evidence.
+        if (actual === undefined && (wanted === '' && ['variant', 'agent'].includes(field) || wanted === false && field === 'goalEnabled')) return true;
+        if (wanted && typeof wanted === 'object') return Array.isArray(wanted) ? Array.isArray(actual) && actual.length === wanted.length && wanted.every((value, index) => matches(actual[index], value)) : Object.entries(record(wanted)).every(([key, value]) => matches(record(actual)[key], value, key));
+        return actual === wanted;
+      };
+      if (!found || !matches(found, expected)) throw new Error(t('common.unavailable'));
+      if (Object.keys(expected).length === 2 && typeof expected.enabled === 'boolean') {
+        desktop.acknowledge(); noteScheduledCatalogWrite(); savedTask.set(found); enabled.set(found.enabled === true); state.committed.set(true); state.notice.set(t('sessions.scheduledTasks.dialog.toast.saved') + ' · ' + t('common.unavailable')); return;
+      }
+      await saved({ task: found, schedulerSynced: false });
+    }, true);
+  }
+  if (desktop) return <TaskEditorDesktop form={{ taskID, name, prompt, goalEnabled, enabled, projectID, kind, timezone, times, time, date, cron, weekdays }} catalog={c} owner={desktop} savedTask={savedTask()} disabled={disabled()} creationContext={creationContext} directory={directory()} capturedHost={capturedHost} creationID={creationID}
+    active={props.active !== false} onClose={() => { void navigation.cancel(); }} onSave={() => { void save(); }} onDelete={() => { void remove(); }} onRun={() => { void taskAction('run'); }} onToggle={() => { void taskAction('toggle'); }} onHistory={props.onOpenHistory ? () => { void navigation.cancel(props.onOpenHistory); } : undefined}
+    onRecover={() => { void recover(); }} onFinish={() => { void state.perform(state.finish, true); }} onReload={() => { if (desktop.admitted() && directory()) void c.load(directory()); }}
+    preview={{ runs: formattedRuns(), loading: previewLoading(), error: previewError(), valid: cronValidation()?.valid !== false }} />;
   return (
     <NavPage
       headerBackTitle=""

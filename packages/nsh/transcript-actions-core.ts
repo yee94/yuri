@@ -4,6 +4,9 @@ import { resolveNativeForkBoundary } from '../ui/src/sync/session-fork-boundary'
 
 export type NativeEditDraft = { target: ChatTarget; messageID: string; text: string; files: Attachment[] };
 export type NativeRevert = { messageID: string; files?: Row[] };
+export type NativeHistoryOutcome = { status: 'accepted' | 'rejected' | 'unknown'; reason?: string; error?: unknown; target?: ChatTarget };
+export type NativeHistoryInvocation = { current: () => boolean };
+export type NativeHistoryWrite = { kind: 'stage' | 'clear' | 'fork'; messageID: string | null };
 export type TranscriptScope = {
   /** Include Host generation + target identity; all rows of a chat share this key. */
   key: string;
@@ -23,8 +26,11 @@ export type TranscriptActionOptions = {
   onRevert?: (revert: NativeRevert | null) => void;
   /** Refresh authority, never optimistically remove history on a failed request. */
   onChanged?: () => void | Promise<void>;
+  /** Persist the intent before dispatch; a lost receipt is never automatically replayed. */
+  onDispatch?: (write: NativeHistoryWrite) => Promise<void>;
+  onReceipt?: (outcome: NativeHistoryOutcome) => void | Promise<void>;
 };
-const mutations = new Set<string>();
+const mutations = new Map<string, { unknown: boolean }>();
 
 /** Only durable Host references can round-trip through the native composer. */
 export function nativeEditFiles(files: Row[]): Attachment[] {
@@ -76,102 +82,145 @@ export function createTranscriptActions(options: TranscriptActionOptions) {
     if (!active || typeof active !== 'object' || Array.isArray(active) || Object.values(active).some(item => record(item).type !== 'running')) throw new Error('Invalid active membership');
     if (Object.hasOwn(active, target.id) || scope.busy()) throw new Error('Session is running');
   }
-  async function mutation(work: () => Promise<void>) {
-    assertCurrent();
-    if (mutations.has(lock)) throw new Error('Session history action is pending');
-    mutations.add(lock);
+  async function mutation(work: (dispatch: <T>(write: NativeHistoryWrite, work: () => Promise<T>, parse: (value: T) => void) => Promise<void>) => Promise<void>, invocation?: NativeHistoryInvocation): Promise<NativeHistoryOutcome> {
+    if (!current() || invocation?.current() === false) return { status: 'rejected', reason: 'stale' };
+    if (mutations.has(lock)) return { status: 'rejected', reason: 'pending', error: new Error('Session history action is pending') };
+    const owner = { unknown: false };
+    mutations.set(lock, owner);
     let acquired = false;
-    try { options.onPending?.(true); acquired = true; await work(); }
-    finally { mutations.delete(lock); if (acquired) options.onPending?.(false); }
-  }
-  async function reconcileFailure() {
-    if (!current()) return;
-    options.onUncertain?.();
-    // Unknown write results must reload authority, never masquerade as rollback.
-    try { await options.onChanged?.(); } catch { /* Keep the original failure and last valid indicator. */ }
-  }
-  async function stage(messageID: string, files: boolean) {
+    let dispatched = false, acknowledged = false;
     try {
-      const value = nativeRevertFrom(await request(path('revert/stage'), 'POST', { messageID, files }));
       assertCurrent();
-      if (value.messageID !== messageID) throw new Error('Invalid revert acknowledgement');
-      return value;
-    } catch (failure) { await reconcileFailure(); throw failure; }
+      options.onPending?.(true); acquired = true;
+      await work(async (write, send, parse) => {
+        assertCurrent();
+        if (invocation?.current() === false) throw new Error('Transcript source changed');
+        await options.onDispatch?.(write);
+        assertCurrent();
+        if (invocation?.current() === false) throw new Error('Transcript source changed');
+        dispatched = true;
+        const value = await send();
+        parse(value);
+        acknowledged = true;
+        await options.onReceipt?.({ status: 'accepted' });
+      });
+      return { status: 'accepted' };
+    } catch (failure) {
+      const status = record(failure).status;
+      const outcome: NativeHistoryOutcome = { status: acknowledged ? 'accepted' : !dispatched || typeof status === 'number' && status >= 400 && status < 500 && status !== 408 ? 'rejected' : 'unknown', error: failure };
+      if (outcome.status === 'unknown') {
+        owner.unknown = true;
+        options.onUncertain?.();
+        // Unknown write results must reload authority, never masquerade as rollback.
+        try { await options.onChanged?.(); } catch { /* Keep the original failure and last valid indicator. */ }
+      } else if (!acknowledged && acquired) {
+        try { await options.onReceipt?.(outcome); } catch { /* A retained journal remains conservatively locked on restart. */ }
+      }
+      return outcome;
+    } finally {
+      if (!owner.unknown) { mutations.delete(lock); if (acquired) options.onPending?.(false); }
+    }
+  }
+  const legacy = async (operation: Promise<NativeHistoryOutcome>) => {
+    const result = await operation;
+    if (result.error) throw result.error;
+    if (result.status !== 'accepted') throw new Error(result.reason || 'Session action unavailable');
+  };
+  async function stageSelected(files: boolean, invocation?: NativeHistoryInvocation, edit = false) {
+    return mutation(async dispatch => {
+      if (edit && (!options.onEditDraft || options.canEditDraft?.() === false)) throw new Error('当前草稿尚未就绪或有待恢复操作，不能编辑历史消息');
+      await idle();
+      const { message, raw } = await selected();
+      if (raw.type !== 'user' || message.role !== 'user') throw new Error('Revert requires a user message');
+      let draft: NativeEditDraft | undefined;
+      if (edit) {
+        const authoritative = messageFrom(raw);
+        if (!authoritative) throw new Error('Selected message is unavailable');
+        if (authoritative.content?.some(part => !['text', 'file'].includes(text(part.type)))) throw new Error('此消息包含尚不支持编辑的结构化内容，不能安全编辑');
+        draft = { target, messageID: message.id, text: authoritative.text, files: nativeEditFiles(authoritative.files) };
+      }
+      await idle();
+      if (edit && options.canEditDraft?.() === false) throw new Error('当前草稿有待恢复操作，不能编辑历史消息');
+      if (scope.message()?.id !== message.id) throw new Error('Selected message is unavailable');
+      let staged!: NativeRevert;
+      await dispatch({ kind: 'stage', messageID: message.id }, () => request(path('revert/stage'), 'POST', { messageID: message.id, files }), payload => {
+        staged = nativeRevertFrom(payload);
+        if (staged.messageID !== message.id) throw new Error('Invalid revert acknowledgement');
+      });
+      assertCurrent();
+      options.onRevert?.(staged);
+      if (draft) await options.onEditDraft?.(draft);
+      await options.onChanged?.();
+    }, invocation);
+  }
+  async function clear(invocation?: NativeHistoryInvocation) {
+    return mutation(async dispatch => {
+      await idle();
+      // Redo is session-scoped: its original row may already have disappeared.
+      await dispatch({ kind: 'clear', messageID: null }, () => request(path('revert'), 'DELETE'), () => {});
+      assertCurrent(); options.onRevert?.(null); await options.onChanged?.();
+    }, invocation);
+  }
+  async function forkAt(messageID: string | null, invocation?: NativeHistoryInvocation) {
+    let opened: ChatTarget | undefined;
+    const result = await mutation(async dispatch => {
+      const authority = record(await request(`/api/session/${encodeURIComponent(target.id)}?${query(target.directory)}`));
+      assertCurrent();
+      const session = record(authority.data ?? authority);
+      if (session.id !== target.id || text(record(session.location).directory ?? session.directory) !== target.directory) throw new Error('Invalid session fork authority');
+      if (messageID !== null) { const { message } = await selected(); if (message.id !== messageID) throw new Error('Fork target is unavailable'); }
+      let rows: Array<{ id: string; type: string; finish?: string; status?: string }> = [];
+      let cursor = '', found = messageID === null && !scope.busy();
+      const seen = new Set<string>();
+      for (let page = 0; !found && page < 1000; page++) {
+        const response = record(await request(`${path('message')}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : '&order=desc'}`));
+        assertCurrent();
+        if (!Array.isArray(response.data)) throw new Error('Invalid fork history');
+        const batch = response.data.map(record).map(row => ({ id: text(row.id), type: text(row.type), finish: text(row.finish), status: text(row.status) }));
+        if (batch.some(row => !row.id || !row.type)) throw new Error('Invalid fork history');
+        rows = [...batch.reverse(), ...rows];
+        if (messageID ? rows.some(row => row.id === messageID) : rows.some(row => ['user', 'shell', 'idle'].includes(row.type))) { found = true; break; }
+        const next = text(record(response.cursor).next);
+        if (!next || batch.length < 100) break;
+        if (seen.has(next)) throw new Error('Fork history cursor did not advance');
+        seen.add(next); cursor = next;
+      }
+      if (!found || messageID !== null && scope.message()?.id !== messageID) throw new Error('Fork target is unavailable');
+      const before = resolveNativeForkBoundary(rows, messageID ?? undefined, scope.busy());
+      await dispatch({ kind: 'fork', messageID }, () => request(path('fork'), 'POST', before ? { before } : {}), payload => {
+        const value = record(payload), forked = record(value.data ?? value);
+        const directory = text(record(forked.location).directory ?? forked.directory);
+        if (!text(forked.id) || !directory) throw new Error('Invalid fork acknowledgement');
+        opened = { kind: 'session', id: text(forked.id), directory, title: text(forked.title) || target.title };
+      });
+    }, invocation);
+    if (result.status === 'accepted' && current() && invocation?.current() !== false && opened) {
+      try { options.onOpenChat?.(opened); }
+      catch (error) { return { ...result, target: opened, error }; }
+    }
+    return { ...result, ...(opened ? { target: opened } : {}) };
   }
   return {
     current,
     pending: () => mutations.has(lock),
+    unknown: () => mutations.get(lock)?.unknown === true,
+    stage: (files = true, invocation?: NativeHistoryInvocation) => stageSelected(files, invocation),
+    clear,
+    forkAt,
     /** Stage first, preserve the source; a new send commits through the chat owner. */
     async edit() {
-      await mutation(async () => {
-        if (!options.onEditDraft || options.canEditDraft?.() === false) throw new Error('当前草稿尚未就绪或有待恢复操作，不能编辑历史消息');
-        await idle();
-        const { message, raw } = await selected();
-        if (raw.type !== 'user' || message.role !== 'user') throw new Error('Only user messages can be edited');
-        const authoritative = messageFrom(raw);
-        if (!authoritative) throw new Error('Selected message is unavailable');
-        if (authoritative.content?.some(part => !['text', 'file'].includes(text(part.type)))) throw new Error('此消息包含尚不支持编辑的结构化内容，不能安全编辑');
-        const draft = { target, messageID: message.id, text: authoritative.text, files: nativeEditFiles(authoritative.files) };
-        await idle();
-        if (options.canEditDraft?.() === false) throw new Error('当前草稿有待恢复操作，不能编辑历史消息');
-        if (scope.message()?.id !== message.id) throw new Error('Selected message is unavailable');
-        const value = await stage(message.id, false);
-        options.onRevert?.(value);
-        await options.onEditDraft(draft);
-        await options.onChanged?.();
-      });
+      await legacy(stageSelected(false, undefined, true));
     },
     async revert(files = true) {
-      await mutation(async () => {
-        await idle();
-        const { message, raw } = await selected();
-        if (raw.type !== 'user') throw new Error('Revert requires a user message');
-        await idle();
-        if (scope.message()?.id !== message.id) throw new Error('Selected message is unavailable');
-        const value = await stage(message.id, files);
-        options.onRevert?.(value);
-        await options.onChanged?.();
-      });
+      await legacy(stageSelected(files));
     },
     async redo() {
-      await mutation(async () => {
-        await idle();
-        // Redo is session-scoped: its original row may already have disappeared.
-        try { await request(path('revert'), 'DELETE'); }
-        catch (failure) { await reconcileFailure(); throw failure; }
-        assertCurrent();
-        options.onRevert?.(null);
-        await options.onChanged?.();
-      });
+      await legacy(clear());
     },
     async fork() {
-      await mutation(async () => {
-        const { message } = await selected();
-        let rows: Array<{ id: string; type: string; finish?: string; status?: string }> = [];
-        let cursor = '', found = false;
-        const seen = new Set<string>();
-        for (let page = 0; page < 1000; page++) {
-          const response = record(await request(`${path('message')}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : '&order=desc'}`));
-          assertCurrent();
-          if (!Array.isArray(response.data)) throw new Error('Invalid fork history');
-          const batch = response.data.map(record).map(row => ({ id: text(row.id), type: text(row.type), finish: text(row.finish), status: text(row.status) }));
-          if (batch.some(row => !row.id || !row.type)) throw new Error('Invalid fork history');
-          rows = [...batch.reverse(), ...rows];
-          if (rows.some(row => row.id === message.id)) { found = true; break; }
-          const next = text(record(response.cursor).next);
-          if (!next || batch.length < 100) break;
-          if (seen.has(next)) throw new Error('Fork history cursor did not advance');
-          seen.add(next); cursor = next;
-        }
-        if (!found || scope.message()?.id !== message.id) throw new Error('Fork target is unavailable');
-        const before = resolveNativeForkBoundary(rows, message.id, scope.busy());
-        assertCurrent();
-        const value = record(await request(path('fork'), 'POST', before ? { before } : {}));
-        assertCurrent();
-        const forked = record(value.data ?? value);
-        if (!text(forked.id)) throw new Error('Invalid fork acknowledgement');
-        options.onOpenChat?.({ kind: 'session', id: text(forked.id), directory: text(forked.directory) || target.directory, title: text(forked.title) || target.title });
-      });
+      const message = scope.message();
+      if (!message?.id) throw new Error('Selected message is unavailable');
+      await legacy(forkAt(message.id));
     },
   };
 }

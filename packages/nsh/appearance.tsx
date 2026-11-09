@@ -1,4 +1,4 @@
-import { cleanup, colorScheme, effect, host, lifecycle, setColorScheme, signal, untracked, type TextStyle, type ViewStyle } from 'nsh';
+import { cleanup, colorScheme, effect, host, lifecycle, platform, setColorScheme, signal, Storage, untracked, type TextStyle, type ViewStyle } from 'nsh';
 import type { SemanticTypographyKey } from '../ui/src/lib/typography';
 import { app, captureHostRequest, epoch } from './state';
 import { native } from './runtime';
@@ -7,6 +7,14 @@ import { createNativeAppearanceSync, appearanceFromSettings, nativeAppearanceMod
 import type { Theme } from '../ui/src/types/theme';
 import { settingsObject } from './settings-protocol';
 import { t } from './i18n';
+import { createNativeCodeFontPreference } from './settings-preferences-core';
+
+export const nativeCodeFontSize = signal<number | null>(null);
+export const nativeCodeFontUnconfirmed = signal(false);
+let codeFontPreference: ReturnType<typeof createNativeCodeFontPreference> | undefined;
+const codeFontOwner = () => codeFontPreference ??= createNativeCodeFontPreference(Storage, (value, unconfirmed = false) => { nativeCodeFontSize.set(value); nativeCodeFontUnconfirmed.set(unconfirmed); });
+export const loadNativeCodeFontSize = () => codeFontOwner().load();
+export const saveNativeCodeFontSize = (value: unknown) => codeFontOwner().save(value);
 
 export const nativeAppearance = {
   current: signal<AppliedNativeAppearance | null>(null),
@@ -67,6 +75,7 @@ export async function saveNativeAppearanceMode(mode: NativeAppearanceMode, isCur
 export function NativeAppearanceSync() {
   if (mounted) throw new Error('NativeAppearanceSync already mounted');
   mounted = true;
+  if (platform.desktop) void loadNativeCodeFontSize().catch(() => {});
   const createSync = (request: ReturnType<typeof captureHostRequest>) => createNativeAppearanceSync({
     readSettings: () => request('/api/config/settings'),
     readThemes: () => request('/api/config/themes'),
@@ -123,10 +132,15 @@ export function NativeAppearanceSync() {
 export function nativeChatTextStyle(role: SemanticTypographyKey | 'user' | 'assistant' | 'composer' = 'markdown'): TextStyle {
   const value = nativeAppearance.current();
   const semantic = role === 'user' || role === 'assistant' || role === 'composer' ? 'markdown' : role;
-  const style: TextStyle = nativeTypographyStyle(value, semantic);
+  const style: TextStyle = nativeTypographyStyle(value, semantic, platform.desktop);
+  if (role === 'code' && platform.desktop) {
+    style.fontSize = style.fontSize! * (nativeCodeFontSize() ?? 100) / 100;
+    style.lineHeight = style.fontSize * 1.625;
+  }
   if (role === 'assistant' && value) style.fontFamily = value.assistantFontFamilies[colorScheme()];
   // mobile.css's iOS input zoom floor wins over semantic percentages for composer input.
-  if (role === 'composer') { style.fontSize = 16; style.lineHeight = 24; }
+  // Desktop Web measures the same field as 14px/21px (md:typography-ui-label).
+  if (role === 'composer') { style.fontSize = platform.desktop ? 14 : 16; style.lineHeight = platform.desktop ? 21 : 24; }
   if (value && (role === 'user' || role === 'assistant')) style.color = value.cssVars[colorScheme()][`chat-${role}-foreground`];
   return style;
 }

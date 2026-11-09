@@ -41,7 +41,7 @@ test('production MCP JSON parse/cancel never writes or connects; reviewed import
     'await app.press("id:collections-fixture-mcp");', 'await app.waitFor("id:mcp-import-open");', 'await app.waitUntil(() => app.enabled("id:mcp-import-open"));', 'await app.press("id:mcp-import-open");',
     'await app.waitFor("id:mcp-import-sheet");', 'await app.waitFor("id:mcp-import-source");',
     'await app.type("id:mcp-import-source", "{invalid");', 'await app.press("id:mcp-import-apply");',
-    'await app.waitUntil(() => app.texts().some(text => text.includes("Cannot import this MCP configuration")));', 'await app.press("id:mcp-import-cancel");',
+    'await app.waitUntil(() => app.texts().some(text => text.includes("Cannot import this MCP configuration")));', 'app.onDialog(() => "Discard"); await app.press("id:mcp-import-cancel");',
     'await app.waitUntil(() => !app.shows("id:mcp-import-source"));',
     'await app.press("id:collections-fixture-audit");', 'await app.waitUntil(() => app.texts().some(text => text.includes("\\"mcpWrites\\":0")));',
     'await app.waitUntil(() => app.enabled("id:mcp-import-open"));', 'await app.press("id:mcp-import-open");', 'await app.waitFor("id:mcp-import-source");', `await app.type("id:mcp-import-source", ${JSON.stringify(source)});`,

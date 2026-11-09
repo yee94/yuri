@@ -1,6 +1,7 @@
 import { host } from 'nsh';
 import { record, type Connection } from './model';
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
+import { beginDesktopWriterDispatch, desktopWriterNotDispatched, DesktopWriterError, type VerifiedDesktopWriterGrant } from './desktop-writer-core';
 export async function native<T>(name: string, body: Record<string, unknown> = {}): Promise<T> {
   if (!host.available()) throw new Error('This build requires the Yuri native host');
   return await host.call(name, body) as T;
@@ -13,19 +14,25 @@ export async function native<T>(name: string, body: Record<string, unknown> = {}
  */
 export type RawNativeResponse = { status: number; body: unknown };
 /** Capture once at owner creation; every continuation keeps this same immutable lease. */
-export function bindRawRequest(scope: RuntimeScope | null) {
+export function bindRawRequest(scope: RuntimeScope | null, writer?: () => VerifiedDesktopWriterGrant | null) {
   const expectedHost = runtimeScopeFrom(scope);
   return async (path: string, method = 'GET', body?: unknown): Promise<RawNativeResponse> => {
     const verb = method.toUpperCase();
     if (!/^[A-Z]+$/.test(verb)) throw new Error('invalid_http_method');
     if (verb !== 'GET' && !expectedHost) throw new Error('scope_required');
-    const result = await native<RawNativeResponse>('runtime.request', { path, method: verb, ...(body === undefined ? {} : { body }), ...(expectedHost ? { expectedHost } : {}) });
-    if (!result || !Number.isInteger(result.status) || result.status < 100 || result.status > 599 || !Object.prototype.hasOwnProperty.call(result, 'body')) throw new Error('Invalid native response');
-    return result;
+    const permit = beginDesktopWriterDispatch({ writer, expectedHost, path, method: verb, body });
+    if (permit && !permit.current()) { permit.finish('not-dispatched'); throw new DesktopWriterError('stale', 'not-dispatched'); }
+    try {
+      const result = await native<RawNativeResponse>('runtime.request', { path, method: verb, ...(body === undefined ? {} : { body }), ...(expectedHost ? { expectedHost } : {}), ...(permit ? { writerGrant: permit.grantID } : {}) });
+      if (permit && !permit.current()) throw new DesktopWriterError('stale', 'unknown');
+      if (!result || !Number.isInteger(result.status) || result.status < 100 || result.status > 599 || !Object.prototype.hasOwnProperty.call(result, 'body') || permit && Object.keys(result).sort().join(',') !== 'body,status') throw new Error('Invalid native response');
+      permit?.finish(result.status >= 200 && result.status < 300 ? 'confirmed' : 'unknown');
+      return result;
+    } catch (cause) { permit?.finish(desktopWriterNotDispatched(cause) ? 'not-dispatched' : 'unknown'); throw cause; }
   };
 }
-export function bindRequest(scope: RuntimeScope | null) {
-  const raw = bindRawRequest(scope);
+export function bindRequest(scope: RuntimeScope | null, writer?: () => VerifiedDesktopWriterGrant | null) {
+  const raw = bindRawRequest(scope, writer);
   return async (path: string, method = 'GET', body?: unknown): Promise<unknown> => responseBody(await raw(path, method, body));
 }
 function responseBody(result: RawNativeResponse): unknown {

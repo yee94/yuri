@@ -8,6 +8,7 @@ import { readSettingsModels, settingsDefaultModelPatch, settingsDefaultVariantPa
 import { SettingsChoice, SettingsFeedback, SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { settingsObject } from './settings-protocol';
 import { SettingsTarget } from './settings-target';
+import { publishSettingsEditor } from './desktop-settings-publisher';
 
 /** Defaults are Host-wide; only the Sessions catalogs carry the current directory. */
 export function SettingsDefaults(props: SettingsRoute & { directory?: string; onReveal?: (node: ViewRef) => void }) {
@@ -67,6 +68,7 @@ export function SettingsDefaults(props: SettingsRoute & { directory?: string; on
   const selected = () => models().find(entry => settingsModelValue(entry) === modelValue());
   const variants = () => selected() ? modelVariants(selected()!) : [];
   const promptsDirty = () => Object.keys(settingsSummaryDefaults).some(key => prompts()[key as keyof typeof settingsSummaryDefaults] !== savedPrompts()[key as keyof typeof settingsSummaryDefaults]);
+  publishSettingsEditor({ current: state.current, scope: state.operation, pending: () => state.busy() || catalogBusy(), dirty: promptsDirty, stamp: () => [prompts()] });
   const fields = summary ? ['summaryModel', 'summaryTest', 'summaryCommitPrompt', 'summarySessionTitlePrompt'] : ['defaultModel', 'defaultVariant', 'defaultAgent'];
   const ids: Record<string, string> = { summaryModel: 'summary-ai.configuration', summaryTest: 'summary-ai.test-connection', summaryCommitPrompt: 'summary-ai.commit-prompt', summarySessionTitlePrompt: 'summary-ai.title-prompt', defaultModel: 'sessions.default-model', defaultVariant: 'sessions.default-thinking', defaultAgent: 'sessions.default-agent' };
   return <View class="gap-5">
