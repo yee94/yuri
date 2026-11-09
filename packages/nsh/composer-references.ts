@@ -350,7 +350,7 @@ export function compileNativeReferences(document: ScopedReferenceDocument, scope
     seen.add(key);
     if (ref.kind === 'file' || ref.kind === 'directory') {
       const uri = fileUri(ref.value, scope.directory);
-      if (!files.some(file => file.uri === uri)) files.push({ uri, name: ref.value.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() });
+      if (!files.some(file => file.kind !== 'contact' && file.uri === uri)) files.push({ uri, name: ref.value.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() });
     } else if (ref.kind === 'agent') agents.push({ name: ref.value });
     else if (ref.kind === 'skill') skills.push({ id: ref.value });
     else sessions.push(contexts?.find(context => context.id === ref.value) ?? { id: ref.value, title: ref.label, directory: ref.directory || scope.directory, messages: [] });

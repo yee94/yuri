@@ -8,6 +8,7 @@ import {
 import type { IconName } from '@/components/icon/icons';
 import { useI18n } from '@/lib/i18n';
 import { formatSessionChangeCounts, readSessionChangeSummary } from '@/lib/sessionChangeSummary';
+import { formatRelativeShort } from '@/lib/time-format-core';
 import { PROJECT_ICON_MAP } from '@/lib/projectMeta';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import {
@@ -108,20 +109,6 @@ const getSessionTimestamp = (session: Session): number => {
   return Number.isFinite(value) && value > 0 ? value : 0;
 };
 
-/** Same short relative labels as MobileSessionsSheet. */
-const formatRelativeShort = (timestamp: number): string => {
-  if (timestamp <= 0) return '';
-  const diffMs = Date.now() - timestamp;
-  if (diffMs < 60_000) return 'now';
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(timestamp));
-};
-
 const isSessionArchived = (session: Session): boolean => {
   const archived = session.time?.archived;
   return typeof archived === 'number' && archived > 0;
@@ -180,6 +167,7 @@ export const listProjectAreaRootSessions = (
 export { listInProgressHomeSessions };
 
 export type MobileProjectsHomeModel = {
+  catalogIncomplete: boolean;
   projects: MobileProjectHomeItem[];
   pinnedSessions: MobileSessionTreeNode[];
   inProgressSessions: MobileSessionTreeNode[];
@@ -208,6 +196,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
   const liveSessions = useAllLiveSessions();
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const activePaginationByDirectory = useGlobalSessionsStore((state) => state.activePaginationByDirectory);
+  const sessionIndexSyncByDirectory = useGlobalSessionsStore((state) => state.sessionIndexSyncByDirectory);
   const registryProjects = useProjectsStore((state) => state.projects);
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const projects = React.useMemo(() => sortProjectEntries(registryProjects, projectSortOrder), [registryProjects, projectSortOrder]);
@@ -566,6 +555,8 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
         path: node.project.path,
         icon: iconName,
         sessionCount: node.totalSessions,
+        sessionCountPartial: node.buckets.some(bucket => activePaginationByDirectory.get(normalizePath(bucket.path))?.hasMore === true
+          || !!sessionIndexSyncByDirectory.get(normalizePath(bucket.path))?.incomplete),
         activityLabel: formatRelativeShort(node.latestActivity) || undefined,
         active: node.isActive,
         expanded: projectExpanded,
@@ -576,6 +567,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     return projects;
   }, [
     activePaginationByDirectory,
+    sessionIndexSyncByDirectory,
     alwaysVisibleSessionIds,
     currentDirectory,
     currentSessionId,
@@ -656,8 +648,10 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     });
   };
 
+  const catalogIncomplete = React.useMemo(() => [...sessionIndexSyncByDirectory.values()].some(entry => !!entry.incomplete), [sessionIndexSyncByDirectory]);
   return {
     projects: homeProjects,
+    catalogIncomplete,
     pinnedSessions,
     inProgressSessions,
     sessionById,

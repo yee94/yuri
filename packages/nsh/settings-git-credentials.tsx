@@ -6,8 +6,8 @@ import { SettingsTarget } from './settings-target';
 import { gitSettingsNativeRequest } from './settings-github';
 import { createSettingsGitCredentials, unimportedGitCredentials, type GitCredentialsDependencies, type GitCredentialsState } from './settings-git-credentials-core';
 import { publishSettingsEditor } from './desktop-settings-publisher';
-const credentialColors = ['keyword', 'error', 'string', 'function', 'type'] as const;
-const credentialIcons = ['branch', 'briefcase', 'house', 'graduation', 'code'] as const;
+export const credentialColors = ['keyword', 'error', 'string', 'function', 'type'] as const;
+export const credentialIcons = ['branch', 'briefcase', 'house', 'graduation', 'code'] as const;
 
 export const settingsGitCredentialsSearchTarget = 'git.discovered-credentials';
 export const settingsGitCredentialsSearchItem = { page: 'git', id: settingsGitCredentialsSearchTarget, title: 'settings.gitIdentities.page.discoveredCredentials.title', keywords: 'git credentials token import discovered 凭据 导入' } as const;

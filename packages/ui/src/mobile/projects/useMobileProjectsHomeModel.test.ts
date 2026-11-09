@@ -3,9 +3,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import type { Session } from '@/lib/opencode/v2-types';
+import { formatRelativeShort as sharedRelativeShort } from '@/lib/time-format-core';
 
 import {
   formatHomeSessionSubtitle,
+  formatRelativeShort,
   listProjectAreaRootSessions,
 } from './useMobileProjectsHomeModel';
 
@@ -58,6 +60,12 @@ describe('listProjectAreaRootSessions', () => {
 });
 
 describe('useMobileProjectsHomeModel shared pin contract', () => {
+  test('the home export and sessions sheet both read the shared compact formatter', () => {
+    expect(formatRelativeShort).toBe(sharedRelativeShort);
+    const sheetSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../apps/MobileSessionsSheet.tsx'), 'utf8');
+    expect(sheetSource).toContain("import { formatRelativeShort } from '@/lib/time-format-core'");
+    expect(sheetSource).not.toContain('const formatRelativeShort =');
+  });
   test('reuses sidebar ownership and keeps pinned sessions in project trees', () => {
     expect(modelSource).toContain('createSessionOwnershipIndex');
     expect(modelSource).toContain('derivePinnedSessions');

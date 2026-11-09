@@ -1,0 +1,33 @@
+{
+  "status": "oracle-p2-fixed-awaiting-original-oracle",
+  "scope": "Web candidate parity, no-session compact handoff, and same-receipt preparation Retry without replaying unknown dispatch",
+  "sources": {
+    "packages/nsh/composer-command-router.ts": "cd424764a9fe06172cfa33481f9a1e443af04bb5875cd7d1a6283d9ea83b65bf",
+    "packages/nsh/composer-commands-model.ts": "0f9a8d78bfa8696ef1147878fdc78c4a11a72b2523b3234515de1007430f343c",
+    "packages/nsh/chat-composer-commands.ts": "f6021badec3b2056fc93ae1389b2c13f234a28f5f46a56958d1c64a4a8c4e4df",
+    "packages/nsh/new-session-page.tsx": "9b5e5396082db015bc49cb620bcaa5b9656cd75a3594a506cb503021fd30f9a9",
+    "packages/nsh/new-session.ts": "5739ecd1e080a4055fde53ab65ef8bed647abdc0f851875777a67dec7b78e646",
+    "packages/nsh/new-session-admission.ts": "9255518c5e1211b6efafc432820bf7d0735dc83229ae6d00ae8ba3a02a70f780",
+    "packages/nsh/new-session-admission.test.ts": "0a7e26408e29d9bbbeea8d49eaa67c26b47cf7f0a594958b757d28be39d6dcb3",
+    "packages/nsh/composer-command-selection-parity.test.ts": "3683e23482a6c79391a860218fdcceca9a3dda5d400029c7f4344eb0327a5793",
+    "packages/nsh/composer-command-router.test.ts": "82f1638aae197e136f199a90e98cf0f9050103b9a94b83d0f1d8872b950b76a4",
+    "packages/nsh/chat-composer-commands.test.ts": "6f404d3e16af916622afe3ac5ad0767fd448575ad01e609542e9364810d5d02a",
+    "packages/nsh/new-session-page.test.ts": "943617978a0b70d0d2930a568cdce91ec928a8c2432f3f6d9d0b98c1c21af79a",
+    "packages/nsh/tests/composer-local-commands-contract.md": "c9c1c61655f619261b382014dc46146429347340ed16548a0e97ccff02f0b2b7"
+  },
+  "sharedIntegration": {
+    "file": "packages/nsh/application.tsx",
+    "anchors": ["createChatComposerCommands", "chooseCommand: commandRouter.choose", "commandRouter.submit()", "NativeChatTimeline", "NativeBtwSheet"],
+    "note": "Actual Chat callbacks are covered by production-source tests. Global routes and resource-retirement regions belong to other owners and are not frozen by this manifest."
+  },
+  "validation": {
+    "productionRedBeforeFix": "8 original selection cases; oracle P2 additionally reproduced 2 real admission + production Retry cases with no second metadata read",
+    "focusedVitest": "7 files, 135 passed; includes 11 real-Web-handler comparisons and actual admission + production Retry with metadata failure/malformed, same inputID/create once, lost ACK no replay, Storage unknown and late scope fences",
+    "nshTypeScript": "passed",
+    "deadCode": "completed and inspected; existing workspace findings, no listed new composer router/adapter source",
+    "independentOracle": "P2 repair awaiting original oracle re-review",
+    "UIKit": "not run",
+    "realHost": "not run",
+    "realModel": "not run"
+  }
+}

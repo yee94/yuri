@@ -31,7 +31,19 @@ struct NativeSpeechSettings {
 }
 enum SpeechFailure: LocalizedError {
     case invalid, unavailable, audio
-    var errorDescription: String? { "原生朗读失败，请重试或检查语音设置" }
+    var errorDescription: String? {
+        if case .unavailable = self { return "speech_unavailable" }
+        return "原生朗读失败，请重试或检查语音设置"
+    }
+}
+/// Web persists a name, never a native identifier. Only an empty name uses the system default.
+enum NativeBrowserSpeechVoice {
+    static func resolve<Voice>(name: String, voices: [Voice], nameOf: (Voice) -> String) throws -> Voice? {
+        guard !name.isEmpty else { return nil }
+        let matches = voices.filter { nameOf($0).utf8.elementsEqual(name.utf8) }
+        guard matches.count == 1 else { throw SpeechFailure.unavailable }
+        return matches[0]
+    }
 }
 struct NativeSpeechSegment {
     let text: String
@@ -106,9 +118,17 @@ import NativeShell
     private var temporary: URL?
     private var watchdog: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
-    init(app: NshAppView, capture: @escaping () throws -> ResourceTransport) {
+    init(app: NshAppView, captureVoices: ((RuntimeHostScope) throws -> NativeSpeechVoiceScope)? = nil, capture: @escaping () throws -> ResourceTransport) {
         self.app = app; self.capture = capture
         super.init()
+        app.handle("speech.voices") { input async throws -> Any? in
+            guard let captureVoices else { throw SpeechFailure.unavailable }
+            return try NativeSpeechVoiceCatalog.read(input, capture: captureVoices,
+                foreground: { UIApplication.shared.applicationState == .active },
+                voices: { AVSpeechSynthesisVoice.speechVoices().map {
+                    NativeSpeechVoiceIdentity(identifier: $0.identifier, name: $0.name, language: $0.language)
+                } })
+        }
         app.handle("speech.prepare") { [weak self] input async throws -> Any? in
             guard let self, let value = input as? [String: Any], Set(value.keys) == ["owner"], let owner = value["owner"] as? String, !owner.isEmpty, owner.utf8.count <= 128 else { throw SpeechFailure.invalid }
             self.invalidate()
@@ -189,6 +209,8 @@ import NativeShell
                 bytes = response.data
             }
             guard current() else { throw CancellationError() }
+            let browserVoice = settings.route == nil ? try NativeBrowserSpeechVoice.resolve(name: settings.voice,
+                voices: AVSpeechSynthesisVoice.speechVoices(), nameOf: { $0.name }) : nil
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio); try session.setActive(true)
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -201,10 +223,7 @@ import NativeShell
                     if let bytes, let audio { try play(bytes, pitch: audio.pitch, volume: audio.volume, current: current) }
                     else {
                         let utterance = AVSpeechUtterance(string: text)
-                        if !settings.voice.isEmpty {
-                            guard let voice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.identifier == settings.voice || $0.name == settings.voice }) else { throw SpeechFailure.unavailable }
-                            utterance.voice = voice
-                        }
+                        if let browserVoice { utterance.voice = browserVoice }
                         let rate = AVSpeechUtteranceDefaultSpeechRate * Float(settings.rate)
                         guard rate >= AVSpeechUtteranceMinimumSpeechRate, rate <= AVSpeechUtteranceMaximumSpeechRate, settings.pitch >= 0.5 else { throw SpeechFailure.unavailable }
                         utterance.rate = rate; utterance.pitchMultiplier = Float(settings.pitch); utterance.volume = Float(settings.volume)
@@ -216,6 +235,7 @@ import NativeShell
             guard current() else { throw CancellationError() }
         } catch {
             if current() { stop() }
+            if let failure = error as? SpeechFailure, case .unavailable = failure { throw failure }
             throw error is CancellationError ? CancellationError() : SpeechFailure.audio
         }
     }

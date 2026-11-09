@@ -1,12 +1,12 @@
 import type { TextViewStyles } from 'nsh/base';
-import { nativeChatTextStyle } from './appearance';
+import { nativeChatTextStyle, nativeCodeTextViewStyles } from './appearance';
 
 /** Match Web's list/row indent; intrinsic marker width keeps 10. from being ellipsized. */
 export function nativeTranscriptMarkdownStyles(role: 'user' | 'assistant', compact = false): TextViewStyles {
   const body = nativeChatTextStyle(role);
   return {
     root: body,
-    code: nativeChatTextStyle('code'),
+    ...nativeCodeTextViewStyles(),
     orderedList: { paddingLeft: 19 },
     unorderedList: { paddingLeft: 18 },
     listItem: { paddingLeft: 1 },

@@ -23,6 +23,10 @@ compiles all `ios/*.swift`, links the static framework and system frameworks, co
 bundle resources, and writes Info.plist. A failed compile preserves the previous
 successful app. No framework is dynamically embedded.
 
+The compile also includes the existing, Capacitor-independent
+`packages/mobile/ios/App/App/YuriViewExportRenderer.swift`, required by
+`GuiPluginDeviceBridge.swift`. The renderer is reused directly, not copied or forked.
+
 ## Yuri brand resources
 
 `scripts/generate-branding.swift` uses system CoreGraphics/ImageIO, without an
@@ -88,6 +92,10 @@ archive, App Store release or TestFlight build.
 
 ## Native boundary
 
+GUI 文件内容使用独立 `GuiPluginPreviewBridge`，由主控制器注册；主界面仍由 NSH/UIKit 渲染。首次打开时才验证已暂存的 `gui-plugin-preview` 资产并创建应用私有的 Host 存储 backend，资产缺失不会阻止其他页面启动。每次 capture 使用 Runtime 的精确 Host lease，并同时提供 buffered 与 lossless pull reader；认证和 Relay 仍归 Runtime。Host 失效、后台和主控制器退出均撤销该原生预览。完整主题/语言/context、文件入口及真实插件验收状态见 `../GUI-PLUGIN-CONTRACT.md`，注册完成不代表这些能力已全部验收。
+
+单日期选择器由 `DatePicker.swift` 的系统 inline `UIDatePicker` 所有。NSH wrapper 传应用 locale、0–6 的周起始和 before/after 日期界限；Swift 转换为 Calendar.firstWeekday、minimumDate/maximumDate，严格验证 ISO 日期。range、自定义离散禁选或时间编辑继续交 NSH 原有 DatePicker，避免静默忽略 UIKit 无对应的合同。系统日历实际禁选、语言与周起始布局仍需 UIKit 验收。
+
 - `ConnectionStore` atomically persists connections and credentials in one
   device-only Keychain record. Public connection metadata excludes credentials.
 - `RuntimeBridge` issues password credentials through `POST /auth/session` with
@@ -127,9 +135,86 @@ the data with SHA-256, and sends a raw PUT to
 encoding. Returned digest and length must match before the Host path becomes an
 encoded `file://` URI. A connection switch invalidates the captured upload scope.
 
-Assistant attachment descriptors use another server contract. Passing
-`assistantID` currently rejects explicitly; expose the picker only for session
-targets until that contract is implemented.
+Passing `assistantID`, `requestId`, `expectedHost` and the captured contact/draft context selects the contact receipt
+protocol frozen in the Host assistants documentation. Before presentation,
+`contactAttachmentOperation` captures the original authenticated connection and
+lease, reads `/contact/messages?limit=1` generation, and requires the exact receipt
+probe (including a validated 404 not_found envelope). The GET generation must equal
+the JS adopter's already-authoritative captured generation. Read failure is never zero;
+an old Host's generic 404 never permits a legacy PUT. PUT carries the original
+generation query and receipt-aware Accept marker alongside integrity headers. A 201
+also requires a fresh exact receipt GET before returning a descriptor for adoption;
+a reset between commit and ACK cannot be adopted through that result.
+
+The native AttachmentBridge retains up to 64 exact operation owners independently
+of picker/page lifetime. Picker `defer` releases presentation, not an ambiguous
+upload receipt. `runtime.reconcileAttachment` performs GET only; committed data
+can return only through the original live lease and JS adopter. The actual state
+adopter captures target, canonical contact generation, durable edit revisions and
+the exact application page-operation object; all must still match before one append.
+Unknown/cached-only generation cannot open a picker. The
+existing attachment button retries this original reconciliation when unknown;
+it does not open another picker or repeat PUT. A null reconcile result means
+still unresolved (not_found/inflight), not cancellation success.
+
+`runtime.cancelAttachment` awaits `retirePick` and the exact durable DELETE ACK.
+The native-only retirement closure has the original connection and authorization
+identity, is callable only by its exact policy, and cannot issue arbitrary paths,
+GETs or uploads. It can retire after a lease/selected-Host change while the original
+authorization remains registered. Revocation/unavailability keeps a retryable
+failure. The original opaque connection, transport, authorization and connection-record
+version must still match; a changed/revoked/missing record sends no recovery traffic
+and reports original-authorization-unavailable, keeping the receipt for retry. It
+never obtains new credentials. `runtime.acknowledgeAttachment` releases
+the owner only after descriptor equality and original authorization checks; JS invokes it
+after the original adopter accepted the descriptor and its existing durable draft
+owner finished the attachment write. The pending/reconcile/acknowledge handlers are
+installed in main.swift and included in the NSH capability allowlist.
+An already accepted original draft can finish this exact local ACK after its lease
+retires; that local release grants no new send/PUT authority and uses no network.
+This applies to cold recovery as well: after a committed GET, AttachmentBridge retains
+only the exact local ACK closure until durable adoption and metadata removal finish.
+It never reconstructs that ACK through a fresh admission. Storage failure retains
+the closure for retry; original authorization/record changes still reject it.
+
+Retirement prevents new admission; it never reports physical deletion. Original
+provider files/session temporary files and shared objects remain untouched; same
+hash with distinct uploadIDs stays independent.
+
+`AttachmentReceiptJournal` uses the existing `NshAppView.storageDirectory` device
+storage interface (or NSH's documented per-app default directory). Atomic, metadata-only
+write-ahead records retain exact assistant/upload/request/generation, descriptor,
+opaque original connection/transport/authorization/record-version references,
+hashed durable draft identity, durable checkpoint revision and opaque page-operation.
+It never serializes closures, credentials, source bytes, user paths or message text.
+Every write rereads the bounded journal and compares request/upload identity; a late
+clear cannot remove another operation. Corrupt/unreadable storage is failure, never
+an empty journal. At 64 pending operations new selection fails without eviction.
+
+The prepared record is durable before presentation. The unknown record is durable
+before PUT dispatch. A failure in either stage reports zero dispatch; a failure after
+dispatch retains unknown. ACK descriptors are persisted before adoption. Retirement
+persists its irreversible local fence before DELETE, then clears metadata only after
+a validated Host retirement ACK. Failed DELETE/storage cleanup remains retryable.
+
+After process restart, the existing attachment button explicitly reads
+`runtime.pendingAttachments` for its exact draft/assistant/Host and reconciles an old
+receipt. The native restored operation can only GET/DELETE its original upload; its
+upload closure always rejects. Adoption additionally requires the same durable
+checkpoint and a fresh current page/Host/generation CAS. If a prior draft write
+already contains the exact descriptor, recovery confirms it without a duplicate append.
+A newer draft rejects adoption and exact-retires the upload. A surviving old native
+page owner is exposed as retirement-only with its original cleanup scope, never
+transferred to a new page. No startup path auto-appends recovered attachments.
+
+Focused synthetic evidence: `attachment-upload-swift.test.ts` executes policy and
+production picker delegates with delayed UIKit doubles, and typechecks picker plus
+the extracted production Runtime attachment methods against the iOS SDK. It uses
+temporary original files and injected transport, without Host/network/device/model.
+It also executes native journal/runtime reconstruction, exact production authorization
+lookup, lost ACK/reset, storage failures, same-hash isolation, no-replay and capacity
+contracts. `state.test.ts` runs the actual state adopter and the existing picker retry
+entry. These synthetic checks do not establish actual UIKit/Photos/Relay behavior.
 
 `check-native-bridge.mjs` compiles the production bridge for macOS against a small
 NSH test double and exercises a local HTTP/SSE fixture. It covers password issuance,

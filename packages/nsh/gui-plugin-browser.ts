@@ -1,12 +1,16 @@
-import { createGuiPluginPreview, type GuiPluginPreviewBundle, type GuiPluginPreviewHost, type GuiPluginPreviewIntent, type GuiPluginPreviewState } from './gui-plugin-preview';
+import { createGuiPluginPreview, type GuiPluginPreviewJson, type GuiPluginPreviewHost, type GuiPluginPreviewIntent, type GuiPluginPreviewState } from './gui-plugin-preview';
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 
 type GuiClient = {
   plugin: {
-    list(input: undefined, options: { signal: AbortSignal }): Promise<{ data: unknown }>;
-    gui(input: { id: string }, options: { signal: AbortSignal }): Promise<{ data: GuiPluginPreviewBundle }>;
+    list(input: undefined, options: { signal: AbortSignal }): Promise<unknown>;
+    gui(input: { id: string }, options: { signal: AbortSignal }): Promise<unknown>;
   };
 };
+const json = (value: unknown): value is GuiPluginPreviewJson => value === null || typeof value === 'string' || typeof value === 'boolean'
+  || typeof value === 'number' && Number.isFinite(value) || Array.isArray(value) && value.every(json)
+  || typeof value === 'object' && value !== null && Object.values(value).every(json);
+const options = (value: unknown): value is Record<string, GuiPluginPreviewJson> => typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every(json);
 
 /** Browser-only content entry. Bundle separately, never import into QuickJS/App.
  * The composition root must supply real captured SDK/files/storage adapters;
@@ -33,8 +37,13 @@ export function createGuiPluginBrowser(input: {
   input.host.setAppearance({ ...input.appearance, narrow: true });
   const preview = createGuiPluginPreview({
     ...input, scope: expectedHost,
-    list: async signal => (await client.plugin.list(undefined, { signal })).data,
-    bundle: async (id, signal) => (await client.plugin.gui({ id }, { signal })).data,
+    list: signal => client.plugin.list(undefined, { signal }),
+    bundle: async (id, signal) => {
+      const bundle = await client.plugin.gui({ id }, { signal });
+      if (!bundle || typeof bundle !== 'object' || !('code' in bundle) || typeof bundle.code !== 'string'
+        || !('revision' in bundle) || typeof bundle.revision !== 'string' || !('options' in bundle) || !options(bundle.options)) throw new Error('GUI_PLUGIN_INVALID_BUNDLE');
+      return { code: bundle.code, revision: bundle.revision, options: bundle.options };
+    },
   });
   const close = () => { window.removeEventListener('pagehide', close); preview.close(); };
   window.addEventListener('pagehide', close, { once: true });

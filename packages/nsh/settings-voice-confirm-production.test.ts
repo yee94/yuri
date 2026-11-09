@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nativeLayoutDensity } from './native-density';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { expect, test } from 'vitest';
@@ -110,11 +111,13 @@ async function productionFixture(initialActive = true) {
     './settings-voice-recognition': recognition, '../ui/src/lib/voice/speechSettings': speech,
     './settings-search-core': { createSettingsTargetNavigation: () => ({ onScroll() {}, reveal() {} }) },
     './settings-defaults': { SettingsDefaults: 'SettingsDefaults' }, './settings-target': { SettingsTarget: 'SettingsTarget' },
+    './settings-sessions': { SettingsSessions: 'SettingsSessions' }, './settings-voice-catalog': { SettingsVoiceCatalog: 'SettingsVoiceCatalog' },
     './settings-preferences': { SettingsPreferences: 'SettingsPreferences' }, './settings-about': { SettingsAbout: 'SettingsAbout' },
     './notification-settings': { SettingsNotifications: 'SettingsNotifications' }, './settings-voice-models': { SettingsVoiceModels: 'SettingsVoiceModels' },
     './settings-retention': { SettingsSessionRetentionSection: 'SettingsSessionRetentionSection' }, './settings-voice-test': { SettingsVoiceTests: 'SettingsVoiceTests' },
     './settings-voice-test-core': testCore, './settings-voice-test-labels': labels, './settings-voice-test-presentation': presentation,
     './Icon': { Icon: 'Icon' },
+    './appearance': { nativeDensity: () => nativeLayoutDensity(100) },
   };
   const lazy: ts.TransformerFactory<ts.SourceFile> = context => file => {
     const visit: ts.Visitor = node => {
@@ -208,6 +211,7 @@ async function productionFixture(initialActive = true) {
       (field.props.onChange as (value: unknown) => void)(value);
     },
     models: () => one('SettingsVoiceModels').props,
+    catalog: () => one('SettingsVoiceCatalog').props,
     confirm: (kind: testCore.VoiceTestKind) => (one('SettingsVoiceTests').props.confirm as (kind: testCore.VoiceTestKind) => Promise<testCore.VoiceTestConfirmation | null>)(kind),
     press: async (id: string) => { const action = button(id); expect(action.props.disabled).not.toBe(true); (action.props.onPress as () => void)(); await flush(); },
     button, get: (next: typeof get) => { get = next; }, put: (next: typeof put) => { put = next; },
@@ -255,6 +259,17 @@ test('actual Voice production field -> confirm prop -> complete receipt -> actua
   expect(h.props().dirty).toBe(false); h.mountTester(); await h.press('settings-voice-preview');
   expect(h.wire.map(call => call.method)).toEqual(['GET', 'PUT', 'GET', 'GET']);
   expect(h.nativeCalls.map(call => call.name)).toEqual(['voiceRecognition.capabilities', 'speech.prepare', 'speech.segment', 'speech.stop', 'speech.release']);
+  await h.dispose();
+});
+
+test.each(['sayVoice', 'browserVoice'])('production directory callback edits %s through the retained Voice ACK journal', async key => {
+  const h = await productionFixture();
+  (h.catalog().onChange as (key: string, value: string) => void)(key, 'Samantha');
+  expect(h.props().dirty).toBe(true);
+  const receipt = await h.confirm('tts');
+  expect(receipt?.settings[key as 'sayVoice' | 'browserVoice']).toBe('Samantha');
+  expect(h.wire.filter(call => call.method === 'PUT')).toHaveLength(1);
+  expect(h.props().dirty).toBe(false);
   await h.dispose();
 });
 

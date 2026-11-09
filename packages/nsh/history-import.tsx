@@ -6,7 +6,7 @@ import codex from '../ui/src/assets/brand/history-import/codex.svg';
 import cursor from '../ui/src/assets/model-icons/cursor.svg';
 import dsh from '../ui/src/assets/model-icons/deepseek.svg';
 import opencode from '../ui/src/assets/provider-logos/opencode.svg';
-import { nativeAppearance } from './appearance';
+import { nativeAppearance, nativeCodeTextViewStyles } from './appearance';
 import { language, t } from './i18n';
 import { Icon } from './Icon';
 import { app, captureHostOperation } from './state';
@@ -147,7 +147,7 @@ export function NativeHistoryImportStep(props: { controller: HistoryImportContro
 export function NativeHistoryImportReceipt(props: { job: NativeImportJob }) {
   return <View class="gap-4"><Text class="text-base text-foreground">{t('historyImport.review')}</Text><NativeHistoryImportProgress job={props.job} stale={false} /><Text class="text-xs text-muted-foreground">{props.job.id}</Text>
     <Each of={props.job.results}>{result => <View class="gap-1"><Text class={result().status === 'failed' ? 'text-sm text-destructive' : 'text-sm text-foreground'}>{result().phase} · {result().status}</Text><Text class="text-xs text-muted-foreground">{result().key}</Text><If when={!!result().code}><Text class="text-xs text-destructive">{result().code}</Text></If><If when={!!result().directory}><Text class="text-xs text-muted-foreground">{result().directory}</Text></If><If when={!!result().sessionID}><Text class="text-xs text-muted-foreground">{result().sessionID}</Text></If><If when={!!result().target}><Text class="text-xs text-muted-foreground">{result().target}</Text></If><If when={!!result().project || !!result().index}><Text class="text-xs text-muted-foreground">{result().project} · {result().index}</Text></If></View>}</Each>
-    <TextView document={{ blocks: [{ type: 'codeBlock', code: JSON.stringify(props.job, null, 2) }] }} selectable class="text-xs text-foreground" />
+    <TextView document={{ blocks: [{ type: 'codeBlock', code: JSON.stringify(props.job, null, 2) }] }} selectable styles={nativeCodeTextViewStyles()} class="text-xs text-foreground" />
   </View>;
 }
 

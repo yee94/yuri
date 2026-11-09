@@ -13,6 +13,7 @@ export async function native<T>(name: string, body: Record<string, unknown> = {}
  * credential or endpoint is cached by the JS request layer.
  */
 export type RawNativeResponse = { status: number; body: unknown };
+export type NativeMessageStreamTransport = 'auto' | 'ws' | 'sse';
 /** Capture once at owner creation; every continuation keeps this same immutable lease. */
 export function bindRawRequest(scope: RuntimeScope | null, writer?: () => VerifiedDesktopWriterGrant | null) {
   const expectedHost = runtimeScopeFrom(scope);
@@ -53,6 +54,7 @@ export function connectionSnapshotFrom(value: unknown): ConnectionSnapshot {
     const connection = record(entry);
     if (typeof connection.id !== 'string' || !connection.id || typeof connection.url !== 'string' || !connection.url) throw new Error('Invalid connection snapshot');
     if (connection.authorizationID !== undefined && (typeof connection.authorizationID !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(connection.authorizationID))) throw new Error('Invalid connection authorization');
+    if (connection.transportID !== undefined && (typeof connection.transportID !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(connection.transportID))) throw new Error('Invalid connection transport identity');
     return connection as Connection;
   });
   if (fields.selected !== null && !entries.some(entry => entry.id === fields.selected)) throw new Error('Invalid connection selection');

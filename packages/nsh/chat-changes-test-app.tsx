@@ -2,13 +2,7 @@ import { cleanup, host, mount, signal, Text, View } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { NativeChangesSheet, NativeComposerChanges } from './chat-changes';
 import { language } from './i18n';
-import { loadConnections } from './state';
-
-function ReadyChangesFixture() {
-  const ready = signal(false);
-  void loadConnections().then(() => ready.set(true));
-  return <If when={ready()}><ChangesFixture /></If>;
-}
+import { prepareChangesFixture } from './chat-changes-fixture-bootstrap';
 
 function ChangesFixture() {
   language.set('en');
@@ -26,4 +20,7 @@ function ChangesFixture() {
     <NativeChangesSheet source={{ kind: 'turn', directory: '/fixture', sessionID: 's', messageID: 'm', path: 'history.ts', files: [{ path: 'history.ts', patch: '@@ -1 +1 @@\n-old\n+HISTORICAL_ONLY' }, { path: 'thin.ts' }] }} open={historical()} active={active()} onClose={() => historical.set(false)} />
   </View>;
 }
-mount(ReadyChangesFixture);
+mount(() => {
+  const boot = prepareChangesFixture();
+  return <If when={boot.ready()} else={<Text testID="changes-fixture-boot">{boot.error() || 'Loading fixture connection'}</Text>}><ChangesFixture /></If>;
+});

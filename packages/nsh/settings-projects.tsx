@@ -1,6 +1,7 @@
 import { effect, Scroll, signal, Text, untracked, View } from 'nsh';
 import { AlertDialog, Button, NavPage } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import { Icon } from './Icon';
 import { projectsFrom, record, text, type Row } from './model';
@@ -195,7 +196,7 @@ export function SettingsProjects(props: ProjectsProps & { onNavigation?: (naviga
   }
   const none = () => ({ value: '', title: t('settings.projects.page.field.none') });
   const modelOptions = () => [none(), ...models(), ...(value('defaultModel') && !models().some(item => item.value === value('defaultModel')) ? [{ value: value('defaultModel'), title: value('defaultModel') }] : [])];
-  const projectList = () => <Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10">
+  const projectList = () => <Scroll class="flex-1 min-w-0 min-h-0" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settingsEntity}>
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
       <Button testID="settings-project-refresh" class={settingsAction} disabled={state.busy()} accessibilityLabel={t('sidebarFilesTree.actions.refreshTitle')} onPress={() => { void load(); }}><Icon name="refresh" /></Button>
       <SettingsGroup title={t('settings.page.projects.title')}><Each of={projects()}>{project => <Button testID={`settings-entity-${text(project().id)}`} selected={props.entity === text(project().id)} disabled={!state.current() || busy()} class="min-h-12 py-3 gap-1 selected:bg-accent" onPress={() => { if (state.current()) props.onOpen({ page: 'projects', entity: text(project().id) }); }}><Text class="text-base text-foreground">{text(project().label) || text(project().name) || text(project().path)}</Text><Text class="text-xs text-muted-foreground">{text(project().path)}</Text></Button>}</Each><If when={state.ready() && !projects().length}><Text class="text-muted-foreground">{t('settings.projects.page.empty.noProjects')}</Text></If></SettingsGroup>

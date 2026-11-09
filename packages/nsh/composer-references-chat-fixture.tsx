@@ -1,11 +1,12 @@
 import { mount, signal, Text, View } from 'nsh';
 import { Button, Input } from 'nsh/base';
 import { NativeReferencePicker } from './composer-references-controls';
-import { app, createChat, loadConnections } from './state';
-import { request } from './runtime';
+import { captureHostRequest, createChat } from './state';
+import { prepareInteractionFixture } from './tests/chat-interaction-fixture-bootstrap';
 import { nativeReferenceTrigger } from './composer-references';
 
 function ChatFixture() {
+  const request = captureHostRequest();
   const chat = createChat({ kind: 'session', id: 'reference-chat', title: 'References', directory: '/workspace' });
   const open = signal(false);
   return <View>
@@ -22,10 +23,11 @@ function ChatFixture() {
 }
 function ReferenceChatApp() {
   const present = signal(true);
-  void loadConnections();
+  const boot = prepareInteractionFixture();
   return <View>
     <Button testID="reference-chat-toggle" onPress={() => present.set(!present())}><Text>Toggle</Text></Button>
-    <If when={!!app.connection() && present()}><ChatFixture /></If>
+    <If when={!boot.ready()}><Text>{boot.error() || 'Loading fixture connection'}</Text></If>
+    <If when={boot.ready() && present()}><ChatFixture /></If>
   </View>;
 }
 mount(ReferenceChatApp);

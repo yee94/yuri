@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { webcrypto } from 'node:crypto';
+import ts from 'typescript';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,8 @@ import { GUI_NATIVE_CSS_LIMIT, GUI_NATIVE_LABEL_KEYS, validateGuiPluginNativeCon
 import { bindGuiPluginPreview } from './gui-plugin-preview';
 import { captureGuiPluginFactory } from './gui-plugin-factory';
 import { createGuiPluginComposition } from './gui-plugin-composition';
+import { queryClient } from '../ui/src/lib/queryRuntime';
+import { createResourceGuiFile, type ResourceGuiState } from './resources-gui';
 import { dict as en } from '../ui/src/lib/i18n/messages/en';
 import { dict as zhCN } from '../ui/src/lib/i18n/messages/zh-CN';
 import { dict as zhTW } from '../ui/src/lib/i18n/messages/zh-TW';
@@ -116,6 +118,20 @@ describe('real native GUI presentation context', () => {
     expect(calls[0]).toMatchObject({ expectedHost: scope, owner: 'native-owner', context: { locale: 'ja', mode: 'dark', labels: { failed: ja['guiPlugins.error'] } } });
     expect(calls[0]).not.toHaveProperty('options');
   });
+  it.each([undefined, 'actual-source-session'])('production resource callback → real context binder → native payload retains session=%s and fallback', async sessionId => {
+    const appearance = await appearanceFromSettings(settings, noThemes);
+    const calls: { name: string; input: Record<string, unknown> }[] = [], states: ResourceGuiState[] = [];
+    const gui = createResourceGuiFile({ expectedHost: scope, active: () => true, changed: value => states.push(value), capture: expectedHost => bindNativeGuiPluginPreview({
+      expectedHost, appearanceScope, appearance, systemMode: 'dark', locale: 'ja', t: key => ja[key], identify: () => 'resource-operation', isCurrent: () => true,
+      call: async (name, input) => { calls.push({ name, input }); return name.endsWith('.present') ? { closed: true, matched: false } : true; },
+    }) });
+    await gui.open({ directory: '/work', path: '/work/no-registry-match.eficy', ...(sessionId === undefined ? {} : { sessionId }) });
+    expect(calls[0]).toMatchObject({ name: 'plugins.preview.present', input: { expectedHost: scope, owner: 'resource-operation', context: { locale: 'ja', runtimeKey: 'nsh:' + scope.hostID } } });
+    if (sessionId === undefined) expect(calls[0].input).not.toHaveProperty('sessionId'); else expect(calls[0].input.sessionId).toBe(sessionId);
+    expect(calls.at(-1)).toEqual({ name: 'plugins.preview.close', input: { expectedHost: scope, owner: 'resource-operation' } });
+    expect(states.at(-1)).toEqual({ preparing: false, matched: false, failed: false });
+    expect(calls.every(call => call.name.startsWith('plugins.preview.'))).toBe(true);
+  });
   it('actual browser factory applies captured mode/locale and full CSS as DOM text, then restores its document', async () => {
     const appearance = await appearanceFromSettings(settings, noThemes);
     const context = captureGuiPluginNativeContext({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'uk', t: key => uk[key] });
@@ -139,6 +155,38 @@ describe('real native GUI presentation context', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(prior.dark);
     expect(document.documentElement.getAttribute('lang')).toBe(prior.lang);
     expect(document.documentElement.getAttribute('data-theme')).toBe(prior.theme);
+  });
+  it.each([false, true])('real factories restore original appearance after interleaved cleanup, old-first=%s', oldFirst => {
+    const root = document.documentElement;
+    root.classList.add('light'); root.classList.remove('dark'); root.lang = 'pl'; root.dataset.theme = 'light'; root.style.colorScheme = 'light';
+    const make = (id: string, mode: 'light' | 'dark', locale: string) => captureGuiPluginFactory({ expectedHost: scope, runtimeKey: id, origin: 'https://synthetic.invalid', directory: '/work',
+      fetch: async () => { throw Error('No network in cleanup regression'); }, signal: new AbortController().signal, storage: localStorage, appearance: { mode, locale }, themeCSS: ':root{}', preferenceKey: guiPreferencesKey(id) });
+    const a = make('factory-a', 'dark', 'ja'), b = make('factory-b', 'light', 'uk');
+    try {
+      const first = oldFirst ? a : b, second = oldFirst ? b : a;
+      first.host.dispose(); first.dispose();
+      expect(root.lang).toBe(oldFirst ? 'uk' : 'ja');
+      expect(root.classList.contains('dark')).toBe(!oldFirst);
+      second.host.dispose(); second.dispose();
+      expect(root.classList.contains('light')).toBe(true); expect(root.classList.contains('dark')).toBe(false);
+      expect(root.dataset.theme).toBe('light'); expect(root.lang).toBe('pl'); expect(root.style.colorScheme).toBe('light');
+    } finally { a.host.dispose(); a.dispose(); b.host.dispose(); b.dispose(); }
+  });
+  it('old real factory disposal preserves a newer factory cache and pending query in the shared owning QueryClient', async () => {
+    const make = (id: string) => captureGuiPluginFactory({ expectedHost: scope, runtimeKey: id, origin: 'https://synthetic.invalid', directory: '/work', fetch: async () => { throw Error('No HTTP expected'); },
+      signal: new AbortController().signal, storage: localStorage, appearance: { mode: 'dark', locale: 'en' }, themeCSS: ':root{}', preferenceKey: guiPreferencesKey(id) });
+    const a = make('query-a'), b = make('query-b');
+    const cached = ['gui-plugin-files', 'query-b', '/work', 'search', 'cached'];
+    const pendingKey = ['gui-plugin-files', 'query-b', '/work', 'search', 'pending'];
+    queryClient.setQueryData(cached, ['complete']);
+    let release!: (value: string[]) => void, querySignal!: AbortSignal;
+    const pending = queryClient.fetchQuery({ queryKey: pendingKey, queryFn: ({ signal }) => { querySignal = signal; return new Promise<string[]>(resolve => { release = resolve; }); } });
+    try {
+      a.host.dispose(); a.dispose(); a.dispose();
+      expect(queryClient.getQueryData(cached)).toEqual(['complete']); expect(querySignal.aborted).toBe(false);
+      release(['resolved']); await expect(pending).resolves.toEqual(['resolved']);
+      expect(queryClient.getQueryData(pendingKey)).toEqual(['resolved']);
+    } finally { b.host.dispose(); b.dispose(); }
   });
   it.skipIf(process.platform !== 'darwin')('production Foundation consumes the actual factory JSON with exact scope/storage and missing-context rejection', async () => {
     const root = path.dirname(fileURLToPath(import.meta.url));
@@ -197,7 +245,7 @@ describe('real native GUI presentation context', () => {
   print("Real GUI context JSON/identity/storage passed")
  }
 }`);
-      const compiled = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift'].map(file => path.join(root, 'ios', file)), source, '-o', binary], { encoding: 'utf8', timeout: 60000 });
+      const compiled = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift'].map(file => path.join(root, 'ios', file)), source, '-o', binary], { encoding: 'utf8', timeout: 60000 });
       expect(compiled.status, compiled.stdout + compiled.stderr).toBe(0);
       const result = spawnSync(binary, [input, temporary, staged], { encoding: 'utf8', timeout: 10000 });
       expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -213,16 +261,41 @@ describe('real native GUI presentation context', () => {
       expect(built.status, built.stdout + built.stderr).toBe(0);
       const source = readFileSync(output, 'utf8');
       const module = { exports: {} as Record<string, unknown> };
-      // NSH declares crypto.subtle/EventTarget/AbortController in globals.d.ts;
-      // use real standard implementations, never a Window/DOM/storage shim.
-      runInNewContext(source, { module, exports: module.exports, TextEncoder, TextDecoder, btoa, atob, crypto: webcrypto, EventTarget, AbortController, AbortSignal, URL, URLSearchParams,
-        fetch() { throw Error('Native context must not fetch'); },
-      }, { timeout: 10000 });
+      runInNewContext(source, { module, exports: module.exports, TextEncoder, TextDecoder, btoa, atob }, { timeout: 10000 });
       const capture = module.exports.captureGuiPluginNativeContext as typeof captureGuiPluginNativeContext;
       const appearance = await appearanceFromSettings(settings, noThemes);
       const context = capture({ expectedHost: scope, appearanceScope, appearance, systemMode: 'dark', locale: 'en', t: key => en[key] });
       expect(context.themeCSS).toContain(new CSSVariableGenerator().generate(getThemeById('jetbrains-dark')!));
       expect(source).not.toContain('NativeAppearanceSync');
     } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+  it('native context/resource GUI import graph excludes browser host, SDK, Query and relay even through type imports', () => {
+    const root = path.dirname(fileURLToPath(import.meta.url));
+    const config = ts.getParsedCommandLineOfConfigFile(path.join(root, 'tsconfig.json'), {}, {
+      ...ts.sys, onUnRecoverableConfigFileDiagnostic(error) { throw Error(ts.flattenDiagnosticMessageText(error.messageText, '\n')); },
+    });
+    if (!config) throw Error('Missing actual native tsconfig');
+    const queue = ['gui-plugin-native-context-factory.ts', 'resources-gui.ts'].map(file => [path.join(root, file)]);
+    const seen = new Set<string>(), violations: string[] = [];
+    while (queue.length) {
+      const chain = queue.shift()!, file = chain.at(-1)!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      if (/(?:gui-plugins\/host\.|queryRuntime\.|\/relay\/|opencode-gui-client|@opencode-ai\/sdk|@tanstack\/|react-query|\/desktop\.|\/runtime-switch\.|\/instanceScopedStorage\.)/.test(file)) {
+        violations.push(chain.map(item => path.relative(root, item)).join(' → '));
+      }
+      if (file.includes('/node_modules/')) continue;
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+      for (const statement of source.statements) {
+        if (!(ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+        const specifier = statement.moduleSpecifier.text;
+        const resolved = ts.resolveModuleName(specifier, file, config.options, ts.sys).resolvedModule;
+        if (!resolved) { violations.push(`${path.relative(root, file)} → unresolved ${specifier}`); continue; }
+        queue.push([...chain, path.resolve(resolved.resolvedFileName)]);
+      }
+    }
+    expect(violations).toEqual([]);
+    expect([...seen].some(file => file.endsWith('/instanceScopedStorageKey.ts'))).toBe(true);
+    expect([...seen].some(file => file.endsWith('/theme/cssGenerator.ts'))).toBe(true);
   });
 });

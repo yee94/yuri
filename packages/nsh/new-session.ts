@@ -3,7 +3,7 @@ import { openDraft, draftKey, sameAttachment, localMagicSubmission, type Durable
 import type { NativeLocalCommandInvocation, NativeLocalCommandOutcome } from './composer-local-commands';
 import { compileNativePrompt, magicCommand } from './composer';
 import { compileDesktopGitContext, desktopGitDraftAuthority, sameDesktopGitContext, type DesktopGitContextInput, type DesktopGitStageConfirmation, type DesktopGitStageResult } from './desktop-git-dispatch';
-import { sameReferenceScope, validateNativeReferences, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
+import { referenceRoute, sameReferenceScope, validateNativeReferences, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 import { app, captureHostRequest, epoch, isCurrentHostScope, type createChat, type SendOptions } from './state';
 import { createPageOperations, type PageOperation } from './page-operations';
 import { bindRequest, query, sessionPath } from './runtime';
@@ -17,7 +17,7 @@ export type { NativeNewSessionFolderTarget, NativeNewSessionFolderAdmission } fr
 export { desktopGitDraftAuthority };
 
 export type NativeNewSessionSelection = { model?: { providerID: string; id: string; variant?: string }; agent?: string };
-type Receipt = { version: 1; revision: number; selection: NativeNewSessionSelection; folder?: NativeNewSessionFolderReceipt; admission?: 'unknown' | 'acknowledged'; configuration?: { model?: 'unknown' | 'acknowledged'; agent?: 'unknown' | 'acknowledged' } } & (
+type Receipt = { version: 1; revision: number; selection: NativeNewSessionSelection; folder?: NativeNewSessionFolderReceipt; admission?: 'preparing' | 'unknown' | 'acknowledged'; configuration?: { model?: 'unknown' | 'acknowledged'; agent?: 'unknown' | 'acknowledged' } } & (
   | { phase: 'draft' }
   | { phase: 'creating'; inputID: string }
   | { phase: 'created' | 'installed'; inputID: string; target: ChatTarget }
@@ -38,12 +38,12 @@ function receiptFrom(raw: string | null, directory: string): Receipt {
   if (raw === null) return { version: 1, revision: 0, phase: 'draft', selection: {} };
   const row = record(JSON.parse(raw));
   if (row.version !== 1 || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0) throw new Error('new-session-invalid-receipt');
-  if (row.admission !== undefined && row.admission !== 'unknown' && row.admission !== 'acknowledged') throw new Error('new-session-invalid-receipt');
+  if (row.admission !== undefined && row.admission !== 'preparing' && row.admission !== 'unknown' && row.admission !== 'acknowledged') throw new Error('new-session-invalid-receipt');
   const configuration = record(row.configuration);
   if (row.configuration !== undefined && (!row.configuration || typeof row.configuration !== 'object' || Array.isArray(row.configuration) || Object.keys(configuration).some(key => !['model', 'agent'].includes(key)) || Object.values(configuration).some(value => value !== 'unknown' && value !== 'acknowledged'))) throw new Error('new-session-invalid-receipt');
   const folder = nativeNewSessionFolderFrom(row.folder);
   const base = { version: 1 as const, revision: Number(row.revision), selection: selectionFrom(row.selection), ...(folder ? { folder } : {}),
-    ...(row.admission ? { admission: row.admission as 'unknown' | 'acknowledged' } : {}),
+    ...(row.admission ? { admission: row.admission as Receipt['admission'] } : {}),
     ...(row.configuration !== undefined ? { configuration: configuration as Receipt['configuration'] } : {}) };
   if (row.phase === 'draft') return { ...base, phase: 'draft' };
   if (!text(row.inputID)) throw new Error('new-session-invalid-receipt');
@@ -78,7 +78,7 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
   // durable input before this navigation callback gets its first turn.
   if (await chat.recoverPendingSend()) return current();
   if (!current()) return false;
-  const pending = chat.pendingSend();
+  let pending = chat.pendingSend();
   if (pending && pending.id !== handoff.inputID) throw new Error('new-session-handoff-input-mismatch');
   // An absent receipt may already be admitted or definitively rejected. Reinstalling
   // here would turn a remount into a duplicate command or prompt.
@@ -96,6 +96,28 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
       return current() && !pending?.command && pending?.inputMode !== 'shell' && (record(value.info).id ?? value.id) === handoff.inputID;
     } catch (failure) { if (record(failure).status === 404 || !current()) return false; throw failure; }
   }
+  if (pending.command?.name.toLowerCase() === 'compact' && pending.inputMode !== 'shell' && !pending.references?.references.length && !pending.localMagic && !pending.localCompact) {
+    const original = pending;
+    const [payload, skillPayload] = await Promise.all([
+      request(`/api/command?location%5Bdirectory%5D=${encodeURIComponent(handoff.target.directory)}`),
+      request(referenceRoute('skill', handoff.target.directory, '')),
+    ]);
+    if (!current() || chat.pendingSend() !== original) return false;
+    const commands = Array.isArray(payload) ? payload : record(payload).data;
+    const skills = Array.isArray(skillPayload) ? skillPayload : record(skillPayload).data;
+    if (!Array.isArray(commands) || !Array.isArray(skills)) throw new Error('Invalid command catalog');
+    const skill = skills.map(record).find(item => text(item.name).toLowerCase() === 'compact');
+    if (skill && !text(skill.id)) throw new Error('Invalid skill catalog');
+    const registered = commands.map(record).find(item => text(item.name).toLowerCase() === 'compact');
+    if (skill || !registered || registered.isBuiltIn === false) {
+      const suffix = original.command?.text ? ` ${original.command.text}` : '';
+      const compiledText = skill ? `[skill:${text(skill.id)}]${suffix}` : registered ? `[command:${text(registered.reference) || text(registered.name)}]${suffix}` : original.preparedText ?? original.text;
+      pending = { ...original, command: undefined, compiled: { text: compiledText, ...(skill ? { skills: [{ id: text(skill.id) }] } : {}) } };
+      chat.pendingSend.set(pending);
+      await chat.flushDraft();
+      if (!current() || chat.pendingSend() !== pending) return false;
+    }
+  }
   const prepare = options.prepare ?? (pending.inputMode !== 'shell' && (magicCommand(pending.text) || pending.references?.references.length) ? (input: Parameters<typeof compileNativePrompt>[0]) => {
     if (!request) throw new Error('new-session-request-owner-required');
     return compileNativePrompt(input, request);
@@ -106,7 +128,7 @@ export async function sendNewSessionHandoff(chat: NativeChat, handoff: NativeNew
 }
 
 /** Headless draft owner. Opening/typing/selecting never creates a remote session. */
-export function openNativeNewSession(options: { project?: Project; directory?: string; active: () => boolean; operation?: () => PageOperation | null; draftAuthorityKey?: string; folder?: NativeNewSessionFolderTarget; folderAdmission?: NativeNewSessionFolderAdmission; desktopWriter?: NewSessionWriterAdmission }) {
+export function openNativeNewSession(options: { project?: Project; directory?: string; active: () => boolean; operation?: () => PageOperation | null; draftAuthorityKey?: string; folder?: NativeNewSessionFolderTarget; folderAdmission?: NativeNewSessionFolderAdmission; desktopWriter?: NewSessionWriterAdmission; deviceChatPreferences?: () => { persistChatDraft: boolean } | null }) {
   const lifetime = createPageOperations();
   const operation = signal<PageOperation | null>(null);
   const connection = app.connection();
@@ -121,7 +143,8 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
   const writer = platform?.desktop ? createNewSessionWriterCustody(options.desktopWriter!, {
     directory, scope: app.runtimeScope(), current: () => ownedScope(), hostCurrent: () => hostCurrent(), changed: () => writerRevision.set(untracked(writerRevision) + 1),
   }) : undefined;
-  const durable = openDraft(hostID, localTarget(directory), options.draftAuthorityKey), key = receiptKey(hostID, directory, options.draftAuthorityKey), owner = ++nextOwner;
+  const draftOptions = options.draftAuthorityKey !== undefined ? options.draftAuthorityKey : options.deviceChatPreferences ? { persistChatDraft: () => options.deviceChatPreferences!()?.persistChatDraft ?? null } : {};
+  const durable = openDraft(hostID, localTarget(directory), draftOptions), key = receiptKey(hostID, directory, options.draftAuthorityKey), owner = ++nextOwner;
   const lane = lanes.get(key) ?? { tail: Promise.resolve(), owner };
   lane.owner = owner; lanes.set(key, lane);
   const receipt = signal<Receipt>({ version: 1, revision: 0, phase: 'draft', selection: {} });
@@ -132,7 +155,7 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
   let submitFlight: Promise<NativeNewSessionHandoff | null> | undefined;
   let submitOperation: PageOperation | null = null;
   let firstOperation: PageOperation | null = null;
-  let retired = false, externalOperation = false, closing = false;
+  let retired = false, externalOperation = false, closing = false, admissionWriteUnknown = false;
   let retirementIntent = 0, retirementRevision: number | undefined;
   let writerReleaseFlight: Promise<boolean> | undefined;
   let closeFlight: Promise<void> | undefined;
@@ -283,8 +306,8 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
       return handoff ? { status: 'accepted', handoff } : { status: 'rejected' };
     } catch { return { status: local?.dispatched && !local.rejected ? 'unknown' : 'rejected' }; }
   }
-  const submit = (sendOptions: Pick<SendOptions, 'inputMode'> = {}) => submitInternal(sendOptions);
-  function submitInternal(sendOptions: Pick<SendOptions, 'inputMode'> = {}, local?: LocalCreation): Promise<NativeNewSessionHandoff | null> {
+  const submit = (sendOptions: Pick<SendOptions, 'inputMode'> & { presetText?: string } = {}) => submitInternal(sendOptions);
+  function submitInternal(sendOptions: Pick<SendOptions, 'inputMode'> & { presetText?: string } = {}, local?: LocalCreation): Promise<NativeNewSessionHandoff | null> {
     if (folderChanging()) return Promise.resolve(null);
     if (submitFlight) return submitFlight;
     let captured: ReturnType<typeof captureOperation>;
@@ -311,9 +334,10 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
           if (!submission) {
             const document = untracked(durable.document), mode = sendOptions.inputMode ?? 'normal';
             if (mode === 'shell' && (document.references.length || durable.attachments().length || durable.context())) throw new Error('new-session-shell-references-unsupported');
-            submission = local?.submission ?? { id: id(), text: document.text, files: durable.attachments().map(file => ({ ...file })), delivery: 'steer', uncertain: false, inputMode: mode, references: relocate(document, durable.scope), ...(durable.context() ? { context: durable.context() } : {}) };
+            const capturedText = sendOptions.presetText ?? document.text;
+            submission = local?.submission ?? { id: id(), text: document.text, files: durable.attachments().map(file => ({ ...file })), delivery: 'steer', uncertain: false, inputMode: mode, references: relocate(document, durable.scope), ...(durable.context() ? { context: durable.context() } : {}), ...(sendOptions.presetText !== undefined ? { preparedText: sendOptions.presetText } : {}) };
             if (!local && mode !== 'shell' && !submission.context && !document.references.length && !magicCommand(document.text)) {
-              const command = slashCommand(document.text); if (command) submission.command = command;
+              const command = slashCommand(capturedText.replace(/^(\s*)\/\u2003/, '$1/')); if (command) submission.command = command;
             }
             snapshotRevision = durable.draftRevision();
             durable.pendingSend.set(submission);
@@ -383,15 +407,14 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
           const submission = durable.pendingSend();
           if (!submission || submission.id !== value.inputID || !submission.references) throw new Error('new-session-snapshot-missing');
           await configure(value.target, value.selection, sessionOperation, readOnly); assertCurrent(captured);
-          const destination = openDraft(hostID, value.target, options.draftAuthorityKey);
+          const destination = openDraft(hostID, value.target, draftOptions);
           try {
             await destination.ready; assertCurrent(captured);
             const references = submission.localMagic ? { text: '', references: [], scope: { ...destination.scope } } : relocate(submission.references, destination.scope);
-            const transferred: ContextSubmission = { ...submission, files: submission.files.map(file => ({ ...file })), references: relocate(submission.references, destination.scope) };
-            // Resume a crash/write failure between destination flush and the
-            // installed receipt without overwriting an unrelated destination.
-            const staged = destination.pendingSend()?.id === value.inputID && destination.matches(references.text, submission.files, references.references) && !destination.queueEdit()
-              && sameDesktopGitContext(destination.context(), submission.context) && sameDesktopGitContext(destination.pendingSend()?.context, submission.context);
+            const transferred: ContextSubmission = { ...submission, files: submission.files.map(file => ({ ...file })), references };
+            const pending = destination.pendingSend();
+            const referenceIdentity = (document: ScopedReferenceDocument | undefined) => document && JSON.stringify([document.text, document.scope.host, document.scope.draft, document.scope.directory, document.references.map(ref => [ref.kind, ref.value, ref.label, ref.display, ref.start, ref.end, ref.directory, ref.description])]);
+            const staged = pending?.id === value.inputID && pending.text === transferred.text && pending.delivery === transferred.delivery && pending.inputMode === transferred.inputMode && pending.command?.name === transferred.command?.name && pending.command?.text === transferred.command?.text && pending.preparedText === transferred.preparedText && pending.files.length === transferred.files.length && pending.files.every((file, index) => sameAttachment(file, transferred.files[index])) && referenceIdentity(pending.references) === referenceIdentity(references) && !destination.queueEdit() && sameDesktopGitContext(destination.context(), submission.context) && sameDesktopGitContext(pending?.context, submission.context);
             if (!staged) {
               if (destination.pendingSend() || destination.queueEdit() || destination.draft() || destination.attachments().length || destination.context()) throw new Error('new-session-destination-not-empty');
               destination.setDocument(references); destination.attachments.set(transferred.files); destination.context.set(transferred.context); destination.pendingSend.set(transferred);
@@ -515,15 +538,17 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     void flight.catch(() => { if (closeFlight === flight) closeFlight = undefined; });
     return flight;
   }
-  async function noteAdmission(handoff: NativeNewSessionHandoff, phase: 'unknown' | 'acknowledged', captured: PageOperation) {
+  async function noteAdmission(handoff: NativeNewSessionHandoff, phase: 'preparing' | 'unknown' | 'acknowledged', captured: PageOperation) {
     await restoration; assertCurrent(captured);
+    if (admissionWriteUnknown) throw new Error('new-session-admission-storage-unknown');
     const value = receipt();
     if (value.phase !== 'installed' || value.inputID !== handoff.inputID || value.target.id !== handoff.target.id || handoff.hostID !== hostID || handoff.generation !== generation || handoff.target.directory !== directory) throw new Error('new-session-handoff-input-mismatch');
     if (value.folder && value.folder.status !== 'acknowledged') throw new Error('new-session-folder-not-confirmed');
     if (value.admission === 'acknowledged' || value.admission === phase) return;
-    await write({ ...value, admission: phase }, captured);
+    try { await write({ ...value, admission: phase }, captured); }
+    catch (failure) { if (captured.current()) admissionWriteUnknown = true; throw failure; }
   }
-  return { directory, hostID, generation, project: { ...project }, durable, ready, status, error, submitting, folderChanging, current, replaceOperation, captureOperation, operation, ownedScope, noteAdmission, admission: () => receipt().admission,
+  return { directory, hostID, generation, project: { ...project }, durable, ready, status, error, submitting, folderChanging, current, replaceOperation, captureOperation, operation, ownedScope, noteAdmission, admission: () => admissionWriteUnknown ? 'unknown' as const : receipt().admission,
     selection: () => selectionFrom(receipt().selection),
     folder: () => receipt().folder ? { ...receipt().folder! } : undefined,
     phase: () => receipt().phase, target: () => { const value = receipt(); return value.phase === 'created' || value.phase === 'installed' ? { ...value.target } : null; },

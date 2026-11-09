@@ -2026,6 +2026,7 @@ describe('useGlobalSessionsStore', () => {
       cursor: 61,
       hasMore: true,
       loadingMore: false,
+      loadedMore: true,
     });
   });
 
@@ -2050,7 +2051,7 @@ describe('useGlobalSessionsStore', () => {
     await useGlobalSessionsStore.getState().loadMoreSessionsForDirectory('/repo/app');
     expect(useGlobalSessionsStore.getState().sessionsByDirectory.get('/repo/app')?.length).toBe(40);
     const deeperPagination = useGlobalSessionsStore.getState().activePaginationByDirectory.get('/repo/app');
-    expect(deeperPagination).toEqual({ cursor: 61, hasMore: true, loadingMore: false });
+    expect(deeperPagination).toEqual({ cursor: 61, hasMore: true, loadingMore: false, loadedMore: true });
 
     const headWindow = [
       {
@@ -2105,6 +2106,7 @@ describe('useGlobalSessionsStore', () => {
         cursor: 61,
         hasMore: true,
         loadingMore: false,
+        loadedMore: true,
       });
     } finally {
       Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });

@@ -56,12 +56,58 @@ struct AuthorizationRetirement: Codable, Hashable {
     }
 }
 
+private struct ConnectionTransportField: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+private func transportFields(_ decoder: Decoder, allowed: Set<String>) throws {
+    let fields = try decoder.container(keyedBy: ConnectionTransportField.self)
+    guard Set(fields.allKeys.map(\.stringValue)).isSubset(of: allowed) else { throw ConnectionEditorFailure.invalid }
+}
+struct ConnectionTransport: Codable, Hashable {
+    let address: String
+    let serverID: String?
+    init(url: URL, relay: RelayConfiguration?) throws {
+        if let relay {
+            guard !relay.serverId.isEmpty, relay.serverId.utf8.count <= 256,
+                  relay.serverId.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else { throw ConnectionEditorFailure.invalid }
+            address = try RelayConfiguration.canonicalAddress(relay.relayUrl); serverID = relay.serverId
+        } else { address = try ConnectionEditorRecords.origin(url.absoluteString); serverID = nil }
+    }
+    private enum CodingKeys: String, CodingKey { case address, serverID }
+    init(from decoder: Decoder) throws {
+        try transportFields(decoder, allowed: ["address", "serverID"])
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        let address = try fields.decode(String.self, forKey: .address)
+        let serverID = try fields.decodeIfPresent(String.self, forKey: .serverID)
+        guard let url = URL(string: address) else { throw ConnectionEditorFailure.invalid }
+        try self.init(url: url, relay: serverID.map { RelayConfiguration(relayUrl: address, serverId: $0, hostEncPubJwk: [:]) })
+        guard self.address == address else { throw ConnectionEditorFailure.invalid }
+    }
+}
+struct ConnectionTransportPartition: Codable {
+    let transport: ConnectionTransport
+    let id: String
+    init(transport: ConnectionTransport, id: String) { self.transport = transport; self.id = id }
+    private enum CodingKeys: String, CodingKey { case transport, id }
+    init(from decoder: Decoder) throws {
+        try transportFields(decoder, allowed: ["transport", "id"])
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        transport = try fields.decode(ConnectionTransport.self, forKey: .transport)
+        id = try fields.decode(String.self, forKey: .id)
+    }
+}
+
 struct ConnectionEditorRecords: Codable {
     var connections: [SavedConnection] = []
     var selected: String?
     private(set) var pendingAuthorizationRetirements: [AuthorizationRetirement] = []
     static let retirementLimit = 1024
-    private enum CodingKeys: String, CodingKey { case connections, selected, pendingAuthorizationRetirements }
+    private(set) var transportPartitions: [ConnectionTransportPartition]?
+    static let transportPartitionLimit = 4096
+    private enum CodingKeys: String, CodingKey { case connections, selected, pendingAuthorizationRetirements, transportPartitions }
     init(connections: [SavedConnection] = [], selected: String? = nil) {
         self.connections = connections; self.selected = selected
     }
@@ -70,7 +116,39 @@ struct ConnectionEditorRecords: Codable {
         connections = try values.decode([SavedConnection].self, forKey: .connections)
         selected = try values.decodeIfPresent(String.self, forKey: .selected)
         pendingAuthorizationRetirements = values.contains(.pendingAuthorizationRetirements) ? try values.decode([AuthorizationRetirement].self, forKey: .pendingAuthorizationRetirements) : []
+        transportPartitions = values.contains(.transportPartitions) ? try values.decode([ConnectionTransportPartition].self, forKey: .transportPartitions) : nil
         try validateRetirements()
+        try validateTransportPartitions()
+    }
+    private func validateTransportPartitions() throws {
+        guard let partitions = transportPartitions else {
+            guard connections.allSatisfy({ $0.transportID == nil }) else { throw ConnectionEditorFailure.invalid }
+            return
+        }
+        guard partitions.count <= Self.transportPartitionLimit,
+              Set(partitions.map(\.transport)).count == partitions.count,
+              Set(partitions.map(\.id)).count == partitions.count,
+              partitions.allSatisfy({ UUID(uuidString: $0.id)?.uuidString.lowercased() == $0.id }) else { throw ConnectionEditorFailure.invalid }
+        let identities = Dictionary(uniqueKeysWithValues: partitions.map { ($0.transport, $0.id) })
+        for connection in connections {
+            guard let id = identities[try ConnectionTransport(url: connection.url, relay: connection.relay)], connection.transportID == id else { throw ConnectionEditorFailure.invalid }
+        }
+    }
+    private mutating func assignTransportPartitions(from previous: Self) throws {
+        try previous.validateTransportPartitions()
+        var partitions = previous.transportPartitions ?? []
+        var identities = Dictionary(uniqueKeysWithValues: partitions.map { ($0.transport, $0.id) })
+        for index in connections.indices {
+            let transport = try ConnectionTransport(url: connections[index].url, relay: connections[index].relay)
+            if identities[transport] == nil {
+                guard partitions.count < Self.transportPartitionLimit else { throw ConnectionEditorFailure.storage }
+                let id = UUID().uuidString.lowercased()
+                partitions.append(ConnectionTransportPartition(transport: transport, id: id)); identities[transport] = id
+            }
+            connections[index].transportID = identities[transport]
+        }
+        transportPartitions = partitions
+        try validateTransportPartitions()
     }
     private func validateRetirements() throws {
         guard pendingAuthorizationRetirements.count <= Self.retirementLimit else { throw AuthorizationRetirementFailure.capacity }
@@ -125,10 +203,10 @@ struct ConnectionEditorRecords: Codable {
     func replacing(id: String, version: String, candidate: SavedConnection) throws -> Self {
         let previous = try connection(id, version: version)
         guard !candidate.token.isEmpty else { throw ConnectionEditorFailure.pairingRequired }
-        let collision = connections.contains { other in
+        let transport = try ConnectionTransport(url: candidate.url, relay: candidate.relay)
+        let collision = try connections.contains { other in
             guard other.id != id else { return false }
-            if let relay = candidate.relay { return other.relay?.scope == relay.scope }
-            return other.relay == nil && (try? Self.origin(other.url.absoluteString)) == (try? Self.origin(candidate.url.absoluteString))
+            return try ConnectionTransport(url: other.url, relay: other.relay) == transport
         }
         guard !collision else { throw ConnectionEditorFailure.duplicate }
         var next = self
@@ -154,6 +232,7 @@ struct ConnectionEditorRecords: Codable {
         }
         if let acknowledging { staged.pendingAuthorizationRetirements.removeAll { $0 == acknowledging } }
         try staged.validateRetirements()
+        try staged.assignTransportPartitions(from: self)
         let bytes = try JSONEncoder().encode(staged)
         try persist(bytes)
         self = staged

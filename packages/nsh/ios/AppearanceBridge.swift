@@ -65,8 +65,17 @@ import NativeShell
     private weak var app: NshAppView?
     private let selectedHost: () -> String?
     private var revision = 0
-    init(app: NshAppView, selectedHost: @escaping () -> String?) {
-        self.app = app; self.selectedHost = selectedHost
+    private var contract: NativeAppearanceContract?
+    private let fontRegistry: NativeFontRegistry
+    private lazy var fonts = NativeFontOwner(dependencies: .registry(fontRegistry)) { [weak self] hostID, revision, projection in
+        guard let self, hostID == self.selectedHost(), revision == self.revision, self.contract != nil else { return }
+        do {
+            try self.renderFonts(projection)
+            self.app?.send("appearance.fonts", projection.value.merging(["hostID": hostID, "fontRevision": revision]) { _, new in new })
+        } catch { self.app?.send("appearance.error", ["message": "原生字体应用失败"]) }
+    }
+    init(app: NshAppView, selectedHost: @escaping () -> String?, fontRegistry: NativeFontRegistry? = nil) {
+        self.app = app; self.selectedHost = selectedHost; self.fontRegistry = fontRegistry ?? .shared
         app.handle("appearance.reset") { [weak self] input async throws -> Any? in
             guard let self else { throw CancellationError() }
             try NativeAppearanceContract.validateReset(input, selectedHost: self.selectedHost())
@@ -77,35 +86,49 @@ import NativeShell
             guard let self else { throw CancellationError() }
             return try self.apply(input)
         }
+        app.handle("appearance.fonts.retry") { [weak self] input async throws -> Any? in
+            guard let self, let data = input as? [String: Any], Set(data.keys) == ["hostID", "fontRevision", "fontTicket"],
+                  let hostID = data["hostID"] as? String, hostID == self.selectedHost(),
+                  let revision = data["fontRevision"] as? NSNumber, CFGetTypeID(revision) != CFBooleanGetTypeID(), revision.doubleValue == Double(self.revision),
+                  let ticket = data["fontTicket"] as? NSNumber, CFGetTypeID(ticket) != CFBooleanGetTypeID(), ticket.doubleValue == Double(self.fonts.projection.ticket),
+                  let contract = self.contract else { throw CancellationError() }
+            let projection = self.fonts.select(hostID: hostID, revision: self.revision, fonts: contract.fonts, retry: true)
+            try self.renderFonts(projection)
+            return projection.value.merging(["hostID": hostID, "fontRevision": self.revision]) { _, new in new }
+        }
     }
     func invalidate() throws {
         revision += 1
+        contract = nil
+        fonts.invalidate()
         try app?.setThemeOverrides(nil)
         app?.fontScale = nil
         app?.overrideUserInterfaceStyle = .unspecified
     }
     private func apply(_ input: Any?) throws -> [String: Any] {
         let contract = try NativeAppearanceContract.decode(input, selectedHost: selectedHost(), revision: revision)
-        let encoded = try JSONSerialization.data(withJSONObject: ["cssVars": contract.cssVars])
-        guard let json = String(data: encoded, encoding: .utf8), let app else { throw CancellationError() }
+        guard let app, let hostID = selectedHost() else { throw CancellationError() }
         // Validate the entire contract before changing any previously valid native appearance.
-        try app.setThemeOverrides(json)
+        self.contract = contract
+        let projection = fonts.select(hostID: hostID, revision: revision, fonts: contract.fonts)
+        try renderFonts(projection)
         app.fontScale = 1 // Host percentages are applied to semantic TextStyle sizes, not twice via Dynamic Type.
         app.overrideUserInterfaceStyle = contract.mode == "system" ? .unspecified : contract.mode == "dark" ? .dark : .light
-        var unsupported: [String] = []
-        func family(_ name: String, fallback: String) -> String {
-            if name == "system-ui" || name == "monospace" { return name }
-            if UIFont.familyNames.contains(name) { return name }
-            unsupported.append(name)
-            return fallback
+        return projection.value.merging(["fontRevision": revision,
+            "systemColorScheme": UIScreen.main.traitCollection.userInterfaceStyle == .dark ? "dark" : "light"]) { _, new in new }
+    }
+    private func renderFonts(_ projection: NativeFontProjection) throws {
+        guard let app, let contract else { throw CancellationError() }
+        // setThemeOverrides replaces the override document. Merge font tokens into
+        // the CURRENT contract; a font completion never captures/replays a palette.
+        var cssVars = contract.cssVars
+        for variant in ["light", "dark"] {
+            cssVars[variant]?["font-sans"] = projection.ui
+            cssVars[variant]?["font-mono"] = projection.mono
         }
-        let ui = family(contract.fonts["ui"]!, fallback: "system-ui")
-        let mono = family(contract.fonts["mono"]!, fallback: "monospace")
-        let assistantLight = family(contract.fonts["assistantLight"]!, fallback: ui)
-        let assistantDark = family(contract.fonts["assistantDark"]!, fallback: ui)
-        return ["uiFontFamily": ui, "monoFontFamily": mono,
-                "assistantFontFamilies": ["light": assistantLight, "dark": assistantDark], "unsupportedFonts": Array(Set(unsupported)).sorted(),
-                "systemColorScheme": UIScreen.main.traitCollection.userInterfaceStyle == .dark ? "dark" : "light"]
+        let encoded = try JSONSerialization.data(withJSONObject: ["cssVars": cssVars])
+        guard let json = String(data: encoded, encoding: .utf8) else { throw CancellationError() }
+        try app.setThemeOverrides(json)
     }
 }
 #endif

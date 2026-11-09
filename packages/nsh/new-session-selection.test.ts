@@ -27,4 +27,31 @@ describe('new-session local picker catalog', () => {
     const send = vi.fn(async () => gate.promise); const catalog = createNewSessionCatalog('/repo', () => current, send); const loading = catalog.load('agent'); current = false; gate.resolve({ data: [{ name: 'old', mode: 'primary' }] }); await loading;
     expect(catalog.agents()).toEqual([]); current = true; catalog.dispose(); await catalog.load('agent'); expect(send).toHaveBeenCalledTimes(1);
   });
+  it('warm reopen paints the cached catalog immediately and forces one shared background refresh', async () => {
+    const { createNewSessionCatalog } = await import('./new-session-selection');
+    const providers = Array.from({ length: 300 }, (_, i) => ({ id: `p-${i}`, models: { m: { id: 'm' } } }));
+    const send = vi.fn(async (path: string) => path.includes('/providers?') ? { schemaVersion: 1, providers } : { favoriteModels: [], secret: 'never-retained' });
+    const first = createNewSessionCatalog('/repo', () => true, send, 'host:lease'); await first.load('model'); first.dispose();
+    const gate = deferred<unknown>(); send.mockImplementation(async () => gate.promise);
+    const a = createNewSessionCatalog('/repo', () => true, send, 'host:lease'), b = createNewSessionCatalog('/repo', () => true, send, 'host:lease');
+    expect(a.providers()).toHaveLength(300); expect(a.preferences().secret).toBeUndefined();
+    const refreshA = a.load('model'), refreshB = b.load('model'); await Promise.resolve();
+    expect(a.busy()).toBe(false); expect(a.refreshing()).toBe(true); expect(send).toHaveBeenCalledTimes(4);
+    gate.resolve({ schemaVersion: 1, providers: [] }); await Promise.all([refreshA, refreshB]);
+    expect(a.providers()).toEqual([]); expect(b.providers()).toEqual([]);
+    await a.load('model'); expect(send).toHaveBeenCalledTimes(6);
+    const other = createNewSessionCatalog('/other', () => true, send, 'host:lease'); expect(other.providers()).toEqual([]);
+    expect(createNewSessionCatalog('/repo', () => true, send, 'other:lease').providers()).toEqual([]);
+  });
+  it('publishes independent readiness, preserves complete providers on partial refresh, and fences preference writes', async () => {
+    const { createNewSessionCatalog } = await import('./new-session-selection');
+    let partial = false; const gate = deferred<unknown>(); let wait = false;
+    const send = vi.fn(async (path: string) => path.includes('/providers?') ? { schemaVersion: 1, partial, providers: partial ? [] : [{ id: 'p', models: { m: { id: 'm' } } }] } : wait ? gate.promise : {});
+    const first = createNewSessionCatalog('/repo', () => true, send, 'host'); await first.load('model');
+    const previous = first.providers(); partial = true; wait = true;
+    const work = first.load('model'); for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(first.providers()).toBe(previous); expect(first.partial()).toBe(true); expect(first.refreshing()).toBe(true);
+    first.setPreferences({ favoriteModels: [{ providerID: 'p', modelID: 'm' }] }); gate.resolve({ favoriteModels: [] }); await work;
+    expect(first.preferences().favoriteModels).toHaveLength(1);
+  });
 });

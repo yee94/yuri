@@ -85,14 +85,14 @@ describe('production-context strict synthetic Host (pure VM; not production navi
   it('admits exact scoped global/chat stream and keyed stop payloads; malformed/stale A→B→A calls never reach stream ownership (forwarding only)', () => {
     const { host, audit } = syntheticHost();
     const first = connectionSnapshotFrom(host.call('connection.list')).runtimeScope!;
-    const stream = (key: 'global' | 'chat', expectedHost: RuntimeScope) => ({ key, path: key === 'global' ? '/api/yuri/events' : '/api/event?directory=%2Ffixture%2Factual', expectedHost });
+    const stream = (key: 'global' | 'chat', expectedHost: RuntimeScope) => ({ key, path: key === 'global' ? '/api/yuri/events' : '/api/event?directory=%2Ffixture%2Factual', expectedHost, ...(key === 'chat' ? { mode: 'sse', ownerID: 'fixture-chat' } : {}) });
     for (const key of ['global', 'chat'] as const) {
       expect(host.call('runtime.stream', stream(key, first))).toBe(true);
-      expect(host.call('runtime.stop', { key, expectedHost: first })).toBe(true);
+      expect(host.call('runtime.stop', { key, expectedHost: first, ...(key === 'chat' ? { ownerID: 'fixture-chat' } : {}) })).toBe(true);
     }
     const before = audit();
     for (const name of ['runtime.stream', 'runtime.stop']) {
-      const payload = name === 'runtime.stream' ? stream('chat', first) : { key: 'chat', expectedHost: first };
+      const payload = name === 'runtime.stream' ? stream('chat', first) : { key: 'chat', expectedHost: first, ownerID: 'fixture-chat' };
       for (const expectedHost of [null, undefined, {}, [], { ...first, extra: true }, { hostID: first.hostID }, { ...first, lease: 'invalid' }]) expect(() => host.call(name, { ...payload, expectedHost })).toThrow('runtime_host_scope_invalid');
       const { expectedHost: _scope, ...unbound } = payload;
       expect(() => host.call(name, unbound)).toThrow('runtime_host_scope_required');
@@ -118,7 +118,7 @@ describe('production-context strict synthetic Host (pure VM; not production navi
     expect(audit().admittedStreams).toEqual(before.admittedStreams); expect(audit().admittedStops).toEqual(before.admittedStops);
     expect(audit().requests).toEqual([]); expect(audit().historyReads).toBe(0);
     expect(host.call('runtime.stream', stream('chat', third))).toBe(true);
-    expect(host.call('runtime.stop', { key: 'chat', expectedHost: third })).toBe(true);
+    expect(host.call('runtime.stop', { key: 'chat', expectedHost: third, ownerID: 'fixture-chat' })).toBe(true);
     expect(audit().admittedStreams).toHaveLength(3); expect(audit().admittedStops).toHaveLength(3);
   });
   it('captures the real runtime request wrapper once and forwards that same lease across A→B→A without refreshing authority', async () => {
@@ -302,11 +302,12 @@ describe('production-context strict synthetic Host (pure VM; not production navi
   it('uses real hostEvent for synthetic tokens; no route, state, owner or second event channel is supplied by the fixture', () => {
     const { host, events, audit, send } = syntheticHost();
     const expectedHost = connectionSnapshotFrom(host.call('connection.list')).runtimeScope!;
-    host.call('runtime.stream', { key: 'chat', path: '/api/event?directory=%2Ffixture%2Factual', expectedHost });
+    host.call('runtime.stream', { key: 'chat', path: '/api/event?directory=%2Ffixture%2Factual', expectedHost, mode: 'sse', ownerID: 'actual-stream-ticket' });
     host.call('context.production.delta', {});
-    expect(events).toHaveLength(1);
-    expect(events[0].name).toBe('runtime.event');
-    const value = events[0].value as { key: string; data: string };
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ name: 'runtime.event', value: { type: 'reconnected', ownerID: 'actual-stream-ticket', expectedHost } });
+    expect(events[1].name).toBe('runtime.event');
+    const value = events[1].value as { key: string; data: string };
     expect(value.key).toBe('chat'); expect(JSON.parse(value.data)).toEqual({ type: 'session.text.delta', data: { sessionID: 'context-actual', assistantMessageID: 'context-assistant', parentID: 'context-user', ordinal: 0, delta: ' synthetic-token-1' }, location: { directory: '/fixture/actual' } });
     const page = messagesFrom(send('/api/session/context-actual/message?directory=%2Ffixture%2Factual&limit=20&order=desc').body);
     expect(page.messages[1].text).toBe('Synthetic answer synthetic-token-1'); expect(audit().streams).toHaveLength(1);

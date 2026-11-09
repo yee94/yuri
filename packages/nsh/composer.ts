@@ -1,7 +1,8 @@
 import { nativeMagicDefaults } from './settings-magic-defaults';
 import { parseMagicOverrides } from './settings-magic-state';
 import { slashCommand, type Attachment, type CompiledSubmission } from './model';
-import { compileNativeReferences, hydrateNativeReferenceSessions, type NativeSessionReferenceContext, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
+import { contactDescriptor } from './attachments';
+import { compileNativeReferences, hydrateNativeReferenceSessions, sameReferenceScope, type NativeSessionReferenceContext, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 
 export const magicCommands = [
   { name: 'explore', prompt: 'session.explore' },
@@ -34,11 +35,13 @@ export async function compileNativePrompt(
   let contexts: NativeSessionReferenceContext[] | undefined;
   const finish = (compiledText?: string): CompiledSubmission => {
     if (input.isCurrentScope && !input.isCurrentScope()) throw new Error('native-reference-scope-changed');
-    if (!references) return { text: compiledText ?? input.text, files: input.files };
-    if (!scope || references.text !== input.text) throw new Error('native-reference-snapshot-mismatch');
+    if (references && (!scope || references.text !== input.text || !sameReferenceScope(references.scope, scope))) throw new Error('native-reference-snapshot-mismatch');
+    if (!references?.references.length) return { text: compiledText ?? input.text, files: input.files };
+    if (!scope) throw new Error('native-reference-snapshot-mismatch');
     const compiled = compileNativeReferences(references, scope, compiledText, contexts);
     const files = [...input.files, ...(compiled.files ?? [])];
-    return { ...compiled, files: files.filter((file, index) => files.findIndex(other => other.uri === file.uri) === index) };
+    const key = (file: NonNullable<CompiledSubmission['files']>[number]) => file.kind === 'contact' ? JSON.stringify([file.hostID, file.assistantID, contactDescriptor(file)]) : file.uri;
+    return { ...compiled, files: files.filter((file, index) => files.findIndex(other => key(other) === key(file)) === index) };
   };
   // Validate before any network read; a cross-Host draft must never reach admission.
   if (references) finish();

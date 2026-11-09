@@ -1,11 +1,11 @@
 import { mount, Text, View } from 'nsh';
 import { NativeAppearanceSync, nativeAppearance, nativeChatSurfaceStyle, nativeChatTextStyle } from './appearance';
-import { app } from './state';
+import { loadConnections } from './state';
 import { NativeAppearanceFeedback } from './appearance-feedback';
 import { language } from './i18n';
 
 // CLI-only fixture entrypoint; never imported by App.tsx or the iOS Host.
-app.connection.set({ id: 'fixture', url: 'https://host.example', label: 'Fixture', lastUsedAt: 0 });
+void loadConnections().catch(error => { console.error('Appearance fixture admission failed', error); });
 language.set('en');
 function AppearanceFixture() {
   return <View>

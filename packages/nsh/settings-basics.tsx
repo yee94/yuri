@@ -1,5 +1,6 @@
 import { cleanup, effect, host, lifecycle, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
 import { AlertDialog, Button } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { text, type Row } from './model';
@@ -24,6 +25,8 @@ import { createSettingsVoiceConfirmation } from './settings-voice-confirm';
 import { createSettingsVoiceRecognitionAdapter } from './settings-voice-recognition';
 import type { VoiceTestAsrAdapter, VoiceTestConfirmation, VoiceTestKind } from './settings-voice-test-core';
 import { publishSettingsEditor } from './desktop-settings-publisher';
+import { SettingsSessions } from './settings-sessions';
+import { SettingsVoiceCatalog } from './settings-voice-catalog';
 
 function optionTitle(key: string, value: string) {
   const labels: Record<string, Record<string, I18nKey>> = {
@@ -61,6 +64,8 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
   const voiceRevision = signal(0), voiceTestVersion = signal(0), recognitionReady = signal(false);
   const recognitionError = signal(false), recognitionAttempt = signal(0);
   const voiceCurrent = () => props.page === 'voice' && props.active === true && lifecycle() === 'active' && state.current();
+  const catalogProvider = () => props.target === 'voice.sayVoice' ? 'say' : props.target === 'voice.browserVoice' ? 'browser' : data().voiceProvider ?? speechDefaults.voiceProvider;
+  const catalogVoiceKey = () => catalogProvider() === 'say' ? 'sayVoice' : 'browserVoice';
   const initialOperation = state.operation();
   const voice = props.page === 'voice' ? createSettingsVoiceConfirmation({ send: initialOperation?.request ?? (async () => { throw new Error('settings_operation_stale'); }), current: initialOperation?.current ?? (() => false), active: voiceCurrent,
     changed: value => { data.set(value.data); changes.set(value.changes); voiceRevision.set(value.draftRevision); state.ready.set(value.ready); },
@@ -221,10 +226,11 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
       state.notice.set(t(props.page === 'behavior' ? 'settings.behavior.page.toast.saved' : 'filesView.editor.saved'));
     });
   }
-  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
     <If when={props.page === 'voice' && recognitionError()}><View class="gap-2"><Text class="text-sm text-destructive">{t('common.unavailable')}</Text><Button testID="settings-voice-recognition-retry" class={settingsAction} disabled={!voiceCurrent()} onPress={() => { void retryRecognition(); }}><Text class="text-foreground">{t('settings.voice.volcengine.retry')}</Text></Button></View></If>
     <If when={props.page === 'sessions' || props.page === 'summary-ai'}><SettingsDefaults {...props} onReveal={node => { void navigation.reveal(node); }} /></If>
+    <If when={props.page === 'sessions'}><SettingsSessions operation={state.operation} active={pageActive} target={props.target} onReveal={node => { void navigation.reveal(node); }} /></If>
     <If when={props.page === 'sessions' && !!props.retention}><SettingsSessionRetentionSection controller={props.retention!} active={props.active === true} target={props.target} onReveal={node => { void navigation.reveal(node); }} /></If>
     <If when={props.page === 'instances'}>
       <Button class={settingsAction} onPress={props.onConnect}><Text class="text-foreground">{t('mobile.instances.addTitle')}</Text></Button>
@@ -244,6 +250,7 @@ export function SettingsBasics(props: SettingsCallbacks & SettingsRoute & { dire
         </If>
       </SettingsTarget>}</Each></SettingsGroup>
       <If when={props.page === 'voice' && ((data().sttProvider ?? speechDefaults.sttProvider) === 'local' || (data().voiceProvider ?? speechDefaults.voiceProvider) === 'local' || props.target === 'voice.sttLocalModel' || props.target === 'voice.localTtsVoiceId')}><SettingsVoiceModels stt={(data().sttProvider ?? speechDefaults.sttProvider) === 'local' || props.target === 'voice.sttLocalModel'} tts={(data().voiceProvider ?? speechDefaults.voiceProvider) === 'local' || props.target === 'voice.localTtsVoiceId'} selectedModel={text(data().sttLocalModel) || speechDefaults.sttLocalModel} voice={typeof data().localTtsVoiceId === 'number' ? data().localTtsVoiceId as number : speechDefaults.localTtsVoiceId} disabled={state.busy()} active={props.active} current={state.current} target={props.target} onReveal={node => { void navigation.reveal(node); }} onSelect={value => update('sttLocalModel', value)} onVoice={value => update('localTtsVoiceId', value)} /></If>
+      <If when={props.page === 'voice'}><SettingsTarget id={`voice.${catalogVoiceKey()}`} target={props.target} onReveal={node => { void navigation.reveal(node); }}><SettingsVoiceCatalog provider={catalogProvider} value={() => text(data()[catalogVoiceKey()])} active={voiceCurrent} operation={state.operation} disabled={state.busy} onChange={update} /></SettingsTarget></If>
       <If when={props.page === 'voice'}><Each of={[voiceTestVersion()]} key={version => version}>{() => {
         const operation = state.operation(), adapter: VoiceTestAsrAdapter | null = recognition;
         const current = () => !!operation?.scope && operation.current() && voiceCurrent();

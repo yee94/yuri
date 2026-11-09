@@ -2,6 +2,7 @@ import '@/lib/brand-storage-bootstrap';
 import type { PersistStorage, StateStorage, StorageValue } from 'zustand/middleware';
 import { getRuntimeApiBaseUrl, getRuntimeKey } from '@/lib/runtime-switch';
 import { getSafeStorage } from '@/stores/utils/safeStorage';
+import { instanceScopedStorageKeyForRuntime } from './instanceScopedStorageKey';
 
 /**
  * Instance-scoped localStorage for data that belongs to one paired device /
@@ -18,19 +19,6 @@ import { getSafeStorage } from '@/stores/utils/safeStorage';
  * buckets.
  */
 
-const SCOPE_PREFIX = 'yuri.inst.';
-
-const encodeInstance = (identity: string): string => {
-  try {
-    return btoa(unescape(encodeURIComponent(identity)))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/g, '');
-  } catch {
-    return encodeURIComponent(identity);
-  }
-};
-
 const resolveInstanceKey = (runtimeKey?: string): string => {
   const identity = (runtimeKey ?? getRuntimeKey()).trim();
   return identity.length > 0 ? identity : 'default';
@@ -45,7 +33,7 @@ const readLocalOrigin = (): string => {
 export const instanceScopedStorageKey = (
   baseKey: string,
   runtimeKey: string = getRuntimeKey(),
-): string => `${SCOPE_PREFIX}${encodeInstance(resolveInstanceKey(runtimeKey))}.${baseKey}`;
+): string => instanceScopedStorageKeyForRuntime(baseKey, resolveInstanceKey(runtimeKey));
 
 const isRelayRuntimeKey = (runtimeKey: string = getRuntimeKey()): boolean =>
   resolveInstanceKey(runtimeKey).startsWith('relay:');

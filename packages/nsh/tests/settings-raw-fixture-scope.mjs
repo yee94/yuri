@@ -2,7 +2,7 @@
  * authorization, credentials, transport or a production lease issuer. */
 export function createSettingsFixtureScope(hostID) {
   let selected = hostID, revision = 1, lists = 0, admitted = 0, rejected = 0;
-  const entries = [hostID, `${hostID}-other`].map((id, index) => ({ id, label: `Synthetic ${index ? 'B' : 'A'}`, url: `https://settings-${index ? 'b' : 'a'}.invalid`, authorizationID: `synthetic-auth-${index ? 'B' : 'A'}`, lastUsedAt: 0 }));
+  const entries = [hostID, `${hostID}-other`].map((id, index) => ({ id, label: `Synthetic ${index ? 'B' : 'A'}`, url: `https://settings-${index ? 'b' : 'a'}.invalid`, authorizationID: `synthetic-auth-${index ? 'B' : 'A'}`, transportID: index ? 'synthetic-transport-B' : 'synthetic-transport-A', lastUsedAt: 0 }));
   const scope = () => ({ hostID: selected, lease: `synthetic-settings-lease-${revision}` });
   const keys = (value, expected) => {
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join(',') !== [...expected].sort().join(',')) throw new Error('Invalid synthetic scope payload');

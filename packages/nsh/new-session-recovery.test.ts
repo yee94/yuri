@@ -176,7 +176,7 @@ describe('retained new-session production owners with dependency-tracked lifecyc
     const operation = reactive.signal<PageOperation | null>(root.captureHostOperation()); let released = false;
     const release = vi.fn(async () => { released = true; await owner.close(); });
     const handoff = { receipt, owner, released: () => released, release }, states: string[] = [];
-    const chat = { active: () => true, draftReady: destination.ready, referenceScope: destination.scope, get messageScope() { return { hostID: 'A', generation: root.epoch() }; },
+    const chat = { active: () => true, draftReady: destination.ready, draftStatus: destination.status, referenceScope: destination.scope, get messageScope() { return { hostID: 'A', generation: root.epoch() }; },
       pendingSend: destination.pendingSend, recoverPendingSend: vi.fn(async () => false), retrySend: vi.fn(async () => false),
     };
     const admission = admissionAPI.createNewSessionAdmission({ chat: chat as any, handoff, current: () => true, operation, changed: value => states.push(value) });
@@ -184,9 +184,16 @@ describe('retained new-session production owners with dependency-tracked lifecyc
   }
 
   it.each([false, true])('retains handoff after page cleanup and only GET reconciles an unknown first admission after replacement, command=%s', async command => {
-    const f = await admissionFixture(command), gate = deferred<boolean>(); f.chat.retrySend.mockImplementation(() => gate.promise);
+    const f = await admissionFixture(command), gate = deferred<boolean>();
+    f.chat.retrySend.mockImplementation(async () => {
+      f.destination.pendingSend.set({ ...f.destination.pendingSend()!, uncertain: true });
+      await f.destination.flush();
+      return gate.promise;
+    });
     const original = f.owner.durable, first = f.admission.run(); await flush(); expect(f.chat.retrySend).toHaveBeenCalledTimes(1);
-    expect(f.owner.admission()).toBe('unknown');
+    expect(f.owner.admission()).toBe('preparing');
+    expect(f.destination.pendingSend()).toMatchObject({ id: f.receipt.inputID, uncertain: true });
+    expect(JSON.parse(reactive.storage.get(f.destination.key)!).pendingSend).toMatchObject({ id: f.receipt.inputID, uncertain: true });
     background(); f.operation.set(null); foreground(); expect(f.owner.ownedScope()).toBe(true);
     confirm(); f.operation.set(root.captureHostOperation());
     const resumed = f.admission.reconcile(); gate.resolve(false); await Promise.all([first, resumed]);
@@ -201,6 +208,21 @@ describe('retained new-session production owners with dependency-tracked lifecyc
     expect(f.release).toHaveBeenCalledTimes(command ? 0 : 1); expect(f.owner.phase()).toBe(command ? 'installed' : 'draft');
   });
 
+  it('legacy unknown admission stays reconcile-only even when the destination journal says not dispatched', async () => {
+    const f = await admissionFixture();
+    await f.owner.noteAdmission(f.receipt, 'unknown', f.owner.captureOperation(false));
+    const before = root.requests.length;
+    await f.admission.run();
+    background(); f.operation.set(null); foreground(); confirm(); f.operation.set(root.captureHostOperation());
+    await f.admission.run();
+    expect(f.owner.admission()).toBe('unknown');
+    expect(f.destination.pendingSend()).toMatchObject({ id: f.receipt.inputID, uncertain: false });
+    expect(f.chat.retrySend).not.toHaveBeenCalled(); expect(f.release).not.toHaveBeenCalled();
+    const reads = root.requests.slice(before);
+    expect(reads.length).toBeGreaterThan(0); expect(reads.every(item => item.method === 'GET')).toBe(true);
+    expect(f.owner.phase()).toBe('installed'); expect(f.owner.durable.draft()).toBe('frozen');
+  });
+
   it('records completed local cleanup before checking a retired operation, so a foreground lane can finish release', async () => {
     const f = await admissionFixture(), gate = deferred<void>(), persist = reactive.set.getMockImplementation()!;
     f.chat.retrySend.mockResolvedValue(true);
@@ -211,18 +233,26 @@ describe('retained new-session production owners with dependency-tracked lifecyc
     expect(f.release).toHaveBeenCalledTimes(1); expect(f.chat.retrySend).toHaveBeenCalledTimes(1); expect(f.states.at(-1)).toBe('complete');
   });
 
-  it.each(['unknown', 'acknowledged'])('a delayed %s receipt write never dispatches through a replacement permission', async phase => {
+  it.each(['preparing', 'acknowledged'])('a delayed %s receipt write never dispatches through a replacement permission', async phase => {
     const f = await admissionFixture(), gate = deferred<void>(), persist = reactive.set.getMockImplementation()!;
+    let entered = false, persisted = false;
     f.chat.retrySend.mockResolvedValue(true);
-    reactive.set.mockImplementation(async (key: string, raw: string) => { if (key.startsWith('nsh:new-session:') && JSON.parse(raw).admission === phase) await gate.promise; return persist(key, raw); });
+    reactive.set.mockImplementation(async (key: string, raw: string) => {
+      const delayed = key.startsWith('nsh:new-session:') && JSON.parse(raw).admission === phase;
+      if (delayed) { entered = true; await gate.promise; }
+      await persist(key, raw);
+      if (delayed) persisted = true;
+    });
     const first = f.admission.run(); await flush();
-    expect(f.chat.retrySend).toHaveBeenCalledTimes(phase === 'unknown' ? 0 : 1);
+    expect(entered).toBe(true); expect(persisted).toBe(false);
+    expect(f.chat.retrySend).toHaveBeenCalledTimes(phase === 'preparing' ? 0 : 1);
     background(); f.operation.set(null); foreground(); confirm(); f.operation.set(root.captureHostOperation());
     const next = f.admission.reconcile(); gate.resolve(); await Promise.all([first, next]);
-    expect(f.chat.retrySend).toHaveBeenCalledTimes(phase === 'unknown' ? 0 : 1);
+    expect(persisted).toBe(true);
+    expect(f.chat.retrySend).toHaveBeenCalledTimes(phase === 'preparing' ? 0 : 1);
     expect(root.requests.filter(item => item.generation === 2).every(item => item.method === 'GET')).toBe(true);
-    expect(f.release).toHaveBeenCalledTimes(phase === 'unknown' ? 0 : 1);
-    expect(f.owner.phase()).toBe(phase === 'unknown' ? 'installed' : 'draft');
-    expect(f.owner.durable.draft()).toBe(phase === 'unknown' ? 'frozen' : '');
+    expect(f.release).toHaveBeenCalledTimes(phase === 'preparing' ? 0 : 1);
+    expect(f.owner.phase()).toBe(phase === 'preparing' ? 'installed' : 'draft');
+    expect(f.owner.durable.draft()).toBe(phase === 'preparing' ? 'frozen' : '');
   });
 });

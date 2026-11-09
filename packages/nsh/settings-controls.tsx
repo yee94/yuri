@@ -1,9 +1,10 @@
-import { cleanup, effect, signal, Text, untracked, View, type JSX } from 'nsh';
+import { cleanup, effect, signal, Text, untracked, View, type JSX, type TextStyle } from 'nsh';
 import { Button, Input, Switch, type SelectItem } from 'nsh/base';
 import { NativeSelect as Select } from './native-select';
 import { t } from './i18n';
 import { app, captureHostOperation, captureHostRequest, epoch } from './state';
 import { createSettingsTransaction } from './settings-protocol';
+import { nativeDensity } from './appearance';
 import { DesktopSettingsPublisher, publishSettingsPending, publishSettingsPicker } from './desktop-settings-publisher';
 
 export const settingsAction = 'min-h-11 px-4 py-3 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
@@ -25,19 +26,19 @@ export function SettingsEntityLayout(props: { editing: boolean; list: () => JSX.
   </View>;
 }
 export function SettingsGroup(props: { title: string; children?: JSX.Element }) {
-  return <View class="gap-2"><Text class="text-xs text-muted-foreground px-1">{props.title}</Text><View class="rounded-2xl bg-card p-4 gap-3">{props.children}</View></View>;
+  return <View class="gap-2" style={nativeDensity().settings.section}><Text class="text-xs text-muted-foreground px-1" style={nativeDensity().settings.label}>{props.title}</Text><View class="rounded-2xl bg-card p-4 gap-3" style={nativeDensity().settings.card}>{props.children}</View></View>;
 }
-export function SettingsInput(props: { title: string; value: string; onChange: (value: string) => void; multiline?: boolean; disabled?: boolean; masked?: boolean; testID?: string }) {
-  return <View class="gap-2"><Text class="text-sm text-foreground">{props.title}</Text><Input testID={props.testID} class={settingsField + (props.multiline ? ' min-h-40' : '')} multiline={props.multiline} value={props.value} onChange={e => props.onChange(e.value)} disabled={props.disabled} masked={props.masked} autoCapitalize="none" autoCorrect={false} accessibilityLabel={props.title} /></View>;
+export function SettingsInput(props: { title: string; value: string; onChange: (value: string) => void; multiline?: boolean; disabled?: boolean; masked?: boolean; testID?: string; inputStyle?: TextStyle }) {
+  return <View class="gap-2" style={nativeDensity().settings.section}><Text class="text-sm text-foreground">{props.title}</Text><Input testID={props.testID} class={settingsField + (props.multiline ? ' min-h-40' : '')} style={{ ...nativeDensity().settings.field, ...(props.multiline ? { minHeight: 160 * nativeDensity().scale } : {}), ...props.inputStyle }} multiline={props.multiline} value={props.value} onChange={e => props.onChange(e.value)} disabled={props.disabled} masked={props.masked} autoCapitalize="none" autoCorrect={false} accessibilityLabel={props.title} /></View>;
 }
 export function SettingsChoice(props: { title: string; value: string; items: SelectItem[]; onChange: (value: string) => void; disabled?: boolean; testID?: string }) {
   const pickerOpen = signal(false);
   publishSettingsPicker(pickerOpen);
   // Select's component host is not the press target; the native select owns behavior on this trigger.
-  return <View class="gap-2"><Text class="text-sm text-foreground">{props.title}</Text><Select value={props.value} items={props.items} disabled={props.disabled} searchable accessibilityLabel={props.title} searchAccessibilityLabel={props.title} searchPlaceholder={props.title} popupClass="bg-card rounded-2xl p-3" listClass="bg-card" itemClass="min-h-12 p-3 rounded-xl text-foreground selected:bg-accent" searchClass={settingsField} onOpenChange={event => pickerOpen.set(event.open)} onClose={() => pickerOpen.set(false)} onChange={e => props.onChange(e.value ?? '')} trigger={<View testID={props.testID} class={settingsField}><Text class="text-foreground">{props.items.find(item => item.value === props.value)?.title || props.value || props.title}</Text></View>} /></View>;
+  return <View class="gap-2" style={nativeDensity().settings.section}><Text class="text-sm text-foreground">{props.title}</Text><Select value={props.value} items={props.items} disabled={props.disabled} searchable accessibilityLabel={props.title} searchAccessibilityLabel={props.title} searchPlaceholder={props.title} popupClass="bg-card rounded-2xl p-3" popupStyle={nativeDensity().settings.popup} listClass="bg-card" itemClass="min-h-12 p-3 rounded-xl text-foreground selected:bg-accent" itemStyle={nativeDensity().settings.field} searchClass={settingsField} onOpenChange={event => pickerOpen.set(event.open)} onClose={() => pickerOpen.set(false)} onChange={e => props.onChange(e.value ?? '')} trigger={<View testID={props.testID} class={settingsField} style={nativeDensity().settings.field}><Text class="text-foreground">{props.items.find(item => item.value === props.value)?.title || props.value || props.title}</Text></View>} /></View>;
 }
 export function SettingsToggle(props: { title: string; value: boolean; onChange: (value: boolean) => void; disabled?: boolean; testID?: string }) {
-  return <Switch testID={props.testID} class="min-h-12 flex-row-reverse items-center gap-3" checked={props.value} disabled={props.disabled} onChange={event => props.onChange(event.checked)} accessibilityLabel={props.title} trackClass="w-11 rounded-full bg-secondary p-0.5 checked:bg-foreground disabled:opacity-40" thumbClass="size-5 rounded-full bg-background checked:translate-x-5"><Text class="flex-1 text-sm text-foreground">{props.title}</Text></Switch>;
+  return <Switch testID={props.testID} class="min-h-12 flex-row-reverse items-center gap-3" style={nativeDensity().settings.toggle} checked={props.value} disabled={props.disabled} onChange={event => props.onChange(event.checked)} accessibilityLabel={props.title} trackClass="w-11 rounded-full bg-secondary p-0.5 checked:bg-foreground disabled:opacity-40" thumbClass="size-5 rounded-full bg-background checked:translate-x-5"><Text class="flex-1 text-sm text-foreground">{props.title}</Text></Switch>;
 }
 export function settingsLifetime() {
   const generation = epoch(), connection = app.connection()?.id;

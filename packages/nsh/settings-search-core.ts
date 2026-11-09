@@ -3,8 +3,33 @@ import { settingsPreferenceFields, settingsPreferenceVisible } from './settings-
 import { settingsBasicSections, settingsBasicTarget } from './settings-basics-core';
 import { retentionSearchItems } from './settings-retention-search';
 
-export type SettingsSearchItem = { page: 'appearance' | 'chat' | 'sessions' | 'summary-ai' | 'notifications' | 'behavior' | 'voice' | 'about' | 'git' | 'global-config' | 'remote-instances' | 'skills.catalog'; id: string; title: I18nKey; keywords: string };
+export type SettingsSearchItem = { page: 'appearance' | 'chat' | 'sessions' | 'summary-ai' | 'notifications' | 'behavior' | 'voice' | 'about' | 'git' | 'global-config' | 'remote-instances' | 'skills.catalog' | 'agents' | 'commands' | 'mcp' | 'skills.installed'; id: string; title: I18nKey; keywords: string };
+const collectionSearchItems: readonly SettingsSearchItem[] = [
+  { page: 'agents', id: 'agents.name', title: 'settings.agents.page.field.agentName', keywords: 'agent name 智能体 名称' },
+  { page: 'agents', id: 'agents.mode', title: 'settings.agents.page.field.mode', keywords: 'primary subagent visibility 模式' },
+  { page: 'agents', id: 'agents.scope', title: 'settings.agents.page.field.scope', keywords: 'scope project user global 范围 项目' },
+  { page: 'agents', id: 'agents.model', title: 'settings.agents.page.field.overrideModel', keywords: 'model provider variant 模型 思考' },
+  { page: 'agents', id: 'agents.system-prompt', title: 'settings.agents.page.section.systemPrompt', keywords: 'prompt instructions 系统 提示词' },
+  { page: 'agents', id: 'agents.permissions', title: 'settings.agents.page.section.toolPermissions', keywords: 'tools permissions allow ask deny 权限 工具' },
+  { page: 'commands', id: 'commands.name', title: 'settings.commands.page.field.commandName', keywords: 'slash command name 命令 名称' },
+  { page: 'commands', id: 'commands.agent', title: 'settings.commands.page.field.overrideAgent', keywords: 'command agent execution 智能体' },
+  { page: 'commands', id: 'commands.model', title: 'settings.agents.page.field.overrideModel', keywords: 'command model provider 模型' },
+  { page: 'commands', id: 'commands.template', title: 'settings.commands.page.section.template', keywords: 'prompt template arguments shell file 命令 模板' },
+  { page: 'mcp', id: 'mcp.server', title: 'settings.mcp.page.server.title', keywords: 'server name transport 服务器' },
+  { page: 'mcp', id: 'mcp.command', title: 'settings.mcp.page.connection.command', keywords: 'stdio local command 本地 命令' },
+  { page: 'mcp', id: 'mcp.environment', title: 'settings.mcp.page.env.title', keywords: 'env variables api key 环境变量' },
+  { page: 'mcp', id: 'mcp.advanced', title: 'settings.mcp.page.advanced.title', keywords: 'oauth headers timeout 认证 请求头 超时' },
+  { page: 'skills.installed', id: 'skills.basic-information', title: 'settings.skills.page.section.basicInformation', keywords: 'skill name description 技能 名称 描述' },
+  { page: 'skills.installed', id: 'skills.instructions', title: 'settings.skills.page.section.instructions', keywords: 'skill instructions prompt 技能 指令' },
+  { page: 'skills.installed', id: 'skills.supporting-files', title: 'settings.skills.page.section.supportingFiles', keywords: 'skill supporting files 技能 文件' },
+];
+/** Stable field search opens a local draft before reveal; no entity or project is guessed. */
+export function prepareCollectionSearchTarget(page: string, target?: string): { create: true; draft: Record<string, unknown> } | null {
+  if (!target || !collectionSearchItems.some(item => item.page === page && item.id === target)) return null;
+  return { create: true, draft: target === 'mcp.advanced' ? { type: 'remote' } : target === 'mcp.command' ? { type: 'local' } : {} };
+}
 export const settingsSearchItems: readonly SettingsSearchItem[] = [
+  ...collectionSearchItems,
   ...retentionSearchItems,
   { page: 'global-config', id: 'global-config.editor', title: 'settings.globalConfig.title', keywords: 'opencode.json opencode.jsonc global configuration 全局 配置' },
   { page: 'remote-instances', id: 'remote-instances.instances', title: 'settings.remoteInstances.direct.title', keywords: 'connect remote ssh host link 远程 连接 实例' },
@@ -23,6 +48,9 @@ export const settingsSearchItems: readonly SettingsSearchItem[] = [
   { page: 'sessions', id: 'sessions.default-model', title: 'settings.yuri.defaults.field.defaultModel', keywords: 'default model 模型 provider' },
   { page: 'sessions', id: 'sessions.default-thinking', title: 'settings.yuri.defaults.field.defaultThinking', keywords: 'thinking reasoning variant 推理 思考' },
   { page: 'sessions', id: 'sessions.default-agent', title: 'settings.yuri.defaults.field.defaultAgent', keywords: 'default agent 默认 智能体' },
+  { page: 'sessions', id: 'sessions.opencode-binary', title: 'settings.yuri.opencodeCli.field.binaryPath', keywords: 'OpenCode CLI binary executable path reload 命令行 路径 重载' },
+  { page: 'sessions', id: 'sessions.opencode-update-notifications', title: 'settings.yuri.opencodeCli.field.showUpdateNotifications', keywords: 'OpenCode CLI update upgrade notifications 升级 更新 通知' },
+  { page: 'sessions', id: 'sessions.passkeys', title: 'settings.yuri.passkeys.title', keywords: 'passkey management WebAuthn authentication security sign out 通行密钥 管理 认证 安全 登出' },
   { page: 'summary-ai', id: 'summary-ai.configuration', title: 'settings.yuri.defaults.summary.providerModel', keywords: 'summary model provider 摘要 模型' },
   { page: 'summary-ai', id: 'summary-ai.test-connection', title: 'settings.yuri.defaults.summary.testConnection', keywords: 'test connection 连接 测试' },
   { page: 'summary-ai', id: 'summary-ai.commit-prompt', title: 'settings.yuri.defaults.summary.commitPrompt', keywords: 'git commit prompt 提交 提示词' },

@@ -1,5 +1,7 @@
 import { cleanup, computed, locale, signal, Scroll, Text, View } from 'nsh';
-import { Button, Input, NavPage } from 'nsh/base';
+import { Button, NavPage } from 'nsh/base';
+import { NativeSheetSearch } from './sheet-search';
+import { createNewSessionCatalog } from './new-session-selection';
 import { language, t } from './i18n';
 import { app, captureHostRequest, epoch } from './state';
 import { assistantPath, query, sessionPath } from './runtime';
@@ -22,10 +24,14 @@ export function ChatModels(props: { target: ChatTarget; onDone: () => void; init
   let retryOperation: (() => Promise<void>) | undefined;
   cleanup(() => { alive = false; attempt++; });
   const current = () => alive && epoch() === generation;
-  const providers = signal<Row[]>([]), agents = signal<Row[]>([]), selection = signal<Row>({}), preferences = signal<Row>({});
+  const catalog = createNewSessionCatalog(props.target.directory, current, request, app.runtimeScope() ? JSON.stringify(app.runtimeScope()) : undefined);
+  cleanup(catalog.dispose);
+  const { providers, agents, preferences, preferencesReady, partial } = catalog;
+  const selection = signal<Row>({});
   const search = signal(''), expanded = signal<string[]>([]), expandedModel = signal('');
-  const loading = signal(false), pending = signal(false), error = signal(''), partial = signal(false);
-  const selectionReady = signal(false), preferencesReady = signal(false);
+  const readingSelection = signal(false), pending = signal(false), error = signal('');
+  const selectionReady = signal(false);
+  const loading = () => catalog.busy() || readingSelection();
   const variantTarget = signal<PickerModel | null>(null), memory = signal<Row>({});
   const variantMemory = openModelVariantMemory(props.target.kind === 'session' && app.runtimeScope() ? { hostID: app.runtimeScope()!.hostID, directory: props.target.directory, sessionID: props.target.id } : null);
   const selectedModel = (): ModelRef => {
@@ -34,45 +40,31 @@ export function ChatModels(props: { target: ChatTarget; onDone: () => void; init
   };
   async function load(preserveError = false) {
     const serial = ++attempt;
-    loading.set(true); if (!preserveError) error.set('');
+    if (!current()) return;
+    readingSelection.set(!selectionReady()); if (!preserveError) error.set('');
+    const applySelection = async () => {
+      const value = props.target.kind === 'session'
+        ? await request(`/api/session/${encodeURIComponent(props.target.id)}?${query(props.target.directory)}`)
+        : await request('/api/yuri/assistants/snapshot');
+      if (!current() || serial !== attempt) return;
+      const result = props.target.kind === 'session' ? record(unwrap(value)) : list(record(value).assistants).find(bot => bot.id === props.target.id);
+      if (!result || result.id !== props.target.id) throw new Error(t('assistants.state.invalidConfiguration'));
+      selection.set(result); selectionReady.set(true); readingSelection.set(false);
+      if (!initialized) { expanded.set(selectedModel().providerID ? [selectedModel().providerID] : []); initialized = true; }
+    };
     const results = await Promise.allSettled([
-      tab === 'model' ? request(`/api/config/catalog/providers?${query(props.target.directory)}`) : Promise.resolve(undefined),
-      request(`/api/agent?location%5Bdirectory%5D=${encodeURIComponent(props.target.directory)}`),
-      props.target.kind === 'session'
-        ? request(`/api/session/${encodeURIComponent(props.target.id)}?${query(props.target.directory)}`)
-        : request('/api/yuri/assistants/snapshot'),
-      tab === 'model' ? request('/api/config/settings') : Promise.resolve(undefined),
-      tab === 'model' ? variantMemory.read() : Promise.resolve(undefined),
+      catalog.load(tab),
+      applySelection(),
+      tab === 'model' ? variantMemory.read().then(value => { if (current() && serial === attempt) memory.set(record(value)); }) : Promise.resolve(),
     ]);
     if (!current() || serial !== attempt) return;
     const failures: string[] = [];
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index];
+    for (const result of results) {
       if (result.status === 'rejected') { failures.push(String(result.reason instanceof Error ? result.reason.message : result.reason)); continue; }
-      const value = result.value;
-      if (value === undefined && (index === 0 || index === 3)) continue;
-      if (index === 0) {
-        const body = record(value);
-        if (body.schemaVersion !== 1 || !Array.isArray(body.providers) || body.ok === false) { failures.push(t('assistants.state.invalidConfiguration')); continue; }
-        providers.set(list(body.providers)); partial.set(body.partial === true);
-      } else if (index === 1) {
-        if (!Array.isArray(unwrap(value))) { failures.push(t('assistants.state.invalidConfiguration')); continue; }
-        agents.set(list(unwrap(value)).filter(agent => agent.hidden !== true && agent.mode !== 'subagent'));
-      } else if (index === 2) {
-        const result = props.target.kind === 'session' ? record(unwrap(value)) : list(record(value).assistants).find(bot => bot.id === props.target.id);
-        if (!result || result.id !== props.target.id) { failures.push(t('assistants.state.invalidConfiguration')); continue; }
-        selection.set(result); selectionReady.set(true);
-      } else if (index === 4) {
-        memory.set(record(value));
-      } else {
-        const settings = pickerPreferences(value);
-        if (!settings) { failures.push(t('assistants.state.invalidConfiguration')); continue; }
-        preferences.set(settings); preferencesReady.set(true);
-      }
     }
-    if (!initialized && selectionReady()) { expanded.set(selectedModel().providerID ? [selectedModel().providerID] : []); initialized = true; }
+    if (catalog.error()) failures.push(catalog.error());
     if (failures.length) error.set([preserveError ? error() : '', ...failures].filter(Boolean).join('\n'));
-    loading.set(false);
+    readingSelection.set(false);
   }
   const entries = computed(() => tab === 'model' && preferencesReady() ? pickerModels(providers(), preferences()) : []);
   const lists = computed(() => pickerLists(entries(), preferences(), selectedModel()));
@@ -92,7 +84,7 @@ export function ChatModels(props: { target: ChatTarget; onDone: () => void; init
     const response = record(await request('/api/config/settings', 'PUT', patch));
     if (!current()) return;
     if (response.ok === false || response.success === false) throw new Error(t('assistants.composer.selectionSaveFailed'));
-    preferences.set({ ...latest, ...patch }); preferencesReady.set(true);
+    catalog.setPreferences({ ...latest, ...patch });
   }
   async function toggleFavorite(entry: PickerModel) {
     if (!current() || pending() || loading() || !preferencesReady() || retryOperation) return;
@@ -170,9 +162,9 @@ export function ChatModels(props: { target: ChatTarget; onDone: () => void; init
     <If when={props.embedded}><NativeModelPickerHandle sheet={props.sheet} /></If>
     <If when={variantTarget()}><NativeModelVariantHeader entry={variantTarget()!} onBack={() => variantTarget.set(null)} onClose={props.onDone} /></If>
     <If when={tab === 'model' || error() || loading()}><View class="px-2 gap-2">
-      <If when={tab === 'model' && !variantTarget()}><View class="bg-card rounded-xl px-2 flex-row items-center gap-1.5"><View style={{ opacity: 0.6 }}><Icon name="search" size={14} /></View><Input testID="model-search" class="flex-1 min-h-9 text-sm text-foreground" value={search()} autoCapitalize="none" autoCorrect={false} onChange={event => { search.set(event.value); expandedModel.set(''); }} placeholder={t('chat.modelControls.searchProvidersOrModels')} accessibilityLabel={t('chat.modelControls.searchProvidersOrModels')} /><If when={search()}><Button testID="model-search-clear" class="items-center justify-center" style={{ width: 24, height: 32 }} hitSlop={4} accessibilityLabel={t('chat.modelControls.clearSearch')} onPress={() => { search.set(''); expandedModel.set(''); }}><Icon name="close-circle" size={16} /></Button></If></View></If>
+      <If when={tab === 'model' && !variantTarget()}><NativeSheetSearch testID="model-search" value={search()} onChange={event => { search.set(event.value); expandedModel.set(''); }} placeholder={t('chat.modelControls.searchProvidersOrModels')} accessibilityLabel={t('chat.modelControls.searchProvidersOrModels')} clearTestID="model-search-clear" onClear={() => { search.set(''); expandedModel.set(''); }} /></If>
       <If when={error()}><Text class="text-sm text-destructive">{error()}</Text><Button testID="model-picker-retry" class={rowClass + ' bg-secondary rounded-xl'} disabled={loading() || pending()} onPress={() => { void retry(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
-      <If when={loading()}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If>
+      <If when={loading() || catalog.refreshing()}><Text class="text-sm text-muted-foreground">{t('common.loading')}</Text></If>
       <If when={partial() && tab === 'model'}><Text class="text-sm text-muted-foreground">{t('chat.modelControls.partialCatalog')}</Text></If>
     </View></If>
     <Scroll class="flex-1" contentClass="px-2 pb-6 gap-2">

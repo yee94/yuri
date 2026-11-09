@@ -25,7 +25,7 @@ import { GUI_WORK_STATUS_REGISTRY, GuiWorkStatusCatalog, createWorkStatusState, 
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
-type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
+type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; system?: { copy(text: string): Promise<void>; openExternal(url: string): void; save(file: { name: string; content: string }): Promise<boolean> }; toasts?: (owner: AbortSignal) => Gui.Toasts; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
 type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
 type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run'> & { key: string; pluginId: string; actionable: boolean };
@@ -349,7 +349,7 @@ export class GuiPluginHost {
             ? { status: 'inactive', reason: 'disabled' } : { status: 'active', generation: 1, value: pages });
         const context = partial<Gui.SetupContext<Gui.Plugin.Definition>>('ctx', {
             id: instance.id, options, signal: instance.controller.signal, client: this.options.client, storage, stores,
-            toast: createGuiToasts(instance.controller.signal, this.options.toast),
+            toast: this.options.toasts?.(instance.controller.signal) ?? createGuiToasts(instance.controller.signal, this.options.toast),
             app: { name: 'yuri', version: instance.native?.activation.app.version ?? '', channel: instance.native?.activation.app.packaged ? 'prod' : 'local', platform: instance.native ? 'desktop' : 'web', packaged: instance.native?.activation.app.packaged ?? false },
             desktop: instance.native ? partial<Gui.Desktop>('desktop', { os: instance.native.activation.os }) : undefined,
             t, plural: (key, count, params) => {
@@ -427,7 +427,7 @@ export class GuiPluginHost {
             screen: { current: () => this.session[0]() ? this.#screen : undefined }, layout,
             appearance: { mode: () => this.appearance[0]().mode, font: () => getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace' },
             locale: { locale: () => this.appearance[0]().locale, direction: () => /^(ar|fa|he|ur)(-|$)/i.test(this.appearance[0]().locale) ? 'rtl' : 'ltr' },
-            system: {
+            system: this.options.system ?? {
                 copy: (text) => navigator.clipboard.writeText(text),
                 openExternal: (url) => { const parsed = new URL(url); if (!['https:', 'http:', 'mailto:'].includes(parsed.protocol)) unsupported('system.openExternal protocol'); window.open(url, '_blank', 'noopener,noreferrer'); },
                 save: saveGuiFile,

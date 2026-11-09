@@ -1,20 +1,22 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const h = vi.hoisted(() => ({ call: vi.fn(), storage: new Map<string, string>(), cleanups: [] as Array<() => void>, disposers: [] as Array<() => void>, listeners: new Map<string, Set<(value: unknown) => void>>() }));
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
+const h = vi.hoisted(() => ({ call: vi.fn(), storage: new Map<string, string>(), storageWrite: null as null | ((key: string, value: string) => Promise<void>), cleanups: [] as Array<() => void>, disposers: [] as Array<() => void>, listeners: new Map<string, Set<(value: unknown) => void>>() }));
 vi.mock('nsh', () => ({
   signal: <T>(value: T) => Object.assign(() => value, { set: (next: T) => { value = next; }, update: (work: (old: T) => T) => { value = work(value); } }),
   batch: (work: () => void) => work(), untracked: <T>(work: () => T) => work(), lifecycle: () => 'active',
   cleanup: (work: () => void) => h.cleanups.push(work), effect: (work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') h.disposers.push(dispose as () => void); },
-  Storage: { getItem: async (key: string) => h.storage.get(key) ?? null, setItem: async (key: string, value: string) => { h.storage.set(key, value); } },
+  Storage: { getItem: async (key: string) => h.storage.get(key) ?? null, setItem: async (key: string, value: string) => { if (h.storageWrite) return h.storageWrite(key, value); h.storage.set(key, value); } },
   host: { available: () => true, call: h.call, on: (name: string, listener: (value: unknown) => void) => { const entries = h.listeners.get(name) ?? new Set(); entries.add(listener); h.listeners.set(name, entries); return () => { entries.delete(listener); }; } },
 }));
 const target = { kind: 'session' as const, id: 's', title: 'Fixture history', directory: '/repo' };
 let staged: { messageID: string } | null, rows: Array<Record<string, unknown>>, handle: (path: string, method: string, body: unknown) => unknown;
 const flush = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
 const requests = () => h.call.mock.calls.filter(([name]) => name === 'runtime.request').map(([, body]) => body as { path: string; method: string; body?: Record<string, unknown> });
-const emit = (type: string, data: Record<string, unknown>) => { for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type, data }) }); };
+const emit = (type: string, data: Record<string, unknown>) => { for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type, data }) }); };
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
-  vi.resetModules(); vi.useFakeTimers(); h.storage.clear(); h.cleanups = []; h.disposers = []; h.listeners.clear();
+  resetIssuedStreams(h.call);
+  vi.resetModules(); vi.useFakeTimers(); h.storage.clear(); h.storageWrite = null; h.cleanups = []; h.disposers = []; h.listeners.clear();
   staged = { messageID: 'a-boundary' };
   rows = [{ id: 'z-before', type: 'user', text: 'Before' }, { id: 'a-boundary', type: 'user', text: 'Boundary' }, { id: 'm-tail', type: 'assistant', text: 'Tail' }];
   handle = (path, method, body) => {
@@ -26,12 +28,178 @@ beforeEach(() => {
     if (path.includes('/prompt?')) { const value = body as Record<string, unknown>; return { id: value.id, sessionID: 's', type: 'user', payload: { text: value.text } }; }
     return null;
   };
-  h.call.mockReset().mockImplementation(async (name, input) => name === 'connection.list'
+  h.call.mockReset().mockImplementation(async (name, input) => { if (name === 'runtime.stream') captureIssuedStream(h.call, input); return name === 'connection.list'
     ? { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', url: 'https://host.example', label: 'Fixture' }] }
-    : name === 'runtime.request' ? { status: 200, body: await handle(input.path, input.method, input.body) } : true);
+    : name === 'runtime.request' ? { status: 200, body: await handle(input.path, input.method, input.body) } : true; });
 });
 afterEach(() => { h.disposers.forEach(work => work()); h.cleanups.forEach(work => work()); vi.useRealTimers(); });
 async function chat() { const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await chat.draftReady; await flush(); await chat.load(); return { state, chat }; }
+
+it('compact releases composer sending immediately and orders follow-up queue admission behind its POST ACK', async () => {
+  staged = null; const { chat: c } = await chat(), original = handle, gate = deferred<unknown>();
+  handle = (path, method, body) => path.includes('/compact?') ? gate.promise : original(path, method, body);
+  const compact = c.compact();
+  expect(c.sending()).toBe(false); expect(c.compactionBarrier()).toBe(true);
+  c.draft.set('Follow up'); const followup = c.send(); await flush();
+  expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+  expect(requests().some(input => input.path.includes('/prompt?'))).toBe(false);
+  gate.resolve({ id: 'compact-one', sessionID: 's', type: 'compaction' });
+  expect(await compact).toBe(true); expect(await followup).toBe(true);
+  expect(requests().find(input => input.path.includes('/prompt?'))?.body?.delivery).toBe('queue');
+  expect(c.sending()).toBe(false); expect(c.compactReceipt()?.status).toBe('acknowledged');
+  expect(requests().some(input => input.path.includes('/command?'))).toBe(false);
+});
+it('compaction follows explicit steer preference and does not send the slash text as a prompt', async () => {
+  staged = null; const { state } = await chat(), original = handle;
+  handle = (path, method, body) => path.includes('/compact?') ? { id: 'compact-two', sessionID: 's', type: 'compaction' } : original(path, method, body);
+  const c = state.createChat(target, { followUpBehavior: () => 'steer' }); await c.draftReady; await flush(); await c.load();
+  expect(await c.compact()).toBe(true); c.draft.set('Immediate follow up'); expect(await c.send()).toBe(true);
+  expect(requests().find(input => input.path.includes('/prompt?'))?.body?.delivery).toBe('steer');
+  expect(c.inbox().some(item => item.type === 'compaction')).toBe(false);
+});
+it('unknown compact ACK never replays and failed history preflight preserves the reverted tail', async () => {
+  const { chat: c } = await chat(), original = handle;
+  expect(await c.compact()).toBe(false); expect(c.revert()).toEqual(staged); expect(requests().some(input => input.path.includes('/compact?'))).toBe(false);
+  staged = null;
+  handle = (path, method, body) => { if (path.includes('/compact?')) throw new Error('Lost compact ACK'); return original(path, method, body); };
+  expect(await c.compact()).toBe(false); expect(c.compactReceipt()?.status).toBe('unknown'); expect(c.sending()).toBe(false);
+  expect(await c.compact()).toBe(false); expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+});
+it.each(['lost-ack', 'journal-unknown'])('ordinary input recovers from %s using authoritative idle/inbox without replaying compact', async failure => {
+  staged = null; const { state, chat: c } = await chat(), original = handle;
+  handle = (path, method, body) => {
+    if (path.includes('/compact?')) throw new Error('Lost ACK');
+    if (path.includes('/delivery?')) return { data: [], compactionRunning: false };
+    return original(path, method, body);
+  };
+  if (failure === 'journal-unknown') h.storageWrite = async (key, value) => {
+    h.storage.set(key, value);
+    if (key.startsWith('nsh:compact:')) throw new Error('Atomic write result unknown');
+  };
+  expect(await c.compact()).toBe(false); expect(c.compactReceipt()?.status).toBe('unknown');
+  const posts = requests().filter(input => input.path.includes('/compact?')).length;
+  expect(posts).toBe(failure === 'lost-ack' ? 1 : 0);
+  h.storageWrite = null;
+  emit('session.compaction.ended', { sessionID: 's', inputID: 'unidentified-old-turn' });
+  c.draft.set('Safe new ordinary input'); expect(await c.send()).toBe(true);
+  expect(c.sending()).toBe(false); expect(c.compactReceipt()?.status).toBe('unknown'); expect(c.compactionBarrier()).toBe(false);
+  expect(await c.compact()).toBe(false);
+  const resumed = state.createChat(target); await resumed.draftReady; await flush(); await resumed.load();
+  expect(resumed.compactReceipt()?.status).toBe('unknown');
+  resumed.draft.set('Safe after remount'); expect(await resumed.send()).toBe(true);
+  expect(await resumed.compact()).toBe(false);
+  expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(posts);
+  expect(requests().filter(input => input.path.includes('/prompt?'))).toHaveLength(2);
+});
+it.each(['before', 'after'])('A terminal %s queued B ACK cannot clear B receipt or queue barrier in actual state', async order => {
+  staged = null; const { chat: c } = await chat(), original = handle, ack = deferred<unknown>();
+  const B = { id: 'compact-B', sessionID: 's', type: 'compaction', delivery: 'queue' };
+  let completedB = false;
+  handle = (path, method, body) => {
+    if (path.includes('/compact?')) return ack.promise;
+    if (path.includes('/delivery?')) return { data: completedB ? [] : [B], compactionRunning: !completedB };
+    if (path.includes('/inbox?')) return completedB ? [] : [B];
+    return original(path, method, body);
+  };
+  c.busy.set(true); emit('session.compaction.started', { sessionID: 's', inputID: 'compact-A' });
+  const work = c.compact(); await flush();
+  if (order === 'before') emit('session.compaction.ended', { sessionID: 's', inputID: 'compact-A' });
+  ack.resolve(B); expect(await work).toBe(true);
+  if (order === 'after') emit('session.compaction.ended', { sessionID: 's', inputID: 'compact-A' });
+  await c.load(false, ['inbox']);
+  expect(c.compactReceipt()).toEqual({ status: 'acknowledged', inboxID: 'compact-B' }); expect(c.compactionBarrier()).toBe(true);
+  c.busy.set(false); c.draft.set('Behind B'); expect(await c.send()).toBe(true);
+  expect(requests().find(input => input.path.includes('/prompt?'))?.body?.delivery).toBe('queue');
+  expect(c.compactReceipt()?.inboxID).toBe('compact-B');
+  completedB = true; emit('session.compaction.ended', { sessionID: 's', inputID: 'compact-B' });
+  expect(c.compactReceipt()?.inboxID).toBe('compact-B');
+  await c.load(false, ['inbox']); expect(c.compactReceipt()).toBeNull(); expect(c.compactionBarrier()).toBe(false);
+  expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+});
+it('production action journals use the complete captured Host URL/auth/session/directory tuple', async () => {
+  staged = null; const { state, chat: c } = await chat();
+  const base = state.app.connection()!;
+  const original = handle;
+  handle = (path, method, body) => path.includes('/compact?') ? { id: 'scope-proof', sessionID: 's', type: 'compaction' } : original(path, method, body);
+  expect(await c.compact()).toBe(true);
+  expect(h.storage.get(`nsh:compact:v1:${c.historyActionStorageKey}`)).toBe(JSON.stringify({ status: 'acknowledged', inboxID: 'scope-proof' }));
+  const scope = (host: typeof base, change = target) => { state.app.connection.set(host); return state.createChat(change).historyActionStorageKey; };
+  expect(JSON.parse(decodeURIComponent(c.historyActionStorageKey!))).toEqual(['fixture', 'https://host.example', null, 'session', '/repo', 's']);
+  const keys = [c.historyActionStorageKey, scope({ ...base, id: 'other-host' }), scope({ ...base, url: 'https://other.example' }), scope({ ...base, authorizationID: 'other-auth' }),
+    scope(base, { ...target, id: 'other-session' }), scope(base, { ...target, directory: '/other-directory' })];
+  expect(new Set(keys).size).toBe(keys.length);
+  state.app.connection.set(base);
+});
+it('failed compact receipt clearing keeps the old intent non-replayable while new ordinary inputs remain recoverable', async () => {
+  staged = null; const { chat: c } = await chat(), original = handle;
+  handle = (path, method, body) => {
+    if (path.includes('/compact?')) return { id: 'clear-failure', sessionID: 's', type: 'compaction' };
+    if (path.includes('/delivery?')) return { data: [], compactionRunning: false };
+    return original(path, method, body);
+  };
+  expect(await c.compact()).toBe(true);
+  h.storageWrite = async (key, value) => {
+    if (key.startsWith('nsh:compact:') && value === 'null') throw new Error('Clear storage result unknown');
+    h.storage.set(key, value);
+  };
+  await c.load(false, ['inbox']);
+  expect(c.compactReceipt()?.status).toBe('unknown'); expect(c.compactionBarrier()).toBe(false);
+  c.draft.set('Not sealed by old receipt'); expect(await c.send()).toBe(true);
+  expect(await c.compact()).toBe(false); expect(requests().filter(input => input.path.includes('/compact?'))).toHaveLength(1);
+});
+it('slash undo crosses multiple full native pages through production loadOlder before selecting a user', async () => {
+  const original = handle;
+  const middle = Array.from({ length: 20 }, (_, i) => ({ id: `middle-${i}`, type: 'assistant', text: 'Context' }));
+  const tail = [{ id: 'a-boundary', type: 'user', text: 'Boundary' }, ...Array.from({ length: 19 }, (_, i) => ({ id: `tail-${i}`, type: 'assistant', text: 'Tail' }))];
+  handle = (path, method, body) => {
+    if (path.includes('/message?')) {
+      if (path.includes('cursor=opaque-two')) return { data: [{ id: 'z-authoritative-before', type: 'user', text: 'Before' }], cursor: { next: null } };
+      if (path.includes('cursor=opaque-one')) return { data: [...middle].reverse(), cursor: { next: 'opaque-two' } };
+      return { data: [...tail].reverse(), cursor: { next: 'opaque-one' } };
+    }
+    if (path.includes('/revert/stage?')) return { messageID: (body as { messageID: string }).messageID };
+    return original(path, method, body);
+  };
+  const { state, chat: c } = await chat();
+  const { createTranscriptActions } = await import('./transcript-actions-core');
+  let receipt: import('./transcript-actions-core').NativeSessionHistoryReceipt | null = null;
+  const actions = createTranscriptActions({ target, send: state.captureHostRequest(), scope: { key: 'production-full-pages', current: () => true, busy: c.busy, message: () => undefined },
+    onRevert: value => c.revert.set(value), sessionHistory: { refresh: () => c.prepareHistoryAction(() => true), snapshot: c.historyActionSnapshot, loadOlder: c.loadOlder,
+      receipt: () => receipt, setReceipt: value => { receipt = value; } } });
+  await actions.undoTurn();
+  expect(c.revert()?.messageID).toBe('z-authoritative-before');
+  expect(requests().filter(input => input.path.includes('/message?') && input.path.includes('cursor='))).toHaveLength(2);
+  expect(requests().find(input => input.path.includes('/revert/stage?'))?.body?.messageID).toBe('z-authoritative-before');
+});
+it('a second slash undo retries its failed older boundary through the actual adapter without a scroll gesture', async () => {
+  const original = handle;
+  const tail = [{ id: 'a-boundary', type: 'user', text: 'Boundary' }, ...Array.from({ length: 19 }, (_, i) => ({ id: `tail-${i}`, type: 'assistant', text: 'Tail' }))];
+  const middle = Array.from({ length: 20 }, (_, i) => ({ id: `middle-${i}`, type: 'assistant', text: 'Context' }));
+  let failed = false;
+  handle = (path, method, body) => {
+    if (path.includes('/message?')) {
+      if (path.includes('cursor=opaque-two')) {
+        if (!failed) { failed = true; throw new Error('Recoverable second page failure'); }
+        return { data: [{ id: 'previous-authoritative-user', type: 'user', text: 'Previous' }], cursor: { next: null } };
+      }
+      if (path.includes('cursor=opaque-one')) return { data: [...middle].reverse(), cursor: { next: 'opaque-two' } };
+      return { data: [...tail].reverse(), cursor: { next: 'opaque-one' } };
+    }
+    if (path.includes('/revert/stage?')) return { messageID: (body as { messageID: string }).messageID };
+    return original(path, method, body);
+  };
+  const { state, chat: c } = await chat(), { createTranscriptActions } = await import('./transcript-actions-core');
+  let receipt: import('./transcript-actions-core').NativeSessionHistoryReceipt | null = null;
+  const action = createTranscriptActions({ target, send: state.captureHostRequest(), scope: { key: 'retry-native-boundary', current: () => true, busy: c.busy, message: () => undefined },
+    onRevert: value => c.revert.set(value), sessionHistory: { refresh: () => c.prepareHistoryAction(() => true), snapshot: c.historyActionSnapshot, loadOlder: c.loadOlder,
+      receipt: () => receipt, setReceipt: value => { receipt = value; } } });
+  await expect(action.undoTurn()).rejects.toThrow('authority');
+  expect(c.historyError()).toContain('second page'); expect(requests().some(input => input.path.includes('/revert/stage?'))).toBe(false);
+  await action.undoTurn(); expect(c.revert()?.messageID).toBe('previous-authoritative-user');
+  expect(c.historyError()).toBe(''); expect(requests().filter(input => input.path.includes('cursor=opaque-one'))).toHaveLength(1);
+  expect(requests().filter(input => input.path.includes('cursor=opaque-two'))).toHaveLength(2);
+  expect(requests().filter(input => input.path.includes('/revert/stage?'))).toHaveLength(1);
+});
 
 it('loads authoritative revert and hides the inclusive tail by sequence, not ID order', async () => {
   const { chat: c } = await chat();

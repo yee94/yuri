@@ -1,5 +1,6 @@
-import { Scroll, signal, Text, View, type ScrollRef } from 'nsh';
+import { effect, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
 import { AlertDialog, Button } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { text, type Row } from './model';
@@ -7,10 +8,12 @@ import type { SettingsCallbacks, SettingsRoute } from './settings';
 import { SettingsChoice, SettingsFeedback, SettingsGroup, SettingsInput, SettingsToggle, settingsAction, settingsPageLifetime, type SettingsOperation } from './settings-controls';
 import { settingsObject, settingsRows } from './settings-protocol';
 import { SettingsGitHub } from './settings-github';
-import { SettingsGitCredentials } from './settings-git-credentials';
+import { SettingsGitCredentials, credentialColors, credentialIcons } from './settings-git-credentials';
 import { createSettingsTargetNavigation } from './settings-search-core';
 import { DesktopSettingsPublisher, publishSettingsEditor } from './desktop-settings-publisher';
 import type { DesktopSettingsGitHubSlot } from './desktop-header-github-root';
+
+const gitProfilesRevision = signal({ key: '', serial: 0 });
 
 const gitFields: { key: string; title: I18nKey }[] = [
   { key: 'name', title: 'settings.gitIdentities.editor.field.profileName' },
@@ -21,7 +24,17 @@ const gitFields: { key: string; title: I18nKey }[] = [
   { key: 'signingKey', title: 'settings.gitIdentities.editor.field.signingKey' },
 ];
 export function SettingsGit(props: SettingsCallbacks & SettingsRoute & { active?: boolean; desktopGitHub?: DesktopSettingsGitHubSlot }) {
-  const state = settingsPageLifetime(), profiles = signal<Row[]>([]), global = signal<Row>({}), draft = signal<Row>({ name: '', userName: '', userEmail: '', authType: 'ssh', signCommits: false });
+  const state = settingsPageLifetime(), profiles = signal<Row[]>([]), global = signal<Row>({}), draft = signal<Row>({ id: props.entity || `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, name: '', userName: '', userEmail: '', authType: 'ssh', signCommits: false, color: 'keyword', icon: 'branch' });
+  const pending = signal<{ method: string; body?: Row; id: string } | null>(null);
+  const completed = signal(false);
+  let readVersion = 0;
+  const changed = () => gitProfilesRevision.set({ key: state.identityKey, serial: gitProfilesRevision().serial + 1 });
+  function adopted() { completed.set(true); pending.set(null); changed(); props.onBack(); }
+  function reconcile(rows: Row[]) {
+    const expected = pending(); if (!expected) return;
+    if (expected.method === 'DELETE' ? !rows.some(row => row.id === expected.id) : rows.some(row => row.id === expected.id && Object.entries(expected.body || {}).every(([key, value]) => row[key] === value))) adopted();
+    else throw new Error(t('settings.github.native.unknown'));
+  }
 
   let scroll!: ScrollRef;
   const navigation = createSettingsTargetNavigation(() => scroll, state.current, () => state.operation()?.current ?? (() => false));
@@ -37,39 +50,61 @@ export function SettingsGit(props: SettingsCallbacks & SettingsRoute & { active?
     return <SettingsGitHub active={props.active === true} target={props.target} onReveal={node => { void navigation.reveal(node); }} />;
   }
   const initialDraft = signal(draft()), initialPreferences = signal<Row>({});
-  publishSettingsEditor({ current: state.current, scope: state.operation, pending: state.busy,
-    dirty: () => JSON.stringify(editing ? draft() : preferences()) !== JSON.stringify(editing ? initialDraft() : initialPreferences()),
-    stamp: () => [draft(), preferences()],
+  publishSettingsEditor({ current: state.current, scope: state.operation, pending: () => state.busy() || !!pending(),
+    dirty: () => !completed() && JSON.stringify(editing ? draft() : preferences()) !== JSON.stringify(editing ? initialDraft() : initialPreferences()),
+    stamp: () => [draft(), preferences(), pending(), completed()],
   });
-  const update = (key: string, value: unknown) => draft.set({ ...draft(), [key]: value });
+  const update = (key: string, value: unknown) => { if (!state.current() || state.busy() || pending() || completed()) return; draft.set({ ...draft(), [key]: value }); };
   async function load(operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
     await state.perform(async (operation) => {
+      const ticket = ++readVersion;
       const values = await Promise.all([operation.request('/api/git/identities'), operation.request('/api/git/global-identity'), operation.request('/api/config/settings')]);
-      if (!operation.current()) return;
+      if (!operation.current() || ticket !== readVersion) return;
       const rows = settingsRows(values[0]), settings = settingsObject(values[2]);
       profiles.set(rows); if (values[1]) global.set(settingsObject(values[1]));
       defaultID.set(text(settings.defaultGitIdentityId));
       if (!state.ready()) { const value = { gitmojiEnabled: settings.gitmojiEnabled === true, filesViewShowGitignored: settings.filesViewShowGitignored === true, gitChangesViewMode: settings.gitChangesViewMode || 'flat' }; preferences.set(value); initialPreferences.set(value); }
       if (props.entity && !state.ready()) { const item = rows.find(row => row.id === props.entity); if (!item) throw new Error(t('common.unavailable')); draft.set(item); initialDraft.set(item); }
       state.ready.set(true);
+      reconcile(rows);
     }, operation);
   }
   void load();
   state.observeOperation(operation => { if (operation) void load(operation); });
+  let seenRevision = gitProfilesRevision().serial;
+  let refreshNeeded = false, previouslyActive = props.active === true;
+  effect(() => {
+    const revision = gitProfilesRevision(), active = props.active === true, busy = state.busy(), current = state.current();
+    const changedRevision = revision.serial !== seenRevision && revision.key === state.identityKey;
+    if (changedRevision || active && !previouslyActive) refreshNeeded = true;
+    previouslyActive = active;
+    if (!editing && refreshNeeded && !busy && current) { seenRevision = revision.serial; refreshNeeded = false; untracked(() => { void load(); }); }
+  });
   async function save(operation: SettingsOperation | null = state.operation()) {
     if (!operation?.current()) return;
-    let saved = false;
     await state.perform(async (operation) => {
+      if (completed()) { props.onBack(); return; }
+      if (pending()) {
+        const rows = settingsRows(await operation.request('/api/git/identities'));
+        if (operation.current()) reconcile(rows);
+        return;
+      }
       const value = draft();
       if (!text(value.userName).trim() || !text(value.userEmail).trim()) throw new Error(t('settings.gitIdentities.editor.toast.userNameEmailRequired'));
       if (value.authType === 'token' && !text(value.host).trim()) throw new Error(t('settings.gitIdentities.editor.toast.hostRequiredForToken'));
       if (value.signCommits && !text(value.signingKey).trim()) throw new Error(t('settings.gitIdentities.editor.toast.signingKeyRequired'));
-      const body = Object.fromEntries([...gitFields.map(field => field.key), 'authType', 'signCommits'].filter(key => key in value).map(key => [key, value[key]]));
-      await operation.transaction(`/api/git/identities${props.create ? '' : '/' + encodeURIComponent(props.entity || '')}`, props.create ? 'POST' : 'PUT', body);
-      if (operation.current()) { initialDraft.set(value); saved = true; }
+      const body: Row = { id: value.id, name: text(value.name).trim() || text(value.userName).trim(), userName: text(value.userName).trim(), userEmail: text(value.userEmail).trim(), authType: value.authType || 'ssh', signCommits: value.signCommits === true,
+        host: value.authType === 'token' ? text(value.host).trim() || null : null, sshKey: value.authType === 'token' ? null : text(value.sshKey).trim() || null, signingKey: text(value.signingKey).trim() || null, color: value.color || 'keyword', icon: value.icon || 'branch' };
+      const submission = { id: text(body.id), method: props.create ? 'POST' : 'PUT', body };
+      pending.set(submission);
+      ++readVersion;
+      const result = await operation.transaction(`/api/git/identities${props.create ? '' : '/' + encodeURIComponent(props.entity || '')}`, submission.method, body);
+      if (!operation.current()) return;
+      if (!Object.entries(body).every(([key, value]) => result[key] === value)) throw new Error(t('settings.github.native.unknown'));
+      initialDraft.set(value);
+      adopted();
     }, operation);
-    if (saved && operation.current()) props.onBack();
   }
   async function savePreferences() {
     await state.perform(async operation => {
@@ -78,17 +113,7 @@ export function SettingsGit(props: SettingsCallbacks & SettingsRoute & { active?
       if (operation.current()) { initialPreferences.set(value); state.notice.set(t('settings.behavior.page.toast.saved')); }
     });
   }
-  async function remove() {
-    let removed = false;
-    await state.perform(async operation => {
-      const answer = await AlertDialog.show({ title: t('settings.common.actions.delete'), actions: [{ id: 'cancel', label: t('settings.common.actions.cancel'), role: 'cancel' }, { id: 'delete', label: t('settings.common.actions.delete'), role: 'destructive' }] });
-      if (answer.action !== 'delete' || !operation.current()) return;
-      await operation.transaction(`/api/git/identities/${encodeURIComponent(props.entity || '')}`, 'DELETE');
-      if (operation.current()) { initialDraft.set(draft()); removed = true; }
-    });
-    if (removed && state.current()) props.onBack();
-  }
-  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <SettingsFeedback state={state} retry={!state.ready() ? () => { void load(); } : undefined} />
     <If when={!editing}><GitHubFragment /></If>
     <If when={state.ready() && !editing}>
@@ -108,12 +133,14 @@ export function SettingsGit(props: SettingsCallbacks & SettingsRoute & { active?
     </If>
     <If when={state.ready() && editing}>
       <SettingsGroup title={t('settings.gitIdentities.editor.title.editIdentity')}>
-        <Each of={gitFields}>{field => <SettingsInput testID={`settings-git-${field().key}`} title={t(field().title)} value={text(draft()[field().key])} disabled={state.busy()} onChange={next => update(field().key, next)} />}</Each>
-        <SettingsChoice title={t('settings.gitIdentities.editor.field.authMethod')} value={text(draft().authType) || 'ssh'} disabled={state.busy()} items={[{ value: 'ssh', title: 'SSH' }, { value: 'token', title: t('settings.gitIdentities.editor.field.authToken') }]} onChange={next => update('authType', next)} />
-        <SettingsToggle title={t('settings.gitIdentities.editor.field.signCommits')} value={draft().signCommits === true} disabled={state.busy()} onChange={next => update('signCommits', next)} />
+        <Each of={gitFields.filter(field => field.key !== 'host' && field.key !== 'sshKey' || field.key === 'host' && draft().authType === 'token' || field.key === 'sshKey' && draft().authType !== 'token')}>{field => <SettingsInput testID={`settings-git-${field().key}`} title={t(field().title)} value={text(draft()[field().key])} disabled={state.busy() || !!pending() || completed()} onChange={next => update(field().key, next)} />}</Each>
+        <SettingsChoice testID="settings-git-color" title={t('settings.gitIdentities.editor.field.color')} value={text(draft().color) || 'keyword'} disabled={state.busy() || !!pending() || completed()} items={credentialColors.map(value => ({ value, title: t(`settings.github.native.color.${value}`) }))} onChange={next => update('color', next)} />
+        <SettingsChoice testID="settings-git-icon" title={t('settings.gitIdentities.editor.field.icon')} value={text(draft().icon) || 'branch'} disabled={state.busy() || !!pending() || completed()} items={credentialIcons.map(value => ({ value, title: t(`settings.github.native.icon.${value}`) }))} onChange={next => update('icon', next)} />
+        <SettingsChoice testID="settings-git-auth" title={t('settings.gitIdentities.editor.field.authMethod')} value={text(draft().authType) || 'ssh'} disabled={state.busy() || !!pending() || completed()} items={[{ value: 'ssh', title: 'SSH' }, { value: 'token', title: t('settings.gitIdentities.editor.field.authToken') }]} onChange={next => update('authType', next)} />
+        <SettingsToggle title={t('settings.gitIdentities.editor.field.signCommits')} value={draft().signCommits === true} disabled={state.busy() || !!pending() || completed()} onChange={next => update('signCommits', next)} />
       </SettingsGroup>
-      <Button class={settingsAction} disabled={state.busy()} onPress={() => { void save(); }}><Text class="text-foreground">{t('settings.gitIdentities.editor.actions.save')}</Text></Button>
-      <If when={!props.create}><Button class={settingsAction} disabled={state.busy()} onPress={() => { void remove(); }}><Text class="text-destructive">{t('settings.common.actions.delete')}</Text></Button></If>
+      <Button testID="settings-git-save" class={settingsAction} disabled={state.busy()} onPress={() => { void save(); }}><Text class="text-foreground">{t(completed() ? 'gitView.common.done' : pending() ? 'settings.voice.volcengine.retry' : 'settings.gitIdentities.editor.actions.save')}</Text></Button>
+      <If when={!props.create}><Button testID="settings-git-delete" class={settingsAction} disabled={state.busy() || !!pending() || completed()} onPress={() => { void state.perform(async (operation) => { if (pending() || completed()) return; const answer = await AlertDialog.show({ title: t('settings.common.actions.delete'), actions: [{ id: 'cancel', label: t('settings.common.actions.cancel'), role: 'cancel' }, { id: 'delete', label: t('settings.common.actions.delete'), role: 'destructive' }] }); if (answer.action !== 'delete' || !operation.current()) return; pending.set({ id: props.entity || '', method: 'DELETE' }); ++readVersion; await operation.transaction(`/api/git/identities/${encodeURIComponent(props.entity || '')}`, 'DELETE'); if (!operation.current()) return; initialDraft.set(draft()); adopted(); }); }}><Text class="text-destructive">{t('settings.common.actions.delete')}</Text></Button></If>
     </If>
   </Scroll>;
 }

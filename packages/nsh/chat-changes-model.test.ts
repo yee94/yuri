@@ -1,8 +1,17 @@
 import { describe, expect, test } from 'vitest';
 import { changeGroups, changesSnapshot, createChangesReader, nativeChangeLocation, nativeSourceHunks, patchLines } from './chat-changes-model';
 import { buildChangesTree, flattenChangesTree } from './chat-changes-tree.js';
+import { nativeToolDetails } from './transcript-tools-model';
 
 describe('native Changes authority', () => {
+  test('workspace reads the same full side texts as MobileDiffDetail so collapsed context and source targets remain available', async () => {
+    const calls: string[] = [];
+    const reader = createChangesReader({ kind: 'workspace', directory: '/fixture' }, async path => { calls.push(path); return { original: 'one\nold\nthree', modified: 'one\nnew\nthree', isBinary: false }; });
+    await reader.select('a.ts', true);
+    expect(calls).toEqual(['/api/git/file-diff?directory=%2Ffixture&path=a.ts&staged=true']);
+    expect(reader.state().diff).toEqual({ path: 'a.ts', before: 'one\nold\nthree', after: 'one\nnew\nthree', isBinary: false });
+    expect(reader.state().diffError).toBe('');
+  });
   test('native hunk navigation converts one-based source lines and supports insertion/deletion and nearest changes', () => {
     const hunks = [{ index: 0, oldStart: 4, oldLines: 0, newStart: 4, newLines: 2 }, { index: 1, oldStart: 19, oldLines: 2, newStart: 21, newLines: 0 }];
     expect(nativeChangeLocation([])).toBeUndefined();
@@ -23,6 +32,47 @@ describe('native Changes authority', () => {
     expect(reader.state().diff).toEqual({ path: 'empty', before: '', after: '' });
     expect(reader.state().diffError).toBe('');
   });
+  test.each([
+    { path: 'thin.ts', patch: '' },
+    { path: 'thin.ts', patch: '   ' },
+    { path: 'thin.ts', patch: 'not a unified patch' },
+    { path: 'thin.ts', patch: '@@ -1,2 +1,2 @@\n-old\n+new' },
+    { path: 'thin.ts', before: 'only before' },
+    { path: 'thin.ts', after: 'only after' },
+  ])('incomplete historical snapshot %j hydrates only its exact turn/file', async file => {
+    const calls: string[] = [];
+    const reader = createChangesReader({ kind: 'turn', directory: '/worktrees/non-default', sessionID: 'original-session', messageID: 'original-message', files: [file] }, async path => {
+      calls.push(path); return { diff: { file: 'thin.ts', before: 'original before', after: 'original after' } };
+    });
+    await reader.select('thin.ts');
+    expect(calls).toEqual(['/api/yuri/sessions/original-session/changes?directory=%2Fworktrees%2Fnon-default&messageID=original-message&file=thin.ts']);
+    expect(reader.state().diff).toMatchObject({ before: 'original before', after: 'original after' });
+  });
+  test('hydrated one-sided or empty-patch history remains unavailable, but an explicit empty pair is authoritative', async () => {
+    let response: object = { file: 'thin.ts', patch: '' };
+    const calls: string[] = [];
+    const reader = createChangesReader({ kind: 'turn', directory: '/fixture', sessionID: 's', messageID: 'm', files: [{ path: 'thin.ts', patch: '' }] }, async path => { calls.push(path); return { diff: response }; });
+    await reader.select('thin.ts'); expect(reader.state().diff).toBeNull(); expect(reader.state().diffError).not.toBe('');
+    response = { file: 'thin.ts', before: 'one side' }; await reader.retryDiff(); expect(reader.state().diff).toBeNull();
+    response = { file: 'thin.ts', patch: 'invalid non-empty patch', before: '', after: '' }; await reader.retryDiff();
+    expect(reader.state().diff).toEqual({ path: 'thin.ts', before: '', after: '' }); expect(reader.state().diffError).toBe('');
+    expect(calls).toHaveLength(3); expect(calls.every(path => path.startsWith('/api/yuri/sessions/s/changes?'))).toBe(true);
+  });
+  test.each([
+    { name: 'apply_patch', state: { metadata: { files: [{ relativePath: 'tool.ts' }] } } },
+    { name: 'write', state: { input: { path: 'tool.ts', content: 'only new side' } } },
+  ])('production tool snapshot %j cannot bypass exact historical hydration with its empty patch', async tool => {
+    const files = nativeToolDetails(tool).files;
+    expect(files[0].patch).toBe('');
+    const reads: string[] = [];
+    const reader = createChangesReader({ kind: 'turn', directory: '/fixture', sessionID: 'original', messageID: 'turn', files }, async path => { reads.push(path); return { diff: { file: 'tool.ts', before: 'old full body', after: 'new full body' } }; });
+    await reader.select('tool.ts'); expect(reader.state().diff?.before).toBe('old full body');
+    expect(reads).toEqual(['/api/yuri/sessions/original/changes?directory=%2Ffixture&messageID=turn&file=tool.ts']);
+  });
+  test('historical binary patch markers remain binary without reading current files or Git', async () => {
+    const reader = createChangesReader({ kind: 'turn', directory: '/fixture', sessionID: 's', messageID: 'm', files: [{ path: 'old.png', patch: 'diff --git a/old.png b/old.png\nBinary files a/old.png and b/old.png differ' }] }, async () => { throw new Error('No current Git'); });
+    await reader.select('old.png'); expect(reader.state().diff?.isBinary).toBe(true);
+  });
   test('native type boundary reuses Web tree collapse and directory batch membership', () => {
     const tree = buildChangesTree([{ path: 'folder/sub/a.ts', index: ' ', working_dir: 'M' }, { path: 'folder/b.ts', index: '?', working_dir: '?' }]);
     expect(tree.children.get('folder')?.files.map(file => file.path)).toEqual(['folder/sub/a.ts', 'folder/b.ts']);
@@ -37,6 +87,7 @@ describe('native Changes authority', () => {
     ] }));
     expect(groups.map(group => [group.staged, group.files.map(file => file.path)])).toEqual([[true, ['z.ts']], [false, ['a.ts', 'z.ts']]]);
     expect(() => changesSnapshot({ isClean: false, files: [{ path: 'x' }] })).toThrow();
+    expect(changesSnapshot({ isClean: false, files: [], oversized: true }).oversized).toBe(true);
   });
 
   test('patch line numbers and first change do not mistake headers for changed content', () => {
@@ -56,6 +107,18 @@ describe('native Changes authority', () => {
     expect(reader.state().snapshot).toBe(previous); expect(reader.state().error).toBe('offline');
     mode = 2; await reader.refresh(); expect(reader.state().snapshot?.files).toEqual([]);
   });
+  test('only an explicit check=false authority shows the non-repository state after status failure', async () => {
+    let mode = 'offline';
+    const reader = createChangesReader({ kind: 'workspace', directory: '/fixture' }, async path => {
+      if (path.includes('/check?')) { if (mode === 'not-git') return { isGitRepository: false }; throw new Error('check offline'); }
+      if (mode === 'valid') return { isClean: false, files: [{ path: 'a', index: 'M', working_dir: ' ' }] };
+      throw new Error('status failed');
+    });
+    await reader.refresh(); expect(reader.state().gitRepository).toBeNull(); expect(reader.state().error).toBe('status failed');
+    mode = 'valid'; await reader.refresh(); expect(reader.state().gitRepository).toBe(true);
+    mode = 'offline'; await reader.refresh(); expect(reader.state().snapshot?.files.length).toBe(1); expect(reader.state().error).toBe('status failed');
+    mode = 'not-git'; await reader.refresh(); expect(reader.state().gitRepository).toBe(false); expect(reader.state().snapshot).toBeNull(); expect(reader.state().error).toBe('');
+  });
 
   test('history never reads workspace, unknown bodies fail rather than rendering empty success', async () => {
     const calls: string[] = [];
@@ -72,19 +135,19 @@ describe('native Changes authority', () => {
     let host = 1;
     const reader = createChangesReader({ kind: 'workspace', directory: '/fixture' }, () => new Promise(resolve => pending.push(resolve)), () => host === 1);
     const first = reader.select('a', true), second = reader.select('b', false);
-    pending[1]({ diff: '+b' }); await second; pending[0]({ diff: '+a' }); await first;
-    expect(reader.state().path).toBe('b'); expect(reader.state().diff?.patch).toBe('+b');
-    const third = reader.select('c'); reader.cancel(); pending[2]({ diff: '+c' }); await third;
+    pending[1]({ original: '', modified: '+b' }); await second; pending[0]({ original: '', modified: '+a' }); await first;
+    expect(reader.state().path).toBe('b'); expect(reader.state().diff?.after).toBe('+b');
+    const third = reader.select('c'); reader.cancel(); pending[2]({ original: '', modified: '+c' }); await third;
     expect(reader.state().diff).toBeNull();
-    const fourth = reader.select('d'); host = 2; pending[3]({ diff: '+d' }); await fourth;
+    const fourth = reader.select('d'); host = 2; pending[3]({ original: '', modified: '+d' }); await fourth;
     expect(reader.state().diff).toBeNull();
   });
 
   test('failed diff refresh retains exact file body, switching staged scope never reuses it', async () => {
     let fail = false; const paths: string[] = [];
-    const reader = createChangesReader({ kind: 'workspace', directory: '/fixture' }, async path => { paths.push(path); if (fail) throw new Error('diff offline'); return { diff: '+authority' }; });
+    const reader = createChangesReader({ kind: 'workspace', directory: '/fixture' }, async path => { paths.push(path); if (fail) throw new Error('diff offline'); return { original: '', modified: '+authority' }; });
     await reader.select('a.ts', true); fail = true; await reader.retryDiff();
-    expect(reader.state().diff?.patch).toBe('+authority'); expect(reader.state().diffError).toBe('diff offline');
+    expect(reader.state().diff?.after).toBe('+authority'); expect(reader.state().diffError).toBe('diff offline');
     await reader.select('a.ts', false); expect(reader.state().diff).toBeNull(); expect(paths[2]).toContain('staged=false');
   });
 

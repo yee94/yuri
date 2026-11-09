@@ -2,6 +2,10 @@
 
 ## 当前 baseline 准备：仅 fixture admission 修复，尚无本轮 dragfix
 
+**后续状态更新：**main 已固定并安装 baseline `2026-11-07T13-46-16-017Z-8c000e21` 后正式解锁生产。当前已有 starters dragfix；修后 hash、原四红及 collapsed AX/hit 真缺陷、126 项纯验证、独立 review 和待 main 的真实手势步骤，统一见 [NEW-SESSION-STARTERS-DRAG-VALIDATION.md](../../NEW-SESSION-STARTERS-DRAG-VALIDATION.md)。本节后续内容保留为 baseline admission 准备记录，不能再用“尚无 dragfix”描述当前源图。
+
+**main 实测更新：**修后包 `2026-11-07T14-11-52-588Z-3091937e` 已由 main 构建/签名/安装/启动，f1 批次确认折叠 AX、同排、显式展开后的跨行、删除、项目内排序和跨组 no-op。审计 settingsWrites=3、configWrites=1、deniedSessionWrites=0，无额外跨组写，fixtureRetain.version7 保留。一次 Back tool 超时仅在后来 AX 中看到已回 root，仍是 invalid；多指/Sheet/后台/取消/连续重排/FPS 尚未验收。执行归 main，本 worker 只读核对 audit 文件；完整 hashes、证据与现有 probe 的取消能力边界见上述专项文档。
+
 生产 `new-session-page.tsx` 和 `new-session-ui-helpers.ts` 在 main 复制 baseline 依赖闭包前保持冻结。本轮只给合成载体补入真实 `connection.list` snapshot；fixture 在 active lifecycle 时通过生产 `loadConnections()`，并检查 `captureHostOperation().current()` 确认 root adoption 后才挂载导航。inactive 启动或等待期间退到后台不放行，下次 active 再读合成 snapshot；不再手动 `app.connection.set` 冒充 readiness。新增的 native grant 仅为只读 `connection.list`，未授予 select/connect/stream/PTY 或真实网络权限。
 
 合成 snapshot 使用固定 Host `new-session-uikit-synthetic`、authorizationID `fixture-memory-authorization` 和 runtime lease `new-session-uikit-memory-lease`。所有 runtime.request（包括读取）必须携带逐字段完全匹配的 `expectedHost`；缺省、旧 lease、其他 Host、附加字段均失败关闭。它们是公开合成身份，不是外部 Host 或凭据。配置写入仍只在内存；session create/prompt/command/shell/model/agent 路由仍拒绝，误短按会留 deniedSessionWrites 而不会调用模型。

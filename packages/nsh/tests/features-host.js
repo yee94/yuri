@@ -2,6 +2,7 @@ export function createHost() {
   return { call(name, input) {
     if (name !== 'runtime.request') return true;
     if (input.method !== 'GET') throw new Error('Features navigation fixture must not write');
+    if (input.path === '/api/config/settings') return { status: 200, body: { favoriteModels: [], recentModels: [], hiddenModels: [], providerOrder: [], weekStartPreference: 'monday' } };
     const providerName = input.path === '/api/config/catalog/providers?directory=%2Fmanaged'
       ? 'Managed directory verified'
       : input.path === '/api/config/catalog/providers?directory=%2Ffirst-project'

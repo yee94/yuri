@@ -8,6 +8,7 @@ import Foundation
     let isCurrent: () -> Bool
     let readGui: (RuntimeHostScope, GuiPluginPreviewRequest, Int) async throws -> GuiPluginPreviewResponse
     let openGui: (RuntimeHostScope, GuiPluginPreviewRequest) async throws -> GuiPluginPreviewByteStream
+    var isHostResourceURL: ((URL) -> Bool)? = nil
 }
 
 struct GuiPluginRuntimeHead {

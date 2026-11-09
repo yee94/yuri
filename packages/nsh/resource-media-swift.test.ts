@@ -52,7 +52,7 @@ it('guards native-only local media, bounded captured transport and lifecycle wir
   expect(source).toContain('self.read(admitted.request, generation: scope, transport: transport)');
   expect(source).toContain('transport.read(route, limit)');
   expect(source).toContain('guard response.status == 200');
-  expect(source).toContain('key == self?.presented');
+  expect(source).toContain('if key == presented { closePresentation');
   expect(source).toContain('UIApplication.willResignActiveNotification');
   expect(source).toContain('for task in reads.values { task.cancel() }');
   expect(source).toContain('player?.replaceCurrentItem(with: nil)');

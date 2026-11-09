@@ -24,6 +24,8 @@ import Foundation
         require(ResourceMediaPolicy.kind(path: "/fixture/.mp4") == "text", "hidden name has no extension")
         require(ResourceMediaPolicy.kind(path: "/fixture/file.bin", containsNull: true) == "binary", "binary")
         require(ResourceMediaPolicy.binaryLimit == 26_214_400 && ResourceMediaPolicy.textLimit == 1_000_000, "unchanged bounded limits")
+        require(ResourceMediaPolicy.kind(path: "/fixture/image.SVG", binary: true) == "svg", "SVG extension")
+        require(ResourceMediaPolicy.kind(path: "/fixture/opaque", mime: "image/svg+xml") == "svg", "SVG MIME")
         print("Resource media Foundation contract passed")
     }
 }

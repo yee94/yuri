@@ -83,6 +83,12 @@ export function NativeTerminalPage(props: {
     const active = props.active && lifecycle() === 'active' && ready() && !failed(), actual = props.scope;
     untracked(() => controller.setActive(active, actual));
   });
+  effect(() => {
+    const fontPreferences = { fontSize: props.fontSize, fontFamily: props.fontFamily };
+    if (!props.active || lifecycle() !== 'active' || !ready() || !opened || !current()) return;
+    if (!Number.isFinite(fontPreferences.fontSize) || fontPreferences.fontSize < 9 || fontPreferences.fontSize > 52) { failed.set(true); controller.setActive(false); return; }
+    void call('terminal.preview.render', { fontPreferences }).catch(() => { if (!disposed) { failed.set(true); controller.setActive(false); } });
+  });
   const unsubscribe = host.on('terminal.preview.event', raw => {
     if (!raw || typeof raw !== 'object') return;
     const value = raw as Record<string, unknown>;

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "projects": [{ "id": "order-project", "name": "Projects order fixture", "path": "/fixture/repo" }],
+  "directories": [
+    { "path": "/fixture/repo", "name": "Main", "branch": "main", "sessionCount": 12, "idPrefix": "s0-" },
+    { "path": "/fixture/a", "name": "Tree A", "branch": "feature-a", "sessionCount": 12, "idPrefix": "s1-" },
+    { "path": "/fixture/b", "name": "Tree B", "branch": "feature-b", "sessionCount": 4, "idPrefix": "s2-" },
+    { "path": "/fixture/c", "name": "Tree C", "branch": "feature-c", "sessionCount": 4, "idPrefix": "s3-" }
+  ],
+  "pinnedSessionIDs": ["s0-0", "s1-0", "s2-0"],
+  "runningSessionIDs": ["s0-11"],
+  "retainedWorktreePaths": ["/fixture/retained-unloaded-tree"]
+}

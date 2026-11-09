@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NativeNewSessionPageHandoff } from './new-session';
+import type { createNativeReferenceKeyboard } from './composer-reference-keyboard-native';
 
 const harness = vi.hoisted(() => ({
   call: vi.fn(), get: vi.fn(), set: vi.fn(), storage: new Map<string, string>(),
@@ -45,10 +46,11 @@ beforeEach(async () => {
 afterEach(async () => { harness.stops.forEach(stop => stop()); harness.cleanups.forEach(stop => stop()); await receipt?.release(); await flush(); vi.useRealTimers(); });
 
 /** Actual production page callbacks, not an NSH renderer/layout simulation. */
-async function pageFixture(uiResponse: (path: string, method?: string, body?: unknown) => unknown = () => []) {
+async function pageFixture(uiResponse: (path: string, method?: string, body?: unknown) => unknown = () => [], attachment?: { call: (name: string, body: Record<string, unknown>) => Promise<unknown>; choose: () => Promise<{ action: string }> }) {
   const api = await import('./new-session'), model = await import('./model'), state = await import('./state');
   const mobileControls = await import('../ui/src/components/chat/mobileControlsUtils'), touchGestures = await import('../ui/src/lib/touch-gestures/tap');
   const pickerHelpers = await import('./chat-models-helpers'), starters = await import('./new-session-ui-helpers'), selection = await import('./new-session-selection');
+  const density = await import('./native-density');
   const owners: ReturnType<typeof api.createNativeNewSessionOwnership>[] = [], callbacks: Array<() => void> = [], effects: Array<() => void> = [];
   const h = (type: Node['type'], props: Node['props'] | null, ...children: unknown[]): Node => {
     const observed = { ...props };
@@ -59,22 +61,25 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const active = source(true), keyboardHeight = source(0), lifecycle = source('active'), onBack = vi.fn(), nativeCommand = vi.fn();
   const uiRequest = vi.fn(async (path: string, method?: string, body?: unknown) => uiResponse(path, method, body));
   const keyboard = { trigger: () => null, commandTrigger: () => null, dismiss: () => {}, ref: () => {}, selectedRange: () => undefined, onFocus: () => {}, onBlur: () => {}, submitBehavior: () => 'newline', onSubmit: () => {}, onSelectionChange: () => {}, onCompositionChange: () => {}, beforeChange: () => {}, refresh: () => {} };
+  const commandPorts: Array<Parameters<typeof createNativeReferenceKeyboard>[0]> = [];
   const imports: Record<string, unknown> = {
     nsh: { batch: <T>(work: () => T) => work(), keymap: { bind: () => () => {} }, signal: source, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), token: (name: string) => name, cleanup: (work: () => void) => callbacks.push(work), effect: (work: () => void) => { effects.push(work); work(); }, lifecycle, platform: { os: 'ios' }, nativeComponent: (name: string, spec: unknown) => {
       if (name !== 'yuri.sheet.presentation') throw new Error(`Unexpected native leaf ${name}`);
-      expect(spec).toEqual({ props: ['generation', 'detents', 'initialDetent', 'dismissible'], events: ['ready', 'opened', 'dismissed', 'cancel'] });
+      expect(spec).toEqual({ props: ['generation', 'detents', 'initialDetent', 'viewportDetents', 'dismissible'], events: ['ready', 'opened', 'dismissed', 'cancel'] });
       return name;
     }, keyboardFrame: () => ({ height: keyboardHeight(), duration: 0 }), safeArea: () => ({ top: 0, bottom: 0 }), windowSize: () => ({ width: 390, height: 844 }), Keyboard: { dismiss: () => {} }, Speech: { available: async () => false }, Scroll: 'Scroll', Text: 'Text', View: 'View', Overlay: 'Overlay' },
-    'nsh/base': { Button: 'Button', Input: 'Input', NavPage: 'NavPage', Sheet: 'Sheet', Dialog: 'Dialog', AlertDialog: { show: async () => ({ action: 'cancel' }) } },
-    './appearance': { nativeChatTextStyle: () => ({}) }, './chat-identity': { NativeAgentAvatar: 'Avatar', NativeModelLogo: 'Logo', nativeAgentAccent: () => 'foreground' }, './chat-models-helpers': pickerHelpers,
+    'nsh/base': { Button: 'Button', Input: 'Input', NavPage: 'NavPage', Sheet: 'Sheet', Dialog: 'Dialog', AlertDialog: { show: attachment?.choose ?? (async () => ({ action: 'cancel' })) } },
+    './appearance': { nativeChatTextStyle: () => ({}), nativeDensity: () => density.nativeLayoutDensity() }, './native-density': density, './chat-identity': { NativeAgentAvatar: 'Avatar', NativeModelLogo: 'Logo', nativeAgentAccent: () => 'foreground' }, './chat-models-helpers': pickerHelpers,
     '../ui/src/components/chat/mobileControlsUtils': mobileControls, '../ui/src/lib/touch-gestures/tap': touchGestures, './new-session-ui-helpers': starters,
     './new-session-selection': { createNewSessionCatalog: (directory: string, current: () => boolean) => selection.createNewSessionCatalog(directory, current, uiRequest) },
-    './composer-controls': { NativeCommandSuggestions: 'CommandSuggestions' }, './composer-reference-keyboard-native': { createNativeReferenceKeyboard: () => keyboard }, './composer-references-controls': { NativeReferencePicker: 'ReferencePicker' },
+    './composer-controls': { NativeCommandSuggestions: 'CommandSuggestions' }, './composer-reference-keyboard-native': { createNativeReferenceKeyboard: (options: Parameters<typeof createNativeReferenceKeyboard>[0]) => { commandPorts.push(options); return keyboard; } }, './composer-references-controls': { NativeReferencePicker: 'ReferencePicker' },
     './composer-surface': await import('./composer-surface'), './composer-commands-model': await import('./composer-commands-model'),
     './new-session-local-commands': {},
+    './composer-command-router': await import('./composer-command-router'),
+    './attachment-pick': await import('./attachment-pick'),
     './composer-send': { NativeComposerSend: (props: Node['props']) => h('Button', { ...props, testID: 'send' }) }, './Icon': { Icon: 'Icon' }, './i18n': { t: (key: string) => key }, './model': model,
     './new-session': { ...api, createNativeNewSessionOwnership: (...args: Parameters<typeof api.createNativeNewSessionOwnership>) => { const owner = api.createNativeNewSessionOwnership(...args); owners.push(owner); return owner; } },
-    './new-session-copy': { newSessionText: (key: string) => key }, './new-session-models': { NativeNewSessionModels: 'Models' }, './runtime': { native: async () => null, request: uiRequest }, './state': { ...state, captureHostRequest: () => uiRequest },
+    './new-session-copy': { newSessionText: (key: string) => key }, './new-session-models': { NativeNewSessionModels: 'Models' }, './runtime': { native: attachment?.call ?? (async () => null), request: uiRequest }, './state': { ...state, captureHostRequest: () => uiRequest },
     './new-session-native-owners': { NativeNewSessionPresentation: 'NativePresentation', NativeNewSessionInputAX: 'NativeInputAX' },
     './desktop-attachments': await import('./desktop-attachments'),
     './desktop-attachments-recovery': await import('./desktop-attachments-recovery'),
@@ -82,6 +87,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
     './page-operations': await import('./page-operations'),
     './new-session-writer': await import('./new-session-writer'),
     './new-session-directory': await import('./new-session-directory'),
+    './native-input-metadata': { NativeInputMetadata: 'NativeInputMetadata' }, './native-composer-spellcheck': { NativeComposerSpellcheck: 'NativeComposerSpellcheck' },
   };
   const sourceFile = readFileSync(fileURLToPath(new URL('./new-session-page.tsx', import.meta.url)), 'utf8');
   // Observe the actual production expressions lazily, as NSH's signal-bound
@@ -148,17 +154,145 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const tree = nodes(root);
   await flush();
   const find = (id: string) => { const result = nodes(root).find(node => node.props.testID === id); if (!result) throw new Error(`Missing page node: ${id}`); return result; };
-  return { owners, active, keyboardHeight, lifecycle, onBack, nativeCommand, uiRequest, root, tree, find, render: () => nodes(root), runEffects: () => effects.forEach(work => work()), unmount: () => { callbacks.splice(0).forEach(work => work()); } };
+  return { owners, active, keyboardHeight, lifecycle, onBack, nativeCommand, commandPorts, uiRequest, root, tree, find, render: () => nodes(root), runEffects: () => effects.forEach(work => work()), unmount: () => { callbacks.splice(0).forEach(work => work()); } };
 }
 
 describe('new-session production page callback boundary', () => {
+  it.each(['hidden', 'unmount'])('actual attachment callback captures original session scope and exactly cancels on %s', async reason => {
+    let resolve!: (value: unknown) => void; const result = new Promise<unknown>(done => { resolve = done; });
+    const call = vi.fn(async (name: string, body: Record<string, unknown>) => {
+      if (name === 'runtime.pickAttachment') return result;
+      const original = call.mock.calls[0][1];
+      if (name === 'runtime.cancelAttachment' && Object.keys(body).sort().join(',') === 'expectedHost,requestId'
+        && body.requestId === original.requestId && JSON.stringify(body.expectedHost) === JSON.stringify(original.expectedHost)) return true;
+      throw new Error('Unexpected attachment callback');
+    });
+    const page = await pageFixture(undefined, { call, choose: async () => ({ action: 'files' }) });
+    (page.find('new-session-composer').props.onChange as (event: { value: string }) => void)({ value: 'Keep draft and owner' });
+    const owner = page.owners[0]; (page.find('new-session-attach').props.onPress as () => void)(); await flush();
+    expect(call.mock.calls[0][0]).toBe('runtime.pickAttachment');
+    expect(call.mock.calls[0][1]).toMatchObject({ kind: 'files', expectedHost: { hostID: 'one', lease: 'page-fixture-lease' } });
+    expect(Object.keys(call.mock.calls[0][1]).sort()).toEqual(['expectedHost', 'kind', 'requestId']);
+    if (reason === 'hidden') { page.active.set(false); page.runEffects(); } else page.unmount();
+    await flush(); expect(call.mock.calls[1][0]).toBe('runtime.cancelAttachment');
+    resolve({ uri: 'attachment://late', name: 'late.txt', mime: 'text/plain' }); await flush();
+    expect(owner.owner.durable.attachments()).toEqual([]); expect(owner.owner.durable.draft()).toBe('Keep draft and owner');
+    expect(page.owners).toHaveLength(1); expect(requests()).toEqual([]);
+    if (reason === 'hidden') page.unmount();
+  });
   it.each(['/model ', '/MODEL keep this draft'])('typed or Tab-inserted %s opens local model picker without creating or sending', async value => {
     const page = await pageFixture();
     (page.find('new-session-composer').props.onChange as (event: { value: string }) => void)({ value });
     (page.find('send').props.onPress as () => void)(); await flush(); page.runEffects();
     expect(requests()).toEqual([]); expect(receipt).toBeUndefined();
-    expect(page.owners[0]!.owner.durable.draft()).toBe(value.includes('keep') ? 'keep this draft' : '');
+    expect(page.owners[0]!.owner.durable.draft()).toBe(value);
     expect(page.render().some(node => node.type === 'Dialog')).toBe(true); page.unmount();
+  });
+  it.each([true, false])('production candidate model submit=%s replaces the body; later model submit preserves that inserted body and root attachments', async submit => {
+    const page = await pageFixture(), owner = page.owners[0].owner;
+    owner.setDraftText('/m\nkeep this'); owner.setAttachments([{ uri: 'attachment://keep', name: 'keep.txt', mime: 'text/plain' }]);
+    const port = page.commandPorts[0];
+    expect(port.chooseCommand?.({ id: 'yuri:model', name: 'model', source: 'yuri' }, submit, {
+      owner: owner.operation()!, scope: owner.durable.scope, query: 'm', text: '/m\nkeep this', start: 0, end: 2, editing: true,
+    })).toBe(true);
+    expect(owner.durable.draft()).toBe('/\u2003model ');
+    if (!submit) { expect(page.render().some(node => node.type === 'Dialog')).toBe(false); (page.find('send').props.onPress as () => void)(); }
+    await flush(); page.runEffects(); expect(requests()).toEqual([]); expect(owner.durable.draft()).toBe('/\u2003model ');
+    expect(owner.durable.attachments()).toEqual([{ uri: 'attachment://keep', name: 'keep.txt', mime: 'text/plain' }]);
+    expect(page.render().some(node => node.type === 'Dialog')).toBe(true); page.unmount();
+  });
+  it.each(['submit', 'candidate'] as const)('production %s /new reopens the current unsent draft idempotently and preserves resources', async via => {
+    const page = await pageFixture();
+    const owner = page.owners[0].owner; owner.setDraftText(via === 'submit' ? '/new tail' : '/n\ntail');
+    owner.setAttachments([{ uri: 'attachment://keep', mime: 'text/plain' }]);
+    if (via === 'submit') (page.find('send').props.onPress as () => void)();
+    else expect(page.commandPorts[0].chooseCommand?.({ id: 'yuri:new', name: 'new', source: 'yuri' }, true, {
+      owner: owner.operation()!, scope: owner.durable.scope, query: 'n', text: '/n\ntail', start: 0, end: 2, editing: true,
+    })).toBe(true);
+    await flush(); expect(page.owners).toHaveLength(1); expect(page.owners[0].owner).toBe(owner); expect(owner.durable.draft()).toBe('');
+    expect(owner.durable.attachments()).toHaveLength(1); expect(requests()).toEqual([]); expect(receipt).toBeUndefined();
+    expect(owner.phase()).toBe('draft'); page.unmount();
+  });
+  it('unavailable session locals and wrong local identity cannot reach first session creation', async () => {
+    const page = await pageFixture(), owner = page.owners[0].owner;
+    for (const text of ['/btw Why?', '/undo', '/redo', '/fork', '/timeline', '/summary', '/init']) {
+      owner.setDraftText(text); (page.find('send').props.onPress as () => void)(); await flush();
+      expect(owner.durable.draft()).toBe(text); expect(requests()).toEqual([]); expect(receipt).toBeUndefined();
+    }
+    owner.setDraftText('/m');
+    const port = page.commandPorts[0], context = { owner: owner.operation()!, scope: owner.durable.scope, query: 'm', text: '/m', start: 0, end: 2, editing: true };
+    expect(port.chooseCommand?.({ id: 'yuri:invented', name: 'invented', source: 'yuri' }, true, context)).toBe(false);
+    expect(owner.durable.draft()).toBe('/m');
+    expect(port.chooseCommand?.({ id: 'opencode:model', name: 'model', source: 'opencode', isBuiltIn: true }, true, context)).toBe(true);
+    expect(page.render().some(node => node.type === 'Dialog')).toBe(false); expect(requests()).toEqual([]); page.unmount();
+  });
+  it.each(['send', 'enter', 'tab'] as const)('new-draft compact %s takes the existing create/handoff route and ordinary prompt fallback when Host has no command', async via => {
+    const page = await pageFixture(), owner = page.owners[0].owner;
+    owner.setDraftText(via === 'send' ? '/compact optional topic' : '/c\nold tail');
+    if (via === 'send') (page.find('send').props.onPress as () => void)();
+    else {
+      expect(page.commandPorts[0].chooseCommand?.({ id: 'yuri:compact', name: 'compact', source: 'yuri' }, via === 'enter', {
+        owner: owner.operation()!, scope: owner.durable.scope, query: 'c', text: '/c\nold tail', start: 0, end: 2, editing: true,
+      })).toBe(true);
+      if (via === 'tab') { expect(receipt).toBeUndefined(); expect(requests()).toEqual([]); (page.find('send').props.onPress as () => void)(); }
+    }
+    await flush(); expect(receipt).toBeDefined(); expect(requests().filter(request => request.path === '/api/session')).toHaveLength(1);
+    expect(requests().some(request => request.path.includes('/compact?'))).toBe(false);
+    const state = await import('./state'), api = await import('./new-session'), chat = state.createChat(receipt!.receipt.target); await chat.draftReady; await flush();
+    expect(await api.sendNewSessionHandoff(chat, receipt!.receipt)).toBe(true);
+    const prompts = requests().filter(request => request.path.includes('/prompt?')); expect(prompts).toHaveLength(1);
+    expect(requests().findIndex(request => request.path === '/api/session')).toBeLessThan(requests().findIndex(request => request.path.startsWith('/api/command?')));
+    expect(prompts[0].body.text).toBe(via === 'send' ? '/compact optional topic' : via === 'enter' ? '/compact' : '/\u2003compact ');
+    expect(requests().some(request => request.path.includes('/command?') && request.method === 'POST')).toBe(false);
+    await receipt!.owner.complete(receipt!.receipt); expect(owner.durable.draft()).toBe(''); page.unmount();
+  });
+  it.each([true, false])('new-draft compact resolves actual Host metadata isBuiltIn=%s through the ordinary handoff without calling local compact', async isBuiltIn => {
+    const base = harness.call.getMockImplementation()!;
+    harness.call.mockImplementation(async (name, input) => name === 'runtime.request' && input.path.startsWith('/api/command?')
+      ? { status: 200, body: [{ name: 'compact', isBuiltIn, reference: 'project:compact' }] } : base(name, input));
+    const page = await pageFixture(), owner = page.owners[0].owner; owner.setDraftText('/compact topic'); (page.find('send').props.onPress as () => void)(); await flush();
+    expect(receipt).toBeDefined(); const state = await import('./state'), api = await import('./new-session'), chat = state.createChat(receipt!.receipt.target); await chat.draftReady; await flush();
+    expect(await api.sendNewSessionHandoff(chat, receipt!.receipt)).toBe(true);
+    expect(requests().filter(request => request.path === '/api/session')).toHaveLength(1);
+    expect(requests().filter(request => request.path.includes('/command?') && request.method === 'POST')).toHaveLength(isBuiltIn ? 1 : 0);
+    if (!isBuiltIn) expect(requests().find(request => request.path.includes('/prompt?')).body.text).toBe('[command:project:compact] topic');
+    expect(requests().some(request => request.path.includes('/compact?'))).toBe(false); page.unmount();
+  });
+  it.each(['malformed', 'failed'] as const)('new-draft compact %s metadata preserves the created receipt and does not become an empty-catalog prompt', async failure => {
+    const base = harness.call.getMockImplementation()!;
+    harness.call.mockImplementation(async (name, input) => name === 'runtime.request' && input.path.startsWith('/api/command?')
+      ? failure === 'failed' ? { status: 503, body: { error: 'catalog unavailable' } } : { status: 200, body: { unexpected: [] } } : base(name, input));
+    const page = await pageFixture(); page.owners[0].owner.setDraftText('/compact'); (page.find('send').props.onPress as () => void)(); await flush();
+    expect(receipt).toBeDefined(); const state = await import('./state'), api = await import('./new-session'), chat = state.createChat(receipt!.receipt.target); await chat.draftReady; await flush();
+    await expect(api.sendNewSessionHandoff(chat, receipt!.receipt)).rejects.toThrow();
+    expect(chat.pendingSend()?.command?.name).toBe('compact'); expect(chat.pendingSend()?.uncertain).toBe(false);
+    expect(requests().filter(request => request.path === '/api/session')).toHaveLength(1);
+    expect(requests().filter(request => request.method === 'POST' && (request.path.includes('/prompt?') || request.path.includes('/command?') || request.path.includes('/compact?')))).toEqual([]);
+    page.unmount();
+  });
+  it('new-draft compact follows Web skill-before-command resolution using the existing native skill attachment', async () => {
+    const base = harness.call.getMockImplementation()!;
+    harness.call.mockImplementation(async (name, input) => {
+      if (name === 'runtime.request' && input.path.startsWith('/api/skill?')) return { status: 200, body: [{ id: 'skill-compact', name: 'compact' }] };
+      if (name === 'runtime.request' && input.path.startsWith('/api/command?')) return { status: 200, body: [{ name: 'compact', isBuiltIn: true }] };
+      return base(name, input);
+    });
+    const page = await pageFixture(); page.owners[0].owner.setDraftText('/compact topic'); (page.find('send').props.onPress as () => void)(); await flush();
+    const state = await import('./state'), api = await import('./new-session'), chat = state.createChat(receipt!.receipt.target); await chat.draftReady; await flush();
+    expect(await api.sendNewSessionHandoff(chat, receipt!.receipt)).toBe(true);
+    const prompt = requests().find(request => request.path.includes('/prompt?'));
+    expect(prompt.body.text).toBe('[skill:skill-compact] topic'); expect(prompt.body.skills).toEqual([{ id: 'skill-compact' }]);
+    expect(requests().some(request => request.method === 'POST' && (request.path.includes('/command?') || request.path.includes('/compact?')))).toBe(false); page.unmount();
+  });
+  it('retained production candidate callback rejects a same-Host same-text ABA operation', async () => {
+    const page = await pageFixture();
+    const owner = page.owners[0].owner;
+    owner.setDraftText('/m'); const previous = owner.operation()!;
+    const context = { owner: previous, scope: owner.durable.scope, query: 'm', text: '/m', start: 0, end: 2, editing: true };
+    expect(owner.replaceOperation({ ...previous, generation: previous.generation + 1 })).toBe(true);
+    expect(page.commandPorts[0].chooseCommand?.({ id: 'yuri:model', name: 'model', source: 'yuri' }, true, context)).toBe(false);
+    expect(owner.durable.draft()).toBe('/m'); expect(page.render().some(node => node.type === 'Dialog')).toBe(false);
+    expect(requests()).toEqual([]); page.unmount();
   });
   it('200 actual onChange callbacks do no session create, sync Storage or global catalog scans', async () => {
     const page = await pageFixture(), { app } = await import('./state'); let scans = 0;
@@ -327,7 +461,10 @@ describe('production starter touch callbacks → unique NavPage swipe policy (pu
     // timers, callback forwarding and the NavPage policy are production code.
     for (const [id, x, y, width] of [
       ['new-session-preset-explore', 20, 425, 90], ['new-session-preset-weigh', 120, 425, 130], [reviewID, 30, 475, 290],
-    ] as const) call(wrapper(id), 'ref', { measure: async () => ({ pagePosition: { x, y }, bounds: { size: { width, height: 28 } } }) });
+    ] as const) {
+      call(wrapper(id), 'ref', { measure: async () => ({ pagePosition: { x, y }, bounds: { size: { width, height: 28 } } }) });
+      call(wrapper(id), 'onLayout', { bounds: { origin: { x: x - 20, y: y - 425 }, size: { width, height: 28 } } });
+    }
     const trashSlot = page.render().find(node => node.props.ref && !node.props.onTouchStartCapture && hasID(node.children, 'new-session-presets-trash'))!;
     call(trashSlot, 'ref', { measure: async () => ({ pagePosition: { x: 354, y: 382 }, bounds: { size: { width: 24, height: 28 } } }) });
     const layout = page.render().find(node => node.props.onLayout)!;

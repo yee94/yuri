@@ -74,7 +74,7 @@ describe('native resource web preview intent', () => {
     };
     const owner = bindResourceWebPreview(expectedHost, call, () => 'retry-owner');
     const work = owner.present({ directory: '/work', path: '/work/a.html' });
-    await owner.close();
+    await expect(owner.close()).rejects.toThrow('not delivered');
     const retry = owner.close(), concurrent = owner.close();
     await Promise.resolve(); expect(closes).toBe(2);
     end({ closed: true }); await Promise.resolve();

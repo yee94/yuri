@@ -14,8 +14,14 @@ it('bundles the prepared content adapter without pulling Web globals, React, SDK
     expect(result.status, result.stdout + result.stderr).toBe(0);
     const graph = JSON.parse(readFileSync(metadata, 'utf8'));
     const inputs = Object.keys(graph.inputs);
-    expect(inputs).toHaveLength(7);
-    expect(inputs.every(file => /(?:gui-plugin-(?:preview|browser|composition|channel|transport|exports)|runtime-scope)\.ts$/.test(file))).toBe(true);
+    // The context validator is a pure admission dependency of preview; its
+    // type-only i18n import must not pull dictionaries or browser code in.
+    expect(inputs.map(file => path.relative(root, path.resolve(file))).sort()).toEqual([
+      'gui-plugin-browser.ts', 'gui-plugin-channel.ts', 'gui-plugin-composition.ts',
+      'gui-plugin-exports.ts', 'gui-plugin-native-context.ts', 'gui-plugin-preview.ts',
+      'gui-plugin-transport.ts', 'runtime-scope.ts',
+    ]);
+    expect(inputs).not.toEqual(expect.arrayContaining([expect.stringMatching(/node_modules|packages\/ui|gui-plugin-(?:entry|factory)|RuntimeBridge/)]));
     for (const entry of ['browser', 'composition', 'channel', 'exports']) expect(readFileSync(path.join(temporary, 'browser', `gui-plugin-${entry}.js`), 'utf8')).not.toMatch(/__YURI_LOCAL_ORIGIN__|__YURI_HOME__|RuntimeBridge|react-dom|\brequire\(/);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });

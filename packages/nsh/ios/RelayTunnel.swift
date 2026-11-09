@@ -17,10 +17,22 @@ actor NativeSocketInbox {
     private var bytes = 0
     private var fragments: [UInt8: Data] = [:]
     private let maxMessageBytes: Int
+    private let maxMessages: Int
+    private let bufferedByteBudget: Int
 
     init(maxMessageBytes: Int = 512 * 1024) {
         precondition(maxMessageBytes > 0 && maxMessageBytes <= 1024 * 1024)
         self.maxMessageBytes = maxMessageBytes
+        maxMessages = 2; bufferedByteBudget = 1024 * 1024
+    }
+    /// Only session replay uses this budget. Other socket domains retain the
+    /// original two-message / 1 MiB defaults, including fragment accounting.
+    static func sessionStream() -> NativeSocketInbox {
+        NativeSocketInbox(sessionReplay: ())
+    }
+    private init(sessionReplay: Void) {
+        maxMessageBytes = 1024 * 1024
+        maxMessages = 4096; bufferedByteBudget = 8 * 1024 * 1024
     }
 
     func waitUntilOpen() async throws {
@@ -49,7 +61,7 @@ actor NativeSocketInbox {
         guard payload.count <= maxMessageBytes - previous else { throw RelayTunnel.Failure.limit }
         // A peer may fragment text and binary independently; the combined bound also
         // includes complete messages, so a stalled consumer cannot grow the tunnel.
-        guard bytes + fragments.values.reduce(0, { $0 + $1.count }) + payload.count <= 1024 * 1024 else { throw RelayTunnel.Failure.limit }
+        guard bytes + fragments.values.reduce(0, { $0 + $1.count }) + payload.count <= bufferedByteBudget else { throw RelayTunnel.Failure.limit }
         var data = fragments.removeValue(forKey: type) ?? Data()
         data.append(payload)
         if more { fragments[type] = data; return }
@@ -59,7 +71,7 @@ actor NativeSocketInbox {
             message = .text(text)
         } else { message = .binary(data) }
         if let reply = waiting { waiting = nil; reply.resume(returning: message); return }
-        guard messages.count < 2 else { throw RelayTunnel.Failure.limit }
+        guard messages.count < maxMessages else { throw RelayTunnel.Failure.limit }
         messages.append(message); bytes += data.count
     }
     func end(code: Int) {
@@ -235,23 +247,35 @@ actor RelayTunnel {
     /// Only the paired desktop, dictation and terminal endpoints are exposed. The Host independently checks
     /// the current Relay pairing grant using this freshly minted scoped token.
     func openWebSocket(path: String, urlToken: String, timeout: TimeInterval = 20) async throws -> WebSocket {
+        try await openSocket(path: path, urlToken: urlToken, timeout: timeout)
+    }
+
+    /// Session transport has one real endpoint and only its opaque resume cursor.
+    /// The persistent pairing credential remains an HTTP header during minting.
+    func openSessionWebSocket(lastEventID: String?, urlToken: String, validUntil: TimeInterval) async throws -> WebSocket {
+        guard SessionMessageStream.validCursor(lastEventID), validUntil.isFinite, ProcessInfo.processInfo.systemUptime < validUntil else { throw Failure.invalidRequest }
+        return try await openSocket(path: "/api/global/event/ws", urlToken: urlToken, timeout: 8, sessionStream: true, lastEventID: lastEventID, tokenDeadline: validUntil)
+    }
+
+    private func openSocket(path: String, urlToken: String, timeout: TimeInterval, sessionStream: Bool = false, lastEventID: String? = nil, tokenDeadline: TimeInterval? = nil) async throws -> WebSocket {
         try Task.checkCancellation()
         guard !closed else { throw Failure.closed }
         if let terminalError { throw terminalError }
-        guard Self.allowsWebSocketPath(path), !urlToken.isEmpty, urlToken.utf8.count <= 8192,
+        guard (sessionStream ? path == "/api/global/event/ws" : Self.allowsWebSocketPath(path)), !urlToken.isEmpty, urlToken.utf8.count <= 8192,
               urlToken.utf8.allSatisfy({ $0 > 32 && $0 < 127 }),
               timeout.isFinite, timeout > 0, timeout <= 60 else { throw Failure.invalidRequest }
         guard webSockets.count < 4, pending.count + webSockets.count < Self.maxStreams,
               nextStream <= UInt64(UInt32.max) else { throw Failure.limit }
         let id = UInt32(nextStream); nextStream += 2
-        let inbox = NativeSocketInbox(maxMessageBytes: path == "/api/terminal/ws" ? 1024 * 1024 : 512 * 1024); webSockets[id] = inbox
+        let inbox = sessionStream ? NativeSocketInbox.sessionStream() : NativeSocketInbox(maxMessageBytes: path == "/api/terminal/ws" ? 1024 * 1024 : 512 * 1024); webSockets[id] = inbox
         var query = URLComponents(); query.queryItems = [URLQueryItem(name: "yuri_url_token", value: urlToken)]
+        if let lastEventID, !lastEventID.isEmpty { query.queryItems?.append(URLQueryItem(name: "lastEventId", value: lastEventID)) }
         let head = try JSONSerialization.data(withJSONObject: ["path": path, "query": query.percentEncodedQuery ?? ""])
         let timer = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000)) } catch { return }
             await self?.closeWebSocket(id, error: Failure.timeout)
         }
-        let launch = Task { [weak self] in await self?.startWebSocket(id, head: head) }
+        let launch = Task { [weak self] in await self?.startWebSocket(id, head: head, tokenDeadline: tokenDeadline) }
         defer { timer.cancel(); launch.cancel() }
         do {
             try await withTaskCancellationHandler(operation: {
@@ -281,7 +305,7 @@ actor RelayTunnel {
         }
     }
 
-    private func startWebSocket(_ id: UInt32, head: Data) async {
+    private func startWebSocket(_ id: UInt32, head: Data, tokenDeadline: TimeInterval?) async {
         do {
             if !ready {
                 if connection == nil {
@@ -295,6 +319,7 @@ actor RelayTunnel {
                 await connection?.value
             }
             guard webSockets[id] != nil else { return }
+            if let tokenDeadline, ProcessInfo.processInfo.systemUptime >= tokenDeadline { throw Failure.authentication }
             try await send(type: 6, streamID: id, payload: head)
         } catch { await closeWebSocket(id, error: error) }
     }

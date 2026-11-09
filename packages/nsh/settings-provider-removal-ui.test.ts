@@ -1,16 +1,13 @@
-import { spawnSync } from 'node:child_process';
+import { runSettingsEngineFixture } from './tests/settings-engine-fixture-runner.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { withProviderRemovalHost } from './tests/settings-provider-removal-runner.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 function nativeTest(steps: string[]) {
-  withProviderRemovalHost(directory, (host: string) => {
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'settings-provider-removal-test-app.tsx', '--web-host', host], { cwd: directory, input: steps.join('\n'), encoding: 'utf8', timeout: 35_000 });
+    const result = runSettingsEngineFixture(directory, 'settings-provider-removal-test-app.tsx', 'tests/settings-provider-removal-host.js', steps, 35_000);
     expect(result.error, result.stdout + result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
-  });
 }
 const open = (scope: string, id: string) => [
   `await app.waitFor("id:provider-fixture-${scope}");`, `await app.press("id:provider-fixture-${scope}");`,

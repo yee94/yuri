@@ -20,7 +20,8 @@ import { deleteSessionsWithUndo, showArchivedSessionsUndoToast } from '@/lib/ses
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
-import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
+import { syncGlobalSessionsForDirectories, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { getRuntimeGeneration } from '@/lib/runtime-switch';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
 import { useLiveSessionStatus } from '@/sync/sync-context';
@@ -119,6 +120,15 @@ export function MobileProjectsHomeContainer({
 
   const [actionTarget, setActionTarget] = React.useState<ActionTargetState | null>(null);
   const [actionsOpen, setActionsOpen] = React.useState(false);
+  const [catalogRetrying, setCatalogRetrying] = React.useState(false);
+  const handleRetryCatalog = useEvent(async () => {
+    if (catalogRetrying) return;
+    const generation = getRuntimeGeneration();
+    setCatalogRetrying(true);
+    try { await useGlobalSessionsStore.getState().refreshSessionIndex(); }
+    catch { if (generation === getRuntimeGeneration()) toast.error(t('mobile.sessions.catalogPartial')); }
+    finally { setCatalogRetrying(false); }
+  });
   const [editingProjectId, setEditingProjectId] = React.useState<string | null>(null);
   const [closingProject, setClosingProject] = React.useState<ProjectMeta | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
@@ -587,6 +597,9 @@ export function MobileProjectsHomeContainer({
         projects={model.projects}
         pinnedSessions={model.pinnedSessions}
         inProgressSessions={model.inProgressSessions}
+        catalogIncomplete={model.catalogIncomplete}
+        catalogRetrying={catalogRetrying}
+        onRetryCatalog={handleRetryCatalog}
         onAddProject={onAddProject}
         onNewSession={handleNewSession}
         onScanQr={onScanQr}

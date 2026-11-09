@@ -102,16 +102,18 @@ export function createHost() {
         configurations.push(copy(input)); return { lease: 'quota-production-memory-lease-' + selected };
       }
       if (name === 'runtime.stream') {
-        keys(input, ['path', 'key', 'expectedHost']); expectedScope(input, true);
+        keys(input, input?.key === 'chat' ? ['path', 'key', 'expectedHost', 'ownerID', 'mode'] : ['path', 'key', 'expectedHost']); expectedScope(input, true);
+        if (input.key === 'chat' && (!['auto', 'ws', 'sse'].includes(input.mode) || typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected quota production stream ticket');
         if (!(input.key === 'global' && input.path === '/api/yuri/events') && !(input.key === 'chat' && input.path === '/api/event?directory=' + encodeURIComponent(actual))) throw new Error('Unexpected quota production stream');
-        streams.set(input.key, copy({ path: input.path, expectedHost: input.expectedHost }));
+        streams.set(input.key, copy({ path: input.path, expectedHost: input.expectedHost, ...(input.key === 'chat' ? { ownerID: input.ownerID } : {}) }));
         streamCalls.push(copy({ name, ...input, accepted: true })); return true;
       }
       if (name === 'runtime.stop') {
-        keys(input, ['key', 'expectedHost']); keys(input.expectedHost, ['hostID', 'lease']);
+        keys(input, input?.key === 'chat' ? ['key', 'expectedHost', 'ownerID'] : ['key', 'expectedHost']); keys(input.expectedHost, ['hostID', 'lease']);
+        if (input.key === 'chat' && (typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected quota production stop ticket');
         if (!['global', 'chat'].includes(input.key) || typeof input.expectedHost.hostID !== 'string' || !input.expectedHost.hostID.trim() || typeof input.expectedHost.lease !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/.test(input.expectedHost.lease)) throw new Error('Unexpected quota production stop');
         const stream = streams.get(input.key);
-        const released = !!stream && stream.expectedHost.hostID === input.expectedHost.hostID && stream.expectedHost.lease === input.expectedHost.lease;
+        const released = !!stream && stream.expectedHost.hostID === input.expectedHost.hostID && stream.expectedHost.lease === input.expectedHost.lease && (input.key !== 'chat' || stream.ownerID === input.ownerID);
         if (released) streams.delete(input.key);
         // Native cleanup is an exact stream-scope match; a stale well-formed stop is a recorded no-op.
         streamCalls.push(copy({ name, ...input, released })); return true;

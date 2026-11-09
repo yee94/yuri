@@ -4,14 +4,13 @@ import { language } from './i18n';
 import { native } from './runtime';
 import { SettingsCollection } from './settings-collections';
 import type { SettingsRoute } from './settings';
-import { admitSettingsFixture } from './settings-raw-fixture-bootstrap';
+import { settingsEngineFixtureBoot } from './settings-engine-fixture-boot';
 
 /** Isolated production-component fixture, never mounted by App/application. */
 language.set('en');
 function CollectionsFixture() {
+  const boot = settingsEngineFixtureBoot();
   const nav = createNavStack<SettingsRoute>([{ page: 'agents' }]), audit = signal('');
-  const ready = signal(false);
-  void admitSettingsFixture().then(() => ready.set(true), failure => audit.set(String(failure)));
   const callbacks = { onOpen: (route: SettingsRoute) => nav.push(route), onBack: () => nav.pop(), onConnect: () => undefined };
   return <View class="flex-1 bg-background">
     <View class="gap-2 p-3">
@@ -20,7 +19,7 @@ function CollectionsFixture() {
       <Button testID="collections-fixture-audit" onPress={() => { void native<Record<string, number>>('collections.fixture.audit').then(value => audit.set(JSON.stringify(value))); }}><Text>Audit fixture</Text></Button>
       <Text testID="collections-fixture-audit-result">{audit()}</Text>
     </View>
-    <If when={ready()}><NavStack state={nav} class="flex-1">{route => <NavPage title="Collections fixture" class="flex-1"><SettingsCollection {...callbacks} {...route} directory="/fixture/project" /></NavPage>}</NavStack></If>
+    <If when={boot.mounted()}><NavStack state={nav} class="flex-1">{route => <NavPage title="Collections fixture" class="flex-1"><SettingsCollection {...callbacks} {...route} active={boot.active() && nav.routes().at(-1) === route} directory="/fixture/project" /></NavPage>}</NavStack></If>
   </View>;
 }
 mount(CollectionsFixture);

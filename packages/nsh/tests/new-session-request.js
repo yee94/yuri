@@ -1,4 +1,9 @@
 /** QuickJS Host fixture parser: deliberately no browser URL/URLSearchParams dependency. */
+export function assertNewSessionFixtureScope(input, scope) {
+  if (input.expectedHost && (input.expectedHost.hostID !== scope.hostID || input.expectedHost.lease !== scope.lease)) throw new Error('Stale new-session fixture scope');
+  if ((input.method ?? 'GET') !== 'GET' && !input.expectedHost) throw new Error('Missing new-session fixture scope');
+}
+
 export function fixtureRequest(input) {
   const resource = input.path;
   if (typeof resource !== 'string' || !resource.startsWith('/') || resource.startsWith('//') || /[\s\\#\u0000-\u001f\u007f]/.test(resource)) throw new Error('Invalid new-session fixture resource');

@@ -4,6 +4,8 @@ import { createGuiPluginChannel, type GuiPluginReplyPort } from './gui-plugin-ch
 import { createGuiPluginStorage } from './gui-plugin-storage';
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 import { validateGuiPluginPreviewIntent } from './gui-plugin-preview';
+import { createGuiPluginDevice } from './gui-plugin-browser/device';
+import { installGuiPluginResourceURLs } from './gui-plugin-browser/resource-urls';
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): string => { if (typeof value !== 'string' || !value) throw new Error('GUI_INVALID_BOOTSTRAP'); return value; };
@@ -18,8 +20,8 @@ export async function startGuiPluginPreview(input: {
   const bootstrap = await input.port.postMessage({ name: 'bootstrap' });
   if (!record(bootstrap) || !record(bootstrap.intent) || !record(bootstrap.labels)) throw new Error('GUI_INVALID_BOOTSTRAP');
   const scope = runtimeScopeFrom(bootstrap.intent.expectedHost);
-  if (!scope || typeof bootstrap.intent.sessionId !== 'string' || typeof bootstrap.intent.directory !== 'string' || typeof bootstrap.intent.path !== 'string') throw new Error('GUI_INVALID_BOOTSTRAP');
-  const intent = validateGuiPluginPreviewIntent({ sessionId: bootstrap.intent.sessionId, directory: bootstrap.intent.directory, path: bootstrap.intent.path });
+  if (!scope || bootstrap.intent.sessionId !== undefined && typeof bootstrap.intent.sessionId !== 'string' || typeof bootstrap.intent.directory !== 'string' || typeof bootstrap.intent.path !== 'string') throw new Error('GUI_INVALID_BOOTSTRAP');
+  const intent = validateGuiPluginPreviewIntent({ ...(bootstrap.intent.sessionId === undefined ? {} : { sessionId: bootstrap.intent.sessionId as string }), directory: bootstrap.intent.directory, path: bootstrap.intent.path });
   const runtimeKey = text(bootstrap.runtimeKey), themeCSS = text(bootstrap.themeCSS), locale = text(bootstrap.locale), preferenceKey = text(bootstrap.preferenceKey);
   const mode = bootstrap.mode;
   if (mode !== 'light' && mode !== 'dark') throw new Error('GUI_INVALID_BOOTSTRAP');
@@ -31,6 +33,8 @@ export async function startGuiPluginPreview(input: {
   let current = true;
   const isCurrent = (expected: RuntimeScope) => current && expected.hostID === scope.hostID && expected.lease === scope.lease;
   const channel = createGuiPluginChannel({ scope, port: input.port, isCurrent });
+  const device = createGuiPluginDevice({ scope, window: input.window, port: input.port, isCurrent: () => current, prompt: input.storagePrompt });
+  const resources = installGuiPluginResourceURLs({ window: input.window, directory: intent.directory, path: intent.path });
   const storage = createGuiPluginStorage({ scope, isCurrent, transact(expectedHost, operation) {
     const value = input.storagePrompt('yuri.gui.storage.v1', JSON.stringify({ expectedHost, operation }));
     if (value === null) throw new Error('GUI_STORAGE_UNAVAILABLE');
@@ -51,17 +55,18 @@ export async function startGuiPluginPreview(input: {
     changed(state) {
       status.textContent = state.phase === 'loading' ? labels.loading : state.failure || state.phase === 'error' || state.phase === 'unmatched' ? labels.failed : '';
       retry.hidden = !state.failure && state.phase !== 'error' && state.phase !== 'unmatched';
-      void channel.state(state.phase).catch(() => { close(); });
+      const phase = state.refreshing && (state.phase === 'error' || state.phase === 'unmatched') ? 'loading' : state.phase;
+      void channel.state(phase).catch(() => { close(); });
     },
     capture({ expectedHost, fetch, signal }) {
-      factory = captureGuiPluginFactory({ expectedHost, origin, runtimeKey, directory: intent.directory, fetch, signal, storage, appearance: { locale, mode }, themeCSS, preferenceKey });
+      factory = captureGuiPluginFactory({ expectedHost, origin, runtimeKey, directory: intent.directory, fetch, signal, storage, appearance: { locale, mode }, themeCSS, preferenceKey, ...device });
       return factory;
     },
   });
   function close() {
     if (!current) return;
     current = false; revision++; input.window.removeEventListener('pagehide', close);
-    try { composition.close(); } finally { channel.close(); root?.replaceChildren(); }
+    try { composition.close(); } finally { resources.close(); device.close(); channel.close(); root?.replaceChildren(); }
   }
   retry.onclick = () => { factory?.readPreferences(); void composition.refresh(); };
   toggle.onclick = () => {

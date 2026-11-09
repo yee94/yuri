@@ -1,8 +1,15 @@
 import { eventSessionID, type RuntimeEvent } from './model';
-import type { TranscriptDiagnosticsEvent } from '../ui/src/sync/transcript-diagnostics';
 
 /** Stricter, content-free subset of Web client diagnostics. No user text or raw identifiers. */
-export type AboutDiagnosticEvent = Pick<TranscriptDiagnosticsEvent, 'at' | 'feat' | 'kind' | 'sessionID' | 'source' | 'sseType' | 'surfaceKind'>;
+export type AboutDiagnosticEvent = {
+  at: number;
+  feat: 'transcript';
+  kind: 'sse-event';
+  sessionID: string;
+  source: 'sse';
+  sseType: string;
+  surfaceKind: RuntimeEvent['key'];
+};
 export const aboutDiagnosticTypes = [
   'reconnected', 'server.connected', 'global.disposed', 'session.status', 'session.idle', 'session.error', 'session.created', 'session.updated', 'session.deleted',
   'session.execution.started', 'session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted',

@@ -1,5 +1,6 @@
 import { cleanup, effect, lifecycle, Scroll, signal, Text, untracked, View, type ViewRef } from 'nsh';
 import { Button, NavPage } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { bindRawRequest } from './runtime';
@@ -114,7 +115,7 @@ export function SettingsQuotaCredentialsPage(props: SettingsQuotaCredentialsProp
     }
   }
   return <NavPage title={`${props.providerName} · ${t('settings.providers.quota.title')}`} headerBackTitle="" class="flex-1 bg-background" popOnBack={false} onBackPress={close}>
-    <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10">
+    <Scroll class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
       <Text class="text-sm text-muted-foreground">{t('settings.providers.quota.description')}</Text>
       <Text testID="quota-form-status" class="text-sm text-muted-foreground">{statusLabel(state())}</Text>
       <If when={state().error !== null || state().recovery !== null}><Text testID="quota-form-error" class="text-sm text-destructive">{t(state().error === 'load' ? 'settings.providers.quota.loadFailed' : 'settings.providers.quota.failed')}</Text></If>

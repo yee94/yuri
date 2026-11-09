@@ -1,4 +1,4 @@
 import { mount } from 'nsh';
-import { YuriNativeApp } from './application';
+import { NativeStartup } from './native-startup';
 
-mount(YuriNativeApp);
+mount(NativeStartup);

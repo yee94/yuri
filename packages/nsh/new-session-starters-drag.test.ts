@@ -76,7 +76,8 @@ async function fixture(options: { desktop?: boolean; global?: helpers.DraftStart
   const measures: Array<ReturnType<typeof vi.fn>> = [];
   const geometry = (name: string, x: number, y: number, width: number) => {
     const measure = vi.fn(async () => ({ pagePosition: { x, y }, bounds: { size: { width, height: 28 } } })); measures.push(measure);
-    call(wrapper(name), 'ref', { measure }); call(wrapper(name), 'onLayout', { bounds: { origin: { x: x - 20, y: y - 425 }, size: { width, height: 28 } } }); return measure;
+    call(wrapper(name), 'ref', { measure });
+    call(wrapper(name), 'onLayout', { bounds: { origin: { x: x - 20, y: y - 425 }, size: { width, height: 28 } } }); return measure;
   };
   for (const [name, x, y, width] of [['explore', 20, 425, 90], ['weigh', 120, 425, 130], ['review-accessibility-and-keyboard-navigation', 30, 475, 290]] as const) if (all().some(node => node.props.testID === `new-session-preset-${name}`)) geometry(name, x, y, width);
   const trash = all().find(node => node.props.ref && !node.props.onTouchStartCapture && contains(node, 'new-session-presets-add'))!;
@@ -206,6 +207,15 @@ describe('homepage chips drag regression (actual production callbacks; synthetic
     call(source, 'onTouchStartCapture', event(65, 439, 2)); call(chip, 'onPressDown');
     call(source, 'onTouchEndCapture', event(65, 439, 0)); call(chip, 'onPress');
     expect(f.submit).not.toHaveBeenCalled(); expect(f.gesture.mock.calls.at(-1)?.[0]).not.toBe(true); f.dispose();
+  });
+
+  it('one finger ending in a cancelled multi-touch sequence does not rearm press while another finger remains down', async () => {
+    const f = await fixture(), source = f.wrapper('explore'), chip = f.chip('explore');
+    call(source, 'onTouchStartCapture', event(65, 439)); call(source, 'onTouchStartCapture', event(65, 439, 2));
+    call(source, 'onTouchEndCapture', event(65, 439, 1)); call(chip, 'onPressDown'); call(chip, 'onPress');
+    expect(f.submit).not.toHaveBeenCalled();
+    call(source, 'onTouchEndCapture', event(65, 439, 0)); call(chip, 'onPress'); expect(f.submit).not.toHaveBeenCalled();
+    call(chip, 'onPressDown'); call(chip, 'onPress'); expect(f.submit).toHaveBeenCalledTimes(1); f.dispose();
   });
 
   it('cancels frozen geometry on a real chips width reflow instead of persisting an obsolete target', async () => {

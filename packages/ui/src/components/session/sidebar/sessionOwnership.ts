@@ -1,5 +1,5 @@
 import type { Session } from '@/lib/opencode/v2-types';
-import { normalizePath } from '@/lib/pathNormalization';
+import { normalizePath } from '../../../lib/pathNormalization';
 
 type Project = {
   id: string;
@@ -17,10 +17,12 @@ export type DirectoryOwner = {
   kind: 'project' | 'worktree';
 };
 
-export type SessionOwnershipIndex = {
+type SessionDirectoryIdentity = { id: string; directory?: string | null; project?: { worktree?: string | null } | null };
+
+export type SessionOwnershipIndex<S = Session> = {
   bySessionId: Map<string, DirectoryOwner>;
-  sessionsByProject: Map<string, Session[]>;
-  archivedSessionsByProject: Map<string, Session[]>;
+  sessionsByProject: Map<string, S[]>;
+  archivedSessionsByProject: Map<string, S[]>;
   sessionsByScope: Map<string, Set<string>>;
   directoryResolutions: number;
 };
@@ -42,12 +44,8 @@ const setOwner = (owners: Map<string, DirectoryOwner>, directory: string, candid
   }
 };
 
-const resolveSessionDirectory = (session: Session): string | null => {
-  const record = session as Session & {
-    directory?: string | null;
-    project?: { worktree?: string | null } | null;
-  };
-  return normalizePath(record.directory) ?? normalizePath(record.project?.worktree);
+const resolveSessionDirectory = (session: SessionDirectoryIdentity): string | null => {
+  return normalizePath(session.directory) ?? normalizePath(session.project?.worktree);
 };
 
 const getParentDirectory = (directory: string): string | null => {
@@ -61,13 +59,13 @@ const getParentDirectory = (directory: string): string | null => {
   return directory.slice(0, separator);
 };
 
-export const createSessionOwnershipIndex = (
-  sessions: Session[],
+export const createSessionOwnershipIndex = <S extends SessionDirectoryIdentity = Session>(
+  sessions: S[],
   projects: Project[],
   availableWorktreesByProject: Map<string, Worktree[]>,
   isVSCode: boolean,
-  archivedSessions: Session[] = [],
-): SessionOwnershipIndex => {
+  archivedSessions: S[] = [],
+): SessionOwnershipIndex<S> => {
   const ownerByDirectory = new Map<string, DirectoryOwner>();
   const projectByRoot = new Map<string, Project>();
 
@@ -106,8 +104,8 @@ export const createSessionOwnershipIndex = (
 
   const resolvedOwners = new Map<string, DirectoryOwner | null>();
   const bySessionId = new Map<string, DirectoryOwner>();
-  const sessionsByProject = new Map<string, Session[]>();
-  const archivedSessionsByProject = new Map<string, Session[]>();
+  const sessionsByProject = new Map<string, S[]>();
+  const archivedSessionsByProject = new Map<string, S[]>();
   const sessionsByScope = new Map<string, Set<string>>();
 
   const resolveOwner = (directory: string | null): DirectoryOwner | null => {
@@ -142,8 +140,8 @@ export const createSessionOwnershipIndex = (
   };
 
   const bucket = (
-    input: Session[],
-    target: Map<string, Session[]>,
+    input: S[],
+    target: Map<string, S[]>,
     scopeTarget?: Map<string, Set<string>>,
   ): void => {
     for (const session of input) {

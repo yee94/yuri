@@ -101,11 +101,13 @@ export function createHost() {
         configurations.push(copy(input)); return { lease: 'voice-production-memory-lease-' + selected };
       }
       if (name === 'runtime.stream') {
-        keys(input, ['path', 'key', 'expectedHost']); admit(input.expectedHost);
+        keys(input, input?.key === 'chat' ? ['path', 'key', 'expectedHost', 'ownerID', 'mode'] : ['path', 'key', 'expectedHost']); admit(input.expectedHost);
+        if (input.key === 'chat' && (!['auto', 'ws', 'sse'].includes(input.mode) || typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected Voice stream ticket');
         return base.call(name, { path: input.path, key: input.key });
       }
       if (name === 'runtime.stop') {
-        keys(input, ['key', 'expectedHost'], []);
+        keys(input, ['key', 'expectedHost', 'ownerID'], []);
+        if (input.key === 'chat' && (typeof input.ownerID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerID))) throw new Error('Unexpected Voice stop ticket');
         if (input.expectedHost !== undefined) {
           keys(input.expectedHost, ['hostID', 'lease']);
           if (!same(issuedScopes.get(input.expectedHost.lease), input.expectedHost)) throw new Error('Unknown Voice cleanup scope');

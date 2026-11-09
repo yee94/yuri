@@ -16,7 +16,7 @@ import NativeShell
         func request(_ path:String) throws -> GuiPluginPreviewRequest {try GuiPluginPreviewRequest(["method":"GET","route":"/api/fs/read?path="+path,"headers":["accept":"application/javascript"]])}
         let stream = app.handlers["runtime.stream"]!
         _ = try await stream(["expectedHost":scope.publicValue,"key":"global","path":"/api/yuri/events"])
-        _ = try await stream(["expectedHost":scope.publicValue,"key":"chat","path":"/api/event?directory=synthetic"])
+        _ = try await stream(["expectedHost":scope.publicValue,"key":"chat","path":"/api/event?directory=synthetic","mode":"sse","ownerID":"gui-isolation-chat"])
         let terminal = try runtime.terminalTransport(expectedHost:scope), socket = try await terminal.open()
         defer{socket.close()}
         guard case .text("connected") = try await socket.receive() else {preconditionFailure("terminal did not connect")}
@@ -27,7 +27,14 @@ import NativeShell
         let independent = try await capture.openGui(scope,request("small"))
         let independentBytes = try await independent.read(65536);precondition(independentBytes == Data([65]));independent.cancel()
         heldSecond.cancel()
-        func ticks(_ key:String) -> Int {app.events.filter{$0.0=="runtime.event" && $0.1["key"] as? String==key && $0.1["data"] as? String=="tick"}.count}
+        func ticks(_ key:String) -> Int {
+            app.events.filter {
+                guard $0.0 == "runtime.event", $0.1["key"] as? String == key,
+                      let text = $0.1["data"] as? String, let bytes = text.data(using: .utf8),
+                      let event = try? JSONSerialization.jsonObject(with: bytes) as? [String:Any] else { return false }
+                return event["type"] as? String == "gui.isolation.\(key).tick"
+            }.count
+        }
         func audit() async throws -> [[String:Any]] {
             let (bytes,_) = try await URLSession.shared.data(from:URL(string:(config["origin"] as! String)+"/stats")!)
             return (try JSONSerialization.jsonObject(with:bytes) as! [String:Any])["lanes"] as! [[String:Any]]

@@ -45,6 +45,8 @@ function normalizeModuleId(id: string): string {
 
 function isNonClientSource(id: string): boolean {
   const normalized = normalizeModuleId(id);
+  if (normalized === 'server/lib/notifications/admission-event.js'
+    || normalized.endsWith('/packages/web/server/lib/notifications/admission-event.js')) return false;
   if (CLIENT_TEST_FILE_RE.test(normalized)) return true;
   // Node backend lives under the Vite root; it must not enter the browser graph.
   return normalized.includes('/packages/web/server/') || normalized.startsWith('server/');

@@ -1,0 +1,26 @@
+{
+  "status": "fixture-repair-ready-for-review",
+  "scope": "Five authorized NSH fixture and dependency-boundary tests; no production changes",
+  "sources": {
+    "packages/nsh/new-session-input-ax.test.ts": "40b55212c55c27276780c2ae9d864513e0f851dc03f0c6441dad93f5e9af9e62",
+    "packages/nsh/new-session-ui.test.ts": "1093780408527f73f47a4e3120cdfed36e8fa3e1c4c4b0c89c66115cb00eefbe",
+    "packages/nsh/new-session-recovery.test.ts": "04e7044fd4a26dddfc70a1c890a984d836de8fe29744f0ad5bf228c8efb6c555",
+    "packages/nsh/setup-tour-application.test.ts": "150220981056853273ac89a6fa2bad65c4d337ff2da4cd846bdd82e018046b14",
+    "packages/nsh/chat-models-runtime.test.ts": "be9c6faf37a21e07b6be84177b71f058637d4a32203b05b6888394e3356db997"
+  },
+  "contracts": {
+    "inputAX": "Real NativeSheetSearch and AX sibling registration; appearance port uses production nativeLayoutDensity helper",
+    "selectionNotification": "Production createNativeComposerCommandRouter; existing no draft/network reads assertions retained",
+    "recovery": "Production draftStatus; unknown dispatch fixture persists destination uncertain:true before suspension; legacy source unknown never replays; preparing and acknowledged deferred-write gates assert entered, not yet persisted, then persisted",
+    "tour": "Explicit computed reader and real createResourceConnectionClear with popToRoot navigation port; unexpected dependencies still throw; startup opens no Tour and writes no progress; no added route/component side effects",
+    "dependencyBoundary": "conversation-order.ts inspected as import-free array-only helpers; exact pureLeaves entry requires empty imports; no sync directory or browser allowance"
+  },
+  "validation": {
+    "red": "Current five-file baseline: 60 tests, 17 failed and 43 passed",
+    "green": "Same five files plus legacy-unknown regression: 61 passed",
+    "focusedCommand": "bunx vitest run --config packages/nsh/vitest.config.ts packages/nsh/new-session-input-ax.test.ts packages/nsh/new-session-ui.test.ts packages/nsh/new-session-recovery.test.ts packages/nsh/setup-tour-application.test.ts packages/nsh/chat-models-runtime.test.ts",
+    "typecheck": "bunx tsc --noEmit -p packages/nsh/tsconfig.json passed",
+    "productionFreeze": "All six production source hashes and contract documentation in composer-local-commands-freeze.json still match",
+    "limitations": "Node/VM and bundle-graph evidence only; no device, real Host, Git, dependency changes, model calls, HTML route changes, or full-suite rerun; chat-chrome-wiring belongs to main"
+  }
+}

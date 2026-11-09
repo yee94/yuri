@@ -25,6 +25,10 @@ export function createNativeHistoryFooter(changed: (value: NativeHistoryFooterSn
   }
   return {
     snapshot,
+    invalidateMeasurement() {
+      const before = snapshot(); state.measuredHeight = 0; publish(before);
+    },
+    invalidateScroll() { state.offsetY = null; state.gesture = false; },
     update(context: NativeHistoryFooterContext, authority: NativeHistoryFooterAuthority = 'presentation') {
       const before = snapshot(), sameScope = context.scope === state.scope;
       state = { ...state, ...context, contentKey: context.contentKey };

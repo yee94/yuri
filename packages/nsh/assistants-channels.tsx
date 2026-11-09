@@ -1,11 +1,12 @@
 import { cleanup, effect, Image, lifecycle, locale, openUrl, Scroll, signal, Text, untracked, View } from 'nsh';
 import { AlertDialog, Button, Dialog, Input } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { admitAssistantMutation, assistantRequest, assistantURL, type AssistantFence } from './assistants-core';
 import { language, t } from './i18n';
 import { Icon } from './Icon';
 import { list, record, text, type Row } from './model';
-import { app, captureHostRequest, epoch } from './state';
+import { createPageOperations } from './page-operations';
 import { assistantQRSvg } from './assistants-qr';
 import wechatMark from '../ui/src/assets/brand/channels/wechat.svg';
 import wecomMark from '../ui/src/assets/brand/channels/wecom.svg';
@@ -32,34 +33,37 @@ function errorKey(error: string, weixin: boolean): I18nKey {
   if (error.includes('discovery_timeout')) return 'assistants.channels.discovery.timeout';
   return weixin ? 'assistants.weixin.error.generic' : 'assistants.channels.error.generic';
 }
-export function AssistantChannels(props: { bot: Row }) {
+export function AssistantChannels(props: { bot: Row; active?: boolean }) {
   const selected = signal<Channel | null>(null);
-  return <View class="gap-2">
+  return <View class="gap-2" style={nativeDensity().forms.group}>
     <Text class="text-xs text-muted-foreground">{t('assistants.channels.title')}</Text>
-    <View class="bg-card rounded-2xl p-4 flex-row flex-wrap gap-3">
+    <View class="bg-card rounded-2xl p-4 flex-row flex-wrap gap-3" style={nativeDensity().settings.card}>
       <Each of={channels}>{provider => <Button testID={`assistant-channel-${provider()}`} class="w-32 min-h-20 p-3 rounded-xl bg-secondary items-center justify-center gap-2" accessibilityLabel={t(titleKey(provider()))} onPress={() => selected.set(provider())}><Image src={marks[provider()]} style={{ width: 28, height: 28, objectFit: 'contain' }} /><Text class="text-foreground">{t(titleKey(provider()))}</Text></Button>}</Each>
     </View>
     <If when={selected() !== null}>
-      <Dialog presentation="pageSheet" class="flex-1 bg-background p-5 gap-4" closeOnEscape closeOnBackdropPress onOpenChange={event => { if (!event.open) selected.set(null); }}>
+      <Dialog presentation="pageSheet" class="flex-1 bg-background p-5 gap-4" style={nativeDensity().pages.sheetSimple} closeOnEscape closeOnBackdropPress onOpenChange={event => { if (!event.open) selected.set(null); }}>
         <View class="flex-row items-center gap-3"><Text class="flex-1 text-xl font-semibold text-foreground">{t(titleKey(selected()!))}</Text><Button testID="assistant-channel-close" class={action} onPress={() => selected.set(null)} accessibilityLabel={t('settings.common.actions.cancel')}><Icon name="close" /></Button></View>
-        <ChannelPanel bot={props.bot} provider={selected()!} onClose={() => selected.set(null)} />
+        <ChannelPanel bot={props.bot} provider={selected()!} active={props.active} onClose={() => selected.set(null)} />
       </Dialog>
     </If>
   </View>;
 }
 
-function ChannelPanel(props: { bot: Row; provider: Channel; onClose: () => void }) {
-  const request = captureHostRequest();
-  const captured = epoch(), connectionID = app.connection()?.id, weixin = props.provider === 'weixin';
+function ChannelPanel(props: { bot: Row; provider: Channel; onClose: () => void; active?: boolean }) {
+  const operations = createPageOperations(() => props.active !== false);
+  const weixin = props.provider === 'weixin';
   let alive = true, seeded = false, sequence = 0, discoverySequence = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const state = signal<Row | null>(null), error = signal(''), busy = signal(false), loading = signal(false), discovering = signal(false);
   const clientID = signal(''), secret = signal(''), ownerID = signal(''), code = signal(''), qr = signal('');
-  const fence: AssistantFence = { current: () => alive && captured === epoch() && connectionID === app.connection()?.id, request };
+  const fence = { current: () => alive && operations.current() };
+  // Keep the original write across lease replacement. GET never proves a secret
+  // update without its ACK, and recovery must not replay that update.
+  let pending: { suffix: string; method: string; body?: Row; acknowledged: boolean; fields?: { clientID: string; ownerID: string; secret: string; code: string } } | null = null;
+  operations.onRetire(() => { sequence++; discoverySequence++; busy.set(false); discovering.set(false); loading.set(false); if (timer) { clearTimeout(timer); timer = undefined; } });
   effect(() => {
-    app.connection();
-    if (fence.current()) return;
-    discoverySequence++; secret.set(''); ownerID.set(''); code.set(''); qr.set('');
+    if (operations.displayCurrent()) return;
+    discoverySequence++; clientID.set(''); secret.set(''); ownerID.set(''); code.set(''); qr.set(''); pending = null;
   });
   cleanup(() => { alive = false; sequence++; discoverySequence++; secret.set(''); code.set(''); qr.set(''); if (timer) clearTimeout(timer); });
   const path = assistantURL(text(props.bot.id), weixin ? '/weixin' : `/channels/${props.provider}`);
@@ -83,82 +87,105 @@ function ChannelPanel(props: { bot: Row; provider: Channel; onClose: () => void 
     if (replaceFields) { secret.set(''); code.set(''); }
     schedule();
   }
-  async function load(replaceFields = false, duringWrite = false) {
+  async function load(replaceFields = false, duringWrite = false, captured?: AssistantFence) {
     if (!fence.current() || busy() && !duringWrite || lifecycle() !== 'active') return;
+    const operation = captured ?? operations.capture();
     const attempt = ++sequence;
     loading.set(true);
     try {
-      const value = await assistantRequest(fence, path);
-      if (!fence.current() || attempt !== sequence) return;
-      accept(value, replaceFields); error.set('');
+      const value = await assistantRequest(operation, path);
+      if (!operation.current() || attempt !== sequence) return;
+      const transferred = pending?.suffix === '/transfer' && pending.acknowledged && value.configured === true;
+      const fields = transferred ? pending?.fields : undefined;
+      // An explicit transfer adopts its fields, unless the user has since edited
+      // the retained draft while its acknowledged write was awaiting a GET.
+      const adoptTransfer = !!fields && fields.clientID === clientID() && fields.ownerID === ownerID() && fields.secret === secret() && fields.code === code();
+      accept(value, replaceFields || adoptTransfer); error.set('');
+      if (pending) {
+        const matches = pending.method === 'PUT' && value.configured === true && value.clientID === pending.body?.clientID && value.ownerID === pending.body?.ownerID;
+        if (transferred || (matches && (pending.acknowledged || !pending.body?.clientSecret)) || (pending.method === 'DELETE' && value.configured === false && value.status === 'disconnected')) pending = null;
+        else error.set('delivery_unknown');
+      }
     } catch (failure) {
-      if (!fence.current() || attempt !== sequence) return;
+      if (!operation.current() || attempt !== sequence) return;
       const status = record(failure).status;
       if (status === 404 || status === 501) accept({ status: 'unsupported' });
       else { error.set(failure instanceof Error ? failure.message : String(failure)); schedule(); }
-    } finally { if (fence.current() && attempt === sequence) loading.set(false); }
+    } finally { if (operation.current() && attempt === sequence) loading.set(false); }
   }
   function cancelDiscovery() { discoverySequence++; discovering.set(false); }
   async function perform(suffix: string, method: string, body?: Row, close = false) {
     if (busy() || discovering() || !fence.current()) return;
+    if (pending) { await load(); return; }
+    const captured = operations.capture();
+    const fields = suffix === '/transfer' ? { clientID: clientID(), ownerID: ownerID(), secret: secret(), code: code() } : undefined;
     busy.set(true); error.set('');
     if (timer) { clearTimeout(timer); timer = undefined; }
     sequence++;
     try {
-      await admitAssistantMutation(fence);
-      if (!fence.current()) return;
+      await admitAssistantMutation(captured);
+      if (!captured.current()) return;
       if (unavailable()) throw new Error('assistant_disabled');
-      const result = await assistantRequest(fence, path + suffix, method, body);
-      if (!fence.current()) return;
+      const mutation = { suffix, method, body, acknowledged: false, fields };
+      pending = mutation;
+      const result = await assistantRequest(captured, path + suffix, method, body);
+      if (!captured.current()) return;
+      mutation.acknowledged = true;
       if (!text(result.status)) {
-        await load(suffix === '/transfer' || method === 'DELETE', true);
-        if (!fence.current()) return;
-      } else accept(result, suffix === '/transfer' || method === 'DELETE');
+        await load(false, true, captured);
+        if (!captured.current() || pending) return;
+      } else { accept(result, suffix === '/transfer'); pending = null; }
       if (suffix === '/verify') code.set('');
       if (close && state()?.configured === true) { secret.set(''); props.onClose(); }
-    } catch (failure) { if (fence.current()) error.set(failure instanceof Error ? failure.message : String(failure)); }
-    finally { if (fence.current()) { loading.set(false); busy.set(false); schedule(); } }
+    } catch (failure) { if (captured.current()) error.set(failure instanceof Error ? failure.message : String(failure)); }
+    finally { if (captured.current()) { loading.set(false); busy.set(false); schedule(); } }
   }
   async function save() {
-    if (!clientID().trim() || !ownerID().trim() || needsSecret() && !secret().trim() || discovering()) return;
+    if (!fence.current() || !clientID().trim() || !ownerID().trim() || needsSecret() && !secret().trim() || discovering()) return;
     await perform('', 'PUT', { clientID: clientID().trim(), ownerID: ownerID().trim(), ...(secret() ? { clientSecret: secret() } : {}), language: wireLanguage() }, true);
     if (!fence.current()) return;
   }
   async function disconnect() {
+    if (!fence.current()) return;
+    const captured = operations.capture();
     const answer = await AlertDialog.show({ title: t(weixin ? 'assistants.weixin.disconnect' : 'assistants.channels.actions.confirmDisconnect'), description: t('assistants.channels.disconnectWarning'), actions: [{ id: 'cancel', role: 'cancel', label: t('settings.common.actions.cancel') }, { id: 'remove', role: 'destructive', label: t(weixin ? 'assistants.weixin.disconnect' : 'assistants.channels.actions.confirmDisconnect') }] });
-    if (!fence.current() || answer.action !== 'remove') return;
+    if (!captured.current() || answer.action !== 'remove') return;
     await perform('', 'DELETE');
     if (!fence.current()) return;
   }
   async function discover() {
     if (busy() || discovering() || unavailable() || !clientID().trim() || needsSecret() && !secret().trim()) return;
+    const captured = operations.capture(), input = { clientID: clientID().trim(), ...(secret() ? { clientSecret: secret() } : {}) };
     const attempt = ++discoverySequence;
     discovering.set(true); error.set('');
     try {
-      await admitAssistantMutation(fence);
-      if (!fence.current() || attempt !== discoverySequence) return;
-      const result = await assistantRequest(fence, path + '/discover', 'POST', { clientID: clientID().trim(), ...(secret() ? { clientSecret: secret() } : {}) });
-      if (!fence.current() || attempt !== discoverySequence) return;
+      await admitAssistantMutation(captured);
+      if (!captured.current() || attempt !== discoverySequence) return;
+      const result = await assistantRequest(captured, path + '/discover', 'POST', input);
+      if (!captured.current() || attempt !== discoverySequence) return;
       if (!text(result.ownerID)) throw new Error('invalid_response');
       ownerID.set(text(result.ownerID));
-    } catch (failure) { if (fence.current() && attempt === discoverySequence) error.set(failure instanceof Error ? failure.message : String(failure)); }
-    finally { if (fence.current() && attempt === discoverySequence) discovering.set(false); }
+    } catch (failure) { if (captured.current() && attempt === discoverySequence) error.set(failure instanceof Error ? failure.message : String(failure)); }
+    finally { if (captured.current() && attempt === discoverySequence) discovering.set(false); }
   }
   async function transfer(source: Row) {
+    if (!fence.current()) return;
+    const captured = operations.capture();
     const revision = text(source.revision), sourceID = text(source.assistantID);
     const answer = await AlertDialog.show({ title: t('assistants.weixin.transfer'), description: t('assistants.weixin.transferWarning'), actions: [{ id: 'cancel', label: t('settings.common.actions.cancel'), role: 'cancel' }, { id: 'transfer', label: t('assistants.weixin.transferConfirm') }] });
-    if (!fence.current() || answer.action !== 'transfer' || discovering()) return;
+    if (!captured.current() || answer.action !== 'transfer' || discovering()) return;
     if (!list(state()?.transferSources).some(item => item.assistantID === sourceID && item.revision === revision)) { error.set('binding_changed'); return; }
     await perform('/transfer', 'POST', { sourceAssistantID: sourceID, revision, ...(weixin ? { language: wireLanguage() } : {}) });
     if (!fence.current()) return;
   }
   async function openHelp() {
     if (!fence.current() || weixin) return;
+    const captured = operations.capture();
     try {
       const result = await openUrl(helpURLs[props.provider as Exclude<Channel, 'weixin'>]);
-      if (!fence.current()) return;
+      if (!captured.current()) return;
       if (!result.opened) error.set('channel_error');
-    } catch { if (fence.current()) error.set('channel_error'); }
+    } catch { if (captured.current()) error.set('channel_error'); }
   }
   effect(() => {
     const active = lifecycle() === 'active' && fence.current();
@@ -174,7 +201,7 @@ function ChannelPanel(props: { bot: Row; provider: Channel; onClose: () => void 
     const keys: Record<string, I18nKey> = { disabled: 'assistants.channels.status.disabled', unsupported: 'assistants.channels.status.unsupported', disconnected: 'assistants.channels.status.disconnected', connecting: 'assistants.channels.status.connecting', connected: 'assistants.channels.status.connected', reconnecting: 'assistants.channels.status.reconnecting', error: 'assistants.channels.status.error' };
     return keys[status] || 'common.loading';
   };
-  return <Scroll class="flex-1" contentClass="gap-4 pb-8">
+  return <Scroll class="flex-1" contentClass="gap-4 pb-8" contentStyle={nativeDensity().pages.channels}>
     <Text class="text-muted-foreground">{t(statusKey())}</Text>
     <If when={!!error() || !!state()?.error}><Text class="text-destructive">{t(errorKey(error() || text(state()?.error), weixin))}</Text></If>
     <If when={(!state() || !!error()) && !loading()}><Button testID="assistant-channel-refresh" class={action} disabled={busy() || discovering()} onPress={() => { void load(); }}><Text class="text-foreground">{t('assistants.actions.retry')}</Text></Button></If>

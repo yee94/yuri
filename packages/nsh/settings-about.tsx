@@ -1,5 +1,6 @@
 import { cleanup, effect, lifecycle, openUrl, platform, Scroll, signal, Text, untracked, View, type ScrollRef } from 'nsh';
 import { AlertDialog, Button, Progress } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { bindRawRequest, native } from './runtime';
@@ -129,7 +130,7 @@ export function SettingsAbout(props: { target?: string; active?: boolean; depend
   const failedVersion = () => (['client', 'host', 'opencode', 'diagnostics'] as const).some(key => state()[key].status === 'failed');
   const updateEnabled = () => { state(); return controller.updateAvailable(); };
   const updateWritable = () => { state(); return controller.updateWritable(); };
-  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10">
+  return <Scroll ref={scroll} onScroll={navigation.onScroll} class="flex-1" contentClass="p-5 gap-5 pb-10" contentStyle={nativeDensity().pages.settings}>
     <View class="items-center gap-3"><Text class="text-2xl font-semibold text-foreground">Yuri</Text></View>
     <SettingsGroup title={t('settings.page.about.title')}>
       <View class="gap-1"><Text class="text-sm text-muted-foreground">{t('settings.yuri.about.field.clientVersion')}</Text><Text testID="about-client-version" class="text-sm font-mono text-foreground">{clientLabel()}</Text></View>

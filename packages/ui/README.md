@@ -7,6 +7,42 @@ Provider 品牌候选顺序由无运行时依赖的 `src/lib/providerBrand.ts` �
 `useProviderLogo` 与 NSH 的原生图片适配器共用 alias/Magpie 解码规则，各自提供实际
 artwork 目录。Native 不导入 React Hook 或 `import.meta.glob`。
 
+移动 Projects 首页与 MobileSessionsSheet 的紧凑活动时间由无 import 的
+`src/lib/time-format-core.ts` 的 `formatRelativeShort` 所有，NSH Projects 直接复用。
+保留 Web 的 `now/m/h/d` 文本与默认 Intl locale/时区；不足七个经过天显示相对时间，
+七天起只显示短月份与日，不额外加年份。零/非法 Date 返回空文本，合法未来时间显示 `now`。
+
+## Projects 菜单与工作树表单
+
+`src/mobile/sessionMenuModel.ts` 拥有项目菜单的动作顺序、字典 key、图标与破坏性分组，
+Web 手机端和 NSH Projects 共用 `buildProjectMenuItems`。菜单模型仅依赖纯类型/字典类型，
+不经 i18n React context；实际点击、关闭 completion 与呈现由各 runtime 所有。
+NSH 的工作树/文件/更改额外入口保留在共享标准动作之后，不以删除能力实现一致。
+
+`src/lib/worktrees/worktreeNames.ts` 拥有无运行时依赖的分支规范化与目录 slug 规则，
+`NewWorktreeDialog` 和 NSH 创建 controller 共用；分支不截长，目录 slug 最多80字符。
+它只规范化输入，不证明分支/目录可创建，服务端校验仍为创建前置条件。
+
+`src/lib/worktrees/branchSearch.ts` 的 `rankBranchesForQuery` 同时供 Web 工作树表单与
+NSH 的纯分组适配器消费；依赖相对路径的共享 fuzzy scorer，不引入 React/browser 层。
+搜索把模糊匹配置顶，但保留其他本地/远端分支；远端显示短名，值始终保留 `remotes/`。
+成功空目录、无搜索匹配和读取失败由各 runtime 的读取/呈现 owner 分开处理。
+
+Web `NewWorktreeDialog` 的分支数据、加载和错误统一由现有 `useGitBranchesQuery`
+所有，不再通过 Git store 的独立加载状态投影。读取失败保留 Query 旧目录和组件草稿，
+表单及源/现有分支的手机 picker、桌面 dropdown 均提供错误和显式重试；失败不显示成功空态。
+刷新调用 `refetch({ cancelRefetch: false })`，绕过新鲜缓存且不叠加活跃刷新；
+Query 原有30秒新鲜期、失败重试与窗口聚焦刷新语义保留，不宣称所有读取只由点击触发。
+此读取不执行 remote fetch；创建许可仍须服务端校验，读取成功不代替创建确认。
+
+Web `NewWorktreeDialog` 的预校验在 touched 后按实际表单依赖 debounce 300ms。
+取消句柄归 ref，`useEvent` 读取最新校验逻辑；校验自身状态更新和无关父级 render
+不重新触发请求。关闭、换稿或开始创建使旧结果不可采用，但该句柄没有传入 HTTP reader，
+因此不宣称已物理中止网络。真实组件回归覆盖成功/失败各50次无关重渲染只校验一次，
+以及关闭重开后的旧响应隔离（`NewWorktreeDialog.validation.test.tsx`）。
+这些是共享表单合同；完整 Native/Web 的局部实测及未完成分支见
+`../nsh/PROJECTS-SESSION-ACCEPTANCE.md` 批次 F，不代表所有 runtime 均已端到端验收。
+
 ## Tests
 
 The desktop header shows a neutral connection glyph when more than one instance

@@ -1,4 +1,5 @@
 import { record, type Attachment } from './model';
+import { sameAttachmentValue } from './attachments';
 import { nativeEditFiles } from './transcript-actions-core';
 import { referenceKinds, sameReferenceScope, validateNativeReferences, type NativeReference, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 
@@ -10,7 +11,7 @@ export type HistoryDraftOwner = {
 };
 export function historyDraftSnapshot(owner: HistoryDraftOwner): HistoryDraftSnapshot {
   const document = owner.referenceDocument();
-  return { text: document.text, files: owner.attachments().map(file => ({ uri: file.uri, name: file.name, mime: file.mime })), references: { text: document.text, scope: { ...document.scope }, references: document.references.map(ref => ({ kind: ref.kind, value: ref.value, label: ref.label, display: ref.display, start: ref.start, end: ref.end,
+  return { text: document.text, files: owner.attachments().map(file => ({ ...file })), references: { text: document.text, scope: { ...document.scope }, references: document.references.map(ref => ({ kind: ref.kind, value: ref.value, label: ref.label, display: ref.display, start: ref.start, end: ref.end,
     ...(ref.directory !== undefined ? { directory: ref.directory } : {}), ...(ref.description !== undefined ? { description: ref.description } : {}), ...(ref.scope ? { scope: { ...ref.scope } } : {}),
   })) } };
 }
@@ -53,7 +54,7 @@ export function historyDraftBackupJSON(snapshots: HistoryDraftSnapshot[]) {
 /** Existing durable document CAS owns text/reference replacement; files follow synchronously. */
 export function replaceHistoryDraft(owner: HistoryDraftOwner, next: HistoryDraftSnapshot, expected: HistoryDraftSnapshot) {
   const files = owner.attachments();
-  if (!sameReferenceScope(next.references.scope, expected.references.scope) || files.length !== expected.files.length || files.some((file, i) => file.uri !== expected.files[i]?.uri || file.name !== expected.files[i]?.name || file.mime !== expected.files[i]?.mime)) return false;
+  if (!sameReferenceScope(next.references.scope, expected.references.scope) || files.length !== expected.files.length || files.some((file, i) => !expected.files[i] || !sameAttachmentValue(file, expected.files[i]))) return false;
   if (!owner.setReferenceDocument(next.references, expected.references)) return false;
   owner.attachments.set(next.files.map(file => ({ ...file }))); return true;
 }

@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["../../.nsh/types/nsh/globals.d.ts", "../../.nsh/types/nsh/assets.d.ts", "../../.nsh/types/nsh/tokens.d.ts", "fixture.tsx"],
+  "exclude": []
+}

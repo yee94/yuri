@@ -21,6 +21,8 @@ NSH_BIN=/path/to/nsh/bin/nsh bunx --no-install vitest run \
   packages/nsh/new-session-local-page-native.test.ts
 ```
 
+首页 chips 拖拽专项的最新修后源图、红绿证据及 UIKit 待验收路径见 [NEW-SESSION-STARTERS-DRAG-VALIDATION.md](./NEW-SESSION-STARTERS-DRAG-VALIDATION.md)。该专项只改 Starters，不改变下述 durable/admission 合同；旧验证批次不覆盖新的原生手势结论。
+
 ## 2026-11-07：retained source / operation-only 恢复合同（本轮优先）
 
 本轮只改 `new-session.ts`、`new-session-admission.ts`、`new-session-page.tsx`、`new-session-fixture.tsx` 及其测试和本文；未改 application、state、runtime、Swift、composer 或外部 input/selection 模块。application 由 Tour owner 独占，下面接线交 main 协调。下文历史记录中的“未知后再次 POST”不再适用：未知首次 admission 一经记账，只允许按原 target/inputID 只读核验。

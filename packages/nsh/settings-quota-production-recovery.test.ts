@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { expect, it } from 'vitest';
 import * as core from './settings-quota-credentials-core';
 import * as scopes from './runtime-scope';
+import { nativeLayoutDensity } from './native-density';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 /** Executes the actual production quotaOwner, Settings lifetime and state operation
@@ -37,6 +38,7 @@ async function fixture() {
   const ports = { signal, effect, untracked, context: (initial: unknown) => () => initial, cleanup: (work: () => void) => cleanups.push(work), lifecycle: () => foreground() ? 'active' : 'background' };
   const modules: Record<string, unknown> = { nsh: { ...ports, host: { available: () => true, call: native } }, 'nsh/base': {}, './model': { record: (value: unknown) => value ?? {} }, './runtime-scope': scopes, './i18n': { t: (key: string) => key }, './settings-protocol': { createSettingsTransaction: () => () => { throw new Error('No Settings transaction expected'); } } };
   // This harness invokes only the Settings operation lifetime, never a Select or its UI.
+  modules['./appearance'] = { nativeDensity: () => nativeLayoutDensity() };
   modules['./native-select'] = { NativeSelect: () => { throw new Error('Quota recovery must not render a native Select'); } };
   function evaluate<T>(file: string, source = readFileSync(path.join(root, file), 'utf8'), extra = {}): T {
     const output = ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, jsx: ts.JsxEmit.React } }).outputText;

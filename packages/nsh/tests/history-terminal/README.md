@@ -2,6 +2,10 @@
 
 > 最新为 [build6 持久化修正与三轮实测](./BUILD6.md)，实验仍默认 OFF；三ON原生连续窗口通过，完整视频未通过，生产53pt仍red。[build5 同步释放合同](./SYNC-RELEASE.md)保留。下文与原验证文档保留旧诊断/四秒采样历史；不能用旧 checker 的绿替代同步模式验证。
 
+后续离线增量见 [生产53pt反馈与source fence交接](./PRODUCTION-HANDOFF.md)：真实录像负控制可只读重放，新增自然layout source generation fence与纯回归；未生成新原生包，未做UIKit或生产验收，不能将当前fixture源码冒认build6源码。
+
+正式生产接口现已落地，见 [History footer controller](../../HISTORY-FOOTER.md)。独立oracle指出的可变layoutSource换名问题已用不可复用source修正，实际fixture事件闭包回归已执行先红后绿；自然reader不再由tests拥有。此增量仍不改变生产53pt红灯和实验默认OFF。
+
 仅诊断，不是修复。依据真实录像独立审查 `.scratch/nsh/production-history-review-1794040314/README.md`：静止后的三块旧内容共同 −53pt；footer 消失及「已处理」→「用时 29m 31s」同个编码事件出现，但权威 adoption 身份不全。本夹具补可控变量、原生读取和采用记录，不能替代真实 Host 验收。
 
 **首次交付 `build-ewhxQ0` 被 main 实际启动后发现授权失败：`terminal.record is not granted`。该旧 App 不可用，构建成功未捕获此问题。** 当前授权修正版及待复验状态见 [VALIDATION.md](./VALIDATION.md)。

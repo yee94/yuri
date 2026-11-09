@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { runSettingsEngineFixture } from './tests/settings-engine-fixture-runner.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,19 +6,16 @@ import { tmpdir } from 'node:os';
 import { expect, test } from 'vitest';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-function nativeTest(steps: string[], platform: 'ios' | 'macos' = 'ios') {
-  const parent = process.env.OPENCODE_TMP_DIR || path.join(tmpdir(), 'opencode');
-  mkdirSync(parent, { recursive: true });
-  const temporary = mkdtempSync(path.join(parent, 'settings-outer-'));
-  try {
-    writeFileSync(path.join(temporary, 'nsh.json'), JSON.stringify({ name: 'Outer Settings fixture', id: 'example.yuri.settings-outer', version: '0.1.0', build: 1, theme: path.join(directory, 'theme.json'), capabilities: { host: ['connection.list', 'runtime.request', 'notification.status', 'notification.openSettings', 'notification.configure'] } }));
-    writeFileSync(path.join(temporary, 'App.tsx'), `import ${JSON.stringify(path.join(directory, 'settings-outer-test-app.tsx'))};`);
-    writeFileSync(path.join(temporary, 'Outer.test.tsx'), `import { expect, open, test } from 'nsh/test';\ntest('outer Settings regression (${platform} headless)', async () => { const app = await open('./App.tsx', { platform: ${JSON.stringify(platform)} });\n${steps.join('\n')}\n});`);
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'Outer.test.tsx', '--web-host', path.join(directory, 'tests/settings-outer-host.js')], { cwd: temporary, encoding: 'utf8', timeout: 35_000 });
-    expect(result.error, result.stdout + result.stderr).toBeUndefined();
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
+function nativeTest(steps: string[]) {
+  const result = runSettingsEngineFixture(directory, 'settings-outer-test-app.tsx', 'tests/settings-outer-host.js', steps, 35_000, ['notification.status', 'notification.openSettings', 'notification.configure']);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 }
+const providerAudit = (visibilityAttempts: number, modelAttempts: number) => [
+  'await app.press("id:settings-provider-fixture-audit");',
+  `await app.waitUntil(() => app.texts().some(text => text.startsWith(${JSON.stringify(`{"visibilityAttempts":${visibilityAttempts},"modelAttempts":${modelAttempts},`)})));`,
+];
+const providerSnapshot = 'JSON.parse(app.texts().find(text => text.startsWith("{\\"visibilityAttempts\\":")))';
 
 test('project settings has a real list/editor, retains a failed draft and round-trips only its metadata', () => {
   nativeTest([
@@ -155,13 +152,20 @@ test('Provider model add/remove keeps its row on failure and round-trips the sha
     'await app.waitFor("text:Fixture provider");',
     'await app.press("text:Fixture provider");',
     'await app.waitFor("id:settings-provider-toggle-model");',
+    'await app.waitUntil(() => app.enabled("id:settings-provider-toggle-model"));',
     'expect(app.texts().includes("−")).toBe(true);',
+    'await app.press("id:settings-provider-fixture-preflight");',
+    'await app.waitFor("text:Visibility preflight armed");',
     'await app.press("id:settings-provider-toggle-model");',
-    'await app.waitFor("text:HTTP 409: Fixture visibility conflict");',
+    'await app.waitFor("text:HTTP 500: Failed to read settings");',
     'expect(app.texts().includes("−")).toBe(true);',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.hiddenModels).toEqual([{providerID:"unrelated",modelID:"preserved"}]);`,
     'await app.press("id:settings-provider-toggle-model");',
     'await app.waitFor("text:Removed model");',
     'expect(app.texts().includes("+")).toBe(true);',
+    ...providerAudit(1, 0),
+    `expect(${providerSnapshot}.hiddenModels).toEqual([{providerID:"unrelated",modelID:"preserved"},{providerID:"fixture",modelID:"model"}]);`,
     'await app.back();',
     'await app.press("text:Fixture provider");',
     'await app.waitFor("id:settings-provider-toggle-model");',
@@ -169,6 +173,8 @@ test('Provider model add/remove keeps its row on failure and round-trips the sha
     'await app.press("id:settings-provider-toggle-model");',
     'await app.waitFor("text:Models · 1 added");',
     'expect(app.texts().includes("−")).toBe(true);',
+    ...providerAudit(2, 0),
+    `expect(${providerSnapshot}.hiddenModels).toEqual([{providerID:"unrelated",modelID:"preserved"}]);`,
   ]);
 }, 45_000);
 
@@ -183,12 +189,23 @@ test('model Sheet shows a rejected save in place, preserves the draft and refres
     'await app.waitFor("id:settings-model-name");',
     'await app.type("id:settings-model-name", "Native model edit");',
     'const draft = app.value("id:settings-model-name");',
-    'await app.press("text:Save");',
-    'await app.waitFor("text:HTTP 409: Fixture model conflict");',
+    'await app.press("id:settings-provider-model-save");',
+    'await app.waitFor("text:Enter a valid model ID and positive whole-number token limits. Output cannot exceed context.");',
     'expect(app.value("id:settings-model-name")).toBe(draft);',
-    'await app.press("text:Save");',
+    'expect(app.shows("text:Edit model")).toBe(true);',
+    'expect(app.shows("id:settings-provider-model-id")).toBe(true);',
+    'expect(app.value("id:settings-provider-model-id")).toBe("model");',
+    'expect(app.shows("id:settings-model-name")).toBe(true);',
+    'expect(app.shows("id:settings-provider-model-save")).toBe(true);',
+    'await app.waitUntil(() => app.enabled("id:settings-model-name"));',
+    ...providerAudit(0, 1),
+    `expect(${providerSnapshot}.model.name).toBe("Fixture model");`,
+    'await app.press("id:settings-provider-model-save");',
     'await app.waitFor("id:settings-provider-toggle-model");',
+    'expect(app.shows("id:settings-model-name")).toBe(false);',
     'await app.waitFor("text:" + draft);',
+    ...providerAudit(0, 2),
+    `expect(${providerSnapshot}.model.name).toBe(draft.trim());`,
     'await app.press("text:" + draft);',
     'await app.waitFor("id:settings-model-name");',
     'expect(app.value("id:settings-model-name")).toBe(draft);',
@@ -214,7 +231,7 @@ test('macOS headless Summary AI model edits enable provider mode without rewriti
   ], 'macos');
 }, 45_000);
 
-test('Appearance keeps a rejected font draft, retries once and reopens its confirmed Host value', () => {
+test('Appearance keeps an unconfirmed font draft across explicit GET retry and reopen without replay or treating equal GET as ACK', () => {
   nativeTest([
     'await app.waitFor("text:Appearance");',
     'await app.press("text:Appearance");',
@@ -222,14 +239,63 @@ test('Appearance keeps a rejected font draft, retries once and reopens its confi
     'await app.clear("id:settings-basics-fontSize");',
     'await app.type("id:settings-basics-fontSize", "125");',
     'await app.press("id:settings-preferences-save");',
-    'await app.waitFor("text:HTTP 409: Fixture preference conflict");',
+    'await app.waitFor("id:settings-preferences-unknown");',
     'expect(app.value("id:settings-basics-fontSize")).toBe("125");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    `expect(${providerSnapshot}.fontSize).toBe(125);`,
+    `const beforeRetry = ${providerSnapshot}.preferenceReads;`,
+    'await app.press("text:Retry");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceReads).toBeGreaterThan(beforeRetry);`,
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    'expect(app.shows("id:settings-preferences-unknown")).toBe(true);',
+    'expect(app.texts().includes("Saved")).toBe(false);',
     'await app.press("id:settings-preferences-save");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    'expect(app.shows("id:settings-preferences-unknown")).toBe(true);',
+    'await app.back();',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("id:settings-preferences-unknown");',
+    'expect(app.value("id:settings-basics-fontSize")).toBe("125");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    'expect(app.texts().includes("Saved")).toBe(false);',
+  ]);
+}, 45_000);
+
+test('Appearance confirms an acknowledged font write after explicit GET retry and reopens the confirmed Host value without replay', () => {
+  nativeTest([
+    'await app.waitFor("text:Appearance");',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("id:settings-basics-fontSize");',
+    ...providerAudit(0, 0),
+    `const beforeSave = ${providerSnapshot}.preferenceReads;`,
+    'await app.clear("id:settings-basics-fontSize");',
+    'await app.type("id:settings-basics-fontSize", "150");',
+    'await app.press("id:settings-preferences-save");',
+    'await app.waitFor("text:HTTP 500: Fixture preference confirmation unavailable");',
+    'expect(app.value("id:settings-basics-fontSize")).toBe("150");',
+    'expect(app.shows("id:settings-preferences-unknown")).toBe(false);',
+    'expect(app.texts().includes("Saved")).toBe(false);',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    `expect(${providerSnapshot}.preferenceConfirmationReads).toBe(0);`,
+    'await app.press("text:Retry");',
     'await app.waitFor("text:Saved");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
+    `expect(${providerSnapshot}.preferenceReads).toBeGreaterThan(beforeSave);`,
+    `expect(${providerSnapshot}.preferenceConfirmationReads).toBeGreaterThan(0);`,
+    `expect(${providerSnapshot}.fontSize).toBe(150);`,
+    'expect(app.shows("id:settings-preferences-unknown")).toBe(false);',
     'await app.back();',
     'await app.press("text:Appearance");',
     'await app.waitFor("id:settings-basics-fontSize");',
-    'expect(app.value("id:settings-basics-fontSize")).toBe("125");',
+    'expect(app.value("id:settings-basics-fontSize")).toBe("150");',
+    ...providerAudit(0, 0),
+    `expect(${providerSnapshot}.preferenceAttempts).toBe(1);`,
   ]);
 }, 45_000);
 
@@ -268,5 +334,5 @@ test('macOS headless Sessions defaults select real models, variants and visible 
     'expect(app.texts().includes("hidden-agent")).toBe(false);',
     'await app.press("text:visible-subagent");',
     'await app.waitFor("text:Saved");',
-  ], 'macos');
+  ]);
 }, 45_000);

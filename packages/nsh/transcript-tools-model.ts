@@ -7,7 +7,7 @@ import {
   resolveTaskAgentName,
 } from '../ui/src/components/chat/message/parts/taskToolModel';
 
-export type NativeToolFile = { path: string; patch: string; before?: string; after?: string; additions?: number; deletions?: number };
+export type NativeToolFile = { path: string; patch: string; before?: string; after?: string; additions?: number; deletions?: number; status?: 'added' | 'deleted' | 'modified' | 'renamed' };
 export type NativeToolField = { key: string; value: string };
 
 /** Same seconds/minutes display as Web ToolPart; absent terminal time is not fabricated. */
@@ -31,6 +31,9 @@ function inputFrom(value: unknown): Row {
   try { return record(JSON.parse(value)); } catch { return {}; }
 }
 function patchText(value: unknown) { return text(value) || text(record(value).patch); }
+function fileStatus(value: unknown): NativeToolFile['status'] {
+  return value === 'added' || value === 'deleted' || value === 'modified' || value === 'renamed' ? value : undefined;
+}
 export function nativeToolDetails(tool: Row) {
   const state = record(tool.state), metadata = record(state.metadata ?? tool.metadata);
   const normalized = normalizeTaskToolName(tool.name || tool.tool);
@@ -43,11 +46,14 @@ export function nativeToolDetails(tool: Row) {
   const path = text(fileDiff.file) || text(input.path) || text(input.filePath) || text(input.file_path) || text(metadata.filePath) || text(metadata.file_path) || text(metadata.path);
   const files: NativeToolFile[] = list(metadata.files).flatMap(file => {
     const path = text(file.movePath) || text(file.relativePath) || text(file.filePath) || text(file.file);
-    return path ? [{ path, patch: patchText(file.patch) || patchText(file.diff), ...(typeof file.before === 'string' ? { before: file.before } : {}), ...(typeof file.after === 'string' ? { after: file.after } : {}), ...(typeof file.additions === 'number' ? { additions: file.additions } : {}), ...(typeof file.deletions === 'number' ? { deletions: file.deletions } : {}) }] : [];
+    const status = fileStatus(file.status);
+    return path ? [{ path, patch: patchText(file.patch) || patchText(file.diff), ...(typeof file.before === 'string' ? { before: file.before } : {}), ...(typeof file.after === 'string' ? { after: file.after } : {}), ...(typeof file.additions === 'number' ? { additions: file.additions } : {}), ...(typeof file.deletions === 'number' ? { deletions: file.deletions } : {}), ...(status ? { status } : {}) }] : [];
   });
   if (path && !files.length) {
     const diff = patchText(fileDiff.patch) || patchText(fileDiff.diff) || patchText(metadata.patch) || patchText(metadata.diff);
+    const status = fileStatus(fileDiff.status);
     files.push({ path, patch: diff,
+      ...(status ? { status } : {}),
       ...(typeof fileDiff.before === 'string' ? { before: fileDiff.before } : name === 'edit' && typeof input.oldString === 'string' ? { before: input.oldString } : {}),
       ...(typeof fileDiff.after === 'string' ? { after: fileDiff.after } : name === 'edit' && typeof input.newString === 'string' ? { after: input.newString } : name === 'write' && typeof input.content === 'string' ? { after: input.content } : {}),
       ...(typeof fileDiff.additions === 'number' ? { additions: fileDiff.additions } : {}), ...(typeof fileDiff.deletions === 'number' ? { deletions: fileDiff.deletions } : {}),
@@ -79,4 +85,34 @@ export function nativeToolDescription(details: ReturnType<typeof nativeToolDetai
   }
   if (details.command) return details.command.split('\n')[0].slice(0, 100);
   return details.task ? details.description.slice(0, 80) : details.description;
+}
+
+export type NativeMultiFileEntry = { path: string; name: string; added: number | null; removed: number | null };
+
+function displayCount(value: number | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+}
+function combineCount(base: number | null, incoming: number | null): number | null {
+  if (base === null) return incoming;
+  if (incoming === null) return base;
+  return base + incoming;
+}
+
+/** Same per-file basename row as Web `getMultiFileDescription`. Empty means the single-line description and total stay. */
+export function nativeMultiFileEntries(details: ReturnType<typeof nativeToolDetails>): NativeMultiFileEntry[] {
+  if (details.name !== 'apply_patch' || details.files.length <= 1) return [];
+  const entries = new Map<string, NativeMultiFileEntry>();
+  for (const file of details.files) {
+    if (!file.path) continue;
+    const added = displayCount(file.additions), removed = displayCount(file.deletions);
+    const existing = entries.get(file.path);
+    if (existing) {
+      existing.added = combineCount(existing.added, added);
+      existing.removed = combineCount(existing.removed, removed);
+      continue;
+    }
+    const name = file.path.replace(/\\/g, '/').split('/').pop();
+    entries.set(file.path, { path: file.path, name: name || file.path, added, removed });
+  }
+  return [...entries.values()];
 }

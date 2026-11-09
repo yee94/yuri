@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 
-const h = vi.hoisted(() => ({ call: vi.fn(), cleanups: [] as Array<() => void>, disposers: [] as Array<() => void>, listeners: new Map<string, Set<(value: unknown) => void>>() }));
+const h = vi.hoisted(() => ({ call: vi.fn(), authorizationID: undefined as string | undefined, historyWrites: 0, storage: new Map<string, string>(), cleanups: [] as Array<() => void>, disposers: [] as Array<() => void>, listeners: new Map<string, Set<(value: unknown) => void>>() }));
 vi.mock('nsh', () => ({
   signal: <T>(value: T) => Object.assign(() => value, { set: (next: T) => { value = next; } }),
   batch: (work: () => void) => work(), untracked: <T>(work: () => T) => work(), lifecycle: () => 'active',
   cleanup: (work: () => void) => h.cleanups.push(work), effect: (work: () => unknown) => { const stop = work(); if (typeof stop === 'function') h.disposers.push(stop as () => void); },
-  Storage: { getItem: async () => null, setItem: async () => {} },
+  Storage: { getItem: async (key: string) => h.storage.get(key) ?? null, setItem: async (key: string, value: string) => { if (key.startsWith('nsh:history-cache:')) h.historyWrites++; h.storage.set(key, value); }, removeItem: async (key: string) => { h.storage.delete(key); } },
   host: { available: () => true, call: h.call, on: (name: string, listener: (value: unknown) => void) => { const entries = h.listeners.get(name) ?? new Set(); entries.add(listener); h.listeners.set(name, entries); return () => { entries.delete(listener); }; } },
 }));
 const target = { kind: 'session' as const, id: 'history-scope', title: 'History fixture', directory: '/fixture' };
@@ -17,10 +18,12 @@ const page = (start: number, next: string | null = token, count = 20) => ({ data
 let read: (url: URL) => unknown;
 const requests = () => h.call.mock.calls.filter(([name, input]) => name === 'runtime.request' && input.path.includes('/message?')).map(([, input]) => new URL(input.path, 'https://fixture.example'));
 beforeEach(() => {
-  vi.resetModules(); vi.useFakeTimers(); h.cleanups = []; h.disposers = []; h.listeners.clear();
+  resetIssuedStreams(h.call);
+  vi.resetModules(); vi.useFakeTimers(); h.cleanups = []; h.disposers = []; h.listeners.clear(); h.storage.clear(); h.authorizationID = undefined; h.historyWrites = 0;
   read = url => url.searchParams.has('cursor') ? page(0, null) : page(20);
   h.call.mockReset().mockImplementation(async (name, input) => {
-    if (name === 'connection.list') return { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', label: 'Fixture', url: 'https://fixture.example' }] };
+    if (name === 'runtime.stream') captureIssuedStream(h.call, input);
+    if (name === 'connection.list') return { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', label: 'Fixture', url: 'https://fixture.example', ...(h.authorizationID ? { authorizationID: h.authorizationID } : {}) }] };
     if (name !== 'runtime.request') return true;
     const path = input.path as string;
     const body = path.includes('/message?') ? await read(new URL(path, 'https://fixture.example'))
@@ -122,7 +125,7 @@ it('fences an older request waiting behind a tail when the Host changes', async 
 it('does not let an older overlap overwrite newly streamed text', async () => {
   const { chat } = await open(); const gate = deferred<unknown>();
   read = () => gate.promise; const older = chat.load(true); await flush();
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-20', ordinal: 0, delta: ' live' } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-20', ordinal: 0, delta: ' live' } }) });
   await vi.advanceTimersByTimeAsync(32);
   gate.resolve(page(1, null)); await older;
   expect(chat.messages().find(row => row.id === 'row-20')?.text).toContain('live');
@@ -132,7 +135,7 @@ it('does not use a newly streamed latest row as proof that a staged gap has been
   const { chat } = await open();
   read = url => { const cursor = url.searchParams.get('cursor'); const start = cursor ? Number(cursor.slice(5)) : 200; return page(start, start > 0 ? `from-${start - 20}` : null); };
   await chat.load(false, ['messages']);
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-219', ordinal: 0, delta: ' live' } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-219', ordinal: 0, delta: ' live' } }) });
   await vi.advanceTimersByTimeAsync(32);
   expect(chat.messages().map(row => row.id)).toEqual(rows(20).map(row => row.id));
   await chat.load(false, ['messages']);
@@ -154,7 +157,7 @@ it('restarts catchup if the fresh newest page no longer overlaps the staged tail
 it('initializes the older boundary even if a live row arrived before the first GET completed', async () => {
   const gate = deferred<unknown>(); read = () => gate.promise;
   const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'live-newest', ordinal: 0, delta: 'live' } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'live-newest', ordinal: 0, delta: 'live' } }) });
   await vi.advanceTimersByTimeAsync(32); gate.resolve(page(20)); await flush();
   expect(chat.hasGap()).toBe(false); expect(chat.more()).toBe(true);
   expect(chat.messages().map(row => row.id)).toEqual([...rows(20).map(row => row.id), 'live-newest']);
@@ -165,7 +168,7 @@ it('initializes the older boundary even if a live row arrived before the first G
 
 it('older overlap never settles already-published live text even when the delta preceded the request', async () => {
   const { chat } = await open();
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-20', ordinal: 0, delta: ' live' } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-20', ordinal: 0, delta: ' live' } }) });
   await vi.advanceTimersByTimeAsync(32);
   read = () => page(1, null); await chat.load(true);
   expect(chat.messages().find(row => row.id === 'row-20')?.text).toContain('live');
@@ -189,8 +192,46 @@ it('does not use live rows published during the newest GET as authoritative brid
   const { chat } = await open(); const gate = deferred<unknown>();
   read = url => { const cursor = url.searchParams.get('cursor'); if (!cursor) return gate.promise; const start = Number(cursor.slice(5)); return page(start, start > 0 ? `from-${start - 20}` : null); };
   const tail = chat.load(false, ['messages']); await flush();
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-219', ordinal: 0, delta: ' live' } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type: 'session.text.delta', data: { sessionID: target.id, assistantMessageID: 'row-219', ordinal: 0, delta: ' live' } }) });
   await vi.advanceTimersByTimeAsync(32); gate.resolve(page(200, 'from-180')); await tail;
   expect(chat.hasGap()).toBe(true);
   expect(requests()).toHaveLength(7);
+});
+
+it('reopens the merged loaded window synchronously, validates in background, and never promotes the seed to live authority', async () => {
+  h.authorizationID = 'fixture-authorization';
+  const { state, chat } = await open(); await chat.loadOlder(); await flush();
+  const previous = chat.messages(); expect(previous).toHaveLength(40);
+  const gate = deferred<unknown>(); read = () => gate.promise;
+  const reopened = state.createChat(target);
+  expect(reopened.messages()).toEqual(previous); expect(reopened.loading()).toBe(false);
+  expect(reopened.messagesResolved()).toBe(false); expect(reopened.streamingMessageIDs().size).toBe(0); expect(reopened.busy()).toBe(false);
+  await flush(); gate.resolve(page(20)); await flush();
+  expect(reopened.messages()).toHaveLength(40); expect(reopened.messagesResolved()).toBe(true);
+  expect(reopened.messages()[0]).toBe(previous[0]);
+  const writes = h.historyWrites, network = requests().length;
+  for (let i = 0; i < 50; i++) reopened.setDraftText(`edit ${i}`);
+  await flush(); expect(h.historyWrites).toBe(writes); expect(requests()).toHaveLength(network);
+  for (let i = 0; i < 10; i++) await reopened.load(false, ['messages']);
+  await flush(); expect(h.historyWrites).toBe(writes);
+  await state.loadConnections({ forceReconnect: true }); h.authorizationID = 'new-authorization'; await state.loadConnections({ forceReconnect: true });
+  read = () => new Promise(() => {}); const newAuthorization = state.createChat(target);
+  expect(newAuthorization.messages()).toEqual([]);
+});
+
+it('cold native storage can seed while the message GET waits, even after metadata has already returned', async () => {
+  h.authorizationID = 'fixture-authorization';
+  const { chat } = await open(); await chat.loadOlder(); await flush();
+  h.disposers.splice(0).forEach(stop => stop()); h.cleanups.splice(0).forEach(stop => stop()); h.listeners.clear();
+  vi.resetModules(); const gate = deferred<unknown>(); read = () => gate.promise;
+  const state = await import('./state'); await state.loadConnections(); const cold = state.createChat(target); await flush();
+  expect(cold.messages()).toHaveLength(40); expect(cold.messagesResolved()).toBe(false);
+  gate.resolve(page(20)); await flush(); expect(cold.messages()).toHaveLength(40); expect(cold.messagesResolved()).toBe(true);
+});
+
+it('a staged revert invalidates the persisted window before a new Chat can seed it', async () => {
+  h.authorizationID = 'fixture-authorization';
+  const { state, chat } = await open(); await flush(); chat.revert.set({ messageID: 'row-30' });
+  read = () => new Promise(() => {}); const reopened = state.createChat(target); await flush();
+  expect(reopened.messages()).toEqual([]);
 });

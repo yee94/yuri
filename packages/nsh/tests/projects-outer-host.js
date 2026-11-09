@@ -1,8 +1,13 @@
+import { projectsFixtureAuthority } from './projects-fixture-authority.js';
+
 /** Projects acquisition/search fixture only; no production Host or model calls. */
 export function createHost() {
+  const authority = projectsFixtureAuthority('fixture');
   let cloneCount = 0, saves = 0, contentReads = 0, projects = [];
   return { call(name, input) {
+    if (name === 'connection.list' && input && Object.keys(input).length === 0) return authority.snapshot();
     if (name !== 'runtime.request') throw new Error('Unexpected native call');
+    authority.accept(input);
     const path = input.path, method = input.method;
     let body;
     if (path === '/api/fs/home') body = { home: '/workspace' };

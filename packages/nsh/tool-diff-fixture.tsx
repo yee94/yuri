@@ -4,6 +4,7 @@ import { NativeToolRow } from './transcript-tools';
 import { NativeChangesSheet } from './chat-changes';
 import { language } from './i18n';
 import type { ChangesSource } from './chat-changes-model';
+import { prepareChangesFixture } from './chat-changes-fixture-bootstrap';
 
 function Fixture() {
   language.set('en-US');
@@ -29,4 +30,7 @@ function Fixture() {
     <If when={!!source()}><NativeChangesSheet source={source()!} open active={active()} onClose={() => source.set(null)} onOpenPreview={(path, line) => preview.set(`preview:${path}:${line}`)} /></If>
   </View>;
 }
-mount(Fixture);
+mount(() => {
+  const boot = prepareChangesFixture();
+  return <If when={boot.ready()} else={<Text testID="tool-diff-fixture-boot">{boot.error() || 'Loading fixture connection'}</Text>}><Fixture /></If>;
+});

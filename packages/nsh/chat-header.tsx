@@ -104,9 +104,9 @@ export function ChatHeaderActions(props: { native?: boolean; target: ChatTarget;
       <WorkspaceAction id="files" label={t('mobile.menu.files')} icon="file-text" select={select} />
       <WorkspaceAction id="changes" label={t('mobile.menu.changes')} icon="git-branch" dirty={metadata().dirty} select={select} />
       <WorkspaceAction id="mcp" label={t('mobile.menu.mcp')} icon="plug" select={select} />
+      <WorkspaceAction id="refresh" label={t('sessions.sidebar.session.menu.refreshTranscript')} icon="refresh" select={select} />
       <WorkspaceAction id="remote-desktop" label={t('remoteDesktop.title')} icon="computer" select={select} />
       <If when={!!props.autoRead}><WorkspaceAction id="auto-read" label={t('mobile.menu.autoRead')} icon="volume-up" selected={props.autoRead?.preferred} disabled={!props.autoRead?.available} select={() => { if (current()) { menu.set(false); props.autoRead?.onToggle(); } }} /></If>
-      <WorkspaceAction id="refresh" label={t('sessions.sidebar.session.menu.refreshTranscript')} icon="refresh" select={select} />
     </ChatHeaderPopup>
   </View>;
 }

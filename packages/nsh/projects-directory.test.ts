@@ -21,8 +21,8 @@ beforeEach(() => {
   handle = (path, method, body) => path === '/api/fs/home' ? { home: '/workspace' } : path.startsWith('/api/fs/list') ? { entries: [] } : method === 'PUT' ? body : { projects: [] };
   request = vi.fn(async (...args: [string, string?, unknown?]) => handle(...args));
   const exports = {}, imports: Record<string, unknown> = {
-    nsh: { signal, computed: (work: () => unknown) => work, cleanup: () => {} }, 'nsh/base': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model,
-    '../ui/src/lib/projectId': { createProjectIdFromPath }, '../ui/src/lib/pathNormalization': { normalizePath }, './runtime': { request }, './state': { app, epoch: () => generation },
+    nsh: { signal, computed: (work: () => unknown) => work, cleanup: () => {} }, 'nsh/base': {}, './native-select': {}, './Icon': {}, './i18n': { t: (key: string) => key }, './model': model,
+    '../ui/src/lib/projectId': { createProjectIdFromPath }, '../ui/src/lib/pathNormalization': { normalizePath }, './runtime': { request }, './state': { app, epoch: () => generation, captureHostRequest: () => request },
   };
   vm.runInNewContext(compiled, { exports, require: (id: string) => { if (!(id in imports)) throw new Error(id); return imports[id]; }, console });
   module = exports as typeof module;
@@ -112,13 +112,16 @@ describe('native project directory acquisition (no NSH engine)', () => {
     expect(await controller.add('/workspace/repo')).toBeUndefined(); expect(app.projects()).toEqual([]); expect(controller.prepared()).not.toBeNull();
     expect(controller.error()).toContain('not confirmed');
   });
-  it('fences old Host clone completion before registry writes and clears the checkpoint on rebind', async () => {
+  it('fences old Host clone completion and gives the new Host a fresh page-owned controller', async () => {
     const controller = module.createProjectDirectoryController(); await controller.initialize(); controller.remote.set('https://repo.example/repo');
     const late = deferred(); handle = () => late.promise; const work = controller.add('/workspace/repo', { clone: true });
     generation++; late.resolve({ success: true, path: '/workspace/repo' }); await work;
     expect(request.mock.calls.filter(([path]) => path === '/api/config/settings')).toEqual([]); expect(app.projects()).toEqual([]);
+    const reads = request.mock.calls.length;
     handle = path => path === '/api/fs/home' ? { home: '/new-home' } : { entries: [] }; await controller.initialize();
-    expect(controller.home()).toBe('/new-home'); expect(controller.prepared()).toBeNull(); expect(controller.remote()).toBe('');
+    expect(request.mock.calls.length).toBe(reads); expect(controller.current()).toBe(false);
+    const replacement = module.createProjectDirectoryController(); await replacement.initialize();
+    expect(replacement.home()).toBe('/new-home'); expect(replacement.prepared()).toBeNull(); expect(replacement.remote()).toBe('');
   });
   it('ignores stale browse completion and every write after disposal', async () => {
     const controller = module.createProjectDirectoryController(); await controller.initialize(); const late = deferred();

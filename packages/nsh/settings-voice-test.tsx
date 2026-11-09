@@ -1,5 +1,6 @@
 import { cleanup, effect, host, lifecycle, Scroll, signal, Text, untracked, View } from 'nsh';
 import { Button, createNavStack, Dialog, NavPage, NavStack, TextView } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import { native } from './runtime';
 import { SettingsGroup, settingsAction } from './settings-controls';
@@ -78,7 +79,7 @@ function SettingsVoiceAsrTestDialog(props: {
         <NavStack state={navigation} class="flex-1">{() => <NavPage title={t('settings.voice.volcengine.asrTest')} headerClass="bg-background text-foreground" onBackPress={close}
           header={<View class="flex-row items-center justify-between p-4"><Text class="text-base text-foreground">{t('settings.voice.volcengine.asrTest')}</Text><Button class={settingsAction} onPress={close}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button></View>}
           headerRight={<Button testID="settings-voice-asr-close" class="min-h-11 px-3 items-center justify-center" onPress={close} accessibilityLabel={t('settings.common.actions.cancel')}><Text class="text-foreground">{t('settings.common.actions.cancel')}</Text></Button>}>
-          <Scroll class="flex-1" contentClass="p-5 gap-5 items-center">
+           <Scroll class="flex-1" contentClass="p-5 gap-5 items-center" contentStyle={nativeDensity().pages.voiceTest}>
             <Text class="text-xs text-muted-foreground">{t('settings.voice.volcengine.testHelp')}</Text>
             <Button testID="settings-voice-asr-primary" class="size-28 rounded-full bg-secondary active:bg-accent items-center justify-center disabled:opacity-40" disabled={props.blocked() || asrBusy() || state().asr === 'unsupported'} accessibilityLabel={t(voiceTestAsrAction(state()))} onPress={props.primary}>
               <Icon name={asrBusy() || state().asr === 'failed' ? 'refresh' : state().asr === 'recording' ? 'stop' : 'mic'} size={48} />

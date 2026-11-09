@@ -2,6 +2,25 @@
 
 > **后续实施状态**：本文以下保留最初只读审计快照，其旧行号及“缺/本次未运行”不能作为当前实现结论。Chat 后续接线、测试、真实 Host 与 UIKit 证据及未关闭差异见 [CHAT-VALIDATION.md](./CHAT-VALIDATION.md)。原 checklist 仍限定完整交付范围，新增代码或测试不自动勾选验收。
 
+后续实现已覆盖最初表格中的许多缺口。继续执行原 checklist 时，先核对以下所属合同，再分别登记代码、引擎、UIKit、真实 Host/Relay 证据；原表的待验步骤仍全部保留。
+
+| 范围 | 当前实现与验收边界的所属记录 |
+| --- | --- |
+| Projects、工作树与会话返回链 | [PROJECTS-SESSION-ACCEPTANCE.md](./PROJECTS-SESSION-ACCEPTANCE.md)、[PROJECTS-HOME-SHEETS-VALIDATION.md](./PROJECTS-HOME-SHEETS-VALIDATION.md) |
+| Bots 集合、详情、四渠道及 Schedules 外层 | [OUTER-ASSISTANTS-SCHEDULES-VALIDATION.md](./OUTER-ASSISTANTS-SCHEDULES-VALIDATION.md) |
+| Bot/Task 编辑器、原生日期及 History Sheet | [tests/features-uikit/README.md](./tests/features-uikit/README.md) |
+| 完整设置集合、详情和支持文件 | [SETTINGS-COLLECTIONS-VALIDATION.md](./SETTINGS-COLLECTIONS-VALIDATION.md) |
+| 偏好真实消费者、unknown 安全离页与缓存清理 | [tests/settings-preferences-gap-contract.md](./tests/settings-preferences-gap-contract.md) |
+| 聊天设置控件、预览动画与真实视口门控 | [tests/settings-preferences-fields-contract.md](./tests/settings-preferences-fields-contract.md) |
+| 设备代码字号、Host 终端字号与 TextView 消费者 | [tests/appearance-font-consumers-contract.md](./tests/appearance-font-consumers-contract.md) |
+| 实际会话 WS/SSE、唯一 owner 与补偿 | [tests/session-message-stream-contract.md](./tests/session-message-stream-contract.md) |
+| Changes 各入口与 canonical Diff 布局 | [CHANGES-VALIDATION.md](./CHANGES-VALIDATION.md)、[tests/chat-changes-layout-contract.md](./tests/chat-changes-layout-contract.md) |
+| Contact 附件上传、草稿、发送和独立预览 | [tests/attachment-upload/README.md](./tests/attachment-upload/README.md) |
+| 真实 WK 主桥及子文档隔离 | [tests/gui-wk-boundary/README.md](./tests/gui-wk-boundary/README.md) |
+| 历史 −53pt 红灯与原生诊断 | [HISTORY-FOOTER.md](./HISTORY-FOOTER.md)、[tests/history-production-uikit/NATIVE-DIAGNOSTIC.md](./tests/history-production-uikit/NATIVE-DIAGNOSTIC.md) |
+
+历史 −53pt 仍未关闭；拼写检查的精确编辑器 trait 接口、系统能力及真实设备验证等阻断不能从上述实现记录推成已通过。终端是否具有当前手机可达入口仍按 R02 核查，不能仅凭已存在原生 bridge 新增参考端没有的入口。
+
 审计日期：2026-11-07。范围是**当前 Web 手机端全部实际行为及其二级页、弹层、Agent 交互**，并列出 Capacitor 原生增补；优先级只安排先后，不缩减 scope，不把缺失功能排为“非 MVP”。本次只读源码和指定截图，仅写本文；未读设备凭据、未运行真实对话、未执行 git/GitHub、未安装依赖。未操作主线程的 5180 服务。
 
 ## 证据口径（先读）

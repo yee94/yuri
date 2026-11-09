@@ -32,10 +32,16 @@ it('native editor Back/Cancel guard keeps drafts and only explicit discard leave
     'await app.press("id:features-open-bot");',
     'await app.waitFor("id:features-bot-name");',
     ...(process.env.FEATURES_HOST_TRACE === '1' ? ['console.log("[features-host-probe]", JSON.stringify(app.host.calls()));'] : []),
+    'await app.waitUntil(() => app.enabled("id:features-model-picker")); await app.press("id:features-model-picker");',
     'await app.waitFor("text:Managed directory verified");',
+    'await app.press("id:features-model-close");',
+    'await app.waitUntil(() => !app.shows("id:features-model-sheet"));',
+    'await app.waitUntil(() => app.enabled("id:features-bot-save"));',
+    'console.log("[features-phase] bot picker dismissed; editor dirty Back/Cancel next");',
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected features|must not write|ReferenceError|TypeError/);',
     'await app.type("id:features-bot-name", "Unsaved Bot");',
     'const botDraft = app.value("id:features-bot-name");',
+    'expect(botDraft).toContain("Unsaved Bot");',
     'const botBackDialogs = app.dialogs().length;',
     'app.onDialog(() => "Cancel");',
     'await app.back();',
@@ -47,13 +53,19 @@ it('native editor Back/Cancel guard keeps drafts and only explicit discard leave
     'await app.waitFor("id:features-open-task");',
     'await app.press("id:features-open-task");',
     'await app.waitFor("id:features-goal");',
+    'await app.waitUntil(() => app.enabled("id:features-model-picker")); await app.press("id:features-model-picker");',
     'await app.waitFor("text:Task directory verified");',
+    'await app.press("id:features-model-close");',
+    'await app.waitUntil(() => !app.shows("id:features-model-sheet"));',
+    'await app.waitUntil(() => app.enabled("id:features-task-save"));',
+    'console.log("[features-phase] task picker dismissed; editor dirty Cancel/Back next");',
     'await app.waitFor("id:features-cron-next-runs");',
     'expect(app.count("id:features-cron-next-run")).toBe(4);',
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected features|must not write|ReferenceError|TypeError/);',
     'expect(app.texts().join("\\n")).not.toContain("Invalid cron expression");',
     'await app.type("id:features-task-name", "Unsaved Task");',
     'const taskDraft = app.value("id:features-task-name");',
+    'expect(taskDraft).toContain("Unsaved Task");',
     'const taskCancelDialogs = app.dialogs().length;',
     'app.onDialog(() => "Cancel");',
     'await app.press("id:features-task-cancel");',
@@ -66,7 +78,17 @@ it('native editor Back/Cancel guard keeps drafts and only explicit discard leave
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected features|must not write|ReferenceError|TypeError/);',
   ].join('\n');
   if (!dateHost) throw new Error('A real Foundation date Host is required');
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'features-ui-test-app.tsx', '--web-host', dateHost], { cwd: directory, input: steps, encoding: 'utf8', timeout: 60_000 });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const engineDirectory = mkdtempSync(path.join(directory, 'tests', '.features-read-engine-'));
+  try {
+    const engineTest = path.join(engineDirectory, 'features-engine.test.tsx');
+    writeFileSync(engineTest, [
+      'import { expect, open, test } from "nsh/test";',
+      'test("read-only editor guards on the headless non-iOS surface", async () => {',
+      `const app = await open(${JSON.stringify(path.join(directory, 'features-ui-test-app.tsx'))}, { platform: 'macos', storage: {}, network: {} });`,
+      'try {', steps, '} finally { app.dispose(); }', '});',
+    ].join('\n'));
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', engineTest, '--web-host', dateHost], { cwd: directory, encoding: 'utf8', timeout: 60_000 });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { rmSync(engineDirectory, { recursive: true, force: true }); }
 }, 75_000);

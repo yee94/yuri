@@ -40,16 +40,18 @@ it.skipIf(process.env.NSH_LIVE !== '1')('renders real Host SSE incrementally, ca
   let finish!: () => void, ready!: () => void;
   const completed = new Promise<void>(resolve => { finish = resolve; }), connected = new Promise<void>(resolve => { ready = resolve; });
   const controller = new AbortController(), started = Date.now();
+  let issued: Record<string, unknown> | undefined, streamAttached = false;
   const emit = (payload: unknown) => { for (const listener of harness.listeners.get('runtime.event') ?? []) listener(payload); };
+  const nativeReady = () => { if (issued && streamAttached) emit({ key: 'chat', ownerID: issued.ownerID, expectedHost: issued.expectedHost, type: 'reconnected' }); };
   const stream = host.stream('/api/event', async (raw: unknown) => {
-    const payload = { key: 'chat', data: JSON.stringify(raw) };
+    const payload = { key: 'chat', ...(issued ? { ownerID: issued.ownerID, expectedHost: issued.expectedHost } : {}), data: JSON.stringify(raw) };
     const event = runtimeEventFrom(payload);
-    if (event?.type === 'server.connected') ready();
+    if (event?.type === 'server.connected') { streamAttached = true; nativeReady(); ready(); }
     if (!event || eventSessionID(event) !== sessionID) return;
     const envelope = record(record(raw).payload ?? raw), data = event.body;
     const before = chat?.messages().reduce((sum, message) => sum + message.text.length + message.reasoning.length, 0) ?? 0;
     const reads = messageGETs;
-    emit(payload);
+    if (issued) emit(payload);
     await new Promise(resolve => setTimeout(resolve, 40));
     const length = chat?.messages().reduce((sum, message) => sum + message.text.length + message.reasoning.length, 0) ?? 0;
     if (/\.(text|reasoning)\.delta$/.test(event.type) && length > before && reads === messageGETs) directGrowth++;
@@ -58,7 +60,8 @@ it.skipIf(process.env.NSH_LIVE !== '1')('renders real Host SSE incrementally, ca
     if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(event.type)) finish();
   }, controller.signal).catch(() => { if (!controller.signal.aborted) finish(); });
   harness.call.mockImplementation(async (name: string, input: Record<string, unknown>) => {
-    if (name === 'connection.list') return { selected: 'live', connections: [{ id: 'live', label: 'Live acceptance', url: host.origin, lastUsedAt: 0 }] };
+    if (name === 'connection.list') return { selected: 'live', runtimeScope: { hostID: 'live', lease: '00000000-0000-4000-8000-000000000001' }, connections: [{ id: 'live', label: 'Live acceptance', url: host.origin, lastUsedAt: 0 }] };
+    if (name === 'runtime.stream' && input.key === 'chat') { issued = structuredClone(input); nativeReady(); return true; }
     if (name !== 'runtime.request') return true;
     const resource = text(input.path), method = text(input.method);
     if (resource.includes('/message?')) messageGETs++;

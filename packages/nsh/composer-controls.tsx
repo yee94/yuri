@@ -4,7 +4,7 @@ import { t } from './i18n';
 import type { Row } from './model';
 import type { ReferenceScope } from './composer-references';
 import type { NativeReferenceKeyboard } from './composer-reference-keyboard-native';
-import { nativeCommandRows, type NativeLocalCommandCatalog } from './composer-commands-model';
+import { nativeCommandRows, type NativeCommandContext, type NativeLocalCommandCatalog } from './composer-commands-model';
 import { nativeAutocompleteSurface } from './composer-surface';
 import { referenceDescriptionStyle, referencePanelMetrics, referenceRowDensity, referenceTitleStyle } from './composer-references-presentation';
 import { NativeAutocompleteRowText } from './composer-references-controls';
@@ -18,6 +18,7 @@ export function NativeCommandSuggestions(props: {
   loadCommands: () => Promise<void>;
   maxHeight?: number;
   catalog?: NativeLocalCommandCatalog;
+  context?: NativeCommandContext;
 }) {
   const failure = signal(false), loading = signal(false), retry = signal(0);
   const ref = signal<ListRef | undefined>(undefined);
@@ -32,7 +33,7 @@ export function NativeCommandSuggestions(props: {
     void props.loadCommands().then(() => { if (alive) failure.set(false); }).catch(() => { if (alive) failure.set(true); })
       .finally(() => { flight = false; if (alive) loading.set(false); });
   });
-  const rows = computed(() => nativeCommandRows(props.commands, query(), props.scope, t, props.catalog));
+  const rows = computed(() => nativeCommandRows(props.commands, query(), props.scope, t, props.catalog ?? props.context));
   effect(() => { props.keyboard.commandCore.rows({ scope: props.scope, query: query() }, rows(), loading()); });
   effect(() => {
     const state = props.keyboard.commandState(), list = ref();

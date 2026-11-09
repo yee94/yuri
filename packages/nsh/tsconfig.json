@@ -11,5 +11,5 @@
     }
   },
   "include": ["*.ts", "*.tsx", "../ui/src/types/desktop.d.ts"],
-  "exclude": ["*.test.ts", "vitest.config.ts", "tests"]
+  "exclude": ["*.test.ts", "*.test.tsx", "vitest.config.ts", "tests", "gui-plugin-entry.ts", "gui-plugin-factory.ts"]
 }

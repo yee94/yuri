@@ -47,6 +47,13 @@ enum NativeTerminalDocument {
         const instance = await WebAssembly.instantiate(module, {env:{log(){}}});
         const terminal = new GhosttyWeb.Terminal({ghostty:new GhosttyWeb.Ghostty(instance),disableStdin:true,fontFamily:config.family,fontSize:config.size,theme:config.palette,scrollback:10000,cursorBlink:false});
         const fit = new GhosttyWeb.FitAddon(); terminal.loadAddon(fit); terminal.open(document.getElementById('terminal'));
+        window.terminalFontPreferences = value => {
+          if(!value || !Number.isFinite(value.fontSize) || value.fontSize < 9 || value.fontSize > 52 || typeof value.fontFamily !== 'string' || !value.fontFamily.length || value.fontFamily.length > 1024)throw new Error('invalid_font_preferences');
+          if(terminal.options.fontSize === value.fontSize && terminal.options.fontFamily === value.fontFamily)return;
+          if(terminal.options.fontSize !== value.fontSize)terminal.options.fontSize = value.fontSize;
+          if(terminal.options.fontFamily !== value.fontFamily)terminal.options.fontFamily = value.fontFamily;
+          resize();
+        };
         const input = document.getElementById('input'); input.setAttribute('aria-label',config.label);
         let key = '', cursor = 0, live = false, composing = false;
         let follow = true;
@@ -137,10 +144,10 @@ enum NativeTerminalDocument {
         // touch path. The document itself never scrolls and swipes don't type.
         const container = document.getElementById('terminal');
         let pointer = null, lastY = 0, lastTime = 0, startX = 0, startY = 0, moved = false, velocity = 0, remainder = 0, frame = null;
-        const now = () => Date.now(), lineHeight = Math.max(12,Math.round(config.size*1.35));
+        const now = () => Date.now(), lineHeight = () => Math.max(12,Math.round(terminal.options.fontSize*1.35));
         const stopKinetic = () => { if(frame!==null)window.cancelAnimationFrame(frame);frame=null; };
         const scrollPixels = delta => {
-          const before=terminal.getViewportY(),total=remainder+delta,lines=Math.trunc(total/lineHeight);remainder=total-lines*lineHeight;
+          const before=terminal.getViewportY(),height=lineHeight(),total=remainder+delta,lines=Math.trunc(total/height);remainder=total-lines*height;
           if(lines)terminal.scrollLines(lines);return terminal.getViewportY()!==before;
         };
         container.addEventListener('pointerdown',event=>{
@@ -249,6 +256,15 @@ import NativeShell
         button.configuration = config; button.isEnabled = enabled; button.addAction(UIAction { _ in action() }, for: .touchUpInside); return button
     }
     func update(_ value: [String: Any]) throws {
+        if let preferences = value["fontPreferences"] as? [String: Any] {
+            guard !stopped, current(), let size = preferences["fontSize"] as? NSNumber,
+                  CFGetTypeID(size) != CFBooleanGetTypeID(), size.doubleValue.isFinite, (9...52).contains(size.doubleValue),
+                  let family = preferences["fontFamily"] as? String, !family.isEmpty, family.utf8.count <= 1024 else { throw TerminalFailure.invalid }
+            web?.callAsyncJavaScript("window.terminalFontPreferences(preferences)", arguments: ["preferences": preferences], in: nil, in: .page) { [weak self] outcome in
+                if case .failure = outcome { self?.emit(["type": "error", "code": "renderer_failed"]) }
+            }
+            return
+        }
         if let result = value["inputResult"] as? [String: Any] {
             guard !stopped, current(), let key = result["key"] as? String, TerminalProtocol.identifier(key),
                   let receipt = TerminalProtocol.integer(result["receipt"]), receipt > 0,

@@ -2,7 +2,7 @@ import { sameReferenceScope, type MixedReferenceRow, type ReferenceCandidate, ty
 import { resolveComposerAutocompleteTrigger } from '../ui/src/lib/composer-autocomplete/trigger';
 
 export type ReferenceKeyboardOwner = { scope: ReferenceScope; query: string };
-export type ReferenceKeyboardContext = ReferenceKeyboardOwner & { text: string; start: number; end: number; editing: boolean };
+export type ReferenceKeyboardContext = ReferenceKeyboardOwner & { text: string; start: number; end: number; editing: boolean; owner?: object };
 export type ReferenceKeyboardState = { rows: readonly MixedReferenceRow[]; index: number; id?: string };
 const sameOwner = (a: ReferenceKeyboardOwner, b: ReferenceKeyboardOwner) => sameReferenceScope(a.scope, b.scope) && a.query === b.query;
 
@@ -38,7 +38,7 @@ export function createAutocompleteKeyboard<T>(options: {
     const valid = next && next.scope.host && next.scope.draft && next.scope.directory
       && Number.isInteger(next.start) && Number.isInteger(next.end) && next.start >= 0 && next.end >= next.start && next.end <= next.text.length
       && options.validate(next);
-    if (!valid || !context || !sameOwner(context, next)) {
+    if (!valid || !context || !sameOwner(context, next) || context.owner !== next.owner) {
       preferredID = undefined;
       if (state.rows.length || state.id) emit(empty());
     }
@@ -57,7 +57,7 @@ export function createAutocompleteKeyboard<T>(options: {
   function choose(id: string, submit = true) {
     // Read authoritative text/range/scope again at admission, not at pointer-down or async publish.
     const before = context, current = sync();
-    if (!before || !current || !sameOwner(before, current) || before.text !== current.text || before.start !== current.start || before.end !== current.end) return false;
+    if (!before || !current || !sameOwner(before, current) || before.owner !== current.owner || before.text !== current.text || before.start !== current.start || before.end !== current.end) return false;
     const row = state.rows.find(row => options.id(row) === id), scope = row && options.scope(row);
     if (!row || !scope || !sameReferenceScope(scope, current.scope)) return false;
     if (options.choose(row, current, submit) === false) return false;

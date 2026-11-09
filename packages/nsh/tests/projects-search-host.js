@@ -1,8 +1,10 @@
 import { fixtureRequest } from './new-session-request.js';
+import { projectsFixtureAuthority } from './projects-fixture-authority.js';
 
 /** Search-only synthetic authority. Unknown requests are failures, never empty success. */
 export function createHost() {
   const calls = [], contentReads = new Map();
+  const authority = projectsFixtureAuthority('search-fixture');
   let rejected = 0;
   const snapshot = () => ({ calls: calls.map(row => ({ ...row })), rejected });
   return { call(name, input) {
@@ -11,7 +13,9 @@ export function createHost() {
       return snapshot();
     }
     try {
-      if (name !== 'runtime.request' || !input || Object.keys(input).some(key => !['path', 'method', 'body'].includes(key)) || input.body !== undefined) throw new Error('Unexpected search fixture call');
+      if (name === 'connection.list' && input && Object.keys(input).length === 0) return authority.snapshot();
+      if (name !== 'runtime.request' || !input || Object.keys(input).some(key => !['path', 'method', 'body', 'expectedHost'].includes(key)) || input.body !== undefined) throw new Error('Unexpected search fixture call');
+      authority.accept(input);
       const req = fixtureRequest(input), { path, params } = req;
       let body;
       if (path === '/api/session') {

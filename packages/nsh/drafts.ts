@@ -1,5 +1,6 @@
-import { batch, signal, Storage, untracked, type Signal } from 'nsh';
-import { record, type Attachment, type ChatTarget, type CompiledSubmission, type QueueEdit, type Submission } from './model';
+import { batch, effect, signal, Storage, untracked, type Signal } from 'nsh';
+import { record, type Attachment, type ChatTarget, type CompiledFile, type CompiledSubmission, type QueueEdit, type Submission } from './model';
+import { attachmentFrom, sameAttachmentValue, type AttachmentOwner } from './attachments';
 import { editNativeReferences, insertNativeReference, sameReferenceScope, validateNativeReferences, type NativeReference, type ReferenceCandidate, type ReferenceKind, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 import { desktopGitContextFrom, type ContextSubmission, type DesktopGitContext, type DesktopGitContextInput, type DesktopGitStageConfirmation, type DesktopGitStageResult } from './desktop-git-dispatch';
 import { magicCommand } from './composer';
@@ -36,11 +37,15 @@ const lanes = new Map<string, Lane>();
 let nextOwner = 0;
 
 export const draftKey = (hostID: string, target: ChatTarget, authorityKey?: string) => `nsh:chat-draft:v1:${encodeURIComponent(JSON.stringify([hostID, target.directory, target.kind, target.id, ...(authorityKey === undefined ? [] : [authorityKey])]))}`;
-const sameFiles = (left: Attachment[], right: Attachment[]) => left.length === right.length && left.every((file, index) => sameAttachment(file, right[index]!));
-export const sameAttachment = (left: Attachment, right: Attachment) => left.uri === right.uri && left.name === right.name && left.mime === right.mime
-  && left.contact?.assistantID === right.contact?.assistantID && left.contact?.attachmentID === right.contact?.attachmentID
-  && left.contact?.sha256 === right.contact?.sha256 && left.contact?.size === right.contact?.size
-  && left.contact?.mime === right.contact?.mime && left.contact?.filename === right.contact?.filename;
+const sameFiles = (left: Attachment[], right: Attachment[]) => left.length === right.length && left.every((file, index) => !!right[index] && sameAttachment(file, right[index]));
+export const sameAttachment = (left: Attachment, right: Attachment) => {
+  if (left.kind === 'contact' || right.kind === 'contact') return sameAttachmentValue(left, right);
+  if (left.contact || right.contact) return left.uri === right.uri && left.name === right.name && left.mime === right.mime
+    && left.contact?.assistantID === right.contact?.assistantID && left.contact?.attachmentID === right.contact?.attachmentID
+    && left.contact?.sha256 === right.contact?.sha256 && left.contact?.size === right.contact?.size
+    && left.contact?.mime === right.contact?.mime && left.contact?.filename === right.contact?.filename;
+  return left.uri === right.uri && left.name === right.name && left.mime === right.mime;
+};
 const sameReferences = (left: readonly NativeReference[], right: readonly NativeReference[]) => left.length === right.length && left.every((ref, index) => {
   const other = right[index];
   return !!other && ref.kind === other.kind && ref.value === other.value && ref.label === other.label && ref.display === other.display && ref.start === other.start && ref.end === other.end && ref.directory === other.directory && ref.description === other.description;
@@ -69,24 +74,43 @@ function referenceDocumentFrom(value: unknown, text: string, scope: ReferenceSco
   return { text, scope: { ...scope }, references: referencesFrom(row.references, text) };
 }
 
-function filesFrom(value: unknown): Attachment[] {
+function filesFrom(value: unknown, owner?: AttachmentOwner): Attachment[] {
   if (!Array.isArray(value) || value.length > 100) throw new Error('Invalid saved attachment metadata');
   return value.map(item => {
     const file = record(item);
+    if (file.kind === 'contact') {
+      if (!owner) throw new Error('contact_attachment_owner_required');
+      return attachmentFrom(file, owner);
+    }
+    if (file.contact !== undefined) {
+      const contact = assistantAttachmentDescriptor(file.contact);
+      if (typeof file.uri !== 'string' || typeof file.name !== 'string' || typeof file.mime !== 'string') throw new Error('attachment_invalid_receipt');
+      const attachment: Attachment = { uri: file.uri, name: file.name, mime: file.mime, contact };
+      assistantAttachmentFilePart(attachment, contact.assistantID);
+      if (owner && (owner.target.kind !== 'assistant' || contact.assistantID !== owner.target.id)) throw new Error('contact_attachment_owner_mismatch');
+      return attachment;
+    }
+    if (owner) return attachmentFrom(file, owner);
     if (typeof file.uri !== 'string' || !file.uri || typeof file.name !== 'string' || typeof file.mime !== 'string' || /^data:/i.test(file.uri)) throw new Error('附件草稿只能保存有效文件引用，不能保存文件正文');
-    const contact = file.contact === undefined ? undefined : assistantAttachmentDescriptor(file.contact);
-    const attachment = { uri: file.uri, name: file.name, mime: file.mime, ...(contact ? { contact } : {}) };
-    if (contact) assistantAttachmentFilePart(attachment, contact.assistantID);
-    return attachment;
+    return { uri: file.uri, name: file.name, mime: file.mime };
   });
 }
-function compiledFrom(value: unknown): CompiledSubmission {
+function compiledFrom(value: unknown, owner?: AttachmentOwner): CompiledSubmission {
   const input = record(value);
   if (typeof input.text !== 'string') throw new Error('Invalid saved compiled submission');
   const compiled: CompiledSubmission = { text: input.text };
   if (input.files !== undefined) {
-    if (!Array.isArray(input.files) || input.files.some(file => typeof record(file).uri !== 'string' || !record(file).uri || /^data:/i.test(String(record(file).uri)))) throw new Error('Invalid saved compiled file references');
-    compiled.files = input.files.map(file => ({ uri: record(file).uri as string, ...(typeof record(file).name === 'string' ? { name: record(file).name as string } : {}) }));
+    if (!Array.isArray(input.files)) throw new Error('Invalid saved compiled file references');
+    compiled.files = input.files.map(file => {
+      const row = record(file);
+      if (row.kind === 'contact') {
+        if (!owner) throw new Error('contact_attachment_owner_required');
+        return attachmentFrom(row, owner);
+      }
+      if (owner) attachmentFrom({ ...row, name: row.name ?? '', mime: typeof row.mime === 'string' ? row.mime : 'application/octet-stream' }, owner);
+      else if (typeof row.uri !== 'string' || !row.uri || /^data:/i.test(row.uri)) throw new Error('Invalid saved compiled file references');
+      return { uri: row.uri as string, ...(typeof row.name === 'string' ? { name: row.name } : {}) } satisfies CompiledFile;
+    });
   }
   if (input.agents !== undefined) {
     if (!Array.isArray(input.agents) || input.agents.some(item => typeof record(item).name !== 'string')) throw new Error('Invalid saved agent attachments');
@@ -108,11 +132,11 @@ function compiledFrom(value: unknown): CompiledSubmission {
   }
   return compiled;
 }
-function submissionFrom(value: unknown, scope: ReferenceScope): DurableSubmission | null {
+function submissionFrom(value: unknown, scope: ReferenceScope, owner?: AttachmentOwner): DurableSubmission | null {
   if (value === null || value === undefined) return null;
   const input = record(value);
   if (typeof input.id !== 'string' || !input.id || typeof input.text !== 'string' || !['queue', 'steer'].includes(String(input.delivery)) || typeof input.uncertain !== 'boolean') throw new Error('Invalid saved pending send');
-  const next: DurableSubmission = { id: input.id, text: input.text, files: filesFrom(input.files), delivery: input.delivery as Submission['delivery'], uncertain: input.uncertain };
+  const next: DurableSubmission = { id: input.id, text: input.text, files: filesFrom(input.files, owner), delivery: input.delivery as Submission['delivery'], uncertain: input.uncertain };
   if (input.context !== undefined) next.context = desktopGitContextFrom(input.context);
   if (input.command !== undefined) {
     const command = record(input.command);
@@ -123,7 +147,7 @@ function submissionFrom(value: unknown, scope: ReferenceScope): DurableSubmissio
     if (input.inputMode !== 'normal' && input.inputMode !== 'shell') throw new Error('Invalid saved input mode');
     next.inputMode = input.inputMode;
   }
-  if (input.compiled !== undefined) next.compiled = compiledFrom(input.compiled);
+  if (input.compiled !== undefined) next.compiled = compiledFrom(input.compiled, owner);
   if (input.references !== undefined) next.references = referenceDocumentFrom(input.references, input.text, scope);
   if (input.preparedText !== undefined) {
     if (typeof input.preparedText !== 'string') throw new Error('Invalid saved prepared text');
@@ -140,23 +164,26 @@ function submissionFrom(value: unknown, scope: ReferenceScope): DurableSubmissio
   }
   return next;
 }
-function queueEditFrom(value: unknown): QueueEdit | null {
+function queueEditFrom(value: unknown, owner?: AttachmentOwner): QueueEdit | null {
   if (value === null || value === undefined) return null;
   const row = record(value);
   if (typeof row.id !== 'string' || !row.id || typeof row.text !== 'string') throw new Error('Invalid saved queue edit');
-  return { id: row.id, text: row.text, files: filesFrom(row.files) };
+  return { id: row.id, text: row.text, files: filesFrom(row.files, owner) };
 }
-function decode(raw: string | null, scope: ReferenceScope): DraftRecord {
+function decode(raw: string | null, scope: ReferenceScope, owner?: AttachmentOwner): DraftRecord {
   if (raw === null) return { version: 1, revision: 0, draft: '', references: [], attachments: [], pendingSend: null, queueEdit: null };
   const value = record(JSON.parse(raw));
   if (value.version !== 1 || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 || typeof value.draft !== 'string') throw new Error('Invalid saved draft version');
-  return { version: 1, revision: Number(value.revision), draft: value.draft, references: referencesFrom(value.references, value.draft), attachments: filesFrom(value.attachments), pendingSend: submissionFrom(value.pendingSend, scope), queueEdit: queueEditFrom(value.queueEdit), ...(value.context === undefined ? {} : { context: desktopGitContextFrom(value.context) }) };
+  return { version: 1, revision: Number(value.revision), draft: value.draft, references: referencesFrom(value.references, value.draft), attachments: filesFrom(value.attachments, owner), pendingSend: submissionFrom(value.pendingSend, scope, owner), queueEdit: queueEditFrom(value.queueEdit, owner), ...(value.context === undefined ? {} : { context: desktopGitContextFrom(value.context) }) };
 }
 
 /** One native durable draft partition. Setters do no JSON, Storage or network work. */
-export function openDraft(hostID: string, target: ChatTarget, authorityKey?: string) {
+export function openDraft(hostID: string, target: ChatTarget, authorityOrOptions?: string | { persistChatDraft?: () => boolean | null }) {
+  const authorityKey = typeof authorityOrOptions === 'string' ? authorityOrOptions : undefined;
+  const options = typeof authorityOrOptions === 'object' && authorityOrOptions ? authorityOrOptions : {};
   const key = draftKey(hostID, target, authorityKey), owner = ++nextOwner;
   const scope: ReferenceScope = { host: hostID, draft: key, directory: target.directory };
+  const attachmentOwner: AttachmentOwner = { hostID, target: { kind: target.kind, id: target.id } };
   const existing = lanes.get(key);
   // Reserve the previous visible page's last write before this page's read.
   if (existing?.flush) void existing.flush().catch(() => {});
@@ -164,6 +191,10 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
   lane.owner = owner; lanes.set(key, lane);
   const status = signal<'loading' | 'ready' | 'error'>('loading'), error = signal('');
   let revision = 0, storedRevision = 0, dirty = false, hydrated = false;
+  let persistence: boolean | null = options.persistChatDraft ? null : true;
+  let ordinaryResolved = false, declinedRestore = false, policyDirty = false, operationDirty = false;
+  let baseline: DraftRecord | undefined;
+  let closed = false;
   let restoreFlight: Promise<void>;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const versions = { draft: 0, references: 0, attachments: 0, pendingSend: 0, queueEdit: 0, context: 0 };
@@ -177,6 +208,7 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
       set(next: T) {
         if (untracked(source) === next) return;
         source.set(next); versions[name]++; revision++; dirty = true;
+        if (name !== 'draft' && name !== 'references') operationDirty = true;
         if (!timer) timer = setTimeout(() => { timer = undefined; void flush().catch(() => {}); }, 300);
       },
       update(work: (previous: T) => T) { value.set(work(untracked(source))); },
@@ -203,13 +235,30 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
   // Keep legacy draft.set consumers on the same atomic text + reference path.
   const draft = Object.assign(() => draftField.value(), { set: setDraftText, update: (work: (previous: string) => string) => setDraftText(work(untracked(draftField.value))) });
   const attachments = filesField.value, pendingSend = pendingField.value, queueEdit = editField.value;
+  function applyPersistence(next: boolean | null) {
+    if (closed || lane.owner !== owner) return;
+    if (next === null || next === persistence) return;
+    persistence = next;
+    if (!next) { declinedRestore = true; ordinaryResolved = true; }
+    else if (hydrated && !ordinaryResolved) {
+      if (!declinedRestore && !versions.draft && !versions.references && baseline) batch(() => { draftField.restore(baseline!.draft); referenceField.restore(baseline!.references); });
+      ordinaryResolved = true;
+    }
+    policyDirty = true;
+    if (!timer) timer = setTimeout(() => { timer = undefined; void flush().catch(() => {}); }, 300);
+  }
+  // Subscribe only to device authority, never to text, history or catalog changes.
+  if (options.persistChatDraft) effect(() => { const next = options.persistChatDraft!(); untracked(() => applyPersistence(next)); });
   function restore() {
     const flight = enqueue(async () => {
       try {
-        const saved = decode(await Storage.getItem(key), scope);
+        const saved = decode(await Storage.getItem(key), scope, attachmentOwner);
+        baseline = saved;
         storedRevision = saved.revision;
+        if (options.persistChatDraft) applyPersistence(options.persistChatDraft());
         // Separate field CAS: typing during restore cannot erase a pending receipt.
-        if (!versions.draft && !versions.references) batch(() => { draftField.restore(saved.draft); referenceField.restore(saved.references); });
+        if (persistence === true && !ordinaryResolved && !versions.draft && !versions.references) batch(() => { draftField.restore(saved.draft); referenceField.restore(saved.references); });
+        if (persistence !== null) ordinaryResolved = true;
         if (!versions.attachments) filesField.restore(saved.attachments);
         if (!versions.pendingSend) pendingField.restore(saved.pendingSend);
         if (!versions.queueEdit) editField.restore(saved.queueEdit);
@@ -223,25 +272,31 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
   const ready = restore();
   // Restoration failure is observable without an unhandled startup rejection.
   void ready.catch(() => {});
-  function snapshot(nextRevision: number): DraftRecord {
-    return { version: 1, revision: nextRevision, draft: untracked(draft), references: referencesFrom(untracked(references), untracked(draft)), attachments: filesFrom(untracked(attachments)), pendingSend: submissionFrom(untracked(pendingSend), scope), queueEdit: queueEditFrom(untracked(queueEdit)), ...(untracked(contextField.value) ? { context: desktopGitContextFrom(untracked(contextField.value)) } : {}) };
+  function snapshot(nextRevision: number, ordinary?: { text: string; references: NativeReference[] }): DraftRecord {
+    return { version: 1, revision: nextRevision, draft: ordinary?.text ?? untracked(draft), references: ordinary?.references ?? referencesFrom(untracked(references), untracked(draft)), attachments: filesFrom(untracked(attachments), attachmentOwner), pendingSend: submissionFrom(untracked(pendingSend), scope, attachmentOwner), queueEdit: queueEditFrom(untracked(queueEdit), attachmentOwner), ...(untracked(contextField.value) ? { context: desktopGitContextFrom(untracked(contextField.value)) } : {}) };
   }
   function flush(): Promise<void> {
+    if (options.persistChatDraft) applyPersistence(options.persistChatDraft());
     if (timer) { clearTimeout(timer); timer = undefined; }
-    if (lane.owner !== owner) return Promise.resolve();
+    if (closed || lane.owner !== owner) return Promise.resolve();
     return enqueue(async () => {
       if (!hydrated) throw new Error('草稿尚未成功恢复，不能覆盖持久记录');
-      if (!dirty) return;
+      if (!operationDirty && !policyDirty && !(dirty && persistence === true)) return;
       const writtenRevision = revision;
+      const writtenPersistence = persistence;
       try {
-        const saved = decode(await Storage.getItem(key), scope);
+        const saved = decode(await Storage.getItem(key), scope, attachmentOwner);
         if (saved.revision !== storedRevision) throw new Error('草稿已由另一页面更新');
-        const savedSnapshot = snapshot(storedRevision + 1);
+        const ordinaryText = writtenPersistence === true ? untracked(draft) : writtenPersistence === false ? '' : saved.draft;
+        const ordinaryReferences = writtenPersistence === true ? referencesFrom(untracked(references), ordinaryText) : writtenPersistence === false ? [] : saved.references;
+        const savedSnapshot = snapshot(storedRevision + 1, { text: ordinaryText, references: ordinaryReferences });
         const json = JSON.stringify(savedSnapshot);
         if (json.length > 750_000) throw new Error('草稿超过本机存储容量限制');
         await Storage.setItem(key, json);
         storedRevision = savedSnapshot.revision;
-        if (revision === writtenRevision) dirty = false;
+        baseline = savedSnapshot;
+        if (revision === writtenRevision) { dirty = false; operationDirty = false; }
+        if (persistence === writtenPersistence) policyDirty = false;
         status.set('ready'); error.set('');
       } catch (failure) { status.set('error'); error.set('草稿保存失败，输入仍保留在当前页面'); throw failure; }
     });
@@ -261,10 +316,10 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
       const ticket = { key, owner, revision };
       if (confirmed && (confirmed.key !== key || confirmed.owner !== owner || confirmed.revision !== revision)) return { status: 'stale' };
       if (!confirmed && (untracked(draft) || untracked(references).length || untracked(attachments).length || untracked(contextField.value))) return { status: 'requires-confirmation', confirmation: ticket };
-      const saved = decode(await Storage.getItem(key), scope);
+      const saved = decode(await Storage.getItem(key), scope, attachmentOwner);
       if (!valid() || revision !== expected) return { status: 'stale' };
       if (saved.revision !== storedRevision) throw new Error('草稿已由另一页面更新');
-      const staged: DraftRecord = { version: 1, revision: storedRevision + 1, draft: captured.visibleText, references: [], attachments: filesFrom(untracked(attachments)), pendingSend: null, queueEdit: null, context: captured.context };
+      const staged: DraftRecord = { version: 1, revision: storedRevision + 1, draft: captured.visibleText, references: [], attachments: filesFrom(untracked(attachments), attachmentOwner), pendingSend: null, queueEdit: null, context: captured.context };
       const json = JSON.stringify(staged);
       if (json.length > 750_000) throw new Error('草稿超过本机存储容量限制');
       await Storage.setItem(key, json);
@@ -292,11 +347,13 @@ export function openDraft(hostID: string, target: ChatTarget, authorityKey?: str
   }
   function close() {
     const finished = flush();
+    closed = true;
     if (lane.owner === owner) lane.flush = undefined;
     void finished.finally(() => { if (lane.owner === owner && !lane.flush && lanes.get(key) === lane) lanes.delete(key); }).catch(() => {});
     return finished;
   }
   return { key, authorityKey, scope: { ...scope }, draft, references, document, setDocument, setDraftText, insertReference, attachments, pendingSend, queueEdit, context: contextField.value, stageContext, status, error, ready, whenReady: () => restoreFlight, restore, retry, flush, close,
+    checkpoint: async () => { await flush(); if (!hydrated || status() !== 'ready') throw new Error('draft_checkpoint_unavailable'); return storedRevision; },
     revision: () => revision, draftRevision: () => versions.draft + versions.references + versions.context,
     matchesDocument: (text: string, refs: readonly NativeReference[] = []) => untracked(draft) === text && sameReferences(untracked(references), refs),
     matches: (text: string, files: Attachment[], refs: readonly NativeReference[] = []) => untracked(draft) === text && sameFiles(untracked(attachments), files) && sameReferences(untracked(references), refs),

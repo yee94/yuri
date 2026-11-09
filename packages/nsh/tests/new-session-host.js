@@ -1,8 +1,11 @@
-import { fixtureRequest } from './new-session-request.js';
+import { assertNewSessionFixtureScope, fixtureRequest } from './new-session-request.js';
 
 /** Isolated fake native bridge for new-session-fixture.tsx. Never production. */
-export function createHost() {
+export function createHost({ hostID = 'new-session-fixture', lease = 'new-session-fixture-lease' } = {}) {
   let loseCreate = false, failPrompt = false, creates = 0;
+  const runtimeScope = { hostID, lease };
+  let appearanceRevision = 0;
+  const attachmentPicks = new Map();
   const sessions = new Map(), inbox = new Map(), prompts = [];
   let settings = { favoriteModels: [{ providerID: 'fixture', modelID: 'gpt-model', variant: 'high' }], recentModels: [{ providerID: 'fixture', modelID: 'claude-model' }] };
   const settingsWrites = [], projectWrites = [], files = new Map();
@@ -51,10 +54,36 @@ export function createHost() {
   }
   return {
     call(name, input) {
-      if (name === 'connection.list') return { selected: 'new-session-fixture', connections: [{ id: 'new-session-fixture', label: 'Fixture', url: 'https://host.example', lastUsedAt: 0 }], runtimeScope: { hostID: 'new-session-fixture', lease: 'new-session-fixture-lease' } };
+      if (name === 'connection.list') return { selected: hostID, connections: [{ id: hostID, label: 'Fixture', url: 'https://host.example', lastUsedAt: 0 }], runtimeScope: { ...runtimeScope } };
+      if (name === 'appearance.reset') {
+        if (Object.keys(input).join(',') !== 'hostID' || input.hostID !== null && input.hostID !== hostID) throw new Error('Invalid new-session appearance reset');
+        return { revision: ++appearanceRevision };
+      }
+      if (name === 'appearance.apply') {
+        if (Object.keys(input).sort().join(',') !== 'cssVars,fonts,hostID,mode,revision' || input.hostID !== hostID || input.revision !== appearanceRevision
+          || !['light', 'dark', 'system'].includes(input.mode) || Object.keys(input.cssVars ?? {}).sort().join(',') !== 'dark,light'
+          || Object.keys(input.fonts ?? {}).sort().join(',') !== 'assistantDark,assistantLight,mono,ui'
+          || Object.values(input.fonts).some(font => !['system-ui', 'monospace', 'JetBrains Mono'].includes(font))) throw new Error('Invalid new-session appearance apply');
+        return { uiFontFamily: input.fonts.ui, monoFontFamily: input.fonts.mono,
+          assistantFontFamilies: { light: input.fonts.assistantLight, dark: input.fonts.assistantDark }, unsupportedFonts: [], systemColorScheme: 'light' };
+      }
       if (name === 'runtime.stream' || name === 'runtime.stop') return true;
-      if (name === 'runtime.pickAttachment') return { uri: 'attachment://fixture/note', name: 'fixture-note.txt', mime: 'text/plain' };
+      if (name === 'runtime.pickAttachment') {
+        if (!input || Object.keys(input).sort().join(',') !== 'expectedHost,kind,requestId' || !['files', 'images'].includes(input.kind)
+          || typeof input.requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(input.requestId) || attachmentPicks.has(input.requestId)
+          || !input.expectedHost || Object.keys(input.expectedHost).sort().join(',') !== 'hostID,lease'
+          || input.expectedHost.hostID !== hostID || input.expectedHost.lease !== lease) throw new Error('Invalid new-session fixture attachment pick');
+        attachmentPicks.set(input.requestId, { ...input.expectedHost });
+        return { uri: 'attachment://fixture/note', name: 'fixture-note.txt', mime: 'text/plain' };
+      }
+      if (name === 'runtime.cancelAttachment') {
+        const captured = attachmentPicks.get(input?.requestId);
+        if (!input || Object.keys(input).sort().join(',') !== 'expectedHost,requestId' || !captured || !input.expectedHost
+          || Object.keys(input.expectedHost).sort().join(',') !== 'hostID,lease' || input.expectedHost.hostID !== captured.hostID || input.expectedHost.lease !== captured.lease) throw new Error('Invalid new-session fixture attachment cancellation');
+        return true;
+      }
       if (name !== 'runtime.request') throw new Error('Unexpected new-session fixture native call: ' + name);
+      assertNewSessionFixtureScope(input, runtimeScope);
       const route = fixtureRequest(input), { path, method, params } = route;
       const ok = body => ({ status: 200, body });
       if (path === '/__fixture/new-session/lose-create') { route.expect('GET'); loseCreate = true; return ok({}); }
@@ -71,6 +100,7 @@ export function createHost() {
         }
         return ok(clone(settings));
       }
+      if (path === '/api/config/themes') { route.expect('GET'); return ok({ themes: [] }); }
       if (path === '/api/fs/home') { route.expect('GET'); return ok({ home }); }
       if (path === '/api/fs/read') {
         route.expect('GET', ['path', 'optional'], ['path']);

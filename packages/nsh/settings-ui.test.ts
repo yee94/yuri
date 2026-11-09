@@ -1,23 +1,85 @@
-import { spawnSync } from 'node:child_process';
+import { runSettingsEngineFixture } from './tests/settings-engine-fixture-runner.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { expect, test } from 'vitest';
 import { nativeMagicDefaults } from './settings-magic-defaults';
 import { magicPromptGroups } from './settings-magic-state';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-function run(steps: string, timeout = 45_000) {
-  const parent = process.env.OPENCODE_TMP_DIR || path.join(tmpdir(), 'opencode'); mkdirSync(parent, { recursive: true });
-  const temporary = mkdtempSync(path.join(parent, 'settings-ui-'));
-  try {
-    writeFileSync(path.join(temporary, 'nsh.json'), JSON.stringify({ name: 'Settings UI fixture', id: 'example.yuri.settings-ui', version: '0.1.0', build: 1, theme: path.join(directory, 'theme.json'), capabilities: { host: ['connection.list', 'runtime.request'] } }));
-    writeFileSync(path.join(temporary, 'App.tsx'), `import ${JSON.stringify(path.join(directory, 'settings-test-app.tsx'))};`);
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'App.tsx', '--web-host', path.join(directory, 'tests/settings-host.js')], { cwd: temporary, input: steps, encoding: 'utf8', timeout });
-    expect(result.error, result.stdout + result.stderr).toBeUndefined(); expect(result.status, result.stdout + result.stderr).toBe(0);
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
-}
+test('native Appearance editor font size persists locally without overwriting code size or writing Host settings', () => {
+  const steps = [
+    'await app.waitFor("text:Appearance");',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("id:settings-basics-editorFontSize");',
+    'expect(app.value("id:settings-basics-editorFontSize")).toBe("13");',
+    'await app.clear("id:settings-basics-editorFontSize");',
+    'await app.type("id:settings-basics-editorFontSize", "24");',
+    'await app.press("id:settings-preferences-save");',
+    'await app.waitFor("text:Saved");',
+    'expect(app.value("id:settings-basics-codeFontSize")).toBe("100");',
+    'await app.back();',
+    'await app.waitFor("text:Appearance");',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("id:settings-basics-editorFontSize");',
+    'expect(app.value("id:settings-basics-editorFontSize")).toBe("24");',
+    'expect(app.value("id:settings-basics-codeFontSize")).toBe("100");',
+    'await app.press("id:settings-preferences-audit");',
+    'await app.waitFor(\'text:{"writes":0,"preferences":{"chatRenderMode":"sorted","messageStreamTransport":"sse","diffLayoutPreference":"inline"}}\');',
+    'expect(app.texts().join("\\n")).not.toMatch(/Unexpected preferences patch|Unexpected settings request: PUT/);',
+  ].join('\n');
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', [steps], 45_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 60_000);
+test('native Appearance code font size saves only to device storage and survives page reopening', () => {
+  const steps = [
+    'await app.waitFor("text:Appearance");',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("text:Device code size: 100");',
+    'await app.clear("id:settings-basics-codeFontSize");',
+    'await app.type("id:settings-basics-codeFontSize", "150");',
+    'await app.press("id:settings-preferences-save");',
+    'await app.waitFor("text:Device code size: 150");',
+    'await app.waitFor("text:Saved");',
+    'await app.press("id:settings-preferences-audit");',
+    'await app.waitFor(\'text:{"writes":0,"preferences":{"chatRenderMode":"sorted","messageStreamTransport":"sse","diffLayoutPreference":"inline"}}\');',
+    'await app.back();',
+    'await app.waitFor("text:Appearance");',
+    'await app.press("text:Appearance");',
+    'await app.waitFor("id:settings-basics-codeFontSize");',
+    'expect(app.value("id:settings-basics-codeFontSize")).toBe("150");',
+    'expect(app.texts().join("\\n")).not.toMatch(/Unexpected preferences patch|Unexpected settings request: PUT/);',
+  ].join('\n');
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', [steps], 45_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 60_000);
+test('native Chat render cards, transport chips and Diff radios save one exact preference patch', () => {
+  const steps = [
+    'await app.waitFor("text:Chat");',
+    'await app.press("text:Chat");',
+    'await app.waitFor("id:settings-preference-chatRenderMode-live");',
+    'await app.press("id:settings-preference-chatRenderMode-live");',
+    'await app.press("id:settings-preference-messageStreamTransport-ws");',
+    'await app.press("id:settings-preference-diffLayoutPreference-side-by-side");',
+    'await app.press("id:settings-preferences-audit");',
+    'await app.waitFor(\'text:{"writes":0,"preferences":{"chatRenderMode":"sorted","messageStreamTransport":"sse","diffLayoutPreference":"inline"}}\');',
+    'await app.press("id:settings-preferences-save");',
+    'await app.waitFor("text:Saved");',
+    'await app.press("id:settings-preferences-audit");',
+    'await app.waitFor(\'text:{"writes":1,"preferences":{"chatRenderMode":"live","messageStreamTransport":"ws","diffLayoutPreference":"side-by-side"}}\');',
+    'await app.back();',
+    'await app.waitFor("text:Chat");',
+    'await app.press("text:Chat");',
+    'await app.waitFor("id:settings-preference-chatRenderMode-live");',
+    'await app.press("id:settings-preferences-audit");',
+    'await app.waitFor(\'text:{"writes":1,"preferences":{"chatRenderMode":"live","messageStreamTransport":"ws","diffLayoutPreference":"side-by-side"}}\');',
+    'expect(app.texts().join("\\n")).not.toMatch(/Unexpected settings|Unexpected preferences/);',
+  ].join('\n');
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', [steps], 45_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 60_000);
 test('native Settings navigation edits a real command and keeps the draft after a rejected save', () => {
   const steps = [
     'await app.waitFor("text:Commands");',
@@ -34,13 +96,16 @@ test('native Settings navigation edits a real command and keeps the draft after 
     'await app.waitFor("text:Command updated successfully");',
     'expect(app.value("id:settings-template")).toBe(draft);',
     'await app.press("text:Done");',
+    'await app.press("id:settings-command-audit");',
     'await app.waitFor("text:Read-back save attempts: 2");',
     'await app.press("text:review");',
     'await app.waitFor("id:settings-template");',
     'expect(app.value("id:settings-template")).toBe(draft);',
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected settings|Retry changed|did not send/);',
   ].join('\n');
-  run(steps);
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', [steps], 45_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 }, 60_000);
 
 test('native Magic Prompts saves, reloads, resets one block and resets all using the authoritative Host state', () => {
@@ -78,7 +143,9 @@ test('native Magic Prompts saves, reloads, resets one block and resets all using
     'expect(app.value("id:magic-draft-instructions")).toMatch(/Return exactly one JSON object/);',
     'expect(app.texts().join("\\n")).not.toMatch(/Unexpected settings|did not send/);',
   ].join('\n');
-  run(steps);
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', [steps], 45_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 }, 60_000);
 
 test('every Web Magic Prompts group opens both native editors with the exact effective default', () => {
@@ -93,5 +160,7 @@ test('every Web Magic Prompts group opens both native editors with the exact eff
       'await app.back();',
     );
   }
-  run(steps.join('\n'), 90_000);
+  const result = runSettingsEngineFixture(directory, 'settings-test-app.tsx', 'tests/settings-host.js', steps, 90_000);
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 }, 100_000);

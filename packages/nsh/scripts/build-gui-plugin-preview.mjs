@@ -33,11 +33,28 @@ await build({
   },
 });
 const css = `html,body,#gui-plugin-root{height:100%;margin:0;min-width:0}body{background:var(--background);color:var(--foreground);font-family:var(--font-sans,system-ui)}#gui-plugin-root{display:flex;flex-direction:column}.gui-toolbar,.gui-actions{display:flex;align-items:center;gap:.5rem}.gui-toolbar{padding:.5rem}.gui-actions{margin-inline-end:auto}.gui-content{flex:1;min-height:0;overflow:auto}.gui-source{flex:1;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-mono,monospace)}#gui-plugin-root>.gui-content[hidden],#gui-plugin-root>.gui-source[hidden],#gui-plugin-root>.gui-toolbar>button[hidden]{display:none!important}#gui-plugin-root>.gui-toolbar>button{font:inherit;color:var(--foreground);background:var(--surface-muted);border:0;border-radius:var(--radius);padding:.5rem;min-height:36px;min-width:36px}#gui-plugin-root>.gui-status:empty{display:none}`;
-await writeFile(path.join(output, 'assets/surface.css'), css);
+// Use already-vendored, licensed font bytes; never fetch a font/CDN at build or
+// let WebKit silently reach the network. The source manifest owns provenance.
+const fontRoot = path.join(packageRoot, 'assets/fonts/jetbrains-mono');
+const fontManifest = JSON.parse(await readFile(path.join(fontRoot, 'manifest.json'), 'utf8'));
+const fonts = { 'JetBrainsMono-Regular.ttf': [400, 'normal'], 'JetBrainsMono-Medium.ttf': [500, 'normal'], 'JetBrainsMono-SemiBold.ttf': [600, 'normal'], 'JetBrainsMono-Bold.ttf': [700, 'normal'], 'JetBrainsMono-Italic.ttf': [400, 'italic'], 'JetBrainsMono-BoldItalic.ttf': [700, 'italic'] };
+await mkdir(path.join(output, 'assets/fonts'), { recursive: true });
+let fontCSS = '';
+for (const [name, [weight, style]] of Object.entries(fonts)) {
+  const bytes = await readFile(path.join(fontRoot, name));
+  if (createHash('sha256').update(bytes).digest('hex') !== fontManifest.sha256[name]) throw new Error('Font provenance mismatch: ' + name);
+  await writeFile(path.join(output, 'assets/fonts', name), bytes);
+  fontCSS += `@font-face{font-family:"JetBrains Mono";font-weight:${weight};font-style:${style};font-display:swap;src:url("/assets/fonts/${name}") format("truetype")}\n`;
+}
+const license = await readFile(path.join(fontRoot, 'OFL.txt'));
+if (createHash('sha256').update(license).digest('hex') !== fontManifest.sha256['OFL.txt']) throw new Error('Font license mismatch');
+await writeFile(path.join(output, 'assets/fonts/OFL.txt'), license);
+await writeFile(path.join(output, 'assets/surface.css'), fontCSS + css);
+await writeFile(path.join(output, 'assets/file-types.svg'), await readFile(path.resolve(packageRoot, '../ui/src/assets/icons/file-types/sprite.svg')));
 // A real application entry invokes the actual host factory; no report/plugin data.
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/surface.css"></head><body><main id="gui-plugin-root"></main><script src="/assets/entry.js"></script><script>YuriGuiPluginPreview.startGuiPluginPreview({window:window,port:YuriGuiPluginPreview.nativeGuiPluginPort(window),storagePrompt:function(name,input){return window.prompt(name,input)}}).catch(function(){window.webkit.messageHandlers.guiPluginPreview.postMessage({name:'intent'}).then(function(intent){return window.webkit.messageHandlers.guiPluginPreview.postMessage({name:'state',expectedHost:intent.expectedHost,phase:'error'})}).catch(function(){})})</script></body></html>`;
 await writeFile(path.join(output, 'index.html'), html);
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8' };
 const assets = {};
 async function enumerate(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {

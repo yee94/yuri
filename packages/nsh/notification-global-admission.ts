@@ -13,7 +13,8 @@ export function createNotificationGlobalAdmission(input: {
   settings: () => NotificationPreferences | null;
   resolve: (admission: NotificationAdmission, current: () => boolean) => readonly NotificationTarget[] | Promise<readonly NotificationTarget[]>;
   deliver: (event: NotificationLiveEvent, admission: NotificationAdmission) => Promise<'scheduled' | 'suppressed' | 'duplicate' | 'stale'>;
-  error: (error: 'readFailed' | 'unavailable') => void;
+  error: (error: 'readFailed' | 'unavailable', eventID: string) => void;
+  resolved?: (eventID: string) => void;
 }) {
   let alive = true, bound: NotificationScope | null = null, revision = 0;
   let flight: Promise<void> | null = null, dirty = false;
@@ -42,18 +43,20 @@ export function createNotificationGlobalAdmission(input: {
             const settings = input.settings();
             if (!settings) continue;
             if (!notificationPreferenceValue(settings, 'nativeNotificationsEnabled') || !notificationPreferenceValue(settings, preference[admission.kind])) {
-              remember(admission.eventID); pending.delete(admission.eventID); continue;
+              remember(admission.eventID); pending.delete(admission.eventID); input.resolved?.(admission.eventID); continue;
             }
             try {
               const matches = await input.resolve(admission, valid);
               if (!valid()) continue;
-              if (matches.length !== 1 || matches[0].kind !== admission.target.kind || matches[0].id !== admission.target.id) { input.error('unavailable'); continue; }
+              if (matches.length !== 1 || matches[0].kind !== admission.target.kind || matches[0].id !== admission.target.id) { input.error('unavailable', admission.eventID); continue; }
               const confirmed = input.settings();
               if (!confirmed || !notificationPreferenceValue(confirmed, 'nativeNotificationsEnabled') || !notificationPreferenceValue(confirmed, preference[admission.kind])) continue;
               const result = await input.deliver({ origin: 'live', scope: entry.scope, eventID: admission.eventID, kind: admission.kind, target: { ...admission.target } }, admission);
               if (!valid() || result === 'stale') continue;
-              remember(admission.eventID); pending.delete(admission.eventID);
-            } catch { if (valid()) input.error('readFailed'); }
+              remember(admission.eventID); pending.delete(admission.eventID); input.resolved?.(admission.eventID);
+            } catch (error) {
+              if (valid() && !(error instanceof Error && error.message === 'notification_catalog_incomplete')) input.error('readFailed', admission.eventID);
+            }
           }
         }));
       } while (dirty && alive && turn === revision && input.active());

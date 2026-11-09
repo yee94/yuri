@@ -6,6 +6,19 @@ struct RelayConfiguration: Codable, Equatable {
     let serverId: String
     let hostEncPubJwk: [String: String]
     var scope: String { relayUrl + "\n" + serverId }
+    static func canonicalAddress(_ value: String) throws -> String {
+        guard var components = URLComponents(string: value),
+              ["ws", "wss"].contains(components.scheme?.lowercased() ?? ""),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.port == nil || (1...65535).contains(components.port!),
+              !value.contains("\\"), !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw ConnectionEditorFailure.invalid }
+        components.scheme = components.scheme?.lowercased(); components.host = host.lowercased()
+        if (components.scheme == "wss" && components.port == 443) || (components.scheme == "ws" && components.port == 80) { components.port = nil }
+        guard let address = components.string, components.url != nil else { throw ConnectionEditorFailure.invalid }
+        return address
+    }
 }
 
 struct SavedConnection: Codable {
@@ -19,9 +32,11 @@ struct SavedConnection: Codable {
     /// Durable credential authorization generation. Missing legacy values remain
     /// unknown; ordinary metadata edits never manufacture a cold-restore proof.
     var authorizationID: String? = nil
+    var transportID: String? = nil
     var publicValue: [String: Any] {
         var value: [String: Any] = ["id": id, "label": label, "url": relay?.relayUrl ?? url.absoluteString, "transport": relay == nil ? "direct" : "relay", "lastUsedAt": lastUsedAt]
         if let authorizationID { value["authorizationID"] = authorizationID }
+        if let transportID { value["transportID"] = transportID }
         return value
     }
     var editorValue: [String: Any] {
@@ -48,8 +63,15 @@ enum NativeFailure: LocalizedError {
         if status == errSecItemNotFound { state = State() }
         else if status == errSecSuccess, let bytes = result as? Data { state = try JSONDecoder().decode(State.self, from: bytes) }
         else { throw NativeFailure.message("无法读取设备安全存储 (\(status))") }
+        if state.transportPartitions == nil && !state.connections.isEmpty { try commit(state) }
     }
     var selected: SavedConnection? { state.connections.first { $0.id == state.selected } }
+    /// Reconstitute only the exact original attachment authorization. Selection
+    /// and metadata edits do not grant a replacement credential this authority.
+    func attachmentConnection(connectionID: String, transportID: String, authorizationID: String, version: String) throws -> SavedConnection {
+        guard let connection = state.connections.first(where: { $0.id == connectionID && $0.transportID == transportID && $0.authorizationID == authorizationID && $0.editorVersion == version }) else { throw NativeFailure.message("attachment_original_authorization_unavailable") }
+        return connection
+    }
     var snapshot: [String: Any] {
         ["connections": state.connections.sorted { $0.lastUsedAt > $1.lastUsedAt }.map(\.publicValue), "selected": state.selected as Any? ?? NSNull()]
     }
@@ -69,7 +91,8 @@ enum NativeFailure: LocalizedError {
     }
     func save(url: URL, token: String, label: String, relay: RelayConfiguration? = nil) throws {
         var next = state
-        let existing = next.connections.first { relay == nil ? ($0.relay == nil && $0.url == url) : $0.relay?.scope == relay?.scope }
+        let transport = try ConnectionTransport(url: url, relay: relay)
+        let existing = try next.connections.first { try ConnectionTransport(url: $0.url, relay: $0.relay) == transport }
         let value = SavedConnection(id: existing?.id ?? UUID().uuidString, label: label.isEmpty ? (relay?.serverId ?? url.host ?? "Yuri") : label, url: url, token: token, lastUsedAt: Date().timeIntervalSince1970 * 1000, relay: relay, editorVersion: UUID().uuidString, authorizationID: UUID().uuidString.lowercased())
         next.connections.removeAll { $0.id == value.id }
         next.connections.append(value); next.selected = value.id

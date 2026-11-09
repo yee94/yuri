@@ -1,0 +1,10 @@
+{
+  "name": "Features memory write fixture",
+  "id": "example.yuri.features-memory",
+  "version": "0.1.0",
+  "theme": "../../theme.json",
+  "capabilities": {
+    "clipboard": true,
+    "host": ["connection.list", "runtime.request", "features.fixture.identity", "features.fixture.configure", "features.fixture.audit", "appearance.reset", "appearance.apply"]
+  }
+}

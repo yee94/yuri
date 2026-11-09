@@ -66,6 +66,45 @@ async function tap(element: HTMLElement) {
 }
 
 describe('mobile model picker focus through Settings hosts', () => {
+  test('browser sheets follow the actual visual viewport without rerendering input children', async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 710, offsetTop: 0, width: 402, scale: 1 });
+    vi.stubGlobal('visualViewport', viewport);
+    let renders = 0;
+    function Field() { renders++; return <input data-testid="viewport-draft" defaultValue="keyboard-verify" />; }
+    try {
+      await act(async () => root.render(<MobileResizableSheet id="keyboard-form" open onOpenChange={() => undefined}
+        ariaLabel="Worktree" closeAriaLabel="Close" resizeAriaLabel="Resize"><Field /></MobileResizableSheet>));
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const input = document.querySelector<HTMLInputElement>('[data-testid="viewport-draft"]')!;
+      await act(async () => input.focus());
+      const before = renders;
+      await act(async () => { viewport.height = 430; viewport.offsetTop = 100; viewport.dispatchEvent(new Event('resize')); });
+      expect(dialog.style.top).toBe('100px');
+      expect(dialog.style.height).toBe('430px');
+      expect(dialog.style.bottom).toBe('auto');
+      await act(async () => { for (let i = 0; i < 50; i++) viewport.dispatchEvent(new Event('scroll')); });
+      expect(renders).toBe(before);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe('keyboard-verify');
+      await act(async () => { viewport.height = 710; viewport.offsetTop = 0; viewport.dispatchEvent(new Event('resize')); });
+      expect(dialog.style.top).toBe('0px');
+      expect(dialog.style.height).toBe('710px');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  test('Capacitor sheets keep the native keyboard inset as their only viewport writer', async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 430, offsetTop: 100, width: 402, scale: 1 });
+    vi.stubGlobal('visualViewport', viewport);
+    document.documentElement.classList.add('yuri-capacitor-app');
+    try {
+      await act(async () => root.render(<MobileResizableSheet id="native-keyboard-form" open onOpenChange={() => undefined}
+        ariaLabel="Worktree" closeAriaLabel="Close" resizeAriaLabel="Resize"><input /></MobileResizableSheet>));
+      await act(async () => viewport.dispatchEvent(new Event('resize')));
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(dialog.style.top).toBe(''); expect(dialog.style.height).toBe(''); expect(dialog.style.bottom).toBe('');
+    } finally { document.documentElement.classList.remove('yuri-capacitor-app'); vi.unstubAllGlobals(); }
+  });
+
   test('keeps initial focus outside interactive descendants without focusing a field or resize handle', async () => {
     await act(async () => root.render(<MobileResizableSheet id="export-menu" open onOpenChange={() => undefined}
       ariaLabel="File preview" closeAriaLabel="Close" resizeAriaLabel="Resize">

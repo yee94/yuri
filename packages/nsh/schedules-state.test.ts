@@ -1,28 +1,46 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Row } from './model';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Connection, Row } from './model';
 
 const harness = vi.hoisted(() => {
   const signal = <T>(initial: T) => { let value = initial; return Object.assign(() => value, { set: (next: T) => { value = next; } }); };
   return {
-    signal, generation: 1, cleanups: [] as Array<() => void>, request: vi.fn(),
-    app: { connection: signal<{ id: string } | null>({ id: 'host' }), tasks: signal<Row[]>([]), projects: signal([{ id: 'p /', name: 'Project', path: '/workspace/project' }]) },
+    signal, cleanups: [] as Array<() => void>, request: vi.fn(),
+    app: { connection: signal<Connection | null>(null), tasks: signal<Row[]>([]), projects: signal([{ id: 'p /', name: 'Project', path: '/workspace/project' }]) },
   };
 });
-vi.mock('nsh', () => ({ signal: harness.signal, cleanup: (work: () => void) => harness.cleanups.push(work), lifecycle: () => 'active', effect: (work: () => void) => work(), untracked: (work: () => unknown) => work() }));
-vi.mock('./state', () => ({ app: { ...harness.app, runtimeScope: () => null }, epoch: () => harness.generation, captureHostOperation: () => {
-  const generation = harness.generation, connection = harness.app.connection();
-  return { current: () => generation === harness.generation && connection === harness.app.connection(), request: harness.request };
-} }));
-vi.mock('./runtime', () => ({ request: harness.request }));
+vi.mock('nsh', () => ({
+  signal: harness.signal, cleanup: (work: () => void) => harness.cleanups.push(work),
+  batch: <T>(work: () => T) => work(), untracked: <T>(work: () => T) => work(), lifecycle: () => 'active',
+  effect: (work: () => unknown) => { const stop = work(); if (typeof stop === 'function') harness.cleanups.push(stop as () => void); },
+  Storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined },
+  host: {
+    available: () => true,
+    on: () => () => {},
+    call: async (name: string, input: Row) => {
+      if (name === 'connection.list') return {
+        selected: 'host', connections: [{ id: 'host', url: 'https://fixture.example', authorizationID: 'fixture-authorization' }],
+        runtimeScope: { hostID: 'host', lease: 'fixture-lease' },
+      };
+      if (name !== 'runtime.request') throw new Error(`unexpected_native_call:${name}`);
+      expect(input.expectedHost).toEqual({ hostID: 'host', lease: 'fixture-lease' });
+      const body = await (input.method === 'GET' ? harness.request(input.path) : harness.request(input.path, input.method, input.body));
+      return { status: 200, body };
+    },
+  },
+}));
 vi.mock('./i18n', () => ({ t: (key: string) => key }));
 const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const task = (id = 't /', projectId = 'p /', enabled = true) => ({ projectId, task: { id, name: id, enabled, schedule: { kind: 'daily', time: '09:00' }, execution: { prompt: 'Review', providerID: 'test', modelID: 'test' }, state: {} } });
 const run = (id = 'newest') => ({ id, projectId: 'p /', taskId: 't /', taskName: 'Daily', trigger: 'manual', status: 'success', sessionId: 'session', directory: '/old-worktree', error: null, startedAt: 1000, finishedAt: 2000, durationMs: 1000 });
-beforeEach(() => {
-  vi.resetModules(); harness.request.mockReset(); harness.cleanups = []; harness.generation = 1;
-  harness.app.connection.set({ id: 'host' }); harness.app.tasks.set([task()]);
+beforeEach(async () => {
+  vi.resetModules(); harness.request.mockReset(); harness.cleanups = [];
+  const state = await import('./state');
+  await state.loadConnections();
+  harness.app = state.app;
+  harness.app.tasks.set([task()]);
   harness.app.projects.set([{ id: 'p /', name: 'Project', path: '/workspace/project' }]);
 });
+afterEach(() => { harness.cleanups.forEach(stop => stop()); });
 
 describe('scheduled task catalog native authority', () => {
   it.each(['read', 'write'] as const)('explicit dispose fences the captured %s lane without late catalog/loading/pending/notice writes', async kind => {
@@ -100,6 +118,26 @@ describe('scheduled task catalog native authority', () => {
     harness.request.mockResolvedValueOnce({ tasks: null }); await catalog.mutate(task(), 'delete'); expect(harness.app.tasks()).toEqual([task()]);
     harness.request.mockResolvedValueOnce({ ok: true, task: { id: 'wrong' } }); expect(await catalog.mutate(task(), 'run')).toBeUndefined(); expect(harness.app.tasks()).toEqual([task()]);
   });
+  it('retains prior authority after an unknown write result and refreshes without replaying the mutation', async () => {
+    const { createScheduledCatalog } = await import('./schedules-state'); const catalog = createScheduledCatalog();
+    harness.request.mockRejectedValueOnce(new Error('response_lost'));
+    await catalog.mutate(task(), 'toggle');
+    expect(harness.app.tasks()).toEqual([task()]); expect(catalog.error()).toBe('response_lost'); expect(catalog.notice()).toBe('');
+    harness.request.mockResolvedValueOnce({ tasks: [task('t /', 'p /', false)], failedProjectIds: [] });
+    await catalog.load();
+    expect(harness.app.tasks()).toEqual([task('t /', 'p /', false)]);
+    expect(harness.request.mock.calls).toEqual([
+      ['/api/projects/p%20%2F/scheduled-tasks', 'PATCH', { task: { id: 't /', enabled: false } }],
+      ['/api/yuri/scheduled-tasks'],
+    ]);
+  });
+  it('revokes an in-flight catalog write when explicitly disposed', async () => {
+    const { createScheduledCatalog } = await import('./schedules-state'); const catalog = createScheduledCatalog(), pending = deferred();
+    harness.request.mockReturnValueOnce(pending.promise); const write = catalog.mutate(task(), 'toggle');
+    catalog.dispose();
+    pending.resolve({ tasks: [task('t /', 'p /', false).task] }); await write;
+    expect(harness.app.tasks()).toEqual([task()]); expect(catalog.notice()).toBe(''); expect(catalog.current()).toBe(false);
+  });
   it.each([false, true])('core rejects an unavailable immediate run before making HTTP calls (running=%s)', async running => {
     const { createScheduledCatalog } = await import('./schedules-state'); const catalog = createScheduledCatalog();
     const entry = task('t /', 'p /', running); entry.task.state = running ? { lastStatus: 'running' } : {};
@@ -146,8 +184,8 @@ describe('scheduled task catalog native authority', () => {
   it.each(['host', 'generation', 'unmount'] as const)('drops stale catalog reads and writes after %s changes', async mode => {
     const { createScheduledCatalog } = await import('./schedules-state'); const catalog = createScheduledCatalog(), pending = deferred();
     harness.request.mockReturnValueOnce(pending.promise); const write = catalog.mutate(task(), 'run');
-    if (mode === 'host') harness.app.connection.set({ id: 'new' });
-    if (mode === 'generation') harness.generation++;
+    if (mode === 'host') harness.app.connection.set({ ...harness.app.connection()!, id: 'new' });
+    if (mode === 'generation') await (await import('./state')).loadConnections({ forceReconnect: true });
     if (mode === 'unmount') harness.cleanups.forEach(stop => stop());
     pending.resolve({ ok: true, task: { ...task().task, enabled: false }, sessionId: 'late' });
     expect(await write).toBeUndefined(); expect(harness.app.tasks()).toEqual([task()]); expect(catalog.notice()).toBe('');
@@ -223,10 +261,12 @@ describe('scheduled run history native paging', () => {
     harness.request.mockResolvedValueOnce({ runs: [run('replacement')], nextCursor: 'gap', complete: false }); await history.load();
     expect(history.runs().map(value => value.id)).toEqual(['replacement']); expect(history.complete()).toBe(false);
   });
-  it.each(['host', 'unmount'] as const)('drops history responses after %s', async mode => {
+  it.each(['host', 'generation', 'unmount'] as const)('drops history responses after %s', async mode => {
     const { createScheduledHistory } = await import('./schedules-state'); const history = createScheduledHistory(), pending = deferred();
     harness.request.mockReturnValueOnce(pending.promise); const read = history.load();
-    if (mode === 'host') harness.generation++; else history.dispose();
+    if (mode === 'host') harness.app.connection.set({ ...harness.app.connection()!, id: 'new' });
+    if (mode === 'generation') await (await import('./state')).loadConnections({ forceReconnect: true });
+    if (mode === 'unmount') history.dispose();
     pending.resolve({ runs: [run()], nextCursor: null, complete: true }); await read;
     expect(history.runs()).toEqual([]); expect(history.error()).toBe('');
   });

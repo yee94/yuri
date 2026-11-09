@@ -64,7 +64,7 @@ rejected { _ = try NativeSpeechAudio(status: 200, mime: "audio/mpeg", data: byte
 print("Speech contracts passed")
 `);
     const binary = path.join(temporary, 'speech-contract');
-    const compile = spawnSync('xcrun', ['swiftc', '-swift-version', '5', path.join(directory, 'ios/SpeechPlaybackBridge.swift'), program, '-o', binary], { encoding: 'utf8', timeout: 60000 });
+    const compile = spawnSync('xcrun', ['swiftc', '-swift-version', '5', ...['RuntimeHostScope.swift', 'SpeechVoiceCatalogPolicy.swift', 'SpeechPlaybackBridge.swift'].map(file => path.join(directory, 'ios', file)), program, '-o', binary], { encoding: 'utf8', timeout: 60000 });
     expect(compile.status, compile.stdout + compile.stderr).toBe(0);
     const result = spawnSync(binary, { encoding: 'utf8', timeout: 10000 });
     expect(result.status, result.stdout + result.stderr).toBe(0);

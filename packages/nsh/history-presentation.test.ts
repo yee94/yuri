@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 import type { NativeHistoryPresentation } from './history-presentation';
 
 const h = vi.hoisted(() => ({
@@ -61,13 +62,15 @@ const page = (start = 20, next: string | null = 'older', count = 20) => ({ data:
 let read: (path: string, method: string, body: Record<string, unknown>) => unknown;
 let marker: { messageID: string } | null;
 const emit = (type: string, data: Record<string, unknown> = {}) => {
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type, data: { sessionID: target.id, ...data } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type, data: { sessionID: target.id, ...data } }) });
 };
 beforeEach(() => {
+  resetIssuedStreams(h.call);
   vi.resetModules(); vi.useFakeTimers(); h.call.mockReset(); h.cleanups = []; h.stops = []; h.listeners.clear(); h.depth = 0; h.setLifecycle('active'); marker = null;
   read = path => path.includes('/message?') ? page() : path.startsWith(`/api/session/${target.id}?`) ? { id: target.id, revert: marker }
     : path === '/api/session/active' ? {} : [];
   h.call.mockImplementation(async (name, input) => {
+    if (name === 'runtime.stream') captureIssuedStream(h.call, input);
     if (name === 'connection.list') return { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', label: 'Fixture', url: 'https://fixture.example' }] };
     if (name === 'runtime.request') return { status: 200, body: await read(input.path, input.method, input.body) };
     return true;
@@ -75,13 +78,17 @@ beforeEach(() => {
 });
 afterEach(() => { h.stops.forEach(stop => stop()); h.cleanups.forEach(stop => stop()); vi.useRealTimers(); });
 
-async function open(options: { throws?: boolean; listener?: boolean; assistant?: boolean } = {}) {
+async function open(options: { throws?: boolean; listener?: boolean; assistant?: boolean; footerController?: boolean; footerEnabled?: boolean } = {}) {
   const state = await import('./state'), reactive = await import('nsh'); await state.loadConnections();
   const presentation = reactive.signal<NativeHistoryPresentation | null>(null), footprint = reactive.signal(0);
   const notices: NativeHistoryPresentation[] = [], depths: number[] = [];
+  const { createNativeHistoryFooterController } = await import('./history-footer-controller');
+  const footerController = options.footerController ? createNativeHistoryFooterController({ current: () => reactive.lifecycle() === 'active', changed: value => footprint.set(value.minHeight) }) : undefined;
+  footerController?.setEnabled(options.footerEnabled ?? false);
   const callback = (next: NativeHistoryPresentation) => {
     depths.push(h.depth); notices.push(next); presentation.set(next);
-    if (next.authority === 'reset') footprint.set(0);
+    if (footerController) footerController.beforeHistoryPresentationFlush(next);
+    else if (next.authority === 'reset') footprint.set(0);
     else if (next.authority === 'successful-history' && !visible(next) && !next.readError) footprint.set(53);
     if (options.throws) throw new Error('fixture observer failure');
   };
@@ -99,9 +106,34 @@ async function open(options: { throws?: boolean; listener?: boolean; assistant?:
     }
     frames.push({ next, footprint: height, ids: rows.map(row => row.id) });
   });
-  return { state, chat, notices, frames, depths, presentation, footprint };
+  return { state, chat, notices, frames, depths, presentation, footprint, footerController };
 }
 function visible(next: NativeHistoryPresentation) { return next.more || !!next.historyError || next.boundaryMissing || next.repairPending || next.hasGap; }
+
+it('actual createChat adoption flushes production controller footprint with rows without awaiting a pending natural ref', async () => {
+  const { chat, frames, footprint, footerController: controller } = await open({ footerController: true, footerEnabled: true });
+  const gate = deferred<{ bounds: { size: { height: number } } }>();
+  const natural = controller!.captureNatural(), node = { measure: () => gate.promise };
+  natural.ref(node); natural.onLayout({ bounds: { size: { height: 37.25 } } });
+  controller!.captureEvents().onScroll({ offset: { y: 0 } });
+  const confirming = natural.confirm(), before = frames.length, normal = read;
+  read = (path, method, body) => path.includes('cursor=older') ? page(0, null) : normal(path, method, body);
+  await chat.loadOlder();
+  expect(chat.messages()).toHaveLength(40); expect(footprint()).toBe(37.25);
+  const terminal = frames.slice(before).filter(frame => frame.next?.authority === 'successful-history' && !visible(frame.next));
+  expect(terminal).toHaveLength(1); expect(terminal[0]).toMatchObject({ footprint: 37.25 }); expect(terminal[0]!.ids).toHaveLength(40);
+  gate.resolve({ bounds: { size: { height: 99 } } });
+  expect(await confirming).toBe('stale'); expect(footprint()).toBe(37.25);
+}, 15000);
+
+it('actual production controller remains OFF by default and adopts history when natural measure never resolves', async () => {
+  const { chat, footprint, footerController: controller } = await open({ footerController: true });
+  const natural = controller!.captureNatural(); natural.ref({ measure: () => new Promise(() => {}) }); void natural.confirm();
+  controller!.captureEvents().onScroll({ offset: { y: 0 } });
+  const normal = read; read = (path, method, body) => path.includes('cursor=older') ? page(0, null) : normal(path, method, body);
+  await chat.loadOlder();
+  expect(chat.messages()).toHaveLength(40); expect(footprint()).toBe(0); expect(controller!.snapshot().enabled).toBe(false);
+}, 15000);
 
 it('flushes final exhausted facts, rows and a synchronous UI footprint in one dependency-tracked batch', async () => {
   const { chat, notices, frames, depths } = await open(); const before = frames.length;

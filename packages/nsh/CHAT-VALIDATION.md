@@ -104,7 +104,7 @@
 
 ### 工具样式与内置 DiffView（15:29 专项）
 
-- `NativeToolRow` 复用 Web 的纯 icon/尺寸映射；标题 medium、20pt 行高、16pt leading slot，非 Shell 不额外显示耗时/Running，保留单行路径与增删统计。九点波纹直接使用 native motion，Used/Skill 的 active 图标也接入同一组件。工具颜色由 Host appearance 的 JS-only palette 按外部公式生成；没有新增依赖，也没有把 React 引入 QuickJS。
+- `NativeToolRow` 复用 Web 的纯 icon/尺寸映射；标题 medium、20pt 行高、16pt leading slot，非 Shell 不额外显示耗时/Running。单文件保留一行路径和右侧合计；多文件 apply_patch 按 Web 换行显示每个 basename 及自身增减，不拼完整路径、不另显示合计，也没有自建文件类型图标。九点波纹直接使用 native motion，Used/Skill 的 active 图标也接入同一组件。工具颜色由 Host appearance 的 JS-only palette 按外部公式生成；没有新增依赖，也没有把 React 引入 QuickJS。
 - `NativeChangesSheet` 的 patch 与 before/after 已替换为 `nsh/base` 内置 `DiffView`，保留统一视图、词级高亮、上下文、源行号、复制/预览/重试、失败保留快照与二进制分支。多文件工具 source 带完整历史文件；不会替换成当前 Git。NSH patch ref 的内部索引与 gutter 源行不相同，回归捕获第 9 行误变第 2 行后加入映射，UIKit 已确认 preview 源行为 9。
 - **8 files / 54 passed / 1 skipped**（15:38 重跑，含新的 UIKit tool/diff 专项；skip 是另一个未开启的 parity UIKit gate）。覆盖工具开关、literal 原始输出、历史 patch、before/after、多文件 back/切换并预览第 4 行、删除、二进制、空快照、关闭/失效和历史/暂存/工作区隔离；2000 行全替换的 headless 可见 text 节点 <500。该计数不是 UIKit 帧率、输入 P95 或最坏耗时证明。
 - 共享 Web 受影响专项 **3 files / 82 tests passed**；`nsh:check` 与 UI `type-check` 通过，触及共享文件 ESLint 无输出。`dead-code` 已执行并检查：CLI 字符串入口 `tool-diff-fixture.tsx` / `chat-changes-test-app.tsx` 仍报 unused，既有 NativeToolField 类型与其它仓库告警保留，未删未知代码。

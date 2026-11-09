@@ -1,9 +1,10 @@
 import { platform, Scroll, signal, Text, View, type JSX } from 'nsh';
+import { nativeDensity } from './appearance';
 import { Button, Input, NavPage } from 'nsh/base';
 import { Icon } from './Icon';
 import { t } from './i18n';
 import { SettingsBasics } from './settings-basics';
-import { SettingsCollection } from './settings-collections';
+import { SettingsCollection, type SettingsCollectionCallbacks, type SettingsCollectionDraft, type SettingsCollectionNavigation } from './settings-collections';
 import { SettingsGit } from './settings-git';
 import { SettingsUsage } from './settings-usage';
 import { SettingsArchive } from './settings-archive';
@@ -21,8 +22,8 @@ import type { RetentionController } from './settings-retention-controller';
 import type { SettingsHostOperation } from './settings-controls';
 
 export type SettingsPageID = 'instances' | 'remote-instances' | 'appearance' | 'chat' | 'shortcuts' | 'global-config' | 'notifications' | 'sessions' | 'archived-sessions' | 'summary-ai' | 'projects' | 'git' | 'providers' | 'agents' | 'assistants' | 'behavior' | 'commands' | 'mcp' | 'plugins' | 'magic-prompts' | 'skills.installed' | 'skills.catalog' | 'usage' | 'voice' | 'about';
-export type SettingsRoute = { page: SettingsPageID; entity?: string; create?: boolean; target?: string; directory?: string };
-export type SettingsCallbacks = {
+export type SettingsRoute = { page: SettingsPageID; entity?: string; create?: boolean; target?: string; directory?: string; collectionDraft?: SettingsCollectionDraft };
+export type SettingsCallbacks = SettingsCollectionCallbacks & {
   onOpen: (route: SettingsRoute) => void;
   onBack: () => void;
   onConnect: () => void;
@@ -62,12 +63,12 @@ export const SETTINGS_ENTRIES: readonly Entry[] = [
 ];
 
 /** Embeddable root content. The owner supplies the NavStack and connection flow. */
-export function SettingsHome(props: SettingsCallbacks & { showTitle?: boolean }) {
+export function SettingsHome(props: SettingsCallbacks & { showTitle?: boolean; bottomInset?: number }) {
   const search = signal('');
   const groups = ['connection', 'personalization', 'workspace', 'opencode', 'content', 'system'] as const;
   const visible = () => SETTINGS_ENTRIES.filter(entry => !entry.desktopOnly && t(entry.title).toLocaleLowerCase().includes(search().trim().toLocaleLowerCase()));
   const matches = () => searchSettingsFields(search(), t, platform.os);
-  return <Scroll class="flex-1 bg-background" contentClass="p-5 gap-6 pb-10">
+  return <Scroll class="flex-1 bg-background" contentClass="p-5 gap-6 pb-10" contentStyle={{ ...nativeDensity().pages.settingsHome, paddingBottom: (props.bottomInset ?? 0) + 40 }}>
     <If when={props.showTitle !== false}><Text class="text-3xl font-semibold text-foreground">{t('settings.view.home.title')}</Text></If>
     <Input testID="settings-search" class="min-h-12 px-3 rounded-xl bg-card text-foreground" value={search()} onChange={e => search.set(e.value)} placeholder={t('settings.view.search.placeholder')} />
     <If when={!visible().length && !matches().length}><Text class="text-muted-foreground">{t('settings.view.search.noResults')}</Text></If>
@@ -95,9 +96,12 @@ export type SettingsPageProps = SettingsCallbacks & SettingsRoute & { directory?
 /** Render inside the application's NavStack; route.entity opens the third level. */
 export function SettingsPage(props: SettingsPageProps) {
   if (props.page === 'projects') return <SettingsProjectsPage {...props} />;
+  const collectionNavigation = signal<SettingsCollectionNavigation>({ blocked: false, back: () => undefined });
   const entry = SETTINGS_ENTRIES.find(item => item.page === props.page);
-  return <NavPage title={entry ? t(entry.title) : t('settings.view.home.title')} headerBackTitle="" class="flex-1 bg-background">
-    <SettingsPageContent {...props} />
+  return <NavPage title={entry ? t(entry.title) : t('settings.view.home.title')} headerBackTitle="" class="flex-1 bg-background"
+    popOnBack={!collectionNavigation().blocked} popOnSwipe={!collectionNavigation().blocked}
+    onBackPress={() => { if (collectionNavigation().blocked) collectionNavigation().back(); }}>
+    <SettingsPageContent {...props} onCollectionNavigation={next => { collectionNavigation.set(next); props.onCollectionNavigation?.(next); }} />
   </NavPage>;
 }
 
@@ -113,6 +117,7 @@ export type SettingsPageContentProps = SettingsPageProps & {
   remoteConnections?: NativeRemoteConnectionsSlot;
 };
 export function SettingsPageContent(props: SettingsPageContentProps) {
+  const collectionNavigation = signal<SettingsCollectionNavigation>({ blocked: false, back: () => undefined });
   if (props.page === 'about' && props.desktopAbout) return <Each of={[props.desktopAbout()]} key={owner => owner}>{owner =>
     <If when={!!owner()} else={<View class="p-5"><Text class="text-muted-foreground">{t('settings.view.unavailable.description')}</Text></View>}>
       <SettingsAbout target={props.target} active={props.active} owner={owner()} />
@@ -126,14 +131,14 @@ export function SettingsPageContent(props: SettingsPageContentProps) {
   if (props.page === 'skills.catalog') return <SettingsSkillsCatalog {...props} />;
   if (props.page === 'remote-instances') return <SettingsRemoteInstances {...props} connections={props.remoteConnections} />;
   return <View class="flex-1 min-w-0 min-h-0 bg-background">
-    <If when={props.page === 'appearance' || props.page === 'chat'}><SettingsPreferences {...props} /></If>
+    <If when={props.page === 'appearance' || props.page === 'chat'}><SettingsPreferences {...props} onCollectionNavigation={next => { collectionNavigation.set(next); props.onCollectionNavigation?.(next); }} /></If>
     <If when={props.page === 'git'}><SettingsGit {...props} active={props.active} /></If>
     <If when={props.page === 'usage'}><SettingsUsage {...props} active={props.active} /></If>
     <If when={props.page === 'about'}><SettingsAbout target={props.target} active={props.active} /></If>
     <If when={props.page === 'archived-sessions'}><SettingsArchive {...props} /></If>
     <If when={props.page === 'magic-prompts'}><SettingsMagicPrompts {...props} /></If>
     <If when={['providers', 'agents', 'commands', 'mcp', 'plugins', 'skills.installed'].includes(props.page)}>
-      <SettingsCollection {...props} active={props.active} />
+      <SettingsCollection {...props} active={props.active} onCollectionNavigation={next => { collectionNavigation.set(next); props.onCollectionNavigation?.(next); }} />
     </If>
     <If when={!['appearance', 'chat', 'providers', 'agents', 'commands', 'mcp', 'plugins', 'skills.installed', 'git', 'usage', 'about', 'archived-sessions', 'magic-prompts', 'projects'].includes(props.page)}>
       <SettingsBasics {...props} active={props.active} operationToken={props.operationToken} />

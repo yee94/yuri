@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["../../local-compatibility-preferences-core.ts", "../../local-compatibility-preferences.ts"]
+}

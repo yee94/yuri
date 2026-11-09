@@ -133,10 +133,13 @@ export function createProjectDirectoryController() {
 export interface ProjectDirectoryProps {
   /** Quick-add keeps this page; a confirmed primary add opens the native new-session draft. */
   onAdded: (project: Project, options: { openDraft: boolean }) => void;
+  headerVisible?: boolean;
+  onPendingChange?: (pending: boolean) => void;
 }
 
 export function ProjectDirectoryPage(props: ProjectDirectoryProps) {
   const controller = createProjectDirectoryController();
+  effect(() => { props.onPendingChange?.(controller.pending()); });
   effect(() => { app.connection(); untracked(() => { void controller.initialize(); }); });
   const added = (path: string) => app.projects().some(project => normalize(project.path) === normalize(path));
   async function submit(path: string, quick = false) {
@@ -144,7 +147,7 @@ export function ProjectDirectoryPage(props: ProjectDirectoryProps) {
     if (project && controller.current()) props.onAdded(project, { openDraft: !quick });
   }
   const createTarget = () => controller.missingPath() === controller.location().target || (controller.listedPath() === controller.location().parent && !!controller.location().filter && !controller.entries().some(entry => entry.name === controller.location().filter));
-  return <NavPage title={t('directoryExplorerDialog.title')} headerBackTitle="" popOnBack={!controller.pending()} popOnSwipe={!controller.pending()} class="flex-1 bg-background">
+  return <NavPage title={t('directoryExplorerDialog.title')} headerVisible={props.headerVisible} headerBackTitle="" popOnBack={!controller.pending()} popOnSwipe={!controller.pending()} class="flex-1 bg-background">
     <Scroll class="flex-1" contentClass="p-4 gap-4">
       <Text class="text-sm text-muted-foreground">{t('directoryExplorerDialog.description')}</Text>
       <Input testID="projects-directory-path" class={field} value={controller.input()} disabled={controller.pending()} autoCapitalize="none" autoCorrect={false} placeholder={t('directoryExplorerDialog.pathInput.placeholder')} onChange={event => controller.edit(event.value)} />

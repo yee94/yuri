@@ -8,7 +8,7 @@ export default {
   test: {
     ...ui.test,
     name: '@yuriai/nsh-gui-plugin',
-    include: ['packages/nsh/gui-plugin-browser.test.tsx', 'packages/nsh/gui-plugin-artifact.test.tsx'],
+    include: ['packages/nsh/gui-plugin-browser.test.tsx', 'packages/nsh/gui-plugin-artifact.test.tsx', 'packages/nsh/gui-plugin-device.test.tsx'],
   },
   resolve: {
     ...ui.resolve,

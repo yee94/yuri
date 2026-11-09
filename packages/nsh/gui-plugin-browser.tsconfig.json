@@ -3,7 +3,13 @@
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": []
+    "types": [],
+    "paths": {
+      "@/*": ["./*"],
+      "@yuriai/ui/*": ["./*"],
+      "nsh": ["../../nsh/.nsh/types/nsh/index.d.ts"],
+      "nsh/*": ["../../nsh/.nsh/types/nsh/*.d.ts"]
+    }
   },
   "files": ["../ui/src/types/desktop.d.ts"],
   "include": ["gui-plugin-*.ts", "gui-plugin-*.tsx"]

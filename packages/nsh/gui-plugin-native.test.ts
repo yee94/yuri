@@ -55,6 +55,15 @@ it.skipIf(process.platform !== 'darwin')('Foundation lease rejects stale/closed/
   precondition(rpc.method == "POST" && rpc.headers["x-opencode-directory"] == "/work")
   precondition(rpc.body == Data("{\\"input\\":{\\"exact\\":true}}".utf8))
   let intent = try GuiPluginPreviewIntent(["sessionId":"s", "directory":"/work", "path":"reports/a.report.json", "expectedHost":scope.publicValue, "owner":"owner-A"])
+  let standalone = try GuiPluginPreviewIntent(["directory":"/work", "path":"reports/a.report.json", "expectedHost":scope.publicValue, "owner":"standalone"])
+  precondition(standalone.sessionID == nil && standalone.json["sessionId"] == nil)
+  let noMatch = GuiPluginPreviewMatch(); noMatch.finish(.success(false))
+  let unmatched = try await noMatch.wait(); precondition(!unmatched)
+  let cancelledMatch = GuiPluginPreviewMatch()
+  cancelledMatch.finish(.failure(CancellationError()))
+  do { _ = try await cancelledMatch.wait(); fatalError("cancelled preparation adopted late match") } catch is CancellationError {}
+  cancelledMatch.finish(.success(true))
+  do { _ = try await cancelledMatch.wait(); fatalError("late match replaced cancellation") } catch is CancellationError {}
   precondition(intent.path == "reports/a.report.json")
   for input in [["sessionId":"s", "directory":"/work", "path":"https://outside.invalid"], ["sessionId":"", "directory":"/work", "path":"a.report"]] {
     var scoped: [String:Any] = input; scoped["expectedHost"] = scope.publicValue; scoped["owner"] = "owner-A"
@@ -125,7 +134,7 @@ it.skipIf(process.platform !== 'darwin')('Foundation lease rejects stale/closed/
     writeFileSync(path.join(fs, 'assets/entry.js'), '/* synthetic trusted asset; not executed */');
     writeFileSync(path.join(temporary, 'outside.js'), '/* outside asset root */');
     symlinkSync(path.join(temporary, 'outside.js'), path.join(fs, 'assets/escape.js'));
-    run(['swiftc', '-swift-version', '5', '-parse-as-library', path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'ios/GuiPluginPreviewBridge.swift'), source, '-o', executable]);
+    run(['swiftc', '-swift-version', '5', '-parse-as-library', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift'].map(file => path.join(root, 'ios', file)), source, '-o', executable]);
     const result = spawnSync(executable, [fs, path.join(root, '.nsh/gui-plugin-preview')], { encoding: 'utf8', timeout: 10_000 });
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain('GUI Foundation lifecycle passed');
@@ -140,7 +149,7 @@ it.skipIf(process.platform !== 'darwin')('typechecks isolated WKWebView and regi
     writeFileSync(stub, '@MainActor public final class NshAppView { public func handle(_ name: String, _ body: @escaping @MainActor (Any?) async throws -> Any?) {} }');
     const flags = ['-swift-version', '5', '-sdk', sdk, '-target', 'arm64-apple-ios26.0-simulator'];
     run(['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temporary, 'NativeShell.swiftmodule')]);
-    run(['swiftc', ...flags, '-I', temporary, '-parse-as-library', '-typecheck', path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'ios/GuiPluginPreviewBridge.swift')]);
+    run(['swiftc', ...flags, '-I', temporary, '-parse-as-library', '-typecheck', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'ResourceWebPreviewView.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift'].map(file => path.join(root, 'ios', file)), path.join(root, '../mobile/ios/App/App/YuriViewExportRenderer.swift')]);
     const source = readFileSync(path.join(root, 'ios/GuiPluginPreviewBridge.swift'), 'utf8');
     expect(source).not.toMatch(/URLSession|RelayTunnel\s*\(|evaluateJavaScript\(|localStorage|Authorization/);
     expect(source).toContain('configuration.websiteDataStore = .nonPersistent()');

@@ -1,0 +1,20 @@
+{
+  "status": "presentation-ticket-source-reviewed-code-style-consumer-fixed-uikit-partial",
+  "sources": {
+    "packages/nsh/chat-btw-model.ts": "209e26e0c256e5efd474dc9aef8f0434d58d730dceef6dca1ffe4fd38372c508",
+    "packages/nsh/chat-btw-presentation.ts": "b58624e0b68c2ea035943323d3ba1287d15e8ecf06f270a56a73694873cffde9",
+    "packages/nsh/chat-btw.tsx": "41b8fadde80493fb50c6ef9b7ff4f75df2236f1ddeeadef34a94dc927f5ead1e",
+    "packages/nsh/chat-btw-model.test.ts": "7bdcbdc977fde9d3d63787e3253f33d90d04476c3a35cc5f87a00000c83a247a",
+    "packages/nsh/chat-btw-surface.test.ts": "96eb13c0ddab0f19e199071c05497aa814050e36ba5da63e4e90d8e49e8f59f9",
+    "packages/nsh/tests/chat-btw-contract.md": "869663344e2c41a5c19af23f568fb85bc51b40822f7e2bd506c0c5227cc2b71d"
+  },
+  "validation": {
+    "focusedVitest": "39 passed after code-style consumer fix; includes original 32 model/request, real NativeSheet callback seam and command integration cases",
+    "nshTypeScript": "passed",
+    "deadCode": "completed; existing workspace findings; no chat-btw files listed",
+    "realModel": "not run",
+    "realHost": "not run",
+    "UIKit": "c8f9d877: bare candidate opened real Sheet, native grabber dismissed to Chat without model call; close/reopen interleaving and later code-style fix not UIKit validated",
+    "independentOracle": "Original close P2 source scope closed by ses_e47d2120cffeU1zIApAg5GIFPz; later code-style consumer change has focused validation only"
+  }
+}

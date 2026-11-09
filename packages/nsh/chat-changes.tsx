@@ -1,22 +1,28 @@
-import { cleanup, Clipboard, computed, effect, host, Keyboard, keyboardFrame, lifecycle, List, Overlay, platform, safeArea, signal, Text, untracked, View, windowSize, type ViewRef } from 'nsh';
+import { cleanup, computed, effect, host, Image, Keyboard, keyboardFrame, lifecycle, List, Overlay, platform, safeArea, Scroll, signal, Storage, Text, untracked, View, windowSize, type ViewRef } from 'nsh';
 import { Button, DiffView, type DiffViewRef, type DiffHunk } from 'nsh/base';
 import { NativeSheet as Sheet } from './native-sheet';
 import { extractGitChangedFiles, summarizeGitChangedFiles } from '../ui/src/components/chat/changedFiles';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { app } from './state';
+import { app, captureHostRequest, epoch } from './state';
 import { createPageOperations, type PageOperation } from './page-operations';
 import { runtimeEventFrom } from './model';
 import { nativeChatTextStyle } from './appearance';
 import { createChangesReader, nativeChangeLocation, nativeSourceHunks, type ChangesSource, type HistoricalChange } from './chat-changes-model';
+import { createChangesOwner } from './chat-changes-owner';
 import { NativeWorkspaceChanges } from './chat-changes-workspace';
-import { createChangesActions } from './chat-changes-actions';
+import { changesWriteJournal, createChangesActions } from './chat-changes-actions';
+import { createChangesGeneration, type ChangesGenerationContext } from './chat-changes-generation';
+import { isImageFile } from '../ui/src/lib/toolHelpers';
+import { nativeDiffIsNew, nativeDiffLayout, type NativeDiffLayoutPreference } from './chat-changes-layout';
 
 function createOwner(source: ChangesSource, current: () => boolean) {
   const operations = createPageOperations(current);
   const revision = signal(0), actionRevision = signal(0), lane = signal<PageOperation | null>(null), statusLane = signal<PageOperation | null>(null);
-  const workspace = { tree: signal(true), collapsed: signal(new Set<string>()), collapsedGroups: signal(new Set<boolean>()), message: signal(''), inputHeight: signal(88), uncertain: signal(false) };
-  let alive = true, assigned: PageOperation | null = null, actionLane: PageOperation | null = null, writePending = false;
+  const tree = signal(true), collapsed = signal(new Set<string>()), collapsedGroups = signal(new Set<boolean>()), message = signal(''), inputHeight = signal(88), uncertain = signal(false);
+  const deferredLoaded = signal(false), remotes = signal<string[] | null>(null), remoteError = signal(''), generationHighlights = signal<string[]>([]);
+  let alive = true, assigned: PageOperation | null = null, actionLane: PageOperation | null = null, writePending = false, remoteSerial = 0, messageRevision = 0;
+  let generationContext: () => ChangesGenerationContext = () => ({});
   let mutation: object | null = null;
   let committing: { message: string; lane: PageOperation } | undefined;
   const valid = () => alive && assigned?.current() === true && current();
@@ -33,6 +39,7 @@ function createOwner(source: ChangesSource, current: () => boolean) {
     await raw.refresh();
     if (captured === assigned && valid() && !raw.state().loading && !raw.state().error && raw.state().snapshot) statusLane.set(captured);
   } };
+  const journal = changesWriteJournal(app.runtimeScope()?.hostID ?? '', source.kind === 'workspace' ? source.directory : '', Storage);
   const actions = createChangesActions(reader, async (path, method = 'GET', body) => {
     const captured = actionLane;
     if (!captured || captured !== assigned || !valid()) throw new Error('page_operation_stale');
@@ -46,7 +53,7 @@ function createOwner(source: ChangesSource, current: () => boolean) {
     } catch (cause) {
       if (write) {
         const status = cause && typeof cause === 'object' && 'status' in cause ? Number(cause.status) : NaN;
-        if (!Number.isInteger(status)) workspace.uncertain.set(true);
+        if (!Number.isInteger(status)) uncertain.set(true);
         writePending = false;
       }
       throw cause;
@@ -55,15 +62,39 @@ function createOwner(source: ChangesSource, current: () => boolean) {
     actionRevision.set(actionRevision() + 1);
     // Clear only the exact draft whose commit was acknowledged on this lane,
     // before any follow-up sync/status await can suspend the presentation.
-    if (committing && committing.lane === assigned && valid() && actions.state().committed && workspace.message() === committing.message) workspace.message.set('');
+    if (committing && committing.lane === assigned && valid() && actions.state().committed && message() === committing.message) { message.set(''); generation.clear(); }
   });
+  const draft = { state: () => ({ message: message(), highlights: generationHighlights() }), revision: () => messageRevision, replace(next: string, highlights: string[]) { messageRevision++; message.set(next); generationHighlights.set(highlights); } };
+  const generation = source.kind === 'workspace' ? createChangesGeneration(reader, async (path, method = 'GET', body) => {
+    const captured = assigned;
+    if (!captured || !valid()) throw new Error('page_operation_stale');
+    const value = await captured.request(path, method, body);
+    if (assigned !== captured || !valid()) throw new Error('page_operation_stale');
+    return value;
+  }, valid, () => actionRevision.set(actionRevision() + 1), () => generationContext(), draft) : null;
+  const workspace = { tree, collapsed, collapsedGroups, message, inputHeight, uncertain, deferredLoaded, remotes, remoteError,
+    generated: () => ({ message: message(), highlights: generationHighlights(), pending: generation?.state().pending ?? false, error: generation?.state().error ?? '' }),
+    generation: { edit(value: string) { generation?.edit(value); }, generate: () => generation?.generate() ?? Promise.resolve(false), insertHighlights: () => generation?.insertHighlights(), clear: () => generation?.clear() },
+    refreshRemotes };
+  async function refreshRemotes() {
+    if (!valid() || source.kind !== 'workspace') return;
+    const serial = ++remoteSerial, captured = assigned;
+    try {
+      const value = await captured!.request(`/api/git/remotes?directory=${encodeURIComponent(source.directory)}`);
+      if (!valid() || captured !== assigned || serial !== remoteSerial) return;
+      if (!Array.isArray(value) || value.some(item => !item || typeof item !== 'object' || typeof (item as { name?: unknown }).name !== 'string')) throw new Error('Invalid Git remotes');
+      remotes.set(value.map(item => String((item as { name: string }).name)).filter(Boolean)); remoteError.set('');
+    } catch (cause) { if (valid() && captured === assigned && serial === remoteSerial) remoteError.set(cause instanceof Error ? cause.message : String(cause)); }
+  }
+  if (journal.unknown) uncertain.set(true);
+  void refreshRemotes();
   function cancel() {
-    if (writePending) workspace.uncertain.set(true);
-    mutation = null; actionLane = null; committing = undefined; actions.cancel(); raw.cancel(); statusLane.set(null);
+    if (writePending) uncertain.set(true);
+    mutation = null; actionLane = null; committing = undefined; actions.cancel(); generation?.cancel(); raw.cancel(); statusLane.set(null);
   }
   async function perform(work: () => Promise<boolean>, message?: string) {
     const captured = assigned;
-    if (!captured || !valid() || workspace.uncertain() || actions.state().pending || statusLane() !== captured) return false;
+    if (!captured || !valid() || uncertain() || actions.state().pending || actions.state().unknown || statusLane() !== captured) return false;
     const ticket = {}; mutation = ticket;
     actionLane = captured;
     committing = message === undefined ? undefined : { message, lane: captured };
@@ -82,7 +113,8 @@ function createOwner(source: ChangesSource, current: () => boolean) {
   const state = () => { revision(); return reader.state(); };
   const snapshot = computed(() => state().snapshot);
   return { reader, operation: lane, state, snapshot, workspace, cancel,
-    canLeave: () => !workspace.message() && !workspace.uncertain() && !writePending && !actions.state().pending,
+    canLeave: () => !message() && !uncertain() && !writePending && !actions.state().pending && !actions.state().unknown && !(generation?.state().pending),
+    setGenerationContext: (next: () => ChangesGenerationContext) => { generationContext = next; },
     ready: () => lane() !== null && statusLane() === lane() && valid(),
     actions: { state: () => { actionRevision(); return actions.state(); },
       move: (paths: string[], staged: boolean) => perform(() => actions.move(paths, staged)),
@@ -94,7 +126,7 @@ function createOwner(source: ChangesSource, current: () => boolean) {
 }
 export type NativeChangesOwner = ReturnType<typeof createOwner>;
 type Owner = NativeChangesOwner;
-type ChangesSheetProps = { source: ChangesSource; open: boolean; active: boolean; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; owner?: Owner };
+type ChangesSheetProps = { source: ChangesSource; open: boolean; active: boolean; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; owner?: Owner; managed?: boolean; generationContext?: ChangesGenerationContext; diffLayoutPreference?: NativeDiffLayoutPreference | null };
 export type NativeChangesPresentationHandle = { canLeave: () => boolean; source: () => ChangesSource | null };
 type ChangesPresentationProps = {
   source: ChangesSource | null; open: boolean; active: boolean; current: () => boolean;
@@ -150,6 +182,11 @@ export function NativeChangesPresentation(props: ChangesPresentationProps) {
   }}</Each>;
 }
 const action = 'min-h-11 px-3 flex-row items-center justify-center gap-2 rounded-xl bg-secondary active:bg-accent disabled:opacity-40';
+/** Web single-file diff actions are icon-only ghost buttons, not labeled chips. */
+const diffAction = 'min-h-11 min-w-11 items-center justify-center rounded-lg active:bg-accent disabled:opacity-40';
+let wrapPreferenceSave = Promise.resolve();
+/** Session override of the canonical preference, matching Web diffFileLayout. Not persisted, and not part of the diff identity. */
+let diffLayoutOverride: 'unified' | 'split' | null = null;
 
 /** Same authoritative workspace status and pure summary rules as PendingChangesBar. */
 export function NativeComposerChanges(props: {
@@ -159,6 +196,8 @@ export function NativeComposerChanges(props: {
   /** Legacy navigation callback is intentionally not used for diff opening. */
   onOpenFile?: (path: string, staged: boolean) => void;
   onOpenPreview?: (path: string, line?: number) => void;
+  generationContext?: ChangesGenerationContext;
+  diffLayoutPreference?: NativeDiffLayoutPreference | null;
 }) {
   const operations = createPageOperations(() => props.active), directory = props.directory;
   const localExpanded = signal(false), opened = signal(false);
@@ -206,39 +245,54 @@ export function NativeComposerChanges(props: {
     </Overlay></If>
     <If when={summary().count > 0}>
       <View ref={view => anchor.set(view)}>
-      <Button testID="composer-changes" class="min-h-6 px-3 flex-row items-center gap-1" accessibilityLabel={t('chat.pendingChanges.changedInWorkspace')} onPress={() => {
+      <Button testID="composer-changes" class="min-h-7 min-w-0 flex-row items-center gap-1" hitSlop={4} accessibilityLabel={t('chat.pendingChanges.changedInWorkspace')} onPress={() => {
         if (!current()) return;
         const next = !expanded(); setExpanded(next); if (next) void owner.reader.refresh();
-      }}><Icon name="file-edit" size={12} /><Text class="text-xs text-foreground">{t(summary().count === 1 ? 'chat.pendingChanges.fileCountSingle' : 'chat.pendingChanges.fileCountPlural', { count: summary().count })}</Text><If when={summary().insertions > 0}><Text class="text-xs text-success">+{summary().insertions}</Text></If><If when={summary().deletions > 0}><Text class="text-xs text-destructive">−{summary().deletions}</Text></If><Icon name={expanded() ? 'arrow-up-s' : 'arrow-down-s'} size={12} /></Button>
+      }}><Icon name="file-edit" size={12} /><Text class="text-xs text-foreground" style={{ flexShrink: 0 }}>{t(summary().count === 1 ? 'chat.pendingChanges.fileCountSingle' : 'chat.pendingChanges.fileCountPlural', { count: summary().count })}</Text><If when={summary().insertions > 0}><Text class="text-xs text-success" style={{ numberOfLines: 1 }}>+{summary().insertions}</Text></If><If when={summary().deletions > 0}><Text class="text-xs text-destructive" style={{ numberOfLines: 1 }}>-{summary().deletions}</Text></If><Icon name={expanded() ? 'arrow-up-s' : 'arrow-down-s'} size={12} /></Button>
       </View>
     </If>
     <If when={!!owner.state().error && !owner.state().snapshot && !expanded()}><Button testID="composer-changes-retry" class="min-h-6 px-3 flex-row items-center gap-1" disabled={owner.state().loading} onPress={() => { void owner.reader.refresh(); }}><Text class="text-xs text-muted-foreground">{t('mobile.menu.changes')} · {t('common.unavailable')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
-    <NativeChangesSheet source={owner.reader.source} owner={owner} open={opened()} active={props.active} onClose={() => { opened.set(false); owner.cancel(); }} onOpenPreview={props.onOpenPreview} />
+    <NativeChangesSheet source={owner.reader.source} owner={owner} open={opened()} active={props.active} onClose={() => { opened.set(false); owner.cancel(); }} onOpenPreview={props.onOpenPreview} generationContext={props.generationContext} diffLayoutPreference={props.diffLayoutPreference} />
   </View>;
 }
 
 /** Workspace, staged, historical turn and Host identities own separate lifetimes. */
 export function NativeChangesSheet(props: ChangesSheetProps) {
-  const identity = (source: ChangesSource) => { const host = app.connection(); return JSON.stringify([host?.id, host?.url, host?.authorizationID, source.kind, source.directory, source.path, source.targetLine, source.kind === 'workspace' ? source.staged : [source.sessionID, source.messageID, source.revision]]); };
-  return <Each of={[props.source]} key={identity}>{source => <NativeChangesSheetPage source={source()} open={props.open} active={props.active} onClose={props.onClose} onOpenPreview={props.onOpenPreview} owner={props.owner} />}</Each>;
+  const identity = (source: ChangesSource) => { const host = app.connection(); return JSON.stringify([epoch(), host?.id, host?.url, host?.authorizationID, source.kind, source.directory, source.path, source.targetLine, source.kind === 'workspace' ? source.staged : [source.sessionID, source.messageID, source.revision]]); };
+  return <Each of={[props.source]} key={identity}>{source => <NativeChangesSheetPage source={source()} open={props.open} active={props.active} onClose={props.onClose} onOpenPreview={props.onOpenPreview} owner={props.owner} generationContext={props.generationContext} diffLayoutPreference={props.diffLayoutPreference} />}</Each>;
 }
 
-function NativeChangesSheetPage(props: ChangesSheetProps & { managed?: boolean }) {
-  let alive = true, wasOpen = false;
+function NativeChangesSheetPage(props: ChangesSheetProps) {
+  const generation = epoch(); let alive = true, wasOpen = false;
+  const closing = signal(false);
+  let pendingPreview: { path: string; line?: number } | undefined;
   const height = signal<number | null>(null);
   const available = () => Math.max(0, windowSize().height - safeArea().top - 8 - keyboardFrame().height);
   let resizeStart = 0;
-  const current = () => alive && props.open && props.active && lifecycle() === 'active';
+  const current = () => alive && epoch() === generation && props.open && props.active && lifecycle() === 'active';
   const owner = props.owner ?? createOwner(props.source, current);
   const visible = computed(() => props.open && props.active && lifecycle() === 'active');
   const selection = computed(() => JSON.stringify([props.source.path, props.source.kind === 'workspace' && props.source.staged === true]));
+  function close(preview?: { path: string; line?: number }) {
+    if (closing()) return;
+    pendingPreview = preview;
+    owner.cancel(); closing.set(true);
+  }
+  function dismissed() {
+    const preview = pendingPreview, callback = props.onOpenPreview;
+    const valid = alive && epoch() === generation && props.active && lifecycle() === 'active';
+    pendingPreview = undefined; wasOpen = false;
+    // Parent navigation may unmount this page. It must run only after the system's completion.
+    props.onClose();
+    if (valid && preview) callback?.(preview.path, preview.line);
+  }
   effect(() => {
     const displayed = visible(), lane = owner.operation(), opening = !wasOpen;
     const [path, staged] = JSON.parse(selection()) as [string | undefined, boolean];
-    if (!displayed) { untracked(() => { if (wasOpen) owner.cancel(); wasOpen = false; if (props.open) props.onClose(); }); return; }
+    if (!displayed) { untracked(() => { if (wasOpen) close(); else if (props.open) props.onClose(); }); return; }
     wasOpen = true;
     untracked(() => {
-      if (opening) { height.set(null); Keyboard.dismiss(); }
+      if (opening) { closing.set(false); height.set(null); Keyboard.dismiss(); }
       if (!props.owner || props.managed) {
         if (opening) owner.reader.back();
         if (!lane?.current()) return;
@@ -249,17 +303,21 @@ function NativeChangesSheetPage(props: ChangesSheetProps & { managed?: boolean }
       }
     });
   });
-  cleanup(() => { alive = false; owner.cancel(); });
+  effect(() => {
+    const context = props.generationContext;
+    untracked(() => { if (context) owner.setGenerationContext(() => context); });
+  });
+  cleanup(() => { alive = false; pendingPreview = undefined; owner.cancel(); });
   function resize(dy: number, ended = false) {
     const next = Math.max(available() * .42, Math.min(available(), resizeStart - dy));
     height.set(ended ? [.42, .72, 1].map(ratio => ratio * available()).sort((a, b) => Math.abs(a - next) - Math.abs(b - next))[0] : next);
   }
-  return <Sheet detents={[.42, .72, 1]} initialDetent={2} open={props.open && props.active} closeOnSwipe onOpenChange={event => { if (!event.open) { owner.cancel(); props.onClose(); } }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: Math.min(height() ?? available(), available()), marginBottom: keyboardFrame().height }} backdropClass="bg-background/50">
-    <If when={props.open && props.active}><View testID="native-changes-sheet" class="flex-1 bg-background" style={{ paddingBottom: keyboardFrame().height > 0 ? 0 : safeArea().bottom, paddingLeft: safeArea().left, paddingRight: safeArea().right }}><NativeChangesContent owner={owner} targetLine={props.source.targetLine} onClose={props.onClose} onOpenPreview={props.onOpenPreview ? (path, line) => { if (!owner.reader.current()) return; props.onClose(); props.onOpenPreview?.(path, line); } : undefined} onResizeStart={() => { resizeStart = height() ?? available(); }} onResize={resize} /></View></If>
+  return <Sheet detents={[.42, .72, 1]} initialDetent={2} open={props.open && props.active && !closing()} closeOnSwipe onOpenChange={event => { if (!event.open) close(); }} onClose={dismissed} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: Math.min(height() ?? available(), available()), marginBottom: keyboardFrame().height }} backdropClass="bg-background/50">
+    <If when={props.open && props.active}><View testID="native-changes-sheet" class="flex-1 bg-background" style={{ paddingBottom: keyboardFrame().height > 0 ? 0 : safeArea().bottom, paddingLeft: safeArea().left, paddingRight: safeArea().right, pointerEvents: closing() ? 'none' : 'auto' }}><Each of={[owner.reader]} key={reader => reader}>{() => <NativeChangesContent owner={owner} active={!closing()} generationContext={props.generationContext} diffLayoutPreference={props.diffLayoutPreference} onClose={() => close()} onOpenPreview={props.onOpenPreview ? (path, line) => close({ path, line }) : undefined} onResizeStart={() => { resizeStart = height() ?? available(); }} onResize={resize} />}</Each></View></If>
   </Sheet>;
 }
 
-function NativeChangesContent(props: { owner: Owner; targetLine?: number; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; onResizeStart: () => void; onResize: (dy: number, ended?: boolean) => void }) {
+function NativeChangesContent(props: { owner: Owner; active?: boolean; onClose: () => void; onOpenPreview?: (path: string, line?: number) => void; onResizeStart: () => void; onResize: (dy: number, ended?: boolean) => void; generationContext?: ChangesGenerationContext; diffLayoutPreference?: NativeDiffLayoutPreference | null }) {
   const { reader, state } = props.owner;
   let resizeY = 0;
   const history = computed(() => reader.source.kind === 'turn' ? [...reader.source.files].sort((a, b) => a.path.localeCompare(b.path)) : []);
@@ -270,40 +328,65 @@ function NativeChangesContent(props: { owner: Owner; targetLine?: number; onClos
       <View class="flex-1 gap-1"><Text class="text-sm font-semibold text-foreground" style={{ numberOfLines: 1 }}>{state().path || t('mobile.nav.changes')}</Text><Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{reader.source.kind === 'turn' ? t('diffView.scope.lastTurn') : state().path && state().staged ? t('diffView.scope.staged') : t('chat.pendingChanges.changedInWorkspace')}</Text></View>
       <Button testID="changes-close" class="min-h-11 min-w-11 items-center justify-center" accessibilityLabel={t('mobile.surface.closeAria')} onPress={props.onClose}><Icon name="close" size={20} /></Button>
     </View>
-    <If when={reader.source.kind === 'workspace'}><View class="flex-1" style={{ display: state().path ? 'none' : 'flex' }}><NativeWorkspaceChanges owner={props.owner} /></View></If>
+    <If when={reader.source.kind === 'workspace'}><View class="flex-1" style={{ display: state().path ? 'none' : 'flex' }}><NativeWorkspaceChanges owner={props.owner} active={props.active} generationContext={props.generationContext} /></View></If>
     <If when={!state().path}>
       <If when={reader.source.kind === 'turn'}><List class="flex-1" each={history()} keyExtractor={file => file.path}>{file => <Button class="min-h-11 px-4 flex-row items-center gap-2 active:bg-accent" onPress={() => { void reader.select(file().path); }}><Icon name="file-edit" size={16} /><Text class="text-sm text-foreground">{file().path}</Text></Button>}</List><If when={history().length === 0}><Text class="p-4 text-muted-foreground">{t('diffView.state.noLastTurnChanges')}</Text></If></If>
     </If>
-    <If when={!!state().path}><NativeChangeDiff owner={props.owner} targetLine={props.targetLine} onOpenPreview={props.onOpenPreview} /></If>
+    <If when={!!state().path}><NativeChangeDiff owner={props.owner} onOpenPreview={props.onOpenPreview} diffLayoutPreference={props.diffLayoutPreference} /></If>
   </View>;
 }
 
-function NativeChangeDiff(props: { owner: Owner; targetLine?: number; onOpenPreview?: (path: string, line?: number) => void }) {
+function NativeChangeDiff(props: { owner: Owner; onOpenPreview?: (path: string, line?: number) => void; diffLayoutPreference?: NativeDiffLayoutPreference | null }) {
   const { reader, state } = props.owner;
-  const copyError = signal(''), viewError = signal(''), ready = signal(false), hunks = signal<DiffHunk[]>([]);
+  const viewError = signal(''), ready = signal(false), hunks = signal<DiffHunk[]>([]);
+  const wrap = signal(reader.source.kind === 'workspace'), wrapError = signal('');
+  let wrapAlive = true, wrapEdits = 0;
+  cleanup(() => { wrapAlive = false; });
+  if (reader.source.kind === 'turn') {
+    void wrapPreferenceSave.then(() => Storage.getItem('changes-diff-wrap-v1')).then(value => { if (wrapAlive && wrapEdits === 0) wrap.set(value === 'true'); }).catch(cause => { if (wrapAlive) wrapError.set(String(cause)); });
+  }
+  function toggleWrap() {
+    if (!reader.current()) return;
+    const next = !wrap(); wrapEdits++; wrap.set(next); wrapError.set('');
+    wrapPreferenceSave = wrapPreferenceSave.catch(() => {}).then(() => Storage.setItem('changes-diff-wrap-v1', String(next)));
+    void wrapPreferenceSave.catch(cause => { if (wrapAlive) wrapError.set(String(cause)); });
+  }
+  const image = () => isImageFile(state().path);
+  const textDiff = () => !!state().diff && !state().diff?.isBinary && !image();
+  const isNew = computed(() => nativeDiffIsNew(reader.source, state().snapshot, state().path, state().diff));
+  const layoutChoice = signal(diffLayoutOverride);
+  const layout = computed(() => layoutChoice() ?? nativeDiffLayout(props.diffLayoutPreference, windowSize().width, isNew()));
   let diffView: DiffViewRef | undefined;
   const first = computed(() => nativeChangeLocation(hunks()));
-  effect(() => { state().diff; untracked(() => { copyError.set(''); viewError.set(''); ready.set(false); hunks.set([]); diffView = undefined; }); });
-  function jump() { if (first()) diffView?.goToHunk(first()!.index); }
+  effect(() => { state().diff; untracked(() => { viewError.set(''); ready.set(false); hunks.set([]); diffView = undefined; }); });
+  function toggleLayout() {
+    if (!reader.current() || !textDiff()) return;
+    diffLayoutOverride = layout() === 'split' ? 'unified' : 'split';
+    layoutChoice.set(diffLayoutOverride);
+  }
   return <View class="flex-1 gap-2">
-    <View class="px-3 pt-2 flex-row flex-wrap gap-2">
-      <Button testID="changes-diff-refresh" class={action} disabled={state().diffLoading} onPress={() => { void reader.retryDiff(); }}><Text class="text-foreground">{t(state().diffError ? 'diffView.actions.retry' : 'mobile.files.refreshAria')}</Text></Button>
-      <If when={!!props.onOpenPreview}><Button testID="changes-open-preview" class={action} onPress={() => props.onOpenPreview?.(state().path, first()?.line)}><Icon name="eye" size={18} /><Text class="text-foreground">{t('diffView.actions.openFilePreview')}</Text></Button></If>
-      <Button testID="changes-first-change" class={action} disabled={!first()} accessibilityLabel={t('diffView.actions.openFileAtFirstChangedLine')} onPress={jump}><Icon name="arrow-down-s" size={18} /><Text class="text-foreground">{t(first() ? 'diffView.actions.openFileAtFirstChangedLine' : 'common.unavailable')}</Text></Button>
-      <Button testID="changes-copy-diff" class={action} disabled={!state().diff} accessibilityLabel={t('mobile.files.copyContent')} onPress={() => { const diff = state().diff; if (!diff) return; void Clipboard.writeText(diff.patch ?? [diff.before ?? '', diff.after ?? ''].join('\n\n')).catch(cause => copyError.set(String(cause))); }}><Icon name="file-copy" size={18} /></Button>
+    <View testID="changes-diff-actions" class="px-3 pt-2 flex-row items-center gap-1">
+      <If when={!!props.onOpenPreview}><Button testID="changes-open-preview" class={diffAction} accessibilityLabel={t('diffView.actions.openFilePreview')} onPress={() => props.onOpenPreview?.(state().path)}><Icon name="eye" size={18} /></Button></If>
+      <If when={textDiff()}><Button testID="changes-wrap" class={diffAction} accessibilityLabel={t(wrap() ? 'diffView.actions.disableLineWrap' : 'diffView.actions.enableLineWrap')} onPress={toggleWrap}><Icon name="text-wrap" size={18} /></Button></If>
+      <If when={textDiff()}><Button testID="changes-layout" class={diffAction} accessibilityLabel={t(layout() === 'split' ? 'settings.yuri.visual.option.diffLayout.inline.label' : 'settings.yuri.visual.option.diffLayout.sideBySide.label')} onPress={toggleLayout}><Icon name={layout() === 'split' ? 'align-justify' : 'layout-column'} size={18} /></Button></If>
     </View>
     <If when={state().diffLoading}><Text class="px-4 text-sm text-muted-foreground">{t('diffView.state.loadingDiff')}</Text></If>
-    <If when={!!state().diffError || !!copyError() || !!viewError()}><Text role="alert" class="px-4 text-sm text-destructive">{state().diffError || copyError() || viewError()}</Text></If>
+    <If when={!!state().diffError || !!viewError() || !!wrapError()}><Text role="alert" class="px-4 text-sm text-destructive">{state().diffError || viewError() || wrapError()}</Text><Button testID="changes-diff-refresh" class={action} disabled={state().diffLoading} onPress={() => { void reader.retryDiff(); }}><Text class="text-foreground">{t('diffView.actions.retry')}</Text></Button></If>
     <If when={state().diff?.isBinary}><Text class="p-4 text-muted-foreground">{t('diffView.binary.unavailable')}</Text></If>
-    <If when={!!state().diff && !state().diff?.isBinary}>
-      <Each of={state().diff ? [state().diff!] : []} key={diff => diff}>{diff => <NativeDiffDocument diff={diff()} current={() => reader.current() && state().diff === diff()} targetLine={props.targetLine} onReady={(ref, value) => { diffView = ref; hunks.set(value); ready.set(true); viewError.set(''); }} onError={() => viewError.set(t('diffView.state.failedToLoadDiff'))} />}</Each>
+    <If when={!!state().diff && !state().diff?.isBinary && image()}>
+      <If when={reader.source.kind === 'turn' && [state().diff?.before, state().diff?.after].some(value => typeof value === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(value))} else={<Text testID="changes-image-unavailable" class="p-4 text-muted-foreground">{t('mobile.changes.diffDetail.imageUnavailable')}</Text>}>
+        <Scroll testID="changes-history-images" class="flex-1"><Each of={[{ side: 'before', value: state().diff?.before }, { side: 'after', value: state().diff?.after }].filter(item => typeof item.value === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(item.value))}>{item => <View class="p-4 gap-2"><Text class="text-xs text-muted-foreground">{t(item().side === 'before' ? 'diffView.image.original' : state().diff?.before ? 'diffView.image.modified' : 'diffView.image.new')}</Text><Image src={item().value!} accessibilityLabel={t(item().side === 'before' ? 'diffView.image.originalAlt' : 'diffView.image.modifiedAlt', { path: state().path })} style={{ width: windowSize().width - 32, height: windowSize().height * .45, objectFit: 'contain' }} onError={() => viewError.set(t('diffView.state.failedToLoadDiff'))} /></View>}</Each></Scroll>
+      </If>
+    </If>
+    <If when={!!state().diff && !state().diff?.isBinary && !image()}>
+      <Each of={state().diff ? [state().diff!] : []} key={diff => diff}>{diff => <NativeDiffDocument diff={diff()} wrap={wrap()} layout={layout()} current={() => reader.current() && state().diff === diff()} targetLine={reader.source.targetLine} onReady={(ref, value) => { diffView = ref; hunks.set(value); ready.set(true); viewError.set(''); }} onError={() => viewError.set(t('diffView.state.failedToLoadDiff'))} />}</Each>
       <If when={ready() && !first()}><Text class="p-4 text-muted-foreground">{t('diffView.state.cleanWorkingTree')}</Text></If>
     </If>
   </View>;
 }
 
 /** DiffView owns diffing, virtual rows, horizontal scrolling and collapsed context. */
-function NativeDiffDocument(props: { diff: HistoricalChange; current: () => boolean; targetLine?: number; onReady: (ref: DiffViewRef, hunks: DiffHunk[]) => void; onError: () => void }) {
+function NativeDiffDocument(props: { diff: HistoricalChange; wrap: boolean; layout: 'unified' | 'split'; current: () => boolean; targetLine?: number; onReady: (ref: DiffViewRef, hunks: DiffHunk[]) => void; onError: () => void }) {
   let ref: DiffViewRef | undefined, alive = true, laidOut = false, initialized = false;
   let hunks: DiffHunk[] | undefined;
   cleanup(() => { alive = false; });
@@ -323,8 +406,8 @@ function NativeDiffDocument(props: { diff: HistoricalChange; current: () => bool
   }
   return <DiffView testID="changes-native-diff" class="flex-1" ref={value => { ref = value; void readHunks(); }}
     patch={props.diff.patch || undefined} oldValue={props.diff.patch ? undefined : props.diff.before ?? ''} newValue={props.diff.patch ? undefined : props.diff.after ?? ''}
-    language={props.diff.path} layout="unified" inline="word" indicators="classic" contextLines={3} lineNumbers background
-    fontFamily={nativeChatTextStyle('code').fontFamily} fontSize={nativeChatTextStyle('code').fontSize} lineHeight={20}
-    classes={{ side: 'bg-background text-foreground', gutter: 'bg-background', lineNumber: 'text-muted-foreground', lineAdded: 'bg-success/10', lineDeleted: 'bg-destructive/10', wordAdded: 'bg-success/20', wordDeleted: 'bg-destructive/20', indicatorAdded: 'text-success', indicatorDeleted: 'text-destructive', separator: 'bg-secondary text-muted-foreground' }}
+    language={props.diff.path} layout={props.layout} inline="word" indicators="classic" contextLines={3} softWrap={props.wrap} lineNumbers background
+    fontFamily={nativeChatTextStyle('code').fontFamily} fontSize={nativeChatTextStyle('code').fontSize} lineHeight={20 * (nativeChatTextStyle('code').fontSize ?? 13) / 13}
+    classes={{ side: 'bg-background text-foreground', content: 'select-text', gutter: 'bg-background', lineNumber: 'text-muted-foreground', lineAdded: 'bg-success/10', lineDeleted: 'bg-destructive/10', wordAdded: 'bg-success/20', wordDeleted: 'bg-destructive/20', indicatorAdded: 'text-success', indicatorDeleted: 'text-destructive', separator: 'bg-secondary text-muted-foreground' }}
     onStatsChange={() => { void readHunks(); }} onScroll={() => { if (!laidOut) { laidOut = true; ready(); } }} />;
 }

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginOption } from 'vite';
 import createConfig from './vite.config';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 async function pluginNames(option: PluginOption): Promise<string[]> {
   const plugin = await option;
@@ -19,6 +22,18 @@ afterEach(() => {
 });
 
 describe('web development compilation budget', () => {
+  it('keeps the existing import-free notification wire contract while still excluding server implementations', () => {
+    const config = createConfig({ command: 'serve', mode: 'development' });
+    const plugin = config.plugins?.find(p => p && !Array.isArray(p) && typeof p === 'object' && 'name' in p && p.name === 'omit-non-client-sources') as { resolveId: { handler: (id: string) => string | undefined }; load: { handler: (id: string) => string | undefined } };
+    for (const id of ['server/lib/notifications/admission-event.js', '/workspace/packages/web/server/lib/notifications/admission-event.js']) {
+      expect(plugin.resolveId.handler(id)).toBeUndefined();
+      expect(plugin.load.handler(id)).toBeUndefined();
+    }
+    expect(plugin.resolveId.handler('/workspace/packages/web/server/index.js')).toBe('\0virtual:non-client-source');
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'server/lib/notifications/admission-event.js'), 'utf8');
+    expect(source).not.toMatch(/\b(?:import|require)\s*(?:\(|['"{*])/);
+    expect(source).toContain('export function notificationAdmission');
+  });
   it.each(['development', 'production'])('skips compiler and vendor grouping during serve (%s)', async (mode) => {
     const config = createConfig({ command: 'serve', mode });
 

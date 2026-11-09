@@ -25,7 +25,7 @@ test.skipIf(process.platform !== 'darwin')('production ASR runtime, Relay and AV
     const flags = ['-swift-version', '5', '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator'];
     run(['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temporary, 'NativeShell.swiftmodule')]);
     run(['swiftc', ...flags, '-I', temporary, '-parse-as-library', '-typecheck',
-      ...['ConnectionStore.swift', 'connection-editor.swift', 'RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'RemoteDesktopBridge.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionBridge.swift',
-        'VoiceRecognitionRuntime.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginRuntime.swift', 'RuntimeBridge.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'].map(file => path.join(root, 'ios', file))]);
+      ...['PasskeyPolicy.swift', 'ConnectionStore.swift', 'connection-editor.swift', 'RuntimeHostScope.swift', 'AttachmentUploadPolicy.swift', 'ResourceWebPreviewBridge.swift', 'ResourceWebPreviewView.swift', 'RemoteDesktopBridge.swift', 'VoiceRecognitionCore.swift', 'VoiceRecognitionBridge.swift',
+        'VoiceRecognitionRuntime.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift', 'GuiPluginRuntime.swift', 'RuntimeBridge.swift', 'SessionMessageStream.swift', 'SessionMessageStreamDirect.swift', 'RelayTunnel.swift', 'TerminalBridge.swift', 'TerminalTransport.swift'].map(file => path.join(root, 'ios', file)), path.join(root, '../mobile/ios/App/App/YuriViewExportRenderer.swift')]);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 }, 130_000);

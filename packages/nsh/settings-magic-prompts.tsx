@@ -1,5 +1,6 @@
 import { Scroll, signal, Text, View } from 'nsh';
 import { Button } from 'nsh/base';
+import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import type { SettingsCallbacks, SettingsRoute } from './settings';
 import { SettingsEntityLayout, SettingsGroup, SettingsInput, settingsAction, settingsPageLifetime } from './settings-controls';

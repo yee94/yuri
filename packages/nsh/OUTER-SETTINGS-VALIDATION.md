@@ -163,7 +163,9 @@ chat-changes-workspace.tsx
 | diffLayoutPreference | 现已通过唯一 device-local owner 接真实 Settings/工作台 Diff，不发 Host PUT；mobile 仍 unavailable | root registration/close 接线及 API ACK、真实磁盘/多 Engine 的未验边界见 `desktop-diff-preferences-DOCUMENTATION.md` |
 | sessionGoalEnabled/followUpBehavior/showAssistantTps/collapsibleThinkingBlocks | Host可存；本线核对未发现对应Native偏好消费者 | 分别接Goal入口/发送delivery/真实TPS及折叠详情；不能删除这些范围 |
 | pwaAppName/pwaOrientation/mobileKeyboardMode | Host真实浏览器偏好；不是UIKit安装包/键盘API | 本页明确Host保存与Native不可用；不要把PWA orientation误改为iOS系统旋转控制 |
-| codeFontSize/editorFontSize/fileEditorKeymap/allowPromptingSubagentSessions/persistChatDraft | **不在Host GET/PUT合同**，Web本地偏好 | 需main确认Native设备偏好持久化owner/消费者后再接可编辑控件，禁止虚假Host PUT |
+| codeFontSize/editorFontSize | **不在Host GET/PUT合同**；Native共用device-appearance-v1设备singleton与串行lane，Prefs已接本机保存/Reset/失败恢复 | code消费者保持原合同；editor仅接Skills instructions/supporting-file两个原Input（9–32pt、默认13、round/clamp、行高1.5），metadata为skills-editor。实际移动FilesSurface只读，桌面FilesEditor/Vim不是mobile缺口；UIKit焦点/选区/IME未验。禁止Host PUT/receipt，旧记录成功读后补缺失本机默认，三键保存互保 |
+| fileEditorKeymap | **不在Host GET/PUT合同**；device-appearance-v1本机枚举，Default/Vim两项Radio与本机保存/重开恢复已接，metadata为device-preference | 与真实移动共享设置一致，消费者仅桌面FilesView；手机只读预览无视觉效果，不新增Native Vim/编辑菜单/文件写入。三键串行互保、dirty CAS及失败恢复不清Host unknown receipt |
+| allowPromptingSubagentSessions/persistChatDraft | **不在Host GET/PUT合同**，Web本地偏好 | Native各自设备偏好owner/消费者由对应合同记录，禁止虚假Host PUT |
 | sidebarBrandName/iosNativeUiEnabled/transcriptCache | Web本地品牌/Capacitor体验开关/浏览器缓存动作，没有Host PUT合同 | Native分别需要品牌owner、明确平台行为和本地cache清理owner；不能把永远Native的App伪装成可切Web体验，也不能用清Host历史替代清本地cache |
 | reportUsage | Host可存；Native没有上报器消费者证据 | 仅保存偏好，不启动任何未获明确用户同意的上报；Native reporter owner后续遵守该开关 |
 | collapsibleUserMessages | Native渲染已读appearance同名字段，但**当前Host sanitizer丢弃** | main/owner解决Native设备偏好或正式Host合同后接；不得再提交无效PUT并显示Saved |

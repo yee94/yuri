@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["resources.tsx", "resources-gui.ts", "../ui/src/types/desktop.d.ts"],
+  "exclude": ["*.test.ts", "*.test.tsx"]
+}

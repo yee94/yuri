@@ -13,6 +13,12 @@ import * as summary from '../ui/src/lib/sessionChangeSummary';
 import * as orderGesture from './projects-order-gesture';
 import * as orderTouch from './projects-order-touch';
 import * as sidebar from './projects-sidebar';
+import * as presentation from './projects-presentation';
+import * as homeSummary from './projects-summary';
+import * as timeCore from '../ui/src/lib/time-format-core';
+import * as worktreeNames from '../ui/src/lib/worktrees/worktreeNames';
+import * as branchNameGenerator from '../ui/src/lib/git/branchNameGenerator';
+import * as sessionMenuModel from '../ui/src/mobile/sessionMenuModel';
 
 const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'projects.tsx'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2023 } }).outputText;
@@ -49,6 +55,15 @@ beforeEach(() => {
      './projects-order-gesture': orderGesture,
       './projects-order-touch': orderTouch,
       './projects-sidebar': sidebar,
+      './projects-presentation': presentation,
+      './projects-summary': homeSummary,
+      '../ui/src/lib/time-format-core': timeCore,
+      '../ui/src/lib/worktrees/worktreeNames': worktreeNames,
+      '../ui/src/lib/git/branchNameGenerator': branchNameGenerator,
+      '../ui/src/mobile/sessionMenuModel': sessionMenuModel,
+      './projects-worktree-picker': {},
+      './projects-worktree-form': {},
+      './appearance': {},
      './projects-delete': deletion, './projects-attention': { ...attention, projectsAttention: attentionStore }, '../ui/src/lib/sessionChangeSummary': summary,
      './projects-attention-blocking': blocking, './projects-attention-indicator': {}, '../ui/src/mobile/projects/mobileSessionIndicator': indicator,
   };
@@ -100,6 +115,42 @@ describe('native projects authority', () => {
     handle = path => path === '/api/yuri/session-index' ? { available: true, directories: [], pinnedSessionIds: [] } : normal(path);
     await controller.refresh(); expect(controller.catalogReady()).toBe(true); expect(controller.error()).toBe('');
     expect(controller.retainedSessions()).toEqual([]);
+  });
+  it('retains an explicitly loaded twelve-row window through a five-row head refresh, but complete authority removes its old tail', async () => {
+    const controller = module.createProjectsController();
+    const wire = Array.from({ length: 12 }, (_, i) => ({ ...row(`window-${i}`), time: { updated: 100 - i } }));
+    const sessions = wire.map(value => module.projectsSessionPage({ data: [value], cursor: {} }).sessions[0]!);
+    controller.buckets.set({ '/repo': { sessions, cursor: null, loaded: true, hasMore: false } });
+    let more = true;
+    const normal = handle;
+    handle = path => path === '/api/yuri/session-index' ? { available: true, directories: [{ directory: '/repo', sessions: wire.slice(0, 5), hasMore: more }] } : normal(path);
+    await controller.refresh();
+    expect(controller.sessions().map(row => row.id)).toEqual(sessions.map(row => row.id));
+    expect(controller.buckets()['/repo']?.hasMore).toBe(false);
+    more = false; await controller.refresh();
+    expect(controller.sessions().map(row => row.id)).toEqual(sessions.slice(0, 5).map(row => row.id));
+  });
+  it('retains directory display limits independently of row mounts and never reads a complete index just to reveal cached rows', async () => {
+    const controller = module.createProjectsController();
+    controller.buckets.set({ '/repo': { sessions: Array.from({ length: 5 }, (_, i) => module.projectsSessionPage({ data: [row(`s${i}`)], cursor: {} }).sessions[0]!), loaded: false, cursor: null, hasMore: false } });
+    const before = request.mock.calls.length;
+    expect(controller.visibleCount('/repo')).toBe(3);
+    controller.showMore('/repo');
+    expect(controller.visibleCount('/repo')).toBe(10);
+    expect(controller.visibleCount('/other')).toBe(3);
+    for (let i = 0; i < 50; i++) expect(controller.visibleCount('/repo')).toBe(10);
+    expect(request.mock.calls.length).toBe(before);
+    controller.showFewer('/repo'); expect(controller.visibleCount('/repo')).toBe(3);
+    expect(module.createProjectsController().visibleCount('/repo')).toBe(3);
+  });
+  it('keeps expanded limits and prior rows through paging failure; retired owners cannot change them', async () => {
+    const controller = module.createProjectsController(); await controller.refresh();
+    handle = () => { throw new Error('synthetic page unavailable'); };
+    controller.showMore('/repo'); await Promise.resolve(); await Promise.resolve();
+    expect(controller.visibleCount('/repo')).toBe(10);
+    expect(controller.sessions().map(row => row.id)).toEqual(['head']);
+    app.connection.set({ id: 'another-host' }); advanceGeneration(); controller.showMore('/repo'); controller.showFewer('/repo');
+    expect(controller.visibleCount('/repo')).toBe(10);
   });
   it('enumerates the complete subtree, masks every surface without DELETE, and restores after snapshot eviction on Undo', async () => {
     vi.useFakeTimers();
@@ -606,6 +657,38 @@ describe('native projects authority', () => {
     controller.pins.set(['a']);
     await controller.reorder('/repo', 'a', 'b'); await controller.reorder('__pinned__', 'a', 'b');
     expect(request.mock.calls.some(([, method]) => method === 'POST')).toBe(false);
+  });
+  it('persists the exact visible body subset, retaining collapsed ranks and full activity like Web', async () => {
+    const controller = module.createProjectsController(), ids = ['a', 'b', 'c', 'd', 'e'];
+    app.sessions.set(ids.map((id, i) => ({ id, title: id, directory: '/repo', updated: 50 - i })));
+    const activity = Object.fromEntries(ids.map((id, i) => [id, 50 - i]));
+    handle = (_path, _method, body) => ({ revision: 1, sessionOrderByScope: { '/repo': body ? (body as { order: string[] }).order : ids }, sessionOrderActivityByScope: { '/repo': activity } });
+    await controller.reorder('/repo', 'a', 'e', ['a', 'b', 'e']);
+    expect(request).toHaveBeenLastCalledWith('/api/session-folders/order', 'POST', { scopeKey: '/repo', order: ['b', 'e', 'a', 'c', 'd'], activity, onlyIfAbsent: false });
+  });
+  it('bounds visible-subset validation and hidden-rank preservation at a 500-session drop', async () => {
+    const controller = module.createProjectsController(), ids = Array.from({ length: 500 }, (_, i) => `row-${i}`);
+    let identityReads = 0;
+    const rows = ids.map((id, i) => Object.defineProperty({ id, title: id, directory: '/repo', updated: 1000 - i, pinned: false, archived: false }, 'id', { enumerable: true, get: () => { identityReads++; return id; } }));
+    controller.buckets.set({ '/repo': { sessions: rows, cursor: null, loaded: true, hasMore: false } });
+    const baseline = Object.fromEntries(ids.map((id, i) => [id, 1000 - i]));
+    handle = (_path, _method, body) => ({ revision: 1, sessionOrderByScope: { '/repo': body ? (body as { order: string[] }).order : ids }, sessionOrderActivityByScope: { '/repo': baseline } });
+    const visible = ids.filter((_, i) => i % 2 === 0 || i === 499);
+    await controller.reorder('/repo', 'row-0', 'row-499', visible);
+    expect(request.mock.calls).toHaveLength(2); expect(identityReads).toBeLessThan(20_000);
+    expect(request.mock.calls.filter(([, method]) => method === 'POST')).toHaveLength(1);
+  });
+  it('retires the real page-operation lane while covered and only reads on same-Host reactivation', async () => {
+    let active = true;
+    const controller = module.createProjectsController(() => active), late = deferred();
+    handle = () => late.promise; const read = controller.loadDirectory('/repo');
+    active = false; effects.forEach(work => work());
+    late.resolve({ data: [row('covered')], cursor: {} }); await read;
+    expect(controller.sessions()).toEqual([]); expect(controller.pending()).toEqual([]);
+    active = true; effects.forEach(work => work());
+    handle = path => path === '/api/session/active' ? {} : path === '/api/session-folders/order' ? { revision: 0, sessionOrderByScope: {}, sessionOrderActivityByScope: {} } : { available: true, directories: [], pinnedSessionIds: [] };
+    const before = request.mock.calls.length; await controller.refresh();
+    expect(controller.current()).toBe(true); expect(request.mock.calls.slice(before).every(([, method]) => method === undefined)).toBe(true);
   });
   it('writes the narrow manual title intent before PATCH and fences the second write on Host switch', async () => {
     const controller = module.createProjectsController(); await controller.refresh(); const root = controller.sessions()[0]!;

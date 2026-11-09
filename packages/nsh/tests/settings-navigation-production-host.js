@@ -69,13 +69,13 @@ export function createHost(initial = {}) {
         return snapshot();
       }
       if (name === 'runtime.stream') {
-        keys(input, ['path', 'key', 'expectedHost'], ['path', 'key']);
+        keys(input, ['path', 'key', 'expectedHost', 'ownerID', 'mode'], ['path', 'key']);
         if (Object.prototype.hasOwnProperty.call(input, 'expectedHost')) expected(input, 'GET');
         if (!(input.key === 'global' && input.path === '/api/yuri/events') && !(input.key === 'chat' && input.path === '/api/event?directory=' + encodeURIComponent(actual))) throw new Error('Unexpected settings navigation stream');
         return true;
       }
       if (name === 'runtime.stop') {
-        keys(input, ['key', 'expectedHost'], []);
+        keys(input, ['key', 'expectedHost', 'ownerID'], []);
         if (Object.prototype.hasOwnProperty.call(input, 'expectedHost')) expected(input, 'GET');
         if ('key' in input && !['global', 'chat'].includes(input.key)) throw new Error('Unexpected settings navigation stop');
         return true;

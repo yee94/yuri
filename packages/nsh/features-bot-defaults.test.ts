@@ -103,12 +103,13 @@ describe('Bot creation Web defaults', () => {
       return { id: 'created', revision: 1 };
     } });
     const root = f.element('bot');
+    await settle();
     (f.find(root, node => node.props.testID === 'features-bot-name').props.onChange as (value: { value: string }) => void)({ value: 'My bot' });
     finish({ schemaVersion: 1, defaultModel: 'provider/model' }); await settle();
     (root.props.headerRight as { props: { onPress: () => void } }).props.onPress(); await settle();
     expect(f.calls.find(call => call.method === 'POST')?.body).toMatchObject({ name: 'My bot' });
     const old = featureFixture({ request: async call => call.path === '/api/config/settings/bootstrap' ? new Promise(resolve => { finish = resolve; }) : call.path === '/api/config' ? [] : call.path.includes('catalog') ? { schemaVersion: 1, providers: [] } : { assistants: [] } });
-    const oldRoot = old.element('bot'); old.changeHost(); finish({ schemaVersion: 1, defaultModel: 'provider/model' }); await settle();
+    const oldRoot = old.element('bot'); await settle(); old.changeHost(); finish({ schemaVersion: 1, defaultModel: 'provider/model' }); await settle();
     (oldRoot.props.headerRight as { props: { onPress: () => void } }).props.onPress(); await settle();
     expect(old.calls.some(call => call.method !== 'GET')).toBe(false);
   });

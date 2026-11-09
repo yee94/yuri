@@ -7,20 +7,54 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as model from './model';
 import * as historyBackup from './transcript-actions-backup';
 import { createTranscriptActions, nativeRevertFrom } from './transcript-actions-core';
+import { inNativeSessionActionStorageLane } from './transcript-actions-storage';
 import { createProjectsDeletes } from './projects-delete';
 import { createProjectsAttention } from './projects-attention';
-import { createNativeHistoryFooter } from './history-footer';
+import { createNativeHistoryFooterController } from './history-footer-controller';
+import { createChatChromeState, createNativeChatChrome } from './chat-chrome';
+import { resourcePath, resourceWithin } from './resources-model';
+import { createNativeHistoryScroll } from './history-scroll';
+import { createDeviceChatPreferences } from './settings-preferences-device-core';
 import { createSpeechController } from './speech-core';
 import * as projectsSidebar from './projects-sidebar';
-import { createChatChromeState, createNativeChatChrome } from './chat-chrome';
 import { desktopGitDraftAuthority } from './desktop-git-dispatch';
 import { createNativeDesktopComposerShortcutOwner } from './desktop-composer-actions';
 import { createDesktopAttachments } from './desktop-attachments';
 import { desktopAttachmentRecovery } from './desktop-attachments-recovery';
+import { createAttachmentPick } from './attachment-pick';
+import { attachmentFrom } from './attachments';
+import { sameRuntimeScope } from './runtime-scope';
+import { projectHomeDensityGeometry } from './projects-presentation';
+import { createChatComposerCommands } from './chat-composer-commands';
+import { createBtwGenerate, createBtwOwner } from './chat-btw-model';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const deferred = <T>() => { let resolve!: (next: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
+
+describe('resource navigation retains only the explicit owning session', () => {
+  function openFrom(source: unknown, directory = '/project', file = 'report.eficy') {
+    const pushed: unknown[] = [];
+    const open = production('application.tsx', 'openResourceFile', { nav: { routes: () => [source], push: (route: unknown) => pushed.push(route) }, resourcePath, resourceWithin, t: (key: string) => key });
+    open(file, directory, 12);
+    return pushed[0];
+  }
+  it('carries the actual session through a file preview and preserves the source line', () => {
+    const first = openFrom({ kind: 'chat', target: { kind: 'session', id: 'session-a', directory: '/project' } });
+    expect(first).toMatchObject({ sessionId: 'session-a', directory: '/project', path: '/project/report.eficy', targetLine: 12 });
+    expect(openFrom(first)).toMatchObject({ sessionId: 'session-a' });
+    expect(openFrom({ kind: 'files', directory: '/project', sessionId: 'session-a' })).toMatchObject({ sessionId: 'session-a' });
+  });
+  it('does not invent a session for project files, contacts, or another directory', () => {
+    for (const source of [{ kind: 'project' }, { kind: 'chat', target: { kind: 'contact', id: 'bot-a', directory: '/project' } },
+      { kind: 'chat', target: { kind: 'session', id: 'session-b', directory: '/other' } }, { kind: 'files', directory: '/other', sessionId: 'session-b' }]) {
+      expect(openFrom(source)).not.toHaveProperty('sessionId');
+    }
+  });
+  it('rejects a file outside the captured directory before navigating', () => {
+    expect(() => openFrom({ kind: 'project' }, '/project', '../other/report.eficy')).toThrow();
+  });
+});
 
 /** Executes production owner code; only its final JSX return becomes observations. */
 function production(file: string, name: string, ports: Record<string, unknown>, observations?: string) {
@@ -92,6 +126,91 @@ const disposers: Array<() => void> = [];
 afterEach(() => { disposers.splice(0).forEach(dispose => dispose()); vi.useRealTimers(); });
 function setup() { const h = harness(); disposers.push(h.dispose); return h; }
 
+describe('collection route and native Back assembly', () => {
+  it('replaces the explicit directory, including Global, while retaining the route owner', () => {
+    const tourOwner = {}, initial = { kind: 'settings', route: { page: 'agents', directory: '/old' }, tourOwner };
+    const routes = [initial], replace = vi.fn();
+    const navigate = production('application.tsx', 'replaceCollectionDirectory', { nav: { routes: () => routes, replace } });
+    navigate(undefined, { page: 'agents', directory: '/old' });
+    expect(replace).toHaveBeenLastCalledWith({ ...initial, route: { page: 'agents', directory: undefined } });
+    navigate('/explicit', { page: 'agents' });
+    expect(replace).toHaveBeenLastCalledWith({ ...initial, route: { page: 'agents', directory: '/explicit' } });
+    navigate('/wrong-page', { page: 'commands' });
+    expect(replace).toHaveBeenCalledTimes(2);
+  });
+
+  it('an old mounted page cannot replace a newer collection directory', () => {
+    const h = setup(), route = { kind: 'settings', route: { page: 'agents', directory: '/old' } };
+    const routes = h.signal([route]), replace = vi.fn();
+    const page = production('application.tsx', 'SettingsOperationPage', {
+      createPageOperations: h.createPageOperations, nav: { routes }, settingsCallbacks: {},
+      retentionController: () => undefined, replaceCollectionDirectory: replace,
+      React: { createElement: (_type: unknown, props: Record<string, unknown>) => props }, SettingsPage: 'SettingsPage',
+    })({ route });
+    page.onCollectionDirectory(undefined, { page: 'agents' });
+    expect(replace).toHaveBeenCalledTimes(1);
+    routes.set([{ kind: 'settings', route: { page: 'agents', directory: '/new' } }]);
+    page.onCollectionDirectory('/late', { page: 'agents' });
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the full copy draft and delegates dirty Back to the collection owner', () => {
+    const reactive = signals(); disposers.push(reactive.dispose);
+    type Element = { type: string; props: Record<string, any>; children: Element[] };
+    const leafNames = ['NavPage', 'If', 'SettingsProjectsPage', 'SettingsPreferences', 'SettingsGit', 'SettingsUsage', 'SettingsAbout', 'SettingsArchive', 'SettingsMagicPrompts', 'SettingsCollection', 'SettingsBasics'];
+    const component = production('settings.tsx', 'SettingsPage', {
+      signal: reactive.signal, SETTINGS_ENTRIES: [{ page: 'commands', title: 'commands-title' }], t: (key: string) => key,
+      ...Object.fromEntries(leafNames.map(name => [name, name])),
+      React: { createElement: (type: string, props: Record<string, unknown>, ...children: Element[]) => ({ type, props, children }) },
+    });
+    const collectionDraft = { editor: { name: 'copy' }, config: { template: '// original source', metadata: { keep: true } } };
+    const forwarded = vi.fn(), tree: Element = component({ page: 'commands', create: true, collectionDraft, onCollectionNavigation: forwarded });
+    const flatten = (node: Element): Element[] => [node, ...node.children.flatMap(flatten)];
+    const collection = flatten(tree).find(node => node.type === 'SettingsCollection')!;
+    expect(collection.props.collectionDraft).toBe(collectionDraft);
+    expect(tree.props.popOnBack).toBe(true); expect(tree.props.popOnSwipe).toBe(true);
+    const back = vi.fn(), navigation = { blocked: true, back };
+    collection.props.onCollectionNavigation(navigation); tree.props.onBackPress();
+    expect(forwarded).toHaveBeenCalledWith(navigation); expect(back).toHaveBeenCalledTimes(1);
+    collection.props.onCollectionNavigation({ blocked: false, back }); tree.props.onBackPress();
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('device Chat preference root authority', () => {
+  it('loads independently of Host state, preserves prior on failure and retries only device Storage', async () => {
+    const h = setup();
+    let fail = false, raw: string | null = JSON.stringify({ collapsibleUserMessages: false });
+    const get = vi.fn(async () => { if (fail) throw new Error('private storage error'); return raw; });
+    const changed = vi.fn(), set = vi.fn(async () => undefined);
+    const store = createDeviceChatPreferences({ get, set, changed });
+    const rootOwner = production('device-chat-preferences-root.tsx', 'NativeDeviceChatPreferences', {
+      signal: h.signal, cleanup: h.cleanup, deviceChatPreferenceStore: store,
+    }, 'failed, loading, load')();
+    await flush();
+    expect(get).toHaveBeenCalledTimes(1); expect(store.snapshot()?.collapsibleUserMessages).toBe(false);
+    const prior = store.snapshot(); fail = true;
+    await rootOwner.load();
+    expect(rootOwner.failed()).toBe(true); expect(store.snapshot()).toBe(prior);
+    fail = false; raw = JSON.stringify({ collapsibleUserMessages: true });
+    await rootOwner.load();
+    expect(rootOwner.failed()).toBe(false); expect(rootOwner.loading()).toBe(false);
+    expect(store.snapshot()?.collapsibleUserMessages).toBe(true);
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('does not queue duplicate initial reads or retry after root disposal', async () => {
+    const h = setup(), read = deferred<void>(), load = vi.fn(() => read.promise);
+    const rootOwner = production('device-chat-preferences-root.tsx', 'NativeDeviceChatPreferences', {
+      signal: h.signal, cleanup: h.cleanup, deviceChatPreferenceStore: { load },
+    }, 'failed, loading, load')();
+    await rootOwner.load(); expect(load).toHaveBeenCalledTimes(1);
+    h.dispose(); read.resolve(); await flush();
+    await rootOwner.load(); expect(load).toHaveBeenCalledTimes(1);
+    expect(rootOwner.failed()).toBe(false);
+  });
+});
+
 describe('application stable display and replaceable operation owners (no engine/network)', () => {
   it.each([false, true])('pageScope preserves display through same-Host readiness gap, legacy=%s; old callbacks stay retired with a repeated lease', async legacy => {
     const h = setup();
@@ -140,6 +259,7 @@ describe('application stable display and replaceable operation owners (no engine
     const ports: Record<string, unknown> = { nsh: { ...h, host: { on: () => () => {} } }, 'nsh/base': {}, './state': h, './page-operations': h,
       './model': model, './runtime': { query: (directory: string) => `directory=${encodeURIComponent(directory)}`, sessionPath: (id: string, suffix: string) => `/api/session/${id}/${suffix}` },
       './i18n': { t: (key: string) => key }, './projects-delete': { createProjectsDeletes }, './projects-attention': { projectsAttention: createProjectsAttention() }, './projects-sidebar': projectsSidebar };
+      './appearance': { nativeAppearance: { current: () => null } }, './projects-presentation': { projectHomeDensityGeometry } };
     const source = ts.transpileModule(readFileSync(path.join(root, 'projects.tsx'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText;
     const exports: Record<string, unknown> = {};
     vm.runInNewContext(source, { exports, require: (name: string) => ports[name] ?? {}, setTimeout, clearTimeout });
@@ -163,7 +283,7 @@ describe('application stable display and replaceable operation owners (no engine
     const scope = { generation: 1 };
     const chat = { active: () => true, busy: () => false, sending: () => false, historyBusy: h.signal(false), messageScope: scope, revert: h.signal(null),
       referenceScope: { host: 'A', draft: 'draft', directory: '/neutral' }, draftStatus: () => 'ready', pendingSend: () => null, queueEdit: () => null };
-    const make = production('transcript-actions.tsx', 'createNativeTranscriptHistory', { ...h, ...historyBackup, record: model.record, nativeRevertFrom, createTranscriptActions,
+    const make = production('transcript-actions.tsx', 'createNativeTranscriptHistory', { ...h, ...historyBackup, record: model.record, nativeRevertFrom, createTranscriptActions, inNativeSessionActionStorageLane,
       Storage: { getItem: async (key: string) => stored.get(key) ?? null }, t: (key: string) => key });
     const history = make({ chat, target: { kind: 'session', id: 's', directory: '/neutral' }, current: operations.displayCurrent, key: 'stable-chat', storageKey: 'stable-draft', operation: operations.operation, onOpenChat: vi.fn() });
     await flush(); const old = history.props(() => model.messageFrom({ id: 'm', type: 'user', text: 'Retained' }));
@@ -188,73 +308,152 @@ describe('application stable display and replaceable operation owners (no engine
     expect(calls.filter(call => call.name === 'speech.prepare')).toHaveLength(2);
   });
 
-  it.each([false, true])('actual Chat assembly retains Chat/window/List ref and UI choices while retiring an attachment and dictation continuation, desktop=%s', async desktop => {
-    const h = setup(), route = { kind: 'chat', target: { kind: 'session', id: 's', title: 'Retained', directory: '/neutral' } };
+  it.each(['session', 'assistant'] as const)('actual %s Chat assembly retains Chat/window/List ref and UI choices while retiring an attachment and dictation continuation', async kind => {
+    const h = setup(), route = { kind: 'chat', target: { kind, id: kind === 'assistant' ? 'actual-bot' : 's', title: 'Retained', directory: '/neutral' } };
     const messages = [{ id: 'retained-row' }], rows = [{ key: 'retained-row', messages }];
     const draft = h.signal('unsent selection'), attachments = h.signal<unknown[]>([]), historyGeneration = h.signal(0);
-    const chat = { draft, attachments, draftAuthorityKey: desktop ? desktopGitDraftAuthority(h.app.connection()) : undefined, active: h.signal(false), syncActive: h.signal(false), visibleMessages: () => messages, messages: () => messages,
+    const attachmentSelections: Array<{ expectedHost: ReturnType<typeof h.app.runtimeScope>; target: typeof route.target; adopt: ReturnType<typeof vi.fn>; retire: ReturnType<typeof vi.fn> }> = [];
+    const captureAttachment = vi.fn(() => {
+      const captured = h.captureHostOperation(); let retired = false, adopted = false;
+      const selection = { expectedHost: captured.scope, target: Object.freeze({ ...route.target }),
+        adopt: vi.fn((raw: unknown) => { if (retired || adopted || !captured.current()) return false; adopted = true; attachments.set([...attachments(), raw]); return true; }),
+        retire: vi.fn(() => { retired = true; }) };
+      attachmentSelections.push(selection); return selection;
+    });
+    const chat = { draft, attachments, active: h.signal(false), syncActive: h.signal(false), visibleMessages: () => messages, messages: () => messages,
       more: h.signal(true), historyError: h.signal(''), loading: h.signal(false), olderLoading: h.signal(false), historyBusy: h.signal(false),
       messagesResolved: h.signal(true), historyRepairPending: h.signal(false), historyBoundaryMissing: h.signal(false), hasGap: h.signal(false), revert: h.signal(null),
-      busy: () => false, sending: () => false, draftStatus: () => 'ready', streamingMessageIDs: () => new Set(), historyGeneration, referenceScope: { host: 'A', draft: 'draft', directory: '/neutral' },
-      load: vi.fn(async () => {}), loadOlder: vi.fn(async () => {}), setDraftText: draft.set, error: h.signal(''),
+      busy: () => false, streamingMessageIDs: () => new Set(), historyGeneration, referenceScope: { host: 'A', draft: 'draft', directory: '/neutral' },
+      load: vi.fn(async () => {}), loadOlder: vi.fn(async () => {}), setDraftText: draft.set, error: h.signal(''), captureAttachment,
       goal: { controller: { setArmed: () => {} }, observe: () => () => {}, state: () => ({ armed: false }) } };
     const pick = deferred<unknown>(), recognition = deferred<void>(), available = deferred<boolean>();
-    const nativeCalls: string[] = [];
-    let attachmentRequestID: string | undefined;
-    const native = async (name: string, body?: Record<string, unknown>) => {
-      nativeCalls.push(name);
+    const nativeCalls: Array<{ name: string; body: Record<string, unknown> }> = [];
+    const native = async (name: string, body: Record<string, unknown>) => {
+      nativeCalls.push({ name, body });
       if (name === 'runtime.pickAttachment') return pick.promise;
-      if (desktop && name === 'desktop.attachments.pick') { expect(body?.expectedHost).toEqual({ hostID: 'A', lease: 'lease-a' }); attachmentRequestID = String(body?.requestID); return pick.promise; }
-      if (desktop && ['desktop.attachments.cancel', 'desktop.attachments.release'].includes(name)) { expect(body?.requestID).toBe(attachmentRequestID); return { requestID: body?.requestID, state: 'retired', attachments: [], orphaned: 0 }; }
+      if (name === 'runtime.cancelAttachment' && Object.keys(body).sort().join(',') === 'expectedHost,requestId'
+        && body.requestId === nativeCalls[0].body.requestId && JSON.stringify(body.expectedHost) === JSON.stringify(nativeCalls[0].body.expectedHost)) return true;
       throw new Error('unexpected_native:' + name);
     };
-    const createDesktopChatAttachments = production('desktop-chat-attachments.tsx', 'createDesktopChatAttachments', { ...h, createDesktopAttachments, desktopAttachmentRecovery, native, id: () => 'recovery-fixture-pick', t: (key: string) => key });
-    const historyFactory = vi.fn(() => ({ props: () => ({}), Indicator: () => null }));
+    const historyFactory = vi.fn(() => ({ props: () => ({}), Indicator: () => null,
+      sessionActions: { undo: vi.fn(async () => {}), redo: vi.fn(async () => {}), fork: vi.fn(async () => {}) } }));
     const speechFactory = vi.fn(() => ({ state: () => ({ status: 'idle' }) }));
+    const chromeFactory = vi.fn((publish: Parameters<typeof createNativeChatChrome>[0]) => {
+      const owner = createNativeChatChrome(publish);
+      return { ...owner, begin: vi.fn(owner.begin), scroll: vi.fn(owner.scroll), release: vi.fn(owner.release), end: vi.fn(owner.end) };
+    });
     const auto = { state: () => ({ preferred: false, available: false }), beginRecognition: () => recognition.promise, endRecognition: vi.fn(), toggle: vi.fn() };
     let beforeFlush: ((value: unknown) => void) | undefined;
-    const initialFacts = { authority: 'successful-history', scope: { hostID: 'A', generation: 1, owner: 1, historyGeneration: 0, targetKind: 'session', targetID: 's', directory: '/neutral' }, more: true, historyError: '', boundaryMissing: false, repairPending: false, hasGap: false, readError: '', resolved: true };
-    const createChat = vi.fn((_target, options) => { expect(options.draftAuthorityKey).toBe(chat.draftAuthorityKey); beforeFlush = options.beforeHistoryPresentationFlush; beforeFlush!(initialFacts); return chat; });
-    const nav = { routes: h.signal([route]) };
+    const initialFacts = { authority: 'successful-history', scope: { hostID: 'A', generation: 1, owner: 1, historyGeneration: 0, targetKind: kind, targetID: route.target.id, directory: '/neutral' }, more: true, historyError: '', boundaryMissing: false, repairPending: false, hasGap: false, readError: '', resolved: true };
+    const createChat = vi.fn((_target, options) => { if (desktop) expect(options.draftAuthorityKey).toBe(chat.draftAuthorityKey); beforeFlush = options.beforeHistoryPresentationFlush; beforeFlush!(initialFacts); return chat; });
+    const nativeBtwOwner = production('chat-btw.tsx', 'createNativeBtwOwner', { ...h, createBtwGenerate, createBtwOwner, bindRequest: h.captureHostRequest });
+    const nav = { routes: h.signal([route]), push: vi.fn() };
     const make = production('application.tsx', 'Chat', { ...h, createChat, mountedChats: new WeakMap(), nav, retainedChatRoute: () => route,
-      platform: { os: desktop ? 'macos' : 'ios', desktop }, desktopGitDraftAuthority, desktopHostIdentity: () => desktopGitDraftAuthority(h.app.connection()),
-      createDesktopChatAttachments, createChatChromeState, createNativeChatChrome, keyboardFrame: () => ({ height: 0 }),
-      desktopInteractionBlocked: () => false, desktopChatSubmitters: new Map(), createNativeDesktopComposerShortcutOwner,
-      publishDesktopComposerShortcuts: () => {}, desktopChatHeader: h.signal(null),
-      nativeAppearance: { current: () => null }, createNativeHistoryFooter,
-      createNativeSpeech: speechFactory, createNativeTranscriptHistory: historyFactory,
+      nativeAppearance: { current: () => null }, platform: { os: desktop ? 'macos' : 'ios', desktop }, desktopHostIdentity: () => desktopGitDraftAuthority(h.app.connection()), desktopChatHeader: h.signal(null), publishDesktopComposerShortcuts: () => {}, desktopChatSubmitters: new Map(), desktopInteractionBlocked: () => false, createNativeDesktopComposerShortcutOwner, createDesktopChatAttachments, desktopGitDraftAuthority, deviceChatPreferences: () => null, createNativeHistoryFooterController, createChatChromeState, createNativeChatChrome: chromeFactory,
+      keyboardFrame: () => ({ height: 0, duration: 0 }),
+      language: () => 'en', windowSize: () => ({ width: 402, height: 874 }),
+      createNativeSpeech: speechFactory, createNativeTranscriptHistory: historyFactory, createChatComposerCommands, createNativeBtwOwner: nativeBtwOwner,
       createNativeHistoryRows: () => () => rows, createNativeHistoryFocus: () => ({ cancel: () => {}, focus: () => {} }),
       nativeTurnPresentation: () => new Map(), createNativePendingHeaders: () => () => new Set(),
-      createNativeHistoryScroll: () => ({ reset: () => {} }), createNativeTurnModelNames: () => () => '', createNativeAutoRead: () => auto,
+      createNativeHistoryScroll, createNativeTurnModelNames: () => () => '', createNativeAutoRead: () => auto,
       createNativeChatStatusPopovers: () => ({ close: () => {} }), createNativeReferenceKeyboard: () => ({ trigger: () => null, dismiss: () => {} }),
       Speech: { available: () => available.promise, start: vi.fn(() => { throw new Error('stale dictation started'); }) },
-      native, run: async (work: () => Promise<unknown>) => work(), record: model.record, t: (key: string) => key,
-    }, 'chat, operations, current, transcriptRef, bodyRows, inputMode, activityChoices, headerSelection, attach, dictate, footer, footerState, footerExperiment');
+      createAttachmentPick, attachmentFrom, sameRuntimeScope, native, run: async (work: () => Promise<unknown>) => work(), record: model.record, t: (key: string) => key,
+    }, 'chat, operations, current, transcriptRef, bodyRows, inputMode, activityChoices, headerSelection, attach, previewAttachment, dictate, footer, footerState, footerExperiment, listHistoryEvents');
     const mounted = make({ route, target: route.target });
+    const contact = { kind: 'contact', hostID: 'A', assistantID: route.target.id, name: 'note.txt', type: 'file', attachmentID: 'opaque-note', sha256: 'a'.repeat(64), size: 4, mime: 'text/plain', filename: 'note.txt' };
+    attachments.set([contact]);
+    mounted.previewAttachment(contact);
+    if (kind === 'assistant') {
+      expect(nav.push).toHaveBeenCalledExactlyOnceWith({ kind: 'contact-attachment-preview', file: contact, expectedHost: { hostID: 'A', lease: 'lease-a' } });
+      expect(Object.isFrozen(nav.push.mock.calls[0][0].expectedHost)).toBe(true);
+      const previewFile = nav.push.mock.calls[0][0].file;
+      expect(previewFile).not.toBe(contact); expect(Object.isFrozen(previewFile)).toBe(true);
+      contact.attachmentID = 'edited-after-opening';
+      expect(previewFile.attachmentID).toBe('opaque-note');
+      contact.attachmentID = 'opaque-note';
+    } else expect(nav.push).not.toHaveBeenCalled();
+    nav.push.mockClear();
+    for (const invalid of [{ ...contact }, { ...contact, hostID: 'B' }, { ...contact, assistantID: 'other' }]) mounted.previewAttachment(invalid);
+    expect(nav.push).not.toHaveBeenCalled(); expect(nativeCalls).toEqual([]);
+    attachments.set([]); mounted.previewAttachment(contact); expect(nav.push).not.toHaveBeenCalled();
     const ref = { marker: 'native-list-owner' }; mounted.transcriptRef.set(ref); mounted.inputMode.set('shell');
     if (desktop) { await mounted.attach('files'); expect(nativeCalls).toEqual([]); mounted.inputMode.set('normal'); }
     const choices = { turn: true }; mounted.activityChoices.set(choices); const selection = { model: { id: 'retained-model' } }; mounted.headerSelection.set(selection);
     expect(mounted.footerExperiment()).toBe(false); expect(mounted.footerState().minHeight).toBe(0);
     expect(mounted.footerState().visible).toBe(true); // callback ran synchronously before chat assignment
+    const previousFooterScope = mounted.footerState().scope, previousListEvents = mounted.listHistoryEvents();
     const captures = h.captureHostOperation.mock.calls.length;
     for (let i = 0; i < 50; i++) draft.set(`draft edit ${i}`);
     draft.set('unsent selection');
     expect(h.captureHostOperation).toHaveBeenCalledTimes(captures);
     expect(createChat).toHaveBeenCalledTimes(1);
     const attachment = mounted.attach('files'), dictation = mounted.dictate();
+    expect(captureAttachment).toHaveBeenCalledTimes(1);
+    expect(attachmentSelections[0].expectedHost).toEqual(nativeCalls[0].body.expectedHost);
     h.background(); h.foreground();
+    expect(attachmentSelections[0].retire).toHaveBeenCalledTimes(1);
     expect(mounted.operations.operation()).toBeNull();
-    h.confirm(); recognition.resolve(); available.resolve(true); pick.resolve(desktop ? { requestID: attachmentRequestID, state: 'ready', attachments: [{ uri: 'file:///synthetic/old-host-file', name: 'old.txt', mime: 'text/plain' }], orphaned: 0 } : { uri: 'old-host-file' });
+    const rawAttachment = kind === 'assistant'
+      ? { type: 'file', attachmentID: 'raw-contact', sha256: 'a'.repeat(64), size: 4, mime: 'text/plain', filename: 'raw.txt' }
+      : { uri: 'attachment://old-host-file', name: 'raw.txt', mime: 'text/plain' };
+    h.confirm(); recognition.resolve(); available.resolve(true); pick.resolve(rawAttachment);
     await Promise.all([attachment, dictation]);
+    expect(mounted.footerState().scope).toBe(previousFooterScope);
+    expect(mounted.footerState().active).toBe(true);
+    expect(mounted.listHistoryEvents()).not.toBe(previousListEvents);
+    const loads = chat.load.mock.calls.length, olderLoads = chat.loadOlder.mock.calls.length;
+    const observedChrome = chromeFactory.mock.results[0].value;
+    const chromeCalls = [observedChrome.begin, observedChrome.scroll, observedChrome.release, observedChrome.end].map(method => method.mock.calls.length);
+    previousListEvents.onScrollDragStart({ offset: { x: 0, y: 150 } });
+    previousListEvents.onScroll({ offset: { x: 0, y: 20 }, size: { width: 402, height: 400 }, contentSize: { width: 402, height: 800 } });
+    previousListEvents.onLoadMore(); previousListEvents.onLoadMoreAtStart(); previousListEvents.onScrollEnd({ offset: { x: 0, y: 20 } });
+    previousListEvents.onScrollDragEnd(); previousListEvents.onMomentumEnd();
+    expect(chat.load.mock.calls.length).toBe(loads); expect(chat.loadOlder.mock.calls.length).toBe(olderLoads);
+    expect([observedChrome.begin, observedChrome.scroll, observedChrome.release, observedChrome.end].map(method => method.mock.calls.length)).toEqual(chromeCalls);
+    mounted.listHistoryEvents().onLoadMoreAtStart();
+    expect(chat.load.mock.calls.length).toBe(loads + 1);
     expect(createChat).toHaveBeenCalledTimes(1); expect(mounted.chat).toBe(chat); expect(chat.visibleMessages()).toBe(messages);
     expect(mounted.bodyRows()).toBe(rows); expect(mounted.transcriptRef()).toBe(ref); expect(mounted.inputMode()).toBe(desktop ? 'normal' : 'shell');
     expect(mounted.activityChoices()).toBe(choices); expect(mounted.headerSelection()).toBe(selection); expect(draft()).toBe('unsent selection'); expect(attachments()).toEqual([]);
-    if (desktop) { expect(nativeCalls[0]).toBe('desktop.attachments.pick'); expect(nativeCalls).toContain('desktop.attachments.cancel'); expect(nativeCalls).not.toContain('runtime.pickAttachment'); }
-    else expect(nativeCalls).toEqual(['runtime.pickAttachment']);
+    expect(nativeCalls.map(call => call.name)).toEqual(['runtime.pickAttachment', 'runtime.cancelAttachment']);
+    expect(nativeCalls[0].body).toMatchObject({ kind: 'files', expectedHost: { hostID: 'A', lease: 'lease-a' } });
+    expect(Object.keys(nativeCalls[0].body).sort()).toEqual(kind === 'assistant' ? ['assistantID', 'expectedHost', 'kind', 'requestId'] : ['expectedHost', 'kind', 'requestId']);
+    if (kind === 'assistant') expect(nativeCalls[0].body.assistantID).toBe('actual-bot');
+    expect(nativeCalls[1].body).toEqual({ requestId: nativeCalls[0].body.requestId, expectedHost: { hostID: 'A', lease: 'lease-a' } });
+    expect(attachmentSelections[0].adopt).not.toHaveBeenCalled(); expect(attachmentSelections[0].retire).toHaveBeenCalledTimes(1);
     expect(historyFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
     expect(speechFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
     beforeFlush!({ ...initialFacts, scope: { ...initialFacts.scope, generation: 2 }, more: false, boundaryMissing: true });
     expect(mounted.footerState().visible).toBe(true); expect(mounted.footerState().minHeight).toBe(0);
+    await mounted.attach('images');
+    expect(captureAttachment).toHaveBeenCalledTimes(2);
+    expect(attachmentSelections[1].adopt).toHaveBeenCalledExactlyOnceWith(rawAttachment);
+    expect(attachmentSelections[1].retire).toHaveBeenCalledTimes(1);
+    expect(attachments()).toEqual([rawAttachment]);
+    expect(nativeCalls[2].body.requestId).not.toBe(nativeCalls[0].body.requestId);
+    const nativeCount = nativeCalls.length, capture = captureAttachment.getMockImplementation()!;
+    captureAttachment.mockImplementationOnce(() => ({ ...capture(), expectedHost: { hostID: 'A', lease: 'different-lease' } }));
+    await mounted.attach('files');
+    expect(nativeCalls).toHaveLength(nativeCount);
+    expect(attachmentSelections[2].adopt).not.toHaveBeenCalled(); expect(attachmentSelections[2].retire).toHaveBeenCalledTimes(1);
+    expect(attachments()).toEqual([rawAttachment]);
+    if (kind === 'assistant') {
+      attachments.set([contact]);
+      nav.push.mockImplementation(next => nav.routes.set([...nav.routes(), next]));
+      mounted.previewAttachment(contact);
+      const preview = nav.routes().at(-1)!;
+      expect(preview.kind).toBe('contact-attachment-preview'); expect(chat.active()).toBe(false);
+      expect(mounted.operations.operation()).toBeNull(); expect(attachments()).toEqual([contact]);
+      const openedCount = nav.push.mock.calls.length;
+      expect(() => mounted.previewAttachment(contact)).not.toThrow();
+      expect(nav.push.mock.calls.length).toBe(openedCount);
+      expect(draft()).toBe('unsent selection'); expect(createChat).toHaveBeenCalledTimes(1);
+      nav.routes.set([route]);
+      expect(chat.active()).toBe(true); expect(mounted.operations.operation()).not.toBeNull();
+      expect(attachments()).toEqual([contact]); expect(draft()).toBe('unsent selection');
+      expect((preview as unknown as { expectedHost: unknown }).expectedHost).toEqual(h.app.runtimeScope());
+    }
     h.switchHost('B'); h.switchHost('A'); expect(mounted.current()).toBe(false);
   });
 
@@ -265,8 +464,9 @@ describe('application stable display and replaceable operation owners (no engine
       state: () => ({ snapshot: null, loading: false, error: '' }),
       cancel() { cancels(); changed(); }, refresh: async () => { refreshes(); changed(); },
     });
-    const createOwner = production('chat-changes.tsx', 'createOwner', { ...h, createChangesReader });
-    const make = production('chat-changes.tsx', 'NativeComposerChanges', { ...h, createOwner,
+    const createChangesDraft = production('chat-changes-generation.ts', 'createChangesDraft', {});
+    const createChangesOwner = production('chat-changes-owner.ts', 'createChangesOwner', { ...h, createChangesReader, createChangesDraft });
+    const make = production('chat-changes.tsx', 'NativeComposerChanges', { ...h, createChangesOwner,
       host: { on: () => () => {} }, runtimeEventFrom: () => null,
     }, 'owner, current');
     const props = { directory: '/focused-worktree', get active() { return active(); } };

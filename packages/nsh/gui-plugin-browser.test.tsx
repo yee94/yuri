@@ -46,8 +46,8 @@ function fixture(composed = false) {
   let revision = 'one', current = true, enabled = true, inventoryError = false, bundleError = false;
   let ids = ['synthetic'];
   const states: GuiPluginPreviewState[] = [];
-  const list = vi.fn(async (): Promise<{ data: unknown }> => { if (inventoryError) throw Error('synthetic inventory failure'); return { data: ids.map(id => ({ id, features: { gui: true }, state: { status: 'active' } })) }; });
-  const gui = vi.fn(async () => { if (bundleError) throw Error('synthetic bundle failure'); return { data: { code, revision, options: { value: 'in-memory-synthetic-option' } } }; });
+  const list = vi.fn(async (): Promise<unknown> => { if (inventoryError) throw Error('synthetic inventory failure'); return ids.map(id => ({ id, features: { gui: true }, state: { status: 'active' } })); });
+  const gui = vi.fn(async () => { if (bundleError) throw Error('synthetic bundle failure'); return { code, revision, options: { value: 'in-memory-synthetic-option' } }; });
   const lifetime = new AbortController();
   const readFile = vi.fn(async (path: string) => ({ path, content: '{"synthetic":true}' }));
   const storage: Storage = { length: 0, clear() {}, getItem: () => null, key: () => null, removeItem() {}, setItem: vi.fn() };
@@ -78,6 +78,30 @@ function fixture(composed = false) {
 }
 
 describe('NSH prepared plugin content uses the actual official SDK and Solid host', () => {
+  it.each([undefined, 'explicit-session'])('real file registry supports session=%s without a synthetic ID or suffix decision', async sessionId => {
+    const observations: unknown[] = [];
+    Reflect.set(globalThis, '__resourceRegistry', observations);
+    const host = new GuiPluginHost({ client: createGuiClient(new AbortController().signal), files: { listDirectory: async () => ({ directory: '/work', entries: [] }), search: async () => [], createDirectory: async () => { throw Error('unsupported'); } },
+      queryClient, storage: localStorage, transport: 'resources-registry', locale: 'en', mode: 'dark', narrow: true });
+    const content = document.createElement('section'), actions = document.createElement('div');
+    const states: GuiPluginPreviewState[] = [];
+    const preview = createGuiPluginBrowser({ host, scope: { hostID: 'h', lease: 'l' }, appearance: { locale: 'en', mode: 'dark' },
+      intent: { directory: '/work', path: '/work/registered.unknown', ...(sessionId === undefined ? {} : { sessionId }) }, content, actions, enabled: () => true, isCurrent: () => true,
+      changed: state => states.push(state), captureClient: () => ({ plugin: {
+        list: async () => [{ id: 'registry', features: { gui: true }, state: { status: 'active' } }],
+        gui: async () => ({ revision: 'registry', options: {}, code: `const G=require('@opencode/plugin/gui');module.exports.default=G.Plugin.define({setup(ctx){
+          ctx.add(G.LinkHandler,{match:l=>l.href.includes('registered.unknown'),open(l){globalThis.__resourceRegistry.push(l.session?.id??null);if(l.session)ctx.layout.open(ctx.id+':'+l.href,l.session)}});
+          ctx.add(G.Panel,{id:'file',region:'side',list:i=>i.open.map(path=>({id:path,title:path,file:path})),render(){return document.createElement('article')}});
+        }});` }),
+      } }) });
+    try {
+      await preview.refresh(); await settle();
+      expect(observations).toEqual([sessionId ?? null]);
+      expect(states.at(-1)?.phase).toBe(sessionId === undefined ? 'unmatched' : 'mounted');
+      expect(host.getSnapshot().sessionKey).toBe(sessionId === undefined ? undefined : `resources-registry\n${sessionId}`);
+      expect(host.filePanel('/work/not-registered.eficy', '/work')).toBeUndefined();
+    } finally { preview.close(); Reflect.deleteProperty(globalThis, '__resourceRegistry'); }
+  });
   it.each(['buffered', 'stream'])('actual factory and %s channel distinguish empty existing files from missing files', async mode => {
     const scope = { hostID: 'optional-host', lease: 'optional-lease' };
     let existence: string | undefined = 'true', extra = false;
@@ -138,13 +162,13 @@ describe('NSH prepared plugin content uses the actual official SDK and Solid hos
     const fetch = createGuiPluginFetch({ scope, origin: 'https://synthetic.invalid', signal: new AbortController().signal,
       sender: { isCurrent: expected => expected.lease === 'original', async send(expected, request) {
         expect(expected).toEqual(scope); requests.push(request);
-        const payload = request.route === '/api/plugin' ? { data: [] } : request.route.startsWith('/api/plugin/gui') ? { data: { code: '', revision: 'one', options: {} } } : { data: { output: 'synthetic' } };
+         const payload = request.route === '/api/plugin' ? [] : request.route.startsWith('/api/plugin/gui') ? { code: '', revision: 'one', options: {} } : { data: { output: 'synthetic' } };
         return { status: 200, mime: 'application/json', base64: btoa(JSON.stringify(payload)) };
       } },
     });
     const client = OpenCode.make({ baseUrl: 'https://synthetic.invalid', fetch });
-    await client.plugin.list(undefined);
-    await client.plugin.gui({ id: 'synthetic-plugin' });
+    expect(await client.plugin.list(undefined)).toEqual([]);
+    expect(await client.plugin.gui({ id: 'synthetic-plugin' })).toEqual({ code: '', revision: 'one', options: {} });
     await client.rpc.call({ rpcID: 'synthetic.contract', method: 'read', input: { original: true } });
     expect(requests.map(request => [request.method, request.route])).toEqual([
       ['GET', '/api/plugin'], ['GET', '/api/plugin/gui?id=synthetic-plugin'], ['POST', '/api/rpc/synthetic.contract/read'],
@@ -193,14 +217,14 @@ describe('NSH prepared plugin content uses the actual official SDK and Solid hos
     let resolve!: (value: Awaited<ReturnType<typeof f.gui>>) => void;
     f.gui.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     const pending = f.preview.refresh(); await settle();
-    f.setCurrent(false); f.preview.close(); resolve({ data: { code, revision: 'late', options: { value: 'in-memory-synthetic-option' } } });
+    f.setCurrent(false); f.preview.close(); resolve({ code, revision: 'late', options: { value: 'in-memory-synthetic-option' } });
     await pending; expect(f.counts.setup).toBe(0); expect(f.states.at(-1)?.phase).toBe('closed');
     const next = fixture(); await next.preview.refresh(); await settle();
     window.dispatchEvent(new Event('pagehide')); expect(next.counts.dispose).toBe(1); expect(next.states.at(-1)?.phase).toBe('closed');
   });
   it('rejects malformed inventory as invalid authority without deleting a live panel', async () => {
     const f = fixture(); await f.preview.refresh(); await settle(); const node = f.content.firstChild;
-    f.list.mockResolvedValueOnce({ data: [{ features: { gui: true }, state: { status: 'active' } }] });
+    f.list.mockResolvedValueOnce([{ features: { gui: true }, state: { status: 'active' } }]);
     await f.preview.refresh(); await settle();
     expect(f.content.firstChild).toBe(node); expect(f.counts.dispose).toBe(0);
     expect(f.states.at(-1)).toMatchObject({ phase: 'mounted', failure: 'invalid-inventory' });
@@ -212,7 +236,7 @@ describe('NSH prepared plugin content uses the actual official SDK and Solid hos
     first.preview.source(true); expect(first.counts.unmount).toBe(1); expect(second.counts.unmount).toBe(0);
     second.preview.close(); expect(second.counts.dispose).toBe(1); expect(first.counts.dispose).toBe(0);
     const partial = fixture(); partial.setIds(['failed', 'working']);
-    partial.gui.mockResolvedValueOnce({ data: { code: 'throw Error("synthetic setup failure")', revision: 'bad', options: { value: 'in-memory-synthetic-option' } } });
+    partial.gui.mockResolvedValueOnce({ code: 'throw Error("synthetic setup failure")', revision: 'bad', options: { value: 'in-memory-synthetic-option' } });
     await partial.preview.refresh(); await settle();
     expect(partial.states.at(-1)?.phase).toBe('mounted'); expect(partial.counts.render).toBe(1);
   });

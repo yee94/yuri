@@ -12,6 +12,7 @@ import * as credentialsCore from './settings-git-credentials-core';
 import * as aboutCore from './settings-about-core';
 import * as diagnostics from './settings-about-diagnostics';
 import * as protocol from './settings-protocol';
+import { nativeLayoutDensity } from './native-density';
 
 const h = vi.hoisted(() => ({ call: vi.fn(), cleanups: [] as Array<() => void>, stops: [] as Array<() => void>, depth: 0 }));
 vi.mock('nsh', () => {
@@ -61,7 +62,8 @@ async function pageFixture(kind: 'github' | 'git-credentials' | 'about') {
   h.call.mockImplementation(async (name, input) => host.call(name, input));
   expect(state.captureHostOperation().current()).toBe(true);
   const modules: Record<string, unknown> = { nsh, 'nsh/base': { Button: 'Button' }, './state': state, './runtime': runtime,
-    './native-select': { NativeSelect: 'Select' },
+    './appearance': { nativeDensity: () => nativeLayoutDensity() },
+    './native-select': { NativeSelect: 'NativeSelect' },
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './settings-protocol': protocol,
     './settings-github-core': githubCore, './settings-github-protocol': gitProtocol, './settings-git-credentials-core': credentialsCore,
     './settings-about-core': aboutCore, './settings-about-diagnostics': diagnostics, './settings-target': { SettingsTarget: 'Target' },

@@ -1,13 +1,27 @@
 /** Native engine UI fixture. Never selected by production nsh.json or the iOS Host. */
+export function assertFixtureRequestScope(input, runtimeScope) {
+  if (input.expectedHost && (input.expectedHost.hostID !== runtimeScope.hostID || input.expectedHost.lease !== runtimeScope.lease)) throw new Error('Stale synthetic chat scope');
+  if ((input.method ?? 'GET') !== 'GET' && (!input.expectedHost || input.expectedHost.hostID !== runtimeScope.hostID || input.expectedHost.lease !== runtimeScope.lease)) throw new Error('Missing synthetic chat scope');
+}
 export function createHost() {
   let sent = false;
   let selectedModel = { id: 'Native test model', providerID: 'fixture' };
   let selectedAgent = 'build';
+  const runtimeScope = { hostID: 'fixture', lease: 'synthetic-chat-lease' };
+  const cleanupOwner = 'synthetic-cache-root';
   return {
     call(name, input) {
+      if (name.startsWith('authorization.cache.')) {
+        const keys = Object.keys(input ?? {});
+        if (name === 'authorization.cache.ready' && keys.length === 0) return { owner: cleanupOwner, tickets: [] };
+        if (name === 'authorization.cache.list' && keys.length === 1 && input.owner === cleanupOwner) return [];
+        if (name === 'authorization.cache.retry' && keys.length === 0) return true;
+        throw new Error('Invalid synthetic authorization cache request');
+      }
       if (name === "connection.list")
         return {
           selected: "fixture",
+          runtimeScope,
           connections: [
             {
               id: "fixture",
@@ -21,6 +35,7 @@ export function createHost() {
       if (name !== "runtime.request")
         throw new Error("Unexpected native call: " + name);
       const path = input.path;
+      assertFixtureRequestScope(input, runtimeScope);
       let body;
       if (path === "/api/config/settings")
         body = {
@@ -65,6 +80,7 @@ export function createHost() {
       else if (path === "/api/yuri/scheduled-tasks")
         body = { tasks: [], failedProjectIds: [] };
       else if (path.startsWith('/api/git/status?')) body = { isClean: true, files: [] };
+      else if (path.startsWith('/api/git/remotes?')) body = [];
       else if (path.startsWith("/api/session/ses_1/message"))
         body = {
           data: [

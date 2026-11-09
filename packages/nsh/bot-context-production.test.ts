@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBotCreationContext, readBotCreationDefaults } from './features-bot-defaults';
+import * as model from './model';
+import * as runtimeScope from './runtime-scope';
+import type { SettingsRequest } from './settings-protocol';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const fixtureDirectory = path.join(directory, 'tests/bot-context-production');
@@ -32,37 +36,44 @@ function fixtureHost() {
   expect(vm.runInContext('typeof URL + ":" + typeof URLSearchParams', context)).toBe('undefined:undefined');
   vm.runInContext(hostSource, context, { filename: hostBundle });
   const host = vm.runInContext('module.exports.createHost()', context) as Host;
-  const send = (resource: string, method = 'GET', body?: unknown) => host.call('runtime.request', { path: resource, method, ...(body === undefined ? {} : { body }) }) as Reply;
-  const audit = () => send('/__fixture/bot-context-production/audit').body as Audit;
-  return { host, send, audit };
+  const snapshot = host.call('connection.list', {}) as { runtimeScope: runtimeScope.RuntimeScope };
+  const exports: Record<string, unknown> = {};
+  const modules: Record<string, unknown> = { nsh: { host: { available: () => true, call: (name: string, input: Record<string, unknown>) => host.call(name, input) } }, './model': model, './runtime-scope': runtimeScope };
+  vm.runInNewContext(ts.transpileModule(readFileSync(path.join(directory, 'runtime.ts'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports, require(id: string) { if (!(id in modules)) throw new Error('Unexpected Bot fixture runtime import ' + id); return modules[id]; },
+  });
+  const request = (exports.bindRequest as (scope: runtimeScope.RuntimeScope) => SettingsRequest)(snapshot.runtimeScope);
+  const send = (exports.bindRawRequest as (scope: runtimeScope.RuntimeScope) => (resource: string, method?: string, body?: unknown) => Promise<Reply>)(snapshot.runtimeScope);
+  const audit = async () => await request('/__fixture/bot-context-production/audit') as Audit;
+  return { host, send, request, audit };
 }
 
 describe('Bot context production synthetic Host (Node/VM, not NSH)', () => {
-  it('starts with bootstrap schemaVersion 1 but no configured default, plus two plausible decoys', () => {
+  it('starts with bootstrap schemaVersion 1 but no configured default, plus two plausible decoys', async () => {
     const { send, audit } = fixtureHost();
-    expect(send('/api/config/settings/bootstrap').body).toEqual({ schemaVersion: 1 });
-    expect(send('/api/config?location%5Bdirectory%5D=%2Ffixture%2Fother').body).toEqual([{ type: 'document', info: { model: 'fixture/config-decoy#low' } }]);
-    const catalog = send('/api/config/catalog/providers?directory=%2Ffixture%2Fother').body as { providers: Array<{ models: Record<string, unknown> }> };
+    expect((await send('/api/config/settings/bootstrap')).body).toEqual({ schemaVersion: 1 });
+    expect((await send('/api/config?location%5Bdirectory%5D=%2Ffixture%2Fother')).body).toEqual([{ type: 'document', info: { model: 'fixture/config-decoy#low' } }]);
+    const catalog = (await send('/api/config/catalog/providers?directory=%2Ffixture%2Fother')).body as { providers: Array<{ models: Record<string, unknown> }> };
     expect(Object.keys(catalog.providers[0].models)).toEqual(['gpt-model', 'claude-model', 'config-decoy']);
-    expect(audit()).toMatchObject({ mutations: 0, creates: 0, prompts: 0, rejected: [], configDirectories: ['/fixture/other'] });
+    expect(await audit()).toMatchObject({ mutations: 0, creates: 0, prompts: 0, rejected: [], configDirectories: ['/fixture/other'] });
   });
 
   it('real default reader keeps the captured model/variant ahead of config and catalog-first guesses', async () => {
-    const { send, audit } = fixtureHost();
+    const { request, audit } = fixtureHost();
     const context = createBotCreationContext(() => 1);
     context.update('/fixture/other', { providerID: 'fixture', modelID: 'claude-model', variant: 'high' });
-    const result = await readBotCreationDefaults(async resource => send(resource).body, context.snapshot());
+    const result = await readBotCreationDefaults(request, context.snapshot());
     expect(result).toEqual({ name: 'Yuri', model: { providerID: 'fixture', modelID: 'claude-model', variant: 'high' } });
-    expect(audit()).toMatchObject({ bootstrapReads: 1, configDirectories: ['/fixture/other'], catalogDirectories: ['/fixture/other'], mutations: 0, rejected: [] });
+    expect(await audit()).toMatchObject({ bootstrapReads: 1, configDirectories: ['/fixture/other'], catalogDirectories: ['/fixture/other'], mutations: 0, rejected: [] });
   });
 
   it('the config decoy is a real parsed fallback, not an invalid value that cannot compete', async () => {
-    const { send } = fixtureHost();
-    const result = await readBotCreationDefaults(async resource => send(resource).body, { directory: '/fixture/other' });
+    const { request } = fixtureHost();
+    const result = await readBotCreationDefaults(request, { directory: '/fixture/other' });
     expect(result.model).toEqual({ providerID: 'fixture', modelID: 'config-decoy', variant: 'low' });
   });
 
-  it('rejects malformed resources, query/method/body mismatches and guessed directories', () => {
+  it('rejects malformed resources, query/method/body mismatches and guessed directories', async () => {
     const { send } = fixtureHost();
     for (const resource of [
       'https://host.example/api/config/settings/bootstrap', '//host.example/api/config',
@@ -74,21 +85,30 @@ describe('Bot context production synthetic Host (Node/VM, not NSH)', () => {
       '/api/config?location%5Bdirectory%5D=%2Ffixture%2Fother?x=1',
       '/api/config/catalog/providers?directory=%2Ffixture%2Fproject',
       '/api/config/catalog/providers?directory=', '/api/config/catalog/providers?directory',
-    ]) expect(() => send(resource), resource).toThrow();
-    expect(() => send('/api/config/commands/metadata?directory=%2Ffixture%2Fother', 'POST', { catalog: false })).toThrow();
-    expect(() => send('/api/yuri/assistants/capability', 'PUT', {})).toThrow();
+    ]) await expect(send(resource), resource).rejects.toThrow();
+    await expect(send('/api/config/commands/metadata?directory=%2Ffixture%2Fother', 'POST', { catalog: false })).rejects.toThrow();
+    await expect(send('/api/yuri/assistants/capability', 'PUT', {})).rejects.toThrow();
   });
 
-  it('forbids saving Bots/config/sessions/prompts, while allowing only the exact read-only metadata POST', () => {
+  it('forbids saving Bots/config/sessions/prompts, while allowing only the exact read-only metadata POST', async () => {
     const { send, audit } = fixtureHost();
-    expect(send('/api/config/commands/metadata?directory=%2Ffixture%2Fother', 'POST', { catalog: true }).status).toBe(200);
+    expect((await send('/api/config/commands/metadata?directory=%2Ffixture%2Fother', 'POST', { catalog: true })).status).toBe(200);
     for (const [resource, method] of [
       ['/api/yuri/assistants', 'POST'], ['/api/config/settings', 'PUT'], ['/api/session', 'POST'],
       ['/api/session/anything/prompt?directory=%2Ffixture%2Fother', 'POST'], ['/api/fs/write', 'POST'],
-    ]) expect(() => send(resource, method, {})).toThrow('must not mutate Host');
-    expect(audit()).toMatchObject({ mutations: 5, creates: 0, prompts: 0 });
-    expect(audit().rejected).toHaveLength(5);
-    expect(fixtureHost().audit()).toMatchObject({ mutations: 0, creates: 0, prompts: 0, rejected: [] });
+    ]) await expect(send(resource, method, {})).rejects.toThrow('must not mutate Host');
+    expect(await audit()).toMatchObject({ mutations: 5, creates: 0, prompts: 0 });
+    expect((await audit()).rejected).toHaveLength(5);
+    expect(await fixtureHost().audit()).toMatchObject({ mutations: 0, creates: 0, prompts: 0, rejected: [] });
+  });
+
+  it('read-only metadata POST still rejects absent/stale scope while the issued scope bound by production runtime succeeds', async () => {
+    const { host, request, audit } = fixtureHost();
+    const input = { path: '/api/config/commands/metadata?directory=%2Ffixture%2Fother', method: 'POST', body: { catalog: true } };
+    expect(() => host.call('runtime.request', input)).toThrow('Missing new-session fixture scope');
+    expect(() => host.call('runtime.request', { ...input, expectedHost: { hostID: 'other', lease: 'wrong' } })).toThrow('Stale new-session fixture scope');
+    expect(await request(input.path, input.method, input.body)).toMatchObject({ commands: [{ name: 'fixture-command' }, { name: 'fixture-project-command' }] });
+    expect(await audit()).toMatchObject({ mutations: 0, creates: 0, prompts: 0 });
   });
 });
 

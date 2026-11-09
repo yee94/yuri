@@ -33,11 +33,13 @@ type DirectorySessionPagination = {
   cursor: number | null;
   hasMore: boolean;
   loadingMore: boolean;
+  loadedMore?: boolean;
 };
 
 type SessionIndexSyncMetadata = {
   lastSyncedAt: number;
   lastFullSyncedAt: number;
+  incomplete?: 'pending' | 'failed';
 };
 
 type StartupSessionSyncProgress = {
@@ -99,6 +101,7 @@ type GlobalSessionsState = {
   refreshArchivedSessionsForDirectories: (directories: Iterable<string>) => Promise<LoadResult>;
   loadMoreSessionsForDirectory: (directory: string) => Promise<LoadResult>;
   hydrateSessionIndex: () => Promise<void>;
+  refreshSessionIndex: () => Promise<void>;
   /**
    * Cold-start session-index restore + refresh.
    * When `priorityDirectories` is set and a SQLite cache exists, only those
@@ -815,29 +818,28 @@ const applySessionIndexSnapshotState = (
   const repeatedRevision = authoritative && snapshot.revision === appliedSessionIndexRevision;
   if (authoritative) appliedSessionIndexRevision = snapshot.revision;
   const snapshotDirectories = new Set(snapshot.directories.map((entry) => entry.directory));
+  const failedDirectories = new Set(snapshot.sync.failedDirectories);
+  const pendingDirectories = new Set(snapshot.sync.pendingDirectories);
+  const unconfirmedDirectories = new Set([...failedDirectories, ...pendingDirectories]);
+  const replacementDirectories = new Set([...snapshotDirectories].filter(directory => !unconfirmedDirectories.has(directory)));
+  const priorById = unconfirmedDirectories.size ? new Map(state.activeSessions.map(session => [session.id, session])) : undefined;
   const cachedByDirectory = new Map<string, Session[]>();
   for (const entry of snapshot.directories) {
     cachedByDirectory.set(
       entry.directory,
-      filterPendingDeletionSessions(entry.sessions, state.pendingDeletionIds),
+      filterPendingDeletionSessions(unconfirmedDirectories.has(entry.directory)
+        ? entry.sessions.map(session => priorById?.get(session.id) ?? session)
+        : entry.sessions, state.pendingDeletionIds),
     );
   }
   const cachedSessions = [...cachedByDirectory.values()].flat();
-  const existingCountByDirectory = new Map<string, number>();
-  if (authoritative) {
-    for (const session of state.activeSessions) {
-      const directory = resolveGlobalSessionDirectory(session);
-      if (!directory || !snapshotDirectories.has(directory)) continue;
-      existingCountByDirectory.set(directory, (existingCountByDirectory.get(directory) ?? 0) + 1);
-    }
-  }
   const headBoundaryByDirectory = new Map<string, number | null>();
   const preserveTailDirectories = new Set<string>();
   if (authoritative) {
     for (const entry of snapshot.directories) {
       const incomingPagination = { cursor: entry.cursor, hasMore: entry.hasMore };
       const existingPagination = state.activePaginationByDirectory.get(entry.directory);
-      const hasLoadedBeyondHead = (existingCountByDirectory.get(entry.directory) ?? 0) > DIRECTORY_SESSION_LIMIT;
+      const hasLoadedBeyondHead = existingPagination?.loadedMore === true;
       const preserveTail = Boolean(
         entry.hasMore
         && hasLoadedBeyondHead
@@ -855,7 +857,7 @@ const applySessionIndexSnapshotState = (
     ? replaceSessionsForDirectoriesPreservingLoadedTail(
       state.activeSessions,
       cachedByDirectory,
-      snapshotDirectories,
+      replacementDirectories,
       headBoundaryByDirectory,
       preserveTailDirectories,
     )
@@ -886,14 +888,26 @@ const applySessionIndexSnapshotState = (
     nextPagination.set(
       entry.directory,
       authoritative
-        && preserveTailDirectories.has(entry.directory)
+        && (preserveTailDirectories.has(entry.directory) || unconfirmedDirectories.has(entry.directory))
         && existingPagination
-        ? { cursor: existingPagination.cursor, hasMore: existingPagination.hasMore, loadingMore: false }
+        ? { ...existingPagination, loadingMore: false }
         : incomingPagination,
     );
     nextSyncMetadata.set(entry.directory, {
       lastSyncedAt: entry.lastSyncedAt,
       lastFullSyncedAt: entry.lastFullSyncedAt,
+      ...(failedDirectories.has(entry.directory) ? { incomplete: 'failed' as const }
+        : pendingDirectories.has(entry.directory) ? { incomplete: 'pending' as const } : {}),
+    });
+  }
+  for (const directory of new Set([...unconfirmedDirectories, ...snapshot.sync.completedDirectories])) {
+    if (snapshotDirectories.has(directory)) continue;
+    const previous = nextSyncMetadata.get(directory);
+    nextSyncMetadata.set(directory, {
+      lastSyncedAt: previous?.lastSyncedAt ?? 0,
+      lastFullSyncedAt: previous?.lastFullSyncedAt ?? 0,
+      ...(failedDirectories.has(directory) ? { incomplete: 'failed' as const }
+        : pendingDirectories.has(directory) ? { incomplete: 'pending' as const } : {}),
     });
   }
 
@@ -1207,6 +1221,12 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
       status: 'idle',
       startupSyncProgress: { active: false, phase: 'idle', completed: 0, total: 0 },
     });
+  },
+
+  refreshSessionIndex: async () => {
+    const runtime = captureSessionIndexRuntime();
+    const snapshot = await refreshSessionIndexSnapshotQuery(undefined, getRuntimeTransportIdentity(), getRuntimeKey());
+    if (snapshot && isCurrentSessionIndexRuntime(runtime)) set(state => applySessionIndexSnapshotState(state, snapshot, true));
   },
 
   hydrateSessionIndex: async () => {
@@ -1861,7 +1881,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
             new Set([directory]),
           );
           const nextPagination = new Map(state.activePaginationByDirectory);
-          nextPagination.set(directory, getPaginationAfterPage(page, pagination.cursor));
+          nextPagination.set(directory, { ...getPaginationAfterPage(page, pagination.cursor), loadedMore: true });
           return {
             activeSessions: sameSessionList(state.activeSessions, nextActiveSessions)
               ? state.activeSessions

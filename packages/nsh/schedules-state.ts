@@ -28,8 +28,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 const validTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 8.64e15;
 
 function scope() {
-  const operations = createPageOperations();
   let alive = true;
+  const operations = createPageOperations(() => alive);
   const dispose = () => { alive = false; };
   cleanup(dispose);
   function capture() {

@@ -87,7 +87,7 @@ describe('connection editor production strict Host (pure Node/VM, not an NSH ren
     try {
       root.bind(scope, 'en', true);
       for (let attempt = 0; attempt < 100 && (!root.state().ready || root.state().refreshing); attempt++) await Promise.resolve();
-      expect(root.state()).toEqual({ ready: true, refreshing: false, error: null });
+      expect(root.state()).toEqual({ ready: true, refreshing: false, error: null, recovery: 'unsupported' });
       const before = audit();
       expect(before.settingsReads).toBe(1);
       expect(before.requests).toEqual([{ path: '/api/config/settings', method: 'GET' }]);

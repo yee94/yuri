@@ -12,6 +12,7 @@ import openrouter from '../ui/src/assets/provider-logos/openrouter.svg';
 import doubao from '../ui/src/assets/model-icons/doubao.svg';
 import { Icon } from './Icon';
 import { t } from './i18n';
+import { nativeCodeTextViewStyles } from './appearance';
 import { SettingsGroup, settingsAction } from './settings-controls';
 import { app, captureHostOperation } from './state';
 import { createSetupTour, setupTourHasPlugin, setupTourPlugins, setupTourProviders, setupTourSteps, type SetupTourController, type SetupTourMetadata, type SetupTourStep } from './setup-tour-core';
@@ -146,7 +147,7 @@ export function NativeSetupTourPage(props: {
       <If when={state().step !== 'import'}><Button testID="setup-tour-continue" class={settingsAction} disabled={blocked() || (state().step === 'models' || state().step === 'plugins') && !state().entries} onPress={() => { void props.controller.proceed(); }}><Text class="text-foreground">{t(state().step === 'voice' ? 'tour.finish' : 'tour.continue')}</Text></Button></If>
     </View>
     <Sheet testID="setup-tour-readme" open={!!readme()} closeOnSwipe onOpenChange={event => { if (!event.open) readme.set(null); }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: '85%' }} backdropClass="bg-background/50">
-      <Scroll class="flex-1" contentClass="p-5 gap-4 pb-10"><Text class="text-base text-foreground">{readme()?.name} · README</Text><TextView markdown={readme()?.readme || t('tour.metadataUnavailable')} selectable links="report" onLinkPress={event => { void readmeLink(event.url); }} class="text-foreground" /><If when={linkError()}><Text class="text-sm text-destructive">{t('tour.operationFailed')}</Text></If><Button class={settingsAction} onPress={() => readme.set(null)}><Text class="text-foreground">{t('onboarding.common.actions.back')}</Text></Button></Scroll>
+      <Scroll class="flex-1" contentClass="p-5 gap-4 pb-10"><Text class="text-base text-foreground">{readme()?.name} · README</Text><TextView markdown={readme()?.readme || t('tour.metadataUnavailable')} selectable styles={nativeCodeTextViewStyles()} links="report" onLinkPress={event => { void readmeLink(event.url); }} class="text-foreground" /><If when={linkError()}><Text class="text-sm text-destructive">{t('tour.operationFailed')}</Text></If><Button class={settingsAction} onPress={() => readme.set(null)}><Text class="text-foreground">{t('onboarding.common.actions.back')}</Text></Button></Scroll>
     </Sheet>
   </NavPage>;
 }

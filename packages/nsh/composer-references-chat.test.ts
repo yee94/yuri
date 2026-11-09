@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { expect, test } from 'vitest';
+import { prepareInteractionEngineDriver } from './tests/chat-interaction-engine-driver';
 
 test('production native chat owns durable five-domain references through picker, remount and prompt admission', () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -26,7 +27,11 @@ test('production native chat owns durable five-domain references through picker,
     'expect(app.value("id:reference-chat-composer")).toBe("");',
     'expect(app.texts()).toContain("references:0");',
   ];
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'composer-references-chat-fixture.tsx', '--web-host', 'tests/composer-references-chat-host.js'], { cwd: directory, encoding: 'utf8', timeout: 60_000, input: steps.join('\n') });
-  expect(result.error, result.stdout + result.stderr).toBeUndefined();
-  expect(result.status, result.stdout + result.stderr).toBe(0);
+  const driver = prepareInteractionEngineDriver(directory, 'composer-references-chat-fixture.tsx', 'tests/composer-references-chat-host.js', steps);
+  try {
+    const fixture = driver.bundleHost();
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', driver.testFile, '--web-host', fixture], { cwd: directory, encoding: 'utf8', timeout: 60_000 });
+    expect(result.error, result.stdout + result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  } finally { driver.dispose(); }
 }, 75_000);

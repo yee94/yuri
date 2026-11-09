@@ -4,7 +4,7 @@ import { t } from './i18n';
 import { record, text, type ChatTarget, type Row } from './model';
 import { query } from './runtime';
 import { captureHostRequest } from './state';
-import { nativeToolDescription, nativeToolDetails, nativeToolDuration, type NativeToolFile } from './transcript-tools-model';
+import { nativeMultiFileEntries, nativeToolDescription, nativeToolDetails, nativeToolDuration, type NativeToolFile } from './transcript-tools-model';
 import { toolIconSpec } from '../ui/src/components/chat/message/parts/toolIconModel';
 import { formatToolInput, resolveToolDisplayName } from '../ui/src/lib/toolHelpers';
 import { NativeAgentAvatar } from './chat-identity';
@@ -50,10 +50,11 @@ export function NativeToolRow(props: NativeToolRowProps) {
   cleanup(() => { alive = false; });
   const current = () => alive && props.current();
   const details = computed(() => nativeToolDetails(props.tool));
+  const multi = computed(() => nativeMultiFileEntries(details()));
   const now = signal(Date.now());
   const active = () => details().active;
   const shell = () => ['bash', 'shell', 'cmd', 'terminal'].includes(details().name);
-  const shellStyle = () => ({ ...nativeChatTextStyle('code'), lineHeight: 20 });
+  const shellStyle = () => ({ ...nativeChatTextStyle('code'), lineHeight: 20 * (nativeChatTextStyle('code').fontSize ?? 13) / 13 });
   const rowStyle = () => ({ ...nativeChatTextStyle('meta'), lineHeight: 20 });
   const palette = nativeToolPaletteTokens;
   const failed = () => ['error', 'failed'].includes(details().status);
@@ -104,12 +105,17 @@ export function NativeToolRow(props: NativeToolRowProps) {
   }
   return <View class="gap-1 py-1">
     <View class="flex-row items-center gap-1">
-      <Button testID={details().task && details().sessionID ? `tool-session-${details().sessionID}` : `tool-expand-${String(props.tool.id || details().name)}`} class="min-h-0 flex-row flex-1 items-center gap-1.5 rounded-lg py-0.5 active:bg-foreground/5" hitSlop={8} disabled={!current()} onPress={mainPress} accessibilityLabel={title()}>
+      <Button testID={details().task && details().sessionID ? `tool-session-${details().sessionID}` : `tool-expand-${String(props.tool.id || details().name)}`} class={multi().length > 0 ? 'min-h-0 w-full min-w-0 flex-row flex-wrap flex-1 items-center rounded-lg py-0.5 active:bg-foreground/5' : 'min-h-0 flex-row flex-1 items-center gap-1.5 rounded-lg py-0.5 active:bg-foreground/5'} style={multi().length > 0 ? { columnGap: 8, rowGap: 2 } : undefined} hitSlop={8} disabled={!current()} onPress={mainPress} accessibilityLabel={title()}>
         <View class="items-center justify-center" style={{ width: 16, height: 16 }}><If when={details().task && !!(details().agent || details().sessionID)} else={<If when={active()} else={<Icon name={icon().name} size={icon().size} color={failed() ? palette()?.error : palette()?.icon} />}><NativeToolOrb current={current} color={palette()?.icon} /></If>}><NativeAgentAvatar name={details().sessionID || details().agent} size={14} /></If></View>
-        <Text class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title }}>{title()}</Text>
+        <Text class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }}>{title()}</Text>
         <If when={shell() && !!nativeToolDuration(details().start, details().end, active() ? now() : undefined)}><Text testID={`tool-duration-${String(props.tool.id || details().name)}`} class="text-muted-foreground" style={{ ...rowStyle(), opacity: .8 }}>{nativeToolDuration(details().start, details().end, active() ? now() : undefined)}</Text></If>
-        <Text class="text-muted-foreground flex-1" style={{ ...rowStyle(), color: palette()?.description, numberOfLines: details().files.length > 1 ? undefined : 1 }}>{details().files.length > 1 ? details().files.map(file => nativeToolDescription({ ...details(), path: file.path }, props.target.directory)).join(', ') : nativeToolDescription(details(), props.target.directory)}</Text>
-        <If when={!!totals()}><View class="flex-row"><Text class="text-success" style={rowStyle()}>+{totals()!.added}</Text><Text class="text-muted-foreground" style={rowStyle()}>/</Text><Text class="text-destructive" style={rowStyle()}>-{totals()!.removed}</Text></View></If>
+        <If when={multi().length > 0} else={<Text class="text-muted-foreground flex-1" style={{ ...rowStyle(), color: palette()?.description, numberOfLines: 1 }}>{nativeToolDescription(details(), props.target.directory)}</Text>}>
+          <Each of={multi()} key={entry => entry.path}>{entry => <View class="flex-row items-center gap-1" style={{ maxWidth: '100%', flexShrink: 1, minWidth: 0 }}>
+            <Text class="text-muted-foreground" style={{ ...rowStyle(), color: palette()?.description, flexShrink: 1, minWidth: 0, numberOfLines: 1 }}>{entry().name}</Text>
+            <If when={entry().added !== null || entry().removed !== null}><View class="flex-row" style={{ flexShrink: 0 }}><Text class="text-success" style={rowStyle()}>+{entry().added ?? 0}</Text><Text class="text-muted-foreground" style={{ ...rowStyle(), color: palette()?.description }}>/</Text><Text class="text-destructive" style={rowStyle()}>-{entry().removed ?? 0}</Text></View></If>
+          </View>}</Each>
+        </If>
+        <If when={multi().length === 0 && !!totals()}><View class="flex-row"><Text class="text-success" style={rowStyle()}>+{totals()!.added}</Text><Text class="text-muted-foreground" style={rowStyle()}>/</Text><Text class="text-destructive" style={rowStyle()}>-{totals()!.removed}</Text></View></If>
         <If when={details().todos.length > 0}><Text class="text-muted-foreground" style={rowStyle()}>{details().todos.filter(todo => todo.status === 'completed' || todo.status === 'cancelled').length}/{details().todos.length}</Text></If>
         <If when={!navigation()}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></If>
       </Button>

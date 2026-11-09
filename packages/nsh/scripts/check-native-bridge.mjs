@@ -67,13 +67,13 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/api/plain') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('not JSON'); }
   if (url.pathname === '/api/redirect') { res.writeHead(302, { Location: '/api/config/settings' }); return res.end(); }
   if (url.pathname === '/api/event') {
-    const old = url.searchParams.has('old');
+    const old = url.searchParams.get('directory') === '/old';
     return setTimeout(() => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.flushHeaders();
-      res.write(`:${' '.repeat(4096)}\n\ndata: ${old ? 'old' : 'new'}\n\n`);
-      if (url.searchParams.has('unicode')) {
-        const text = Buffer.from('data: 原生 Relay 😀\r\n\r\n');
+      res.write(`:${' '.repeat(4096)}\n\ndata: ${JSON.stringify({ type: 'fixture', value: old ? 'old' : 'new' })}\n\n`);
+      if (url.searchParams.get('directory') === '/unicode') {
+        const text = Buffer.from('data: {"type":"fixture","value":"原生 Relay 😀"}\r\n\r\n');
         for (let index = 0; index < text.length; index++) setTimeout(() => { if (!res.destroyed) res.write(text.subarray(index, index + 1)); }, index * 2);
       }
     }, old ? 200 : 0);
@@ -291,12 +291,12 @@ import NativeShell
         do { _ = try await pendingConnect.value; throw NativeFailure.message("Stale connect was accepted") } catch is CancellationError {}
         try require(store.saved == 1, "stale connect changed persistence")
         let directStreamScope = try RuntimeHostScope(bridge.snapshot["runtimeScope"])
-        _ = try await call("runtime.stream", ["path": "/api/event?old", "key": "chat", "expectedHost": directStreamScope.publicValue])
+        _ = try await call("runtime.stream", ["path": "/api/event?directory=%2Fold", "key": "chat", "mode": "sse", "ownerID": "old", "expectedHost": directStreamScope.publicValue])
         try await Task.sleep(nanoseconds: 30_000_000)
-        _ = try await call("runtime.stream", ["path": "/api/event?new", "key": "chat", "expectedHost": directStreamScope.publicValue])
-        try await eventually("replacement stream did not emit", { app.events.contains { $0.1["data"] as? String == "new" } })
-        try require(!app.events.contains { $0.1["data"] as? String == "old" }, "replaced stream emitted stale data")
-        try require(app.events.contains { $0.1["data"] as? String == "new" }, "replacement stream did not emit: \\(app.events)")
+        _ = try await call("runtime.stream", ["path": "/api/event?directory=%2Fnew", "key": "chat", "mode": "sse", "ownerID": "new", "expectedHost": directStreamScope.publicValue])
+        try await eventually("replacement stream did not emit", { app.events.contains { ($0.1["data"] as? String)?.contains("new") == true } })
+        try require(!app.events.contains { ($0.1["data"] as? String)?.contains("old") == true }, "replaced stream emitted stale data")
+        try require(app.events.contains { ($0.1["data"] as? String)?.contains("new") == true }, "replacement stream did not emit: \\(app.events)")
         bridge.stop()
         _ = try await call("connection.connect", ["pairingLink": CommandLine.arguments[2]])
         let relayID = store.selected!.id
@@ -313,9 +313,9 @@ import NativeShell
         try await verifyResources("relay")
         app.events.removeAll()
         let relayStreamScope = try RuntimeHostScope(bridge.snapshot["runtimeScope"])
-        _ = try await call("runtime.stream", ["path": "/api/event?unicode", "key": "chat", "expectedHost": relayStreamScope.publicValue])
-        try await eventually("relay chunked UTF-8 SSE did not emit", { app.events.contains { $0.1["data"] as? String == "原生 Relay 😀" } })
-        try require(app.events.contains { $0.1["data"] as? String == "原生 Relay 😀" }, "relay chunked UTF-8 SSE failed")
+        _ = try await call("runtime.stream", ["path": "/api/event?directory=%2Funicode", "key": "chat", "mode": "sse", "ownerID": "unicode", "expectedHost": relayStreamScope.publicValue])
+        try await eventually("relay chunked UTF-8 SSE did not emit", { app.events.contains { ($0.1["data"] as? String)?.contains("原生 Relay 😀") == true } })
+        try require(app.events.contains { ($0.1["data"] as? String)?.contains("原生 Relay 😀") == true }, "relay chunked UTF-8 SSE failed")
         _ = try await call("connection.select", ["id": relayID])
         let reconnected = try await call("runtime.request", ["path": "/api/config/settings"]) as? [String: Any]
         try require((reconnected?["body"] as? [String: Any])?["authorized"] as? Bool == true, "relay reconnect failed")
@@ -324,7 +324,7 @@ import NativeShell
     }
 }
 `);
-  await run('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', '-I', temporary, '-L', temporary, '-lNativeShell', '-Xlinker', '-rpath', '-Xlinker', temporary, path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/VoiceRecognitionCore.swift'), path.join(root, 'ios/VoiceRecognitionRuntime.swift'), path.join(root, 'ios/RuntimeBridge.swift'), path.join(root, 'ios/connection-editor.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'ios/GuiPluginPreviewBridge.swift'), path.join(root, 'ios/GuiPluginRuntime.swift'), path.join(root, 'ios/RelayTunnel.swift'), path.join(root, 'ios/TerminalBridge.swift'), path.join(root, 'ios/TerminalTransport.swift'), path.join(temporary, 'StoreFixture.swift'), path.join(temporary, 'Check.swift'), '-o', path.join(temporary, 'check')]);
+  await run('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', '-I', temporary, '-L', temporary, '-lNativeShell', '-Xlinker', '-rpath', '-Xlinker', temporary, path.join(root, 'ios/PasskeyPolicy.swift'), path.join(root, 'ios/RuntimeHostScope.swift'), path.join(root, 'ios/AttachmentUploadPolicy.swift'), path.join(root, 'ios/AttachmentReceiptJournal.swift'), path.join(root, 'ios/VoiceRecognitionCore.swift'), path.join(root, 'ios/VoiceRecognitionRuntime.swift'), path.join(root, 'ios/RuntimeBridge.swift'), path.join(root, 'ios/SessionMessageStream.swift'), path.join(root, 'ios/SessionMessageStreamDirect.swift'), path.join(root, 'ios/connection-editor.swift'), path.join(root, 'ios/ResourceWebPreviewBridge.swift'), path.join(root, 'ios/GuiPluginPreviewBridge.swift'), path.join(root, 'ios/GuiPluginDeviceBridge.swift'), path.join(root, 'ios/GuiPluginResourceResolver.swift'), path.join(root, 'ios/GuiPluginRuntime.swift'), path.join(root, 'ios/RelayTunnel.swift'), path.join(root, 'ios/TerminalBridge.swift'), path.join(root, 'ios/TerminalTransport.swift'), path.join(temporary, 'StoreFixture.swift'), path.join(temporary, 'Check.swift'), '-o', path.join(temporary, 'check')]);
   await run(path.join(temporary, 'check'), [`http://127.0.0.1:${server.address().port}`, relayLink]);
   if (!passwordIssued) throw new Error('Password endpoint did not receive required client-token issuance fields');
   if (!attachmentVerified) throw new Error('Attachment upload did not satisfy size/digest/MIME/name/bearer contract');

@@ -1,5 +1,7 @@
 # Picker 背景 AX 隔离：固定版本证据与 owner 合同
 
+> 历史设计审计：下文透明 fullScreen Dialog / 原 Sheet 方案已由系统 `NativeSheet` pageSheet 迁移替代，不是当前实现指令。现行 owner 与验证边界见 [PICKER-NATIVE-OWNERS.md](./PICKER-NATIVE-OWNERS.md) 和 [系统 Sheet 验证](../../SYSTEM-SHEETS-VALIDATION.md)；旧 AX 证据仍保留，不扩大为新容器验收。
+
 状态：`3f51bbee` 初次 Agent 展开已有 main 真实背景 AX 隔离／Build Plan 可达证据，但 Search 缺真实 ID／label、Agent 关闭后 Model 重开失败，**完整流程未通过**。当前最小 editor 注册与真实 UIKit completion 修复见 [PICKER-NATIVE-OWNERS.md](./PICKER-NATIVE-OWNERS.md)，其新唯一 fixture 仍须 main 重验。没有背景 AX gate、不支持的 props、全局窗口扫描或私有 UIKit 层级推断。完整 1:1 目标不缩减。
 
 ## 已有真实结果的边界

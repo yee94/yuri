@@ -6,19 +6,23 @@ enum GuiPluginPreviewFailure: String, Error { case invalid, stale, unavailable, 
 struct GuiPluginPreviewIntent {
     let owner: String
     let expectedHost: RuntimeHostScope
-    let sessionID: String
+    let sessionID: String?
     let directory: String
     let path: String
     let context: GuiPluginNativeContext?
     init(_ input: Any?) throws {
         let identity = try Self.identity(input)
-        let required: Set<String> = ["sessionId", "directory", "path", "expectedHost", "owner"]
-        guard let args = input as? [String: Any], Set(args.keys) == required || Set(args.keys) == required.union(["context"]),
-              let session = args["sessionId"] as? String, !session.isEmpty, session.count <= 1024,
+        let required: Set<String> = ["directory", "path", "expectedHost", "owner"]
+        guard let args = input as? [String: Any], required.isSubset(of: Set(args.keys)), Set(args.keys).isSubset(of: required.union(["sessionId", "context"])),
               let directory = args["directory"] as? String, let path = args["path"] as? String,
-              Self.valid(directory), Self.valid(path), !session.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw GuiPluginPreviewFailure.invalid }
+              Self.valid(directory), Self.valid(path) else { throw GuiPluginPreviewFailure.invalid }
+        if args.keys.contains("sessionId") {
+            guard let session = args["sessionId"] as? String, !session.isEmpty, session.count <= 1024,
+                  !session.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw GuiPluginPreviewFailure.invalid }
+            sessionID = session
+        } else { sessionID = nil }
         self.expectedHost = identity.0; self.owner = identity.1
-        self.sessionID = session; self.directory = directory; self.path = path
+        self.directory = directory; self.path = path
         context = try args.keys.contains("context") ? GuiPluginNativeContext(args["context"], expectedHost: identity.0) : nil
     }
     private static func valid(_ value: String) -> Bool {
@@ -31,7 +35,27 @@ struct GuiPluginPreviewIntent {
               owner.range(of: "^[a-zA-Z0-9_-]+$", options: .regularExpression) != nil else { throw GuiPluginPreviewFailure.invalid }
         return (try RuntimeHostScope(args["expectedHost"]), owner)
     }
-    var json: [String: Any] { ["sessionId": sessionID, "directory": directory, "path": path, "expectedHost": expectedHost.publicValue, "owner": owner] }
+    var json: [String: Any] {
+        var value: [String: Any] = ["directory": directory, "path": path, "expectedHost": expectedHost.publicValue, "owner": owner]
+        if let sessionID { value["sessionId"] = sessionID }; return value
+    }
+}
+
+/// The native file surface remains usable until the real registry has a panel.
+/// This gate also owns cancellation before a WK document can report readiness.
+@MainActor final class GuiPluginPreviewMatch {
+    private var result: Result<Bool, Error>?
+    private var pending: CheckedContinuation<Bool, Error>?
+    func wait() async throws -> Bool {
+        try Task.checkCancellation()
+        if let result { return try result.get() }
+        guard pending == nil else { throw GuiPluginPreviewFailure.busy }
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func finish(_ result: Result<Bool, Error>) {
+        guard self.result == nil else { return }; self.result = result
+        let pending = self.pending; self.pending = nil; pending?.resume(with: result)
+    }
 }
 
 /// Exact presentation tickets, including opening and native dismissal. Kept in
@@ -117,6 +141,9 @@ struct GuiPluginPreviewIntent {
     /// Optional lossless pull lane. At most 64 KiB per read, no aggregate 32 MiB
     /// ceiling or token URL. The Runtime owner still owns auth and Relay bytes.
     var openGui: ((_ expectedHost: RuntimeHostScope, _ request: GuiPluginPreviewRequest) async throws -> GuiPluginPreviewByteStream)? = nil
+    /// Optional native-only identity predicate from the same captured Runtime.
+    /// It authorizes only the captured Host origin, never arbitrary external URLs.
+    var isHostResourceURL: ((URL) -> Bool)? = nil
     func applying(_ context: GuiPluginNativeContext) throws -> Self {
         guard isCurrent(expectedHost), resource.isCurrent(), context.runtimeKey == GuiPluginNativeContext.runtimeKey(hostID: expectedHost.hostID),
               context.preferenceKey == GuiPluginNativeContext.preferenceKey(runtimeKey: context.runtimeKey) else { throw GuiPluginPreviewFailure.stale }
@@ -377,7 +404,23 @@ struct GuiPluginPreviewScope {
     static let replyLimit = 32 * 1024 * 1024
     // The existing host evaluates official CJS. CSP permits that operation only
     // inside this isolated, ephemeral content document; it grants no native main.
-    static let policy = "default-src 'none'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; frame-src 'self' blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    static let policy = "default-src 'none'; script-src 'self' blob: 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    // Resource documents execute scripts in an opaque sandbox origin. Omitting
+    // allow-same-origin is essential: main-frame message checks alone cannot
+    // stop a same-origin child from invoking the parent's eval/Function.
+    // The scheme remains readable for scripts/fonts/simple GETs; native still
+    // admits every individual URL against the captured owner and workspace.
+    static let resourcePolicy = "default-src 'none'; sandbox allow-scripts allow-modals allow-downloads; script-src yuri-plugin: blob: 'unsafe-eval' 'unsafe-inline'; style-src yuri-plugin: 'unsafe-inline'; img-src yuri-plugin: data: blob:; font-src yuri-plugin: data:; connect-src yuri-plugin:; frame-src yuri-plugin: blob:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    static func responseHeaders(_ response: ResourceWebPreviewResponse, applicationDocument: Bool) -> [String: String] {
+        var headers = ["Content-Type": response.mime, "Content-Security-Policy": (applicationDocument ? policy : resourcePolicy) + (response.contentSecurityPolicy.map { ", " + $0 } ?? ""), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"]
+        if !applicationDocument {
+            // Opaque resource frames may read their scoped assets without
+            // credentials. The privileged application entry never opts in.
+            headers["Access-Control-Allow-Origin"] = "*"
+            headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        }
+        return headers
+    }
     static func asset(_ url: URL, owner: String) throws -> String {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == scheme, parts.host == owner,
               parts.user == nil, parts.password == nil, parts.port == nil, parts.query == nil, parts.fragment == nil,
@@ -500,7 +543,11 @@ import WebKit
         guard let rules = try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "yuri-plugin-no-network", encodedContentRuleList: ResourceWebPreviewScope.networkRules) else { throw GuiPluginPreviewFailure.response }
         try Task.checkCancellation(); guard current(), controller.presentedViewController == nil else { throw GuiPluginPreviewFailure.stale }
         let surface = GuiPluginPreviewSurface(intent: intent, capture: captured, labels: labels, lease: lease, entry: entry, rules: rules, current: current)
-        surface.onClose = { [weak self] in self?.terminate(ticket, result: .success(["closed": true]), animated: true) }
+        self.surface = surface
+        surface.onClose = { [weak self] in self?.terminate(ticket, result: .success(["closed": true, "matched": true]), animated: true) }
+        let matched = try await surface.prepare(frame: controller.view.bounds)
+        try Task.checkCancellation(); guard current(), controller.presentedViewController == nil else { throw GuiPluginPreviewFailure.stale }
+        if !matched { return ["closed": true, "matched": false] }
         return try await withTaskCancellationHandler(operation: {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
@@ -533,7 +580,7 @@ import WebKit
     }
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
         guard let ticket = ownership.active, presentationController.presentedViewController === navigation else { return }
-        terminate(ticket, result: .success(["closed": true]), animated: false)
+        terminate(ticket, result: .success(["closed": true, "matched": true]), animated: false)
     }
 }
 
@@ -549,6 +596,7 @@ import WebKit
 }
 
 @MainActor private final class GuiPluginPreviewSurface: UIViewController, WKNavigationDelegate, WKUIDelegate {
+    private let match = GuiPluginPreviewMatch()
     private let labels: GuiPluginPreviewLabels
     private let intent: GuiPluginPreviewIntent, captured: GuiPluginPreviewCapture, lease: GuiPluginPreviewLease
     private let initial: ResourceWebPreviewResponse, rules: WKContentRuleList, current: () -> Bool
@@ -563,6 +611,19 @@ import WebKit
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let failureLabel = UILabel()
     private var retryButton: UIBarButtonItem?
+    private var device: GuiPluginDeviceBridge?
+    private var resourceResolver: GuiPluginResourceResolver?
+    private func deviceBridge() -> GuiPluginDeviceBridge {
+        if let device { return device }
+        let generation = owner
+        let bridge = GuiPluginDeviceBridge(controller: self, current: { [weak self] in
+            guard let self else { return false }; return !self.stopped && self.current() && self.owner == generation
+        }, progress: { [weak self] event in
+            guard let self, !self.stopped, self.current(), self.owner == generation else { return }
+            self.web?.callAsyncJavaScript("window.dispatchEvent(new CustomEvent('yuri.gui.device.progress',{detail:event}))", arguments: ["event": event], in: nil, in: .page, completionHandler: nil)
+        })
+        device = bridge; return bridge
+    }
     var onClose: (() -> Void)?
     init(intent: GuiPluginPreviewIntent, capture: GuiPluginPreviewCapture, labels: GuiPluginPreviewLabels, lease: GuiPluginPreviewLease, entry: ResourceWebPreviewResponse, rules: WKContentRuleList, current: @escaping () -> Bool) {
         self.labels = labels
@@ -601,13 +662,15 @@ import WebKit
         if let url = URL(string: GuiPluginPreviewScope.scheme + "://" + owner + GuiPluginPreviewScope.entry) { web?.load(URLRequest(url: url)) }
     }
     private func failed() {
+        match.finish(.failure(GuiPluginPreviewFailure.response))
         spinner.stopAnimating(); navigationItem.titleView = failureLabel
         // Native system controls supply localized labels; raw plugin errors never cross to UIKit.
         if let close = navigationItem.rightBarButtonItems?.first, let retryButton { navigationItem.rightBarButtonItems = [close, retryButton] }
     }
-    private func cancelAll() { tasks.values.forEach { $0.cancel() }; tasks.removeAll(); schemes.removeAll(); requestsByID.removeAll(); streams.values.forEach { $0.stop() }; streams.removeAll(); web?.stopLoading() }
+    private func cancelAll() { resourceResolver?.stop(); resourceResolver = nil; device?.stop(); device = nil; tasks.values.forEach { $0.cancel() }; tasks.removeAll(); schemes.removeAll(); requestsByID.removeAll(); streams.values.forEach { $0.stop() }; streams.removeAll(); web?.stopLoading() }
     func stop() {
         guard !stopped else { return }; stopped = true; lease.close(); cancelAll()
+        match.finish(.failure(CancellationError()))
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "guiPluginPreview", contentWorld: .page)
         web?.navigationDelegate = nil; web?.uiDelegate = nil; web?.removeFromSuperview(); web = nil
     }
@@ -615,24 +678,34 @@ import WebKit
         guard !stopped, current(), lease.expectedHost == expectedHost else { throw GuiPluginPreviewFailure.stale }
         try lease.check()
     }
+    func prepare(frame: CGRect) async throws -> Bool {
+        try Task.checkCancellation(); loadViewIfNeeded(); view.frame = frame
+        return try await match.wait()
+    }
     func start(_ scheme: WKURLSchemeTask) {
-        guard !stopped, current(), tasks.count < 8, requests < 256, scheme.request.httpMethod == "GET", let url = scheme.request.url,
-              let path = try? GuiPluginPreviewScope.asset(url, owner: owner) else { scheme.didFailWithError(GuiPluginPreviewFailure.invalid); return }
+        guard !stopped, current(), tasks.count < 8, requests < 256, scheme.request.httpMethod == "GET", let url = scheme.request.url else { scheme.didFailWithError(GuiPluginPreviewFailure.invalid); return }
+        let path = try? GuiPluginPreviewScope.asset(url, owner: owner)
+        guard path != nil || url.path.hasPrefix("/__gui/") || url.path.hasPrefix("/api/preview/proxy/") else { scheme.didFailWithError(GuiPluginPreviewFailure.invalid); return }
         let key = ObjectIdentifier(scheme), id = UUID(), generation = owner
         schemes[key] = id; requests += 1
         tasks[id] = Task { [weak self] in
             guard let self else { return }
             do {
-                let response = path == GuiPluginPreviewScope.entry ? initial : try await captured.readAsset(path, GuiPluginPreviewScope.limit)
+                let response: ResourceWebPreviewResponse
+                if let path { response = path == GuiPluginPreviewScope.entry ? initial : try await captured.readAsset(path, GuiPluginPreviewScope.limit) }
+                else {
+                    if resourceResolver == nil { resourceResolver = try GuiPluginResourceResolver(directory: intent.directory, transport: captured.resource, isHostResourceURL: captured.isHostResourceURL) }
+                    response = try await resourceResolver!.read(url, owner: generation)
+                }
                 try Task.checkCancellation(); try lease.check()
                 guard !stopped, current(), owner == generation, schemes[key] == id else { throw GuiPluginPreviewFailure.stale }
                 try ResourceWebPreviewScope.validate(response, document: path == GuiPluginPreviewScope.entry)
                 guard response.data.count <= ResourceWebPreviewScope.totalLimit - bytes else { throw GuiPluginPreviewFailure.limit }
                 bytes += response.data.count
-                let headers = ["Content-Type": response.mime, "Content-Security-Policy": GuiPluginPreviewScope.policy + (response.contentSecurityPolicy.map { ", " + $0 } ?? ""), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"]
+                let headers = GuiPluginPreviewScope.responseHeaders(response, applicationDocument: path == GuiPluginPreviewScope.entry)
                 guard let head = HTTPURLResponse(url: url, statusCode: response.status, httpVersion: "HTTP/1.1", headerFields: headers) else { throw GuiPluginPreviewFailure.response }
                 scheme.didReceive(head); scheme.didReceive(response.data); scheme.didFinish()
-            } catch { if schemes[key] == id, !stopped { scheme.didFailWithError(GuiPluginPreviewFailure.response); failed() } }
+            } catch { if schemes[key] == id, !stopped { scheme.didFailWithError(error); if path != nil { failed() } } }
             schemes.removeValue(forKey: key); tasks.removeValue(forKey: id)
         }
     }
@@ -652,6 +725,22 @@ import WebKit
             reply(value, nil); return
         }
         guard let expectedHost = try? RuntimeHostScope(args["expectedHost"]), expectedHost == lease.expectedHost else { reply(nil, GuiPluginPreviewFailure.stale.rawValue); return }
+        if name == "device" {
+            guard Set(args.keys) == ["name", "expectedHost", "method", "input"], let method = args["method"] as? String,
+                  let input = args["input"] as? [String: Any], tasks.count < 8 else { reply(nil, GuiPluginPreviewFailure.invalid.rawValue); return }
+            let id = UUID(), generation = owner, device = deviceBridge()
+            tasks[id] = Task { [weak self] in
+                guard let self else { reply(nil, GuiPluginPreviewFailure.stale.rawValue); return }
+                defer { tasks.removeValue(forKey: id) }
+                do {
+                    try checkAdmission(expectedHost)
+                    let value = try await device.request(method, input: input)
+                    guard owner == generation else { throw GuiPluginDeviceFailure.aborted }
+                    reply(GuiPluginDeviceBridge.reply(.success(value)), nil)
+                } catch { reply(GuiPluginDeviceBridge.reply(.failure(error)), nil) }
+            }
+            return
+        }
         if name == "cancel" {
             guard let requestID = args["id"] as? String else { reply(nil, GuiPluginPreviewFailure.invalid.rawValue); return }
             if let taskID = requestsByID.removeValue(forKey: requestID) { tasks[taskID]?.cancel() }
@@ -676,6 +765,9 @@ import WebKit
         }
         if name == "state" {
             guard let phase = args["phase"] as? String, ["loading", "mounted", "source", "unmatched", "error", "closed"].contains(phase) else { reply(nil, GuiPluginPreviewFailure.invalid.rawValue); return }
+            if phase == "mounted" { match.finish(.success(true)) }
+            if phase == "unmatched" { match.finish(.success(false)) }
+            if phase == "closed" { match.finish(.failure(CancellationError())) }
             if phase == "loading" { spinner.startAnimating() }
             else { spinner.stopAnimating(); navigationItem.titleView = nil }
             if phase == "error" || phase == "unmatched" { failed() }
@@ -712,19 +804,31 @@ import WebKit
         }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let allowed = !stopped && current() && navigationAction.targetFrame?.isMainFrame == true && navigationAction.request.httpMethod == "GET"
-            && navigationAction.request.url.map { (try? GuiPluginPreviewScope.asset($0, owner: owner)) == GuiPluginPreviewScope.entry } == true
+        let allowed = !stopped && current() && navigationAction.request.httpMethod == "GET" && navigationAction.request.url.map { url in
+            if navigationAction.targetFrame?.isMainFrame == true { return (try? GuiPluginPreviewScope.asset(url, owner: owner)) == GuiPluginPreviewScope.entry }
+            return ["about:blank", "about:srcdoc"].contains(url.absoluteString) || url.scheme == "blob" || url.scheme == GuiPluginPreviewScope.scheme && url.host == owner && (url.path.hasPrefix("/__gui/") || url.path.hasPrefix("/api/preview/proxy/"))
+        } == true
         decisionHandler(allowed ? .allow : .cancel)
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { if !stopped { failed() } }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-        guard prompt == "yuri.gui.storage.v1", !stopped, current(), webView === web, frame.isMainFrame,
-              let url = frame.request.url, (try? GuiPluginPreviewScope.asset(url, owner: owner)) == GuiPluginPreviewScope.entry,
-              let text = defaultText, let data = text.data(using: .utf8), let storage = captured.storage else { completionHandler(nil); return }
+        guard ["yuri.gui.storage.v1", "yuri.gui.device.v1"].contains(prompt), !stopped, current(), webView === web, frame.isMainFrame,
+               let url = frame.request.url, (try? GuiPluginPreviewScope.asset(url, owner: owner)) == GuiPluginPreviewScope.entry,
+               let text = defaultText, let data = text.data(using: .utf8) else { completionHandler(nil); return }
         do {
             let request = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let expected = try RuntimeHostScope(request?["expectedHost"])
             try checkAdmission(expected)
+            if prompt == "yuri.gui.device.v1" {
+                let result: Result<Any, Error>
+                do {
+                    guard let request, Set(request.keys) == ["expectedHost", "method", "input"], let method = request["method"] as? String, let input = request["input"] as? [String: Any] else { throw GuiPluginDeviceFailure.invalid }
+                    result = .success(try deviceBridge().synchronous(method, input: input))
+                } catch { result = .failure(error) }
+                let response = try JSONSerialization.data(withJSONObject: GuiPluginDeviceBridge.reply(result))
+                completionHandler(String(data: response, encoding: .utf8)); return
+            }
+            guard let storage = captured.storage else { throw GuiPluginPreviewFailure.unavailable }
             let result = try storage.transact(request?["operation"])
             try checkAdmission(expected)
             let reply = try JSONSerialization.data(withJSONObject: ["ok": true, "value": result], options: [.fragmentsAllowed])

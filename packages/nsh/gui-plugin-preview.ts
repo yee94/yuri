@@ -1,7 +1,8 @@
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 import { validateGuiPluginNativeContext, type GuiPluginNativeContext } from './gui-plugin-native-context';
 
-export type GuiPluginPreviewIntent = { sessionId: string; directory: string; path: string };
+export type GuiPluginPreviewIntent = { sessionId?: string; directory: string; path: string };
+export type GuiPluginPresentationResult = { closed: true; matched?: boolean };
 export type GuiPluginPreviewState = Readonly<{
   phase: 'loading' | 'mounted' | 'source' | 'unmatched' | 'error' | 'closed';
   refreshing: boolean;
@@ -45,9 +46,9 @@ export function validateGuiPluginPreviewIntent(value: GuiPluginPreviewIntent): G
   const path = (input: string) => typeof input === 'string' && input.length > 0 && input.length <= 8192
     && !/[\u0000-\u001f\u007f]/.test(input)
     && (!/^[a-z][a-z\d+.-]*:/i.test(input) || /^file:/i.test(input) || /^[a-z]:[\\/]/i.test(input));
-  if (!value || !path(value.directory) || !path(value.path) || typeof value.sessionId !== 'string'
-    || !value.sessionId || value.sessionId.length > 1024 || /[\u0000-\u001f\u007f]/.test(value.sessionId)) throw new Error('GUI_PLUGIN_INVALID_INPUT');
-  return { sessionId: value.sessionId, directory: value.directory, path: value.path };
+  if (!value || !path(value.directory) || !path(value.path) || value.sessionId !== undefined && (typeof value.sessionId !== 'string'
+    || !value.sessionId || value.sessionId.length > 1024 || /[\u0000-\u001f\u007f]/.test(value.sessionId))) throw new Error('GUI_PLUGIN_INVALID_INPUT');
+  return { ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }), directory: value.directory, path: value.path };
 }
 
 /** Mount-only orchestration. The injected host is the existing SDK/Solid host,
@@ -127,7 +128,7 @@ export function createGuiPluginPreview(input: {
     scheduled = true;
     queueMicrotask(() => { scheduled = false; if (!ended) reconcile(); });
   };
-  input.host.setSession({ id: intent.sessionId, directory: intent.directory });
+  input.host.setSession(intent.sessionId === undefined ? undefined : { id: intent.sessionId, directory: intent.directory });
   stopObserve = input.host.subscribe(schedule);
   async function refresh() {
     if (!current()) { close(); return; }
@@ -183,7 +184,7 @@ export async function presentGuiPluginPreview(
   isCurrent: (expectedHost: RuntimeScope) => boolean,
   owner: string,
   context?: GuiPluginNativeContext,
-): Promise<{ closed: true }> {
+): Promise<GuiPluginPresentationResult> {
   const expectedHost = runtimeScopeFrom(scope);
   if (!expectedHost) throw new Error('scope_required');
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(owner)) throw new Error('GUI_PLUGIN_INVALID_OWNER');
@@ -192,7 +193,8 @@ export async function presentGuiPluginPreview(
   const result = await call('plugins.preview.present', { ...validateGuiPluginPreviewIntent(intent), expectedHost, owner, ...(presentation ? { context: presentation } : {}) });
   if (!isCurrent(expectedHost)) throw new Error('runtime_host_scope_stale');
   if (!result || typeof result !== 'object' || !('closed' in result) || result.closed !== true) throw new Error('GUI_PLUGIN_INVALID_OUTPUT');
-  return { closed: true };
+  if ('matched' in result && typeof result.matched !== 'boolean') throw new Error('GUI_PLUGIN_INVALID_OUTPUT');
+  return { closed: true, ...('matched' in result ? { matched: result.matched as boolean } : {}) };
 }
 
 /** Parent captures the scope once; every open and cleanup has a unique owner.

@@ -1,7 +1,9 @@
 import { fixtureRequest } from './new-session-request.js';
+import { settingsEngineFixtureScope } from './settings-engine-fixture-scope.js';
 
 /** Isolated in-memory destructive fixture; never connects to a real Host/configuration. */
 export function createHost() {
+  const scope = settingsEngineFixtureScope('provider-removal-fixture');
   const ids = ['target', 'environment', 'runtime', 'partial-config', 'partial-credential', 'refresh'];
   const rows = ids.map(id => ({ id, files: id === 'runtime' ? [] : ['/fixture/user.jsonc', '/fixture/project/opencode.json'],
     credentials: id === 'runtime' ? [] : [`${id}/a`, `${id}/b`], configAttempts: 0, credentialAttempts: {}, configFailed: false, credentialFailed: false, refreshFailed: false }));
@@ -9,8 +11,11 @@ export function createHost() {
   const present = row => row.files.length > 0 || row.credentials.length > 0 || ['environment', 'runtime'].includes(row.id);
   const connections = row => [...row.credentials.map(id => ({ type: 'credential', id, method: 'key', label: 'Fixture account' })), ...(row.id === 'environment' ? [{ type: 'env', name: 'FIXTURE_KEY' }] : [])];
   return { call(name, input) {
-    if (name === 'connection.list') return { selected: 'provider-removal-fixture', runtimeScope: { hostID: 'provider-removal-fixture', lease: 'synthetic-provider-removal-lease' }, connections: [{ id: 'provider-removal-fixture', label: 'Synthetic Provider Host', url: 'https://providers.example.invalid', lastUsedAt: 0 }] };
+    if (name === 'connection.list') return scope.connection(input);
+    if (name === 'settings.fixture.scope') return scope.control(input);
+    if (name === 'settings.fixture.scopeAudit') return scope.audit(input);
     if (name !== 'runtime.request') throw new Error('Unexpected provider-removal native call');
+    scope.admit(input);
     const route = fixtureRequest(input), { path, method, params } = route;
     if (input.path.endsWith('?') || input.body !== undefined) throw new Error('Unexpected provider-removal fixture query/body');
     const ok = body => ({ status: 200, body });

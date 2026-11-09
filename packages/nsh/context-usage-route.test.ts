@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { captureIssuedStream, issuedStream, resetIssuedStreams } from './tests/session-stream-fixture';
 import type { Row } from './model';
 import { createContextUsageRoute, type ContextMessageCommit } from './context-usage-route-core';
 
@@ -57,13 +58,109 @@ const catalog = { schemaVersion: 1, providers: [{ id: 'decoy', models: { wrong: 
 const flush = async () => { for (let index = 0; index < 100; index++) await Promise.resolve(); };
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 const emit = (type: string, body: Row = {}) => {
-  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ key: 'chat', data: JSON.stringify({ type, data: { sessionID: target.id, ...body }, location: { directory: target.directory } }) });
+  for (const listener of h.listeners.get('runtime.event') ?? []) listener({ ...issuedStream(h.call), data: JSON.stringify({ type, data: { sessionID: target.id, ...body }, location: { directory: target.directory } }) });
 };
 const requests = () => h.call.mock.calls.filter(([name]) => name === 'runtime.request').map(([, input]) => input as { path: string; method: string });
 const streams = () => h.call.mock.calls.filter(([name]) => name === 'runtime.stream' || name === 'runtime.stop');
 let read: (path: string) => unknown;
 const routes: Array<ReturnType<typeof createContextUsageRoute>> = [];
+it('A→B→A global frames retain their real issued lease; retired status/ready/Goal cannot enter the current Chat', async () => {
+  const state = await import('./state');
+  let nativeScope = { hostID: 'fixture', lease: 'first-A' };
+  const original = h.call.getMockImplementation()!;
+  h.call.mockImplementation(async (name, input) => name === 'connection.list'
+    ? { selected: nativeScope.hostID, runtimeScope: { ...nativeScope }, connections: [{ id: nativeScope.hostID, url: 'https://fixture.example' }] }
+    : name === 'runtime.request' && input.path.startsWith('/api/rpc/opencode.goal/get?') ? { status: 200, body: await read(input.path) }
+    : original(name, input));
+  await state.loadConnections(); state.runtimeLifecycle(); await flush();
+  const oldA = issuedStream(h.call, 'global');
+  nativeScope = { hostID: 'other', lease: 'B' }; await state.loadConnections({ forceReconnect: true }); await flush();
+  const oldB = issuedStream(h.call, 'global');
+  nativeScope = { hostID: 'fixture', lease: 'second-A' }; await state.loadConnections({ forceReconnect: true }); await flush();
+  const current = issuedStream(h.call, 'global');
+  expect(current.expectedHost).not.toEqual(oldA.expectedHost); expect(current.expectedHost).not.toEqual(oldB.expectedHost);
+  const goal = { id: 'g', objective: 'Keep current authority', status: 'active', rounds: 1, maxRounds: 20, boot: 'process', updatedAt: 1 };
+  const normal = read; read = path => path.startsWith('/api/rpc/opencode.goal/get?') ? { output: goal } : normal(path);
+  const chat = state.createChat(target); await chat.draftReady; chat.goal.observe(); await flush();
+  const dispatch = (value: Row) => { for (const listener of h.listeners.get('runtime.event') ?? []) listener(value); };
+  dispatch({ ...issuedStream(h.call), type: 'reconnected' }); await vi.advanceTimersByTimeAsync(120); await flush();
+  expect(chat.goal.state().goal).toMatchObject(goal);
+  const frame = (ticket: ReturnType<typeof issuedStream>, type: string, data: Row) => dispatch({ ...ticket, data: JSON.stringify({ type, data: { sessionID: target.id, ...data }, location: { directory: target.directory } }) });
+  frame(current, 'session.execution.started', {}); expect(chat.busy()).toBe(true);
+  const reads = () => requests().filter(request => request.path.startsWith('/api/rpc/opencode.goal/get?')).length;
+  const baseline = reads();
+  for (const retired of [oldA, oldB]) {
+    frame(retired, 'session.status', { status: 'idle' });
+    frame(retired, 'rpc.opencode.goal.changed', { goal: null });
+    dispatch({ ...retired, type: 'reconnected' });
+  }
+  for (const expectedHost of [undefined, null, {}, Object.assign({}, current.expectedHost, { extra: true })]) {
+    dispatch({ key: 'global', expectedHost, data: JSON.stringify({ type: 'session.status', data: { sessionID: target.id, status: 'idle' } }) });
+    dispatch({ key: 'global', expectedHost, type: 'reconnected' });
+  }
+  expect(chat.busy()).toBe(true); expect(chat.goal.state().goal).toMatchObject(goal);
+  await vi.advanceTimersByTimeAsync(120); expect(reads()).toBe(baseline);
+  frame(current, 'rpc.opencode.goal.changed', { goal: { ...goal, status: 'paused' } });
+  expect(chat.goal.state().goal?.status).toBe('paused');
+  frame(current, 'session.status', { status: 'idle' }); expect(chat.busy()).toBe(false);
+  dispatch({ ...current, type: 'reconnected' }); await vi.advanceTimersByTimeAsync(120);
+  expect(reads()).toBe(baseline + 1); expect(current).not.toHaveProperty('ownerID');
+});
+it('unknown canonical transport blocks only the stream, preserving independent initial history and safety reads', async () => {
+  const state = await import('./state'); await state.loadConnections();
+  const chat = state.createChat(target, { messageStreamTransport: () => null }); await flush();
+  expect(streams()).toEqual([]); expect(chat.streamState()).toBe('inactive');
+  expect(chat.messages().map(message => message.id)).toEqual(['u', 'a', 'b']); expect(chat.messagesResolved()).toBe(true);
+  const history = requests().filter(request => request.path.includes('/message?')).length;
+  await vi.advanceTimersByTimeAsync(4100);
+  expect(requests().filter(request => request.path.includes('/message?'))).toHaveLength(history + 1);
+});
+it('50 unrelated canonical appearance updates preserve the stream owner and do no extra GETs', async () => {
+  const state = await import('./state'); await state.loadConnections(); const { signal } = await import('nsh');
+  const canonical = signal<{ mode: 'auto' | 'ws' | 'sse'; unrelated: number }>({ mode: 'ws', unrelated: 0 });
+  state.createChat(target, { messageStreamTransport: () => canonical().mode }); await flush();
+  const before = requests().length, ticket = issuedStream(h.call), starts = streams().length;
+  for (let index = 1; index <= 50; index++) canonical.set({ mode: 'ws', unrelated: index });
+  await flush();
+  expect(streams()).toHaveLength(starts); expect(issuedStream(h.call)).toEqual(ticket); expect(requests()).toHaveLength(before);
+  canonical.set({ mode: 'sse', unrelated: 51 }); await flush();
+  expect(streams()).toHaveLength(starts + 2); expect(issuedStream(h.call).ownerID).not.toBe(ticket.ownerID);
+});
+it('canonical mode replaces one stream; old same-lease frames cannot act, replay flushes before GET', async () => {
+  const state = await import('./state'); await state.loadConnections();
+  const { signal } = await import('nsh');
+  const mode = signal<'auto' | 'ws' | 'sse' | null>('ws');
+  const chat = state.createChat(target, { messageStreamTransport: mode }); await flush();
+  const old = issuedStream(h.call);
+  const startCount = streams().filter(([name]) => name === 'runtime.stream').length;
+  mode.set('sse'); await flush();
+  const current = issuedStream(h.call);
+  expect(current.expectedHost).toEqual(old.expectedHost); expect(current.ownerID).not.toBe(old.ownerID);
+  expect(streams().filter(([name]) => name === 'runtime.stream')).toHaveLength(startCount + 1);
+  expect(streams().filter(([name]) => name === 'runtime.stop').at(-1)?.[1]).toEqual(old);
+  const dispatch = (name: string, value: unknown) => { for (const listener of h.listeners.get(name) ?? []) listener(value); };
+  const event = (ticket: typeof current, type: string, body: Row = {}) => dispatch('runtime.event', { ...ticket, data: JSON.stringify({ type, data: { sessionID: target.id, ...body } }) });
+  event(current, 'session.execution.started'); expect(chat.busy()).toBe(true);
+  dispatch('runtime.disconnected', current); expect(chat.streamState()).toBe('disconnected');
+  const before = requests().length;
+  event(old, 'session.idle'); dispatch('runtime.event', { ...old, type: 'reconnected' }); dispatch('runtime.disconnected', old);
+  expect(chat.busy()).toBe(true); expect(chat.streamState()).toBe('disconnected');
+  event(current, 'session.text.delta', { assistantMessageID: 'replay', ordinal: 0, delta: 'replayed-before-ready' });
+  await vi.advanceTimersByTimeAsync(120); expect(requests()).toHaveLength(before);
+  dispatch('runtime.event', { ...current, type: 'reconnected' });
+  expect(chat.messages().find(message => message.id === 'replay')?.text).toBe('replayed-before-ready');
+  expect(chat.busy()).toBe(true); expect(requests()).toHaveLength(before);
+  const normal = read;
+  read = path => { if (path.includes('/message?') || path === '/api/session/active') throw new Error('authority unavailable'); return normal(path); };
+  await vi.advanceTimersByTimeAsync(120); await flush();
+  expect(chat.messages().find(message => message.id === 'replay')?.text).toBe('replayed-before-ready'); expect(chat.busy()).toBe(true);
+  const start = h.call.mock.calls.filter(([name]) => name === 'runtime.stream').at(-1)?.[1];
+  expect(start.mode).toBe('sse'); expect(start.path).toBe('/api/event?directory=%2Fworkspace%2Factual');
+  mode.set(null); await flush(); expect(chat.streamState()).toBe('inactive');
+  expect(streams().filter(([name]) => name === 'runtime.stop').at(-1)?.[1]).toEqual(current);
+});
 beforeEach(() => {
+  resetIssuedStreams(h.call);
   vi.resetModules(); vi.useFakeTimers(); h.cleanups = []; h.disposers = []; h.listeners.clear(); h.setLifecycle('active');
   read = path => {
     if (path.includes('/message?')) return page();
@@ -74,6 +171,7 @@ beforeEach(() => {
     throw new Error('Unexpected production fixture GET: ' + path);
   };
   h.call.mockReset().mockImplementation(async (name, input) => {
+    if (name === 'runtime.stream') captureIssuedStream(h.call, input);
     if (name === 'connection.list') return { selected: 'fixture', runtimeScope: { hostID: 'fixture', lease: 'fixture-lease' }, connections: [{ id: 'fixture', label: 'Fixture', url: 'https://fixture.example' }] };
     if (name === 'runtime.request') { if (input.method !== 'GET') throw new Error('Fixture forbids writes'); return { status: 200, body: await read(input.path) }; }
     return true;

@@ -63,7 +63,7 @@ it.skipIf(process.platform !== 'darwin')('exact native tickets and pending strea
   print("Exact GUI ownership regression passed")
  }
 }`);
-    const compiled = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift'].map(file => path.join(root, 'ios', file)), source, '-o', binary], { encoding: 'utf8', timeout: 60_000 });
+    const compiled = spawnSync('xcrun', ['swiftc', '-swift-version', '5', '-parse-as-library', ...['RuntimeHostScope.swift', 'ResourceWebPreviewBridge.swift', 'GuiPluginPreviewBridge.swift', 'GuiPluginDeviceBridge.swift', 'GuiPluginResourceResolver.swift'].map(file => path.join(root, 'ios', file)), source, '-o', binary], { encoding: 'utf8', timeout: 60_000 });
     expect(compiled.status, compiled.stdout + compiled.stderr).toBe(0);
     const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 10_000 });
     expect(result.status, result.stdout + result.stderr).toBe(0);
