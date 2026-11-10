@@ -163,6 +163,7 @@ export const SummarySettings: React.FC = () => {
           itemId="summary-ai.configuration"
           label={t('settings.yuri.defaults.summary.providerModel')}
           description={t('settings.yuri.defaults.summary.description')}
+          className="yuri-settings-split-row-stacked yuri-settings-summary-model"
         >
           <ModelSelector
             providerId={summaryProviderID}

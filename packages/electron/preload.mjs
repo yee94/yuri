@@ -3,6 +3,30 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 const eventListeners = new Map();
 let documentRestricted = false;
 
+let quitHint = null;
+let quitHintTimer = null;
+ipcRenderer.on('yuri:quit-hint', (_event, payload) => {
+  clearTimeout(quitHintTimer);
+  quitHint?.remove();
+  quitHint = null;
+  if (!payload || !document.body) return;
+
+  const hint = document.createElement('div');
+  hint.dataset.yuriQuitHint = '';
+  hint.setAttribute('role', 'status');
+  hint.setAttribute('popover', 'manual');
+  hint.className = 'yuri-mobile-overlay-surface yuri-popup-surface';
+  hint.style.cssText = 'position:fixed;inset:0;margin:auto;width:max-content;max-width:calc(100vw - 48px);height:max-content;padding:16px 24px;border-radius:16px;font:500 20px/1.5 system-ui;text-align:center;pointer-events:none;user-select:none;';
+  hint.textContent = payload.message;
+  document.body.append(hint);
+  hint.showPopover();
+  quitHint = hint;
+  quitHintTimer = setTimeout(() => {
+    hint.remove();
+    if (quitHint === hint) quitHint = null;
+  }, payload.duration);
+});
+
 const readArgValue = (name) => {
   const prefix = `${name}=`;
   const entry = process.argv.find((value) => typeof value === 'string' && value.startsWith(prefix));

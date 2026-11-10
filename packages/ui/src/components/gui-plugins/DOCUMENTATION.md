@@ -26,10 +26,15 @@ Settings → Plugins uses the package's top-level `package.json.icon`, not neste
 `currentColor`, so transparent package icons follow the surrounding text in light
 and dark themes; raster artwork keeps its original colors. SVG load/CORS failures
 use the existing placeholder. No plugin SVG markup is injected into the page.
-GUI sidebar/titlebar entries instead use official `IconName` strings
-resolved to available Yuri sprites (including `globe` → `global`) in current text
-color. They never query or substitute package artwork. Busy still uses a spinner.
-Unknown icons preserve the label. Plugin-owned labels remain under the plugin's
+GUI sidebar/titlebar entries accept built-in names resolved to Yuri sprites
+(including `globe` → `global`) in current text color. Yuri also extends that same
+`icon` string with raw SVG and image data URIs, normalized by the GUI host before
+publication. Custom images render as `<img>` with their own colors, object-contained
+in the existing icon slot; no SVG markup is injected. All shared placements use the
+same behavior (Web, Electron, VS Code, hosted and Capacitor mobile). They never query
+or substitute package artwork, fetch remote images or resolve file paths. Busy still
+uses a spinner. Unknown/rejected icons and image load failures preserve the label
+and sidebar slot; a different image string retries rendering. Plugin-owned labels remain under the plugin's
 i18n. Native actions retain the existing main/IPC policy.
 
 An entry is an action, not a global page registration. Official `Panel` content is
