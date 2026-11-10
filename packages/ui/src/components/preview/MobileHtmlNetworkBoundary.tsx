@@ -6,7 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
 
-type Network = Awaited<ReturnType<typeof acquireMobileHtmlNetwork>>;
+type Network = { hostOrigin?: string };
 type Props = { children: (network?: Network) => React.ReactNode };
 
 function NativeBoundary({ children }: Props) {
@@ -24,9 +24,12 @@ function NativeBoundary({ children }: Props) {
       lost = true;
       if (!controller.signal.aborted) setResult({ generation, attempt, failed: true });
     };
-    void acquireMobileHtmlNetwork(controller.signal, fail).then(network => {
-      if (!controller.signal.aborted && !lost) setResult({ generation, attempt, network });
-    }).catch(fail);
+    // HTML needs the Host's HTTP origin from the channel handshake, so it connects now.
+    void acquireMobileHtmlNetwork(controller.signal, fail)
+      .then(lease => lease.connect(controller.signal))
+      .then(network => {
+        if (!controller.signal.aborted && !lost) setResult({ generation, attempt, network });
+      }).catch(fail);
     // Passive cleanup runs after the iframe/HTML descendants have been removed.
     return () => controller.abort();
   }, [generation, attempt, failed]);

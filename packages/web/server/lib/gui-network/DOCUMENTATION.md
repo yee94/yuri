@@ -43,11 +43,18 @@ SOCKS gateway. Without a GUI lease it forwards ordinary application TCP directly
 network isolation.
 
 Before GUI CJS/setup executes, `start` closes old gateway streams and switches
-new streams to the Relay emitter. A failed Relay keeps that mode until the host
-owner releases its lease. `stop` closes streams/wires and returns the gateway to
-ordinary application forwarding; it does not uninstall the WebView proxy.
-Native owner destruction owns final listener/proxy cleanup. The gateway currently
-shares the main iOS data store / Android WebView process with ordinary app traffic.
+new streams to the Relay emitter. `start.direct` lists Yuri's own endpoints
+(current Relay server, runtime origin, saved LAN candidates as `host:port`); the
+gateway matches them at SOCKS connect time and forwards those streams directly,
+so the application tunnel is never nested inside plugin egress. All other streams
+use the plugin Relay channel, which the UI opens on the first plugin stream and
+closes after 60 seconds idle. A lost channel fails only in-flight plugin streams;
+the next stream reconnects with backoff while the lease and plugins stay loaded.
+`stop` closes streams/wires and returns the gateway to ordinary application
+forwarding; it does not uninstall the WebView proxy. Native owner destruction owns
+final listener/proxy cleanup. The gateway shares the main iOS data store / Android
+WebView process with ordinary app traffic; the direct list keeps that traffic off
+the plugin channel. The goal is Host-equivalent reachability, not isolation.
 
 `ui/src/lib/preview/mobile-html-network.ts` shares this owner between GUI setup and
 built-in HTML previews. The last consumer releases the gateway. Built-in loopback

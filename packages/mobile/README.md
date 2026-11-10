@@ -60,10 +60,13 @@ remain browser-owned. No hostname bypass or direct fallback is configured, but
 the current iOS implementation has a verified platform routing bypass below.
 
 Mobile startup prepares the persistent gateway before importing runtime network
-configuration. The Provider switches it to Relay before evaluating any GUI bundle,
-and keeps the lease until the host is disposed, covering setup, panels and settings
-as well as pages. Closing a page does not release it. A failed tunnel first disposes
-plugins before releasing its shared owner. Built-in HTML files and URL sheets hold
+configuration. The Provider switches it to plugin egress before evaluating any GUI
+bundle, and keeps the lease until the host is disposed, covering setup, panels and
+settings as well as pages. Closing a page does not release it. Switching is local:
+the plugin Relay channel connects on the first plugin connection and reconnects with
+backoff after loss without disposing plugins. Yuri's own Relay, runtime and LAN
+endpoints always connect directly, so plugin traffic cannot stall application sync.
+Apps appears as soon as an enabled GUI plugin exists; its sheet shows loading/retry. Built-in HTML files and URL sheets hold
 independent references; the final release returns the gateway to ordinary application
 forwarding while retaining the proxy.
 Old shells, iOS below 17,

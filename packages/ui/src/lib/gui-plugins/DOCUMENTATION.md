@@ -82,7 +82,7 @@ React 只拥有空容器；插件可返回 iframe，也可自行渲染 DOM。无
 不会回退外部浏览器。`/plugins/$pluginId/$pageId` 只包含身份，不包含配置。
 桌面/Web 桌面布局和 VS Code 保留上述全局 placement。新版 Capacitor 通过
 Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet 中挂载同一个页面。
-卡片只来自真实 `yuri.page` 注册；没有页面时不显示入口。多个插件相同页面 ID
+卡片只来自真实 `yuri.page` 注册；入口按已启用 GUI 插件显示，加载期间在 Sheet 内提示。多个插件相同页面 ID
 按完整 host key 区分；无图标或未知图标沿用 window 回退。其他 root header 不重复放入口。
 普通 hosted mobile 的全局页仍为 unsupported，`yuri.pages` 在网络未就绪时 inactive。
 
@@ -92,23 +92,39 @@ Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet �
 runtime 配置，避免应用网络先建立连接。常驻 SOCKS 网关在没有 GUI 租约时直接
 转发普通应用 TCP；原生 `capabilities.supported` 只表示准备成功，不表示零旁路。
 
+目标是**可达性**：插件在手机上看到的网络与 Host 一致（Host 本机、Host 内网与公网
+均从 Host 发起）。它不是插件沙箱，也不承诺零旁路。
+
 `GuiPluginsProvider` 在创建 host、求值 CJS 和执行 setup **之前**取得
-`acquireMobileHtmlNetwork` 共享租约，底层仍由 `openMobileGuiNetwork` 持有。内置 HTML
-文件预览及 URL Sheet 也申请同一个 owner。缺少新版原生桥、iOS 17+ 代理能力、已配对 Relay
-或新版 Host 出口时，不执行移动插件代码，错误保留在插件设置中。LAN 连接也使用
-同一已保存设备的 Relay candidate；不猜测其他设备或降级手机直连。
+`acquireMobileHtmlNetwork` 共享租约，底层仍由 `openMobileGuiNetwork` 持有。取得租约只是
+把本地网关切到插件出口，不等待 Relay：插件 Relay 通道在第一条插件 TCP 连接时才建立，
+空闲 60 秒后关闭。插件加载、页面注册和入口显示因此不依赖 Relay 握手。内置 HTML
+文件预览及 URL Sheet 也申请同一个 owner；它们需要握手返回的 Host HTTP origin，
+所以显式 `connect()`，失败时显示重试。缺少新版原生桥、iOS 17+ 代理能力或已配对 Relay
+时不执行移动插件代码，错误保留在插件设置中。LAN 连接也使用同一已保存设备的 Relay
+candidate；不猜测其他设备或降级手机直连。
+
+**Yuri 自身连接永远不进入插件出口。** `start` 携带 `direct` 目标：当前 Relay 服务器、
+当前 runtime 地址和已保存的 LAN 候选（host:port）。网关在 SOCKS 握手时按目标分流，
+这些连接直连；其余连接走插件 Relay。主应用的消息同步因此不受插件流量或插件通道
+故障影响。
 
 租约覆盖整个 host，因此页面、Panel、Settings、setup 和插件后台任务共用代理；
-关闭单个页面不释放租约。`start` 关闭旧网关连接并切换 Relay 出口；失败先 dispose
-插件，再 abort 自己的引用；HTML 消费者先移除内容再释放，最后一个 owner 才结束
-Relay 模式。正常清理先释放 host owner，再 abort 网络；`stop` 关闭流和 wire，恢复
-普通应用转发，但保留 WebView 代理配置。
-并发 acquire 等待上次 release，旧 generation 的回调丢弃。页面被权威移除会关闭，所属插件
-失败则保留错误页；其他插件的失败不阻碍关闭已移除页面。
+关闭单个页面不释放租约。插件通道断开只关闭在途插件连接并通知 owner，不 dispose
+插件、不结束租约；下一条连接以指数退避（1s 起、30s 封顶）重连，成功后清零。
+HTML 消费者先移除内容再释放，最后一个 owner 才结束插件出口。正常清理先释放 host
+owner，再 abort 网络；`stop` 关闭流和 wire，恢复普通应用转发，但保留 WebView 代理配置。
+并发 acquire 等待上次 release，旧 generation 的回调丢弃；打开失败的租约不被后续 owner
+共享。页面被权威移除会关闭，所属插件失败则保留错误页；其他插件的失败不阻碍关闭已移除页面。
+
+Projects 的「应用」入口在权威 inventory 有已启用 GUI 插件时立即显示，不等插件加载；
+点开后在 Sheet 内显示加载、失败重试或暂无应用。卡片仍只来自真实 `yuri.page` 注册。
 
 `mobile-network-wire.ts` 将**同一配对 Relay 的独立连接**交给原生 URLSession /
-OkHttp；加密仍由既有 TS tunnel client 完成。WebView 代理没有 Relay hostname
-bypass；配置的 HTTP(S)/WS(S) 路径为 loopback SOCKS → 现有 Relay → Host TCP 出口。
+OkHttp；加密仍由既有 TS tunnel client 完成。插件的 HTTP(S)/WS(S) 路径为
+loopback SOCKS → 插件 Relay 通道 → Host TCP 出口；Yuri 自身目标按上文直连。
+Android 流 ID 按 `Integer`/`Long` 两种 JSON 数字读取（Capacitor `getLong` 不接受
+`Integer`，曾导致打开确认被拒、约 23 秒一轮重试）。
 32 流、16 KiB 分块和 128 KiB/流 credit 限制在途字节，写入完成后才归还 credit。
 
 当前复用主 WebView：iOS 同 website data store、Android 同进程的其他 WebView

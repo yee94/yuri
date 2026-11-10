@@ -4,11 +4,14 @@
 the GUI host and built-in HTML views. It delegates to `gui-plugins/mobile-network`
 and the existing paired Relay; it does not create another Relay service. Concurrent
 consumers share startup. Cancelling one does not cancel the others. The last owner
-releases the native gateway; runtime generations never share an entry.
+releases the native gateway; runtime generations never share an entry, and a failed
+open is never shared. Acquiring only routes plugin egress; the Relay channel connects
+on first use or `connect()`. Channel loss notifies every owner but keeps the lease.
+Yuri's own Relay/runtime/LAN endpoints always bypass plugin egress.
 
-`MobileHtmlNetworkBoundary` gates built-in HTML execution on that lease. On failure
-or runtime switch it removes iframe descendants before passive cleanup aborts its
-owner. It exposes a local retry. Ordinary web/desktop/VS Code rendering passes
+`MobileHtmlNetworkBoundary` gates built-in HTML execution on that lease and calls
+`connect()` for the Host HTTP origin. On failure or runtime switch it removes iframe
+descendants before passive cleanup aborts its owner. It exposes a local retry. Ordinary web/desktop/VS Code rendering passes
 through without a native lease. GUI CJS/setup remains gated by its Provider.
 
 Native mobile `openExternalUrl` loopback links (including bare `localhost:port`),

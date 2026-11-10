@@ -11,6 +11,7 @@ vi.mock('@/lib/gui-plugins/react', () => ({ useGuiPlugins: () => fixture.context
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: true }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: ({ name }: { name: string }) => <svg data-icon={name} /> }));
+vi.mock('@/components/ui/FilePreviewError', () => ({ FilePreviewError: ({ message }: { message: string }) => <p>{message}</p> }));
 vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileResizableSheet: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <section data-sheet>{children}</section> : null }));
 vi.mock('./GuiPluginWindow', () => ({ GuiPluginWindow: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <section>{children}</section> : null }));
 vi.mock('./GuiPluginPage', () => ({ GuiPluginPage: () => <div data-page /> }));
@@ -42,6 +43,30 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); useUIStore.setState(previous); });
 
+const enabledInventory = [{ id: 'one', enabled: true }];
+
+it('shows the entry from inventory before plugins load, with loading then failure and retry in the sheet', async () => {
+  fixture.context = { ...fixture.context!, host: null, requested: false, inventory: enabledInventory };
+  await draw();
+  await click('guiPlugins.apps');
+  expect(fixture.context!.requestLoad).toHaveBeenCalledOnce();
+  expect(container.querySelector('[data-gui-apps-loading]')).not.toBeNull();
+  fixture.context = { ...fixture.context!, requested: true, loading: false, error: 'offline' };
+  await draw();
+  expect(container.querySelector('[data-gui-apps-loading]')).toBeNull();
+  await click('guiPlugins.mobile.retry');
+  expect(fixture.context!.refresh).toHaveBeenCalledOnce();
+});
+
+it('hides the entry without an enabled GUI plugin, and reports an empty catalog after loading', async () => {
+  fixture.context = { ...fixture.context!, inventory: [{ id: 'one', enabled: false }] };
+  await draw();
+  expect(container.querySelector('button')).toBeNull();
+  fixture.context = { ...fixture.context!, inventory: enabledInventory };
+  await draw(); await click('guiPlugins.apps');
+  expect(container.querySelector('[data-gui-apps-empty]')?.textContent).toContain('guiPlugins.mobile.noApps');
+});
+
 it('only exposes registered pages and opens their exact identity from icon cards', async () => {
   snapshot({ titlebarItems: [{ key: 'action', pluginId: 'demo', label: 'Action', title: 'Action', actionable: true }] });
   await draw();
@@ -51,6 +76,7 @@ it('only exposes registered pages and opens their exact identity from icon cards
     { key: '["two","main"]', pluginId: 'two', title: 'Second' },
   ] });
   await draw(); await click('guiPlugins.apps');
+  expect(container.querySelectorAll('[data-icon="loader-4"]')).toHaveLength(0);
   expect([...container.querySelectorAll('[data-gui-apps] [data-icon]')].map(node => node.getAttribute('data-icon'))).toEqual(['global', 'window']);
   await click('Second');
   expect(useUIStore.getState().activeGuiPage).toBe('["two","main"]');

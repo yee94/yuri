@@ -18,15 +18,24 @@ private final class GuiSocksServer {
     }
     private let queue = DispatchQueue(label: "com.yuri.gui-network")
     private var emit: (([String: Any]) -> Void)?
+    private var directTargets: Set<String> = []
     private var listener: NWListener?
     private var streams: [UInt32: Stream] = [:]
     private var nextID: UInt32 = 0
     private var stopped = false
 
-    func setRelayEmitter(_ emit: (([String: Any]) -> Void)?, completion: @escaping () -> Void) {
+    static func targetKey(_ hostname: String, _ port: Int) -> String {
+        var normalized = hostname.lowercased()
+        if normalized.hasPrefix("["), normalized.hasSuffix("]") { normalized = String(normalized.dropFirst().dropLast()) }
+        return "\(normalized):\(port)"
+    }
+
+    /// `direct` keeps Yuri's own Relay/runtime endpoints out of plugin egress.
+    func setRelayEmitter(_ emit: (([String: Any]) -> Void)?, direct: Set<String> = [], completion: @escaping () -> Void) {
         queue.async {
             for id in Array(self.streams.keys) { self.close(id, notify: false) }
             self.emit = emit
+            self.directTargets = emit == nil ? [] : direct
             completion()
         }
     }
@@ -112,7 +121,9 @@ private final class GuiSocksServer {
                 guard let hostname, !hostname.isEmpty else { self.close(id); return }
                 self.exact(id, 2) { port in
                     let number = UInt16(port[0]) * 256 + UInt16(port[1])
-                    if let emit = self.emit { emit(["type": "open", "id": id, "hostname": hostname, "port": Int(number)]) }
+                    if let emit = self.emit, !self.directTargets.contains(Self.targetKey(hostname, Int(number))) {
+                        emit(["type": "open", "id": id, "hostname": hostname, "port": Int(number)])
+                    }
                     else { self.openDirect(id, hostname: hostname, port: number) }
                 }
             }
@@ -304,16 +315,28 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
               ["ws", "wss"].contains(url.scheme ?? ""), let hostname = url.host,
               !hostname.isEmpty, !hostname.contains("*"), url.user == nil, url.password == nil, url.fragment == nil
         else { call.reject("invalid_relay"); return }
+        var direct = Set<String>()
+        for case let target as JSObject in (call.getArray("direct") ?? []).prefix(32) {
+            guard let hostname = target["hostname"] as? String, !hostname.isEmpty,
+                  let port = target["port"] as? Int, port > 0, port <= 65535 else { call.reject("invalid_direct"); return }
+            direct.insert(GuiSocksServer.targetKey(hostname, port))
+        }
         DispatchQueue.main.async {
             guard self.prepared, let server = self.server else { call.reject("unsupported"); return }
-            guard self.scope == nil else { call.reject("busy"); return }
+            // JS serializes leases, so an existing scope belongs to a reloaded document
+            // that can no longer release it. Replace it instead of failing forever.
+            if self.scope != nil {
+                for wire in self.wires.values { wire.cancel(with: .goingAway, reason: nil) }
+                self.wires.removeAll()
+                self.wireSession?.invalidateAndCancel(); self.wireSession = nil
+            }
             self.scope = owner; self.relayURL = url
             server.setRelayEmitter({ [weak self] event in
                 DispatchQueue.main.async {
                     guard self?.scope == owner else { return }
                     self?.notifyListeners("stream", data: event.merging(["scope": owner]) { _, new in new })
                 }
-            }, completion: { call.resolve() })
+            }, direct: direct, completion: { call.resolve() })
         }
     }
     @objc func send(_ call: CAPPluginCall) {
@@ -344,7 +367,7 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
                   url.scheme == relay.scheme, url.host == relay.host, url.port == relay.port, url.path == relay.path,
                   url.user == nil, url.password == nil, url.fragment == nil else { call.reject("invalid_relay"); return }
             // Only the paired Relay wire is native. The JS tunnel still owns E2EE;
-            // all WebView destinations, including the Relay hostname, use SOCKS.
+            // Yuri's own endpoints stay direct, plugin destinations use SOCKS.
             if self.wireSession == nil { self.wireSession = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main) }
             let wire = self.wireSession!.webSocketTask(with: url)
             wire.maximumMessageSize = 2 * 1024 * 1024

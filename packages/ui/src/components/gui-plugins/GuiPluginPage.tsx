@@ -9,10 +9,11 @@ import { WorkspaceSurface } from '@/components/ui/WorkspaceSurface';
 import { guiPagePluginId } from '@/lib/gui-plugins/pages';
 import { isCapacitorApp } from '@/lib/platform';
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/icon/Icon';
 
 /** A placement only: content uses the same Solid bridge as file previews/settings. */
 export function GuiPluginPage() {
-  const { host, snapshot, inventory, error, requested, requestLoad, refresh } = useGuiPlugins();
+  const { host, snapshot, inventory, error, loading, requested, requestLoad, refresh } = useGuiPlugins();
   const { t } = useI18n();
   const key = useUIStore((state) => state.activeGuiPage);
   const isMobile = useUIStore((state) => state.isMobile);
@@ -31,7 +32,9 @@ export function GuiPluginPage() {
       : failed ? <>
         <FilePreviewError message={t(error === 'relay_required' ? 'guiPlugins.mobile.relayRequired' : error === 'relay_unavailable' ? 'guiPlugins.mobile.networkFailed' : 'guiPlugins.error')} />
         {error ? <Button className="m-4 self-center" onClick={refresh}>{t('guiPlugins.mobile.retry')}</Button> : null}
-      </> : null}
+      </> : loading || !requested ? <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-muted-foreground">
+        <Icon name="loader-4" className="size-4 animate-spin motion-reduce:animate-none" />{t('guiPlugins.loading')}
+      </div> : null}
   </div>;
   return <div data-gui-plugin-page className="flex h-full min-h-0 min-w-0 flex-col py-1.5 pl-1 pr-1.5 text-foreground">
     <WorkspaceSurface data-gui-plugin-page-surface>

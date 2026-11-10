@@ -21,12 +21,14 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
+const lease = () => ({ connect: async () => ({ hostOrigin: 'http://localhost:4000' }), release: async () => {} });
+
 it('gates native built-in HTML without a GUI plugin, retains its lease across 50 updates, and removes it before releasing', async () => {
-  let ready!: (lease: { release: () => Promise<void> }) => void;
+  let ready!: (value: ReturnType<typeof lease>) => void;
   fixture.acquire.mockImplementation(() => new Promise(resolve => { ready = resolve; }));
   await act(async () => render());
   expect(container.querySelector('iframe')).toBeNull();
-  await act(async () => ready({ release: async () => {} }));
+  await act(async () => ready(lease()));
   const frame = container.querySelector('iframe');
   expect(frame).not.toBeNull();
   for (let i = 0; i < 50; i++) await act(async () => render());
@@ -42,13 +44,24 @@ it('gates native built-in HTML without a GUI plugin, retains its lease across 50
 });
 
 it('drops the old document immediately on runtime switch and waits for the new gateway', async () => {
-  fixture.acquire.mockResolvedValueOnce({ release: async () => {} }).mockImplementationOnce(() => new Promise(() => {}));
+  fixture.acquire.mockResolvedValueOnce(lease()).mockImplementationOnce(() => new Promise(() => {}));
   await act(async () => render());
   expect(container.querySelector('iframe')).not.toBeNull();
   await act(async () => { fixture.generation++; fixture.changed(); });
   expect(container.querySelector('iframe')).toBeNull();
   expect(fixture.acquire.mock.calls[0][0].aborted).toBe(true);
   expect(fixture.acquire).toHaveBeenCalledTimes(2);
+});
+
+it('shows retry when the Host channel cannot connect, then renders after a successful retry', async () => {
+  fixture.acquire.mockResolvedValueOnce({ connect: async () => { throw new Error('relay_unavailable'); }, release: async () => {} })
+    .mockResolvedValueOnce(lease());
+  await act(async () => render());
+  expect(container.querySelector('iframe')).toBeNull();
+  const retry = container.querySelector('button');
+  expect(retry).not.toBeNull();
+  await act(async () => retry!.click());
+  expect(container.querySelector('iframe')).not.toBeNull();
 });
 
 it('leaves ordinary web rendering independent of the native gateway', async () => {

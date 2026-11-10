@@ -147,7 +147,7 @@ it('uses application readiness only as an initial gate and retains the host duri
   expect(state.gui).toHaveBeenCalledOnce();
 });
 
-it('waits for native Relay before any plugin setup, then retains it across page-independent updates', async () => {
+it('routes plugin egress before any plugin setup, then retains it across page-independent updates', async () => {
   state.mobile = true;
   let ready!: () => void;
   let signal!: AbortSignal;
@@ -170,21 +170,18 @@ it('waits for native Relay before any plugin setup, then retains it across page-
   expect(disposedBeforeRestore).toBe(true);
 });
 
-it('disposes plugins before releasing a failed shared Relay owner, and can retry', async () => {
+it('keeps plugins loaded when the plugin Relay channel drops; the channel reconnects on next use', async () => {
   state.mobile = true;
   state.network.mockResolvedValue(undefined);
   await load();
   const host = state.hosts[0];
   const [signal, fail] = state.network.mock.calls[0] as [AbortSignal, () => void];
-  await act(async () => fail());
-  expect(host.dispose).toHaveBeenCalledOnce();
-  expect(context.error).toBe('relay_unavailable');
-  expect(signal.aborted).toBe(true);
-  await act(async () => context.refresh()); await settle(); await settle();
-  expect(signal.aborted).toBe(true);
-  expect(state.network).toHaveBeenCalledTimes(2);
-  expect(state.hosts).toHaveLength(2);
+  await act(async () => fail()); await settle();
+  expect(host.dispose).not.toHaveBeenCalled();
   expect(context.error).toBe(null);
+  expect(signal.aborted).toBe(false);
+  expect(state.network).toHaveBeenCalledOnce();
+  expect(state.hosts).toHaveLength(1);
 });
 
 it('never installs mobile plugins when the native bridge or paired Relay is unavailable', async () => {

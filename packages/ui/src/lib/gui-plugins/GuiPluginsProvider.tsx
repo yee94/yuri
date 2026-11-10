@@ -197,23 +197,18 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     if (!wantsHost) return;
     const controller = new AbortController();
     let loaded: GuiPluginHost | undefined;
-    let networkFailed = false;
     setHostError(null);
     void afterGuiPaint(controller.signal).then(async () => {
+      // Routing plugin egress is a local gateway switch; the plugin Relay channel
+      // connects on first plugin request, so loading never waits for it. A lost
+      // channel only fails in-flight plugin requests and reconnects on next use.
       if (mobileNetworkRequired) {
         const { acquireMobileHtmlNetwork } = await import('@/lib/preview/mobile-html-network');
-        await acquireMobileHtmlNetwork(controller.signal, () => {
-          if (controller.signal.aborted) return;
-          networkFailed = true;
-          loaded?.setMobilePageNetworkReady(false);
-          loaded?.dispose();
-          setHostError({ transport, error: 'relay_unavailable' });
-          controller.abort();
-        });
+        await acquireMobileHtmlNetwork(controller.signal, () => {});
       }
       return Promise.all([import('./host'), import('@/lib/opencode/gui'), import('@/components/chat/fileReferenceActions')]);
     }).then(([{ GuiPluginHost }, { createGuiClient }, { openFileReference }]) => {
-      if (controller.signal.aborted || networkFailed || getRuntimeTransportIdentity() !== transport) return;
+      if (controller.signal.aborted || getRuntimeTransportIdentity() !== transport) return;
       loaded = new GuiPluginHost({
         client: createGuiClient(controller.signal), files, queryClient, transport, viewExport, toast,
         storage: window.localStorage, mobileNetworkRequired, ...environment.current,

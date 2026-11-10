@@ -2,11 +2,13 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import type { MobileGuiWireBridge } from './mobile-network-wire';
 
 export type MobileGuiNetworkEvent = { scope: string; type: string; id?: number; hostname?: string; port?: number; data?: string };
+export type MobileGuiDirectTarget = { hostname: string; port: number };
 type NativeReply = { scope: string; id: number; type: string; data?: string; bytes?: number };
 type GuiNetworkPlugin = MobileGuiWireBridge & {
   prepare(): Promise<void>;
   capabilities(): Promise<{ supported: boolean }>;
-  start(options: { scope: string; relayUrl: string }): Promise<void>;
+  /** `direct` lists Yuri's own Relay/runtime endpoints; they never enter plugin egress. */
+  start(options: { scope: string; relayUrl: string; direct: MobileGuiDirectTarget[] }): Promise<void>;
   send(options: NativeReply): Promise<void>;
   stop(options: { scope: string }): Promise<void>;
   addListener(event: 'stream', callback: (event: MobileGuiNetworkEvent) => void): Promise<PluginListenerHandle>;

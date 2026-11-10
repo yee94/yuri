@@ -4,6 +4,7 @@ import android.util.Base64;
 import androidx.webkit.ProxyConfig;
 import androidx.webkit.ProxyController;
 import androidx.webkit.WebViewFeature;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -19,7 +20,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,6 +47,7 @@ public class YuriGuiNetworkPlugin extends Plugin {
     private volatile String scope;
     private volatile ServerSocket listener;
     private volatile URI relayEndpoint;
+    private volatile Set<String> directTargets = new HashSet<>();
     private volatile boolean prepared;
     private boolean destroyed;
     private final List<PluginCall> prepareCalls = new ArrayList<>();
@@ -127,8 +132,20 @@ public class YuriGuiNetworkPlugin extends Plugin {
                 || relay.getUserInfo() != null || relay.getFragment() != null) throw new Exception();
         } catch (Exception error) { call.reject("invalid_relay"); return; }
         if (!prepared) { call.reject("unsupported"); return; }
-        if (scope != null) { call.reject("busy"); return; }
-        scope = next; relayEndpoint = relay;
+        Set<String> direct = new HashSet<>();
+        try {
+            JSArray targets = call.getArray("direct", new JSArray());
+            for (int i = 0; i < targets.length() && i < 32; i++) {
+                org.json.JSONObject target = targets.getJSONObject(i);
+                String hostname = target.optString("hostname", "");
+                int port = target.optInt("port", 0);
+                if (!hostname.isEmpty() && port > 0 && port <= 65535) direct.add(targetKey(hostname, port));
+            }
+        } catch (Exception error) { call.reject("invalid_direct"); return; }
+        // JS serializes leases, so an existing scope belongs to a reloaded document
+        // that can no longer release it. Replace it instead of failing forever.
+        if (scope != null) releaseRelay();
+        scope = next; relayEndpoint = relay; directTargets = direct;
         for (Long id : streams.keySet()) close(null, id, false);
         call.resolve();
     }
@@ -157,7 +174,7 @@ public class YuriGuiNetworkPlugin extends Plugin {
             input.readFully(address);
             String host = kind == 3 ? new String(address, StandardCharsets.UTF_8) : InetAddress.getByAddress(address).getHostAddress();
             int port = input.readUnsignedShort();
-            if (owner == null) { openDirect(id, stream, host, port); return; }
+            if (owner == null || directTargets.contains(targetKey(host, port))) { openDirect(id, stream, host, port); return; }
             emit(owner, new JSObject().put("type", "open").put("id", id).put("hostname", host).put("port", port));
             if (!stream.opened.tryAcquire(20, TimeUnit.SECONDS) || stream.closed) throw new Exception();
             stream.socket.setSoTimeout(120000);
@@ -210,9 +227,23 @@ public class YuriGuiNetworkPlugin extends Plugin {
         } catch (Exception error) { close(null, id, false); }
     }
 
+    private static String targetKey(String hostname, int port) {
+        String normalized = hostname.toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("[") && normalized.endsWith("]")) normalized = normalized.substring(1, normalized.length() - 1);
+        return normalized + ":" + port;
+    }
+
+    /** JSON numbers arrive as Integer or Long depending on magnitude; stream ids are uint32. */
+    private static Long streamId(PluginCall call) {
+        Object value = call.getData().opt("id");
+        if (!(value instanceof Integer) && !(value instanceof Long)) return null;
+        long id = ((Number) value).longValue();
+        return id > 0 && id <= 0xffffffffL ? id : null;
+    }
+
     @PluginMethod public void send(PluginCall call) {
         String owner = call.getString("scope");
-        Long id = call.getLong("id");
+        Long id = streamId(call);
         String type = call.getString("type");
         if (owner == null || !owner.equals(scope) || id == null || type == null) { call.reject("closed"); return; }
         Stream stream = streams.get(id);
@@ -272,6 +303,7 @@ public class YuriGuiNetworkPlugin extends Plugin {
         String owner = scope;
         scope = null;
         relayEndpoint = null;
+        directTargets = new HashSet<>();
         for (WebSocket wire : wires.values()) wire.cancel();
         wires.clear();
         for (Long id : streams.keySet()) close(owner, id, false);

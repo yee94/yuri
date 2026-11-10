@@ -73,7 +73,7 @@ export const GuiPluginMount = React.memo(function GuiPluginMount({ host, contrib
     <div className={`relative flex flex-1 flex-col ${pending ? 'min-h-[240px]!' : 'min-h-0'}`}>
       {kind === 'panel' && !actions ? <div className="absolute right-3 top-3 z-30 flex items-center gap-1"><GuiPreviewActions target={localActions} /></div> : null}
       {error ? <FilePreviewError message={error.cause instanceof Error ? error.cause.message : t('guiPlugins.error')} /> : null}
-      <div ref={container} className={`min-h-0 flex-1 overflow-auto${error ? ' hidden' : ''}`} data-gui-plugin-mount={kind} />
+      <div ref={container} className={`min-h-0 min-w-0 flex-1 overflow-auto${kind === 'page' ? ' overlay-scrollbar-target' : ''}${error ? ' hidden' : ''}`} data-gui-plugin-mount={kind} />
       {pending ? <div className="absolute inset-0 flex">{fallback}</div> : null}
     </div>
   );
