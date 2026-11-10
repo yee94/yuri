@@ -1079,7 +1079,7 @@ function cleanupSessionWorktreeMetadata(sessionId: string): void {
 }
 
 /** Soft-delete undo window. Hard delete only hits the server after this delay. */
-export const SESSION_DELETE_UNDO_MS = 10_000
+export const SESSION_DELETE_UNDO_MS = 5_000
 
 type PendingDeleteEntry = {
   sessionId: string

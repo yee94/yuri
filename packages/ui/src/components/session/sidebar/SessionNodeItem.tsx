@@ -1130,7 +1130,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 </Item>
                 {currentFolderId ? (
                   <Item onClick={() => { removeSessionFromFolder(sessionDirectory, session.id); }} className="text-destructive focus:text-destructive">
-                    <Icon name="close" className="mr-1 h-4 w-4" />
+                    <Icon name="close" className="mr-1 h-4 w-4 text-inherit" />
                     {t('sessions.sidebar.folders.removeFromFolder')}
                   </Item>
                 ) : null}

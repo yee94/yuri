@@ -1,5 +1,19 @@
 # Chat components
 
+Explicit Markdown directory links in a local desktop session open in the system
+file manager, including with Cmd/Ctrl click. Directory detection runs only against
+the active local desktop; remote paths never target the local machine. This uses
+the installer-owned `desktop_is_directory_path` command.
+
+## Project icon alignment
+
+Compact project labels in the composer, multi-run and scheduled-task project
+pickers use a static `relative top-px` on the icon container, matching the sidebar
+project icon. Image and fallback share that position on the initial render;
+text, disclosure arrows and loading spinners retain their existing alignment.
+This geometry belongs to the built-in components, not asynchronously loaded
+GUI-plugin CSS.
+
 ## Desktop composer pickers
 
 `ModelControls`' anchored model and Agent menus share the scoped

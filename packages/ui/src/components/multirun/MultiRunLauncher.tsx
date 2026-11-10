@@ -91,7 +91,7 @@ const renderProjectLabel = (project: ProjectEntry) => {
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       <span
-        className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden text-muted-foreground"
+        className="relative top-px flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden text-muted-foreground"
       >
         {project.iconImage ? <ProjectIconImage project={project} className="size-full object-contain" fallback={fallback} /> : fallback}
       </span>

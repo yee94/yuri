@@ -1,6 +1,6 @@
 import { isExternalHttpUrl, openExternalUrl } from '@/lib/url';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
-import { FILE_LINK_ATTR, FILE_LINK_SELECTOR, isLikelyFilePath, isLocalPathHref } from '../fileReferenceDecorate';
+import { FILE_LINK_ATTR, FILE_LINK_SELECTOR, isLocalPathHref } from '../fileReferenceDecorate';
 import {
   openFileReferenceFromElement,
   type OpenFileReferenceOptions,
@@ -26,13 +26,18 @@ export const handleMarkstreamPointerEvent = (
   event: MouseEvent,
   options: MarkstreamPointerOptions,
 ): void => {
-  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+  if (event.defaultPrevented || event.button !== 0 || event.altKey || event.shiftKey) {
     return;
   }
 
   const target = event.target;
   if (!(target instanceof Element)) {
     return;
+  }
+
+  if (event.metaKey || event.ctrlKey) {
+    const anchor = target.closest('a[href]');
+    if (!(anchor instanceof HTMLAnchorElement) || !isLocalPathHref(anchor.getAttribute('href') ?? '')) return;
   }
 
   const image = target.closest(MARKDOWN_IMAGE_SELECTOR);
@@ -88,7 +93,7 @@ export const handleMarkstreamPointerEvent = (
   if (isLocalPathHref(href)) {
     event.preventDefault();
     event.stopPropagation();
-    if (options.fileReference && isLikelyFilePath(href)) {
+    if (options.fileReference) {
       void openFileReferenceFromElement(anchor, options.fileReference);
     }
     return;

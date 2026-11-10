@@ -206,7 +206,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                           )}>
                             {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
                           </span>
-                          <span className={cn(alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
+                          <span className={cn('relative top-px', alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
                             {projectIconImage ? (
                               <ProjectIconImage
                                 project={{ id, iconImage: projectIconImage }}

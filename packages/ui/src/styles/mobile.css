@@ -2597,9 +2597,7 @@ button.yuri-mobile-schedule-assistant::before {
   --error-bg: var(--yuri-toast-background);
   --warning-bg: var(--yuri-toast-background);
   --info-bg: var(--yuri-toast-background);
-  --yuri-toast-action-background: transparent;
   --yuri-toast-action-foreground: var(--foreground);
-  --yuri-toast-cancel-background: transparent;
   --yuri-toast-cancel-foreground: var(--muted-foreground);
 }
 

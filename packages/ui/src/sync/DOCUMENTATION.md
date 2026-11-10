@@ -2065,7 +2065,7 @@ Examples of global-store updates performed in `session-actions.ts`:
 - `archiveSession()` -> optimistic `archiveSessions([id], archivedAt)` then Host `updateSession({ time: { archived } })` (`PUT /api/yuri/sessions/:id/archive`); same-runtime Host failure restores snapshots; runtime generation/identity change abandons without rolling A snapshots into B
 - `unarchiveSession()` -> Host `updateSession({ time: { archived: 0 } })` then `upsertSession` into the active list (strip any residual `0` stamp); same-runtime failure restores prior archived snapshot; runtime switch abandons without B pollution
 - `deleteSession()` -> optimistic `removeSessions([id])` then immediate server delete
-- UI hard-deletes use `scheduleSessionDeletes()` so the server delete waits for a 10s undo window; `cancelScheduledSessionDeletes()` restores local state without calling the server. Pending deletion IDs keep global refreshes and aggregated live child-store sessions hidden until cancellation restores the snapshot or delete settlement clears the pending state.
+- UI hard-deletes use `scheduleSessionDeletes()` so the server delete waits for a 5s undo window; `cancelScheduledSessionDeletes()` restores local state without calling the server. Pending deletion IDs keep global refreshes and aggregated live child-store sessions hidden until cancellation restores the snapshot or delete settlement clears the pending state.
 - Archive success toasts use `showArchivedSessionsUndoToast()` (undo + open `ArchivedSessionsDialog` via `setArchivedSessionsDialogOpen`); delete success toasts use `deleteSessionsWithUndo()`. Neither expands the sidebar archived bucket by default.
 
 ### Fork transition and event isolation

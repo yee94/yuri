@@ -200,7 +200,7 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onSelect={() => { setEditingId(saved.id); setName(saved.label); openPanel('rename'); }}><Icon name="edit" className="size-4" />{t('mobile.connect.history.rename')}</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => { setEditingId(saved.id); openPanel('remove'); }} className="text-[var(--status-error)]"><Icon name="delete-bin" className="size-4" />{t('mobile.connect.history.remove')}</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { setEditingId(saved.id); openPanel('remove'); }} className="text-[var(--status-error)]"><Icon name="delete-bin" className="size-4 text-inherit" />{t('mobile.connect.history.remove')}</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

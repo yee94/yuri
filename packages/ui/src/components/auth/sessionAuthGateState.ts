@@ -1,4 +1,4 @@
-export type GateState = 'pending' | 'authenticated' | 'locked' | 'pairing-expired' | 'error' | 'rate-limited';
+export type GateState = 'pending' | 'authenticated' | 'locked' | 'pairing-expired' | 'relay-auth-error' | 'error' | 'rate-limited';
 
 export const resolveStatusCheckFailureState = (options: {
   shouldUseDesktopShellPasswordLogin?: boolean;

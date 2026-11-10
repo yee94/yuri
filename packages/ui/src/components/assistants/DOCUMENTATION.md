@@ -22,7 +22,8 @@ fallback and automatic refresh behavior remain unchanged across shared runtimes.
 ## Desktop Mini Chat
 
 Direct-connected Electron surfaces expose Open in Mini Chat in each contact's
-context menu and the conversation header. Native main reuses the existing Mini
+context menu and the conversation header. Double-clicking a desktop contact, pinned
+or ordinary, opens the same window. Native main reuses the existing Mini
 Chat window lifecycle and deduplicates by runtime plus Assistant ID, independently
 of ordinary session windows. Reopening restores/focuses that window and retains
 its pin state. `MiniChatWindowHeader` owns shared drag regions, native controls,

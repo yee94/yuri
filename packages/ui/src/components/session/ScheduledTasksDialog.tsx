@@ -834,7 +834,7 @@ export function ScheduledTasksWorkspace({
     const fallback = <Icon name={iconName ?? 'folder'} className="size-3.5" style={iconColor ? { color: iconColor } : undefined} />;
     return (
       <span className="inline-flex min-w-0 items-center gap-1.5">
-        <span className="flex size-4 shrink-0 items-center justify-center overflow-hidden text-muted-foreground">
+        <span className="relative top-px flex size-4 shrink-0 items-center justify-center overflow-hidden text-muted-foreground">
           {project.iconImage ? <ProjectIconImage project={project} className="size-full object-contain" fallback={fallback} /> : fallback}
         </span>
         <span className="truncate">{formatDirectoryName(project.path)}</span>
@@ -1497,7 +1497,7 @@ export function ScheduledTasksWorkspace({
                       disabled={isBusy}
                       className={cn('text-destructive focus:text-destructive', isMobilePanel && 'min-h-11')}
                     >
-                      <Icon name="delete-bin" className="size-4" />
+                      <Icon name="delete-bin" className="size-4 text-inherit" />
                       {t('sessions.scheduledTasks.dialog.actions.delete')}
                     </Item>
                   </>

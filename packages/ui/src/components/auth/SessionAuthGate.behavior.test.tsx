@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
+import type { RelayTunnelStatus } from '@/lib/relay/tunnel-client';
 
 type ComponentFn<P extends Record<string, unknown> = Record<string, unknown>> = (props: P) => unknown;
 
@@ -152,6 +153,13 @@ let runtimeFetchRejects = true;
 let runtimeStatus = 401;
 let runtimeKey = 'auth-gate-test-runtime';
 let desktopHosts: unknown[] = [];
+const listeners = new Map<string, Set<() => void>>();
+let relayStatus: RelayTunnelStatus | null = null;
+const relayListeners = new Set<() => void>();
+const relayTunnel = {
+  getStatus: () => relayStatus,
+  subscribeStatus: (listener: () => void) => { relayListeners.add(listener); return () => relayListeners.delete(listener); },
+};
 
 Object.assign(globalThis, {
   window: {
@@ -165,6 +173,11 @@ Object.assign(globalThis, {
       return 1;
     },
     clearTimeout: () => undefined,
+    addEventListener: (name: string, listener: () => void) => {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name)?.add(listener);
+    },
+    removeEventListener: (name: string, listener: () => void) => listeners.get(name)?.delete(listener),
   },
 });
 
@@ -247,15 +260,23 @@ mock.module('@/lib/runtime-fetch', () => ({
 
 mock.module('@/lib/runtime-auth', () => ({
   getRuntimeExtraHeadersSync: mock(() => ({})),
+  getRuntimeAuthGeneration: mock(() => 0),
 }));
 
 mock.module('@/lib/runtime-switch', () => ({
   getRuntimeApiBaseUrl: mock(() => ''),
   getRuntimeKey: mock(() => runtimeKey),
+  getRuntimeGeneration: mock(() => 0),
   getActiveRelayDescriptor: mock(() => null),
   isRuntimeEndpointIdentityChange: mock(() => true),
   subscribeRuntimeEndpointChanged: mock(() => () => {}),
   switchRuntimeEndpoint: mock(() => undefined),
+}));
+
+mock.module('@/lib/relay/runtime-tunnel', () => ({
+  getActiveRelayTunnel: () => relayStatus ? relayTunnel : null,
+  activateRelayTunnel: mock(() => undefined),
+  deactivateRelayTunnel: mock(() => undefined),
 }));
 
 mock.module('@/lib/desktopHosts', () => ({
@@ -312,6 +333,40 @@ const collectText = (node: unknown): string => {
 };
 
 describe('SessionAuthGate status-check failure behavior', () => {
+  test('a live desktop Relay pairing rejection redirects to pairing, not the UI password', async () => {
+    listeners.clear(); relayListeners.clear(); resetHarness(); desktopShell = true;
+    runtimeFetchRejects = false; runtimeStatus = 200; relayStatus = { state: 'connected' };
+    await renderGate();
+    runtimeStatus = 403;
+    listeners.get('yuri:runtime-auth-rejected')?.forEach((listener) => listener());
+    await flushEffects();
+    const text = collectText(await renderGate());
+    expect(text).toContain('mobile.connect.pairing.expired');
+    expect(text).not.toContain('sessionAuth.locked.unlockTitle');
+    relayStatus = null; runtimeStatus = 401;
+  });
+  test('terminal Relay transport auth is not mislabeled as revoked pairing or password expiry', async () => {
+    listeners.clear(); relayListeners.clear(); resetHarness(); desktopShell = true;
+    runtimeFetchRejects = false; runtimeStatus = 200; relayStatus = { state: 'connected' };
+    await renderGate();
+    relayStatus = { state: 'error', failureCode: 'relay_authentication_rejected' };
+    relayListeners.forEach((listener) => listener());
+    const text = collectText(await renderGate());
+    expect(text).toContain('sessionAuth.error.relayAuthTitle');
+    expect(text).not.toContain('mobile.connect.pairing.expired');
+    expect(text).not.toContain('sessionAuth.locked.unlockTitle');
+    relayStatus = null; runtimeStatus = 401;
+  });
+  test('rechecks authentication after an API rejection or desktop focus', async () => {
+    for (const event of ['yuri:runtime-auth-rejected', 'focus']) {
+      listeners.clear(); resetHarness(); desktopShell = true; runtimeFetchRejects = false; runtimeStatus = 200;
+      await renderGate();
+      runtimeStatus = 401;
+      listeners.get(event)?.forEach((listener) => listener());
+      await flushEffects();
+      expect(collectText(await renderGate())).toContain('sessionAuth.locked.unlockTitle');
+    }
+  });
   test('a rejected paired desktop host shows re-pairing instead of a password', async () => {
     resetHarness();
     desktopShell = true;

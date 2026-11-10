@@ -42,6 +42,11 @@ Client side (`packages/ui/src/lib/relay/`):
 - `crypto.ts`, `handshake.ts` — the E2EE primitives and handshake state machines (initiator + responder).
 - `tunnel-codec.ts` — Layer 3 frame codec, fragmentation, and outbound frame batching.
 - `tunnel-client.ts` — the client tunnel: exposes a `fetch()`-compatible and a WebSocket-compatible surface backed by the encrypted tunnel. Transient closures (including `4029` capacity/pending timeout and replacement) retry indefinitely at a fixed 3-second foreground cadence, or 60 seconds while hidden/offline. Online, visibility-visible and system-resume interrupt retry waits; an apparently connected tunnel is probed immediately. Authentication rejection stays terminal and later requests fail explicitly rather than waiting forever. Keepalive tracks send and receive separately: outbound requests cannot conceal a dead return path, and inbound-only SSE still sends pings so the Host idle reaper does not evict a healthy client. Reset fails every old stream; retries never replay mutation requests automatically.
+  Terminal socket authentication rejection additionally sets
+  `failureCode: 'relay_authentication_rejected'` for desktop recovery. Consumers
+  must not infer pairing revocation from that transport error or from an arbitrary
+  error string. Pairing rejection is confirmed by the Host's `/auth/session`
+  response through the active tunnel; neither condition requires a UI password.
 - `tunnel-payloads.ts`, `runtime-tunnel.ts`, `runtime-socket.ts` — payload helpers, the active-tunnel singleton, and the shared "open a runtime WebSocket the right way" helper.
 
 Relay is not a separate link format: it is one transport candidate inside the unified **pairing v2** payload (`packages/ui/src/lib/connectionPayload.ts`). A relay candidate is `{ type: 'relay', relayUrl, serverId, hostEncPubJwk }` — no embedded token; the client redeems the one-time pairing secret over the tunnel like any other candidate.

@@ -5,6 +5,19 @@ OpenCode package identities and protocols remain third-party contracts.
 
 ## Tests
 
+Runtime API authorization failures recheck the current UI session and show the
+existing unlock or pairing screen only when session status confirms rejection.
+Electron windows also recheck when focused; transient network failures retain the
+current screen. Late responses from another runtime or credential generation are
+ignored.
+Valid client credentials (including SSH-issued and Relay-pairing credentials)
+remain independent of an expired UI password cookie. Desktop Relay `/auth/session`
+rejections lead to pairing recovery, never password login. Terminal Relay socket
+authentication rejection has a typed transport status and a separate retry/switch
+screen; it is not proof that pairing was revoked. Checks coalesce while in flight
+and time out after ten seconds without treating timeout as logout. Native mobile
+keeps its existing connection flow unchanged.
+
 The desktop header shows a neutral connection glyph when more than one instance
 is configured (including the local backend), independently of probe/auth status.
 An active remote always retains its entry even when its catalog is unavailable.

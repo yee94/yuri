@@ -43,7 +43,7 @@ describe('shared toast visual contract', () => {
     const sharedToastCss = mobileCss.slice(start, mobileCss.indexOf('@media (prefers-reduced-transparency: reduce)', start));
     expect(start).toBeGreaterThan(-1);
     expect(sharedToastCss).not.toMatch(/device-mobile|device-tablet|mobile-pointer|desktop-runtime/);
-    expect(sonnerSource).toContain('var(--yuri-toast-action-background,var(--surface-muted))');
+    expect(sonnerSource).not.toMatch(/(?:actionButton|cancelButton):\s*"[^"]*(?:!bg-|hover:!opacity)/);
     expect(mobileCss).toContain('--yuri-toast-action-foreground: var(--foreground);');
     expect(mobileCss).toMatch(/data-sonner-toast\]\[data-styled="true"\][^{]*\{[\s\S]*?padding: var\(--yuri-toast-padding-y\) var\(--yuri-toast-padding-x\) !important;/);
     expect(mobileCss).toMatch(
@@ -58,6 +58,8 @@ describe('shared toast visual contract', () => {
     const styledLayout = mobileCss.match(/\[data-sonner-toast\]\[data-styled="true"\] \{[^}]*\}/);
     expect(styledLayout?.[0]).not.toContain('backdrop-filter');
     expect(mobileCss).toMatch(/\[data-button\][^{]*\{[\s\S]*?min-height: 36px;[\s\S]*?background: transparent !important;/);
+    expect(sharedToastCss).toMatch(/\[data-button\]:hover\s*\{\s*background: var\(--interactive-hover\) !important;/);
+    expect(sharedToastCss).toMatch(/\[data-button\]:active\s*\{\s*background: var\(--interactive-active\) !important;/);
     expect(mobileCss).toMatch(/\.session-mutation-undo-action \{[\s\S]*?min-height: 0 !important;/);
     expect(mobileCss).toMatch(/prefers-reduced-transparency:[\s\S]*?\[data-sonner-toast\] \{[\s\S]*?background: var\(--surface-elevated, var\(--card\)\) !important;/);
   });

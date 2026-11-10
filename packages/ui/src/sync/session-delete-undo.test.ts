@@ -247,6 +247,20 @@ describe("session delete undo window", () => {
     expect(mocks.replyCalls.some((call) => call.method === "session.delete")).toBe(true)
   })
 
+  test("default undo window commits after five seconds", async () => {
+    vi.useFakeTimers()
+    try {
+      scheduleSessionDeletes(["ses_1"])
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(mocks.replyCalls.some((call) => call.method === "session.delete")).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mocks.replyCalls.some((call) => call.method === "session.delete")).toBe(true)
+    } finally {
+      clearScheduledSessionDeletesForTests()
+      vi.useRealTimers()
+    }
+  })
+
   test("cancelScheduledSessionDeletes restores local state without deleting", async () => {
     const { batchId } = scheduleSessionDeletes(["ses_1"], { delayMs: 50 })
     expect(mocks.globalState.activeSessions.map((session) => session.id)).toEqual(["ses_2"])

@@ -23,6 +23,34 @@ const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); presence.visible = false; });
 
 describe('closed composer picker work', () => {
+    test('project icons have their alignment on the initial render, before plugins load', () => {
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ChatInput.tsx'), 'utf8');
+        const ast = ts.createSourceFile('ChatInput.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        let declaration = '';
+        const visit = (node: ts.Node) => {
+            if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'renderProjectLabelWithIcon') {
+                declaration = node.getText(ast);
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+        expect(declaration).not.toBe('');
+        const scope = {
+            React, PROJECT_ICON_MAP: {}, PROJECT_COLOR_MAP: {}, Icon: 'svg', ProjectIconImage: 'img',
+            getProjectDisplayLabel: () => 'project',
+        };
+        const compiled = ts.transpileModule(`const ${declaration};`, {
+            compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+        }).outputText;
+        const renderLabel = new Function(...Object.keys(scope), `${compiled}\nreturn renderProjectLabelWithIcon;`)(...Object.values(scope));
+        for (const iconImage of [null, { mime: 'image/png', updatedAt: 1, source: 'auto' }]) {
+            const label = renderLabel({ id: 'project', path: '/project', iconImage });
+            const iconWrapper = label.props.children[0];
+            expect(iconWrapper.props.className.split(/\s+/)).toEqual(expect.arrayContaining(['relative', 'top-px']));
+            expect(label.props.children[1].props.className).not.toContain('top-px');
+        }
+    });
+
     test('model footer offers add-provider as a labeled icon button beside keyboard hints', async () => {
         const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ModelControls.tsx'), 'utf8');
         const ast = ts.createSourceFile('ModelControls.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

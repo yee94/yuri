@@ -516,7 +516,7 @@ const FileRow: React.FC<FileRowProps> = ({
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); onOpenDialog('delete', node); }}
             className="text-destructive focus:text-destructive"
           >
-            <Icon name="delete-bin" className="mr-2 size-4" /> {t('sidebarFilesTree.menu.delete')}
+            <Icon name="delete-bin" className="mr-2 size-4 text-inherit" /> {t('sidebarFilesTree.menu.delete')}
           </Item>
         </>
       )}

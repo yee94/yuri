@@ -2818,6 +2818,8 @@ export const dict: Record<I18nKey, string> = {
   'mcpDropdown.empty.configureInConfig': '設定でMCPサーバーを構成してください。',
   'sessionAuth.error.rateLimitTitle': '試行回数が多すぎます',
   'sessionAuth.error.networkTitle': 'サーバーに到達できません',
+  'sessionAuth.error.relayAuthTitle': 'リレー接続の認証に失敗しました',
+  'sessionAuth.error.relayAuthDescription': 'リレーが接続を拒否しました。再試行するか、インスタンスを切り替えてください。UI パスワードの期限切れやペアリングの取り消しを意味するものではありません。',
   'sessionAuth.error.rateLimitDescriptionSingle': '再試行まで{minutes}分お待ちください。',
   'sessionAuth.error.rateLimitDescriptionPlural': '再試行まで{minutes}分お待ちください。',
   'sessionAuth.error.networkDescription': 'UI セッションを確認できませんでした。ローカルネットワーク上の別のデバイスから Yuri を開く場合は、デスクトップアプリで Desktop Network Access を有効にし、設定に表示される LAN アドレスを使用してください。',

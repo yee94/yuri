@@ -419,7 +419,7 @@ const CommandListItem: React.FC<CommandListItemProps> = ({
       )}
       {onDelete && (
         <Item onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }} className="text-destructive focus:text-destructive">
-          <Icon name="delete-bin" className="h-4 w-4 mr-px" />
+          <Icon name="delete-bin" className="h-4 w-4 mr-px text-inherit" />
           {t('settings.common.actions.delete')}
         </Item>
       )}

@@ -2526,6 +2526,8 @@ export const dict = {
   'mcpDropdown.empty.configureInConfig': 'Configurez les serveurs MCP dans la configuration OpenCode.',
   'sessionAuth.error.rateLimitTitle': 'Trop de tentatives',
   'sessionAuth.error.networkTitle': 'Impossible d\'atteindre le serveur',
+  'sessionAuth.error.relayAuthTitle': 'Échec de l’authentification de la connexion relais',
+  'sessionAuth.error.relayAuthDescription': 'Le relais a refusé cette connexion. Réessayez ou changez d’instance. Cela ne signifie pas que votre mot de passe UI a expiré ni que l’appairage a été révoqué.',
   'sessionAuth.error.rateLimitDescriptionSingle': 'Veuillez attendre {minutes} minute avant de réessayer.',
   'sessionAuth.error.rateLimitDescriptionPlural': 'Veuillez attendre {minutes} minutes avant de réessayer.',
   'sessionAuth.error.networkDescription': 'Nous n\'avons pas pu vérifier la session d\'interface utilisateur. Si vous ouvrez Yuri depuis un autre appareil sur votre réseau local, activez l\'accès au réseau du bureau dans l\'application de bureau et utilisez l\'adresse LAN indiquée dans les paramètres.',

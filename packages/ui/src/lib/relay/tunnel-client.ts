@@ -144,6 +144,7 @@ export type RelayTunnelState = 'idle' | 'connecting' | 'connected' | 'reconnecti
 export interface RelayTunnelStatus {
   state: RelayTunnelState;
   lastError?: string;
+  failureCode?: 'relay_authentication_rejected';
 }
 
 export interface RelayTunnelClientOptions {
@@ -250,7 +251,7 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
   let probeCurrentAttempt: (() => void) | null = null;
 
   const setStatus = (next: RelayTunnelStatus): void => {
-    if (status.state === next.state && status.lastError === next.lastError) return;
+    if (status.state === next.state && status.lastError === next.lastError && status.failureCode === next.failureCode) return;
     status = next;
     for (const listener of statusListeners) {
       try {
@@ -435,7 +436,7 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
       consecutiveFailures += 1;
       if (terminal) {
         terminalError = error;
-        setStatus({ state: 'error', lastError: error.message });
+        setStatus({ state: 'error', lastError: error.message, failureCode: 'relay_authentication_rejected' });
         return;
       }
       setStatus({ state: asErrorState ? 'error' : 'reconnecting', lastError: error.message });

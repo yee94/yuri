@@ -111,6 +111,7 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
   return (
     <AssistantContactMenu
       assistant={assistant}
+      doubleClickMiniChat
       onEdit={onEdit}
       onDelete={onDelete}
       trigger={(

@@ -4448,6 +4448,16 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return isBinaryFile(targetPath, fsp);
     }
 
+    case 'desktop_is_directory_path': {
+      if (browserWindow?.__yuriRuntimeConfig?.relayHostId
+        || !sameOrigin(browserWindow?.__yuriRuntimeConfig?.apiBaseUrl || state.localOrigin, state.sidecarUrl)) {
+        throw new Error('Local runtime required');
+      }
+      const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
+      if (!targetPath) throw new Error('Path is required');
+      return (await fsp.stat(targetPath)).isDirectory();
+    }
+
     case 'desktop_open_external_url': {
       const target = typeof args.url === 'string' ? args.url.trim() : '';
       if (!target) throw new Error('URL is required');

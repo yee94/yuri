@@ -7,6 +7,8 @@ const {
   openContextFileAtLineMock,
   editorOpenFileMock,
   toastWarningMock,
+  isDesktopDirectoryPathMock,
+  isDesktopLocalMock,
 } = vi.hoisted(() => ({
   runtimeFetchMock: vi.fn(),
   openDesktopPathMock: vi.fn(async () => false),
@@ -14,6 +16,8 @@ const {
   openContextFileAtLineMock: vi.fn(),
   editorOpenFileMock: vi.fn(async () => undefined),
   toastWarningMock: vi.fn(),
+  isDesktopDirectoryPathMock: vi.fn(async () => false),
+  isDesktopLocalMock: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/runtime-fetch', () => ({
@@ -31,8 +35,9 @@ vi.mock('@/lib/i18n', () => ({
 
 vi.mock('@/lib/desktop', () => ({
   isDesktopBinaryPath: vi.fn(async () => false),
-  isDesktopLocalOriginActive: () => false,
-  isDesktopShell: () => false,
+  isDesktopLocalOriginActive: isDesktopLocalMock,
+  isDesktopShell: isDesktopLocalMock,
+  isDesktopDirectoryPath: isDesktopDirectoryPathMock,
   isVSCodeRuntime: () => false,
   openDesktopPath: openDesktopPathMock,
 }));
@@ -67,6 +72,8 @@ describe('fileReferenceActions', () => {
     openContextFileMock.mockReset();
     openContextFileAtLineMock.mockReset();
     editorOpenFileMock.mockReset();
+    isDesktopLocalMock.mockReturnValue(false);
+    isDesktopDirectoryPathMock.mockReset().mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -85,6 +92,25 @@ describe('fileReferenceActions', () => {
       path: 'src/app.ts',
       resolvedPath: '/Users/dev/project/src/app.ts',
     });
+  });
+
+  test.each(['packages/electron/dist-preview/mac-arm64/', 'packages/electron/dist-preview/mac-arm64'])('opens local directory link %s in the system file manager', async (href) => {
+    isDesktopLocalMock.mockReturnValue(true);
+    isDesktopDirectoryPathMock.mockResolvedValue(true);
+    openDesktopPathMock.mockResolvedValue(true);
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', href);
+    await openFileReferenceFromElement(anchor, { effectiveDirectory: '/repo' });
+    expect(openDesktopPathMock).toHaveBeenCalledWith('/repo/packages/electron/dist-preview/mac-arm64');
+    expect(openContextFileMock).not.toHaveBeenCalled();
+  });
+
+  test('does not inspect or open a remote directory on the local desktop', async () => {
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', 'packages/ui/');
+    await openFileReferenceFromElement(anchor, { effectiveDirectory: '/remote' });
+    expect(isDesktopDirectoryPathMock).not.toHaveBeenCalled();
+    expect(openDesktopPathMock).not.toHaveBeenCalled();
   });
 
   test.each([false, true])('opens encoded Markdown file links (annotated: %s)', async (annotated) => {

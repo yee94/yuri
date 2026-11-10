@@ -25,6 +25,25 @@ const {
 
 const originalFetch = globalThis.fetch;
 
+test('only active runtime API authorization failures signal session revalidation', async () => {
+  const previous = getRuntimeUrlResolver();
+  let calls = 0;
+  const listener = () => { calls += 1; };
+  window.addEventListener('yuri:runtime-auth-rejected', listener);
+  configureRuntimeUrlResolver({ apiBaseUrl: 'https://api.example' });
+  globalThis.fetch = mock(async () => new Response('', { status: 401 })) as typeof fetch;
+  try {
+    await runtimeFetch('/api/config/settings');
+    await runtimeFetch('/auth/session');
+    await runtimeFetch('https://external.example/api/data');
+    expect(calls).toBe(1);
+  } finally {
+    window.removeEventListener('yuri:runtime-auth-rejected', listener);
+    setRuntimeUrlResolver(previous);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 describe('buildRuntimeFetchUrl', () => {
   test('preserves same-origin paths by default', () => {
     expect(buildRuntimeFetchUrl('/api/config/settings')).toBe('/api/config/settings');
