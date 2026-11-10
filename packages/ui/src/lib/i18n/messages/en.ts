@@ -2825,6 +2825,8 @@ export const dict = {
   'mcpDropdown.empty.configureInConfig': 'Configure MCP servers in Settings.',
   'sessionAuth.error.rateLimitTitle': 'Too many attempts',
   'sessionAuth.error.networkTitle': 'Unable to reach server',
+  'sessionAuth.error.relayAuthTitle': 'Relay connection authentication failed',
+  'sessionAuth.error.relayAuthDescription': 'The relay rejected this connection. Retry or switch instances. This does not mean your UI password expired or pairing was revoked.',
   'sessionAuth.error.rateLimitDescriptionSingle': 'Please wait {minutes} minute before trying again.',
   'sessionAuth.error.rateLimitDescriptionPlural': 'Please wait {minutes} minutes before trying again.',
   'sessionAuth.error.networkDescription': 'We could not verify the UI session. If you\'re opening Yuri from another device on your local network, make sure Desktop Network Access is enabled on the desktop app and use the LAN address shown in Settings.',

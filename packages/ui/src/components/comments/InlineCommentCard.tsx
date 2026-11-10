@@ -122,7 +122,7 @@ export function InlineCommentCard({
               {t('inlineComment.actions.editComment')}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onDelete} className="text-destructive">
-              <Icon name="delete-bin" className="size-4 mr-2" />
+              <Icon name="delete-bin" className="size-4 mr-2 text-inherit" />
               {t('inlineComment.actions.deleteComment')}
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -135,7 +135,7 @@ export function InlineCommentCard({
           {t('inlineComment.actions.editComment')}
         </ContextMenuItem>
         <ContextMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
-          <Icon name="delete-bin" className="size-4 mr-2" />
+          <Icon name="delete-bin" className="size-4 mr-2 text-inherit" />
           {t('inlineComment.actions.deleteComment')}
         </ContextMenuItem>
       </ContextMenuContent>

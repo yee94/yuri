@@ -89,7 +89,7 @@ const useExternalLinkInteractions = ({
       return;
     }
 
-    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    if (event.defaultPrevented || event.button !== 0 || event.altKey || event.shiftKey) {
       return;
     }
 
@@ -123,6 +123,8 @@ const useExternalLinkInteractions = ({
     if (!isExternalHttpUrl(href)) {
       return;
     }
+
+    if (event.metaKey || event.ctrlKey) return;
 
     event.preventDefault();
     event.stopPropagation();

@@ -26,6 +26,7 @@ function PinnedContact({ assistant, selected, onSelect, onEdit, onDelete }: {
   return (
     <AssistantContactMenu
       assistant={assistant}
+      doubleClickMiniChat
       onEdit={() => onEdit(assistant.id)}
       onDelete={() => onDelete(assistant)}
       trigger={(

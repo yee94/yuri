@@ -2824,6 +2824,8 @@ export const dict: Record<I18nKey, string> = {
   'mcpDropdown.empty.configureInConfig': '설정에서 MCP 서버를 구성하세요.',
   'sessionAuth.error.rateLimitTitle': '시도가 너무 많습니다',
   'sessionAuth.error.networkTitle': '서버에 연결할 수 없습니다',
+  'sessionAuth.error.relayAuthTitle': '릴레이 연결 인증 실패',
+  'sessionAuth.error.relayAuthDescription': '릴레이가 현재 연결을 거부했습니다. 다시 시도하거나 인스턴스를 전환하세요. UI 비밀번호 만료나 페어링 취소를 의미하지는 않습니다.',
   'sessionAuth.error.rateLimitDescriptionSingle': '{minutes}분 후 다시 시도하세요.',
   'sessionAuth.error.rateLimitDescriptionPlural': '{minutes}분 후 다시 시도하세요.',
   'sessionAuth.error.networkDescription': 'UI 세션을 확인할 수 없습니다. 로컬 네트워크의 다른 기기에서 Yuri를 열고 있다면 데스크톱 앱에서 Desktop Network Access를 활성화하고 설정에 표시되는 LAN 주소를 사용하세요.',

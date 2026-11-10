@@ -202,6 +202,12 @@ alignment, scrollbar geometry or packaged-runtime behavior.
 
 # Anchored popup surfaces
 
+`TooltipContent` accepts the underlying Positioner's optional `anchor` for
+controlled, triggerless hints. Catalog rows keep their DOM stable and mount a
+tooltip only after the active row's delay, anchoring to that existing element;
+inactive rows must not instantiate floating roots or trigger-position observers.
+Ordinary trigger-based tooltips retain their existing behavior.
+
 Menus (including submenus and context menus), desktop Select, Changed files,
 status overlays and device connections use
 `yuri-mobile-overlay-surface yuri-popup-surface`. The base owns blur/saturation;

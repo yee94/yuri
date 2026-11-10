@@ -2790,6 +2790,8 @@ export const dict: Record<I18nKey, string> = {
   "mcpDropdown.empty.configureInConfig": "Configure os servidores MCP nas Configurações.",
   "sessionAuth.error.rateLimitTitle": "Muitas tentativas",
   "sessionAuth.error.networkTitle": "Não é possível acessar o servidor",
+  "sessionAuth.error.relayAuthTitle": "Falha na autenticação da conexão de retransmissão",
+  "sessionAuth.error.relayAuthDescription": "O retransmissor recusou esta conexão. Tente novamente ou troque de instância. Isso não significa que sua senha da UI expirou nem que o pareamento foi revogado.",
   "sessionAuth.error.rateLimitDescriptionSingle": "Aguarde {minutes} minuto antes de tentar novamente.",
   "sessionAuth.error.rateLimitDescriptionPlural": "Aguarde {minutes} minutos antes de tentar novamente.",
   "sessionAuth.error.networkDescription": "Não foi possível verificar a sessão da interface. Se você estiver abrindo o Yuri de outro dispositivo na sua rede local, ative o Desktop Network Access no app para desktop e use o endereço LAN mostrado em Configurações.",

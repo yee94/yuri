@@ -3,15 +3,17 @@ import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import type { EditorAPI } from '@/lib/api/types';
 import {
   isDesktopBinaryPath,
+  isDesktopDirectoryPath,
   isDesktopLocalOriginActive,
   isDesktopShell,
   isVSCodeRuntime,
+  openDesktopPath,
 } from '@/lib/desktop';
 import { getDirectoryForFilePath, isFilePathWithinDirectory, toAbsoluteFilePath } from '@/lib/path-utils';
 import { getImageMimeType, isHtmlFile, isImageFile } from '@/lib/toolHelpers';
 import { useUIStore } from '@/stores/useUIStore';
 import type { ToolPopupContent } from './message/types';
-import { isLikelyFilePath } from './fileReferenceDecorate';
+import { isLikelyFilePath, isLocalPathHref } from './fileReferenceDecorate';
 import {
   isAbsoluteReferencePath,
   isLikelyFileReferencePath,
@@ -106,7 +108,7 @@ export const getResolvedReference = (
     // file: URLs are already decoded by the parser; ordinary filesystem paths are literal.
     try { parsed.path = decodeURIComponent(parsed.path); } catch { /* Keep malformed escapes literal. */ }
   }
-  if (!parsed || !isLikelyFileReferencePath(parsed.path)) {
+  if (!parsed || (referenceKind === 'href' ? !isLocalPathHref(rawValue) : !isLikelyFileReferencePath(parsed.path))) {
     return null;
   }
 
@@ -247,6 +249,14 @@ export const openFileReference = async (
   if (!resolved) {
     return;
   }
+
+  if (options.referenceKind === 'href' && isDesktopShell() && isDesktopLocalOriginActive()
+    && await isDesktopDirectoryPath(resolved.resolvedPath)) {
+    await openDesktopPath(resolved.resolvedPath);
+    return;
+  }
+
+  if (!isLikelyFileReferencePath(resolved.path)) return;
 
   if (isImageFile(resolved.resolvedPath) && options.onShowPopup) {
     const filename = resolved.resolvedPath.split('/').filter(Boolean).pop() ?? resolved.resolvedPath;

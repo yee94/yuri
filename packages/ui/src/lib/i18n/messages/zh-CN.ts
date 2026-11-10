@@ -2790,6 +2790,8 @@ export const dict: Record<I18nKey, string> = {
   'mcpDropdown.empty.configureInConfig': '请在设置中配置 MCP 服务器。',
   'sessionAuth.error.rateLimitTitle': '尝试次数过多',
   'sessionAuth.error.networkTitle': '无法连接服务器',
+  'sessionAuth.error.relayAuthTitle': '中继连接认证失败',
+  'sessionAuth.error.relayAuthDescription': '中继拒绝了当前连接，请重试或切换实例。这不代表 UI 密码已过期，也不能据此判断配对被撤销。',
   'sessionAuth.error.rateLimitDescriptionSingle': '请等待 {minutes} 分钟后再试。',
   'sessionAuth.error.rateLimitDescriptionPlural': '请等待 {minutes} 分钟后再试。',
   'sessionAuth.error.networkDescription': '无法验证 UI 会话。如果你是从本地网络中的另一台设备打开 Yuri，请在桌面端应用中启用 Desktop Network Access，并使用设置中显示的 LAN 地址。',

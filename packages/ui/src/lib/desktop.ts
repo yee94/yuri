@@ -918,6 +918,15 @@ export const isDesktopBinaryPath = async (path: string): Promise<boolean | null>
   }
 };
 
+export const isDesktopDirectoryPath = async (path: string): Promise<boolean> => {
+  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive() || !path.trim()) return false;
+  try {
+    return await invokeDesktop<boolean>('desktop_is_directory_path', { path: path.trim() }) === true;
+  } catch {
+    return false;
+  }
+};
+
 export const revealDesktopPath = async (path: string): Promise<boolean> => {
   if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
     return false;

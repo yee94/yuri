@@ -2790,6 +2790,8 @@ export const dict: Record<I18nKey, string> = {
   "mcpDropdown.empty.configureInConfig": "Налаштуйте сервери MCP у Налаштуваннях.",
   "sessionAuth.error.rateLimitTitle": "Забагато спроб",
   "sessionAuth.error.networkTitle": "Неможливо отримати доступ до сервера",
+  "sessionAuth.error.relayAuthTitle": "Помилка автентифікації з’єднання через ретранслятор",
+  "sessionAuth.error.relayAuthDescription": "Ретранслятор відхилив це з’єднання. Спробуйте ще раз або змініть екземпляр. Це не означає, що термін дії пароля UI минув або сполучення було скасовано.",
   "sessionAuth.error.rateLimitDescriptionSingle": "Зачекайте {minutes} хвилину перед повторною спробою.",
   "sessionAuth.error.rateLimitDescriptionPlural": "Зачекайте {minutes} хвилин, перш ніж повторити спробу.",
   "sessionAuth.error.networkDescription": "Нам не вдалося перевірити сесію інтерфейсу. Якщо ви відкриваєте Yuri з іншого пристрою у локальній мережі, увімкніть Desktop Network Access у настільному застосунку та використайте LAN-адресу, показану в налаштуваннях.",

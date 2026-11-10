@@ -90,7 +90,7 @@ export const BulkActionBar: React.FC<Props> = ({
                   onClick={onRemoveFromFolder}
                   className="text-destructive focus:text-destructive"
                 >
-                  <Icon name="close" className="mr-1 h-4 w-4" />
+                  <Icon name="close" className="mr-1 h-4 w-4 text-inherit" />
                   {t('sessions.sidebar.folders.removeFromFolder')}
                 </DropdownMenuItem>
               ) : null}

@@ -5,6 +5,13 @@ This module owns Yuri UI authentication for browser access, including password s
 
 Trusted-device access has one durable credential model: a remote client bearer token stored by `packages/web/server/lib/client-auth/remote-clients.js`. Password, passkey, and Pairing v2 are issuance methods for that credential, not separate credential systems. Issued client tokens are returned once, stored server-side only as hashes, and are later authenticated via `Authorization: Bearer yuri_client_...`.
 
+An expired UI session cookie does not invalidate a current client bearer. Both
+`requireAuth` and `/auth/session` accept that client independently, including
+SSH-issued and paired credentials. UI-session-only routes retain their separate
+gate. Clients must recheck `/auth/session` before interpreting a feature API's
+401/403 as a UI logout; Relay pairing admission failure and Relay socket routing
+authentication failure are distinct from UI password expiry.
+
 Relay admission additionally requires an active client record with `usesRelay: true`, `authMethod: 'pairing'`, and a pairing ID. `authorizeRelayRequest` enforces this before the tunnel forwards any HTTP/SSE request or WebSocket upgrade, including when the Host has no UI password. SSH/password/passkey credentials, owner cookies, and direct-only pairings do not grant Relay access. URL tokens resolve back to their issuing client and recheck current revocation/expiry and Relay permission. The only pre-credential route is `POST /api/client-auth/pairing/redeem`; its one-time secret validation also requires a Relay-enabled pairing when arriving through Relay. Direct authentication behavior is unchanged.
 
 Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. It stores short-lived one-time pairing sessions with hashed secrets, exposes create/cancel/redeem routes under `/api/client-auth/pairing/*`, and redeems a valid pairing secret into the same remote client token used by password/passkey trusted-device flows.

@@ -45,6 +45,17 @@ afterEach(() => {
 });
 
 describe('handleMarkstreamPointerEvent', () => {
+  test.each([false, true])('opens a directory link without navigating (command=%s)', (metaKey) => {
+    const root = document.createElement('div');
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', 'packages/electron/dist-preview/mac-arm64/');
+    root.append(anchor);
+    const event = click(anchor, root, { metaKey });
+    const fileReference = { effectiveDirectory: '/repo' };
+    handleMarkstreamPointerEvent(event, { fileReference });
+    expect(event.defaultPrevented).toBe(true);
+    expect(openFileReferenceFromElement).toHaveBeenCalledWith(anchor, fileReference);
+  });
   test.each(['/repo/src/', '/repo/src', './src/', '../', 'src', 'packages/ui', '/', 'C:\\repo\\src\\'])('directory link never navigates or reloads the app: %s', (href) => {
     const root = document.createElement('div');
     const anchor = document.createElement('a');

@@ -69,6 +69,31 @@ describe('isUrlAuthWebSocketPath', () => {
 });
 
 describe('ui auth client credential seam', () => {
+  for (const authMethod of ['password', 'pairing']) {
+    it(`an expired UI cookie does not block a valid ${authMethod} client credential`, async () => {
+      const createUiAuth = await loadCreateUiAuth();
+      let valid = true;
+      const auth = createUiAuth({ password: 'secret', clientAuthController: {
+        authenticateBearerToken: async (token) => valid && token === 'client-token'
+          ? { ok: true, clientId: 'device', client: { id: 'device', authMethod } } : null,
+      } });
+      const req = { method: 'GET', path: '/api/session', headers: {
+        authorization: 'Bearer client-token', cookie: 'yuri_ui_session=expired', accept: 'application/json',
+      } };
+      try {
+        const res = createResponse();
+        let admitted = false;
+        await auth.requireAuth(req, res, () => { admitted = true; });
+        expect(admitted).toBe(true);
+        await auth.handleSessionStatus(req, res);
+        expect(res.body).toEqual({ authenticated: true, scope: 'client' });
+        valid = false;
+        const revoked = createResponse();
+        await auth.handleSessionStatus(req, revoked);
+        expect(revoked.statusCode).toBe(401);
+      } finally { auth.dispose(); }
+    });
+  }
   for (const password of ['', 'secret']) {
     it(`relay requires a current relay pairing grant for bearer and URL credentials (password=${Boolean(password)})`, async () => {
       const createUiAuth = await loadCreateUiAuth();

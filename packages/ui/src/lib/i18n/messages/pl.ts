@@ -3012,6 +3012,8 @@ export const dict: Record<I18nKey, string> = {
   'sessionAuth.error.networkDescription': 'Nie udało się zweryfikować sesji UI. Jeśli otwierasz Yuri z innego urządzenia w sieci lokalnej, włącz Desktop Network Access w aplikacji desktopowej i użyj adresu LAN widocznego w Ustawieniach.',
   'sessionAuth.error.networkRetry': 'Błąd sieci. Sprawdź połączenie i spróbuj ponownie.',
   'sessionAuth.error.networkTitle': 'Nie można połączyć się z serwerem',
+  'sessionAuth.error.relayAuthTitle': 'Uwierzytelnienie połączenia przekaźnikowego nie powiodło się',
+  'sessionAuth.error.relayAuthDescription': 'Przekaźnik odrzucił to połączenie. Spróbuj ponownie lub zmień instancję. Nie oznacza to wygaśnięcia hasła UI ani cofnięcia parowania.',
   'sessionAuth.error.passkeySetupFailed': 'Nie udało się skonfigurować klucza dostępu.',
   'sessionAuth.error.passkeySignInCanceled': 'Logowanie kluczem dostępu zostało anulowane.',
   'sessionAuth.error.rateLimitDescriptionPlural': 'Poczekaj {minutes} minut przed ponowną próbą.',
