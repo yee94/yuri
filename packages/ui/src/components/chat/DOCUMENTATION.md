@@ -135,8 +135,13 @@ is 10px on desktop and 6px on mobile; the bottom margin is 12px on desktop and 8
 on mobile. Distributing the extra space above and below the controls
 balances their distance from the body while accounting for the status wrapper's padding and
 collapsed margins as well as the message body's existing bottom spacing.
-Intermediate/interrupted TPS rows keep their original 6px/12px margins because
-they do not replace the live status. This is normal-flow spacing, not a delayed
+Textless/interrupted replies use that same footer and its existing disabled-copy
+action as soon as TPS is publishable, even before `time.completed` arrives. There
+is no separate TPS-only row or alternate spacing: later completion metadata and
+copy availability update the mounted footer in place. Footer copy availability
+uses the original parts' trailing body (`getSortedBodyPartIndex`), not process
+narration or the arrival of `time.completed`. Active continuations still
+publish neither footer nor TPS. This is normal-flow spacing, not a delayed
 status removal, retained empty placeholder or extra scroll compensation. Verify
 the whole pin-reveal root and reading position at completion, not just Markdown
 height. Wrapped metadata/Changes controls can still legitimately add another row.

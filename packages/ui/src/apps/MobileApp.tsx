@@ -23,6 +23,7 @@ import { YuriLogo } from '@/components/ui/YuriLogo';
 import { MobileConnectionWelcome } from './MobileConnectionWelcome';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { MobileGlobalSearchHost } from '@/mobile/MobileGlobalSearchHost';
+import { MobileHtmlPreviewSheet } from '@/mobile/MobileHtmlPreviewSheet';
 import { ChatView } from '@/components/views/ChatView';
 import { AssistantView } from '@/components/assistants/AssistantView';
 import { AssistantShareWelcome } from '@/components/assistants/AssistantShareWelcome';
@@ -3808,6 +3809,7 @@ export function MobileApp({ apis }: MobileAppProps) {
             <div className="h-full bg-background text-foreground">
               <SessionStartupCoordinator />
               <MobileShareBridge />
+              <MobileHtmlPreviewSheet />
               <SyncAppEffects embeddedBackgroundWorkEnabled={isInitialized} />
               <OpenCodeUpdateToast />
               <MobileAppUpdateToast />

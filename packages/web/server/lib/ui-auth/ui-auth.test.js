@@ -334,6 +334,16 @@ describe('ui auth client credential seam', () => {
     expect(arbitraryGetCalled).toBe(false);
     expect(arbitraryGetRes.statusCode).toBe(401);
 
+    for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      const proxyPath = '/api/preview/proxy/1234567890abcdef/form';
+      const proxyReq = { method, path: proxyPath, url: `${proxyPath}?yuri_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
+      let allowed = false;
+      await auth.requireAuth(proxyReq, createResponse(), () => { allowed = true; });
+      expect(allowed, `browser preview ${method}`).toBe(true);
+    }
+    const registerReq = { method: 'POST', path: '/api/preview/targets', url: `/api/preview/targets?yuri_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
+    expect(await auth.ensureSessionToken(registerReq, createResponse())).toBe(null);
+
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
       const writeReq = { method, path: '/api/fs/raw', url: `/api/fs/raw?path=%2Ftmp%2Fimage.png&yuri_url_token=${encodeURIComponent(urlToken)}`, headers: { accept: 'application/json' } };
       const writeRes = createResponse();

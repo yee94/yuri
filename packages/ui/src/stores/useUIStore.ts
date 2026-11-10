@@ -17,6 +17,8 @@ import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobi
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
+import { isCapacitorApp } from '@/lib/platform';
+import { useMobileHtmlPreviewStore } from '@/mobile/useMobileHtmlPreviewStore';
 
 /** Main column tab. Product exclusive primaries: chat(session) | schedule | assistant. */
 export type MainTab = 'chat' | 'git' | 'diff' | 'terminal' | 'files' | 'diagram' | 'schedule' | 'assistant' | 'plugin';
@@ -1611,6 +1613,10 @@ export const useUIStore = create<UIStore>()(
         },
 
         openContextPreview: (directory, url) => {
+          if (isCapacitorApp()) {
+            useMobileHtmlPreviewStore.getState().open(url);
+            return;
+          }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           const normalizedUrl = (url || '').trim();
           if (!normalizedDirectory || !normalizedUrl) {
@@ -1635,6 +1641,10 @@ export const useUIStore = create<UIStore>()(
           });
         },
         openContextBrowser: (directory, url = '') => {
+          if (isCapacitorApp()) {
+            useMobileHtmlPreviewStore.getState().open(url);
+            return;
+          }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           if (!normalizedDirectory) return;
           const targetUrl = typeof url === 'string' && url.trim().length > 0 ? url.trim() : '';

@@ -80,7 +80,65 @@ React 只拥有空容器；插件可返回 iframe，也可自行渲染 DOM。无
 没有宿主标题、返回按钮、加载状态或重试按钮；渲染失败时复用文件/Eficy 的
 `FilePreviewError` 居中 SVG 与文字兜底，详细诊断仍在插件设置中，
 不会回退外部浏览器。`/plugins/$pluginId/$pageId` 只包含身份，不包含配置。
-全局页只用于桌面/Web 桌面布局和 VS Code；移动端契约 inactive、不挂载页面。
+桌面/Web 桌面布局和 VS Code 保留上述全局 placement。新版 Capacitor 通过
+Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet 中挂载同一个页面。
+卡片只来自真实 `yuri.page` 注册；入口按已启用 GUI 插件显示，加载期间在 Sheet 内提示。多个插件相同页面 ID
+按完整 host key 区分；无图标或未知图标沿用 window 回退。其他 root header 不重复放入口。
+普通 hosted mobile 的全局页仍为 unsupported，`yuri.pages` 在网络未就绪时 inactive。
+
+### Capacitor 网络生命周期
+
+`mobile-main.tsx` 先等待轻量 `mobile-network-bridge.ts` 的 `prepare`，再动态导入
+runtime 配置，避免应用网络先建立连接。常驻 SOCKS 网关在没有 GUI 租约时直接
+转发普通应用 TCP；原生 `capabilities.supported` 只表示准备成功，不表示零旁路。
+
+目标是**可达性**：插件在手机上看到的网络与 Host 一致（Host 本机、Host 内网与公网
+均从 Host 发起）。它不是插件沙箱，也不承诺零旁路。
+
+`GuiPluginsProvider` 在创建 host、求值 CJS 和执行 setup **之前**取得
+`acquireMobileHtmlNetwork` 共享租约，底层仍由 `openMobileGuiNetwork` 持有。取得租约只是
+把本地网关切到插件出口，不等待 Relay：插件 Relay 通道在第一条插件 TCP 连接时才建立，
+空闲 60 秒后关闭。插件加载、页面注册和入口显示因此不依赖 Relay 握手。内置 HTML
+文件预览及 URL Sheet 也申请同一个 owner；它们需要握手返回的 Host HTTP origin，
+所以显式 `connect()`，失败时显示重试。缺少新版原生桥、iOS 17+ 代理能力或已配对 Relay
+时不执行移动插件代码，错误保留在插件设置中。LAN 连接也使用同一已保存设备的 Relay
+candidate；不猜测其他设备或降级手机直连。
+
+**Yuri 自身连接永远不进入插件出口。** `start` 携带 `direct` 目标：当前 Relay 服务器、
+当前 runtime 地址和已保存的 LAN 候选（host:port）。网关在 SOCKS 握手时按目标分流，
+这些连接直连；其余连接走插件 Relay。主应用的消息同步因此不受插件流量或插件通道
+故障影响。
+
+租约覆盖整个 host，因此页面、Panel、Settings、setup 和插件后台任务共用代理；
+关闭单个页面不释放租约。插件通道断开只关闭在途插件连接并通知 owner，不 dispose
+插件、不结束租约；下一条连接以指数退避（1s 起、30s 封顶）重连，成功后清零。
+HTML 消费者先移除内容再释放，最后一个 owner 才结束插件出口。正常清理先释放 host
+owner，再 abort 网络；`stop` 关闭流和 wire，恢复普通应用转发，但保留 WebView 代理配置。
+并发 acquire 等待上次 release，旧 generation 的回调丢弃；打开失败的租约不被后续 owner
+共享。页面被权威移除会关闭，所属插件失败则保留错误页；其他插件的失败不阻碍关闭已移除页面。
+
+Projects 的「应用」入口在权威 inventory 有已启用 GUI 插件时立即显示，不等插件加载；
+点开后在 Sheet 内显示加载、失败重试或暂无应用。卡片仍只来自真实 `yuri.page` 注册。
+
+`mobile-network-wire.ts` 将**同一配对 Relay 的独立连接**交给原生 URLSession /
+OkHttp；加密仍由既有 TS tunnel client 完成。插件的 HTTP(S)/WS(S) 路径为
+loopback SOCKS → 插件 Relay 通道 → Host TCP 出口；Yuri 自身目标按上文直连。
+Android 流 ID 按 `Integer`/`Long` 两种 JSON 数字读取（Capacitor `getLong` 不接受
+`Integer`，曾导致打开确认被拒、约 23 秒一轮重试）。
+32 流、16 KiB 分块和 128 KiB/流 credit 限制在途字节，写入完成后才归还 credit。
+
+当前复用主 WebView：iOS 同 website data store、Android 同进程的其他 WebView
+请求也会受代理影响。iOS 26.5 模拟器的冷/预热 `localhost` 均通过，包括租约
+释放后的联网恢复；`127.0.0.1` 和 `[::1]` 四个用例仍旁路。创建前配置不可达代理的
+全新 nonpersistent WebView 也复现回环 IP 直连；真机行为未验证。
+网络握手 ready 不代表所有浏览器请求已经切到代理。
+内置 loopback 链接经 Host preview proxy 改写后的三个预热原生用例已通过；它只覆盖
+该入口，不能外推为任意插件直接访问 IP 也已修复。共享 HTML owner 和 URL 续期见
+`../preview/DOCUMENTATION.md`。
+尚未实现独立插件 WebView/Android 进程；WebRTC/UDP、原生
+联网、外部浏览器和代理安装前的连接不在强制覆盖范围。因此这不是“所有协议零旁路”
+的完成证明。真实 iOS 网络探针与完整边界见
+`packages/web/server/lib/gui-network/DOCUMENTATION.md`。
 
 options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/持久缓存。
 同文档第三方 JS 不是安全沙箱；iframe 的认证、来源校验和跨域策略由插件拥有，
@@ -107,6 +165,8 @@ options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/�
 本地 Electron 支持 `main`、`ctx.main(Ipc)`、`ctx.use(Ipc)`、schema 编解码、每窗口 state/events、调用取消及 `os` 限制；其他运行时仍拒绝 native IPC、main-only 和带 `os` 限制的定义。未支持 `WebContentsView`/embeds、server sources、slots、原生菜单及其他未实现 Host API。访问未支持能力必须产生可见错误，不能用空对象或成功 no-op 冒充支持。
 
 `TitlebarItem` 通过 snapshot 的 `titlebarItems` 交给 React 叶子入口，不挂载 Solid 视图，不主动请求加载，也不增加网络/轮询。注册顺序保持不变，内部 key 按插件 ID 与 item ID 元组编码，避免跨插件同名或含冒号 ID 的碰撞。`runTitlebarItem` 在点击时读取最新贡献并检查 busy 与插件生命周期；撤销、失败、替换、停用和切 runtime 清除旧入口。无会话时仍可运行；无 `run` 时仅展示状态。locale 和 Solid accessor/getter 更新字段，不因普通会话切换重跑注册 accessor。
+
+Yuri 在同一个 `TitlebarItem.icon` 字符串上扩展原始 SVG、SVG Data URI（百分号编码/Base64）及 PNG/JPEG/GIF/WebP/AVIF/ICO Base64 Data URI，内置名称和别名保持兼容；不新增 Registry 或资源引用。`titlebar-icon.ts` 在发布 snapshot 前统一规范化，输入最多 2 MiB 字符，SVG 复用 `validateGuiSvg` 的 16 KiB UTF-8 静态校验；图片非法只清除该 icon，不使插件或其他贡献失败。React 用 `img` 渲染自包含图片，加载失败保留入口文字，变更图片字符串可重试。外部 URL、本地路径和裸 Base64 不作为图片加载；所有共享 UI 运行时使用同一逻辑，无网络和原生权限变化。上游 SDK 仍是 `IconName`，该图片字符串能力仅属于 Yuri；内置 skill 说明窄字段类型断言与可移植性边界。
 
 入口不扩大权限：本地 Electron 插件复用既有 main/IPC lease，Web、VS Code、hosted/Capacitor mobile 和远程窗口仅支持窗口动作；调用 native IPC 仍明确 unsupported。需要本机配置或 Electron shell 的插件应自行处理拒绝，不能由宿主推测 URL 或绕过 native gate。
 

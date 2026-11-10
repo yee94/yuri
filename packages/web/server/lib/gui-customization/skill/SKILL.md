@@ -16,7 +16,7 @@ Use a standard OpenCode GUI plugin to change the running Yuri UI without modifyi
    - Themes, CSS, logos, Dock icons: [appearance](references/appearance.md).
    - Global main-content tabs and titlebar entries: [global pages](references/global-pages.md).
    - Widgets under Changes in the conversation's status column: [work-status widgets](references/work-status.md).
-   - Entry/tab icons or icons inside plugin content: [icons](references/icons.md), including supported names, same-document SVG usage and artwork boundaries.
+   - Entry/tab icons or icons inside plugin content: [icons](references/icons.md), including direct SVG/data-URI icon strings, supported names, same-document SVG usage and artwork boundaries.
    - Custom file suffixes, parsers, inline/mobile previews and file icons: [file previews](references/file-previews.md).
    - Preview toolbar placement, PDF/PNG/HTML export and iframe snapshot boundaries: [preview actions and exports](references/preview-exports.md).
    - Panels, commands, settings, files, RPC, lifecycle, runtime support: [GUI API](references/gui-api.md).

@@ -33,6 +33,7 @@ const ALLOWED_WS_PATHS = new Set([
   '/api/event/ws',
   '/api/terminal/ws',
   '/api/remote-desktop/ws',
+  '/api/gui-network/ws',
   '/api/dictation/ws',
 ]);
 
@@ -402,7 +403,7 @@ export const createTunnelHost = ({
         for (const frame of encodeFragmentedMessage(frameType, streamId, bytes)) {
           await waitForBackpressure(null);
           if (streams.get(streamId) !== stream || closed) return;
-          await send(frame, open.path === '/api/remote-desktop/ws');
+          await send(frame, open.path === '/api/remote-desktop/ws' || open.path === '/api/gui-network/ws');
         }
       });
     });

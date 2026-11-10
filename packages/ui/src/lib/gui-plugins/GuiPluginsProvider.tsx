@@ -19,6 +19,7 @@ import { NativeGuiError, requestNativeGui } from './native-errors';
 import { afterGuiPaint, createGuiInstallQueue } from './scheduling';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { GuiAppearanceProvider } from './GuiAppearanceProvider';
+import { isCapacitorApp } from '@/lib/platform';
 const noop = () => {};
 const noopSubscribe = () => noop;
 const message = (error: unknown): string | null => error ? error instanceof Error ? error.message : String(error) : null;
@@ -172,7 +173,10 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
   const hasGui = disabled !== null && inventory.length > 0;
   const activeIds = React.useMemo(() => new Set((inventoryQuery.data ?? [])
     .filter((plugin) => plugin.state.status === 'active').map((plugin) => plugin.id)), [inventoryQuery.data]);
-  const wantsHost = painted && requested && hasGui && (hasEnabled || host !== null);
+  const mobileNetworkRequired = isCapacitorApp();
+  const wantsHost = painted && requested && hasGui && (mobileNetworkRequired
+    ? inventory.some(plugin => plugin.enabled && activeIds.has(plugin.id))
+    : hasEnabled || host !== null);
 
   React.useEffect(() => {
     if (!painted || requested || !hasEnabled || !inventory.some((plugin) => plugin.enabled && activeIds.has(plugin.id))) return;
@@ -194,26 +198,40 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     const controller = new AbortController();
     let loaded: GuiPluginHost | undefined;
     setHostError(null);
-    void afterGuiPaint(controller.signal).then(() => Promise.all([import('./host'), import('@/lib/opencode/gui'), import('@/components/chat/fileReferenceActions')])).then(([{ GuiPluginHost }, { createGuiClient }, { openFileReference }]) => {
+    void afterGuiPaint(controller.signal).then(async () => {
+      // Routing plugin egress is a local gateway switch; the plugin Relay channel
+      // connects on first plugin request, so loading never waits for it. A lost
+      // channel only fails in-flight plugin requests and reconnects on next use.
+      if (mobileNetworkRequired) {
+        const { acquireMobileHtmlNetwork } = await import('@/lib/preview/mobile-html-network');
+        await acquireMobileHtmlNetwork(controller.signal, () => {});
+      }
+      return Promise.all([import('./host'), import('@/lib/opencode/gui'), import('@/components/chat/fileReferenceActions')]);
+    }).then(([{ GuiPluginHost }, { createGuiClient }, { openFileReference }]) => {
       if (controller.signal.aborted || getRuntimeTransportIdentity() !== transport) return;
       loaded = new GuiPluginHost({
         client: createGuiClient(controller.signal), files, queryClient, transport, viewExport, toast,
-        storage: window.localStorage, ...environment.current,
+        storage: window.localStorage, mobileNetworkRequired, ...environment.current,
         focusFile: async (path, directory) => {
           if (!controller.signal.aborted) await openFileReference(path, false, { effectiveDirectory: directory });
         },
         openPage: (key) => !controller.signal.aborted && getRuntimeTransportIdentity() === transport
-          && !useUIStore.getState().isMobile && useUIStore.getState().openGuiPage(key),
+          && useUIStore.getState().openGuiPage(key),
       });
+      if (mobileNetworkRequired) loaded.setMobilePageNetworkReady(true);
       setResource({ transport, host: loaded });
-    }).catch((error: unknown) => { if (!controller.signal.aborted) setHostError({ transport, error: message(error) }); });
-    return () => {
-      controller.abort();
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setHostError({ transport, error: message(error) });
       loaded?.dispose();
+      controller.abort();
+    });
+    return () => {
+      loaded?.dispose();
+      controller.abort();
       setResource((current) => current?.host === loaded ? null : current);
       setBundles((current) => current?.host === loaded ? null : current);
     };
-  }, [wantsHost, files, queryClient, transport, hostAttempt, viewExport]);
+  }, [wantsHost, files, queryClient, transport, hostAttempt, viewExport, mobileNetworkRequired]);
 
   React.useLayoutEffect(() => {
     host?.setSession(sessionID && directory ? { id: sessionID, directory } : undefined);
@@ -224,7 +242,6 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     host?.workStatus.setOrder(ids);
   }, [host, inventoryQuery.data]);
   React.useLayoutEffect(() => {
-    if (narrow && useUIStore.getState().activeMainTab === 'plugin') useUIStore.getState().closeGuiPage();
     host?.setAppearance({ locale, mode, narrow });
   }, [host, locale, mode, narrow]);
   React.useLayoutEffect(() => {

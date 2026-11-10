@@ -7,14 +7,32 @@ import { GuiPluginWindow } from './GuiPluginWindow';
 import { guiPluginReadinessKey } from './readiness';
 import { GuiPreviewActions } from './GuiPreviewActions';
 import { useDeviceInfo } from '@/lib/device';
+import { useUIStore } from '@/stores/useUIStore';
+import { GuiPluginPage } from './GuiPluginPage';
+import { guiPagePluginId } from '@/lib/gui-plugins/pages';
 
 export function GuiPluginSurface() {
-  const { host, snapshot } = useGuiPlugins();
+  const { host, snapshot, inventory, error, loading, requested } = useGuiPlugins();
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
+  const pageKey = useUIStore(state => state.activeMainTab === 'plugin' ? state.activeGuiPage : null);
+  const page = snapshot.pages.find(entry => entry.key === pageKey);
+  const ownerId = guiPagePluginId(pageKey);
+  const failed = Boolean(error) || snapshot.plugins.some(entry => entry.id === ownerId && entry.status === 'failed')
+    || inventory.some(entry => entry.id === ownerId && entry.error);
+  React.useEffect(() => {
+    if (isMobile && pageKey && requested && !loading && !page && !failed) {
+      useUIStore.getState().closeGuiPage();
+    }
+  }, [isMobile, pageKey, requested, loading, page, failed]);
   const [actions] = React.useState(() => document.createElement('div'));
   const active = snapshot.panels.find((panel) => panel.key === snapshot.activePanel && !panel.inline);
   return (
+    <>
+    {isMobile && pageKey ? <GuiPluginWindow id="gui-plugin-page" open title={page?.title ?? t('guiPlugins.title')}
+      onClose={() => useUIStore.getState().closeGuiPage()}>
+      <GuiPluginPage />
+    </GuiPluginWindow> : null}
     <GuiPluginWindow id="gui-plugin-panel" open={Boolean(host && active)} title={active?.title ?? t('guiPlugins.title')} onClose={() => host?.hidePanel()}
       actions={isMobile && active ? <GuiPreviewActions target={actions} /> : null}>
       {host && active ? <>
@@ -33,5 +51,6 @@ export function GuiPluginSurface() {
       </div>
       </> : null}
     </GuiPluginWindow>
+    </>
   );
 }

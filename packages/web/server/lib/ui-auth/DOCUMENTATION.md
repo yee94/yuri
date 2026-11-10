@@ -27,6 +27,14 @@ Remote desktop uses the exact `/api/remote-desktop/ws` scoped URL-token path, mi
 - `packages/web/server/lib/client-auth/pairing.js`: short-lived Pairing v2 sessions and one-time secret redemption into trusted-device client tokens.
 
 ## Public exports (ui-auth.js)
+
+Browser URL auth also permits GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS beneath an
+exact `/api/preview/proxy/<hex-id>/...` target. This lets framed websites submit
+forms and fetch through the Host without Yuri bearer headers. The preview runtime
+independently requires its short-lived target token and strips Yuri credentials
+before forwarding. Target registration and arbitrary Yuri write routes still
+reject URL tokens; filesystem URL access remains GET-only.
+
 - `isUrlAuthWebSocketPath(pathname)`: true when a WebSocket upgrade may authenticate with `yuri_url_token` (exact terminal/dictation/event/realtime-proxy paths, plus prefix `/api/preview/proxy/` for Preview HMR). Keep in sync with tunnel-host `isTunnelWsPathAllowed`.
 - `createUiAuth({ password, cookieName, sessionTtlMs, readSettingsFromDiskMigrated })`: creates UI auth controller with methods:
   - `authorizeRelayRequest(req)`

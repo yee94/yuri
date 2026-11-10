@@ -119,6 +119,7 @@ import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.
 import { createHostUpdateRuntime } from './lib/host-update/runtime.js';
 import { createCliUpdateAdapter } from './lib/host-update/cli.js';
 import { attachRemoteDesktop } from './lib/remote-desktop/runtime.js';
+import { attachGuiNetwork } from './lib/gui-network/runtime.js';
 import { getOrCreateInstallId } from './lib/package-manager.js';
 import { applyRuntimeCorsHeaders } from './lib/request-cors.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
@@ -1792,6 +1793,14 @@ async function main(options = {}) {
     }, 0);
   }
   uiAuthController = bootstrapResult.uiAuthController;
+  const guiNetworkRuntime = attachGuiNetwork({
+    server, uiAuthController, isRequestOriginAllowed,
+    isClientActive: async (id) => {
+      const clients = await remoteClientAuthRuntime.listClients();
+      return clients.some((client) => client.id === id && !client.revokedAt
+        && (!client.expiresAt || Date.parse(client.expiresAt) > Date.now()));
+    },
+  });
   const remoteDesktopRuntime = attachRemoteDesktop({
     app, server, adapter: options.remoteDesktopAdapter, uiAuthController, isRequestOriginAllowed,
     isClientActive: async (id) => {
@@ -2099,6 +2108,7 @@ async function main(options = {}) {
       }
       realtimeProxyRuntime.stop();
       remoteDesktopRuntime.stop();
+      guiNetworkRuntime.stop();
       liveActivityRefreshRuntime.dispose();
       notificationTriggerRuntime.dispose();
       if (relayReconcileTimer) clearInterval(relayReconcileTimer);

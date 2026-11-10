@@ -31,8 +31,8 @@ This native dock addition requires a native rebuild; older shells ignore it.
 ### Yuri native identity migration (shell API 2)
 
 This is a new installation, not an OTA-only rename. `YuriOTA.shellApiVersion`
-and `YURI_SHELL_API_VERSION` are now **3**. The update publisher must use
-`minShellApiVersion: 3` and application identity `com.yee94.yuri` for every new Yuri
+and `YURI_SHELL_API_VERSION` are now **4**. The update publisher must use
+`minShellApiVersion: 4` and application identity `com.yee94.yuri` for every new Yuri
 bundle. Old shells must receive `install_native_required`, never a Yuri UI bundle.
 The UI and Host owners must update all plugin imports, `Yuri*` registration names,
 `yuri://` deep links, `yuri-asset://` resources and `yuri:ime-state` together.
@@ -46,7 +46,51 @@ object does not expose `getConfig()` or `config`. Missing/invalid metadata fails
 the check instead of inventing epoch 1. Installing the new native shell is required;
 the broken 0.1.3 updater cannot fetch this repair itself. Hosted mobile keeps its
 existing public-feed path. Capgo automatic checks remain disabled and their legacy
-identity-only epoch inference stays conservative; interactive checks send epoch 3.
+identity-only epoch inference stays conservative; interactive checks send the installed shell epoch.
+
+### GUI applications (shell API 4)
+
+Projects shows Apps when active GUI plugins register `yuri.page` entries. Icon
+cards open locally rendered Solid/DOM pages in the existing mobile sheet.
+`YuriGuiNetwork` adds a loopback SOCKS5 server and a native socket restricted to
+the saved Relay endpoint. The existing TypeScript tunnel still performs E2EE;
+the connected Host's authenticated `/api/gui-network/ws` owns target DNS/TCP.
+Website URLs, cookies, browser cross-origin checks and end-to-end website TLS
+remain browser-owned. No hostname bypass or direct fallback is configured, but
+the current iOS implementation has a verified platform routing bypass below.
+
+Mobile startup prepares the persistent gateway before importing runtime network
+configuration. The Provider switches it to plugin egress before evaluating any GUI
+bundle, and keeps the lease until the host is disposed, covering setup, panels and
+settings as well as pages. Closing a page does not release it. Switching is local:
+the plugin Relay channel connects on the first plugin connection and reconnects with
+backoff after loss without disposing plugins. Yuri's own Relay, runtime and LAN
+endpoints always connect directly, so plugin traffic cannot stall application sync.
+Apps appears as soon as an enabled GUI plugin exists; its sheet shows loading/retry. Built-in HTML files and URL sheets hold
+independent references; the final release returns the gateway to ordinary application
+forwarding while retaining the proxy.
+Old shells, iOS below 17,
+Android WebViews without `PROXY_OVERRIDE`, and connections without a saved Relay
+candidate cannot activate native GUI plugins. Hosted mobile global pages remain
+unsupported. Native rebuild and updated Host are required.
+
+The proxy currently applies to the main iOS website data store / Android WebView
+process, including other WebView traffic while plugins are active. This is not an
+independent plugin container or OS VPN. WebRTC/UDP, native network APIs, external
+browser handoff and pre-existing connections remain outside the enforced TCP
+path; strict all-network isolation is unfinished. The iOS 26.5 Simulator acceptance
+matrix passes cold and prewarmed `localhost`, including post-release networking.
+Both `127.0.0.1` and `[::1]` bypass the Host, including after disconnect (2 passed,
+4 failed). A new nonpersistent WebView configured before creation also bypasses an
+unreachable proxy for those IPs. Physical iOS behavior is unverified. Complete iOS
+simulator and Android debug builds passed; Android has only build evidence.
+Built-in loopback URL sheets now load the Host preview proxy through the same
+gateway. The three prewarmed localhost/IPv4/IPv6 proxy cases pass the native probe,
+including upload, WS, nested resources, Host socket attribution and disconnect.
+This does not fix arbitrary JS requests to raw loopback IPs. See
+`packages/ui/src/lib/preview/DOCUMENTATION.md` for file HTML and token renewal limits.
+Protocol, reproducible probe and remaining boundaries are in
+`packages/web/server/lib/gui-network/DOCUMENTATION.md`.
 
 Identity inventory (old strings here are migration documentation only):
 
@@ -115,7 +159,7 @@ identity table after retained installations have recovered their data.
 - About reports the installed native client version separately from the connected instance's Yuri and OpenCode versions. Mobile update checks send the native client version to the instance.
 - Capacitor About export of the prerelease diagnostics log calls `YuriMedia.saveFile`, which presents the system save picker (iOS `UIDocumentPickerViewController`, Android `ACTION_CREATE_DOCUMENT`). It does not copy to the clipboard or rely on `navigator.share`. Android stages the bytes in an app-private cache file and strips `dataBase64` from the Capacitor plugin call before opening the picker, so activity-pause persistence cannot hit Binder's `TransactionTooLargeException`. The picker uses `application/octet-stream` plus `EXTRA_TITLE` because OEM DocumentsUI can crash on confirm when the type is `application/json`.
 - Android update actions pass the APK URL to the configured system default browser, which owns the download and installation handoff.
-- Mobile chat HTTP(S) links open the browser rather than the desktop context panel. Android shares the update-download `YuriExternalBrowser` bridge through `packages/ui/src/lib/native-external-browser.ts`; iOS and hosted H5 use the window browser handoff.
+- Native mobile loopback HTTP(S) links, including bare `localhost:port`, open the local HTML Sheet through the saved Relay and Host preview proxy. Explicit context Preview/Browser actions use that sheet too. Other mobile chat HTTP(S) links retain browser handoff: Android uses `YuriExternalBrowser`, iOS and hosted H5 use the window browser handoff.
 - The connection screen and `Switch instance` Settings page are Capacitor-only. Hosted `mobile.html` in a normal browser keeps the regular web behavior.
 - Password-protected Yuri servers can be unlocked from the mobile app. The app stores the issued client token with the saved connection.
 - Chat `edit` and `multiedit` rows open their exact single-file tool patch in a resizable phone sheet or the iPad Changes panel. An `apply_patch` row opens every renderable file patch from that invocation. The initial target focuses its first changed line, and apply-patch turn-snapshot records open the owning turn diff.

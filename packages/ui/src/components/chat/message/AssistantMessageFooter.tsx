@@ -17,8 +17,8 @@ const MESSAGE_FOOTER_CONTAINER_STYLE = { containerType: 'inline-size' as const, 
  * 操作组首项是 size-6 图标按钮，14px 字形居中内缩 5px，-ml 抵消后与正文左对齐（桌面/移动同一套）.
  */
 const MESSAGE_FOOTER_ACTION_GROUP_CLASS = `${MESSAGE_ACTION_GROUP_CLASS} -ml-[5px]`;
-const MESSAGE_FOOTER_ROW_CLASS = 'mt-1.5 mb-0.5 flex flex-wrap items-center gap-3';
-const MESSAGE_FOOTER_ROW_MOBILE_CLASS = 'mt-3 mb-0.5 flex flex-wrap items-center gap-3';
+const MESSAGE_FOOTER_ROW_CLASS = 'mt-2.5 mb-3 flex flex-wrap items-center gap-3';
+const MESSAGE_FOOTER_ROW_MOBILE_CLASS = 'mt-1.5 mb-2 flex flex-wrap items-center gap-3';
 const MESSAGE_FOOTER_META_GROUP_CLASS = 'flex w-max max-w-full flex-none flex-wrap items-center gap-2 text-muted-foreground';
 /** Duration / timestamp — 与操作图标同色；字略小，行高贴齐图标高度保持垂直对齐. */
 const MESSAGE_FOOTER_META_TEXT_CLASS = 'h-3.5 items-center gap-1 text-[11px] leading-none tabular-nums text-muted-foreground';
@@ -50,7 +50,7 @@ const AssistantTpsMeta = ({ label }: { label: string }) => {
 };
 
 export const AssistantMessageFooter = React.memo(function AssistantMessageFooter({
-    messageId, isMobile, actions, tps, duration, timestamp, activity, trailing, interrupted = false,
+    messageId, isMobile, actions, tps, duration, timestamp, activity, trailing,
 }: {
     messageId: string;
     isMobile: boolean;
@@ -60,12 +60,10 @@ export const AssistantMessageFooter = React.memo(function AssistantMessageFooter
     timestamp?: string | null;
     activity?: React.ReactNode;
     trailing?: React.ReactNode;
-    interrupted?: boolean;
 }) {
-    // Settled chrome replaces the live status footprint. Intermediate TPS rows do not replace it.
-    return <div className={cn(isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS,
-        !interrupted && (isMobile ? 'mt-1.5 mb-2' : 'mt-2.5 mb-3'))}
-        data-message-footer="true" data-message-tps={interrupted ? 'interrupted' : undefined} style={MESSAGE_FOOTER_CONTAINER_STYLE}>
+    // Every completion state shares the same footprint, including textless/interrupted replies.
+    return <div className={isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS}
+        data-message-footer="true" style={MESSAGE_FOOTER_CONTAINER_STYLE}>
         {actions ? <div className={MESSAGE_FOOTER_ACTION_GROUP_CLASS} data-message-action-group="true">{actions}</div> : null}
         {(tps || duration || timestamp || activity) ? <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>
             {(tps || duration) ? <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">

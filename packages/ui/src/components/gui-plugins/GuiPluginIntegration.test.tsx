@@ -195,6 +195,59 @@ describe('foreign DOM ownership', () => {
     expect(container.children).toHaveLength(0);
   });
 
+  test.each([
+    { sidebar: true, mobile: false }, { sidebar: true, mobile: true },
+    { sidebar: false, mobile: false }, { sidebar: false, mobile: true },
+  ])('entry images preserve labels, busy state, failure fallback and lifecycle (%j)', async ({ sidebar, mobile }) => {
+    const svg = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E';
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    const entry = { key: 'image', pluginId: 'demo', label: 'Artwork', title: 'Open artwork', icon: svg, actionable: true };
+    const view = () => <GuiPluginTitlebarItems sidebar={sidebar} mobile={mobile} />;
+    updateSnapshot({ titlebarItems: [entry] });
+    await render(view());
+    const button = container.querySelector('button')!;
+    const image = container.querySelector('img')!;
+    expect(image.getAttribute('src')).toBe(svg);
+    expect(image.alt).toBe('');
+    expect(image.className).toContain('object-contain');
+    expect(image.className).toContain(sidebar ? 'size-4' : 'size-3.5');
+    expect(button.textContent).toBe(sidebar ? 'Artwork' : '');
+    expect(container.querySelector('svg')).toBeNull();
+    await click('Open artwork');
+    expect(fixture.methods.runTitlebarItem).toHaveBeenCalledWith('image');
+    for (let i = 0; i < 50; i++) {
+      updateSnapshot({ sessionKey: `s${i}` });
+      await render(view());
+      expect(container.querySelector('img')).toBe(image);
+    }
+    await act(async () => image.dispatchEvent(new Event('error')));
+    expect(container.querySelector('img')).toBeNull();
+    expect(button.textContent).toBe('Artwork');
+    updateSnapshot({ titlebarItems: [{ ...entry, icon: png }] });
+    await render(view());
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(png);
+    updateSnapshot({ titlebarItems: [{ ...entry, icon: png, busy: true }] });
+    await render(view());
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('[data-icon="loader-4"]')).not.toBeNull();
+    expect(button.disabled).toBe(true);
+    updateSnapshot({ titlebarItems: [{ ...entry, icon: png, actionable: false }] });
+    await render(view());
+    expect(container.querySelector('[role="status"] img')).not.toBeNull();
+    updateSnapshot({ titlebarItems: [] });
+    await render(view());
+    expect(container.children).toHaveLength(0);
+    expect(state.registryQuery).not.toHaveBeenCalled();
+    expect(context().requestLoad).not.toHaveBeenCalled();
+  });
+
+  test.each(['unknown-icon', '__proto__', 'https://example.test/icon.svg', '/icon.svg', 'javascript:alert(1)'])('unsupported entry icon %s keeps its label without loading an image', async (icon) => {
+    updateSnapshot({ titlebarItems: [{ key: 'entry', pluginId: 'demo', label: 'Fallback', icon, actionable: true }] });
+    await render(<GuiPluginTitlebarItems />);
+    expect(container.querySelector('img,svg')).toBeNull();
+    expect(container.querySelector('button')?.textContent).toBe('Fallback');
+  });
+
   test('scoped manager shows the inline GUI status and working switch without a separate inventory', async () => {
     await render(<GuiPluginsManager pluginIds={['demo']} />);
     expect(container.querySelector('details')).toBeNull();

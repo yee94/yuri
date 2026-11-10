@@ -9,6 +9,7 @@ import { evaluateGuiBundle } from './bundle';
 import { GuiPluginFiles, normalizeGuiPath } from './files';
 import { GuiPluginStorage } from './storage';
 import { GUI_FILE_ICON_REGISTRY, GuiPluginFileIcons } from './file-icons';
+import { normalizeGuiTitlebarIcon } from './titlebar-icon';
 import { isLikelyFileReferencePath, parseFileReference } from '@/components/chat/fileReferenceParser';
 import { toAbsoluteFilePath } from '@/lib/path-utils';
 import type { NativeGuiSession } from './native';
@@ -25,10 +26,10 @@ import { GUI_WORK_STATUS_REGISTRY, GuiWorkStatusCatalog, createWorkStatusState, 
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
-type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
+type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; mobileNetworkRequired?: boolean; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
 type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
-type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run'> & { key: string; pluginId: string; actionable: boolean };
+type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run' | 'icon'> & { key: string; pluginId: string; actionable: boolean; icon?: string };
 export type GuiPluginSnapshot = Readonly<{
     plugins: readonly Readonly<{ id: string; revision: string; status: 'active' | 'failed'; error?: string; errorCode?: NativeGuiErrorCode }>[];
     commands: readonly Readonly<CommandView>[];
@@ -97,6 +98,7 @@ export class GuiPluginHost {
     private views = createSignal(0);
     private session = createSignal<Gui.MountedSession>();
     private currentPage = createSignal<string>();
+    private mobilePageNetworkReady = createSignal(false);
     private appearance: ReturnType<typeof createSignal<Appearance>>;
     private layouts = new Map<string, LayoutState>();
     private files?: GuiPluginFiles;
@@ -158,7 +160,14 @@ export class GuiPluginHost {
         if (!this.ended) this.currentPage[1](key);
     }
 
+    setMobilePageNetworkReady(ready: boolean): void {
+        this.mobilePageNetworkReady[1](!this.ended && ready);
+    }
+
     install(id: string, bundle: PluginGuiBundle, native?: NativeGuiSession): void {
+        if (this.options.mobileNetworkRequired && !this.mobilePageNetworkReady[0]() && !this.ended) {
+            throw new NativeGuiError('GUI_PLUGIN_UNAVAILABLE', 'Mobile plugin Relay is not ready');
+        }
         const previous = this.instances.get(id);
         if (this.ended || (previous?.status === 'active' && previous.revision === bundle.revision && previous.native?.active !== false)) { native?.dispose(); return; }
         if (previous) { this.instances.delete(id); this.release(previous); }
@@ -337,7 +346,7 @@ export class GuiPluginHost {
             : { status: 'active', generation: 1, value: previewActions });
         const pages: GuiPagesAPI = {
             open: (id) => {
-                if (instance.controller.signal.aborted || this.appearance[0]().narrow || !instance.pages.some((page) => page.id === id)) return false;
+                if (instance.controller.signal.aborted || (this.appearance[0]().narrow && !this.mobilePageNetworkReady[0]()) || !instance.pages.some((page) => page.id === id)) return false;
                 return this.options.openPage?.(guiPageKey(instance.id, id)) ?? false;
             },
             current: () => {
@@ -345,7 +354,8 @@ export class GuiPluginHost {
                 return instance.pages.find((page) => guiPageKey(instance.id, page.id) === key)?.id;
             },
         };
-        const pagesLive = liveAccessor((): Gui.Live<GuiPagesAPI> => instance.controller.signal.aborted || !this.options.openPage || this.appearance[0]().narrow
+        const pagesLive = liveAccessor((): Gui.Live<GuiPagesAPI> => instance.controller.signal.aborted || !this.options.openPage
+            || (this.appearance[0]().narrow && !this.mobilePageNetworkReady[0]())
             ? { status: 'inactive', reason: 'disabled' } : { status: 'active', generation: 1, value: pages });
         const context = partial<Gui.SetupContext<Gui.Plugin.Definition>>('ctx', {
             id: instance.id, options, signal: instance.controller.signal, client: this.options.client, storage, stores,
@@ -468,7 +478,7 @@ export class GuiPluginHost {
                 if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
             } else if (contribution.registry === Gui.TitlebarItem.id) {
                 const item = value as Gui.TitlebarItem;
-                titlebarItems.push({ key: JSON.stringify([instance.id, item.id]), pluginId: instance.id, label: item.label, title: item.title, icon: item.icon, busy: item.busy, pressed: item.pressed, actionable: Boolean(item.run), run: item.run });
+                titlebarItems.push({ key: JSON.stringify([instance.id, item.id]), pluginId: instance.id, label: item.label, title: item.title, icon: normalizeGuiTitlebarIcon(item.icon), busy: item.busy, pressed: item.pressed, actionable: Boolean(item.run), run: item.run });
             } else if (contribution.registry === Gui.Panel.id && session) {
                 const panel = value as Gui.Panel;
                 const prefix = `${instance.id}:`;
@@ -692,7 +702,7 @@ export class GuiPluginHost {
         return () => {};
     }
     mountPage(key: string, element: HTMLElement): () => void {
-        if (this.appearance[0]().narrow) return () => {};
+        if (this.appearance[0]().narrow && !this.mobilePageNetworkReady[0]()) throw new NativeGuiError('GUI_PLUGIN_UNAVAILABLE', 'Mobile page Relay is not ready');
         for (const instance of this.instances.values()) {
             const page = instance.pages.find((page) => guiPageKey(instance.id, page.id) === key);
             if (page) return this.mount(instance, element, () => page.render());

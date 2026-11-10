@@ -1,6 +1,7 @@
 import '@/lib/brand-storage-bootstrap';
 import React from 'react';
 import { GuiFileLinkBridge } from '@/components/gui-plugins/GuiFileLinkBridge';
+import { MobileHtmlNetworkBoundary } from '@/components/preview/MobileHtmlNetworkBoundary';
 import { LoadingImage } from '@/components/ui/LoadingImage';
 import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder';
 import { useEvent } from '@reactuses/core';
@@ -4084,7 +4085,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                 {t('common.loading')}
               </div>
             ) : (
-            <div className="h-full overflow-hidden">
+            <MobileHtmlNetworkBoundary>{() => <div className="h-full overflow-hidden">
               <iframe
                 key={`${selectedFilePath}:${htmlPreviewNonce}:${htmlDocumentRevision}`}
                 src={!htmlPreviewUsesInlineDocument && htmlAssetAuthReadyKey === htmlAssetAuthKey ? (() => {
@@ -4101,7 +4102,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                 sandbox="allow-scripts allow-same-origin allow-forms"
                 title={t('filesView.editor.htmlPreviewTitle')}
               />
-            </div>
+            </div>}</MobileHtmlNetworkBoundary>
             )
           ) : selectedFile && canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)

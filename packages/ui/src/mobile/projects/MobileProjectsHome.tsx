@@ -3,6 +3,7 @@ import { useEvent } from '@reactuses/core';
 
 import { Icon } from '@/components/icon/Icon';
 import { GlobalSearchButton } from '@/components/layout/GlobalSearchButton';
+import { MobileGuiApps } from '@/components/gui-plugins/MobileGuiApps';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -552,6 +553,7 @@ export function MobileProjectsHome({
         title={t('mobile.sessions.section.projects')}
         trailing={(
           <>
+            <MobileGuiApps />
             <GlobalSearchButton mobile />
             <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
               <DropdownMenuTrigger asChild>

@@ -26,10 +26,15 @@ Settings → Plugins uses the package's top-level `package.json.icon`, not neste
 `currentColor`, so transparent package icons follow the surrounding text in light
 and dark themes; raster artwork keeps its original colors. SVG load/CORS failures
 use the existing placeholder. No plugin SVG markup is injected into the page.
-GUI sidebar/titlebar entries instead use official `IconName` strings
-resolved to available Yuri sprites (including `globe` → `global`) in current text
-color. They never query or substitute package artwork. Busy still uses a spinner.
-Unknown icons preserve the label. Plugin-owned labels remain under the plugin's
+GUI sidebar/titlebar entries accept built-in names resolved to Yuri sprites
+(including `globe` → `global`) in current text color. Yuri also extends that same
+`icon` string with raw SVG and image data URIs, normalized by the GUI host before
+publication. Custom images render as `<img>` with their own colors, object-contained
+in the existing icon slot; no SVG markup is injected. All shared placements use the
+same behavior (Web, Electron, VS Code, hosted and Capacitor mobile). They never query
+or substitute package artwork, fetch remote images or resolve file paths. Busy still
+uses a spinner. Unknown/rejected icons and image load failures preserve the label
+and sidebar slot; a different image string retries rendering. Plugin-owned labels remain under the plugin's
 i18n. Native actions retain the existing main/IPC policy.
 
 An entry is an action, not a global page registration. Official `Panel` content is
@@ -100,6 +105,18 @@ without remounting foreign content. Discovery, bundle download and activation
 failures stay silent outside plugin settings: no file-view banner/retry row,
 command-palette error entry, or root-surface toast. The provider/host retains failure
 state for diagnostics and the Plugins manager's explicit reload controls.
+
+The mobile Apps entry opens a catalog titled Plugins without a close button;
+dragging, tapping the scrim and Android Back retain shared dismissal behavior.
+The catalog keeps the standard header size. Successful page navigation replaces
+the catalog by unmounting its sheet in the same React batch as the page selection,
+without a catalog exit animation or retained hidden DOM. Ordinary scrim/gesture/Back
+dismissal keeps the shared animation. A navigation guard rejection keeps the catalog available.
+Mobile plugin windows use a compact 40px handle/title header without a close button,
+initially expanded; dragging, scrim dismissal and Android Back remain available.
+Plugin-owned toolbars stay inside the content rather than the host header. Their sheet surface
+has no inline borders, so plugin content spans the full width without pale side rails;
+desktop workspace surfaces and unrelated mobile sheets keep their existing borders.
 
 The Plugins collection has no separate GUI inventory or row action menus.
 A provider row carries a muted 13px window icon (localized UI-plugin tooltip)

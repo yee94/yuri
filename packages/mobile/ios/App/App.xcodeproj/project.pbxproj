@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AAF400000000000000000001 /* YuriGuiNetworkPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */; };
         AAF300000000000000000001 /* YuriViewExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF300000000000000000002 /* YuriViewExportRenderer.swift */; };
         AAF300000000000000000003 /* YuriViewExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF300000000000000000004 /* YuriViewExportPlugin.swift */; };
         AAF200000000000000000001 /* YuriVideoServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF200000000000000000002 /* YuriVideoServer.swift */; };
@@ -60,6 +61,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriGuiNetworkPlugin.swift; sourceTree = "<group>"; };
         AAF300000000000000000002 /* YuriViewExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriViewExportRenderer.swift; sourceTree = "<group>"; };
         AAF300000000000000000004 /* YuriViewExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriViewExportPlugin.swift; sourceTree = "<group>"; };
         AAF200000000000000000002 /* YuriVideoServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriVideoServer.swift; sourceTree = "<group>"; };
@@ -257,6 +259,7 @@
                 AAF300000000000000000004 /* YuriViewExportPlugin.swift */,
                 AAF200000000000000000002 /* YuriVideoServer.swift */,
                 AAF200000000000000000004 /* YuriVideoPlugin.swift */,
+                AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */,
 				D0H1000000000000000000A1 /* YuriPhysicalScalePlugin.swift */,
                 AAF100000000000000000002 /* YuriScreenAwakePlugin.swift */,
                 AAF100000000000000000902 /* YuriNativeHeaderPlugin.swift */,
@@ -489,6 +492,7 @@
                 AAF300000000000000000003 /* YuriViewExportPlugin.swift in Sources */,
                 AAF200000000000000000001 /* YuriVideoServer.swift in Sources */,
                 AAF200000000000000000003 /* YuriVideoPlugin.swift in Sources */,
+                AAF400000000000000000001 /* YuriGuiNetworkPlugin.swift in Sources */,
 				D0H2000000000000000000B1 /* YuriPhysicalScalePlugin.swift in Sources */,
                 AAF100000000000000000001 /* YuriScreenAwakePlugin.swift in Sources */,
                 AAF100000000000000000901 /* YuriNativeHeaderPlugin.swift in Sources */,

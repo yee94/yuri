@@ -23,6 +23,8 @@ unsupported; plugin markup, layout and behavior remain plugin-owned.
 `references/icons.md` distinguishes the upstream generated `IconName` union from
 Yuri's actual titlebar/sidebar renderer, lists their verified shared names and
 aliases, and separates entry icons from Settings artwork, file icons and branding.
+It documents Yuri's direct `TitlebarItem.icon` SVG/data-URI string extension,
+static-SVG validation, image fallback, SDK typing and portability boundary.
 It also documents same-document SVG symbol references, common sprite keys and the
 current DOM/version boundary without exposing the React Icon component. Update its
 shared-name list when the renderer or supported SDK catalog changes.

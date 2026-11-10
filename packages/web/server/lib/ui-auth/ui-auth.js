@@ -320,6 +320,7 @@ export const isUrlAuthWebSocketPath = (pathname) => {
     || pathname === '/api/yuri/realtime-proxy/ws'
      || pathname === '/api/terminal/ws'
      || pathname === '/api/remote-desktop/ws'
+     || pathname === '/api/gui-network/ws'
     || pathname === '/api/dictation/ws'
     || pathname.startsWith('/api/preview/proxy/');
 };
@@ -329,6 +330,11 @@ const canUseUrlAuthTokenForRequest = (req) => {
   const pathname = getRequestPathname(req);
   if (isWebSocketUpgrade(req)) {
     return isUrlAuthWebSocketPath(pathname);
+  }
+  // Browser-owned preview forms/fetch cannot attach Yuri headers. The proxy also
+  // requires its separate target token and strips both tokens before forwarding.
+  if (/^\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/|$)/i.test(pathname)) {
+    return ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(method);
   }
   return method === 'GET' && isUrlAuthReadableHttpPath(pathname);
 };

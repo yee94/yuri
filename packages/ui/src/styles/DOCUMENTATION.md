@@ -18,6 +18,12 @@ CPU and animation-progress checks are required separately.
 
 ## Control selection
 
+Mobile floating glass buttons keep their material shadow while focused. The global
+focus shadow reset excludes `yuri-mobile-floating-action`; only `:active` supplies
+pointer press feedback, without hover brightening that can stick after a touch.
+Keyboard `:focus-visible` uses a separate outline without replacing the glass shadow.
+Reduced-transparency shadows retain their existing fallback recipe.
+
 `lib/theme/cssGenerator.ts` owns the global `--interactive-selection` and
 `--interactive-selection-foreground` tokens. Light mode uses a neutral 7%
 foreground/background mix and ordinary foreground for every selection-token
