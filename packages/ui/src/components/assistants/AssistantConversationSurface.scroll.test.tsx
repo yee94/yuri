@@ -11,6 +11,7 @@ const contactEvents = vi.hoisted(() => ({
 const contactQueryState = vi.hoisted(() => ({ cardSharingBubble: false, extraMessages: 0, earlier: 0, imageFilePart: false as false | 'legacy' | 'cached', hasPreviousPage: false, isFetchingPreviousPage: false, previousPageError: null as Error | null, fetchPreviousPage: vi.fn(), hasMessageGap: false, isFillingMessageGap: false, retryMessageGap: vi.fn() }));
 const attachmentIO = vi.hoisted(() => ({ upload: vi.fn(), send: vi.fn(), display: vi.fn(), blob: vi.fn(), release: vi.fn() }));
 const unreadUI = vi.hoisted(() => ({ settingsOpen: false }));
+const viewportUI = vi.hoisted(() => ({ isMobile: false }));
 const failureUI = vi.hoisted(() => ({ failed: false }));
 const translationReads = vi.hoisted(() => vi.fn((key: string) => key));
 const avatarUI = vi.hoisted(() => ({ empty: false, loadFailed: false, peer: false, peerWorking: false, recruited: false }));
@@ -64,7 +65,7 @@ vi.mock('@/stores/useUIStore', () => {
   // Stable action identity, matching the zustand contract the surface's effects rely on.
   const setImagePreviewOpen = (open: boolean) => { previewIO.flagCalls.push(open); };
   return {
-    useUIStore: (selector: (state: { isMobile: boolean; isSettingsDialogOpen: boolean; setImagePreviewOpen: (open: boolean) => void }) => unknown) => selector({ isMobile: false, isSettingsDialogOpen: unreadUI.settingsOpen, setImagePreviewOpen }),
+    useUIStore: (selector: (state: { isMobile: boolean; isSettingsDialogOpen: boolean; setImagePreviewOpen: (open: boolean) => void }) => unknown) => selector({ isMobile: viewportUI.isMobile, isSettingsDialogOpen: unreadUI.settingsOpen, setImagePreviewOpen }),
   };
 });
 vi.mock('@/queries/assistantQueries', () => ({
@@ -262,6 +263,7 @@ afterEach(async () => {
   contactQueryState.hasMessageGap = false;
   contactQueryState.isFillingMessageGap = false;
   unreadUI.settingsOpen = false;
+  viewportUI.isMobile = false;
   failureUI.failed = false;
   Object.assign(avatarUI, { empty: false, loadFailed: false, peer: false, peerWorking: false, recruited: false });
   previewIO.flagCalls.length = 0;
@@ -270,26 +272,42 @@ afterEach(async () => {
 });
 
 describe('AssistantConversationSurface scroll ownership', () => {
-  test('user bubbles follow the selected contact avatar, including edits and missing seeds, without recoloring replies', async () => {
-    contactQueryState.extraMessages = 1;
-    const { host, root } = await mountSurface();
-    const { assistantAvatarMessageColors } = await import('@/lib/assistant-avatar/palette');
-    const { resolveAssistantAvatar } = await import('@/lib/assistant-avatar/recipe');
-    for (const contact of [
-      { ...assistant('assistant-a'), avatarSeed: 'yuri-avatar:v1:round:capsule:orange:neutral:1:custom' },
-      { ...assistant('assistant-a'), avatarSeed: 'yuri-avatar:v1:round:capsule:mint:neutral:1:custom' },
-      assistant('assistant-b'),
-    ]) {
-      await act(async () => root.render(<AssistantConversationSurface assistant={contact} active />));
-      const expected = assistantAvatarMessageColors(resolveAssistantAvatar(contact.avatarSeed ?? contact.id).color);
-      const bubble = host.querySelector<HTMLElement>('[data-assistant-contact-role="user"] [data-assistant-contact-text]')!;
-      const swatch = document.createElement('div');
-      swatch.style.backgroundColor = expected.background;
-      swatch.style.color = expected.foreground;
-      expect(bubble.style.backgroundColor).toBe(swatch.style.backgroundColor);
-      expect(bubble.style.color).toBe(swatch.style.color);
-      expect(bubble.className).not.toContain('--primary-');
-      expect(host.querySelector<HTMLElement>('[data-assistant-contact-role="assistant"] [data-assistant-contact-text]')!.style.backgroundColor).toBe('');
+  test.each([
+    { layout: 'desktop', isMobile: false, theme: 'light' },
+    { layout: 'desktop', isMobile: false, theme: 'dark' },
+    { layout: 'mobile', isMobile: true, theme: 'light' },
+    { layout: 'mobile', isMobile: true, theme: 'dark' },
+  ])('$layout / $theme user bubbles follow every avatar color without recoloring replies', async ({ isMobile, theme }) => {
+    viewportUI.isMobile = isMobile;
+    const previousTheme = document.documentElement.getAttribute('data-theme');
+    const previousClass = document.documentElement.getAttribute('class');
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      contactQueryState.extraMessages = 1;
+      const { host, root } = await mountSurface();
+      const { assistantAvatarMessageColors } = await import('@/lib/assistant-avatar/palette');
+      const { AVATAR_COLORS, resolveAssistantAvatar } = await import('@/lib/assistant-avatar/recipe');
+      for (const contact of [
+        ...AVATAR_COLORS.map((color) => ({ ...assistant('assistant-a'), avatarSeed: `yuri-avatar:v1:round:capsule:${color}:neutral:1:custom` })),
+        assistant('assistant-b'),
+      ]) {
+        await act(async () => root.render(<AssistantConversationSurface assistant={contact} active />));
+        const expected = assistantAvatarMessageColors(resolveAssistantAvatar(contact.avatarSeed ?? contact.id).color);
+        const bubble = host.querySelector<HTMLElement>('[data-assistant-contact-role="user"] [data-assistant-contact-text]')!;
+        const swatch = document.createElement('div');
+        swatch.style.backgroundColor = expected.background;
+        swatch.style.color = expected.foreground;
+        expect(bubble.style.backgroundColor).toBe(swatch.style.backgroundColor);
+        expect(bubble.style.color).toBe(swatch.style.color);
+        expect(bubble.className).not.toContain('--primary-');
+        expect(host.querySelector<HTMLElement>('[data-assistant-contact-role="assistant"] [data-assistant-contact-text]')!.style.backgroundColor).toBe('');
+      }
+    } finally {
+      if (previousTheme === null) document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', previousTheme);
+      if (previousClass === null) document.documentElement.removeAttribute('class');
+      else document.documentElement.setAttribute('class', previousClass);
     }
   });
 

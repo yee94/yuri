@@ -2,6 +2,7 @@ import React from 'react';
 import type { Session } from '@/lib/opencode/v2-types';
 import { useEvent } from '@reactuses/core';
 import { useSessionOrderSync } from '@/hooks/useSessionOrderSync';
+import { useSessionReadMenuAction } from '@/mobile/useSessionReadMenuAction';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { createSessionNodeComparator, buildSessionActivitySnapshot } from '@/components/session/sidebar/sessionSortableOrder';
 import { DraggableSessionRow, SessionFolderDndScope } from '@/components/session/sidebar/sessionFolderDnd';
@@ -547,6 +548,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const [newWorktreeDialogOpen, setNewWorktreeDialogOpen] = React.useState(false);
   const [worktreeDialogProjectId, setWorktreeDialogProjectId] = React.useState<string | null>(null);
   const [actionTarget, setActionTarget] = React.useState<MobileActionTarget | null>(null);
+  const actionSession = actionTarget?.kind === 'session' ? actionTarget.session : null;
+  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
+    actionSession, actionSession ? getSessionDirectory(actionSession) : undefined,
+  );
   const [closingProject, setClosingProject] = React.useState<ProjectMeta | null>(null);
   const [pressedActionKey, setPressedActionKey] = React.useState<string | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
@@ -1394,6 +1399,11 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     return buildSessionMenuItems({
       pinned: pinnedSessionIds.has(session.id),
       shared,
+      unread: actionSessionUnread,
+      onToggleRead: onToggleRead ? () => {
+        closeActionMenu();
+        onToggleRead();
+      } : undefined,
       onRename: () => {
         closeActionMenu();
         setRenameDraft(session.title?.trim() || t('mobile.sessions.untitled'));
@@ -1433,6 +1443,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     });
   }, [
     actionTarget,
+    actionSessionUnread,
     closeActionMenu,
     handleArchiveFromMenu,
     handleCopyShareUrl,
@@ -1440,6 +1451,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     handleNewWorktree,
     handleShareFromMenu,
     handleUnshareFromMenu,
+    onToggleRead,
     pinnedSessionIds,
     startSessionDraftForDirectory,
     syncProjectSessions,

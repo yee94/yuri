@@ -85,7 +85,9 @@ opaque seeds retain the frozen original six-color mapping. New random choices
 are persisted as explicit v1 recipes; no read-time migration or per-frame random
 color is introduced. `palette.ts` owns the exact artwork pigments for all static,
 live and PNG consumers, consumed by `engine.ts`. It also maps contact user bubbles
-to that identity: vivid pigments stay exact; soft/neutral pigments use stronger
+to that identity: luminous jade/cyan pigments stay exact with dark text;
+orange and midtone blue/violet/rose bubbles deepen for white text without changing the avatar
+pigments or hue families. Soft/neutral pigments use stronger
 same-hue fills. Text prefers white whenever its contrast reaches 4.5:1; brighter
 fills retain black text to meet that minimum, independently of the application theme. Geometry, paint-mode caches
 and scheduling are unchanged.

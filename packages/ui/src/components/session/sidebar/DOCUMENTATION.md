@@ -54,13 +54,15 @@ operation with the target running version removes only that Host's stale task.
 Neither path calls the local client updater, even when both target the same version.
 Client downloads reuse their owning updater with `resume: true`, without applying
 or restarting the client. Check-only failures do not invent download tasks.
-The old update footer button hides its duplicate download indicator while this
-area is mounted. After the client reports `downloaded`, the footer shows a compact
-shared neutral solid Button with the restart icon and visible “Restart to update”
-label (“重启更新” in Simplified Chinese), rather than an icon-only download button.
-The label matches background-task triggers: 10px, normal weight, muted foreground at 60% opacity.
+The update footer button hides its duplicate download indicator while this
+area is mounted. A downloaded client update also suppresses an active stale local
+Host mirror for the same version, while unrelated and failed Host tasks remain visible.
+The restart action is icon-only with a tooltip. When it shares the footer with
+background tasks, those tasks are also icon-only with a hover label; the two
+controls share one right-aligned group with a fixed gap. A single task uses the
+same 28px button as the left footer controls; multiple rings retain their required width.
 Clicking delegates directly to the existing restart mutation, never the details
-dialog; pending restart disables repeat clicks and shows the updating label.
+dialog; pending restart disables repeat clicks and exposes the updating label as its accessible name.
 Runtime generation changes remount the observers and clear completion tracking.
 Import/index/update polling uses 1s/3s/2s while active and 15s while idle; unsupported
 capabilities stop polling. The memoized leaf isolates this work from session-tree
@@ -119,7 +121,7 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   The private `SidebarUpdateButton` owns update subscriptions and ring rendering;
   progress does not rerender the footer or device shortcut. Hidden update buttons
   are unmounted. Ring animation uses CSS without Effects or timers.
-  The downloaded/restarting action keeps the compact icon-and-label layout but
+  The downloaded/restarting action uses a compact icon-only layout and
   uses the same transparent resting `Button variant="ghost"` as other footer
   controls; hover/press feedback and the single-restart guard remain intact.
 

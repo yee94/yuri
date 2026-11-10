@@ -1,5 +1,16 @@
 # Chat components
 
+## Mobile session read/unread actions
+
+The mobile Projects home, Sessions sheet (including the iPad sidebar), and status
+bar session menus share `mobile/sessionMenuModel.ts`. Read/unread sits directly
+below Pin/Unpin, using the same Mail/MailOpen icons and labels as desktop. Root
+sessions expose the action; child sessions omit it. `useSessionReadMenuAction`
+subscribes only to the targeted session's unread count and delegates mutations to
+the existing notification/Host sync boundary. Open menus reflect remote updates;
+failed writes retain authoritative state and show the existing error toast. Menu
+actions close the sheet without opening the conversation or clearing its reminder.
+
 ## Find in loaded conversation
 
 `TranscriptSearch` handles Cmd/Ctrl+F on the active chat surface, Enter /

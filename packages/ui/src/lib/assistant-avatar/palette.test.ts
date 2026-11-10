@@ -18,8 +18,18 @@ const hue = (hex: string) => {
 };
 
 describe('assistant identity message colors', () => {
-  test.each(['orange', 'jade', 'blue', 'violet', 'rose', 'cyan'] as const)('%s keeps the vivid avatar pigment unchanged', (color) => {
+  test.each(['jade', 'cyan'] as const)('%s keeps the luminous avatar pigment and dark text unchanged', (color) => {
     expect(assistantAvatarMessageColors(color).background).toBe(assistantAvatarPigment(color));
+    expect(assistantAvatarMessageColors(color).foreground).toBe('#000000');
+  });
+
+  test('orange keeps its hue and avatar pigment while pairing a stronger bubble fill with white text', () => {
+    const original = assistantAvatarPigment('orange');
+    const { background, foreground } = assistantAvatarMessageColors('orange');
+    expect(original).toBe('#f58332');
+    expect(foreground).toBe('#ffffff');
+    expect(Math.abs(hue(background) - hue(original))).toBeLessThan(2);
+    expect(saturation(background)).toBeGreaterThanOrEqual(saturation(original));
   });
 
   test.each(['mint', 'iris', 'coral', 'sky', 'sand', 'graphite'] as const)('%s maps to a stronger same-family pigment visible on white', (color) => {
@@ -29,6 +39,23 @@ describe('assistant identity message colors', () => {
     const distance = Math.abs(hue(background) - hue(original));
     expect(Math.min(distance, 360 - distance)).toBeLessThan(10);
     expect(1.05 / (luminance(background) + 0.05)).toBeGreaterThanOrEqual(3);
+  });
+
+  test.each([
+    { color: 'blue', pigment: '#4b8fe8' },
+    { color: 'violet', pigment: '#9469e4' },
+    { color: 'rose', pigment: '#e76b9f' },
+  ] as const)('$color deepens the bubble for white text without changing the avatar pigment or hue family', ({ color, pigment }) => {
+    const original = assistantAvatarPigment(color);
+    const { background, foreground } = assistantAvatarMessageColors(color);
+    expect(original).toBe(pigment);
+    expect(foreground).toBe('#ffffff');
+    expect(Math.abs(hue(background) - hue(original))).toBeLessThan(2);
+    expect(luminance(background)).toBeLessThan(luminance(original));
+    for (const [index, channel] of rgb(original).entries()) {
+      expect(channel - rgb(background)[index]).toBeGreaterThanOrEqual(0);
+      expect(channel - rgb(background)[index]).toBeLessThan(0.16);
+    }
   });
 
   test.each(['mint', 'iris', 'coral', 'sky', 'sand', 'graphite'] as const)('%s uses white text on its dark mapped fill', (color) => {

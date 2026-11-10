@@ -7,6 +7,23 @@ import {
 } from './sessionMenuModel';
 
 describe('buildSessionMenuItems', () => {
+  test.each([false, true])('places read/unread immediately after pin (unread=%s)', (unread) => {
+    const toggle = () => undefined;
+    const items = buildSessionMenuItems({
+      pinned: false, shared: false, unread,
+      onRename: () => undefined,
+      onTogglePin: () => undefined,
+      onToggleRead: toggle,
+      onArchive: () => undefined,
+    });
+    expect(items.map(item => item.id)).toEqual(['rename', 'pin', 'toggleRead', 'archive']);
+    expect(items[2]).toMatchObject({
+      icon: unread ? 'mail-open' : 'mail',
+      labelKey: unread ? 'sessions.sidebar.session.menu.markRead' : 'sessions.sidebar.session.menu.markUnread',
+      onClick: toggle,
+    });
+  });
+
   test('orders the full shared session set and gates on callbacks', () => {
     const items = buildSessionMenuItems({
       pinned: true,

@@ -10,12 +10,15 @@ const pigments = {
 
 export const assistantAvatarPigment = (color: AvatarColor): string => pigments[color];
 
-// Vivid pigments remain exact; soft/neutral pigments get a stronger same-hue fill.
+// Jade/cyan remain exact; orange and midtones deepen for legible white text, while
+// soft/neutral pigments get a stronger same-hue fill.
 // These identity colors are independent of the selected application theme.
 const messagePigments = {
   ...pigments,
   mint: '#16865c', iris: '#7853c4', coral: '#c94f36',
   sky: '#2879b5', sand: '#996a18', graphite: '#405b8c',
+  blue: '#2e71c9', violet: '#8658d6', rose: '#c34479',
+  orange: '#b55713',
 } satisfies Record<AvatarColor, string>;
 
 export function assistantAvatarMessageColors(color: AvatarColor): { background: string; foreground: string } {

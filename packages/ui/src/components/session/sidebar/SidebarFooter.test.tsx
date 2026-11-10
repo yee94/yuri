@@ -62,30 +62,30 @@ describe('SidebarFooter update button', () => {
     const { render } = renderFooter(onOpenUpdate);
     await render();
 
-    expect(button().textContent).toBe('sessions.sidebar.footer.actions.restartUpdate');
+    expect(button().textContent).toBe('');
     expect(button().querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
     expect(button().className).not.toContain('bg-[var(--surface-muted)]');
     expect(button().className).toContain('hover:bg-interactive-hover');
-    expect(button().className).not.toContain('size-7');
-    expect(button().querySelector('span')?.className).toBe('truncate text-[10px] font-normal text-muted-foreground/60');
+    expect(button().className).toContain('size-7');
 
     await act(async () => button().click());
     await act(async () => button().click());
     await act(async () => button().click());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 
     expect(restartToUpdate).toHaveBeenCalledTimes(1);
     expect(onOpenUpdate).not.toHaveBeenCalled();
     expect(button().disabled).toBe(true);
     expect(button().getAttribute('aria-busy')).toBe('true');
     expect(button().getAttribute('aria-label')).toBe('updateDialog.status.updating');
-    expect(button().textContent).toBe('updateDialog.status.updating');
+    expect(button().textContent).toBe('');
 
     resolveRestart();
     await act(async () => {});
     expect(restartToUpdate).toHaveBeenCalledTimes(1);
   });
 
-  test('finishing a background download reveals the labeled restart button without opening details', async () => {
+  test('finishing a background download reveals the restart icon without opening details', async () => {
     const restartToUpdate = vi.fn(async () => {});
     const onOpenUpdate = vi.fn();
     useUpdateStore.setState({ downloading: true, downloaded: false, available: true, restartToUpdate });
@@ -93,7 +93,7 @@ describe('SidebarFooter update button', () => {
     expect(host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]')).toBeNull();
     await act(async () => useUpdateStore.setState({ downloading: false, downloaded: true }));
     const ready = host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]') as HTMLButtonElement;
-    expect(ready.textContent).toBe('sessions.sidebar.footer.actions.restartUpdate');
+    expect(ready.textContent).toBe('');
     expect(ready.querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
     expect(ready.querySelector('[role="progressbar"]')).toBeNull();
     expect(onOpenUpdate).not.toHaveBeenCalled();

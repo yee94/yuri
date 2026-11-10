@@ -759,7 +759,7 @@ describe('Assistant UI product contract', () => {
     expect(conversation).not.toContain('<ChatContainer');
     expect(conversation).not.toContain('chat-content-max-width');
     expect(conversation).not.toContain('inputClassName=');
-    expect(conversation).toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
+    expect(conversation).not.toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
     expect(conversation).toContain('typography-markdown leading-6');
     expect(conversation).toContain("imageOnly ? 'p-0' : 'px-4 py-2.5'");
     expect(conversation).toContain('const imageOnly = useMarkdown &&');

@@ -21,7 +21,7 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { loca
 vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => fixture.local }));
 vi.mock('@/stores/useUpdateStore', async () => {
   const { create } = await import('zustand');
-  return { useUpdateStore: create(() => ({ downloading: false, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
+  return { useUpdateStore: create(() => ({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
 });
 vi.mock('@/queries/projectOrderQueries', () => ({ refreshProjectOrderSnapshot: (...args: unknown[]) => fixture.refresh(...args) }));
 vi.mock('@/stores/useSetupTourStore', () => ({ useSetupTourStore: { getState: () => ({ move: fixture.move, open: fixture.open }) } }));
@@ -42,7 +42,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
   fixture.transport = 'host-one'; fixture.generation = 1; fixture.local = true; fixture.listeners.clear();
   fixture.refresh.mockReset().mockResolvedValue({ projects: [] }); fixture.move.mockReset(); fixture.open.mockReset(); fixture.renders.mockReset();
-  useUpdateStore.setState({ downloading: false, downloadError: null, downloadVersion: null, progress: null });
+  useUpdateStore.setState({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null });
   vi.mocked(useUpdateStore.getState().downloadUpdate).mockReset().mockResolvedValue(undefined);
   fixture.fetch.mockReset().mockImplementation(async (url: string) => response(url));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -57,7 +57,7 @@ test('multiple tasks show only adjacent rings in a right-aligned fit-width group
   expect(rows.map((row) => row.getAttribute('aria-valuenow'))).toEqual(['25', '60']);
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('text-muted-foreground/60');
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('w-fit');
-  expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('ml-auto');
+  expect(host.querySelector('[data-sidebar-background-tasks]')?.className).not.toContain('ml-auto');
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).not.toContain('flex-1');
   expect(host.querySelector('[role="tooltip"], [title]')).toBeNull();
   await act(async () => host.querySelector('button')!.click());
@@ -146,6 +146,28 @@ test('a single task keeps just its ring and short label, with no visible percent
   expect(host.textContent).toBe('backgroundTasks.import');
   expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
   expect(host.textContent).not.toContain('%');
+});
+
+test('a completed client download suppresses only its stale local Host mirror', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' }),
+    { id: 'host-download', status: 'downloading', version: '2.0.1', progress: 99 }));
+  useUpdateStore.setState({ downloaded: true, downloadVersion: '2.0.1' });
+  await render();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).toBeNull();
+  fixture.local = false;
+  await act(async () => root.render(<QueryClientProvider client={client}><SidebarBackgroundTasks compactWithRestart /></QueryClientProvider>));
+  await tick();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).not.toBeNull();
+});
+
+test('an unrelated task beside restart uses a compact icon with a hover label', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, job(), index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloaded: true });
+  await act(async () => root.render(<QueryClientProvider client={client}><SidebarBackgroundTasks compactWithRestart /></QueryClientProvider>));
+  await tick();
+  expect(host.textContent).toBe('');
+  expect(host.querySelector('button')?.getAttribute('title')).toBe('backgroundTasks.import');
+  expect(host.querySelector('button')?.className).toContain('size-7');
 });
 
 test('import, index, client and Host details share one progress-bar design independent of task type', async () => {

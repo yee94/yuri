@@ -69,17 +69,19 @@ function TaskDetails({ task }: { task: Task }) {
   </div>;
 }
 
-export const SidebarBackgroundTasks = React.memo(function SidebarBackgroundTasks() {
+export const SidebarBackgroundTasks = React.memo(function SidebarBackgroundTasks({ compactWithRestart = false }: { compactWithRestart?: boolean }) {
   const generation = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
-  return <RuntimeBackgroundTasks key={`${getRuntimeTransportIdentity()}:${generation}`} />;
+  return <RuntimeBackgroundTasks key={`${getRuntimeTransportIdentity()}:${generation}`} compactWithRestart={compactWithRestart} />;
 });
 
-function RuntimeBackgroundTasks() {
+function RuntimeBackgroundTasks({ compactWithRestart }: { compactWithRestart: boolean }) {
   const { t, locale } = useI18n();
   const [opened, setOpened] = React.useState(false);
   const downloading = useUpdateStore((state) => state.downloading);
+  const downloaded = useUpdateStore((state) => state.downloaded);
   const downloadError = useUpdateStore((state) => state.downloadError);
   const downloadVersion = useUpdateStore((state) => state.downloadVersion);
+  const updateVersion = useUpdateStore((state) => state.info?.version);
   const downloadCompleted = useUpdateStore((state) => state.progress?.downloaded ?? 0);
   const downloadTotal = useUpdateStore((state) => state.progress?.total ?? 0);
   const transport = getRuntimeTransportIdentity();
@@ -116,7 +118,7 @@ function RuntimeBackgroundTasks() {
       if (useUpdateStore.getState().downloadError) throw new Error(useUpdateStore.getState().downloadError!);
     } });
   const operation = update.data?.operation;
-  if (operation && (isHostUpdateActive(operation) || operation.status === 'failed') && !((downloading || downloadError) && operation.version === downloadVersion && isDesktopLocalOriginActive())) tasks.push({
+  if (operation && (isHostUpdateActive(operation) || operation.status === 'failed') && !((downloading || downloadError || (downloaded && isHostUpdateActive(operation))) && operation.version === (downloadVersion ?? updateVersion) && isDesktopLocalOriginActive())) tasks.push({
     id: operation.id, label: t('backgroundTasks.download'), detail: `${t(operation.status === 'failed' ? 'backgroundTasks.downloadFailed'
       : operation.status === 'installing' ? 'updateDialog.status.installingUpdate' : operation.status === 'restarting' ? 'updateDialog.status.serverRestarting'
         : operation.status === 'checking' ? 'updateDialog.status.updating' : 'updateDialog.status.downloading')} · ${operation.version}`,
@@ -126,11 +128,12 @@ function RuntimeBackgroundTasks() {
   if (!tasks.length && !opened) return null;
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
   return <Popover.Root open={opened} onOpenChange={setOpened}>
-    <div className={`ml-auto w-fit min-w-0 shrink text-muted-foreground/60 ${tasks.length ? '' : 'invisible'}`} data-sidebar-background-tasks={tasks.length ? '' : undefined}>
-      <Popover.Trigger render={<Button variant="ghost" size="xs" aria-label={t('backgroundTasks.title')}
-        className="max-w-full gap-2 text-[10px] font-normal text-muted-foreground/60" />}>
+    <div className={`w-fit min-w-0 shrink text-muted-foreground/60 ${tasks.length ? '' : 'invisible'}`} data-sidebar-background-tasks={tasks.length ? '' : undefined}>
+      <Popover.Trigger render={<Button variant="ghost" size={compactWithRestart && downloaded && tasks.length === 1 ? 'icon' : 'xs'} aria-label={t('backgroundTasks.title')}
+        title={compactWithRestart && downloaded ? (tasks.length === 1 ? tasks[0].label : t('backgroundTasks.title')) : undefined}
+        className={`max-w-full gap-2 text-[10px] font-normal text-muted-foreground/60 ${compactWithRestart && downloaded && tasks.length === 1 ? 'size-7 rounded-md' : ''}`} />}>
           {tasks.map((task) => <TaskRing key={task.id} task={task} />)}
-          {tasks.length === 1 && <span className="truncate">{tasks[0].label}</span>}
+          {tasks.length === 1 && !(compactWithRestart && downloaded) && <span className="truncate">{tasks[0].label}</span>}
       </Popover.Trigger>
     </div>
     <Popover.Portal>

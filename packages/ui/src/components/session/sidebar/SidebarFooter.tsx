@@ -73,18 +73,15 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
         <Button
           type="button"
           variant="ghost"
-          size={downloaded ? "xs" : "icon"}
-          className={downloaded ? "ml-auto min-w-0 shrink gap-1.5 disabled:opacity-100" : `ml-auto ${footerIconButtonClassName} disabled:opacity-100`}
+          size="icon"
+          className={`${footerIconButtonClassName} disabled:opacity-100`}
           onClick={handleClick}
           disabled={restarting}
           aria-busy={restarting || undefined}
           aria-label={updateLabel}
         >
           {downloaded ? (
-            <>
-              <Icon name="restart" className={`size-3.5 ${restarting ? 'motion-safe:animate-spin' : ''}`} />
-              <span className="truncate text-[10px] font-normal text-muted-foreground/60">{t(restarting ? 'updateDialog.status.updating' : 'sessions.sidebar.footer.actions.restartUpdate')}</span>
-            </>
+            <Icon name="restart" className={`${footerIconClassName} ${restarting ? 'motion-safe:animate-spin' : ''}`} />
           ) : downloading ? (
             <svg
               viewBox="0 0 18 18"
@@ -166,8 +163,10 @@ export function SidebarFooter({
           </Tooltip>
         </>
       ) : null}
-      {showRuntimeButtons ? <SidebarBackgroundTasks /> : null}
-      {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} hideDownload={showRuntimeButtons} /> : null}
+      <div className="ml-auto flex min-w-0 items-center gap-1">
+        {showRuntimeButtons ? <SidebarBackgroundTasks compactWithRestart={Boolean(showUpdateButton && onOpenUpdate)} /> : null}
+        {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} hideDownload={showRuntimeButtons} /> : null}
+      </div>
     </div>
   );
 }

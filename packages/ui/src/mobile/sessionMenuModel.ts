@@ -4,6 +4,7 @@ import type { I18nKey } from '@/lib/i18n';
 export type MobileSessionMenuItemId =
   | 'rename'
   | 'pin'
+  | 'toggleRead'
   | 'copyLink'
   | 'unshare'
   | 'share'
@@ -45,8 +46,10 @@ type Translate = (key: I18nKey) => string;
 type SessionMenuOptions = {
   pinned: boolean;
   shared: boolean;
+  unread?: boolean;
   onRename?: () => void;
   onTogglePin?: () => void;
+  onToggleRead?: () => void;
   onShare?: () => void;
   onCopyLink?: () => void;
   onUnshare?: () => void;
@@ -105,6 +108,16 @@ export const buildSessionMenuItems = (
           ? 'sessions.sidebar.session.menu.unpin'
           : 'sessions.sidebar.session.menu.pin',
         onClick: options.onTogglePin,
+      }
+    : null);
+  push(items, options.onToggleRead
+    ? {
+        id: 'toggleRead',
+        icon: options.unread ? 'mail-open' : 'mail',
+        labelKey: options.unread
+          ? 'sessions.sidebar.session.menu.markRead'
+          : 'sessions.sidebar.session.menu.markUnread',
+        onClick: options.onToggleRead,
       }
     : null);
   if (options.shared) {

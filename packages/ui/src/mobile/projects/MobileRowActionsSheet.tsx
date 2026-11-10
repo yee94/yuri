@@ -16,13 +16,14 @@ import {
 } from '@/mobile/sessionMenuModel';
 
 export type MobileRowActionTarget =
-  | { kind: 'session'; title: string; pinned: boolean; shared: boolean }
+  | { kind: 'session'; title: string; pinned: boolean; shared: boolean; unread?: boolean }
   | { kind: 'project'; title: string; gitRepository: boolean }
   | { kind: 'worktree'; title: string };
 
 export type MobileRowActionCallbacks = {
   onRename?: () => void;
   onTogglePin?: () => void;
+  onToggleRead?: () => void;
   onShare?: () => void;
   onCopyLink?: () => void;
   onUnshare?: () => void;
@@ -146,8 +147,10 @@ export function MobileRowActionsSheet({
       return buildSessionMenuItems({
         pinned: target.pinned,
         shared: target.shared,
+        unread: target.unread,
         onRename: actions.onRename,
         onTogglePin: actions.onTogglePin,
+        onToggleRead: actions.onToggleRead,
         onShare: actions.onShare,
         onCopyLink: actions.onCopyLink,
         onUnshare: actions.onUnshare,
