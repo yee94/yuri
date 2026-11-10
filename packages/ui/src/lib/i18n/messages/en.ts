@@ -715,6 +715,7 @@ export const dict = {
   'sessions.sidebar.session.menu.unpin': 'Unpin',
   'sessions.sidebar.session.menu.pin': 'Pin',
   'sessions.sidebar.session.menu.markUnread': 'Mark as unread',
+  'sessions.sidebar.session.menu.markRead': 'Mark as read',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Could not mark as unread. Try again.',
   'sessions.sidebar.session.pin.error': 'Failed to pin session',
   'sessions.sidebar.session.unpin.error': 'Failed to unpin session',

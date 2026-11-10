@@ -4,6 +4,7 @@ import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.markUnread': 'Marcar como no leído',
+  'sessions.sidebar.session.menu.markRead': 'Marcar como leído',
   'sessions.sidebar.session.menu.markUnreadFailed': 'No se pudo marcar como no leído. Inténtalo de nuevo.',
   'chat.find.label': 'Buscar en la conversación cargada',
   'chat.find.count': '{current} / {total}',

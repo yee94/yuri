@@ -116,18 +116,31 @@ test('AI title admission alone does not show title loading', async () => {
   expect(container.querySelector('.animate-text-shimmer')).toBeNull();
 });
 
-test('right-click mark unread invokes the notification action without opening the session', async () => {
+test('read/unread action stays directly below pin and toggles without opening the session', async () => {
   resetSessionUnreadProjection();
   root = createRoot(container);
   await act(async () => root.render(<Harness editing={false} />));
   await act(async () => {
     container.querySelector('[data-session-row]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 20, clientY: 20 }));
   });
-  const action = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+  const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  const pinIndex = items.findIndex(item => item.textContent?.includes('sessions.sidebar.session.menu.pin'));
+  expect(items[pinIndex + 1]?.textContent).toContain('sessions.sidebar.session.menu.markUnread');
+  const action = items
     .find(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'));
   expect(action).toBeDefined();
   await act(async () => action!.click());
   expect(useNotificationStore.getState().sessionUnseenCount(session.id)).toBe(1);
+  await act(async () => {
+    container.querySelector('[data-session-row]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 20, clientY: 20 }));
+  });
+  const unreadItems = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  const unreadPinIndex = unreadItems.findIndex(item => item.textContent?.includes('sessions.sidebar.session.menu.pin'));
+  const readAction = unreadItems[unreadPinIndex + 1];
+  expect(readAction?.textContent).toContain('sessions.sidebar.session.menu.markRead');
+  expect(unreadItems.some(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'))).toBe(false);
+  await act(async () => readAction.click());
+  expect(useNotificationStore.getState().sessionUnseenCount(session.id)).toBe(0);
   await act(async () => resetSessionUnreadProjection());
 });
 

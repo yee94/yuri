@@ -495,6 +495,7 @@ export const dict = {
   'sessions.sidebar.session.menu.unpin': 'Désépingler',
   'sessions.sidebar.session.menu.pin': 'Épingler',
   'sessions.sidebar.session.menu.markUnread': 'Marquer comme non lu',
+  'sessions.sidebar.session.menu.markRead': 'Marquer comme lu',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Impossible de marquer comme non lu. Réessayez.',
   'sessions.sidebar.session.pin.error': 'Échec de l\'épinglage de la session',
   'sessions.sidebar.session.unpin.error': 'Échec du désépinglage de la session',

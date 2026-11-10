@@ -4,6 +4,7 @@ import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.markUnread': 'Позначити як непрочитане',
+  'sessions.sidebar.session.menu.markRead': 'Позначити як прочитане',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Не вдалося позначити як непрочитане. Спробуйте ще раз.',
   'chat.find.label': 'Пошук у завантаженій розмові',
   'chat.find.count': '{current} / {total}',

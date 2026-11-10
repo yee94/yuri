@@ -466,6 +466,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.unpin': 'Odepnij',
   'sessions.sidebar.session.menu.pin': 'Przypnij',
   'sessions.sidebar.session.menu.markUnread': 'Oznacz jako nieprzeczytane',
+  'sessions.sidebar.session.menu.markRead': 'Oznacz jako przeczytane',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Nie udało się oznaczyć jako nieprzeczytane. Spróbuj ponownie.',
   'sessions.sidebar.session.pin.error': 'Nie udało się przypiąć sesji',
   'sessions.sidebar.session.unpin.error': 'Nie udało się odpiąć sesji',
