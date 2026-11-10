@@ -61,9 +61,8 @@ test('iOS WebView composer path uses the same native IME owner and pinned header
   expect(css).toContain(':root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer)::before');
   // iOS never re-lays the page during a keyboard session (no JS on the lift path).
   expect(ios).not.toMatch(/__yuriImeOffset|requestOffset/);
-  // Only the expanded composer follows the lift (one CSS variable per transition).
+  // Lifted page geometry is published once per transition for the composer full snap.
   expect(ios).toContain("setProperty('--yuri-native-ime-lift'");
-  expect(css).toContain('.yuri-mobile-composer[data-mobile-expanded="true"] {');
   expect(css).toContain(':root.yuri-capacitor-app.yuri-native-ime.yuri-platform-android .yuri-mobile-app-shell {');
   expect(ios).not.toContain('setLift(previous)');
   // Lifting the WKWebView must not change the page's safe area.

@@ -271,7 +271,7 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         keyboardOverlap = overlap
         let open = overlap > 0
         engageHeader()
-        publishLift(overlap, duration: duration)
+        publishLift(overlap)
         emitImeState(open: open, phase: "start", height: overlap, duration: duration)
         // The content is translated by -overlap for as long as the keyboard is
         // up, from the keyboard's first frame (same as Android). Unlike Android
@@ -318,17 +318,15 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
     private func resetIme() {
         keyboardOverlap = 0
         setLift(0)
-        publishLift(0, duration: 0)
+        publishLift(0)
         releaseHeader()
     }
 
-    /// The page is never re-laid for the keyboard; only a full-height expanded
-    /// composer reads this target lift (mobile.css) to keep its text visible.
-    /// Written once per keyboard transition, never per frame.
-    private func publishLift(_ value: CGFloat, duration: Double) {
-        webView?.evaluateJavaScript("(()=>{const s=document.documentElement.style;"
-            + "s.setProperty('--yuri-native-ime-duration','\(Int(duration * 1000))ms');"
-            + "s.setProperty('--yuri-native-ime-lift','\(value)px')})()")
+    /// The page is never re-laid for the keyboard, so its top `value` points
+    /// are off screen. Geometry readers (composer full-height snap) subtract
+    /// this target lift. Written once per keyboard transition, never per frame.
+    private func publishLift(_ value: CGFloat) {
+        webView?.evaluateJavaScript("document.documentElement.style.setProperty('--yuri-native-ime-lift','\(value)px')")
     }
 
     /// Translating the WKWebView moves its frame, and WebKit recomputes
