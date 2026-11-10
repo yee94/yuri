@@ -532,6 +532,203 @@
   border-radius: 0;
 }
 
+.yuri-composer-picker .model-picker-search-area {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-composer-picker .model-picker-search-area .model-picker-search {
+  height: 1.5rem;
+  padding-inline: 1.75rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.yuri-composer-picker .model-picker-search-area:focus-within > div > svg {
+  color: var(--surface-foreground);
+}
+
+.yuri-composer-picker .model-picker-search-area .model-picker-search:focus-visible {
+  box-shadow: 0 1px 0 var(--interactive-focus-ring);
+}
+
+.yuri-composer-picker .model-picker-search-area > div > svg {
+  left: 0;
+}
+
+.yuri-composer-picker .model-picker-list,
+.yuri-composer-picker .composer-agent-list {
+  padding: 0.375rem;
+}
+
+.yuri-composer-picker .model-picker-section-header {
+  min-height: 1.5rem;
+  padding: 0.25rem 0.625rem;
+  gap: 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: color-mix(in srgb, var(--surface-foreground) 80%, var(--surface-muted-foreground));
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.yuri-composer-picker .model-picker-section-header > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-composer-picker .model-picker-section-divider {
+  height: 0.375rem;
+  margin: 0.25rem 0.625rem 0;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+  background: transparent;
+}
+
+.yuri-composer-picker .model-picker-row {
+  min-height: 2.5rem;
+  margin-block: 0;
+  padding: 0.25rem 0.625rem;
+  gap: 0.375rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-main {
+  gap: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-placeholder {
+  height: 2.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-placeholder[data-model-section="provider"] {
+  height: 2rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] {
+  min-height: 2rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] .model-picker-row-labels {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] .model-picker-row-meta {
+  flex-shrink: 0;
+}
+
+.yuri-composer-picker .model-picker-row-labels {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+}
+
+.yuri-composer-picker .model-picker-row-name,
+.yuri-composer-picker .composer-agent-name {
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+
+.yuri-composer-picker .model-picker-row-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-composer-picker .model-picker-row-provider {
+  display: block;
+}
+
+.yuri-composer-picker .model-picker-row-meta,
+.yuri-composer-picker .model-picker-row-context {
+  font-size: 0.6875rem;
+  line-height: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.yuri-composer-picker .model-picker-row-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.yuri-composer-picker .model-picker-thinking {
+  width: 4.75rem;
+  min-height: 1.75rem;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+.yuri-composer-picker .model-favorite-button {
+  width: 1.5rem;
+  height: 1.75rem;
+}
+
+.yuri-composer-picker .model-favorite-drag-handle {
+  opacity: 0.35;
+}
+
+.yuri-composer-picker .model-picker-row:hover .model-favorite-drag-handle,
+.yuri-composer-picker .model-favorite-drag-handle:focus-visible {
+  opacity: 1;
+}
+
+.yuri-composer-picker .composer-agent-row {
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-composer-picker .composer-agent-row + .composer-agent-row {
+  margin-top: 0.125rem;
+}
+
+.yuri-composer-picker .composer-agent-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  line-height: 0.9375rem;
+}
+
+.yuri-composer-picker .composer-picker-actions {
+  flex-shrink: 0;
+  padding: 0.25rem 0.375rem;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-composer-picker .composer-picker-actions > [role="menuitem"] {
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  color: var(--surface-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}
+
+.yuri-composer-picker .model-picker-footer,
+.yuri-composer-picker .composer-picker-footer {
+  flex-shrink: 0;
+  padding: 0.375rem 1rem;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
 .yuri-composer-autocomplete-row {
   margin-inline: 0.375rem;
   -webkit-tap-highlight-color: transparent;

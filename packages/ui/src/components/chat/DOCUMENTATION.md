@@ -1,5 +1,35 @@
 # Chat components
 
+## Desktop composer pickers
+
+`ModelControls`' anchored model and Agent menus share the scoped
+`yuri-composer-picker` layout in `styles/mobile.css`. Search is pinned at the top;
+add-provider/reset actions and shared hint keycaps stay outside the scrolling
+catalog. Add-provider is a labeled icon-only button at the footer's lower right,
+alongside keyboard hints, not a separate action row. Favorites/recent rows separate the model name from provider/context
+metadata; provider-group rows omit the repeated provider and keep context beside
+the name. Aligned trailing slots reserve thinking, selection and favorites. Compact
+group headings and shared hairlines separate sections; desktop headers scroll with their group rather than
+painting another sticky material. Agent names use the same label scale, with
+two-line descriptions (full text in the title) and a current-selection check.
+Only the outer shared popup owns glass, edge and shadow. Mobile sheets and other
+`ModelPickerList` consumers retain their existing geometry and behavior.
+Model context/cost formatting reuses `lib/intlFormatters`' bounded locale-aware
+formatter slots rather than constructing formatters for every row on each search.
+Row tooltips mount only after the active row's 450ms delay, anchored to the existing
+row without wrapping/remounting it. Catalog opening must not initialize a floating
+root/trigger for every model. Keyboard and pointer highlight retain the same
+metadata/copy action; leaving the active row or closing the picker cancels its hint.
+The desktop composer opts into `ModelPickerList.virtualize`: TanStack Virtual
+selects visible model rows plus overscan; offscreen rows reserve their exact
+compact desktop height (40px mixed-source, 32px provider-group at 16px root).
+Headers and sortable section containers remain mounted, preserving whole-section
+drag geometry. The full filtered catalog still owns search, ordering and keyboard
+selection. Keyboard scrolling uses the reserved row element even before hydration;
+dragged favorites remain mounted. Row indices are derived from that catalog, never
+a mutable counter inside deferred sortable render callbacks. Mobile and other
+picker consumers do not opt into the compact desktop geometry.
+
 ## Mobile session read/unread actions
 
 The mobile Projects home, Sessions sheet (including the iPad sidebar), and status

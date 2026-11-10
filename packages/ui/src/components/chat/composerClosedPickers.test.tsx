@@ -23,6 +23,89 @@ const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); presence.visible = false; });
 
 describe('closed composer picker work', () => {
+    test('model footer offers add-provider as a labeled icon button beside keyboard hints', async () => {
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ModelControls.tsx'), 'utf8');
+        const ast = ts.createSourceFile('ModelControls.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        let footer = '';
+        const visit = (node: ts.Node) => {
+            if (ts.isJsxAttribute(node) && node.name.getText(ast) === 'footerContent' && node.initializer && ts.isJsxExpression(node.initializer)) {
+                footer = node.initializer.expression?.getText(ast) ?? '';
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+        expect(footer).not.toBe('');
+        const openAddProviderSettings = vi.fn();
+        const scope = {
+            React, openAddProviderSettings,
+            getModelVariantOptions: () => ['high'],
+            t: (key: string) => key,
+            Kbd: ({ children }: React.PropsWithChildren) => <kbd>{children}</kbd>,
+            Icon: ({ name }: { name: string }) => <i data-icon={name} />,
+            Button: ({ children, size: _size, variant: _variant, ...props }: React.PropsWithChildren<React.ComponentProps<'button'> & { size?: string; variant?: string }>) => <button {...props}>{children}</button>,
+        };
+        const compiled = ts.transpileModule(`const renderFooter = ${footer};`, {
+            compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+        }).outputText;
+        const renderFooter = new Function(...Object.keys(scope), `${compiled}\nreturn renderFooter;`)(...Object.values(scope));
+        await act(async () => root.render(renderFooter({ providerID: 'test', modelID: 'model' })));
+        const button = host.querySelector('button')!;
+        expect(button.getAttribute('aria-label')).toBe('chat.modelControls.addNewProvider');
+        expect(button.title).toBe('chat.modelControls.addNewProvider');
+        expect(button.textContent).toBe('');
+        expect(button.querySelector('[data-icon="add"]')).not.toBeNull();
+        expect(button.parentElement?.lastElementChild).toBe(button);
+        expect(button.previousElementSibling?.querySelector('kbd')).not.toBeNull();
+        await act(async () => button.click());
+        expect(openAddProviderSettings).toHaveBeenCalledOnce();
+    });
+
+    test('desktop Agent picker keeps reset below the catalog and selection independent', async () => {
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ModelControls.tsx'), 'utf8');
+        const ast = ts.createSourceFile('ModelControls.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        let popup = '';
+        const visit = (node: ts.Node) => {
+            if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'DropdownMenuContent'
+                && node.getText(ast).includes('yuri-composer-agent-picker')) popup = node.getText(ast);
+            ts.forEachChild(node, visit);
+        };
+        visit(ast);
+        expect(popup).not.toBe('');
+        const handleAgentChange = vi.fn();
+        const scope = {
+            React, cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
+            DropdownMenuContent: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+            DropdownMenuItem: ({ children, onSelect, ...props }: React.PropsWithChildren<{ onSelect: () => void }>) => <button {...props} onClick={onSelect}>{children}</button>,
+            ScrollableOverlay: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+            Input: 'input', Icon: ({ name }: { name: string }) => <i data-icon={name} />,
+            AgentAvatar: () => <i />, Kbd: ({ children, variant }: React.PropsWithChildren<{ variant: string }>) => <kbd data-variant={variant}>{children}</kbd>,
+            isAgentSelectorInstant: false, INSTANT_DROPDOWN_CLASS: '', handleAgentCycleShortcut: vi.fn(), resolveComposerFinalFocus: vi.fn(),
+            agentSearchQuery: '', setAgentSearchQuery: vi.fn(), setAgentSelectorOpen: vi.fn(),
+            defaultAgentName: 'build', uiAgentName: 'plan', handleAgentChange,
+            sortedAndFilteredAgents: [{ name: 'build', description: 'Build description' }, { name: 'plan', description: 'Plan description' }],
+            getAgentCatalogLabel: (agent: { name: string }) => agent.name,
+            capitalizeAgentName: (name: string) => name,
+            t: (key: string) => key,
+        };
+        const compiled = ts.transpileModule(`const Surface = () => (${popup});`, {
+            compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+        }).outputText;
+        const Surface = new Function(...Object.keys(scope), `${compiled}\nreturn Surface;`)(...Object.values(scope));
+        await act(async () => root.render(<Surface />));
+        const rows = host.querySelectorAll<HTMLButtonElement>('.composer-agent-row');
+        expect(rows).toHaveLength(2);
+        expect(rows[0].querySelector('[data-icon="check"]')).toBeNull();
+        expect(rows[1].querySelector('[data-icon="check"]')).not.toBeNull();
+        expect(rows[1].querySelector('.composer-agent-description')?.getAttribute('title')).toBe('Plan description');
+        const actions = host.querySelector('.composer-picker-actions')!;
+        expect(rows[1].compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(host.querySelector('kbd')?.dataset.variant).toBe('hint');
+        await act(async () => rows[1].click());
+        expect(handleAgentChange).toHaveBeenLastCalledWith('plan');
+        await act(async () => actions.querySelector('button')!.click());
+        expect(handleAgentChange).toHaveBeenLastCalledWith('build');
+    });
+
     test.each(['dropdown', 'mobile-sheet'] as const)('%s does not enumerate branches on repeated composer renders', async (presentation) => {
         const localBranches = Array.from({ length: 300 }, (_, i) => `local-${i}`);
         const remoteBranches = Array.from({ length: 300 }, (_, i) => `remote-${i}`);
