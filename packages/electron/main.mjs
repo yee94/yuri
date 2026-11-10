@@ -38,6 +38,7 @@ import {
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
 import { resolveQuitInterception } from './quit-confirmation.mjs';
+import { createQuitShortcut, QUIT_SHORTCUT_INTERVAL_MS } from './quit-shortcut.mjs';
 import { isRemoteIpcCommandAllowed } from './ipc-command-gate.mjs';
 import { getMenuLabels, normalizeMenuLocale } from './menu-i18n.mjs';
 let desktopBackendPromise;
@@ -515,6 +516,7 @@ const shutdownSshSessions = async () => {
 };
 
 const prepareForQuit = ({ installingUpdate = false } = {}) => {
+  quitShortcut.cancel();
   clearTimeout(desktopOtaReadyTimer);
   state.quitRequested = true;
   state.quitConfirmed = true;
@@ -550,6 +552,20 @@ const performConfirmedQuit = async () => {
   await shutdownBackgroundServices();
   app.exit(0);
 };
+
+const quitShortcut = createQuitShortcut({
+  quit: () => void performConfirmedQuit(),
+  showHint: (contents) => {
+    if (!contents || contents.isDestroyed()) return;
+    contents.send('yuri:quit-hint', {
+      message: getMenuLabels(menuLocale).quitShortcutHint,
+      duration: QUIT_SHORTCUT_INTERVAL_MS,
+    });
+  },
+  hideHint: (contents) => {
+    if (contents && !contents.isDestroyed()) contents.send('yuri:quit-hint', null);
+  },
+});
 
 // Hard-stop signals (`Ctrl+C` on `electron:dev`, an external `kill`/SIGTERM,
 // terminal close) await the shared in-process server teardown before exiting.
@@ -5319,7 +5335,17 @@ const buildMacMenu = () => {
         { role: 'hide', label: labels.hide },
         { role: 'hideOthers', label: labels.hideOthers },
         { type: 'separator' },
-        { role: 'quit', label: labels.quit },
+        {
+          label: labels.quit,
+          accelerator: 'Cmd+Q',
+          click: (_item, window, event) => {
+            if (event.triggeredByAccelerator) {
+              quitShortcut.request(window?.webContents ?? null);
+            } else {
+              app.quit();
+            }
+          },
+        },
       ],
     },
     {
@@ -5590,6 +5616,20 @@ const loadUrlInsideWebContents = (contents, rawUrl) => {
 };
 
 app.on('web-contents-created', (_event, contents) => {
+  if (process.platform === 'darwin') {
+    let shortcutOwner = contents;
+    contents.on('before-input-event', (event, input) => {
+      const owner = contents.getOwnerBrowserWindow();
+      if (!owner || owner.isDestroyed()) return;
+      shortcutOwner = owner.webContents;
+      quitShortcut.handleInput(event, input, shortcutOwner);
+    });
+    contents.on('blur', () => quitShortcut.cancel(shortcutOwner));
+    contents.on('destroyed', () => quitShortcut.cancel(shortcutOwner));
+    contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+      if (isMainFrame) quitShortcut.cancel(shortcutOwner);
+    });
+  }
   if (contents.getType() !== 'webview') return;
 
   contents.setWindowOpenHandler(({ url }) => {

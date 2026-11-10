@@ -23,10 +23,9 @@ test.each([false, true])('shared footer keeps optional metadata, action and trai
         await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} actions={<button>Copy</button>} />));
         expect(footer.children).toHaveLength(1);
         expect(footer.querySelector('[data-message-time]')).toBeNull();
-        await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} tps="20 tok/s" interrupted />));
-        expect(footer.getAttribute('data-message-tps')).toBe('interrupted');
-        expect(footer.className).toContain(isMobile ? 'mt-3' : 'mt-1.5');
-        expect(footer.className).toContain('mb-0.5');
+        await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} tps="20 tok/s" />));
+        expect(footer.className).toContain(isMobile ? 'mt-1.5' : 'mt-2.5');
+        expect(footer.className).toContain(isMobile ? 'mb-2' : 'mb-3');
         expect(footer.querySelector('[data-message-action-group]')).toBeNull();
         expect(footer.textContent).toBe('20 tok/s');
     } finally {

@@ -48,6 +48,18 @@ it('runs the shipped global-page reference through the real plugin context and t
     expect(node.textContent).toBe('Own config reached the page');
     host.uninstall('studio'); expect(node.childElementCount).toBe(0);
 });
+it('loads the shipped direct SVG entry example through the real host without a resource registry', async () => {
+    const { host } = fixture();
+    host.install('artwork', { code: await example('icons', 'js'), options: {}, revision: '1' });
+    expect(host.getSnapshot().plugins[0].status).toBe('active');
+    const entry = host.getSnapshot().titlebarItems[0];
+    expect(entry).toMatchObject({ label: 'Studio', actionable: true });
+    expect(decodeURIComponent(entry.icon!)).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+    expect(entry.icon).toMatch(/^data:image\/svg\+xml,/);
+    expect(host.getSnapshot().pages).toHaveLength(0);
+    host.uninstall('artwork');
+    expect(host.getSnapshot().titlebarItems).toHaveLength(0);
+});
 it('runs the shipped custom-suffix parser as a real file Panel and keeps network links out', async () => {
     const { host, files } = fixture();
     host.setSession({ id: 's1', directory: '/work' });

@@ -338,10 +338,25 @@
 
 .yuri-settings-workspace
   [data-settings-value]
-  .yuri-settings-inline-value > :is(div, span) {
+  .yuri-settings-inline-value > :is(div, span):not([role="img"]) {
   flex: 0 1 auto !important;
   justify-content: flex-end;
   text-align: right;
+}
+
+.yuri-settings-workspace .yuri-settings-summary-model .yuri-settings-split-row-control {
+  flex-wrap: wrap;
+}
+
+.yuri-settings-workspace .yuri-settings-summary-model .yuri-settings-inline-value {
+  height: auto !important;
+  flex-basis: 16rem;
+}
+
+.yuri-settings-workspace .yuri-settings-summary-model .yuri-settings-inline-value span.truncate {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .yuri-settings-workspace .yuri-settings-group-row

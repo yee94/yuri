@@ -5,7 +5,7 @@ The supported contract is OpenCode GUI SDK **2.2.0**. Consult current official d
 ## Window APIs
 
 - `Command`: command palette and plugin management execution; hidden commands can be called by `ctx.commands.run`. No GUI shortcut registration or slash autocomplete yet.
-- `TitlebarItem`: global action/status, independent of a session; reactive label/title/icon/busy/pressed. Supported icon names and upstream/Yuri differences: [icons](icons.md).
+- `TitlebarItem`: global action/status, independent of a session; reactive label/title/icon/busy/pressed. Direct SVG/data-URI icon strings, built-in names and upstream/Yuri differences: [icons](icons.md).
 - `Panel`: Solid `list/render`, reactive session/tab getters; file panels mount in existing file previews. An independent panel uses a dialog/mobile sheet, not upstream's full draggable workspace layout.
 - `LinkHandler`: match, exists and open file/custom links. Use `ctx.links.open({ href, base, session })` for navigation. Preserve workspace-relative identity; never resolve against a different session's directory.
 - `SettingsPage`: independent plugin settings pages; host `page/section` injection is unsupported.

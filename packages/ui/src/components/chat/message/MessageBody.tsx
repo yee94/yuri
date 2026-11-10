@@ -1356,8 +1356,6 @@ const AssistantMessageBody = React.memo(({
         onContentChange?.('structural');
     }, [awaitingMessageCompletion, hasTools, onContentChange, reasoningComplete, reasoningParts.length, shouldHoldReasoning]);
 
-    const hasCopyableText = Boolean(hasTextContent) && !awaitingMessageCompletion;
-
     const handleForkClick = useEvent(
         async (event: React.MouseEvent<HTMLButtonElement>) => {
             event.stopPropagation();
@@ -1476,14 +1474,37 @@ const AssistantMessageBody = React.memo(({
     const shouldDeferSortedInlineText = isSortedRenderMode
         && !canRevealSortedBody
         && !(isCompactionTurn && isActivityExpanded);
-    const shouldShowMessageActions = hasCopyableText;
+    const assistantTpsText = React.useMemo(() => {
+        if (!showAssistantTps || !isLastAssistantInTurn || errorPresentation?.variant === 'error') return null;
+        const tps = turnGroupingContext?.assistantTps;
+        // Interrupted and aborted turns stay visible once the streamed clocks
+        // can produce a rate. An active continuation must not flash one.
+        if (!canPresentAssistantTps({
+            completionDisposition: turnGroupingContext?.completionDisposition,
+            tps,
+        })) return null;
+        const label = formatAssistantTps(tps ?? 0);
+        return label.length > 0 ? label : null;
+    }, [
+        showAssistantTps,
+        errorPresentation?.variant,
+        isLastAssistantInTurn,
+        turnGroupingContext?.assistantTps,
+        turnGroupingContext?.completionDisposition,
+    ]);
     // Settled turns keep duration + TPS after user abort, even without text.
     // Failures own the feedback instead of also publishing completion chrome.
+    // A publishable rate uses this same footer even before time.completed arrives;
+    // disabled copy keeps the initial footprint identical to the completed row.
     const shouldShowTurnFooter = isLastAssistantInTurn
-        && isTurnSettled
         && errorPresentation?.variant !== 'error'
         && !hideCompactionBody
-        && (hasTextContent || Boolean(errorMessage) || isMessageCompleted);
+        && ((isTurnSettled && (hasTextContent || Boolean(errorMessage) || isMessageCompleted))
+            || Boolean(assistantTpsText));
+    const hasCopyableText = shouldShowTurnFooter
+        ? getSortedBodyPartIndex(sourceParts ?? parts) >= 0
+        : Boolean(hasTextContent) && !awaitingMessageCompletion;
+    const shouldShowMessageActions = hasCopyableText;
     const hasAuthoritativeChangesMarker = turnGroupingContext?.diffStats?.hasDiffs === true;
     const showBackgroundActivity = Boolean(turnGroupingContext?.activityParts?.length) && sessionId && sessionSurface.active && !isMiniChatSurface;
     const shouldShowChangesPreview = !isMiniChatSurface
@@ -1948,25 +1969,6 @@ const AssistantMessageBody = React.memo(({
         return formatted.length > 0 ? formatted : null;
     }, [messageCompletedAt, messageCreatedAt]);
 
-    const assistantTpsText = React.useMemo(() => {
-        if (!showAssistantTps || !isLastAssistantInTurn || errorPresentation?.variant === 'error') return null;
-        const tps = turnGroupingContext?.assistantTps;
-        // Interrupted and aborted turns stay visible once the streamed clocks
-        // can produce a rate. An active continuation must not flash one.
-        if (!canPresentAssistantTps({
-            completionDisposition: turnGroupingContext?.completionDisposition,
-            tps,
-        })) return null;
-        const label = formatAssistantTps(tps ?? 0);
-        return label.length > 0 ? label : null;
-    }, [
-        showAssistantTps,
-        errorPresentation?.variant,
-        isLastAssistantInTurn,
-        turnGroupingContext?.assistantTps,
-        turnGroupingContext?.completionDisposition,
-    ]);
-
     const canOpenMessagePreview = !isMiniChatSurface && !isMobile && !isVSCode;
 
     const finalTurnActionButtons = (
@@ -2082,10 +2084,6 @@ const AssistantMessageBody = React.memo(({
                             ? <TurnChangedFilesDropdown activityParts={turnGroupingContext?.activityParts} /> : null}
                     />
                 )}
-                {!shouldShowTurnFooter && !hideCompactionBody && assistantTpsText ? (
-                    <AssistantMessageFooter messageId={messageId} isMobile={isMobile} tps={assistantTpsText} interrupted />
-                ) : null}
-
             </div>
         </div>
     );

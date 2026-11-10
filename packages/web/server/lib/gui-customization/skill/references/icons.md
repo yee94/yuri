@@ -1,10 +1,10 @@
 # Plugin icons
 
-Use this reference when choosing an entry icon or rendering icons inside plugin-owned Solid/DOM content. Icon names, package artwork, file icons and application branding are separate contracts. Use [plugin styles](plugin-styles.md) for the surrounding text and colors.
+Use this reference when choosing an entry icon or rendering icons inside plugin-owned Solid/DOM content. Entry icons accept built-in names or self-contained image strings in Yuri. Package artwork, file icons and application branding are separate contracts. Use [plugin styles](plugin-styles.md) for the surrounding text and colors.
 
 ## Upstream contract
 
-OpenCode's `TitlebarItem.icon` is an optional `IconName`, imported as a **type** from `@opencode/plugin/gui`. Its value is a catalog name such as `globe`, not an SVG string, image URL, CSS class or component. The type is erased at runtime; it is not an exported array or an icon renderer.
+OpenCode's `TitlebarItem.icon` is an optional `IconName`, imported as a **type** from `@opencode/plugin/gui`. Upstream defines it as a catalog name such as `globe`; Yuri additionally accepts image strings as documented below. The type is erased at runtime; it is not an exported array or an icon renderer.
 
 Upstream generates the SDK union from the application's icon catalog:
 
@@ -14,6 +14,33 @@ Upstream generates the SDK union from the application's icon catalog:
 - [Official GUI reference](https://opencode.ai/v2/docs/build/plugins/gui#titlebar-items): contribution syntax.
 
 Use the installed SDK's declaration for its exact version. The links above follow upstream development; a name accepted by a newer SDK is not proof that Yuri renders it.
+
+## Custom entry images in Yuri
+
+Pass the artwork directly as the existing `TitlebarItem.icon` string. No resource registration, extra field, file path or dependency is needed:
+
+```js
+const { Plugin, TitlebarItem } = require('@opencode/plugin/gui')
+
+const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#6b83d6" d="M3 3h18v18H3z"/></svg>'
+
+module.exports = Plugin.define({
+  setup(ctx) {
+    ctx.add(TitlebarItem, {
+      id: 'website', label: 'Studio', icon,
+      run: () => ctx.system.openExternal('https://example.com'),
+    })
+  },
+})
+```
+
+The same field also accepts an SVG data URI (`data:image/svg+xml,` with percent-encoded SVG, or `data:image/svg+xml;base64,...`) or a base64 image data URI for PNG, JPEG, GIF, WebP, AVIF or ICO. Include the `data:image/...;base64,` prefix; bare base64 is not an image declaration. HTTPS URLs and local file paths are not loaded.
+
+Yuri validates raw SVG and SVG data URIs with the existing static-SVG rules: a complete `<svg xmlns="http://www.w3.org/2000/svg">` root, at most 16 KiB UTF-8; static geometry, groups, defs, gradients, clip paths, masks, local `#id` references and title/description. Scripts, event attributes, inline `style`, external references, foreign content, DTDs and processing instructions are rejected. All icon strings are bounded to 2 MiB characters. Invalid artwork affects only its icon, not the entry or other plugin contributions.
+
+SVG is normalized to a data URI; all custom images render through `<img>`, never injected markup. Images retain their own colors; `currentColor` and host CSS variables do not inherit into the image document. Use explicit artwork colors, or a built-in name for host-colored line icons. The host fits images into the existing 16px sidebar / 14px compact icon slot.
+
+This is a **Yuri extension**, not portable upstream `IconName` behavior. Direct CJS needs no type workaround. In TypeScript, use a narrow assertion on this field only, e.g. `icon: svg as TitlebarContribution['icon']` with `import type { TitlebarItem as TitlebarContribution } from '@opencode/plugin/gui'`. Keep the rest of the contribution checked by the SDK. For plugins targeting both hosts, use a shared catalog name instead.
 
 ## Names supported by both hosts
 
@@ -54,11 +81,11 @@ module.exports = Plugin.define({
 })
 ```
 
-For typed reactive contributions, annotate the return type as in the [global-page example](global-pages.md); otherwise TypeScript can widen `icon` to `string`.
+For typed reactive contributions using catalog names, annotate the return type as in the [global-page example](global-pages.md); otherwise TypeScript can widen `icon` to `string`.
 
 ## Yuri resolution and fallback
 
-Yuri resolves `TitlebarItem.icon` through these aliases first, then an exact key in its own sprite:
+For built-in names, Yuri resolves `TitlebarItem.icon` through these aliases first, then an exact key in its own sprite:
 
 | SDK name | Yuri sprite key |
 | --- | --- |
@@ -70,7 +97,7 @@ Yuri resolves `TitlebarItem.icon` through these aliases first, then an exact key
 
 Yuri's sprite contains additional names, but those are not automatically valid upstream `IconName` values. Use the shared names above for portable SDK contributions rather than casting a Yuri-only name into the SDK type. For an unlisted name, check the installed SDK and target Yuri version before relying on it.
 
-- Missing or unknown name: Yuri keeps the entry label. Sidebar placement reserves an empty icon slot; titlebar placement renders text instead of an icon. It does not substitute package artwork or the upstream default download arrow.
+- Missing/unknown name, rejected image or image load failure: Yuri keeps the entry label. Sidebar placement reserves an empty icon slot; titlebar placement renders text instead of an icon. It does not substitute package artwork or the upstream default download arrow. A changed image string can render again after failure.
 - `busy: true`: a loading spinner replaces the icon and disables an actionable entry.
 - Valid icon: titlebar placement shows the icon with a hover label; sidebar placement shows icon and text. Host styles control size and color.
 - Registering `yuri.page.icon` alone does not create or configure its navigation entry. Register `TitlebarItem` and set its `icon` separately, as in [global pages](global-pages.md).
@@ -121,14 +148,14 @@ These symbol IDs are current DOM implementation hooks, not an SDK icon-renderer 
 
 | Surface | Contract |
 | --- | --- |
-| Global plugin page/tab navigation entry | `TitlebarItem.icon`: supported catalog name |
+| Global plugin page/tab navigation entry | `TitlebarItem.icon`: supported catalog name, raw SVG or image data URI |
 | Plugin artwork in Settings plugin details | Top-level `package.json.icon`: validated image/data resource; not used by the global entry renderer |
 | Custom file extension icon | `yuri.file-icon`: SVG resource; see [file previews](file-previews.md) |
 | Application Logo / running macOS Dock icon | `yuri.branding`; see [appearance](appearance.md) |
 | Artwork inside plugin-owned page content | Render it in the page's own Solid/DOM content |
 
-The current entry contract has no custom-SVG/image field. Supplying an image URL as `TitlebarItem.icon`, or setting `package.json.icon`, does not add one.
+Set entry artwork directly on `TitlebarItem.icon`; `package.json.icon` does not configure it. Remote image URLs and local paths are unsupported for this field.
 
 ## Verification
 
-Check the actual entry in each target placement: selected artwork, visible/hover label, `busy` spinner, missing-name fallback, and withdrawal when the plugin is disabled. SDK typechecking alone does not prove Yuri runtime support.
+Check the actual entry in each target placement: selected artwork, visible/hover label, `busy` spinner, missing-name/rejected-image/load-failure fallback, reactive image replacement, and withdrawal when the plugin is disabled. SDK typechecking alone does not prove Yuri runtime support.

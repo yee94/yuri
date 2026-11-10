@@ -166,6 +166,8 @@ options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/�
 
 `TitlebarItem` 通过 snapshot 的 `titlebarItems` 交给 React 叶子入口，不挂载 Solid 视图，不主动请求加载，也不增加网络/轮询。注册顺序保持不变，内部 key 按插件 ID 与 item ID 元组编码，避免跨插件同名或含冒号 ID 的碰撞。`runTitlebarItem` 在点击时读取最新贡献并检查 busy 与插件生命周期；撤销、失败、替换、停用和切 runtime 清除旧入口。无会话时仍可运行；无 `run` 时仅展示状态。locale 和 Solid accessor/getter 更新字段，不因普通会话切换重跑注册 accessor。
 
+Yuri 在同一个 `TitlebarItem.icon` 字符串上扩展原始 SVG、SVG Data URI（百分号编码/Base64）及 PNG/JPEG/GIF/WebP/AVIF/ICO Base64 Data URI，内置名称和别名保持兼容；不新增 Registry 或资源引用。`titlebar-icon.ts` 在发布 snapshot 前统一规范化，输入最多 2 MiB 字符，SVG 复用 `validateGuiSvg` 的 16 KiB UTF-8 静态校验；图片非法只清除该 icon，不使插件或其他贡献失败。React 用 `img` 渲染自包含图片，加载失败保留入口文字，变更图片字符串可重试。外部 URL、本地路径和裸 Base64 不作为图片加载；所有共享 UI 运行时使用同一逻辑，无网络和原生权限变化。上游 SDK 仍是 `IconName`，该图片字符串能力仅属于 Yuri；内置 skill 说明窄字段类型断言与可移植性边界。
+
 入口不扩大权限：本地 Electron 插件复用既有 main/IPC lease，Web、VS Code、hosted/Capacitor mobile 和远程窗口仅支持窗口动作；调用 native IPC 仍明确 unsupported。需要本机配置或 Electron shell 的插件应自行处理拒绝，不能由宿主推测 URL 或绕过 native gate。
 
 原生主进程自行从进程内后端的权威 OpenCode client 读取全局 inventory/bundle；窗口只能提交 id/revision，不能提交代码、options、服务地址或凭证。revision 必须匹配，窗口随后运行 main 返回的同一 bundle。插件 main 每个 revision 在应用内共享一个实例；每窗口激活有独立 lease，停用/卸载/切服务释放本窗口 lease，最后一个 lease 释放时撤销 IPC、abort 调用并清理 main。导航/销毁由 main 兜底撤销；replacement 会撤销旧 revision 的全部 lease。每次 native 操作验证主 frame、精确本地来源及主进程记录的本地实例身份，远程页面和预览 iframe 无权调用。

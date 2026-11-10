@@ -217,6 +217,27 @@ describe('GUI plugin host with the actual official Solid SDK', () => {
         } finally { Reflect.deleteProperty(globalThis, '__guiTitlebarCounts'); }
     });
 
+    it('publishes self-contained titlebar images, reacts to icon changes and isolates invalid artwork', () => {
+        const value = host();
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 2h20v20H2z"/></svg>';
+        const png = 'data:image/png;base64,iVBORw0KGgo=';
+        value.install('images', bundle(`
+            const [icon,setIcon]=S.createSignal(${JSON.stringify(svg)});
+            ctx.add(G.TitlebarItem,()=>({id:'image',label:'Image',icon:icon(),run(){}}));
+            ctx.add(G.TitlebarItem,{id:'invalid',label:'Invalid',icon:'data:text/html;base64,PHNjcmlwdC8+'});
+            ctx.add(G.TitlebarItem,{id:'named',label:'Named',icon:'globe'});
+            ctx.add(G.Command,{id:'change',title:'Change',run(){setIcon(${JSON.stringify(png)})}});
+        `));
+        expect(value.getSnapshot().plugins[0].status).toBe('active');
+        expect(value.getSnapshot().titlebarItems.map((item) => item.icon)).toEqual([
+            `data:image/svg+xml,${encodeURIComponent(svg)}`, undefined, 'globe',
+        ]);
+        value.runCommand('images.change');
+        expect(value.getSnapshot().titlebarItems[0].icon).toBe(png);
+        value.uninstall('images');
+        expect(value.getSnapshot().titlebarItems).toEqual([]);
+    });
+
     it('isolates titlebar IDs and action failures, and replaces stale actions on reload', async () => {
         const value = host();
         value.install('demo', bundle(`ctx.add(G.TitlebarItem,{id:'tools:open',label:'First',run(){throw new Error('old')}})`));
