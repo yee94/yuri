@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "channel": "beta",
-  "generation": 83,
+  "generation": 84,
   "activeBundle": {
     "applicationId": "com.yee94.yuri",
-    "bundleId": "a323d457a799682c",
-    "releaseVersion": "0.2.37-beta.1",
-    "url": "/ota/bundles/a323d457a799682c.zip",
-    "size": 10310247,
-    "checksum": "a323d457a799682c2a5fd60660f90534fb307787176153f5797e381f7994de22",
+    "bundleId": "452b08282e56b1e7",
+    "releaseVersion": "0.2.37-beta.4",
+    "url": "/ota/bundles/452b08282e56b1e7.zip",
+    "size": 10310148,
+    "checksum": "452b08282e56b1e7ededf1fcf76432b888287f4b34ac79ed84e40668e652a4a7",
     "rolloutPercent": 100,
-    "rolloutSalt": "beta-83",
+    "rolloutSalt": "beta-84",
     "minShellApiVersion": 3,
     "platforms": {
       "ios": {
@@ -21,10 +21,10 @@
       }
     },
     "desktop": {
-      "bundleId": "bbe4671aa51abe51",
-      "url": "/ota/bundles/bbe4671aa51abe51.zip",
-      "checksum": "bbe4671aa51abe51719d5fd011b140e011c682465528b974a8409a6af418ea82",
-      "size": 11918509,
+      "bundleId": "7d2070adfe523340",
+      "url": "/ota/bundles/7d2070adfe523340.zip",
+      "checksum": "7d2070adfe523340eb83e3b0ece5591587f68cb9e9371eb02864bb2e4785e2a6",
+      "size": 11923125,
       "shellFingerprint": "8fc4e5a7b3d4cd156510b4c8c8a69bfb20b02e7b7168291f99afb3b63fb2c3d3",
       "minShellReleaseVersion": "0.2.35",
       "applicationId": "dev.yuri.desktop",
@@ -46,10 +46,39 @@
     }
   },
   "rollbackBundleIds": [
-    "52b22f1027d3d95d",
-    "d57886393427e25b"
+    "a323d457a799682c",
+    "52b22f1027d3d95d"
   ],
   "rollbackBundles": {
+    "a323d457a799682c": {
+      "applicationId": "com.yee94.yuri",
+      "bundleId": "a323d457a799682c",
+      "releaseVersion": "0.2.37-beta.1",
+      "url": "/ota/bundles/a323d457a799682c.zip",
+      "size": 10310247,
+      "checksum": "a323d457a799682c2a5fd60660f90534fb307787176153f5797e381f7994de22",
+      "rolloutPercent": 100,
+      "rolloutSalt": "beta-83",
+      "minShellApiVersion": 3,
+      "platforms": {
+        "ios": {
+          "minNativeBuild": 1
+        },
+        "android": {
+          "minNativeBuild": 1
+        }
+      },
+      "desktop": {
+        "bundleId": "bbe4671aa51abe51",
+        "url": "/ota/bundles/bbe4671aa51abe51.zip",
+        "checksum": "bbe4671aa51abe51719d5fd011b140e011c682465528b974a8409a6af418ea82",
+        "size": 11918509,
+        "shellFingerprint": "8fc4e5a7b3d4cd156510b4c8c8a69bfb20b02e7b7168291f99afb3b63fb2c3d3",
+        "minShellReleaseVersion": "0.2.35",
+        "applicationId": "dev.yuri.desktop",
+        "minShellApiVersion": 2
+      }
+    },
     "52b22f1027d3d95d": {
       "applicationId": "com.yee94.yuri",
       "bundleId": "52b22f1027d3d95d",
@@ -72,35 +101,6 @@
         "bundleId": "71234b765285c0ee",
         "url": "/ota/bundles/71234b765285c0ee.zip",
         "checksum": "71234b765285c0eea94b2bb39e60850e318fdca86dabd9d35fb2d55cd0c9f8ad",
-        "size": 11913899,
-        "shellFingerprint": "8fc4e5a7b3d4cd156510b4c8c8a69bfb20b02e7b7168291f99afb3b63fb2c3d3",
-        "minShellReleaseVersion": "0.2.35",
-        "applicationId": "dev.yuri.desktop",
-        "minShellApiVersion": 2
-      }
-    },
-    "d57886393427e25b": {
-      "applicationId": "com.yee94.yuri",
-      "bundleId": "d57886393427e25b",
-      "releaseVersion": "0.2.36-beta.8",
-      "url": "/ota/bundles/d57886393427e25b.zip",
-      "size": 10310028,
-      "checksum": "d57886393427e25b79aa22e451d98f570a7aebc07ce2fd07bcb4377940024e72",
-      "rolloutPercent": 100,
-      "rolloutSalt": "beta-81",
-      "minShellApiVersion": 3,
-      "platforms": {
-        "ios": {
-          "minNativeBuild": 1
-        },
-        "android": {
-          "minNativeBuild": 1
-        }
-      },
-      "desktop": {
-        "bundleId": "29bf73cf30bde5c5",
-        "url": "/ota/bundles/29bf73cf30bde5c5.zip",
-        "checksum": "29bf73cf30bde5c54e7b5eeeb38e8f2d2d2a79e294be582c551419a223defb6a",
         "size": 11913899,
         "shellFingerprint": "8fc4e5a7b3d4cd156510b4c8c8a69bfb20b02e7b7168291f99afb3b63fb2c3d3",
         "minShellReleaseVersion": "0.2.35",
