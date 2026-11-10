@@ -171,7 +171,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                 />
               }
             >
-            <div className={cn('relative flex items-center gap-1.5 rounded-lg px-2 py-1.5', SIDEBAR_ROW_HOVER_CLASS)} {...attributes}>
+            <div data-sidebar-project-header={id} className={cn('relative flex items-center gap-1.5 rounded-lg px-2 py-1.5', SIDEBAR_ROW_HOVER_CLASS)} {...attributes}>
               <Tooltip>
                 <TooltipTrigger asChild>
                     <button

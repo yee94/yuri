@@ -253,6 +253,32 @@ matching content message for its snippet and navigation target. The five-row
 preview and “show more” count operate on these unique sessions. Content search
 limits are applied by the Host after session deduplication; expansion reveals the
 already fetched results rather than requesting another server page.
+The default **All** filter renders individual results in one flat relevance order,
+including GUI plugin commands. `lib/search/commandPaletteRank.ts` reuses the mention
+title tiers (exact, prefix, substring, fuzzy); descriptions, paths and content
+snippets provide lower-priority scores. Already-recalled authoritative hits are
+never discarded by this presentation pass. Equal scores preserve source order,
+including the session source's recency order. Empty queries keep recent chats first.
+Pinned filter buttons below the input select All, Chat, Files, Projects, Commands
+or Settings; Commands includes plugin commands. They preserve the query, existing
+search scope and Query observers, so filtering starts no new requests.
+Desktop filters use the shared extra-small button size, with the first label
+aligned to the input and result text inset; mobile retains its touch-sized buttons.
+Unmodified Left/Right arrows cycle these filters with wraparound and retain input
+focus; IME composition and modified arrows keep their normal editing behavior.
+Desktop shows the two arrow keycaps immediately after the filters using
+the same `Kbd variant="hint"` as conversation rows, followed by a localized
+“Switch” label. The first nine selectable rows in the current
+filtered, mixed display order use Command+1–9 on macOS and Ctrl+1–9 elsewhere.
+Every result type and category expansion row participates; changing filters or
+expanding results recomputes numbering. Numeric shortcuts and click/Enter share
+the same selection actions. Pending searches, IME and repeated keydowns cannot
+activate a numeric result. Mobile omits these hints and numeric bindings.
+Each source retains its five-row search preview and a category-labelled expansion row. Counts
+refer to loaded, deduplicated results, not an estimated total. Local categories
+remain usable while remote searches are pending; loading/errors only appear in
+applicable filters. Selection is controlled by result identity so late file hits
+cannot steal an active keyboard selection; changing query or category resets it.
 Each row displays a localized date and time beside its title: the matching
 message's creation time for content hits, otherwise the session's update time
 (falling back to creation time). Missing or invalid timestamps stay hidden.

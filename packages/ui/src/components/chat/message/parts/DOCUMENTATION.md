@@ -6,6 +6,8 @@ Sorted compaction Activity uses localized Compacting / Compaction complete label
 
 This folder contains renderers for chat message parts (text, tools, reasoning, placeholders) and shared tool presentation helpers.
 
+`UserTextPart` also provides `variant="preview"` for the prompt navigator's compact question. It shares the normal Markdown/reference-chip pipeline and citation hints, but omits transcript search markers, interactive chip wrappers, and message collapse/expansion behavior. The enclosing preview owns clipping and turn-selection clicks; ordinary message rendering is unchanged.
+
 Tool grouping operates on visible Activity items: hidden reasoning and empty Thought placeholders do not split adjacent tools. Nonempty visible reasoning, narration, questions and other visible boundaries still retain their original positions. The source transcript and materialization inputs keep the original parts.
 
 The flat/live MessageBody path applies the same invisible-reasoning filter before collecting consecutive tools. Error status does not start a new group: successful and failed process tools remain adjacent in source order. `MessageList.contentRetention.test.tsx` exercises both live/sorted modes with empty and hidden Thought between successful and failed calls.

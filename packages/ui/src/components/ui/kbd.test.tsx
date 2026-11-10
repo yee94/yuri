@@ -25,12 +25,14 @@ describe('Kbd', () => {
     expect(ShortcutKbd({ shortcut: '⌘+N' })?.props['data-slot']).toBe('shortcut-kbd');
   });
 
-  test('sidebar and both global-search shortcut consumers use the same variant', () => {
+  test('sidebar and all global-search shortcut consumers use the same variant', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const sidebar = readFileSync(path.join(here, '../session/sidebar/SessionNodeItem.tsx'), 'utf8');
     const palette = readFileSync(path.join(here, 'CommandPalette.tsx'), 'utf8');
     expect(sidebar).toMatch(/<Kbd\s+data-sidebar-shortcut-number=\{number\}\s+variant="hint"/);
-    expect(palette.match(/<Kbd variant="hint"/g)).toHaveLength(2);
+    const paletteKeycaps = palette.match(/<Kbd\b[^>]*>/g) ?? [];
+    expect(paletteKeycaps.length).toBeGreaterThan(0);
+    for (const keycap of paletteKeycaps) expect(keycap).toContain('variant="hint"');
     expect(palette).not.toMatch(/<Kbd[^>]*bg-interactive-selection/);
   });
 });

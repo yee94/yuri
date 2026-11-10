@@ -120,6 +120,8 @@ error-reporting path as other manager actions. Contribution rows are dynamic ent
 registered individually in Settings search. The owning Plugins page remains the
 navigation entry. `GuiPluginCommands` is an independently filtered command-palette
 group with five-row previews and explicit expansion.
+`useGuiPluginCommandEntries` shares its live-snapshot filtering and command
+execution/error path with the global palette's mixed results and Commands filter.
 Initial plugin discovery is silent in the palette: no loading row or empty group
 is shown. Loaded commands remain usable during discovery and other plugins' failures;
 failed loading never adds an error/retry entry.

@@ -3,6 +3,9 @@ import { settingsDict } from './pt-BR.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  'commandPalette.filter.all': 'Tudo',
+  'commandPalette.filter.label': 'Categorias de pesquisa',
+  'commandPalette.filter.switch': 'Alternar',
   'sessions.sidebar.session.menu.markUnread': 'Marcar como não lido',
   'sessions.sidebar.session.menu.markRead': 'Marcar como lido',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Não foi possível marcar como não lido. Tente novamente.',

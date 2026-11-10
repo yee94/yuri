@@ -231,10 +231,13 @@ const EMPTY_UNSEEN: Readonly<Record<string, number>> = {};
 
 const useStableRenderCallback = <Args extends unknown[], Return>(
   handler: (...args: Args) => Return,
+  renderKey: string,
 ): ((...args: Args) => Return) => {
   const handlerRef = React.useRef(handler);
   handlerRef.current = handler;
-  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), []);
+  // The key invalidates memoized consumers; the ref supplies the latest handler.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), [renderKey]);
 };
 
 const SidebarUpdateDialog = React.memo(function SidebarUpdateDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
@@ -324,10 +327,15 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const [activeSessionByProject, setActiveSessionByProject] = React.useState<
     Map<string, string>
   >(() => readStoredStringMap(PROJECT_ACTIVE_SESSION_STORAGE_KEY));
+  const lastVisibleSidebarNavigationRef = React.useRef<{
+    pinned: readonly SessionNavigationTarget[];
+    project: readonly SessionNavigationTarget[];
+  } | null>(null);
 
   React.useEffect(() => {
     return subscribeRuntimeEndpointChanged((detail) => {
       if (!isRuntimeInstanceChange(detail)) return;
+      lastVisibleSidebarNavigationRef.current = null;
       setCollapsedGroups(readStoredStringSet(GROUP_COLLAPSE_STORAGE_KEY));
       setGroupOrderByProject(readStoredStringArrayMap(GROUP_ORDER_STORAGE_KEY));
       setActiveSessionByProject(readStoredStringMap(PROJECT_ACTIVE_SESSION_STORAGE_KEY));
@@ -456,6 +464,16 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const newSessionDraftOpen = useSessionUIStore((state) =>
     Boolean(state.newSessionDraft?.open),
   );
+  const draftProjectId = useSessionUIStore((state) =>
+    state.newSessionDraft?.open && !state.currentSessionId
+      ? state.newSessionDraft.selectedProjectId ?? null
+      : null,
+  );
+  const projectRevealTarget = React.useMemo(() =>
+    !mobileVariant && activeMainTab === 'chat' && draftProjectId && sessionSwitchIntent.sessionId === null
+      ? { projectId: draftProjectId, revision: sessionSwitchIntent.revision }
+      : null,
+  [mobileVariant, activeMainTab, draftProjectId, sessionSwitchIntent]);
   const setCurrentSession = useSessionUIStore(
     (state) => state.setCurrentSession,
   );
@@ -1778,18 +1796,27 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     );
   }, [pinnedNavigationTargets, visiblePinnedShortcutSessionIds]);
 
+  const sidebarNavigationTargets = React.useMemo(() => (
+    !isVisible && lastVisibleSidebarNavigationRef.current
+      ? lastVisibleSidebarNavigationRef.current
+      : { pinned: visiblePinnedNavigationTargets, project: visibleProjectNavigationTargets }
+  ), [isVisible, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
+
+  React.useLayoutEffect(() => {
+    if (isVisible) lastVisibleSidebarNavigationRef.current = sidebarNavigationTargets;
+  }, [isVisible, sidebarNavigationTargets]);
+
   const numberedSidebarSessionTargets = React.useMemo(
     () =>
       mobileVariant
         ? []
         : buildSidebarNumberedSessionTargets({
-            pinnedTargets: visiblePinnedNavigationTargets,
-            projectTargets: visibleProjectNavigationTargets,
+            pinnedTargets: sidebarNavigationTargets.pinned,
+            projectTargets: sidebarNavigationTargets.project,
           }),
     [
       mobileVariant,
-      visiblePinnedNavigationTargets,
-      visibleProjectNavigationTargets,
+      sidebarNavigationTargets,
     ],
   );
 
@@ -1894,14 +1921,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   React.useLayoutEffect(
     () =>
       publishSessionNavigationSnapshot({
-        pinned: visiblePinnedNavigationTargets,
-        project: visibleProjectNavigationTargets,
+        pinned: sidebarNavigationTargets.pinned,
+        project: sidebarNavigationTargets.project,
       }),
-    [visiblePinnedNavigationTargets, visibleProjectNavigationTargets],
+    [sidebarNavigationTargets],
   );
 
   React.useLayoutEffect(() => {
-    if (isProjectSessionsSyncing) {
+    if (!isVisible || isProjectSessionsSyncing) {
       return;
     }
 
@@ -1917,6 +1944,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     syncSidebarVisualSelection(reconciledFocus);
   }, [
     currentSessionId,
+    isVisible,
     isProjectSessionsSyncing,
     projectFocusIdentities,
     pinnedFocusIdentities,
@@ -2097,6 +2125,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         }
       />
     ),
+    JSON.stringify([...sidebarShortcutNumberByFocusKey]),
   );
 
   const toggleCollapsedGroup = React.useCallback(
@@ -2435,6 +2464,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         sectionsForRender={sectionsForSidebarRender}
         projectSections={projectSections}
         activeProjectId={activeProjectId}
+        projectRevealTarget={projectRevealTarget}
         showOnlyMainWorkspace={showOnlyMainWorkspace}
         hasSessionSearchQuery={hasSessionSearchQuery}
         emptyState={emptyState}

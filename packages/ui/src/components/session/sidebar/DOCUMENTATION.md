@@ -105,6 +105,15 @@ reduced-transparency mode remains opaque.
 Sidebar numeric shortcuts and global-search hints share `Kbd variant="hint"`.
 The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neutral
 6% foreground fill; consumers do not maintain their own shortcut color/size recipe.
+The row render callback invalidates memoized groups when the numbered focus-key
+assignments change, including changes caused by earlier projects or the top section.
+Equivalent assignments retain its identity even when the session model refreshes;
+hints and keyboard activation must always use the same current numbered snapshot.
+Collapsing the whole sidebar retains its last committed navigation snapshot for
+both numbered and adjacent-session shortcuts, including pinned/in-progress rows.
+Hidden activity subscriptions remain disabled; focus reconciliation waits until
+the sidebar is visible rather than treating gated activity as an empty group.
+Reopening refreshes the snapshot, and switching instances clears retained targets.
 
 ## Refactor result
 
@@ -404,6 +413,17 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - Archived groups are collapsed by default and support bulk deletion at group/folder level.
 - Session rows support compact inline dates in minimal mode and simplified metadata in default mode.
 - Session-row visual selection is published through a narrow row-only Focus store before authoritative navigation. Focus includes the render scope (`pinned` or `project`) plus session/project identity, so duplicate representations never both receive the Active background or satisfy the wrong paint barrier. On desktop, focusing a fully visible session preserves the sidebar scroll position; a partially or fully out-of-view row smooth-scrolls to about one-third down the sidebar viewport (`scrollFocusedSessionRow.ts`). Mobile keeps `block: 'nearest'`. Reduced-motion users get an instant jump.
+- Project navigation follows the router's `/session/new` draft target, not a
+  search-owned DOM command. `SessionSidebar` projects the draft's selected project
+  ID and existing navigation-intent revision into `SidebarProjectsList`; only the
+  desktop Chat primary requests a reveal. The list locates that project's header
+  inside its own scroll viewport and reuses `scrollFocusedSessionRowIntoView`.
+  Already-visible headers do not scroll. Each request is consumed once after its
+  header mounts, including delayed project hydration and reopening the sidebar;
+  later catalog/status/collapse updates never re-scroll. A new intent can reveal
+  the same project again. No project reordering, expansion, session loading or
+  independent selection state is added. Search-filtered trees wait until their
+  filter clears; mobile and VS Code's headerless main-workspace view are unchanged.
 - Previous/next-session navigation consumes ordered snapshots published from the rendered sidebar model and cycles one combined ring: visible pinned rows first, then the logically visible project rows in sidebar order, wrapping across both sections. Rows hidden by pinned/project/group/folder collapse or the group's Show more boundary are excluded, while always-visible (busy/retry + current viewing) rows retained beyond that boundary remain keyboard targets.
 - Global Mod+1…9 navigation numbers the first nine logically visible session rows from top to bottom across Pinned and the expanded project tree. Container headers never consume a number; duplicate Pinned/Project representations remain distinct Focus rows. Holding the platform primary modifier for 500ms reveals compact shortcut chips only on those rows; each chip occupies only its intrinsic width and replaces row quick actions until release. Releasing the modifier, window blur, or page hide clears the hints immediately.
 - Every session navigation announces a monotonic intent revision. A later sidebar, keyboard, deep-link, or switcher intent invalidates an older pending sidebar commit, including ABA sequences such as A -> B -> A.

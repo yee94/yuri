@@ -35,6 +35,7 @@ type UserTextPartProps = {
     agentMention?: AgentMentionInfo;
     /** Sibling parts on the same user message — used for image/selection citation icons. */
     messageParts?: readonly Part[];
+    variant?: 'message' | 'preview';
 };
 
 const hasPotentialSkillToken = (textContent: string): boolean => {
@@ -56,9 +57,10 @@ const hasActiveSelectionInElement = (element: HTMLElement): boolean => {
     return element.contains(range.startContainer) || element.contains(range.endContainer);
 };
 
-const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMention, messageParts }) => {
+const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMention, messageParts, variant = 'message' }) => {
+    const isPreview = variant === 'preview';
     const searchTarget = React.useContext(TranscriptSearchContext);
-    const isSearchTarget = searchTarget?.messageId === messageId && searchTarget.partId === part.id;
+    const isSearchTarget = !isPreview && searchTarget?.messageId === messageId && searchTarget.partId === part.id;
     const partWithText = part as PartWithText;
     const rawText = partWithText.text;
     const storedText = typeof rawText === 'string' ? rawText : partWithText.content || partWithText.value || '';
@@ -67,7 +69,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
 
     const [isExpanded, setIsExpanded] = React.useState(false);
     const [isTruncated, setIsTruncated] = React.useState(false);
-    const collapsibleUserMessages = useUIStore((state) => state.collapsibleUserMessages);
+    const collapsibleUserMessages = useUIStore((state) => !isPreview && state.collapsibleUserMessages);
     const effectiveDirectory = useEffectiveDirectory();
     const skillsQuery = useInstalledSkillsQuery({
         directory: effectiveDirectory,
@@ -138,7 +140,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
 
     React.useEffect(() => {
         const el = textRef.current;
-        if (!el) return;
+        if (!el || !collapsibleUserMessages) return;
         // Latch true while collapsed. Hiding images/files after the first
         // overflow measurement must not flip this back (that loops hide/show).
         const checkTruncation = () => {
@@ -161,6 +163,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
     }, [collapsibleUserMessages]);
 
     const handleClick = useEvent((event: React.MouseEvent<HTMLDivElement>) => {
+        if (isPreview) return;
         const target = event.target as HTMLElement | null;
         const skillLink = target?.closest<HTMLElement>('[data-skill-name]');
         const skillName = skillLink?.dataset.skillName
@@ -259,6 +262,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
                     key={`ref-${index}-${partItem.span.start}`}
                     decoration={partItem.decoration}
                     onOpenSkill={openSkill}
+                    interactive={!isPreview}
                 />
             );
         });
@@ -274,7 +278,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
         <div
             className="relative"
             key={part.id || `${messageId}-user-text`}
-            data-transcript-search-part={searchPartKey(messageId, part.id)}
+            data-transcript-search-part={isPreview ? undefined : searchPartKey(messageId, part.id)}
             data-user-message-clamp={clampOverflow ? 'true' : undefined}
         >
             {collapsibleUserMessages && isExpanded && (
@@ -306,7 +310,8 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
             ) : null}
             {textContent.trim().length > 0 ? <div
                 className={cn(
-                    "break-words font-sans typography-markdown-body",
+                    "break-words font-sans",
+                    isPreview ? "typography-meta" : "typography-markdown-body",
                     isExpanded && "pb-3",
                     isCollapsed && "line-clamp-10",
                     collapsibleUserMessages && isTruncated && !isExpanded && "cursor-pointer"

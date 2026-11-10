@@ -339,7 +339,7 @@ test('files only search the focused conversation directory, not other saved proj
     expect(files).toHaveLength(1);
     expect(host.querySelector('[data-value^="project:"]')).not.toBeNull();
     expect(files[0].querySelector('.yuri-global-search-result-detail')?.textContent).toContain('/project-');
-    expect(host.querySelectorAll('[cmdk-group-heading] .yuri-global-search-group-count').length).toBeGreaterThan(1);
+    expect(host.querySelectorAll('.yuri-global-search-filters .yuri-global-search-group-count').length).toBeGreaterThan(1);
     expect(host.textContent).not.toContain('commandPalette.index.');
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Changed query');
@@ -545,6 +545,9 @@ test.each(['input', 'close'])('pending body snapshot is cancelled on %s before a
     const signal = contentSignal.mock.calls.at(-1)![0];
     expect(signal.aborted).toBe(false);
     expect(fileSearch).not.toHaveBeenCalled();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-search-category="commands"]')!.click());
+    expect(host.textContent).not.toContain('common.loading');
+    expect(signal.aborted).toBe(false);
     if (action === 'input') await type('new-query');
     else await act(async () => useUIStore.getState().setCommandPaletteOpen(false));
     expect(signal.aborted).toBe(true);
@@ -583,11 +586,14 @@ test('indexed conversations appear without waiting for a cold project file searc
     expect(host.querySelector('[cmdk-item][data-value^="message:"]')).not.toBeNull();
     expect(host.querySelector('[data-file-search-pending]')).not.toBeNull();
     expect(host.textContent).not.toContain('commandPalette.empty.noResults');
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+    const selectedBeforeFiles = host.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute('data-value');
     await act(async () => {
       finishFiles([{ path: '/cold-project/matching.ts' }]);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(host.querySelector('[data-value="file:/cold-project/matching.ts"]')).not.toBeNull();
+    await vi.waitFor(() => expect(host.querySelector('[data-value="file:/cold-project/matching.ts"]')).not.toBeNull());
+    expect(host.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute('data-value')).toBe(selectedBeforeFiles);
     expect(host.querySelector('[data-file-search-pending]')).toBeNull();
     const fileRequests = fileSearch.mock.calls.length;
     await act(async () => useUIStore.getState().setCommandPaletteOpen(false));
@@ -606,6 +612,212 @@ test('indexed conversations appear without waiting for a cold project file searc
     useProjectsStore.setState({ projects: [] });
     fileSearch.mockReset();
     client.clear(); host.remove();
+  }
+});
+
+test.each(['page', 'dialog'] as const)('%s mixes individual results and filters categories without changing query, refetching or executing a row', async (presentation) => {
+  fileSearch.mockClear().mockResolvedValue([{ path: '/project/login' }]);
+  useProjectsStore.setState({ projects: [{ id: 'project', path: '/project', label: 'login project' }] });
+  useSessionUIStore.setState({ currentSessionId: 'focused', currentSessionDirectory: '/project' });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const stylesheet = document.createElement('style');
+  stylesheet.textContent = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'command-palette.css'), 'utf8');
+  document.head.append(stylesheet);
+  const surface = presentation === 'page' ? host : document.body;
+  const root = createRoot(host);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', 'login'], [{ id: 'partial', title: 'Fix login', time: { updated: 10 } }]);
+  client.setQueryData(['content-search', 'login'], [{ sessionID: 'body', messageID: 'body-hit', title: 'Unrelated work', directory: '/project', role: 'user', createdAt: 2, snippet: 'login' }]);
+  const context: React.ContextType<typeof GuiPluginsContext> = {
+    host: null, snapshot: { plugins: [], commands: [{ key: 'login', title: 'login-helper', run: vi.fn() }], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null },
+    inventory: [], error: null, loading: false, requested: true, requestLoad: vi.fn(), setEnabled: vi.fn(), refresh: vi.fn(),
+  };
+  useUIStore.getState().setCommandPaletteOpen(true);
+  const clickCategory = async (category: string) => {
+    await act(async () => surface.querySelector<HTMLButtonElement>(`[data-search-category="${category}"]`)!.click());
+  };
+  const rows = () => [...surface.querySelectorAll('[cmdk-item]')].map((row) => row.getAttribute('data-value'));
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <GuiPluginsContext.Provider value={context}><CommandPalette presentation={presentation} /></GuiPluginsContext.Provider>
+    </QueryClientProvider>));
+    const input = surface.querySelector<HTMLInputElement>('input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'login');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(rows()).toContain('file:/project/login');
+    expect(rows()[0]).toBe('file:/project/login');
+    expect(rows().indexOf('gui-plugin:login')).toBeLessThan(rows().indexOf('session:partial'));
+    expect(rows().indexOf('session:partial')).toBeLessThan(rows().indexOf('message:body:body-hit'));
+    const sessionHeadingStyle = getComputedStyle(surface.querySelector('.yuri-global-search-session-heading')!);
+    expect(sessionHeadingStyle.display).toBe('flex');
+    if (presentation === 'dialog') {
+      const filters = surface.querySelector('.yuri-global-search-filters')!;
+      expect(getComputedStyle(filters).paddingLeft).toBe('16px');
+      expect(filters.querySelector('button')?.className).toContain('h-6');
+      expect(filters.querySelector('button')?.className).toContain('px-2');
+      const arrowHints = filters.querySelector('[data-search-category-shortcuts]')!;
+      expect(arrowHints.querySelectorAll('kbd[data-variant="hint"]')).toHaveLength(2);
+      expect(arrowHints.querySelector('kbd[aria-label="ArrowLeft"]')?.textContent).toBe('←');
+      expect(arrowHints.querySelector('kbd[aria-label="ArrowRight"]')?.textContent).toBe('→');
+      expect(arrowHints.textContent).toContain('commandPalette.filter.switch');
+      const resultKeycap = surface.querySelector('[cmdk-item] kbd')!;
+      expect(arrowHints.querySelector('kbd')?.className).toBe(resultKeycap.className.replace(/\bjustify-self-end\b/g, '').trim());
+      [...surface.querySelectorAll('[cmdk-item]')].forEach((row, index) => {
+        expect(row.getAttribute('aria-keyshortcuts')).toMatch(new RegExp(`^(Meta|Control)\\+${index + 1}$`));
+        expect(row.querySelector('kbd[data-variant="hint"]')?.textContent).toMatch(new RegExp(`${index + 1}$`));
+      });
+    } else {
+      expect(surface.querySelector('[data-search-category-shortcuts]')).toBeNull();
+      expect(surface.querySelector('[cmdk-item][aria-keyshortcuts]')).toBeNull();
+    }
+    expect(surface.querySelectorAll('[cmdk-group-heading]')).toHaveLength(0);
+    const requests = fileSearch.mock.calls.length;
+    await clickCategory('sessions');
+    expect(rows()).toEqual(['session:partial', 'message:body:body-hit']);
+    await clickCategory('files');
+    expect(rows()).toEqual(['file:/project/login']);
+    await clickCategory('projects');
+    expect(rows()).toEqual(['project:project']);
+    await clickCategory('commands');
+    expect(rows()).toEqual(['gui-plugin:login']);
+    await act(async () => surface.querySelector('[data-search-category="settings"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(useUIStore.getState().isCommandPaletteOpen).toBe(true);
+    await clickCategory('settings');
+    expect(rows()).toEqual([]);
+    expect(surface.textContent).toContain('commandPalette.empty.noResults');
+    expect(surface.querySelector('[data-file-search-pending]')).toBeNull();
+    for (let i = 0; i < 50; i++) await clickCategory(i % 2 ? 'files' : 'all');
+    expect(input.value).toBe('login');
+    expect(document.activeElement).toBe(input);
+    const pressArrow = async (key: string, options: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
+      await act(async () => input.dispatchEvent(event));
+      return event;
+    };
+    for (const category of ['projects', 'commands', 'settings', 'all', 'sessions', 'files']) {
+      expect((await pressArrow('ArrowRight')).defaultPrevented).toBe(true);
+      expect(surface.querySelector(`[data-search-category="${category}"]`)?.getAttribute('aria-pressed')).toBe('true');
+      expect(document.activeElement).toBe(input);
+    }
+    for (const category of ['sessions', 'all', 'settings']) {
+      await pressArrow('ArrowLeft');
+      expect(surface.querySelector(`[data-search-category="${category}"]`)?.getAttribute('aria-pressed')).toBe('true');
+    }
+    for (const options of [{ isComposing: true }, { keyCode: 229 }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
+      expect((await pressArrow('ArrowRight', options)).defaultPrevented).toBe(false);
+      expect(surface.querySelector('[data-search-category="settings"]')?.getAttribute('aria-pressed')).toBe('true');
+    }
+    expect(input.value).toBe('login');
+    expect(fileSearch).toHaveBeenCalledTimes(requests);
+    expect(context.requestLoad).not.toHaveBeenCalled();
+    await clickCategory('projects');
+    await act(async () => (surface.querySelector('[data-value="project:project"]') as HTMLElement).click());
+    expect(useSessionUIStore.getState().openNewSessionDraft).toHaveBeenCalledWith({ selectedProjectId: 'project', directoryOverride: '/project' });
+    expect(useUIStore.getState().isCommandPaletteOpen).toBe(false);
+    await act(async () => useUIStore.getState().setCommandPaletteOpen(false));
+    await act(async () => useUIStore.getState().setCommandPaletteOpen(true));
+    expect(surface.querySelector<HTMLInputElement>('input')!.value).toBe('');
+    expect(surface.querySelector('[data-search-category="all"]')?.getAttribute('aria-pressed')).toBe('true');
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    useProjectsStore.setState({ projects: [] });
+    fileSearch.mockReset(); client.clear(); host.remove(); stylesheet.remove();
+  }
+});
+
+test.each([
+  { kind: 'files', category: 'files', index: 0, mac: true },
+  { kind: 'projects', category: 'projects', index: 1, mac: true },
+  { kind: 'projects', category: 'projects', index: 1, mac: false },
+  { kind: 'sessions', category: 'sessions', index: 1, mac: true },
+  { kind: 'messages', category: 'sessions', index: 0, mac: true },
+  { kind: 'commands', category: 'commands', index: 0, mac: true },
+  { kind: 'settings', category: 'settings', index: 0, mac: true },
+  { kind: 'plugins', category: 'commands', index: 0, mac: true },
+  { kind: 'more', category: 'projects', index: 5, mac: true },
+])('$kind uses the displayed numeric shortcut (mac: $mac)', async ({ kind, category, index, mac }) => {
+  const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(mac ? 'Macintosh' : 'Windows');
+  const query = kind === 'commands' ? 'commandPalette.item.newSession' : kind === 'settings' ? 'Appearance' : 'login';
+  const openDraft = vi.mocked(useSessionUIStore.getState().openNewSessionDraft);
+  const openSession = vi.mocked(useSessionUIStore.getState().setCurrentSession);
+  openDraft.mockClear(); openSession.mockClear();
+  const previousUI = useUIStore.getState();
+  const openFile = vi.fn();
+  useUIStore.setState({ openContextFile: openFile, isSettingsDialogOpen: false });
+  useProjectsStore.setState({ projects: Array.from({ length: 6 }, (_, i) => ({ id: `project-${i}`, path: `/project-${i}`, label: `login ${i}` })) });
+  useSessionUIStore.setState({ currentSessionId: 'focused', currentSessionDirectory: '/project-0' });
+  fileSearch.mockResolvedValue([{ path: '/project-0/login' }]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', query], kind === 'sessions' ? [
+    { id: 'session-0', title: 'login 0' }, { id: 'session-1', title: 'login 1' },
+  ] : []);
+  client.setQueryData(['content-search', query], kind === 'messages' ? [{
+    sessionID: 'body', messageID: 'body-hit', title: 'login body', directory: '/project', role: 'user', createdAt: 2, snippet: 'login',
+  }] : []);
+  const context: React.ContextType<typeof GuiPluginsContext> = {
+    host: null, snapshot: { plugins: [], commands: kind === 'plugins' ? [{ key: 'login', title: 'login', run: vi.fn() }] : [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null },
+    inventory: [], error: null, loading: false, requested: true, requestLoad: vi.fn(), setEnabled: vi.fn(), refresh: vi.fn(),
+  };
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  useUIStore.getState().setCommandPaletteOpen(true);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <GuiPluginsContext.Provider value={context}><CommandPalette /></GuiPluginsContext.Provider>
+    </QueryClientProvider>));
+    const input = document.querySelector<HTMLInputElement>('[data-global-search] input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, query);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    await act(async () => document.querySelector<HTMLButtonElement>(`[data-search-category="${category}"]`)!.click());
+    const row = document.querySelectorAll('[data-global-search] [cmdk-item]')[index];
+    expect(row).toBeDefined();
+    expect(row.getAttribute('aria-keyshortcuts')).toBe(`${mac ? 'Meta' : 'Control'}+${index + 1}`);
+    expect(row.querySelector('kbd')?.textContent).toBe(`${mac ? '⌘' : 'Ctrl+'}${index + 1}`);
+    const press = async (options: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent('keydown', { key: String(index + 1), bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac, ...options });
+      await act(async () => input.dispatchEvent(event));
+      return event;
+    };
+    for (const options of [{ repeat: true }, { isComposing: true }, { keyCode: 229 }, { shiftKey: true }, { altKey: true }, { metaKey: !mac, ctrlKey: mac }]) {
+      await press(options);
+      expect(useUIStore.getState().isCommandPaletteOpen).toBe(true);
+      expect(openDraft).not.toHaveBeenCalled();
+      expect(openSession).not.toHaveBeenCalled();
+      expect(openFile).not.toHaveBeenCalled();
+      expect(useUIStore.getState().isSettingsDialogOpen).toBe(false);
+    }
+    expect((await press()).defaultPrevented).toBe(true);
+    if (kind === 'more') {
+      expect(useUIStore.getState().isCommandPaletteOpen).toBe(true);
+      expect(document.querySelectorAll('[cmdk-item][data-value^="project:"]')).toHaveLength(6);
+      expect(document.querySelector('[data-value="more:projects"]')).toBeNull();
+    } else {
+      expect(useUIStore.getState().isCommandPaletteOpen).toBe(false);
+    }
+    if (kind === 'files') expect(openFile).toHaveBeenCalledWith('/project-0', '/project-0/login');
+    if (kind === 'projects') expect(openDraft).toHaveBeenCalledWith({ selectedProjectId: 'project-1', directoryOverride: '/project-1' });
+    if (kind === 'sessions') expect(openSession).toHaveBeenCalledWith('session-1', '/project');
+    if (kind === 'messages') {
+      const { focusChatMessage } = await import('@/components/chat/hooks/useChatTurnNavigation');
+      expect(focusChatMessage).toHaveBeenCalledWith('body-hit');
+    }
+    if (kind === 'commands') expect(openDraft).toHaveBeenCalledWith();
+    if (kind === 'settings') expect(useUIStore.getState().settingsPage).toBe('appearance');
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    useUIStore.setState({ openContextFile: previousUI.openContextFile, isSettingsDialogOpen: previousUI.isSettingsDialogOpen, settingsPage: previousUI.settingsPage });
+    useProjectsStore.setState({ projects: [] });
+    fileSearch.mockReset(); client.clear(); host.remove(); userAgent.mockRestore();
   }
 });
 

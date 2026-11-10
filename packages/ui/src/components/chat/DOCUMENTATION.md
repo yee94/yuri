@@ -85,6 +85,16 @@ height. Wrapped metadata/Changes controls can still legitimately add another row
 
 ## Composer status popovers
 
+Desktop primary-session composers (including VS Code) snapshot their in-flow
+form height in the entry layout phase. That reservation stays fixed for the
+mounted conversation: attachments, Changes, TODO, queue and text growth extend
+upward into the transcript's existing tail spacing without shrinking its viewport
+or adding another scroll compensation. Contents remain bottom-aligned and do
+not shrink. Switching session or returning from expanded input takes a fresh
+snapshot; new-session drafts, secondary composers and mobile keep their existing
+layout owners. `ChatInput.hooks.test.tsx` guards one measurement across 50 updates
+and reservation cleanup on session/mode changes.
+
 `StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
 they open mutually exclusively, span the full composer column through
 `statusBarComposerPopoverStyle`, and share outside-click dismissal. Mobile Tasks
@@ -753,9 +763,13 @@ controller boundary test verifies one request through the hold, current-user
 anchor recapture and post-adoption cleanup; `desktop-short` exercises real
 normal-flow → virtualized geometry.
 
+The left-side prompt navigation rail is enabled by default; saved enable/disable preferences remain authoritative. It appears for supported desktop chat surfaces with at least two turns, without automatically opening the hover/keyboard preview. Mobile and VS Code retain their existing exclusion.
+
+Shared `MessageReferenceChip` text and icon slots inherit the surrounding font size and line height. Image/attachment references do not have their own chip height or line-height reset; the same rule applies in transcript messages, queued previews and navigator previews. The painted icon remains 1em and does not define the text line box.
+
 The left-side rail highlights every prompt whose turn or message intersects the chat viewport, including a turn where only its assistant reply remains visible. `useVisiblePromptTurns` observes mounted transcript nodes with the chat scroller as its intersection root; virtual row additions, removals, and identity changes update registrations. Stable message ownership avoids reconnecting observers on text deltas, and unchanged visible sets retain their reference. Keyboard navigation's single active turn does not determine viewport highlighting.
 
-Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. User reference chips are removed before truncation. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
+Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. The question reuses `UserTextPart` in preview mode, including shared reference chips and Markdown; the reply reuses `SimpleMarkdownRenderer`. Rich renderers mount only for the highlighted prompt, not every tick. Reference-stripped, truncated text remains the tick's accessible label, not the preview source. Preview mode omits transcript search markers, message expansion and interactive chip wrappers. Preview clicks, including Markdown links, select the turn rather than navigating away; file-reference probing is disabled. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
 
 ## Markdown file-link navigation
 
@@ -1210,7 +1224,7 @@ Activity disclosure settings define the initial state of cold settled turns: `co
 
 Turn anchors are user rows except OpenCode 2 native synthetic notices (`nativeType: 'synthetic'`: background, `<subagent …>`, `<shell …>` completion). After the first turn exists, those notices stay grouped but open no turn, so assistant steps that resume after a background completion continue the current turn instead of splitting the reply or moving between blocks when the notice's `time.created` is stamped at completion. A leading native synthetic row still anchors a turn.
 
-Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Header Working/Processed chrome may change when idle; that presentation cannot revoke retained expansion.
+Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Cold idle/historical turns may use Processed chrome; that presentation cannot revoke retained expansion. Once the latest mounted turn has been observed live, its existing turn-lifecycle claim also preserves active Activity presentation across busy/idle step gaps until its own terminal disposition arrives. The disclosure stays locked open without an elapsed header, indent rail, or TPS footer. This is presentation continuity only: it does not change authoritative session activity, Stop availability, or cold-history behavior. Final completion and errors release the active presentation. `MessageList.contentRetention.test.tsx` covers desktop/mobile step gaps, final completion, interruption, and cold idle history.
 
 The fallback/default-disclosure calculations below apply when MessageList has no explicit user choice, including after automatic live expansion is released on confirmed normal completion. Error/partial turns keep their automatic expansion until final content arrives. Activity justification records are the original intermediate model text at their native positions, not synthesized summaries.
 

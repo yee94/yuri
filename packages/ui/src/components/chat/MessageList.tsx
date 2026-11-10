@@ -910,13 +910,12 @@ const TurnBlock = React.memo(({
         pendingHeaderStateRef.current = { turnId: turn.turnId, shown: false };
     }
     const storedTurnUiState = turnUiStates.get(turn.turnId);
-    // Gate raw message-active through presentation so only the live last turn
-    // while the session is working defaults open; idle/historical actives settle.
-    // Header chrome (Working vs Processed) uses this demotion.
-    const activityPresentationForDefault = resolveTurnActivityPresentation({
+    // A turn observed live keeps its reasoning presentation across step-status
+    // gaps until its own terminal signal arrives. Cold idle/history still settles.
+    const activityPresentation = resolveTurnActivityPresentation({
         completionDisposition: turn.completionDisposition,
         isLastTurn,
-        sessionIsWorking,
+        sessionIsWorking: sessionIsWorking || preserveActiveTurnGap,
         durationMs: turn.durationMs,
     });
     // Expansion must NOT follow sessionIsWorking demotion. Between tool steps
@@ -929,7 +928,7 @@ const TurnBlock = React.memo(({
     const expansionDisposition = resolveActivityExpansionDisposition({
         isLastTurn,
         turnCompletionDisposition: turn.completionDisposition,
-        headerPresentationDisposition: activityPresentationForDefault.completionDisposition,
+        headerPresentationDisposition: activityPresentation.completionDisposition,
         hasAssistantMessages: turn.assistantMessages.length > 0,
     });
     const defaultExpandedForTurn = resolveTurnActivityExpandedByDefault({
@@ -1114,12 +1113,6 @@ const TurnBlock = React.memo(({
                     : undefined));
         const nextMessage = undefined;
 
-        const activityPresentation = resolveTurnActivityPresentation({
-            completionDisposition: turn.completionDisposition,
-            isLastTurn,
-            sessionIsWorking,
-            durationMs: turn.durationMs,
-        });
         const turnGroupingContext = isAssistantMessage
             ? {
                 turnId: turn.turnId,
