@@ -326,8 +326,8 @@ the optional geometry callback patch, live in `lib/assistant-avatar/vendor/`.
 Contact user text bubbles derive their identity color from the selected Assistant's
 `avatarSeed` (falling back to its ID, exactly like its avatar). `lib/assistant-avatar/palette.ts`
 keeps orange/jade/blue/violet/rose/cyan pigments unchanged and maps the six soft/neutral
-pigments to stronger same-hue fills. Bubble text selects black/white with at least
-4.5:1 contrast in light and dark themes. Avatar edits and contact switches update
+pigments to stronger same-hue fills. Bubble text prefers white at 4.5:1 contrast
+or better, otherwise black, in light and dark themes. Avatar edits and contact switches update
 the bubble color directly; assistant/peer replies and primary Chat are unchanged.
 
 `lib/assistant-avatar/recipe.ts` owns deterministic seed resolution, whitelist

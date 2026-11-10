@@ -86,8 +86,8 @@ are persisted as explicit v1 recipes; no read-time migration or per-frame random
 color is introduced. `palette.ts` owns the exact artwork pigments for all static,
 live and PNG consumers, consumed by `engine.ts`. It also maps contact user bubbles
 to that identity: vivid pigments stay exact; soft/neutral pigments use stronger
-same-hue fills. Black/white text is selected by relative luminance for at least
-4.5:1 contrast, independently of the application theme. Geometry, paint-mode caches
+same-hue fills. Text prefers white whenever its contrast reaches 4.5:1; brighter
+fills retain black text to meet that minimum, independently of the application theme. Geometry, paint-mode caches
 and scheduling are unchanged.
 
 `frameClock.ts` joins Motion's application-wide `frame.read` / `frame.render`

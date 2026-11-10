@@ -25,5 +25,6 @@ export function assistantAvatarMessageColors(color: AvatarColor): { background: 
     return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
   });
   const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-  return { background, foreground: luminance > 0.179 ? '#000000' : '#ffffff' };
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  return { background, foreground: whiteContrast >= 4.5 ? '#ffffff' : '#000000' };
 }

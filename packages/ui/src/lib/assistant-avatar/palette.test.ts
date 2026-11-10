@@ -31,6 +31,10 @@ describe('assistant identity message colors', () => {
     expect(1.05 / (luminance(background) + 0.05)).toBeGreaterThanOrEqual(3);
   });
 
+  test.each(['mint', 'iris', 'coral', 'sky', 'sand', 'graphite'] as const)('%s uses white text on its dark mapped fill', (color) => {
+    expect(assistantAvatarMessageColors(color).foreground).toBe('#ffffff');
+  });
+
   test.each(AVATAR_COLORS)('%s has readable text at normal body size', (color) => {
     const { background, foreground } = assistantAvatarMessageColors(color);
     const values = [luminance(background), luminance(foreground)];
