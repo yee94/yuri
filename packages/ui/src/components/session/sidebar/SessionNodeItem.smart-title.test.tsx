@@ -3,9 +3,17 @@ import { createRoot } from 'react-dom/client';
 import { afterAll, afterEach, expect, test, vi } from 'vitest';
 import type { Session } from '@/lib/opencode/v2-types';
 
-const { requestTitle, loadChildren } = vi.hoisted(() => ({
+const { requestTitle, loadChildren, saveTitle, openWindow, desktopAvailable } = vi.hoisted(() => ({
   requestTitle: vi.fn(() => new Promise<void>(() => {})),
   loadChildren: vi.fn(async () => {}),
+  saveTitle: vi.fn(),
+  openWindow: vi.fn(async () => {}),
+  desktopAvailable: vi.fn(() => false),
+}));
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/desktop')>(),
+  canUseElectronDesktopIPC: desktopAvailable,
+  invokeDesktop: openWindow,
 }));
 vi.mock('@/sync/session-actions', () => ({ requestSessionSmartTitle: requestTitle }));
 vi.mock('@/sync/sync-context', () => ({
@@ -42,6 +50,9 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   requestTitle.mockClear();
   loadChildren.mockClear();
+  saveTitle.mockClear();
+  openWindow.mockClear();
+  desktopAvailable.mockReset().mockReturnValue(false);
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -50,15 +61,16 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ live = session, editing = true, indexed = session, children = [] }: {
+function Harness({ live = session, editing = true, indexed = session, children = [], duplicateRows = false }: {
   live?: Session;
   editing?: boolean;
   indexed?: Session;
   children?: Array<{ session: Session; children: []; worktree: null }>;
+  duplicateRows?: boolean;
 }) {
   const [editingId, setEditingId] = React.useState<string | null>(editing ? session.id : null);
   const [expandedParents, setExpandedParents] = React.useState<Set<string>>(new Set());
-  return <TooltipProvider><SessionNodeItem
+  const row = <SessionNodeItem
     node={{ session: indexed, children, worktree: null }}
     groupDirectory="/repo"
     currentSessionId={null}
@@ -71,7 +83,7 @@ function Harness({ live = session, editing = true, indexed = session, children =
     setEditingId={setEditingId}
     editTitle={session.title ?? ''}
     setEditTitle={noop}
-    handleSaveEdit={noop}
+    handleSaveEdit={saveTitle}
     handleCancelEdit={() => setEditingId(null)}
     toggleParent={(key) => setExpandedParents((previous) => {
       const next = new Set(previous);
@@ -103,7 +115,11 @@ function Harness({ live = session, editing = true, indexed = session, children =
     menuOpenSessionId={null}
     nodeStructureKey={session.id}
     liveSessionById={new Map([[session.id, live]])}
-  /></TooltipProvider>;
+  />;
+  return <TooltipProvider>{duplicateRows ? <>
+    <div data-test-section="pinned">{React.cloneElement(row, { renderContext: 'pinned' })}</div>
+    <div data-test-section="project">{row}</div>
+  </> : row}</TooltipProvider>;
 }
 
 test('AI title admission alone does not show title loading', async () => {
@@ -114,6 +130,74 @@ test('AI title admission alone does not show title loading', async () => {
   await act(async () => button!.click());
   expect(requestTitle).toHaveBeenCalledWith(session.id);
   expect(container.querySelector('.animate-text-shimmer')).toBeNull();
+});
+
+test('rename check saves while losing focus outside cancels', async () => {
+  root = createRoot(container);
+  await act(async () => root.render(<Harness />));
+  const input = container.querySelector<HTMLInputElement>('input')!;
+  const save = container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.rename.save"]')!;
+  await act(async () => {
+    save.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    save.click();
+  });
+  expect(saveTitle).toHaveBeenCalledWith('Original title');
+  await act(async () => input.blur());
+  expect(container.querySelector('input')).toBeNull();
+});
+
+test('mouse-focused row enters rename with Enter and double-click reuses Mini Chat only on Electron', async () => {
+  root = createRoot(container);
+  await act(async () => root.render(<Harness editing={false} />));
+  const title = container.querySelector<HTMLButtonElement>('[data-session-title]')!;
+  await act(async () => title.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  expect(openWindow).not.toHaveBeenCalled();
+  desktopAvailable.mockReturnValue(true);
+  await act(async () => title.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  expect(openWindow).toHaveBeenCalledWith('desktop_open_session_mini_chat_window', expect.objectContaining({ sessionId: session.id, directory: '/repo' }));
+  const row = container.querySelector<HTMLElement>('[data-session-row]')!;
+  await act(async () => row.click());
+  await act(async () => title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  expect(container.querySelector('input')).not.toBeNull();
+});
+
+test.each([
+  ['pinned', 'keyboard'],
+  ['project', 'keyboard'],
+  ['pinned', 'context-menu'],
+  ['project', 'context-menu'],
+])('rename started in %s via %s selects text in that section without moving focus to the duplicate row', async (section, method) => {
+  root = createRoot(container);
+  await act(async () => root.render(<Harness editing={false} duplicateRows />));
+  const origin = container.querySelector<HTMLElement>(`[data-test-section="${section}"]`)!;
+  if (method === 'context-menu') {
+    await act(async () => origin.querySelector<HTMLElement>('[data-session-row]')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: 20, clientY: 20 }),
+    ));
+    const rename = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find(item => item.textContent?.includes('sessions.sidebar.session.menu.rename'))!;
+    await act(async () => rename.click());
+    await act(async () => vi.waitFor(() => expect(origin.querySelector('input')).not.toBeNull()));
+  } else {
+    const title = origin.querySelector<HTMLButtonElement>('[data-session-title]')!;
+    await act(async () => origin.querySelector<HTMLElement>('[data-session-row]')!.click());
+    await act(async () => title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  }
+  const input = origin.querySelector<HTMLInputElement>('input')!;
+  expect(input).not.toBeNull();
+  expect(document.activeElement).toBe(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(input.value.length);
+  expect(container.querySelectorAll('input')).toHaveLength(1);
+  await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(container.querySelector('input')).toBeNull();
+  const otherSection = section === 'pinned' ? 'project' : 'pinned';
+  const other = container.querySelector<HTMLElement>(`[data-test-section="${otherSection}"]`)!;
+  const otherTitle = other.querySelector<HTMLButtonElement>('[data-session-title]')!;
+  await act(async () => other.querySelector<HTMLElement>('[data-session-row]')!.click());
+  await act(async () => otherTitle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  expect(container.querySelectorAll('input')).toHaveLength(1);
+  expect(document.activeElement).toBe(other.querySelector('input'));
 });
 
 test('read/unread action stays directly below pin and toggles without opening the session', async () => {
@@ -129,6 +213,7 @@ test('read/unread action stays directly below pin and toggles without opening th
   const action = items
     .find(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'));
   expect(action).toBeDefined();
+  expect(action!.querySelector('svg use')?.getAttribute('href')).toBe('#yuri-mail');
   await act(async () => action!.click());
   expect(useNotificationStore.getState().sessionUnseenCount(session.id)).toBe(1);
   await act(async () => {
@@ -138,6 +223,7 @@ test('read/unread action stays directly below pin and toggles without opening th
   const unreadPinIndex = unreadItems.findIndex(item => item.textContent?.includes('sessions.sidebar.session.menu.pin'));
   const readAction = unreadItems[unreadPinIndex + 1];
   expect(readAction?.textContent).toContain('sessions.sidebar.session.menu.markRead');
+  expect(readAction.querySelector('svg use')?.getAttribute('href')).toBe('#yuri-mail-open');
   expect(unreadItems.some(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'))).toBe(false);
   await act(async () => readAction.click());
   expect(useNotificationStore.getState().sessionUnseenCount(session.id)).toBe(0);

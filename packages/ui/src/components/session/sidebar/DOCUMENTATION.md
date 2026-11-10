@@ -79,6 +79,11 @@ Session menus no longer offer opening a conversation in the side panel. The
 Electron Mini Chat Window action remains available; subtask and review panels
 retain their existing behavior independently of the sidebar menu.
 
+Inline renaming belongs to the row instance that started it. When a session is
+visible in both Pinned/In Progress and its project, only the originating row
+renders the editor, focuses it and selects its title; the duplicate stays a normal
+row. Both context-menu Rename and mouse-focused Enter preserve this ownership.
+
 Root session context menus offer **Mark as unread** for read sessions (including
 an already selected session), and **Mark as read** for unread sessions. This
 action sits immediately below Pin/Unpin and does not open the conversation.
@@ -373,11 +378,13 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   A shared `TooltipProvider`
   (`delay=0`, `closeDelay=150`, `timeout=600`) groups row tips so adjacent handoff
   is instant; per-row tooltips do not nest their own Provider. Pointer click keeps
-  focus for Enter-to-rename, but row `mouseleave` blurs so `:focus-within` does not
-  stick hover chrome after the card dismisses.
+  focus for Enter-to-rename until focus moves elsewhere.
 - A session title button focused by an explicit mouse click enters inline rename
   on Enter. Keyboard or programmatic focus does not arm this shortcut, and blur
   clears the mouse-focus authorization.
+- Inline rename cancels on blur outside its controls; Enter or the check button saves.
+  Double-click reuses the context-menu Mini Chat action for that session on Electron;
+  other runtimes do not act on the double-click.
 - Compact relative times use `common.relative.*Compact` i18n keys.
 - Row action icons (pin, archive/delete) use title-matched `h-3.5` glyphs with `gap-1` spacing; the title
   reserves right padding on hover so icons own their space — no fade veil behind them.
