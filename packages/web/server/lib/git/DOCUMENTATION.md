@@ -57,6 +57,9 @@ The following functions are exported and used by the web server:
 
 ### Worktree Operations
 - `getWorktrees(directory)`: List all git worktrees for a repository.
+  Confirmed missing directories and non-repositories return an empty list.
+  Permission, Git process and enumeration failures reject; callers must retain
+  their prior catalog rather than treating failure as authoritative deletion.
 - `validateWorktreeCreate(directory, input)`: Validate worktree creation parameters (mode, branchName, startRef, upstream config).
 - `createWorktree(directory, input)`: Create a new worktree (supports 'new' and 'existing' modes, upstream setup).
 - `removeWorktree(directory, input)`: Remove a worktree (optionally delete local branch).

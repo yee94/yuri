@@ -17,7 +17,7 @@ test.each([false, true])('shared footer keeps optional metadata, action and trai
         const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
         expect(footer.style.containerName).toBe('message-footer');
         expect(footer.className).toContain(isMobile ? 'mt-1.5' : 'mt-2.5');
-        expect(footer.className).toContain(isMobile ? 'mb-0.5' : 'mb-2');
+        expect(footer.className).toContain(isMobile ? 'mb-2' : 'mb-3');
         expect(footer.firstElementChild?.getAttribute('data-message-action-group')).toBe('true');
         expect(footer.textContent).toBe('Copy20 tok/s1.3sBackground2026-11-03 10:30Changes');
         await act(async () => root.render(<AssistantMessageFooter messageId="message" isMobile={isMobile} actions={<button>Copy</button>} />));

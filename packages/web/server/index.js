@@ -1505,6 +1505,7 @@ async function main(options = {}) {
     getOpenCodeAuthHeaders,
     waitForOpenCodeReady,
     fetchFn: indexSessionDirectories.fetchSessionList,
+    createFetchBatch: indexSessionDirectories.createFetchBatch,
     isDirectoryMissing: indexSessionDirectories.isDirectoryMissing,
     resolveDirectory: indexSessionDirectories.resolveDirectory,
     projectSessions: (sessions) => {

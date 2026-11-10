@@ -210,6 +210,7 @@ test('read/unread action stays directly below pin and toggles without opening th
   const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
   const pinIndex = items.findIndex(item => item.textContent?.includes('sessions.sidebar.session.menu.pin'));
   expect(items[pinIndex + 1]?.textContent).toContain('sessions.sidebar.session.menu.markUnread');
+  expect(items[pinIndex + 2]?.textContent).toContain('sessions.sidebar.session.menu.rename');
   const action = items
     .find(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'));
   expect(action).toBeDefined();
@@ -223,6 +224,7 @@ test('read/unread action stays directly below pin and toggles without opening th
   const unreadPinIndex = unreadItems.findIndex(item => item.textContent?.includes('sessions.sidebar.session.menu.pin'));
   const readAction = unreadItems[unreadPinIndex + 1];
   expect(readAction?.textContent).toContain('sessions.sidebar.session.menu.markRead');
+  expect(unreadItems[unreadPinIndex + 2]?.textContent).toContain('sessions.sidebar.session.menu.rename');
   expect(readAction.querySelector('svg use')?.getAttribute('href')).toBe('#yuri-mail-open');
   expect(unreadItems.some(item => item.textContent?.includes('sessions.sidebar.session.menu.markUnread'))).toBe(false);
   await act(async () => readAction.click());

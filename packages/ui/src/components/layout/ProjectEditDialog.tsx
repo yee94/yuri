@@ -20,11 +20,14 @@ export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
 }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-2xl gap-0 overflow-hidden p-0">
-        <ScrollableOverlay outerClassName="max-h-[min(90vh,48rem)]" className="w-full bg-background">
-          <div className="w-full p-3 sm:p-6 sm:pt-8">
+      <DialogContent
+        aria-label={project?.label || project?.path.split(/[\\/]/).filter(Boolean).at(-1)}
+        className="yuri-settings-workspace w-full max-w-xl gap-0 overflow-hidden p-0"
+      >
+        <ScrollableOverlay outerClassName="max-h-[min(85dvh,44rem)]" disableHorizontal>
+          <div className="w-full p-4 sm:p-6">
             {open && project ? (
-              <ProjectSettingsPanel project={project} onIdentitySave={onSave} />
+              <ProjectSettingsPanel project={project} onIdentitySave={onSave} compact />
             ) : null}
           </div>
         </ScrollableOverlay>

@@ -492,10 +492,6 @@ export async function getWorktreeSetupWaitEnabled(project: ProjectRef): Promise<
   return config?.['setup-worktree-wait'] === true;
 }
 
-export async function saveWorktreeSetupWaitEnabled(project: ProjectRef, enabled: boolean): Promise<boolean> {
-  return updateYuriConfig(project, { 'setup-worktree-wait': enabled });
-}
-
 /**
  * Get this project's pinned draft welcome starters.
  */
@@ -513,21 +509,6 @@ export async function getProjectActionsState(project: ProjectRef): Promise<YuriP
   return sanitizeProjectActionsState({
     actions: config?.projectActions,
     primaryActionId: config?.projectActionsPrimaryId,
-  });
-}
-
-export async function saveProjectActionsState(
-  project: ProjectRef,
-  value: YuriProjectActionsState
-): Promise<boolean> {
-  const sanitized = sanitizeProjectActionsState({
-    actions: value.actions,
-    primaryActionId: value.primaryActionId,
-  });
-
-  return updateYuriConfig(project, {
-    projectActions: sanitized.actions,
-    projectActionsPrimaryId: sanitized.primaryActionId ?? undefined,
   });
 }
 

@@ -61,6 +61,7 @@ type Props = {
   groupKey: string;
   isArchivedLoading?: boolean;
   projectId?: string | null;
+  projectLabel?: string | null;
   hideGroupLabel?: boolean;
   hasSessionSearchQuery: boolean;
   normalizedSessionSearchQuery: string;
@@ -252,6 +253,7 @@ const areGroupPropsEqual = (prev: Props, next: Props): boolean => {
   if (prev.groupKey !== next.groupKey) return false;
   if (prev.isArchivedLoading !== next.isArchivedLoading) return false;
   if (prev.projectId !== next.projectId) return false;
+  if (prev.projectLabel !== next.projectLabel) return false;
   if (prev.hideGroupLabel !== next.hideGroupLabel) return false;
   if (prev.compactBodyPadding !== next.compactBodyPadding) return false;
   if (prev.groupSearchDataByGroup.get(prev.group) !== next.groupSearchDataByGroup.get(next.group)) return false;
@@ -363,6 +365,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
     groupKey,
     isArchivedLoading = false,
     projectId,
+    projectLabel,
     hideGroupLabel,
     hasSessionSearchQuery,
     normalizedSessionSearchQuery,
@@ -842,10 +845,10 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
 
   const groupSessionSecondaryMeta = React.useMemo(
     () => ({
-      projectLabel: !group.isMain ? group.label : null,
+      projectLabel: projectLabel ?? null,
       branchLabel: group.branch && group.branch !== 'HEAD' ? group.branch : null,
     }),
-    [group.branch, group.isMain, group.label],
+    [group.branch, projectLabel],
   );
 
   if (hasSessionSearchQuery && !groupMatchesSearch && rootFolders.length === 0 && ungroupedSessions.length === 0) {
@@ -946,10 +949,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
             } : undefined}
             hideActions={false}
             archivedBucket={group.isArchivedBucket === true}
-            sessionSecondaryMeta={{
-              projectLabel: folder.name,
-              branchLabel: group.branch && group.branch !== 'HEAD' ? group.branch : null,
-            }}
+            sessionSecondaryMeta={groupSessionSecondaryMeta}
           />
         )}
       </DroppableFolderWrapper>

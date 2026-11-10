@@ -1,50 +1,51 @@
 import React from 'react';
-import { cn } from '@/lib/utils';
 import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
-
-export const PROJECT_SETTINGS_CONTROL_WIDTH = 'w-full max-w-[30rem]';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Icon } from '@/components/icon/Icon';
 
 type ProjectSettingsSubsectionProps = {
   title: string;
-  description?: string;
   settingsItem?: string;
-  titleAccessory?: React.ReactNode;
-  headerAction?: React.ReactNode;
   children: React.ReactNode;
-  className?: string;
-  contentClassName?: string;
+  collapsible?: boolean;
+  count?: number;
 };
 
 export const ProjectSettingsSubsection: React.FC<ProjectSettingsSubsectionProps> = ({
   title,
-  description,
   settingsItem,
-  titleAccessory,
-  headerAction,
   children,
-  className,
-  contentClassName,
+  collapsible = false,
+  count,
 }) => {
-  return (
-    <div
-      data-settings-item={settingsItem}
-      className={className}
-    >
-      <SettingsGroup
-        className="yuri-settings-detail-group"
-        label={(
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate">{title}</span>
-              {titleAccessory}
-            </div>
-            {headerAction ? <div className="shrink-0">{headerAction}</div> : null}
+  const [open, setOpen] = React.useState(false);
+
+  if (collapsible) {
+    return (
+      <Collapsible open={open} onOpenChange={setOpen} data-settings-item={settingsItem}>
+        <SettingsGroup>
+          <div className="yuri-settings-group-row flex items-center gap-2">
+            <CollapsibleTrigger className="min-w-0 flex-1 gap-2 p-0 hover:bg-transparent focus-visible:ring-[var(--interactive-focus-ring)]">
+              <span className="typography-ui-label min-w-0 truncate">{title}</span>
+              <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                {count !== undefined ? <span className="typography-meta tabular-nums">{count}</span> : null}
+                <span className="flex size-9 shrink-0 items-center justify-center">
+                  <Icon name={open ? 'arrow-down-s' : 'arrow-right-s'} className="size-4" />
+                </span>
+              </span>
+            </CollapsibleTrigger>
           </div>
-        )}
-        description={description}
-      >
-        <div className={cn('yuri-settings-group-row', contentClassName)}>{children}</div>
-      </SettingsGroup>
-    </div>
+          <CollapsibleContent keepMounted>
+            <div className="yuri-settings-group-row">{children}</div>
+          </CollapsibleContent>
+        </SettingsGroup>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <SettingsGroup label={title} itemId={settingsItem}>
+      <div className="yuri-settings-group-row">{children}</div>
+    </SettingsGroup>
   );
 };

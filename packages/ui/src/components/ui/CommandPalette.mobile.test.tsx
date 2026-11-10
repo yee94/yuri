@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const searchSessions = vi.hoisted(() => vi.fn(async (_query: string) => [
-  { id: 'session-1', title: 'Recent conversation', time: { updated: 1 } },
+  { id: 'session-1', title: 'Recent conversation', directory: '/project', time: { updated: 1 } },
 ]));
 const fileSearch = vi.hoisted(() => vi.fn(async (_request: { directory: string; query: string; maxResults?: number }, _options?: { signal?: AbortSignal }): Promise<{ path: string }[]> => []));
 const readFile = vi.hoisted(() => vi.fn(async (_path: string) => ({ content: '', exists: true })));
@@ -31,7 +31,7 @@ vi.mock('@/sync/session-ui-store', async () => {
 vi.mock('@/stores/useGlobalSessionsStore', async () => {
   const { create } = await import('zustand');
   return {
-    resolveGlobalSessionDirectory: () => '/project',
+    resolveGlobalSessionDirectory: (session: { directory?: string }) => session.directory ?? null,
     useGlobalSessionsStore: create(() => ({ activeSessions: [], status: 'ready' })),
   };
 });
@@ -81,8 +81,88 @@ import { GuiPluginsContext } from '@/lib/gui-plugins/react';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 beforeEach(() => {
+  useProjectsStore.setState({ projects: [{ id: 'project', path: '/project' }] });
   useSessionUIStore.setState({ currentSessionId: null, currentSessionDirectory: null, availableWorktreesByProject: new Map() });
   useDirectoryStore.setState({ currentDirectory: '' });
+});
+
+test.each(['page', 'dialog'] as const)('%s filters conversations without an open project, including frozen results after project closure', async (presentation) => {
+  const projects = [{ id: 'project', path: '/project' }, { id: 'other', path: '/other' }];
+  useProjectsStore.setState({ projects });
+  useSessionUIStore.setState({ availableWorktreesByProject: new Map([
+    ['/other', [{ path: '/worktree', projectDirectory: '/other', branch: 'feature', label: 'Feature' }]],
+  ]) });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', 'needle'], [
+    { id: 'open', title: 'needle open', directory: '/project/src' },
+    { id: 'other', title: 'needle other', directory: '/other' },
+    { id: 'closed', title: 'needle closed', directory: '/closed' },
+    { id: 'unknown', title: 'needle unknown' },
+    { id: 'prefix', title: 'needle prefix', directory: '/project-unadded' },
+  ]);
+  client.setQueryData(['content-search', 'needle'], [
+    { sessionID: 'body', messageID: 'body-hit', title: 'needle body', directory: '/project', role: 'user', createdAt: 1, snippet: 'needle' },
+    { sessionID: 'worktree', messageID: 'worktree-hit', title: 'needle worktree', directory: '/worktree', role: 'user', createdAt: 1, snippet: 'needle' },
+    { sessionID: 'closed-body', messageID: 'closed-hit', title: 'needle closed body', directory: '/closed', role: 'user', createdAt: 1, snippet: 'needle' },
+  ]);
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  useUIStore.getState().setCommandPaletteOpen(true);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><CommandPalette presentation={presentation} /></QueryClientProvider>));
+    const input = document.querySelector<HTMLInputElement>('[data-global-search] input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'needle');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    const rows = () => [...document.querySelectorAll('[data-global-search] .yuri-global-search-session')].map(row => row.getAttribute('data-value')).sort();
+    expect(rows()).toEqual(['session:open', 'session:other', 'message:body:body-hit', 'message:worktree:worktree-hit'].sort());
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+    await act(async () => useProjectsStore.setState({ projects: [projects[0]] }));
+    expect(rows()).toEqual(['session:open', 'message:body:body-hit'].sort());
+    const staleRow = document.querySelector<HTMLElement>('[data-value="session:open"]')!;
+    const openSession = vi.mocked(useSessionUIStore.getState().setCurrentSession).mockClear();
+    await act(async () => {
+      useProjectsStore.setState({ projects: [] });
+      staleRow.click();
+    });
+    expect(rows()).toEqual([]);
+    expect(openSession).not.toHaveBeenCalled();
+    expect(useUIStore.getState().isCommandPaletteOpen).toBe(true);
+    await act(async () => useProjectsStore.setState({ projects }));
+    expect(rows()).toEqual(['session:open', 'session:other', 'message:body:body-hit', 'message:worktree:worktree-hit'].sort());
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    useProjectsStore.setState({ projects: [] });
+    client.clear(); host.remove();
+  }
+});
+
+test.each(['page', 'dialog'] as const)('%s excludes unowned recent conversations before applying the preview limit', async (presentation) => {
+  const sessions = [
+    ...Array.from({ length: 10 }, (_, i) => ({ id: `closed-${i}`, title: `Closed ${i}`, directory: '/closed', time: { updated: 100 + i } })),
+    { id: 'open-recent', title: 'Open recent', directory: '/project', time: { updated: 1 } },
+  ];
+  useGlobalSessionsStore.setState({ activeSessions: sessions });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', ''], sessions);
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  useUIStore.getState().setCommandPaletteOpen(true);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><CommandPalette presentation={presentation} /></QueryClientProvider>));
+    const rows = document.querySelectorAll('[data-global-search] .yuri-global-search-session');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute('data-value')).toBe('session:open-recent');
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    useGlobalSessionsStore.setState({ activeSessions: [] });
+    client.clear(); host.remove();
+  }
 });
 
 test('closed palette performs zero commits for 50 unrelated catalog updates', async () => {
@@ -200,7 +280,7 @@ test.each([
   document.body.append(host);
   const root = createRoot(host);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(['search', ''], [{ id: 'session-time', title: 'Timestamp conversation', time }]);
+  client.setQueryData(['search', ''], [{ id: 'session-time', title: 'Timestamp conversation', directory: '/project', time }]);
   useUIStore.getState().setCommandPaletteOpen(true);
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><CommandPalette presentation="page" /></QueryClientProvider>));
@@ -218,7 +298,7 @@ test('hardware arrow keys wrap from the first selectable result to the last and 
   document.body.append(host);
   const root = createRoot(host);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(['search', ''], [{ id: 'loop-session', title: 'Loop conversation', time: { updated: 1 } }]);
+  client.setQueryData(['search', ''], [{ id: 'loop-session', title: 'Loop conversation', directory: '/project', time: { updated: 1 } }]);
   useUIStore.getState().setCommandPaletteOpen(true);
   const press = async (key: string) => {
     await act(async () => host.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
@@ -250,7 +330,7 @@ test('hardware arrow keys wrap from the first selectable result to the last and 
 
 test('combines title and body matches in five unified rows, freezes navigation and resets expansion', async () => {
   searchSessions.mockResolvedValue(Array.from({ length: 30 }, (_, i) => ({
-    id: `session-${i}`, title: `matching conversation ${i}`, time: { updated: 1000 + i },
+    id: `session-${i}`, title: `matching conversation ${i}`, directory: '/project', time: { updated: 1000 + i },
   })));
   const host = document.createElement('div');
   document.body.append(host);
@@ -563,7 +643,7 @@ test.each(['input', 'close'])('pending body snapshot is cancelled on %s before a
 test('indexed conversations appear without waiting for a cold project file search', async () => {
   let finishFiles!: (files: { path: string }[]) => void;
   fileSearch.mockImplementation(() => new Promise((resolve) => { finishFiles = resolve; }));
-  useProjectsStore.setState({ projects: [{ id: 'cold', path: '/cold-project' }] });
+  useProjectsStore.setState({ projects: [{ id: 'cold', path: '/cold-project' }, { id: 'project', path: '/project' }] });
   useSessionUIStore.setState({ currentSessionId: 'focused', currentSessionDirectory: '/cold-project' });
   const host = document.createElement('div');
   document.body.append(host);
@@ -627,7 +707,7 @@ test.each(['page', 'dialog'] as const)('%s mixes individual results and filters 
   const surface = presentation === 'page' ? host : document.body;
   const root = createRoot(host);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(['search', 'login'], [{ id: 'partial', title: 'Fix login', time: { updated: 10 } }]);
+  client.setQueryData(['search', 'login'], [{ id: 'partial', title: 'Fix login', directory: '/project', time: { updated: 10 } }]);
   client.setQueryData(['content-search', 'login'], [{ sessionID: 'body', messageID: 'body-hit', title: 'Unrelated work', directory: '/project', role: 'user', createdAt: 2, snippet: 'login' }]);
   const context: React.ContextType<typeof GuiPluginsContext> = {
     host: null, snapshot: { plugins: [], commands: [{ key: 'login', title: 'login-helper', run: vi.fn() }], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null },
@@ -754,10 +834,10 @@ test.each([
   fileSearch.mockResolvedValue([{ path: '/project-0/login' }]);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['search', query], kind === 'sessions' ? [
-    { id: 'session-0', title: 'login 0' }, { id: 'session-1', title: 'login 1' },
+    { id: 'session-0', title: 'login 0', directory: '/project-0' }, { id: 'session-1', title: 'login 1', directory: '/project-0' },
   ] : []);
   client.setQueryData(['content-search', query], kind === 'messages' ? [{
-    sessionID: 'body', messageID: 'body-hit', title: 'login body', directory: '/project', role: 'user', createdAt: 2, snippet: 'login',
+    sessionID: 'body', messageID: 'body-hit', title: 'login body', directory: '/project-0', role: 'user', createdAt: 2, snippet: 'login',
   }] : []);
   const context: React.ContextType<typeof GuiPluginsContext> = {
     host: null, snapshot: { plugins: [], commands: kind === 'plugins' ? [{ key: 'login', title: 'login', run: vi.fn() }] : [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null },
@@ -806,7 +886,7 @@ test.each([
     }
     if (kind === 'files') expect(openFile).toHaveBeenCalledWith('/project-0', '/project-0/login');
     if (kind === 'projects') expect(openDraft).toHaveBeenCalledWith({ selectedProjectId: 'project-1', directoryOverride: '/project-1' });
-    if (kind === 'sessions') expect(openSession).toHaveBeenCalledWith('session-1', '/project');
+    if (kind === 'sessions') expect(openSession).toHaveBeenCalledWith('session-1', '/project-0');
     if (kind === 'messages') {
       const { focusChatMessage } = await import('@/components/chat/hooks/useChatTurnNavigation');
       expect(focusChatMessage).toHaveBeenCalledWith('body-hit');
@@ -830,6 +910,7 @@ test('focused file search failure stays quiet and preserves conversation results
   useProjectsStore.setState({ projects: [
     { id: 'offline', path: '/offline' },
     { id: 'online', path: '/online' },
+    { id: 'project', path: '/project' },
   ] });
   useSessionUIStore.setState({ currentSessionId: 'focused', currentSessionDirectory: '/offline' });
   const host = document.createElement('div');

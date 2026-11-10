@@ -24,40 +24,36 @@ const resolveProjectFromWorktreeDirectory = (
   projects: ProjectEntry[],
   availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
   directory: string | null,
-): ProjectEntry | null => {
+): { project: ProjectEntry; boundary: number } | null => {
   const nd = normalizeProjectPath(directory);
   if (!nd) return null;
-  let matchedWorktree: WorktreeMetadata | null = null;
-  let matchedProjectPath: string | null = null;
+  let matchedProject: ProjectEntry | null = null;
   let bestLen = -1;
+  const projectsByPath = new Map(projects.map((project) => [normalizeProjectPath(project.path), project]));
   for (const [projectPath, worktrees] of availableWorktreesByProject.entries()) {
+    const project = projectsByPath.get(normalizeProjectPath(projectPath));
+    if (!project) continue;
     for (const wt of worktrees) {
       const wp = normalizeProjectPath(wt.path);
       if (!wp) continue;
       if (nd !== wp && !nd.startsWith(`${wp}/`)) continue;
-      if (wp.length > bestLen) {
+      if (wp.length > bestLen || (wp.length === bestLen && project.path.length > (matchedProject?.path.length ?? 0))) {
         bestLen = wp.length;
-        matchedWorktree = wt;
-        matchedProjectPath = normalizeProjectPath(projectPath);
+        matchedProject = project;
       }
     }
   }
-  if (!matchedWorktree) return null;
-  const candidates = [normalizeProjectPath(matchedWorktree.projectDirectory), matchedProjectPath]
-    .filter((v): v is string => Boolean(v));
-  for (const c of candidates) {
-    const exact = projects.find((p) => normalizeProjectPath(p.path) === c) ?? null;
-    if (exact) return exact;
-    const nested = resolveProjectForDirectory(projects, c);
-    if (nested) return nested;
-  }
-  return null;
+  return matchedProject ? { project: matchedProject, boundary: bestLen } : null;
 };
 
 export const resolveProjectForSessionDirectory = (
   projects: ProjectEntry[],
   availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
   directory: string | null,
-): ProjectEntry | null =>
-  resolveProjectFromWorktreeDirectory(projects, availableWorktreesByProject, directory) ??
-  resolveProjectForDirectory(projects, directory);
+): ProjectEntry | null => {
+  const direct = resolveProjectForDirectory(projects, directory);
+  const worktree = resolveProjectFromWorktreeDirectory(projects, availableWorktreesByProject, directory);
+  // The most specific directory wins; an explicitly opened project wins ties.
+  if (direct && (!worktree || (normalizeProjectPath(direct.path)?.length ?? 0) >= worktree.boundary)) return direct;
+  return worktree?.project ?? null;
+};

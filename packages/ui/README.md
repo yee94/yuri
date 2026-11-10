@@ -164,6 +164,14 @@ the existing handlers across both layouts.
 The results frame uses `overflow-clip`, leaving the inner directory list as the
 only scroll owner even when touch-mode CSS rewrites `overflow-hidden` to auto.
 
+## Project settings
+
+The project dialog and Settings page share one grouped identity form. The dialog
+uses Settings control tokens and a collapsed existing-worktree list; Settings
+keeps that list expanded for search targets. Project actions and worktree setup
+command controls are no longer exposed on either surface. Identity auto-save and
+existing-worktree deletion retain their original owners.
+
 ## Assistant avatars
 
 Assistant contact faces use the locally bundled procedural avatar

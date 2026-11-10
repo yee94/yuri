@@ -883,7 +883,7 @@ export function NewWorktreeDialog({
 
       if (shouldCreateSession) {
         if (await getWorktreeSetupWaitEnabled(projectRef)) {
-          await waitForWorktreeBootstrap(metadata.path);
+          await waitForWorktreeBootstrap(metadata.worktreeRoot ?? metadata.path);
         }
 
         const sessionTitle = linkedIssue

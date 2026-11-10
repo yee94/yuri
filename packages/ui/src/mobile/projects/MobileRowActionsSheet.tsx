@@ -54,6 +54,7 @@ type ActionRowProps = {
   destructive?: boolean;
   disabled?: boolean;
   spinning?: boolean;
+  divider?: 'above' | 'below' | 'none';
 };
 
 function ActionRow({
@@ -63,6 +64,7 @@ function ActionRow({
   destructive = false,
   disabled = false,
   spinning = false,
+  divider = 'below',
 }: ActionRowProps) {
   // Keep press-scale off (sheet rows use fill feedback), but still fire the
   // shared light haptic that useMobilePressHaptics would skip for "none".
@@ -76,12 +78,12 @@ function ActionRow({
       type="button"
       variant={destructive ? 'destructive' : 'ghost'}
       size="lg"
-      className="h-auto min-h-14 w-full justify-start gap-3 rounded-none supports-[corner-shape:squircle]:rounded-none px-4 leading-6 border-0 border-b border-[var(--surface-subtle)] last:border-b-0 active:bg-interactive-active dark:active:bg-interactive-active"
+      className={`h-auto min-h-14 w-full justify-start gap-3 rounded-none supports-[corner-shape:squircle]:rounded-none px-4 leading-6 border-0 active:bg-interactive-active dark:active:bg-interactive-active ${divider === 'above' ? 'border-t border-[var(--yuri-popup-divider)]' : divider === 'below' ? 'border-b border-[var(--yuri-popup-divider)] last:border-b-0' : ''}`}
       data-mobile-press-feedback="none"
       disabled={disabled}
       onClick={handleClick}
     >
-      <Icon name={icon} className={spinning ? 'size-5 animate-spin' : 'size-5'} />
+      <Icon name={icon} className={spinning ? 'size-5 text-inherit animate-spin' : 'size-5 text-inherit'} />
       <span className="truncate">{label}</span>
     </Button>
   );
@@ -91,10 +93,11 @@ function renderMenuItems(
   items: MobileMenuItem[],
   t: (key: I18nKey) => string,
   run: (action?: () => void) => () => void,
+  projectMenu = false,
 ) {
   const groups = items.reduce<Array<{ separated: boolean; items: MobileMenuItem[] }>>(
     (result, item) => {
-      const separated = Boolean(item.separated);
+      const separated = !projectMenu && Boolean(item.separated);
       const currentGroup = result.at(-1);
       if (currentGroup?.separated === separated) {
         currentGroup.items.push(item);
@@ -112,7 +115,7 @@ function renderMenuItems(
       className="flex flex-col overflow-hidden rounded-2xl bg-[var(--surface-muted)]"
       data-mobile-action-group={group.separated ? 'separated' : 'standard'}
     >
-      {group.items.map((item) => (
+      {group.items.map((item, index) => (
         <ActionRow
           key={item.id}
           icon={item.icon}
@@ -121,6 +124,7 @@ function renderMenuItems(
           destructive={item.destructive}
           disabled={item.disabled}
           spinning={item.spinning}
+          divider={projectMenu ? (item.separated && index > 0 ? 'above' : 'none') : 'below'}
         />
       ))}
     </div>
@@ -195,7 +199,7 @@ export function MobileRowActionsSheet({
           className="flex flex-col gap-5"
           data-page-scroll-lock="true"
         >
-          {renderMenuItems(menuItems, t, run)}
+          {renderMenuItems(menuItems, t, run, target.kind === 'project')}
         </div>
       </div>
     </MobileResizableSheet>

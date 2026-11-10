@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => {
     isGitRepository: false,
     waitForWorktreeSetup: false,
     currentDirectory: '/repo',
+    worktreePath: '/repo-worktrees/fix-thing',
+    bootstrapGate: null as Promise<void> | null,
   };
   return {
     routeMessage: vi.fn(() => Promise.resolve()),
@@ -79,7 +81,7 @@ vi.mock('@/lib/worktrees/worktreeCreate', () => ({
     return Promise.resolve({
       source: 'sdk',
       name: 'fix-thing',
-      path: '/repo-worktrees/fix-thing',
+      path: mocks.state.worktreePath,
       projectDirectory: '/repo',
       branch: 'fix-thing',
       label: 'fix-thing',
@@ -96,7 +98,7 @@ vi.mock('@/lib/worktrees/worktreeBootstrap', () => ({
   waitForWorktreeBootstrap: (directory: string) => {
     mocks.worktreeBootstrapWaitCalls.push(directory);
     mocks.operationOrder.push(`wait:${directory}`);
-    return Promise.resolve();
+    return mocks.state.bootstrapGate ?? Promise.resolve();
   },
 }));
 
@@ -171,6 +173,8 @@ describe('useMultiRunStore', () => {
     mocks.childState.sessionTotal = 0;
     mocks.childState.limit = 20;
     mocks.state.currentDirectory = '/repo';
+    mocks.state.worktreePath = '/repo-worktrees/fix-thing';
+    mocks.state.bootstrapGate = null;
     useMultiRunStore.setState({ isLoading: false, error: null });
   });
 
@@ -249,5 +253,22 @@ describe('useMultiRunStore', () => {
       'wait:/repo-worktrees/fix-thing',
       'createSession:/repo-worktrees/fix-thing',
     ]);
+  });
+
+  test('waits on the Git root before creating or sending in a scoped directory', async () => {
+    mocks.state.isGitRepository = true;
+    mocks.state.waitForWorktreeSetup = true;
+    mocks.state.worktreePath = '/repo-worktrees/fix-thing/src';
+    let ready!: () => void;
+    mocks.state.bootstrapGate = new Promise<void>((resolve) => { ready = resolve; });
+    const creating = useMultiRunStore.getState().createMultiRun({ name: 'Scoped', isolateRuns: true,
+      groups: [{ prompt: 'Fix it', models: [{ providerID: 'test', modelID: 'test' }] }],
+    });
+    await vi.waitFor(() => expect(mocks.worktreeBootstrapWaitCalls).toEqual(['/repo-worktrees/fix-thing']));
+    expect(mocks.upsertedSessions).toEqual([]);
+    expect(mocks.routeMessage).not.toHaveBeenCalled();
+    ready();
+    expect((await creating)?.sessionIds).toEqual(['ses_multirun']);
+    expect(mocks.registeredDirectories).toEqual([{ sessionID: 'ses_multirun', directory: '/repo-worktrees/fix-thing/src' }]);
   });
 });

@@ -295,7 +295,7 @@ const MobileActionButton: React.FC<{
     onClick={onClick}
     style={{ touchAction: 'manipulation' }}
   >
-    <Icon name={icon} className="size-5 shrink-0" />
+    <Icon name={icon} className="size-5 shrink-0 text-inherit" />
     <span className="truncate">{label}</span>
   </Button>
 );
@@ -1473,7 +1473,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         );
         if (!item.separated) return button;
         return (
-          <div key={item.id} className="mt-3 border-t border-[var(--surface-subtle)] pt-3">
+          <div key={item.id} className={actionTarget?.kind === 'project' ? 'border-t border-[var(--yuri-popup-divider)]' : 'mt-3 border-t border-[var(--surface-subtle)] pt-3'}>
             {button}
           </div>
         );

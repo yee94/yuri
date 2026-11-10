@@ -23,6 +23,44 @@ test('sidebar does not depend on GitHub auth or PR discovery for its session tre
     expect(source).not.toContain('prVisualStateByDirectoryBranch');
 });
 
+test('group hover metadata keeps project ownership separate from branch labels and updates on project rename', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'SessionGroupSection.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionGroupSection.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const declarations = new Map<string, string>();
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) declarations.set(node.name.text, `const ${node.getText(ast)};`);
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    const compiled = ts.transpileModule(`return function Surface({ projectLabel, group }) {
+        ${declarations.get('groupSessionSecondaryMeta')}
+        return React.createElement('span', null, JSON.stringify(groupSessionSecondaryMeta));
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const Surface = new Function('React', compiled)(React);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    try {
+        for (const isMain of [false, true]) {
+            const group = { isMain, label: 'feat/ext-a2a', branch: 'feat/ext-a2a' };
+            await act(async () => root.render(<Surface projectLabel="src" group={group} />));
+            expect(JSON.parse(host.textContent!)).toEqual({ projectLabel: 'src', branchLabel: 'feat/ext-a2a' });
+            await act(async () => root.render(<Surface projectLabel="Source" group={group} />));
+            expect(JSON.parse(host.textContent!)).toEqual({ projectLabel: 'Source', branchLabel: 'feat/ext-a2a' });
+        }
+        const compareSource = ts.transpileModule(`${declarations.get('areGroupPropsEqual')} return areGroupPropsEqual;`, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022 },
+        }).outputText;
+        const compare = new Function(compareSource)();
+        const props = { group: { sessions: [] }, groupKey: 'src:feature', projectId: 'src', projectLabel: 'src', groupSearchDataByGroup: new WeakMap() };
+        expect(compare(props, { ...props })).toBe(true);
+        expect(compare(props, { ...props, projectLabel: 'Source' })).toBe(false);
+    } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+    }
+});
+
 test('project actions preserve the memo boundary through 50 catalog updates and use the latest loader', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');

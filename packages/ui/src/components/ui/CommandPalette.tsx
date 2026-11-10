@@ -377,15 +377,17 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   // ---------------------------------------------------------------------------
   // Sessions
   // ---------------------------------------------------------------------------
+  const worktreeMetadata = useSessionUIStore((s) => s.worktreeMetadata);
+  const availableWorktreesByProject = useSessionUIStore((s) => s.availableWorktreesByProject);
+
   const sortedActiveSessions = React.useMemo(() => {
     const getUpdated = (s: Session) =>
       (typeof s.time?.updated === 'number' ? s.time.updated : 0) ||
       (typeof s.time?.created === 'number' ? s.time.created : 0);
-    return [...activeSessions].sort((a, b) => getUpdated(b) - getUpdated(a));
-  }, [activeSessions]);
-
-  const worktreeMetadata = useSessionUIStore((s) => s.worktreeMetadata);
-  const availableWorktreesByProject = useSessionUIStore((s) => s.availableWorktreesByProject);
+    return activeSessions.filter((session) => resolveProjectForSessionDirectory(
+      projects, availableWorktreesByProject, resolveGlobalSessionDirectory(session),
+    )).sort((a, b) => getUpdated(b) - getUpdated(a));
+  }, [activeSessions, projects, availableWorktreesByProject]);
 
   // ---------------------------------------------------------------------------
   // File search
@@ -536,8 +538,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
         id: hit.sessionID, title: hit.title ?? '', directory: hit.directory, location: { directory: hit.directory },
       } as Session, hit });
     }
-    return rows;
-  }, [visibleTitleSessions, contentHits, activeSessions]);
+    return rows.filter(({ session }) => resolveProjectForSessionDirectory(
+      projects, availableWorktreesByProject, resolveGlobalSessionDirectory(session),
+    ));
+  }, [visibleTitleSessions, contentHits, activeSessions, projects, availableWorktreesByProject]);
   const rankedResults = React.useMemo(() => rankCommandPaletteResults([
     ...conversationResults.map((item) => ({
       group: 'sessions' as const, item,
@@ -587,10 +591,15 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   );
 
   const handleOpenSession = useEvent((session: Session, messageID?: string) => {
+    const directory = resolveGlobalSessionDirectory(session) || '';
+    if (!resolveProjectForSessionDirectory(
+      useProjectsStore.getState().projects,
+      useSessionUIStore.getState().availableWorktreesByProject,
+      directory,
+    )) return;
     close();
     setActiveMainTab('chat');
     setSessionSwitcherOpen(false);
-    const directory = resolveGlobalSessionDirectory(session) || '';
     if (mobileActions) {
       useMobileNavigationStore.getState().openSession({ sessionId: session.id, directory });
     } else {

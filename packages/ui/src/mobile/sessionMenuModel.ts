@@ -92,14 +92,6 @@ export const buildSessionMenuItems = (
   options: SessionMenuOptions,
 ): MobileMenuItem[] => {
   const items: MobileMenuItem[] = [];
-  push(items, options.onRename
-    ? {
-        id: 'rename',
-        icon: 'pencil-ai',
-        labelKey: 'sessions.sidebar.session.menu.rename',
-        onClick: options.onRename,
-      }
-    : null);
   push(items, options.onTogglePin
     ? {
         id: 'pin',
@@ -118,6 +110,14 @@ export const buildSessionMenuItems = (
           ? 'sessions.sidebar.session.menu.markRead'
           : 'sessions.sidebar.session.menu.markUnread',
         onClick: options.onToggleRead,
+      }
+    : null);
+  push(items, options.onRename
+    ? {
+        id: 'rename',
+        icon: 'pencil-ai',
+        labelKey: 'sessions.sidebar.session.menu.rename',
+        onClick: options.onRename,
       }
     : null);
   if (options.shared) {

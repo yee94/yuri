@@ -151,6 +151,36 @@ describe('MobileRowActionsSheet session actions', () => {
 });
 
 describe('MobileRowActionsSheet project actions', () => {
+  test('separates only Close project and keeps destructive icons in the label color', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileRowActionsSheet
+          open
+          target={{ kind: 'project', title: 'Project', gitRepository: true }}
+          actions={{
+            onSyncSessions: () => undefined,
+            onEditProject: () => undefined,
+            onCloseProject: () => undefined,
+          }}
+          onOpenChange={() => undefined}
+        />
+      </I18nProvider>,
+    );
+    const content = document.createElement('div');
+    content.innerHTML = html;
+    const rows = Array.from(content.querySelectorAll('button'));
+    expect(rows).toHaveLength(3);
+    expect(content.querySelectorAll('button.border-b')).toHaveLength(0);
+    expect(content.querySelectorAll('button.border-t')).toHaveLength(1);
+    expect(rows[2].classList.contains('border-t')).toBe(true);
+    expect(rows[2].classList.contains('border-[var(--yuri-popup-divider)]')).toBe(true);
+    expect(content.querySelectorAll('[data-mobile-action-group]')).toHaveLength(1);
+    for (const row of rows) {
+      expect(row.querySelector('svg')?.classList.contains('text-inherit')).toBe(true);
+    }
+    expect(rows[2].classList.contains('text-[var(--status-error)]')).toBe(true);
+  });
+
   test('renders Sync sessions when the project callback is available', () => {
     const html = renderToString(
       <I18nProvider>

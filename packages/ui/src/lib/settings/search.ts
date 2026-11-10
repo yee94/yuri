@@ -574,6 +574,12 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['color', 'appearance', 'project metadata'],
   },
   {
+    id: 'projects.default-model',
+    page: 'projects',
+    titleKey: 'settings.yuri.defaults.field.defaultModel',
+    keywords: ['model', 'new chat', 'project default'],
+  },
+  {
     id: 'projects.icon',
     page: 'projects',
     titleKey: 'settings.projects.page.field.projectIcon',
@@ -584,12 +590,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'projects',
     titleKey: 'settings.projects.page.section.worktree',
     keywords: ['worktree', 'branch', 'repository'],
-  },
-  {
-    id: 'projects.worktree.setup.wait',
-    page: 'projects',
-    titleKey: 'settings.yuri.worktrees.setup.waitForCommands',
-    keywords: ['worktree', 'setup commands', 'bootstrap', 'wait'],
   },
   {
     id: 'remote-instances.client-auth',

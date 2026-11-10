@@ -306,7 +306,16 @@ results and show a compact muted status, not a red directory-list alert.
 Arrow-key navigation loops across the first and last selectable result via cmdk's
 `loop` contract, including mobile hardware keyboards.
 
-Conversation search remains global; commands consume registered contributions,
+Conversation search spans all currently added projects, not only the active one.
+Before ranking, preview counts and navigation, merged title/content results must
+resolve to a current project through `resolveProjectForSessionDirectory`, including
+registered worktrees. Unadded/closed projects and unresolved directories are
+excluded; recent-session previews apply ownership before their local row limit.
+Project closure also filters frozen keyboard-navigation snapshots immediately,
+and session activation rechecks current project/worktree state to reject stale rows.
+Readding a project can reuse retained search data; filtering does not delete Host
+index entries or sessions. This shared policy applies to desktop/web, VS Code and
+hosted/native mobile. Commands consume registered contributions,
 and project matches filter the existing project list only (no project discovery
 or directory scanning). File search requires a selected conversation with a known
 `currentSessionDirectory` belonging to a saved project. It makes exactly one

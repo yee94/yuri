@@ -1293,6 +1293,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       }>;
   }, [projects]);
 
+  const projectLabelsById = React.useMemo(
+    () => new Map(normalizedProjects.map((project) => [
+      project.id,
+      formatDirectoryName(project.normalizedPath) || project.normalizedPath,
+    ])),
+    [normalizedProjects],
+  );
+
   const normalizedProjectPaths = React.useMemo(
     () => normalizedProjects.map((project) => project.normalizedPath),
     [normalizedProjects],
@@ -2188,6 +2196,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           ),
         )}
         projectId={projectId}
+        projectLabel={projectId ? projectLabelsById.get(projectId) ?? null : null}
         hideGroupLabel={hideGroupLabel}
         compactBodyPadding={compactBodyPadding}
         hasSessionSearchQuery={hasSessionSearchQuery}
@@ -2249,6 +2258,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       hasSessionSearchQuery,
       normalizedSessionSearchQuery,
       groupSearchDataByGroup,
+      projectLabelsById,
       archivedLoadingDirectories,
       collectDirectoriesForProjectId,
       visibleSessionCountByGroup,

@@ -7,7 +7,7 @@ import {
 } from './sessionMenuModel';
 
 describe('buildSessionMenuItems', () => {
-  test.each([false, true])('places read/unread immediately after pin (unread=%s)', (unread) => {
+  test.each([false, true])('places rename immediately after read/unread (unread=%s)', (unread) => {
     const toggle = () => undefined;
     const items = buildSessionMenuItems({
       pinned: false, shared: false, unread,
@@ -16,8 +16,8 @@ describe('buildSessionMenuItems', () => {
       onToggleRead: toggle,
       onArchive: () => undefined,
     });
-    expect(items.map(item => item.id)).toEqual(['rename', 'pin', 'toggleRead', 'archive']);
-    expect(items[2]).toMatchObject({
+    expect(items.map(item => item.id)).toEqual(['pin', 'toggleRead', 'rename', 'archive']);
+    expect(items[1]).toMatchObject({
       icon: unread ? 'mail-open' : 'mail',
       labelKey: unread ? 'sessions.sidebar.session.menu.markRead' : 'sessions.sidebar.session.menu.markUnread',
       onClick: toggle,
@@ -38,8 +38,8 @@ describe('buildSessionMenuItems', () => {
     });
 
     expect(items.map((item) => item.id)).toEqual([
-      'rename',
       'pin',
+      'rename',
       'copyLink',
       'unshare',
       'refreshTranscript',

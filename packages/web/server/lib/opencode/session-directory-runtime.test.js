@@ -24,6 +24,84 @@ const session = (id, directory, updated = 1) => ({ id, title: id, location: { di
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
 describe('physical session directory identity', () => {
+  it.each(['publishChange', 'noteInteractiveRequest'])('discards shared pages on %s before refreshing another directory', async (method) => {
+    const { real, other } = fixture();
+    let reads = 0;
+    let clock = 0;
+    const directories = createSessionDirectoryRuntime({ fetchFn: async (input) => {
+      if (new URL(input).searchParams.has('parentID')) return json({ data: [], cursor: {} });
+      reads++;
+      return json({ data: [session('a', real), { ...session('b', other), title: `revision-${reads}` }], cursor: {} });
+    } });
+    const service = createSessionIndexService({ dbPath: ':memory:' });
+    const sync = createSessionIndexSyncRuntime({ sessionIndexService: service, now: () => clock,
+      buildOpenCodeUrl: (route) => `http://localhost/api${route}`, getOpenCodeAuthHeaders: () => ({}),
+      fetchFn: directories.fetchSessionList, createFetchBatch: directories.createFetchBatch,
+    });
+    const replace = service.replaceDirectory;
+    vi.spyOn(service, 'replaceDirectory').mockImplementation((input) => {
+      const result = replace(input);
+      if (input.directory === real) { sync[method](); clock += 1_001; }
+      return result;
+    });
+    try {
+      sync.enqueue([real, other]);
+      await vi.waitFor(() => expect(sync.snapshot().sync.active || sync.snapshot().sync.enriching).toBe(false));
+      expect(reads).toBe(2);
+      expect(service.findBySessionId('b').title).toBe('revision-2');
+    } finally { sync.stop(); service.close(); }
+  });
+
+  it('does not reuse failed, aborted or differently authenticated batch pages', async () => {
+    const { real, other } = fixture();
+    let endpoint = 'http://localhost';
+    const fetchFn = vi.fn(async () => json([session('a', real), session('b', other)]));
+    const directories = createSessionDirectoryRuntime({ getRuntimeUrl: () => endpoint, fetchFn });
+    const read = directories.createFetchBatch();
+    const url = (directory) => `http://localhost/session?directory=${encodeURIComponent(directory)}`;
+    fetchFn.mockResolvedValueOnce(json({}, 503));
+    expect((await read(url(real))).status).toBe(503);
+    expect((await (await read(url(real))).json()).map((entry) => entry.id)).toEqual(['a']);
+    expect((await (await read(url(other))).json()).map((entry) => entry.id)).toEqual(['b']);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const controller = new AbortController(); controller.abort();
+    await expect(read(url(other), { signal: controller.signal })).rejects.toThrow();
+    await read(url(other), { headers: { Authorization: 'test-other-scope' } });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    endpoint = 'http://127.0.0.1:9999';
+    await read(url(other));
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+  it('shares global pages across 60 explicit directories only within one sync batch', async () => {
+    const { real } = fixture();
+    const paths = Array.from({ length: 60 }, (_, i) => path.join(real, `scope-${i}`));
+    for (const directory of paths) fs.mkdirSync(directory);
+    let rootReads = 0;
+    const directories = createSessionDirectoryRuntime({ fetchFn: async (input) => {
+      const url = new URL(input);
+      if (url.searchParams.has('parentID')) return json({ data: [], cursor: {} });
+      rootReads++;
+      expect(url.searchParams.has('directory')).toBe(false);
+      const page = Number(url.searchParams.get('cursor') ?? 0);
+      return json({ data: paths.slice(page * 20, (page + 1) * 20).map((directory, i) => session(`s-${page * 20 + i}`, directory)),
+        cursor: page < 2 ? { next: String(page + 1) } : {} });
+    } });
+    const service = createSessionIndexService({ dbPath: ':memory:' });
+    const sync = createSessionIndexSyncRuntime({ sessionIndexService: service,
+      buildOpenCodeUrl: (route) => `http://localhost/api${route}`, getOpenCodeAuthHeaders: () => ({}),
+      fetchFn: directories.fetchSessionList, createFetchBatch: directories.createFetchBatch,
+    });
+    try {
+      sync.enqueue(paths);
+      await vi.waitFor(() => expect(sync.snapshot().sync.active || sync.snapshot().sync.enriching).toBe(false));
+      expect(service.snapshot().directories).toHaveLength(60);
+      expect(service.snapshot().directories.every((entry) => entry.sessions.length === 1)).toBe(true);
+      expect(rootReads).toBe(3);
+      sync.enqueue(paths);
+      await vi.waitFor(() => expect(sync.snapshot().sync.active || sync.snapshot().sync.enriching).toBe(false));
+      expect(rootReads).toBe(6);
+    } finally { sync.stop(); service.close(); }
+  });
   it('backfills only 30 days once per runtime, resumes failed pages, and never boots locations', async () => {
     const { real } = fixture();
     const dbPath = path.join(real, 'index.sqlite');

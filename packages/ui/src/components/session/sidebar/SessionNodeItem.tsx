@@ -1039,18 +1039,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     SubContent: React.ElementType;
   }) => (
     <>
-      <Item
-        onClick={() => {
-          // Defer rename until dropdown close transition completes.
-          // onOpenChangeComplete fires after animation + focus cleanup are done,
-          // avoiding focus stealing from Base UI's unmount cleanup.
-          pendingRenameRef.current = { id: session.id, title: sessionTitle };
-        }}
-        className="[&>svg]:mr-1"
-      >
-        <Icon name="pencil-ai" className="mr-1 h-4 w-4" />
-        {t('sessions.sidebar.session.menu.rename')}
-      </Item>
       <Item onClick={() => togglePinnedSession(session.id)} className="[&>svg]:mr-1">
         {isPinnedSession ? <Icon name="unpin" className="mr-1 h-4 w-4" /> : <Icon name="pushpin" className="mr-1 h-4 w-4" />}
         {isPinnedSession ? t('sessions.sidebar.session.menu.unpin') : t('sessions.sidebar.session.menu.pin')}
@@ -1067,6 +1055,18 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           {unseenCount > 0 ? t('sessions.sidebar.session.menu.markRead') : t('sessions.sidebar.session.menu.markUnread')}
         </Item>
       ) : null}
+      <Item
+        onClick={() => {
+          // Defer rename until dropdown close transition completes.
+          // onOpenChangeComplete fires after animation + focus cleanup are done,
+          // avoiding focus stealing from Base UI's unmount cleanup.
+          pendingRenameRef.current = { id: session.id, title: sessionTitle };
+        }}
+        className="[&>svg]:mr-1"
+      >
+        <Icon name="pencil-ai" className="mr-1 h-4 w-4" />
+        {t('sessions.sidebar.session.menu.rename')}
+      </Item>
       {isSessionSharingAvailable() && !resolvedSession.share ? (
         <Item onClick={() => handleShareSession(resolvedSession)} className="[&>svg]:mr-1">
           <Icon name="share-2" className="mr-1 h-4 w-4" />

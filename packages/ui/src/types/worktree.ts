@@ -6,6 +6,7 @@ export interface WorktreeMetadata {
    */
   source?: 'sdk';
 
+  /** Yuri project working directory in this checkout, including its relative subdirectory. */
   path: string;
 
   projectDirectory: string;
@@ -25,6 +26,7 @@ export interface WorktreeMetadata {
    */
   createdFromBranch?: string;
 
+  /** Project directory relative to the Git checkout root; absent for repository-root projects. */
   relativePath?: string;
 
   status?: {
@@ -36,7 +38,7 @@ export interface WorktreeMetadata {
 
   // --- Phase 1: canonical worktree attachment fields ---
 
-  /** Canonical root path for the worktree (same as path for secondary worktrees). */
+  /** Canonical Git checkout root; path may point to a project subdirectory within it. */
   worktreeRoot?: string;
 
   /** Operational status of this worktree. */

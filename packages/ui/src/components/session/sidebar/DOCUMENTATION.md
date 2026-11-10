@@ -1,5 +1,10 @@
 # Session Sidebar Documentation
 
+Project dropdown and right-click menus have one shared popup hairline immediately
+before destructive Close; ordinary actions have no separators. Action icons inherit
+their label color, including Close. Mobile project action sheets use the same
+single destructive-action divider and color mapping while retaining touch targets.
+
 `SidebarBackgroundTasks` is the shared inline progress area to the right of the
 footer settings/device/help buttons. It consumes existing runtime-scoped import,
 content-index and Host-update Queries plus the client update store; it adds no
@@ -89,6 +94,8 @@ row. Both context-menu Rename and mouse-focused Enter preserve this ownership.
 Root session context menus offer **Mark as unread** for read sessions (including
 an already selected session), and **Mark as read** for unread sessions. This
 action sits immediately below Pin/Unpin and does not open the conversation.
+Rename follows the read/unread action on desktop and mobile; child sessions that
+omit read/unread place Rename after Pin/Unpin.
 The action shares the notification store's server-backed
 attention projection and reports failed writes without changing the existing
 badge. Manual reminders remain unread through remote snapshot refreshes until
@@ -386,6 +393,9 @@ Reopening refreshes the snapshot, and switching instances clears retained target
 - Session rows are single-line (no inline timestamp); details (title, relative time, folder/project,
   branch) open in an immediate floating hover card. Top-section (pinned / in-progress) rows
   always populate that project and branch from ownership, not from the omitted project-tree index.
+  Project-tree rows, including sessions inside folders, use the owning project's
+  display name for the folder-icon line, never a worktree/group or folder name;
+  the branch remains separate. Project-name changes invalidate the group memo.
   A shared `TooltipProvider`
   (`delay=0`, `closeDelay=150`, `timeout=600`) groups row tips so adjacent handoff
   is instant; per-row tooltips do not nest their own Provider. Pointer click keeps
@@ -463,6 +473,31 @@ Reopening refreshes the snapshot, and switching instances clears retained target
 - `hooks/useAlwaysVisibleSessionIds.ts`: Shared running (busy/retry + uncovered fallback) and always-visible (running ∪ current viewing) session-id sets for PC sidebar and mobile session lists.
 - `sidebar-numbered-navigation.ts` (sync): Publishes the global first-nine visible session target order consumed by Mod+1…9, with revision-safe responsive remount cleanup.
 - `sessionOwnership.ts`: Resolves session directories once into shared project/worktree ownership and folder-scope indexes.
+- Yuri projects are working-directory scopes, not OpenCode repository identities.
+  Creation, selection and sidebar ownership use the deepest registered directory;
+  explicit project roots beat worktree mappings at the same directory. A nested
+  project such as `repo/src` maps only confirmed Git checkout roots to
+  `checkout/src`, never to the checkout root. `WorktreeMetadata.path` is that
+  scoped working directory; `worktreeRoot` remains the Git resource used for
+  bootstrap and deletion. Main-checkout entries are excluded from each project's
+  worktree list. Persisted repository-wide nested catalogs are projected before
+  first paint; existing sessions are not moved or rewritten. A historical session
+  already inside `checkout/src` belongs to the nested project, while sessions at
+  `checkout` remain with the repository project. Directory mapping performs no
+  filesystem/network reads and is refreshed by the existing bounded topology
+  coordinator. Successful refreshes retain primary-repository identity separately
+  from catalog entries, including empty catalogs. Events from either a parent or
+  nested scope refresh every scope of that repository; unresolved event origins
+  use authoritative primary-root discovery, never directory-prefix inference.
+  One coordinator refresh batch shares one raw listing per runtime/repository,
+  then projects each scope independently. New batches bypass the HTTP TTL; local
+  mutations invalidate sibling caches and stale in-flight results. Runtime changes
+  clear discovery identity and reject stale refresh commits. Enumeration failure
+  retains existing catalogs and attachments. Creating a session in a mapped subdirectory checks its
+  existence through the runtime file-stat Query when available; failure keeps the
+  draft and never retries at the checkout root. Deleting a checkout invalidates all
+  referencing project catalogs and attachments. Standalone VS Code retains exact
+  open-workspace matching and no worktree subgroups.
 - `manualProjectSessionSync.ts`: Builds deduplicated manual session-index sync directories from the project root, current selection, and freshly refreshed worktree catalog.
 
 ### Hooks

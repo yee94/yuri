@@ -72,9 +72,9 @@ different initial font size.
 ## Turn-completion spacing
 
 The settled `AssistantMessageFooter` replaces the transcript's live status row
-without changing the list's total height for a single-line footer. Its top margin
-is 10px on desktop and 6px on mobile; the bottom margin is 8px on desktop and 2px
-on mobile. Distributing the extra desktop space above and below the controls
+without shrinking the list's total height for a single-line footer. Its top margin
+is 10px on desktop and 6px on mobile; the bottom margin is 12px on desktop and 8px
+on mobile. Distributing the extra space above and below the controls
 balances their distance from the body while accounting for the status wrapper's padding and
 collapsed margins as well as the message body's existing bottom spacing.
 Intermediate/interrupted TPS rows keep their original 6px/12px margins because
