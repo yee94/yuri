@@ -74,6 +74,13 @@ test('native tab bar reads UI badge strings and drives UITabBarItem.badgeValue',
   // View: paint / update / clear via system badgeValue without rebuilding chrome.
   assert.match(view, /let badge: String\?/);
   assert.match(view, /page\.tabBarItem\.badgeValue = Self\.badgeValue\(item\.badge\)/);
+  const css = await source('../ui/src/styles/design-system.css');
+  const unreadFill = css.match(/--assistant-unread-fill:\s*(#[0-9a-f]{6})/i)?.[1];
+  assert.equal(unreadFill, '#F95252');
+  assert.ok(view.includes(`page.tabBarItem.badgeColor = Self.parseHex("${unreadFill}")`));
+  for (const state of ['normal', 'selected']) {
+    assert.ok(view.includes(`setBadgeTextAttributes([.foregroundColor: UIColor.white], for: .${state})`));
+  }
   assert.match(view, /private func applyBadges\(\)/);
   assert.match(view, /viewControllers\[index\]\.tabBarItem\.badgeValue = Self\.badgeValue\(item\.badge\)/);
   assert.match(view, /private static func badgeValue\(_ badge: String\?\) -> String\?/);

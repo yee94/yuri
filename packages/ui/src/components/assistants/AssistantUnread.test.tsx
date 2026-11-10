@@ -63,9 +63,9 @@ describe('Assistant unread UI', () => {
     await render(<AssistantNavigationUnreadBadge />);
     expect(host.textContent).toBe('99+');
     expect(host.firstElementChild?.getAttribute('aria-label')).toBe('assistants.unread.label:123');
-    expect(host.firstElementChild?.className).toContain('bg-[var(--status-info)]');
-    expect(host.firstElementChild?.className).toContain('text-[var(--status-info-foreground)]');
-    expect(host.firstElementChild?.className).toContain('shadow-[inset_');
+    expect(host.firstElementChild?.className).toContain('bg-[var(--assistant-unread-fill)]');
+    expect(host.firstElementChild?.className).toContain('text-[var(--assistant-unread-foreground)]');
+    expect(host.firstElementChild?.className).not.toContain('shadow-');
   });
 
   test('mobile dock displays and clears its assistant total', async () => {
@@ -86,11 +86,13 @@ describe('Assistant unread UI', () => {
     expect(badge?.getAttribute('aria-label')).toBe('assistants.unread.label:2');
     expect(tab?.className).toContain('overflow-visible');
     expect(tab?.querySelector('.relative')?.className).toContain('overflow-visible');
-    expect(badge?.className).toContain('bg-foreground');
-    expect(badge?.className).toContain('text-background');
+    expect(badge?.className).toContain('bg-[var(--assistant-unread-fill)]');
+    expect(badge?.className).toContain('text-[var(--assistant-unread-foreground)]');
     expect(badge?.className).toContain('ring-2');
     expect(badge?.className).toContain('text-[11px]');
     expect(badge?.className).not.toContain('bg-[var(--status-info)]');
+    expect(badge?.className).not.toContain('bg-foreground');
+    expect(badge?.className).not.toContain('text-background');
     expect(badge?.parentElement?.className).toContain('left-full');
     expect(badge?.parentElement?.className).toContain('ml-0.5');
   });

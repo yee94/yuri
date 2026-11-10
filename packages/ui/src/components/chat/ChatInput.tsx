@@ -7265,6 +7265,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 isMobile && 'bottom-safe-area yuri-mobile-composer'
             )}
             data-native-ios-composer={nativeIosComposerActive ? 'true' : undefined}
+            data-mobile-expanded={isMobileExpanded ? 'true' : undefined}
             data-hold-to-talk={holdToTalkEnabled ? 'true' : undefined}
             data-hold-to-talk-empty={holdToTalkEnabled && message.length === 0 ? 'true' : undefined}
             data-dictation-hint={holdToTalkEnabled ? dictationHint ?? undefined : undefined}

@@ -28,7 +28,9 @@ const mountFileTypeSprite = (): void => {
     root.style.height = '0';
     root.style.overflow = 'hidden';
     root.innerHTML = spriteContent;
-    document.body.appendChild(root);
+    // Keep this large subtree ahead of body-level portals: as their previous sibling,
+    // every overlay mount/unmount restyles all ~6k sprite nodes (~30ms per toggle).
+    document.body.insertBefore(root, document.body.firstChild);
   };
 
   if (document.body) {

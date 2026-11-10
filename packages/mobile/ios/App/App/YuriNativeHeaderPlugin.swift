@@ -52,6 +52,9 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         }
     }
 
+    /// Resting composer foot gap (pt); mobile.css native IME foot uses 16px.
+    private static let footGap: CGFloat = 16
+
     private var header: HeaderWebView?
     private var headerHeight: NSLayoutConstraint?
     private var assetHandler: WebViewAssetHandler?
@@ -66,8 +69,6 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
 
     private var imeSync = false
     private var keyboardOverlap: CGFloat = 0
-    private var webOffset: CGFloat = 0
-    private var offsetGeneration = 0
     private var headerGeneration = 0
     private var keyboardObservers: [NSObjectProtocol] = []
     private var offsetObservation: NSKeyValueObservation?
@@ -99,6 +100,7 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
             guard let self else { return call.resolve() }
             if !enabled { self.resetIme() }
             self.imeSync = enabled
+            if enabled { self.publishSafeArea() }
             call.resolve()
         }
     }
@@ -155,11 +157,13 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         view.scrollView.backgroundColor = .clear
         view.scrollView.isScrollEnabled = false
         view.scrollView.contentInsetAdjustmentBehavior = .never
-        view.alpha = 0
+        // Always alpha 1 and rendered; at rest it sits behind the page (the
+        // scrollView paints over it). Engaging only changes z-order, so there
+        // is no first frame with an un-rasterized mirror.
         view.accessibilityElementsHidden = true
         view.translatesAutoresizingMaskIntoConstraints = false
         // Sibling of the main scrollView: the content translation never moves it.
-        main.addSubview(view)
+        main.insertSubview(view, at: 0)
         let height = view.heightAnchor.constraint(equalToConstant: 1)
         NSLayoutConstraint.activate([
             view.topAnchor.constraint(equalTo: main.topAnchor),
@@ -225,13 +229,13 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
     private func renderCollapse() {
         guard let header, shown else { return }
         header.transform = CGAffineTransform(translationX: 0, y: lift - collapse * collapseDistance)
-        header.alpha = header.engaged ? 1 - collapse : 0
+        header.alpha = 1 - collapse
     }
 
     private func setEngaged(_ value: Bool) {
-        guard let header else { return }
+        guard let header, let main = webView else { return }
         header.engaged = value
-        if value { renderCollapse() } else { header.alpha = 0 }
+        if value { main.bringSubviewToFront(header) } else { main.sendSubviewToBack(header) }
     }
 
     // MARK: Keyboard
@@ -252,60 +256,41 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
         let hiding = note.name == UIResponder.keyboardWillHideNotification
         let frame = main.convert(window.convert(end, from: nil), from: window)
-        let overlap = hiding ? 0 : max(0, main.bounds.maxY - frame.minY)
+        let keyboard = hiding ? 0 : max(0, main.bounds.maxY - frame.minY)
+        // The composer foot keeps one constant CSS inset, max(gap, home
+        // indicator), keyboard up or down (a keyboard-state padding switch
+        // would land as a jump at the bookends). The indicator is behind the
+        // keyboard, so lift less by that excess: the gap above the keyboard
+        // equals the resting gap. Keep in sync with mobile.css (native IME foot).
+        publishSafeArea()
+        let excess = max(0, window.safeAreaInsets.bottom - Self.footGap)
+        let overlap = max(0, keyboard - excess)
         // willChangeFrame and willHide both report a close; a repeat must not
-        // restart it (that would drop the held lift before the page offset).
+        // restart it.
         guard overlap != keyboardOverlap else { return }
-        let previous = keyboardOverlap
         keyboardOverlap = overlap
         let open = overlap > 0
-        emitImeState(open: open, phase: "start", height: overlap, duration: duration)
         engageHeader()
-        // Same model as Android: the content is translated by -overlap for as
-        // long as the keyboard is up; the page offset only re-lays the page
-        // into that visible region. Translation never depends on the offset.
-        let animate = { [weak self] in
-            guard let self else { return }
-            UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curveRaw << 16), .beginFromCurrentState]) {
-                self.setLift(overlap)
-            } completion: { [weak self] _ in
-                guard let self, self.keyboardOverlap == overlap else { return }
-                self.settle(overlap)
-            }
-        }
-        if overlap < webOffset {
-            // Release the larger page offset first while translation still
-            // holds the old keyboard height (mirror covers the header), then
-            // the keyboard animation carries the content down.
-            setLift(previous)
-            requestOffset(overlap) { [weak self] in
-                guard let self, self.keyboardOverlap == overlap else { return }
-                animate()
-            }
-        } else {
-            animate()
+        publishLift(overlap, duration: duration)
+        emitImeState(open: open, phase: "start", height: overlap, duration: duration)
+        // The content is translated by -overlap for as long as the keyboard is
+        // up, from the keyboard's first frame (same as Android). Unlike Android
+        // the page is never re-laid into the visible region: WebKit does not
+        // commit a relayout within a keyboard frame, which showed as a blank
+        // band under the header at close start. No JS runs on this path.
+        UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curveRaw << 16), .beginFromCurrentState]) {
+            self.setLift(overlap)
+        } completion: { [weak self] _ in
+            guard let self, self.keyboardOverlap == overlap else { return }
+            self.settle(overlap)
         }
     }
 
     private func settle(_ overlap: CGFloat) {
-        requestOffset(overlap) { [weak self] in
-            guard let self, self.keyboardOverlap == overlap else { return }
-            self.emitImeState(open: overlap > 0, phase: "settled", height: overlap, duration: 0)
-            self.releaseHeader()
-        }
-    }
-
-    /// Page absorbs `px` points at its top; completion runs after it painted.
-    private func requestOffset(_ px: CGFloat, completion: @escaping () -> Void) {
-        guard let main = webView else { return }
-        offsetGeneration += 1
-        let token = offsetGeneration
-        if px == webOffset { return completion() }
-        main.callAsyncJavaScript("return window.__yuriImeOffset ? await window.__yuriImeOffset(px) : 0", arguments: ["px": Double(px)], in: nil, in: .page) { [weak self] _ in
-            guard let self, token == self.offsetGeneration else { return }
-            self.webOffset = px
-            completion()
-        }
+        emitImeState(open: overlap > 0, phase: "settled", height: overlap, duration: 0)
+        // The mirror stays engaged for the whole keyboard session: the page is
+        // never re-laid, so its header sits above the screen while lifted.
+        if overlap == 0 { releaseHeader() }
     }
 
     private func engageHeader() {
@@ -320,20 +305,50 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         headerGeneration += 1
         let token = headerGeneration
         main.callAsyncJavaScript("return window.__yuriNativeHeader ? await window.__yuriNativeHeader(false) : 0", in: nil, in: .page) { [weak self] _ in
-            guard let self, token == self.headerGeneration else { return }
-            self.setEngaged(false)
+            // The page resolves after its header frame painted; one UI-process
+            // turn lets that layer commit land. Any longer overlap of two
+            // translucent headers reads as a brightening band.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, token == self.headerGeneration else { return }
+                self.setEngaged(false)
+            }
         }
     }
 
     private func resetIme() {
-        offsetGeneration += 1
         keyboardOverlap = 0
         setLift(0)
-        if webOffset != 0 {
-            webOffset = 0
-            webView?.evaluateJavaScript("window.__yuriImeOffset&&window.__yuriImeOffset(0)")
-        }
+        publishLift(0, duration: 0)
         releaseHeader()
+    }
+
+    /// The page is never re-laid for the keyboard; only a full-height expanded
+    /// composer reads this target lift (mobile.css) to keep its text visible.
+    /// Written once per keyboard transition, never per frame.
+    private func publishLift(_ value: CGFloat, duration: Double) {
+        webView?.evaluateJavaScript("(()=>{const s=document.documentElement.style;"
+            + "s.setProperty('--yuri-native-ime-duration','\(Int(duration * 1000))ms');"
+            + "s.setProperty('--yuri-native-ime-lift','\(value)px')})()")
+    }
+
+    /// Translating the WKWebView moves its frame, and WebKit recomputes
+    /// env(safe-area-inset-*) from that frame: lifted, top and bottom drop to 0
+    /// (header slides under the status bar, the foot shrinks) and both return
+    /// near the end of a close with a full relayout. Publish the window insets,
+    /// which the keyboard and the lift never change, as fixed CSS variables.
+    private var publishedSafeArea: UIEdgeInsets?
+
+    private func publishSafeArea() {
+        guard let main = webView, let window = main.window else { return }
+        let insets = window.safeAreaInsets
+        guard insets != publishedSafeArea else { return }
+        publishedSafeArea = insets
+        let js = "(()=>{const s=document.documentElement.style;"
+            + "s.setProperty('--yuri-native-safe-top','\(insets.top)px');"
+            + "s.setProperty('--yuri-native-safe-bottom','\(insets.bottom)px');"
+            + "s.setProperty('--yuri-native-safe-left','\(insets.left)px');"
+            + "s.setProperty('--yuri-native-safe-right','\(insets.right)px')})()"
+        main.evaluateJavaScript(js)
     }
 
     private func emitImeState(open: Bool, phase: String, height: CGFloat, duration: Double) {

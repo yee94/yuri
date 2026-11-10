@@ -4069,7 +4069,7 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Keep a small breathing gap between the input card and the IME on every
    native platform. Flush-to-keyboard reads too tight on iPhone. */
-:root.yuri-capacitor-app.yuri-keyboard-open .yuri-mobile-composer {
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-keyboard-open .yuri-mobile-composer {
   /* Beat .bottom-safe-area's !important visual inset. The home indicator is
      behind the IME; leaving that padding in place parks the model row / foot
      padding under the keyboard (web only scrolls to the caret). */
@@ -4160,8 +4160,8 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Capacitor chat safe-area cover: keep the home-indicator / navigation foot
    on the semantic page background while preserving higher overlay layers. */
-:root.yuri-capacitor-app:not(.yuri-platform-android) body:has(.yuri-mobile-composer)::before,
-:root.yuri-capacitor-app:not(.yuri-platform-android) body:has(.yuri-mobile-readonly-prompt-foot)::before {
+:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer)::before,
+:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-readonly-prompt-foot)::before {
   content: "";
   position: fixed;
   z-index: 1;
@@ -4849,10 +4849,23 @@ html.yuri-barcode-scanner-active .yuri-barcode-scanner-chrome {
    Only while the IME moves a separate pinned transparent WebView is engaged
    and the in-page source hides (keeping layout and its panels). Header context panels/menus stay in this page —
    the single state owner — so they shift with the visible viewport top and
-   keep their in-page translucent/blurred surface. */
-:root.yuri-capacitor-app.yuri-native-ime .yuri-mobile-app-shell {
+   keep their in-page translucent/blurred surface.
+   iOS never offsets the page: a relayout is not committed within a keyboard
+   frame, so a moving shell showed a blank band under the header at close
+   start. There the shell keeps its full height (adjustPan-like) and the
+   mirror stays engaged for the whole keyboard session. */
+:root.yuri-capacitor-app.yuri-native-ime.yuri-platform-android .yuri-mobile-app-shell {
   margin-top: var(--yuri-native-viewport-top, 0px);
   height: calc(100dvh - var(--yuri-native-viewport-top, 0px));
+}
+
+/* iOS exception: a full-height expanded composer would have its text lifted
+   above the screen. Native publishes the keyboard target lift once per
+   transition; only this surface pads its top by it, eased along the keyboard
+   curve (approximation of UIKit curve 7) so its text does not jump. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-composer[data-mobile-expanded="true"] {
+  padding-top: calc(0.25rem + var(--yuri-native-ime-lift, 0px));
+  transition: padding-top var(--yuri-native-ime-duration, 0ms) cubic-bezier(0.38, 0.7, 0.125, 1);
 }
 
 :root.yuri-native-header-ready .yuri-native-header-source {
@@ -4905,8 +4918,32 @@ html.yuri-barcode-scanner-active .yuri-barcode-scanner-chrome {
   padding-bottom: 16px !important;
 }
 
-/* iOS native IME path: the keyboard overlap already covers the home
-   indicator, so the shell drops its bottom-safe pad while the keyboard is up. */
-:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android).yuri-keyboard-open .yuri-mobile-app-shell {
+/* iOS native IME path, same contract as Android: no shell bottom band and no
+   opaque safe-area cover; the composer foot owns one constant inset,
+   max(16px, home indicator), keyboard up or down. YuriNativeHeaderPlugin lifts
+   by the keyboard minus the indicator excess, so the gap above the keyboard
+   is the same 16px and nothing changes at the animation bookends. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-app-shell {
   padding-bottom: 0;
+}
+
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-readonly-prompt-foot {
+  padding-bottom: max(16px, var(--yuri-safe-area-bottom, 0px)) !important;
+}
+
+/* iOS native IME path: the lifted WKWebView would make WebKit recompute
+   env(safe-area-inset-*) from its moved frame (top/bottom drop to 0 mid-lift).
+   YuriNativeHeaderPlugin publishes the window insets as fixed variables; every
+   shared safe-area token resolves to them so the header, the composer foot and
+   the mirror header never move with the keyboard. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) {
+  --yuri-safe-area-top: var(--yuri-native-safe-top, env(safe-area-inset-top, 0px));
+  --yuri-safe-area-bottom: var(--yuri-native-safe-bottom, env(safe-area-inset-bottom, 0px));
+  --yuri-safe-area-left: var(--yuri-native-safe-left, env(safe-area-inset-left, 0px));
+  --yuri-safe-area-right: var(--yuri-native-safe-right, env(safe-area-inset-right, 0px));
+  --safe-area-inset-top: var(--yuri-safe-area-top);
+  --safe-area-inset-bottom: var(--yuri-safe-area-bottom);
+  --safe-area-inset-left: var(--yuri-safe-area-left);
+  --safe-area-inset-right: var(--yuri-safe-area-right);
 }

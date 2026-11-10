@@ -10,6 +10,9 @@
    recalc during which the layered `.chat-message-column` width clamp briefly
    lost, flashing message text to full width before it snapped back. */
 @import "katex/dist/katex.min.css";
+/* The media preview lives in a lazy chunk; injecting its stylesheet on the first
+   open forced a whole-document style recalc (~90ms with a long transcript). */
+@import "./components/chat/message/mediaPreviewTransition.css";
 @source "./**/*.{ts,tsx,css}";
 
 ::highlight(yuri-speech) {

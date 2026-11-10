@@ -114,7 +114,7 @@ export function MobileTabBar({ activeTab, onTabChange, className, tabMarks }: Mo
                   className="pointer-events-none absolute left-full -top-1 ml-0.5 inline-flex z-10"
                 >
                   {showAssistantUnread ? (
-                    <AssistantNavigationUnreadBadge className="h-[18px] min-w-[18px] bg-foreground px-1 text-[11px] font-bold tracking-normal text-background shadow-none ring-2 ring-background" />
+                    <AssistantNavigationUnreadBadge className="h-[18px] min-w-[18px] px-1 text-[11px] font-bold tracking-normal ring-2 ring-background" />
                   ) : (
                     <span className="inline-flex size-[18px] items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background">
                       <Icon name="loader-4" className="size-3 animate-spin" />

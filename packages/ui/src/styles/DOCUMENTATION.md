@@ -175,6 +175,18 @@ the circle. Only this cluster opts out of the global 36px touch minimum.
 
 The first-prompt establishing draft joins the main chat and hydrating overlay-foot contract. The idle draft keeps the in-flow Composer contract.
 
+## Assistant unread color calibration
+
+`--assistant-unread-fill` is fixed sRGB `#F95252` in both modes, targeting
+raw screenshot RGB `#CF6A58` under the same `Rec2020 Gamut with sRGB Transfer`
+profile used for voice calibration. `--assistant-unread-foreground` is opaque
+white. Desktop navigation, contact lists, pinned contacts and mobile badges
+share these tokens without accent-derived fills, translucency or inset shading.
+The mobile dock retains its outside background ring, not inverse badge colors.
+Native iOS uses the same sRGB fill through `UITabBarItem.badgeColor` and white
+badge text; this native part requires a new iOS build. Screenshot-profile RGB
+is not a portable CSS hex value; do not add a compensating CSS filter.
+
 ## `isMobile` vs `mobile-pointer` (do not confuse)
 
 Yuri has **two independent mobile signals**. Layout bugs that "look fine in DevTools inspect but wrong on device" almost always come from mixing them.

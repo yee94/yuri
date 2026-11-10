@@ -54,6 +54,26 @@ test('iOS WebView composer path uses the same native IME owner and pinned header
   // Separate transparent header WebView; never a bitmap.
   expect(ios).toContain('view.isOpaque = false');
   expect(ios).not.toMatch(/UIGraphicsImageRenderer|snapshotView|takeSnapshot/);
+  // Safe area: lift by keyboard minus home-indicator excess over the constant foot gap.
+  expect(ios).toContain('let excess = max(0, window.safeAreaInsets.bottom - Self.footGap)');
+  const css = readFileSync(path.join(mobile, '../ui/src/styles/mobile.css'), 'utf8');
+  expect(css).toContain(':root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-composer,');
+  expect(css).toContain(':root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer)::before');
+  // iOS never re-lays the page during a keyboard session (no JS on the lift path).
+  expect(ios).not.toMatch(/__yuriImeOffset|requestOffset/);
+  // Only the expanded composer follows the lift (one CSS variable per transition).
+  expect(ios).toContain("setProperty('--yuri-native-ime-lift'");
+  expect(css).toContain('.yuri-mobile-composer[data-mobile-expanded="true"] {');
+  expect(css).toContain(':root.yuri-capacitor-app.yuri-native-ime.yuri-platform-android .yuri-mobile-app-shell {');
+  expect(ios).not.toContain('setLift(previous)');
+  // Lifting the WKWebView must not change the page's safe area.
+  expect(ios).toContain("s.setProperty('--yuri-native-safe-top'");
+  expect(css).toContain('--yuri-safe-area-top: var(--yuri-native-safe-top, env(safe-area-inset-top, 0px));');
+  // Mirror is always rasterized: engaging only changes z-order (no first blank frame).
+  expect(ios).toContain('main.insertSubview(view, at: 0)');
+  expect(ios).toContain('main.bringSubviewToFront(header)');
+  // Mirror holds the header for the whole keyboard session (no second header at close start).
+  expect(ios).toContain('if overlap == 0 { releaseHeader() }');
   // Native liquid-glass composer keeps ownership of its keyboard.
   expect(ios).toContain('guard imeSync');
   const registry = readFileSync(path.join(mobile, 'ios/App/App/YuriBridgeViewController.swift'), 'utf8');

@@ -20,6 +20,23 @@ import { notifySessionOpenFailed } from '@/sync/openSessionWithFeedback';
 
 const SESSION_ROUTE_TIMEOUT_MS = 30_000;
 
+/** RouteState fields are primitives; equal fields mean the same route. */
+function isSameRouteState(a: RouteState, b: RouteState): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as Array<keyof RouteState>);
+  for (const key of keys) {
+    if ((a[key] ?? null) !== (b[key] ?? null)) return false;
+  }
+  return true;
+}
+
+/**
+ * The hook lives at the app root. Overlay history entries (image preview,
+ * sheets) pop without changing the path; keeping the previous object lets
+ * React bail out instead of re-rendering the whole app on every close.
+ */
+const readRoute = (next: RouteState = parseRoute()) =>
+  (previous: RouteState): RouteState => (isSameRouteState(previous, next) ? previous : next);
+
 /**
  * Check if running in VS Code webview context.
  */
@@ -108,7 +125,7 @@ export function useRouter(): void {
         settingsPath: 'home',
         diffFile: null,
       }, { replace: true, force: true });
-      setRoute(parseRoute());
+      setRoute(readRoute());
     } finally {
       isApplyingRouteRef.current = false;
     }
@@ -265,7 +282,7 @@ export function useRouter(): void {
 
       const state = getCurrentAppState();
       updateBrowserURL(state, options);
-      setRoute(parseRoute());
+      setRoute(readRoute());
     },
     [isVSCode, isEmbeddedChat, getCurrentAppState]
   );
@@ -435,7 +452,7 @@ export function useRouter(): void {
       prevSessionId = sessionId;
       prevDraftOpen = draftOpen;
       syncURLFromState();
-      setRoute(parseRoute());
+      setRoute(readRoute());
     });
 
     return unsubscribe;
@@ -511,7 +528,7 @@ export function useRouter(): void {
     const handlePopState = () => {
       // Parse the new URL and apply it
       const nextRoute = parseRoute();
-      setRoute(nextRoute);
+      setRoute(readRoute(nextRoute));
 
       // Check if this is a route with any params, or if we should restore defaults
       if (hasRouteParams()) {
@@ -553,7 +570,7 @@ export function useRouter(): void {
       }
       failedDeepLinkSessionIdsRef.current.clear();
       queueMicrotask(() => {
-        setRoute(parseRoute());
+        setRoute(readRoute());
       });
     });
   }, [isVSCode, isEmbeddedChat]);

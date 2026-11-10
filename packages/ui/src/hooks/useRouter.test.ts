@@ -17,6 +17,7 @@ const createHookHarness = () => {
   const effectSlots: EffectSlot[] = [];
   let hookIndex = 0;
   let mounted = false;
+  let renderCount = 0;
   let renderHook: (() => void) | null = null;
 
   const react = {
@@ -59,8 +60,12 @@ const createHookHarness = () => {
       if (!(index in stateSlots)) {
         stateSlots[index] = typeof initial === 'function' ? (initial as () => T)() : initial;
       }
-      const setState = (value: T) => {
-        stateSlots[index] = value;
+      const setState = (value: T | ((previous: T) => T)) => {
+        const previous = stateSlots[index] as T;
+        const next = typeof value === 'function' ? (value as (previous: T) => T)(previous) : value;
+        if (Object.is(previous, next)) return;
+        stateSlots[index] = next;
+        renderCount += 1;
         if (mounted) {
           renderHook?.();
         }
@@ -71,7 +76,10 @@ const createHookHarness = () => {
 
   return {
     react,
+    /** State commits that would schedule a React re-render. */
+    get renderCount() { return renderCount; },
     reset() {
+      renderCount = 0;
       effectSlots.forEach((slot) => slot.cleanup?.());
       stateSlots.length = 0;
       memoSlots.length = 0;
@@ -391,6 +399,23 @@ describe('useRouter', () => {
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(selectedAssistantID).toBe('assistant-b');
     expect(setCurrentSessionCalls).toEqual([]);
+  });
+
+  test('overlay history pops with an unchanged path do not re-render the app root', async () => {
+    harness.render(useRouter);
+    await Promise.resolve();
+    // Adopt the normalized initial URL first; only identical pops are measured.
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    const before = harness.renderCount;
+
+    for (let index = 0; index < 20; index += 1) {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    expect(harness.renderCount).toBe(before);
+
+    urlRoute = { ...urlRoute, tab: 'schedule' };
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(harness.renderCount).toBe(before + 1);
   });
 
   test('does not carry another assistant focus or revive a cleared assistant selection', async () => {

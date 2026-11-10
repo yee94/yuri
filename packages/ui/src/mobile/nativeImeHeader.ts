@@ -41,6 +41,7 @@ const NativeHeader = registerPlugin<NativeHeaderPlugin>('YuriNativeHeader');
 const HEADER_SELECTOR = 'header.yuri-mobile-detail-navigation, header.yuri-mobile-header';
 const SOURCE_CLASS = 'yuri-native-header-source';
 const READY_CLASS = 'yuri-native-header-ready';
+const VOLATILE_ROOT_CLASSES = new Set([READY_CLASS, 'yuri-keyboard-open', 'yuri-kb-animating', 'yuri-kb-hide', 'yuri-kb-caret-hold']);
 export const NATIVE_VIEWPORT_TOP_VAR = '--yuri-native-viewport-top';
 // Fixed-position panels (context metadata, menus) mounted inside the header.
 const HEADER_OVERLAY_SELECTOR = '.fixed, [role="dialog"]';
@@ -189,7 +190,9 @@ export function startNativeImeHeader(): () => void {
     // display:none keeps child indexes identical for tap replay.
     for (const overlay of clone.querySelectorAll<HTMLElement>(HEADER_OVERLAY_SELECTOR)) overlay.style.display = 'none';
     const html = clone.outerHTML;
-    const rootClass = [...root.classList].filter((name) => name !== READY_CLASS).join(' ');
+    // Keyboard-state classes flip at every bookend; mirroring them would
+    // re-render the mirror exactly when it is engaged.
+    const rootClass = [...root.classList].filter((name) => !VOLATILE_ROOT_CLASSES.has(name)).join(' ');
     const rootStyle = (root.getAttribute('style') ?? '')
       .replace(new RegExp(`${NATIVE_VIEWPORT_TOP_VAR}\\s*:[^;]*;?`, 'g'), '');
     const bodyClass = document.body.className;
@@ -268,6 +271,8 @@ export function startNativeImeHeader(): () => void {
   // Called by the native IME owner: move the layout into the visible region in
   // one web frame while native translation holds the pixels in place. Android
   // fences with its own visual-state callback; iOS awaits the returned paint.
+  // Android only; the iOS keyboard owner never offsets the page (it keeps the
+  // shell full height and pins the mirror for the whole keyboard session).
   win.__yuriImeOffset = (px: number) => {
     window.dispatchEvent(new Event('yuri:keyboard-native-layout'));
     root.style.setProperty(NATIVE_VIEWPORT_TOP_VAR, `${Math.max(0, px)}px`);

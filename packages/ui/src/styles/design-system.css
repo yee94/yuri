@@ -32,6 +32,10 @@
     --ui-regular-font-weight: 400;
     --voice-active-fill: #38CD80;
     --voice-active-foreground: white;
+    /* sRGB source for screenshot RGB #CF6A58 in Rec2020/sRGB-transfer,
+       calibrated like --voice-active-fill; never derive from the theme accent. */
+    --assistant-unread-fill: #F95252;
+    --assistant-unread-foreground: white;
     --yuri-scrollbar-thumb: oklch(0.32 0.03 50 / 0.4);
     --yuri-scrollbar-thumb-hover: oklch(0.32 0.03 50 / 0.6);
     /* User density setting (useUIStore.applyPadding writes this name).

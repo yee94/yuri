@@ -1,5 +1,17 @@
 import { afterEach, expect, test, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { animateMediaPreview } from './mediaPreviewTransition';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+test('preview styles ship with the main stylesheet, not the lazy preview chunk', () => {
+    // A stylesheet injected on first open restyles the whole document (~90ms).
+    expect(readFileSync(path.join(here, 'mediaPreviewTransition.ts'), 'utf8')).not.toMatch(/import\s+['"][^'"]+\.css['"]/);
+    expect(readFileSync(path.join(here, '../../../index.css'), 'utf8'))
+        .toContain('@import "./components/chat/message/mediaPreviewTransition.css";');
+});
 
 const original = Object.getOwnPropertyDescriptor(document, 'startViewTransition');
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate');

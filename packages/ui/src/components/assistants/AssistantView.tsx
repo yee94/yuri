@@ -133,7 +133,7 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
             <span className={cn('block truncate typography-ui-label leading-5', selected ? 'font-semibold' : 'font-medium')}>{displayName}</span>
             <span className={cn(ASSISTANT_MESSAGE_PREVIEW_CLASS, 'mt-1 text-[length:calc(var(--text-micro)*0.9)] leading-5')}>{summary}</span>
           </span>
-          <AssistantUnreadBadge count={unreadCount} className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
+          <AssistantUnreadBadge count={unreadCount} className="h-3.5 min-w-3.5 px-1 text-[10px]" />
         </button>
       )}
     />
