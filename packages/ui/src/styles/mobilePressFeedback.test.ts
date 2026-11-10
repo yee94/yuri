@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mobileCss = readFileSync(join(__dirname, 'mobile.css'), 'utf-8');
+const designSystemCss = readFileSync(join(__dirname, 'design-system.css'), 'utf-8');
 const buttonSource = readFileSync(join(__dirname, '../components/ui/button.tsx'), 'utf-8');
 const dropdownStylesSource = readFileSync(join(__dirname, '../components/ui/dropdown-menu.styles.ts'), 'utf-8');
 const contextMenuSource = readFileSync(join(__dirname, '../components/ui/context-menu.tsx'), 'utf-8');
@@ -17,6 +18,16 @@ const scheduledTasksSource = readFileSync(join(__dirname, '../components/session
 const scheduledEditorSource = readFileSync(join(__dirname, '../components/session/ScheduledTaskEditorDialog.tsx'), 'utf-8');
 
 describe('mobile press feedback scale policy', () => {
+  test('floating header buttons retain material shadows after touch focus and reserve focus chrome for keyboard', () => {
+    const resets = designSystemCss.match(/\*:focus(?:-visible)?[^{}]+\{[^}]*box-shadow: none !important;[^}]*\}/g);
+    expect(resets).toHaveLength(2);
+    for (const reset of resets!) expect(reset).toContain(':not(.yuri-mobile-floating-action)');
+    expect(mobileCss).toMatch(/\.yuri-mobile-floating-action:focus-visible\s*\{[^}]*outline: 2px solid var\(--interactive-focus-ring\) !important/s);
+    const glassVariant = buttonSource.match(/mobileGlass:\s*"([^"]+)"/)?.[1];
+    expect(glassVariant).toContain('active:bg-interactive-active');
+    expect(glassVariant).not.toContain('hover:');
+  });
+
   test('default and compact press scales grow with restrained bounds', () => {
     expect(mobileCss).toContain('--yuri-press-soft-scale');
     expect(mobileCss).toContain('--yuri-press-compact-scale: 1.05');

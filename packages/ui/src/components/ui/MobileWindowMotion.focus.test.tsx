@@ -66,6 +66,38 @@ async function tap(element: HTMLElement) {
 }
 
 describe('mobile model picker focus through Settings hosts', () => {
+  test('compact plugin chrome leaves a small title and resize strip without a close action', async () => {
+    await act(async () => root.render(<MobileResizableSheet id="plugin-content" open initiallyExpanded compactHeader showCloseButton={false}
+      onOpenChange={() => undefined} title="Runmark" ariaLabel="Runmark" closeAriaLabel="Close plugin" resizeAriaLabel="Resize plugin">
+      <div data-plugin-content />
+    </MobileResizableSheet>));
+    const surface = document.querySelector<HTMLElement>('[data-yuri-motion-id="plugin-content"]')!;
+    expect(surface.className).toContain('h-[98dvh]');
+    expect(surface.querySelector('[data-mobile-sheet-snap-handle]')?.className).toContain('min-h-4');
+    const header = surface.querySelector('[data-mobile-sheet-header]')!;
+    expect(header.className).toContain('min-h-6');
+    expect(header.className).toContain('text-xs');
+    expect(header.textContent).toBe('Runmark');
+    expect(surface.querySelector('[aria-label="Close plugin"]')).toBeNull();
+    expect(surface.querySelector('[data-plugin-content]')).not.toBeNull();
+  });
+
+  test.each([true, false])('sheet close action is opt-out without removing the title or resize handle (show=%s)', async (showCloseButton) => {
+    const onOpenChange = vi.fn();
+    await act(async () => root.render(<MobileResizableSheet id="plugins" open onOpenChange={onOpenChange}
+      title="Plugins" ariaLabel="Plugins" closeAriaLabel="Close plugins" resizeAriaLabel="Resize plugins"
+      showCloseButton={showCloseButton}><div>Plugin list</div></MobileResizableSheet>));
+    const surface = document.querySelector<HTMLElement>('[data-yuri-motion-id="plugins"]')!;
+    expect(surface.textContent).toContain('Plugins');
+    expect(surface.querySelector('[data-mobile-sheet-snap-handle]')).not.toBeNull();
+    const close = surface.querySelector<HTMLButtonElement>('[aria-label="Close plugins"]');
+    expect(Boolean(close)).toBe(showCloseButton);
+    if (close) {
+      await act(async () => close.click());
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    }
+  });
+
   test('keeps initial focus outside interactive descendants without focusing a field or resize handle', async () => {
     await act(async () => root.render(<MobileResizableSheet id="export-menu" open onOpenChange={() => undefined}
       ariaLabel="File preview" closeAriaLabel="Close" resizeAriaLabel="Resize">

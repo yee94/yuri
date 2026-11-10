@@ -106,6 +106,18 @@ failures stay silent outside plugin settings: no file-view banner/retry row,
 command-palette error entry, or root-surface toast. The provider/host retains failure
 state for diagnostics and the Plugins manager's explicit reload controls.
 
+The mobile Apps entry opens a catalog titled Plugins without a close button;
+dragging, tapping the scrim and Android Back retain shared dismissal behavior.
+The catalog keeps the standard header size. Successful page navigation replaces
+the catalog by unmounting its sheet in the same React batch as the page selection,
+without a catalog exit animation or retained hidden DOM. Ordinary scrim/gesture/Back
+dismissal keeps the shared animation. A navigation guard rejection keeps the catalog available.
+Mobile plugin windows use a compact 40px handle/title header without a close button,
+initially expanded; dragging, scrim dismissal and Android Back remain available.
+Plugin-owned toolbars stay inside the content rather than the host header. Their sheet surface
+has no inline borders, so plugin content spans the full width without pale side rails;
+desktop workspace surfaces and unrelated mobile sheets keep their existing borders.
+
 The Plugins collection has no separate GUI inventory or row action menus.
 A provider row carries a muted 13px window icon (localized UI-plugin tooltip)
 even when its GUI is disabled; it is not a text badge.

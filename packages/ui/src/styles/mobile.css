@@ -2165,6 +2165,11 @@ button.yuri-mobile-schedule-assistant::before {
   z-index: 1;
 }
 
+.yuri-mobile-floating-action:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring) !important;
+  outline-offset: 3px;
+}
+
 .dark .yuri-mobile-floating-action {
   color: var(--surface-foreground);
 }
@@ -3987,6 +3992,10 @@ button.yuri-mobile-schedule-assistant::before {
 [data-mobile-overlay-active="true"]:not([inert]) [data-yuri-motion-id]:has([data-mobile-html-preview="true"]),
 :root.yuri-capacitor-app [data-mobile-overlay-active="true"]:not([inert]) .pwa-overlay-panel[data-yuri-motion-id]:has([data-mobile-html-preview="true"]) {
   padding-bottom: 0 !important;
+}
+
+[data-mobile-overlay-active="true"]:not([inert]) .pwa-overlay-panel[data-yuri-motion-id]:has([data-gui-plugin-page]) {
+  border-inline-width: 0;
 }
 
 :root.yuri-capacitor-app .pwa-overlay-panel .pwa-overlay-scroll {

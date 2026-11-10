@@ -6,13 +6,16 @@ import { MobileGuiApps } from './MobileGuiApps';
 import { GuiPluginSurface } from './GuiPluginSurface';
 import { useUIStore } from '@/stores/useUIStore';
 
-const fixture = vi.hoisted(() => ({ context: null as GuiPluginsContextValue | null }));
+const fixture = vi.hoisted(() => ({ context: null as GuiPluginsContextValue | null, sheetUnmount: vi.fn() }));
 vi.mock('@/lib/gui-plugins/react', () => ({ useGuiPlugins: () => fixture.context }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: true }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: ({ name }: { name: string }) => <svg data-icon={name} /> }));
 vi.mock('@/components/ui/FilePreviewError', () => ({ FilePreviewError: ({ message }: { message: string }) => <p>{message}</p> }));
-vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileResizableSheet: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <section data-sheet>{children}</section> : null }));
+vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileResizableSheet: ({ open, title, compactHeader = false, showCloseButton = true, children }: { open: boolean; title: React.ReactNode; compactHeader?: boolean; showCloseButton?: boolean; children: React.ReactNode }) => {
+  React.useEffect(() => () => fixture.sheetUnmount(), []);
+  return open ? <section data-sheet data-compact-header={String(compactHeader)}><h2>{title}</h2>{showCloseButton ? <button aria-label="sheet-close" /> : null}{children}</section> : null;
+} }));
 vi.mock('./GuiPluginWindow', () => ({ GuiPluginWindow: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <section>{children}</section> : null }));
 vi.mock('./GuiPluginPage', () => ({ GuiPluginPage: () => <div data-page /> }));
 vi.mock('./GuiPluginMount', () => ({ GuiPluginMount: () => null }));
@@ -34,6 +37,7 @@ const click = async (label: string) => {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   previous = useUIStore.getState();
+  fixture.sheetUnmount.mockClear();
   useUIStore.setState({ activeMainTab: 'chat', activeGuiPage: null, mainTabGuard: null, isMobile: true });
   fixture.context = {
     host: {} as GuiPluginsContextValue['host'], snapshot: { plugins: [], pages: [], commands: [], titlebarItems: [], panels: [], settings: [], menuItems: [], activePanel: null },
@@ -51,6 +55,9 @@ it('shows the entry from inventory before plugins load, with loading then failur
   await click('guiPlugins.apps');
   expect(fixture.context!.requestLoad).toHaveBeenCalledOnce();
   expect(container.querySelector('[data-gui-apps-loading]')).not.toBeNull();
+  expect(container.querySelector('[data-sheet] h2')?.textContent).toBe('settings.page.plugins.title');
+  expect(container.querySelector('[aria-label="sheet-close"]')).toBeNull();
+  expect(container.querySelector('[data-sheet]')?.getAttribute('data-compact-header')).toBe('false');
   fixture.context = { ...fixture.context!, requested: true, loading: false, error: 'offline' };
   await draw();
   expect(container.querySelector('[data-gui-apps-loading]')).toBeNull();
@@ -81,6 +88,21 @@ it('only exposes registered pages and opens their exact identity from icon cards
   await click('Second');
   expect(useUIStore.getState().activeGuiPage).toBe('["two","main"]');
   expect(useUIStore.getState().activeMainTab).toBe('plugin');
+  expect(container.querySelector('[data-sheet]')).toBeNull();
+  expect(fixture.sheetUnmount).toHaveBeenCalledOnce();
+  await act(async () => useUIStore.getState().closeGuiPage());
+  expect(container.querySelector('[data-sheet]')).toBeNull();
+  await click('guiPlugins.apps');
+  expect(container.querySelector('[data-sheet]')).not.toBeNull();
+});
+
+it('retains the catalog when navigation into a plugin is blocked', async () => {
+  snapshot({ pages: [{ key: '["one","main"]', pluginId: 'one', title: 'First' }] });
+  useUIStore.setState({ mainTabGuard: () => false });
+  await draw(); await click('guiPlugins.apps'); await click('First');
+  expect(useUIStore.getState().activeMainTab).toBe('chat');
+  expect(container.querySelector('[data-sheet]')).not.toBeNull();
+  expect(fixture.sheetUnmount).not.toHaveBeenCalled();
 });
 
 it('does not keep another runtime’s app sheet open', async () => {

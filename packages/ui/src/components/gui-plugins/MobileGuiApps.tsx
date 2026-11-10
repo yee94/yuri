@@ -16,10 +16,10 @@ import { guiPluginIcon } from './icons';
 export function MobileGuiApps() {
   const { host, snapshot, inventory, loading, error, requested, requestLoad, refresh } = useGuiPlugins();
   const { t } = useI18n();
-  const [opened, setOpened] = React.useState<{ host: typeof host } | null>(null);
+  const [opened, setOpened] = React.useState<{ host: typeof host } | 'replaced' | null>(null);
   const enabled = inventory.some(plugin => plugin.enabled);
   if (!enabled && !snapshot.pages.length) return null;
-  const open = opened !== null && opened.host === host;
+  const open = opened !== null && opened !== 'replaced' && opened.host === host;
   const failed = Boolean(error) || inventory.some(plugin => plugin.enabled && plugin.error);
   return <>
     <Button variant="mobileGlass" size="mobileIcon" aria-label={t('guiPlugins.apps')} onClick={() => {
@@ -28,12 +28,12 @@ export function MobileGuiApps() {
     }}>
       <Icon name="apps-2-ai" className="size-5" />
     </Button>
-    <MobileResizableSheet id="gui-apps" open={open} onOpenChange={value => setOpened(value ? { host } : null)} title={t('guiPlugins.apps')}
-      ariaLabel={t('guiPlugins.apps')} closeAriaLabel={t('guiPlugins.close')} resizeAriaLabel={t('guiPlugins.resize')}>
+    {opened !== 'replaced' ? <MobileResizableSheet id="gui-apps" open={open} onOpenChange={value => setOpened(value ? { host } : null)} title={t('settings.page.plugins.title')}
+      showCloseButton={false} ariaLabel={t('settings.page.plugins.title')} closeAriaLabel={t('guiPlugins.close')} resizeAriaLabel={t('guiPlugins.resize')}>
       {snapshot.pages.length ? <div className="grid grid-cols-2 content-start gap-3 overflow-y-auto p-4" data-gui-apps>
         {snapshot.pages.map(page => <Button key={page.key} size="lg"
           className="h-auto min-w-0 flex-col items-start gap-4 rounded-2xl p-4 text-left"
-          onClick={() => useUIStore.getState().openGuiPage(page.key)}>
+          onClick={() => { if (useUIStore.getState().openGuiPage(page.key)) setOpened('replaced'); }}>
           <Icon name={guiPluginIcon(page.icon) ?? 'window'} className="size-8" />
           <span className="line-clamp-2 w-full whitespace-normal break-words typography-ui-label">{page.title}</span>
         </Button>)}
@@ -43,6 +43,6 @@ export function MobileGuiApps() {
         <FilePreviewError message={t(failed ? 'guiPlugins.error' : 'guiPlugins.mobile.noApps')} />
         {failed ? <Button className="mb-4" onClick={refresh}>{t('guiPlugins.mobile.retry')}</Button> : null}
       </div>}
-    </MobileResizableSheet>
+    </MobileResizableSheet> : null}
   </>;
 }

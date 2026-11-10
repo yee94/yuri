@@ -19,7 +19,7 @@ export function GuiPluginWindow({ id, open, title, onClose, children, actions }:
     return (
       <MobileResizableSheet id={id} open={open} onOpenChange={onOpenChange}
         title={title} ariaLabel={title} closeAriaLabel={t('guiPlugins.close')}
-        resizeAriaLabel={t('guiPlugins.resize')} trailing={actions} initiallyExpanded>
+        resizeAriaLabel={t('guiPlugins.resize')} trailing={actions} initiallyExpanded compactHeader showCloseButton={false}>
         {children}
       </MobileResizableSheet>
     );
