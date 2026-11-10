@@ -244,6 +244,7 @@ export const useChatAutoFollow = ({
     // stable main view); only the composer/shell follow the keyboard.
     // Content-growth follow (streaming, notifyContentChange) stays independent.
     const keyboardGeometryFreezeRef = React.useRef(false);
+    const nativeLayoutAnchorRef = React.useRef<{ element: HTMLDivElement; top: number; height: number } | null>(null);
     // Settled keyboard open (from yuri:keyboard-settled). Distinct from freeze:
     // expand freezes provisionally before willShow; only settled open keeps the
     // freeze for the whole IME session.
@@ -989,6 +990,18 @@ export const useChatAutoFollow = ({
             return;
         }
         const geometry = readScrollGeometry(el);
+        const nativeAnchor = nativeLayoutAnchorRef.current;
+        if (nativeAnchor?.element === el && nativeAnchor.height !== geometry.clientHeight) {
+            nativeLayoutAnchorRef.current = null;
+            if (stateRef.current === 'released') {
+                // Native translation moves history as well as the composer.
+                // Preserve that presented position when the viewport takes over.
+                el.scrollTop = Math.max(0, nativeAnchor.top + nativeAnchor.height - geometry.clientHeight);
+                markAuto(el);
+                updateOverflowAndButton(readScrollGeometry(el));
+                return;
+            }
+        }
         if (!canScrollGeometry(geometry)) {
             updateOverflowAndButton(geometry);
             return;
@@ -1038,8 +1051,10 @@ export const useChatAutoFollow = ({
     useResizeObserver(resizeContentTarget, handleContentResize);
 
     // ── native keyboard transitions (Capacitor choreography) ────────────────
-    // The chat scroller gets NO transforms and NO auto re-pin for keyboard
-    // geometry. Transforming the scroller rebuilds WebKit compositing layers
+    // The chat scroller gets NO web transforms. Android translates the native
+    // WebView, then resizes once. The existing owner compensates that handoff;
+    // following remains at the live edge. Other keyboard
+    // paths freeze geometry-driven re-pin. Transforming rebuilds WebKit compositing layers
     // on long chats; re-pinning to the bottom on show/hide is the IM anti-pattern
     // (main view jumps while the keyboard rises). Contract:
     //   show / open: freeze geometry-driven chase; keep scrollTop; composer and
@@ -1093,15 +1108,23 @@ export const useChatAutoFollow = ({
     });
 
     const handleKeyboardAnim = useEvent((event: Event) => {
-        const detail = (event as CustomEvent<{ phase: 'show' | 'hide'; slide: number; durationMs: number; easing: string }>).detail;
+        const detail = (event as CustomEvent<{ phase: 'show' | 'hide'; durationMs: number; nativeResize?: boolean }>).detail;
         if (!detail) return;
         clearExpandFreezeTimer();
         freezeGeometry(detail.durationMs);
+        if (detail.nativeResize) keyboardGeometryFreezeRef.current = false;
     });
 
     const handleKeyboardSettled = useEvent((event: Event) => {
-        const detail = (event as CustomEvent<{ open?: boolean }>).detail;
+        const detail = (event as CustomEvent<{ open?: boolean; nativeResize?: boolean }>).detail;
         clearExpandFreezeTimer();
+        if (detail?.nativeResize) {
+            keyboardOpenRef.current = detail.open === true;
+            keyboardGeometryFreezeRef.current = false;
+            animationGuardUntilRef.current = now() + ANIMATION_GUARD_MS;
+            handleContentResize();
+            return;
+        }
         // Keep freeze while the keyboard remains open so residual layout
         // (SystemBars, safe-area, late composer measure) cannot re-pin.
         // Only unfreeze after hide has settled.
@@ -1126,6 +1149,12 @@ export const useChatAutoFollow = ({
     });
 
     const keyboardListenerTarget = enabled && typeof window !== 'undefined' ? window : noEventTarget;
+    useEventListener('yuri:keyboard-native-layout', () => {
+        const element = scrollRef.current;
+        nativeLayoutAnchorRef.current = element
+            ? { element, top: element.scrollTop, height: element.clientHeight }
+            : null;
+    }, keyboardListenerTarget);
     useEventListener('yuri:keyboard-intent', handleKeyboardIntent, keyboardListenerTarget);
     useEventListener('yuri:keyboard-anim', handleKeyboardAnim, keyboardListenerTarget);
     useEventListener('yuri:keyboard-settled', handleKeyboardSettled, keyboardListenerTarget);
@@ -1134,6 +1163,7 @@ export const useChatAutoFollow = ({
         if (!enabled || typeof window === 'undefined') return;
         return () => {
             clearExpandFreezeTimer();
+            nativeLayoutAnchorRef.current = null;
             keyboardGeometryFreezeRef.current = false;
             keyboardOpenRef.current = false;
         };

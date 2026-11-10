@@ -146,6 +146,26 @@ const touch = (target: Element, type: string, clientY?: number, clientX = 20) =>
 }
 
 describe('useAssistantContactAutoFollow', () => {
+  test.each([true, false])('Android native IME layout keeps the presented position (following=%s)', async (following) => {
+    const geometry: Geometry = { top: 0, height: 2000, client: 700, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    expect(geometry.top).toBe(1300)
+    if (!following) {
+      wheel(probe.scroller, -20)
+      geometry.top = 900
+      probe.scroller.dispatchEvent(new Event('scroll'))
+    }
+    const before = geometry.top
+    // Native translated by 300px; the page now absorbs it at its top.
+    window.dispatchEvent(new Event('yuri:keyboard-native-layout'))
+    geometry.client = 400
+    TestResizeObserver.emit(probe.scroller)
+    expect(geometry.top).toBe(before + 300)
+    // Repeated delivery never compensates twice.
+    TestResizeObserver.emit(probe.scroller)
+    expect(geometry.top).toBe(before + 300)
+  })
+
   test('eases growth, retargets once, and cancels on upward intent without fighting the reader', async () => {
     motionState.reduced = false
     const stop = vi.fn()

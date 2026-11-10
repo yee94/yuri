@@ -3880,18 +3880,13 @@ button.yuri-mobile-schedule-assistant::before {
    stays pinned; the composer sits at the new shell bottom above the IME.
    No transform FLIP.
 
-   Android: keyboard intent / composer focusin starts a short (~200ms)
-   composer-only CSS FLIP before IME movement. Only the bottom chat composer
-   arms this path — question cards and other fields must not. Target height
-   comes from the previous measured IME height (39dvh on the first open); a
-   state-only native event calibrates and caches the settled height. Hide is
-   ~100ms so a late close signal can catch up. No progress bridge or per-frame
-   JS geometry.
-   Header stays fixed; shell keeps solid bottom-safe breathing room.
+   Android: ImeSyncBridge resizes the native viewport's bottom with system IME
+   animation frames. Header stays fixed; all web content shares the resized
+   viewport. No CSS lift, guessed height, progress bridge or second inset.
    https://developer.android.com/develop/ui/views/layout/sw-keyboard
 
    --yuri-keyboard-inset: portal overlays. --yuri-kb-layout: iOS shell height (and
-   Android unused / kept at 0 during FLIP). --yuri-kb-scroll-inset: chat-scroll
+   Android always 0). --yuri-kb-scroll-inset: chat-scroll
    padding for non-composer fields (question cards, etc.) when the shell is
    not shrunk; cleared to 0 while composer focus owns --yuri-kb-layout. */
 /* Match the tabs-root canvas so Capacitor bottom-safe padding and any
@@ -3916,12 +3911,11 @@ button.yuri-mobile-schedule-assistant::before {
   );
 }
 
-/* Android: keep the shell's solid bottom-safe padding while the IME is open.
-   The gap paints with the shell's own --background (set on this element), so
-   the composer has breathing room above the keyboard instead of sitting flush,
-   and chat content never shows through the gap. */
+/* Android: no shell-level bottom band. Pages run to the physical edge; the
+   composer/foot owns its own small inset below (see the Android composer
+   rules), so nothing opaque is painted over the gesture area. */
 :root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-app-shell {
-  padding-bottom: var(--yuri-app-bottom-safe, 16px);
+  padding-bottom: 0;
 }
 
 /* Portal surfaces (bottom sheets, overlay panels) render at <body> level, outside
@@ -4005,11 +3999,19 @@ button.yuri-mobile-schedule-assistant::before {
   transition: height 0.25s cubic-bezier(0.38, 0.7, 0.125, 1);
 }
 
+/* Android's viewport already moves with the IME. CSS height/bottom transitions
+   would chase that moving target and lag behind it, including portaled sheets. */
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-fill-screen,
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface,
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface.yuri-mobile-window-motion {
+  transition: none;
+}
+
 /* Keyboard FLIP movers stay layer-promoted for the Capacitor session. Toggling
    will-change on every open/close churns WebKit compositor layers and slows
    later animations; keep a stable promotion on the fixed movers instead. */
-:root.yuri-capacitor-app .yuri-mobile-composer,
-:root.yuri-capacitor-app .yuri-draft-center {
+:root.yuri-capacitor-app:not(.yuri-platform-android) .yuri-mobile-composer,
+:root.yuri-capacitor-app:not(.yuri-platform-android) .yuri-draft-center {
   will-change: transform;
 }
 
@@ -4026,13 +4028,9 @@ button.yuri-mobile-schedule-assistant::before {
 }
 
 :root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-app-shell .chat-scroll {
-  /* Android keeps the FLIP constant-viewport: shell shrinks by --yuri-kb-layout
-     but the scroller extends that far below so virtualizer clientHeight stays
-     stable across the composer transform. */
-  bottom: calc(
-    -1 * max(var(--yuri-kb-layout, 0px) - var(--yuri-app-bottom-safe, 0px), 0px)
-  );
-  padding-bottom: var(--yuri-kb-scroll-inset, var(--yuri-kb-layout, 0px));
+  /* Native viewport sizing is the only keyboard inset, including question fields. */
+  bottom: 0;
+  padding-bottom: 0;
 }
 
 /* iOS: page-push layout. The scroller is a normal flex sibling above the
@@ -4079,8 +4077,8 @@ button.yuri-mobile-schedule-assistant::before {
   box-shadow: none;
 }
 
-:root.yuri-capacitor-app.yuri-keyboard-open .yuri-mobile-composer::before,
-:root.yuri-capacitor-app.yuri-kb-animating .yuri-mobile-composer::before {
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-keyboard-open .yuri-mobile-composer::before,
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-kb-animating .yuri-mobile-composer::before {
   content: "";
   position: absolute;
   z-index: -2;
@@ -4153,8 +4151,8 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Capacitor chat safe-area cover: keep the home-indicator / navigation foot
    on the semantic page background while preserving higher overlay layers. */
-:root.yuri-capacitor-app body:has(.yuri-mobile-composer)::before,
-:root.yuri-capacitor-app body:has(.yuri-mobile-readonly-prompt-foot)::before {
+:root.yuri-capacitor-app:not(.yuri-platform-android) body:has(.yuri-mobile-composer)::before,
+:root.yuri-capacitor-app:not(.yuri-platform-android) body:has(.yuri-mobile-readonly-prompt-foot)::before {
   content: "";
   position: fixed;
   z-index: 1;
@@ -4833,4 +4831,73 @@ html.yuri-barcode-scanner-active .yuri-barcode-scanner-chrome {
 :root.yuri-native-ios-composer .yuri-scroll-to-bottom--expanded,
 :root.yuri-native-ios-composer .yuri-scroll-to-bottom--compact {
   display: none !important;
+}
+
+/* Two-WebView native IME experiment (Android; iOS WebView composer path).
+   The native IME owner translates the main WebView by the IME height and, once the
+   keyboard rests, asks the page to absorb that height at its top
+   (--yuri-native-viewport-top). At rest the page paints its own header.
+   Only while the IME moves a separate pinned transparent WebView is engaged
+   and the in-page source hides (keeping layout and its panels). Header context panels/menus stay in this page —
+   the single state owner — so they shift with the visible viewport top and
+   keep their in-page translucent/blurred surface. */
+:root.yuri-capacitor-app.yuri-native-ime .yuri-mobile-app-shell {
+  margin-top: var(--yuri-native-viewport-top, 0px);
+  height: calc(100dvh - var(--yuri-native-viewport-top, 0px));
+}
+
+:root.yuri-native-header-ready .yuri-native-header-source {
+  visibility: hidden;
+}
+
+:root.yuri-native-header-ready .yuri-native-header-source .fixed {
+  visibility: visible;
+}
+
+/* Fixed panels with top+bottom insets: margin shifts the top and shrinks the
+   box, so the panel starts under the pinned header and ends above the IME. */
+:root.yuri-native-ime .yuri-native-header-source .fixed {
+  margin-top: var(--yuri-native-viewport-top, 0px);
+}
+
+:root.yuri-native-ime .yuri-native-header-source .fixed [role="dialog"] {
+  max-height: min(
+    72dvh,
+    calc(
+      100dvh - var(--yuri-native-viewport-top, 0px) -
+        var(--yuri-safe-area-top, 0px) -
+        var(--yuri-mobile-detail-navigation-height, 3.5rem) - 1rem
+    )
+  ) !important;
+}
+
+/* Portaled sheets live outside the shell; keep their top inside the visible
+   region while the page absorbs the IME at its top. */
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface {
+  top: var(--yuri-native-viewport-top, 0px);
+}
+
+:root.yuri-capacitor-app.yuri-native-ime .pwa-overlay-panel {
+  max-height: calc(
+    100dvh - var(--yuri-native-viewport-top, 0px) -
+      max(0.75rem, env(safe-area-inset-top))
+  );
+}
+
+/* Android composer foot sits lower: the shell has no bottom band and no
+   opaque safe-area cover. One constant 16px gap, keyboard up or down: the
+   IME owner moves the WebView natively, so any keyboard-state padding change
+   would land as a one-frame jump at the animation bookends. The composer host
+   fill itself stays the only background (it fades to transparent in compact
+   mode). */
+:root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-platform-android.yuri-keyboard-open .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-readonly-prompt-foot {
+  padding-bottom: 16px !important;
+}
+
+/* iOS native IME path: the keyboard overlap already covers the home
+   indicator, so the shell drops its bottom-safe pad while the keyboard is up. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android).yuri-keyboard-open .yuri-mobile-app-shell {
+  padding-bottom: 0;
 }

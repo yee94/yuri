@@ -1,5 +1,19 @@
 # Chat components
 
+## Android native IME viewport experiment
+
+The A experiment APK translates the native WebView while a local header snapshot
+stays fixed. Viewport resizing happens only at handoff. Shared UI receives
+`nativeResize: true` keyboard bookends, not per-frame geometry.
+`yuri:keyboard-native-layout` captures the current viewport before resizing;
+`useChatAutoFollow` owns the one-shot compensation for released history so removing
+native translation does not undo the movement already shown. It never acquires
+follow; following remains at the live edge. A intentionally moves history too.
+The iOS/legacy non-native-resize path retains its geometry freeze. No second
+scroll writer, CSS composer lift or cached keyboard-height estimate is added.
+The auto-follow regression covers both modes and both following/reading states;
+actual IME-to-WebView synchronization and frame pacing require device evidence.
+
 Explicit Markdown directory links in a local desktop session open in the system
 file manager, including with Cmd/Ctrl click. Directory detection runs only against
 the active local desktop; remote paths never target the local machine. This uses

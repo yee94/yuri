@@ -265,9 +265,50 @@ WebP fixture to a simulator's Photos library. Run it with `YURI_IOS_TEST_DEVICE`
 
 ## Native Android Keyboard
 
-`ImeSyncBridge` emits `yuri:ime-state` visibility and height through the asynchronous Capacitor WebView bridge. Shared UI's `useNativeMobileChrome` in `packages/ui/src/apps/MobileApp.tsx` owns the Android response. On native close, both its open and already-closed paths restrict `blur()` to a focused text field inside `.yuri-mobile-composer`. Settings, model-picker search, and other fields retain DOM focus across late or repeated close events. Keyboard insets, classes, and composer lift still follow the existing close lifecycle. Native Back dismissal continues to blur the focused composer so a subsequent tap can start a fresh keyboard session.
+This branch experiments with **A: native translation + header snapshot**.
+`ImeSyncBridge` translates the WebView from actual system IME insets in
+`onProgress`, without per-frame viewport resize or JavaScript calls. One local
+`ImeMotionOverlay` bitmap captures **only the top header strip**, selected from
+the visible detail-navigation/surface/collapsing header. No full-page bitmap is
+created or painted during handoff. Capture uses synchronous
+`WebView.draw`, not asynchronous window PixelCopy (which could capture an already
+translated frame). Screenshots never leave memory or cross the JS bridge.
 
-The shared UI focus regression tests exercise the production hook and real picker sheet with simulated native events; actual device event ordering and keyboard presentation require Android validation.
+Close expands the viewport once at start; open shrinks once at end. A WebView
+visual-state callback after layout releases the fixed header. Generation checks
+reject stale completions; an 800ms timeout releases the header
+with a warning instead of leaving a frozen screenshot. Snapshot allocation failure
+falls back to settled resize, not native translation without a fixed header.
+The bitmap is released on transition end/interruption/activity teardown. Header
+animation and interaction pause while covered. Header capture resolves alpha
+against the current page backdrop so browser-composited glass is not blended a
+second time. Its blurred backdrop is frozen for the transition, not live native
+glass. Bitmap capture uses the WebView density and explicit pixel destination
+bounds (no second CSS/DPR/density scaling), preserving icon sizes.
+`adjustResize` is retained for
+Android compatibility; only the inset owner changes padding. True system progress
+is Android 11+; older systems use the compatibility callback.
+
+`yuri:ime-state` sends `phase: start | settled`, visibility, informational window-px
+height, system duration and `nativeResize: true` only at bookends or standalone
+inset changes. `useNativeMobileChrome` sets presentation state but never caches
+height, transforms the composer, or subtracts another CSS inset. Portaled sheets,
+question fields and the chat use the same resized viewport. Only settled native
+close blurs a focused composer; Settings/picker search retain focus, and cancelled
+Back preserves the composer. `useChatAutoFollow` retains scroll ownership: its
+ordinary resize observer keeps following at the live edge. Before native layout,
+`yuri:keyboard-native-layout` captures the viewport in that same owner; released
+history compensates once for the native translation already shown, without
+acquiring follow. Thus A moves history too (unlike the earlier resize experiment).
+iOS, hosted mobile and desktop retain their existing behavior.
+
+Install this experiment as a debug APK with its matching bundled Web assets;
+do not publish the Web changes alone to older native shells. Native frame sizing
+requires a new APK, not just an OTA. `test/android-native-ime.test.mjs` guards
+native-only frame work, while shared-UI tests cover double-inset avoidance,
+cancelled-close focus, and following versus historical reading ownership.
+
+The shared UI focus regression tests exercise the production hook and real picker sheet with simulated native events; device event ordering, IME/compositor frame pacing, Chinese composition and OEM keyboard-height changes require physical Android validation.
 
 ## Native iOS Composer
 

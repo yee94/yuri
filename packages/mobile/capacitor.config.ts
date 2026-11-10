@@ -38,9 +38,9 @@ const config: CapacitorConfig & {
   },
   plugins: {
     Keyboard: {
-      // iOS: resize none + JS shell shrink (--yuri-kb-layout). Android: adjustNothing +
-      // pre-focus cached-height composer CSS FLIP; ImeSyncBridge keeps parent
-      // padding zero and reports state/settled height. resizeOnFullScreen stays off.
+      // iOS: resize none + JS shell shrink (--yuri-kb-layout). Android ignores
+      // resize: ImeSyncBridge owns native viewport sizing from system IME frames.
+      // Leave the legacy resizeOnFullScreen workaround disabled (no second owner).
       resize: 'none',
       resizeOnFullScreen: false,
       autoBackdropColor: 'dom',

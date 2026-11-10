@@ -15,6 +15,67 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+test.each([true, false].flatMap((nativeResize) => [true, false].flatMap((following) =>
+    (nativeResize ? [true, false] : [false]).map((handoff) => ({ nativeResize, following, handoff })))))(
+    'keyboard viewport keeps the existing scroll owner (native=$nativeResize following=$following handoff=$handoff)', async ({ nativeResize, following, handoff }) => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        const host = document.createElement('div');
+        document.body.append(host);
+        const root = createRoot(host);
+        let api!: UseChatAutoFollowResult;
+        let top = 1700;
+        let height = 300;
+        const write = vi.fn(() => { top = 2000 - height; return true; });
+        const controller = { current: { scrollToBottom: write, cancelScroll: vi.fn() } };
+        function Harness() {
+            api = useChatAutoFollow({ currentSessionId: null, sessionMessageCount: 10, sessionIsWorking: false, isMobile: true, scrollControllerRef: controller });
+            return React.createElement('div', { ref: api.scrollRef }, React.createElement('div'));
+        }
+        try {
+            await act(async () => root.render(React.createElement(Harness)));
+            const scroller = api.scrollRef.current!;
+            Object.defineProperties(scroller, {
+                scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = value; } },
+                clientHeight: { configurable: true, get: () => height },
+                scrollHeight: { configurable: true, value: 2000 },
+            });
+            await act(async () => {
+                if (!following) { api.releaseAutoFollow(); top = 800; }
+                window.dispatchEvent(new CustomEvent('yuri:keyboard-anim', {
+                    detail: { phase: 'show', durationMs: 250, nativeResize },
+                }));
+            });
+            write.mockClear();
+            if (handoff) await act(async () => window.dispatchEvent(new Event('yuri:keyboard-native-layout')));
+            height = 200;
+            await act(async () => scroller.dispatchEvent(new Event('scroll')));
+            await act(async () => window.dispatchEvent(new CustomEvent('yuri:keyboard-settled', {
+                detail: { open: true, nativeResize },
+            })));
+            expect(top).toBe(!following ? handoff ? 900 : 800 : nativeResize ? 1800 : 1700);
+            expect(write.mock.calls.length).toBe(nativeResize && following ? 1 : 0);
+            expect(api.state).toBe(following ? 'following' : 'released');
+            if (handoff) {
+                // No second compensation on repeated settled/resize delivery.
+                await act(async () => window.dispatchEvent(new CustomEvent('yuri:keyboard-settled', {
+                    detail: { open: true, nativeResize },
+                })));
+                expect(top).toBe(following ? 1800 : 900);
+                await act(async () => window.dispatchEvent(new Event('yuri:keyboard-native-layout')));
+                height = 300;
+                top = Math.min(top, 2000 - height); // Browser clamps on viewport expansion.
+                await act(async () => window.dispatchEvent(new CustomEvent('yuri:keyboard-settled', {
+                    detail: { open: false, nativeResize },
+                })));
+                expect(top).toBe(following ? 1700 : 800);
+            }
+        } finally {
+            await act(async () => root.unmount());
+            host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+        }
+    },
+);
+
 test.each(['no-overflow', 'visible-bottom-edge', 'visible-top-edge', 'clamped-noop', 'subpixel-noop', 'unmeasured-range', 'mobile-no-overflow', 'mobile-clamped-noop'] as const)(
     'speech does not write or release a stationary viewport: %s', async (scenario) => {
         vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);

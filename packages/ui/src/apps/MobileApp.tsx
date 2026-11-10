@@ -82,15 +82,13 @@ import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
 import { SyncProvider, useSessionContextUsage, useCurrentSessionEntity, useParentSessionTarget, useSessionMessages } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 
+import { nativeImeHeader, startNativeImeHeader } from '@/mobile/nativeImeHeader';
+import { NATIVE_IOS_COMPOSER_CLASS } from '@/lib/native-ios-composer';
 import { SyncAppEffects } from './AppEffects';
 import {
-  cssPxFromNativeImeHeight,
-  getAndroidComposerImeStateAction,
   isComposerKeyboardFocusTransfer,
   isComposerKeyboardTarget,
-  shouldCorrectArmedImeLift,
   shouldDeferWebKeyboardToNativeComposer,
-  shouldReserveChatScrollInset,
 } from './composerKeyboardLift';
 import { MobileChangesSurface } from './MobileChangesSurface';
 import { MobileFilesSurface } from './MobileFilesSurface';
@@ -278,7 +276,7 @@ export const useNativeMobileChrome = (): void => {
     // the browser-hosted PWA (which handles the keyboard via dvh / interactive-widget).
     root.classList.add('yuri-capacitor-app');
     // Platform marker for Android-specific safe-area / status-bar CSS. Keyboard
-    // geometry is shared with iOS: full-height WebView + transform FLIP (WeChat-style).
+    // Android's native viewport owner resizes from the bottom; iOS keeps its web path.
     const capacitorPlatform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
     if (capacitorPlatform === 'android') {
       root.classList.add('yuri-platform-android');
@@ -335,19 +333,12 @@ export const useNativeMobileChrome = (): void => {
     void import('@capacitor/keyboard').then(async ({ Keyboard }) => {
       if (disposed) return;
       // Keyboard choreography:
-      //   iOS — resize:none + immediate shell shrink (--yuri-kb-layout). Header
-      //            stays pinned; the composer sits at the new shell bottom so
-      //            the full input is visible above the IME. No transform FLIP.
-      //   Android — adjustNothing + an early composer-only CSS FLIP. Android's
-      //            keyboardWillShow and WebView viewport signals arrive after IME
-      //            movement starts, so ChatInput keyboard intent (and focusin
-      //            only when the focused field is the bottom composer) starts a
-      //            short (~200ms) transform from the cached IME height. Hide is
-      //            shorter (~100ms) because close signals often arrive after the
-      //            system IME has already begun dismissing. The state-only native
-      //            event calibrates and caches the final height once per open.
-      //            Non-composer fields (question cards, settings, etc.) must not
-      //            arm this path — only the bottom chat input lifts.
+      //   Android, and iOS with the WebView composer — the native IME owner
+      //            translates the WebView with the system keyboard animation;
+      //            a pinned header WebView holds the header during motion and
+      //            the page absorbs the height at its top once the keyboard rests.
+      //   iOS with the native liquid-glass composer — resize:none + shell
+      //            shrink (--yuri-kb-layout); the native overlay pins itself.
       const platform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
       const isAndroid = platform === 'android';
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined);
@@ -386,39 +377,9 @@ export const useNativeMobileChrome = (): void => {
         }
         return null;
       };
-      const getKbMovers = (anchor?: EventTarget | null): Array<{ el: HTMLElement; factor: number }> => {
-        const movers: Array<{ el: HTMLElement; factor: number }> = [];
-        const anchorElement = anchor instanceof Element ? anchor : null;
-        // When the focus anchor is known and is not the bottom composer, never
-        // fall back to lifting a visible composer (question / other fields).
-        if (anchorElement && !isComposerKeyboardTarget(anchorElement)) {
-          return movers;
-        }
-        const anchoredComposer = anchorElement?.closest<HTMLElement>('.yuri-mobile-composer') ?? null;
-        const composer = anchoredComposer && isVisibleKbMover(anchoredComposer)
-          ? anchoredComposer
-          : findVisibleKbMover<HTMLElement>('.yuri-mobile-composer');
-        if (composer) movers.push({ el: composer, factor: 1 });
-        // Draft title only rides along when the bottom composer is lifting.
-        if (composer) {
-          const draftCenter = findVisibleKbMover<HTMLElement>('.yuri-draft-center');
-          if (draftCenter) movers.push({ el: draftCenter, factor: 0.5 });
-        }
-        return movers;
-      };
       const isTextFieldLike = (node: unknown): boolean =>
         node instanceof HTMLElement
         && (node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.isContentEditable);
-      // ChatInput dispatches yuri:keyboard-intent before focus lands. Treat that as
-      // composer-scoped unless another text field already owns focus (question).
-      const shouldLiftComposerForIntent = (): boolean => {
-        const active = document.activeElement;
-        if (isTextFieldLike(active) && !isComposerKeyboardTarget(active)) return false;
-        return true;
-      };
-      const shouldLiftComposerForFocus = (anchor: EventTarget | null | undefined): boolean => (
-        isComposerKeyboardTarget(anchor)
-      );
       const clearKbMovers = () => {
         for (const el of document.querySelectorAll<HTMLElement>('.yuri-mobile-composer, .yuri-draft-center')) {
           el.style.transition = '';
@@ -430,284 +391,82 @@ export const useNativeMobileChrome = (): void => {
         safeBottomPx = shell ? parseFloat(getComputedStyle(shell).paddingBottom) || 0 : 0;
       };
 
-      // ── Android: pre-focus CSS FLIP from cached IME height ────────────────
-      if (isAndroid) {
-        const IME_RATIO_STORAGE_KEY = 'yuri.androidImeHeightRatio.v2';
-        // Open starts from intent/focus before the IME moves; keep it short.
-        // Close usually begins after the system IME has already started (or
-        // finished) dismissing, so a long hide leaves the composer hanging.
-        const SHOW_MS = 200;
-        const CORRECT_MS = 60;
-        const HIDE_MS = 100;
-        const SHOW_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
-        const HIDE_EASING = 'cubic-bezier(0.4, 0, 1, 1)';
-        let androidTimer: number | null = null;
-        let composerLiftArmed = false;
-
-        const isTextField = isTextFieldLike;
-
-        const clampRatio = (value: number): number => (
-          Number.isFinite(value) ? Math.min(0.68, Math.max(0.28, value)) : 0.39
-        );
-        const readCachedRatio = (): number => {
-          try {
-            return clampRatio(Number.parseFloat(localStorage.getItem(IME_RATIO_STORAGE_KEY) ?? ''));
-          } catch {
-            return 0.39;
-          }
-        };
-        let imeHeight = Math.round(window.innerHeight * readCachedRatio());
-        // Keep the height that armed this keyboard session separate from the
-        // measured cache. The native state event refreshes the next-open cache;
-        // rewriting an in-flight transform from that event creates a second rise.
-        let armedImeHeight = 0;
-        const persistHeight = (height: number) => {
-          imeHeight = Math.max(0, Math.round(height));
-          if (imeHeight <= 0 || window.innerHeight <= 0) return;
-          try {
-            localStorage.setItem(IME_RATIO_STORAGE_KEY, String(clampRatio(imeHeight / window.innerHeight)));
-          } catch {
-            // Restricted storage keeps the in-memory value for this app run.
-          }
-        };
-        const clearAndroidTimer = () => {
-          if (androidTimer === null) return;
-          window.clearTimeout(androidTimer);
-          androidTimer = null;
-        };
-        const getAndroidSlide = (height: number) => Math.max(0, Math.round(height - safeBottomPx));
-        const getAndroidTransform = (slide: number, factor: number) => `translate3d(0, ${-slide * factor}px, 0)`;
-        const liftMovers = (height: number, durationMs: number, easing: string, anchor?: EventTarget | null): number => {
-          clearAndroidTimer();
-          const slide = getAndroidSlide(height);
-          const movers = getKbMovers(anchor);
-          root.classList.add('yuri-kb-animating');
-          for (const { el, factor } of movers) {
-            el.style.transition = `transform ${durationMs}ms ${easing}`;
-            el.style.transform = getAndroidTransform(slide, factor);
-          }
-          androidTimer = window.setTimeout(() => {
-            androidTimer = null;
-            root.classList.remove('yuri-kb-animating');
-            for (const { el } of movers) {
-              el.style.transition = '';
-            }
-          }, durationMs + 20);
-          return slide;
-        };
-
-        const reserveFieldScrollInset = (height: number) => {
-          measureSafeBottom();
-          const resolvedHeight = Math.max(0, Math.round(height));
-          keyboardOpen = true;
-          composerLiftArmed = false;
-          armedImeHeight = resolvedHeight;
-          root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating');
-          setInset(resolvedHeight);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', getAndroidSlide(resolvedHeight));
-          clearAndroidTimer();
-          clearKbMovers();
-          dispatchKb('yuri:keyboard-settled', { open: true });
-        };
-
-        const markOpen = (
-          anchor?: EventTarget | null,
-          source: 'intent' | 'focus' | 'ime' = 'focus',
-        ) => {
-          // Only the bottom chat composer arms the transform FLIP. Question
-          // cards and other text fields open the IME without lifting chrome.
-          if (source === 'intent') {
-            if (!shouldLiftComposerForIntent()) return;
-          } else if (source === 'focus') {
-            if (!shouldLiftComposerForFocus(anchor)) return;
-          } else if (!keyboardOpen && !shouldLiftComposerForFocus(document.activeElement)) {
-            // IME open for a non-composer field: leave composer state untouched.
-            return;
-          }
-          measureSafeBottom();
-          if (keyboardOpen) {
-            const activeImeHeight = armedImeHeight || imeHeight;
-            const slide = getAndroidSlide(activeImeHeight);
-            const movers = getKbMovers(source === 'focus' ? anchor : undefined);
-            if (movers.length === 0) return;
-            composerLiftArmed = true;
-            root.classList.add('yuri-keyboard-open');
-            setInset(0);
-            setVar('--yuri-kb-scroll-inset', 0);
-            const alreadyPositioned = movers.every(
-              ({ el, factor }) => el.style.transform === getAndroidTransform(slide, factor),
-            );
-            if (alreadyPositioned) return;
-            liftMovers(activeImeHeight, CORRECT_MS, SHOW_EASING, source === 'focus' ? anchor : undefined);
-            dispatchKb('yuri:keyboard-anim', {
-              phase: 'show',
-              slide,
-              durationMs: CORRECT_MS,
-              easing: SHOW_EASING,
-            });
-            dispatchKb('yuri:keyboard-settled', { open: true });
-            return;
-          }
-          keyboardOpen = true;
-          composerLiftArmed = true;
-          root.classList.add('yuri-keyboard-open');
+      // ── Native IME owner (Android always; iOS WebView composer path) ─────
+      // Native translates the WebView with the system keyboard animation and
+      // a pinned header WebView holds the header; JS only receives bookends.
+      // iOS hands the keyboard back to the web path below whenever the native
+      // liquid-glass composer is active (it owns its own keyboard pin).
+      const iosNativeIme = !isAndroid && platform === 'ios';
+      const syncIosNativeIme = () => {
+        const enabled = !root.classList.contains(NATIVE_IOS_COMPOSER_CLASS);
+        if (enabled === iosNativeImeEnabled) return;
+        iosNativeImeEnabled = enabled;
+        if (enabled) {
+          // Leave no web-path lift behind when native takes over.
           setInset(0);
           setVar('--yuri-kb-layout', 0);
           setVar('--yuri-kb-scroll-inset', 0);
-          armedImeHeight = imeHeight;
-          const slide = liftMovers(armedImeHeight, SHOW_MS, SHOW_EASING, source === 'focus' ? anchor : undefined);
-          dispatchKb('yuri:keyboard-anim', {
-            phase: 'show',
-            slide,
-            durationMs: SHOW_MS,
-            easing: SHOW_EASING,
-          });
-          dispatchKb('yuri:keyboard-settled', { open: true });
-        };
-        const markClosed = (blur: boolean) => {
-          // Native close events can arrive after focus moved into a settings or
-          // overlay field. Blur ownership stays with the bottom chat composer.
-          // focusout and yuri:ime-state can both fire for one dismissal; restarting
-          // the hide transition mid-flight is what parks the composer above the
-          // already-gone IME for an extra beat.
-          if (!keyboardOpen) {
-            if (blur && isTextField(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
-              (document.activeElement as HTMLElement).blur();
-            }
-            return;
-          }
-          const activeImeHeight = armedImeHeight || imeHeight;
-          const hadComposerLift = composerLiftArmed;
+          root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating', 'yuri-kb-caret-hold', 'yuri-kb-hide');
+          layoutApplied = false;
           keyboardOpen = false;
-          composerLiftArmed = false;
-          armedImeHeight = 0;
-          if (blur && isTextField(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
-            (document.activeElement as HTMLElement).blur();
-          }
-          root.classList.remove('yuri-keyboard-open');
-          setInset(0);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', 0);
-          dispatchKb('yuri:keyboard-intent', { open: false });
-          const slide = getAndroidSlide(activeImeHeight);
-          if (!hadComposerLift) {
-            clearAndroidTimer();
-            clearKbMovers();
-            dispatchKb('yuri:keyboard-settled', { open: false });
-            return;
-          }
-          // Start the transform first so the same frame collapses chrome + lift.
-          liftMovers(0, HIDE_MS, HIDE_EASING);
-          dispatchKb('yuri:keyboard-anim', {
-            phase: 'hide',
-            slide,
-            durationMs: HIDE_MS,
-            easing: HIDE_EASING,
-          });
-          clearAndroidTimer();
-          androidTimer = window.setTimeout(() => {
-            androidTimer = null;
-            root.classList.remove('yuri-kb-animating');
-            clearKbMovers();
-            dispatchKb('yuri:keyboard-settled', { open: false });
-          }, HIDE_MS + 20);
-        };
-
-        // ChatInput intent runs before focus (pre-IME). focusin lifts only the
-        // bottom composer; other text fields reserve chat scroll room.
-        const handleFocusIn = (event: FocusEvent) => {
-          if (!isTextField(event.target)) return;
-          if (isComposerKeyboardTarget(event.target)) {
-            markOpen(event.target, 'focus');
-            return;
-          }
-          reserveFieldScrollInset(armedImeHeight || imeHeight);
-        };
-        const handleFocusOut = (event: FocusEvent) => {
-          if (!isTextField(event.target)) return;
-          // During focusout, activeElement is often still the field being blurred.
-          // relatedTarget is the authoritative next focus for same-document moves.
-          // Stay open only when focus remains inside the bottom composer; moving
-          // to a question card (or any other field) must drop the lift.
-          if (isComposerKeyboardFocusTransfer(event.relatedTarget)) return;
-          if (shouldReserveChatScrollInset(event.relatedTarget)) {
-            dispatchKb('yuri:keyboard-intent', { open: false });
-            reserveFieldScrollInset(armedImeHeight || imeHeight);
-            return;
-          }
-          // Prefer the earliest close signal. A zero-timeout waits a full task and
-          // lets the system IME finish before the composer starts dropping.
-          markClosed(false);
-        };
+        }
+        root.classList.toggle('yuri-native-ime', enabled);
+        void nativeImeHeader.setImeSync({ enabled }).catch(() => undefined);
+      };
+      let iosNativeImeEnabled: boolean | null = null;
+      if (isAndroid || iosNativeIme) {
+        if (isAndroid) root.classList.add('yuri-native-ime');
+        setInset(0);
+        setVar('--yuri-kb-layout', 0);
+        setVar('--yuri-kb-scroll-inset', 0);
         const handleImeState = (event: Event) => {
-          type ImeStateEvent = Event & {
+          type ImeState = {
             open?: boolean;
-            height?: number;
-            detail?: { open?: boolean; height?: number };
+            phase?: 'start' | 'settled';
+            durationMs?: number;
           };
-          const nativeEvent = event as ImeStateEvent;
+          const nativeEvent = event as Event & ImeState & { detail?: ImeState };
+          if (iosNativeIme && !iosNativeImeEnabled) return;
           // Capacitor triggerJSEvent exposes payload fields on the event object;
           // CustomEvent detail remains supported for browser/test dispatches.
           const detail = nativeEvent.detail ?? nativeEvent;
-          if (detail?.open === true) {
-            const measured = cssPxFromNativeImeHeight(detail.height ?? 0, window.devicePixelRatio || 1);
-            const action = getAndroidComposerImeStateAction(composerLiftArmed, document.activeElement);
-            if (measured > 0 && (action === 'open' || action === 'cache')) {
-              // A model-picker search field can have a different IME silhouette
-              // from the composer. Keep the cache scoped to composer-owned opens.
-              persistHeight(measured);
-            }
-            // The state event may beat focusin on a fast keyboard. In that case
-            // it starts the single composer lift with the measured height. Once
-            // a focus/intent lift is armed, this event only refreshes next-open
-            // cache data and leaves its transform untouched.
-            if (action === 'open') markOpen(document.activeElement, 'ime');
-            if (action === 'cache' && shouldCorrectArmedImeLift(armedImeHeight || imeHeight, measured)) {
-              // The estimate that armed this lift under-cleared the keyboard;
-              // re-lift from the measured height so the composer is not covered
-              // for the rest of the keyboard session.
-              armedImeHeight = measured;
-              const slide = liftMovers(
-                measured,
-                CORRECT_MS,
-                SHOW_EASING,
-                isComposerKeyboardTarget(document.activeElement) ? document.activeElement : undefined,
-              );
-              dispatchKb('yuri:keyboard-anim', { phase: 'show', slide, durationMs: CORRECT_MS, easing: SHOW_EASING });
-            }
-            if (action === 'field') reserveFieldScrollInset(measured || imeHeight);
+          if (typeof detail.open !== 'boolean') return;
+          const animating = detail.phase === 'start';
+          root.classList.toggle('yuri-keyboard-open', detail.open || animating);
+          root.classList.toggle('yuri-kb-animating', animating);
+          if (animating) {
+            dispatchKb('yuri:keyboard-anim', {
+              phase: detail.open ? 'show' : 'hide',
+              durationMs: detail.durationMs ?? 0,
+              nativeResize: true,
+            });
+            return;
           }
-          if (detail?.open === false) markClosed(true);
-        };
-        const handleKeyboardIntent = (event: Event) => {
-          const detail = (event as CustomEvent<{ open?: boolean }>).detail;
-          // ChatInput is the only intent source (pre-focus composer expand).
-          if (detail?.open === true) markOpen(undefined, 'intent');
+          // Dismiss only the composer after the native close really settles.
+          // A cancelled predictive-back reports open:true and retains its IME;
+          // late close events must never steal a picker's new search focus.
+          if (!detail.open && isTextFieldLike(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
+            (document.activeElement as HTMLElement).blur();
+          }
+          if (!detail.open) dispatchKb('yuri:keyboard-intent', { open: false });
+          dispatchKb('yuri:keyboard-settled', { open: detail.open, nativeResize: true });
         };
 
-        document.addEventListener('focusin', handleFocusIn, true);
-        document.addEventListener('focusout', handleFocusOut, true);
         window.addEventListener('yuri:ime-state', handleImeState);
-        window.addEventListener('yuri:keyboard-intent', handleKeyboardIntent);
-
-        if (disposed) {
-          clearAndroidTimer();
-          document.removeEventListener('focusin', handleFocusIn, true);
-          document.removeEventListener('focusout', handleFocusOut, true);
-          window.removeEventListener('yuri:ime-state', handleImeState);
-          window.removeEventListener('yuri:keyboard-intent', handleKeyboardIntent);
-          return;
-        }
-        cleanup.push(
-          clearAndroidTimer,
-          () => document.removeEventListener('focusin', handleFocusIn, true),
-          () => document.removeEventListener('focusout', handleFocusOut, true),
-          () => window.removeEventListener('yuri:ime-state', handleImeState),
-          () => window.removeEventListener('yuri:keyboard-intent', handleKeyboardIntent),
-        );
-        return;
+        cleanup.push(() => window.removeEventListener('yuri:ime-state', handleImeState));
+        // Pinned header WebView + top layout offset (see nativeImeHeader).
+        if (!disposed) cleanup.push(startNativeImeHeader());
+        if (isAndroid) return;
+        syncIosNativeIme();
+        const composerObserver = new MutationObserver(syncIosNativeIme);
+        composerObserver.observe(root, { attributes: true, attributeFilter: ['class'] });
+        cleanup.push(() => {
+          composerObserver.disconnect();
+          root.classList.remove('yuri-native-ime');
+          void nativeImeHeader.setImeSync({ enabled: false }).catch(() => undefined);
+        });
       }
+      const webKeyboardActive = () => !(iosNativeIme && iosNativeImeEnabled);
 
       // ── iOS: shrink the shell immediately (no transform FLIP) ────────────
       const IOS_IME_RATIO_STORAGE_KEY = 'yuri.iosImeHeightRatio.v1';
@@ -757,6 +516,7 @@ export const useNativeMobileChrome = (): void => {
         return slide;
       };
       const handleIosKeyboardIntent = (event: Event) => {
+        if (!webKeyboardActive()) return;
         if (shouldDeferWebKeyboardToNativeComposer(
           root.classList.contains('yuri-native-ios-composer'),
           document.activeElement,
@@ -784,6 +544,7 @@ export const useNativeMobileChrome = (): void => {
       window.addEventListener('yuri:keyboard-intent', handleIosKeyboardIntent);
 
       const showHandle = await Keyboard.addListener('keyboardWillShow', (info) => {
+        if (!webKeyboardActive()) return;
         if (shouldDeferWebKeyboardToNativeComposer(
           root.classList.contains('yuri-native-ios-composer'),
           document.activeElement,
@@ -859,6 +620,11 @@ export const useNativeMobileChrome = (): void => {
       };
 
       const runHide = () => {
+        if (!webKeyboardActive()) {
+          // Native owns layout; only release a still-focused composer.
+          blurActiveTextField();
+          return;
+        }
         if (root.classList.contains('yuri-native-ios-composer')) {
           unwindKeyboardShell();
           void getNativeIosComposerPlugin().blur();
@@ -915,6 +681,7 @@ export const useNativeMobileChrome = (): void => {
         node instanceof HTMLElement
         && (node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.isContentEditable);
       const handleFocusOut = (event: FocusEvent) => {
+        if (!webKeyboardActive()) return;
         if (!keyboardOpen) return;
         if (!isTextInput(event.target)) return;
         // Drop composer lift when focus leaves the bottom composer (question

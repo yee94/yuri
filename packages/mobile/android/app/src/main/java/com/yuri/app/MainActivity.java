@@ -35,12 +35,12 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(YuriViewExportPlugin.class);
         registerPlugin(YuriPhysicalScalePlugin.class);
         registerPlugin(YuriNotificationsPlugin.class);
+        registerPlugin(YuriNativeHeaderPlugin.class);
         super.onCreate(savedInstanceState);
         dispatchShare(getIntent());
-        // After the Keyboard plugin installs its root animation callback, remove
-        // that callback so IME animation stays off the app's main-thread callback
-        // path. Also owns WebView-parent padding/backdrop and emits state-only
-        // IME bookends for cached-height CSS composer choreography.
+        // After Keyboard/SystemBars load, install the native viewport IME owner.
+        // It keeps the top pinned and resizes only the bottom with system frames;
+        // JavaScript receives bookends rather than per-frame geometry.
         // Double-post = after load.
         if (getBridge() != null && getBridge().getWebView() != null) {
             applyDeviceParityTextZoom();
@@ -51,6 +51,15 @@ public class MainActivity extends BridgeActivity {
                 })
             );
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        if (imeSyncBridge != null) {
+            imeSyncBridge.detach();
+            imeSyncBridge = null;
+        }
+        super.onDestroy();
     }
 
     @Override

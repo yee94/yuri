@@ -1,5 +1,16 @@
 # Assistant UI
 
+## Inline composer geometry
+
+`ChatPromptComposer` derives the inline single-line height from the textarea's
+computed line height, vertical padding and minimum height, rather than a fixed
+48px baseline. The same metrics determine multiline alignment, allowing native
+design-point scaling to retain centered single-line text.
+Scroll-height rounding alone must not mark a single line as grown. Stacked Chat
+composers retain their existing sizing. Only mobile inline Assistant text uses a
+`spacing-2` left inset instead of `spacing-3`; the reference overlay shares that inset while
+desktop spacing, vertical padding and action rails remain unchanged.
+
 ## Mobile settings save navigation
 
 After a successful Bot configuration write, `AssistantsSettingsPage` emits the

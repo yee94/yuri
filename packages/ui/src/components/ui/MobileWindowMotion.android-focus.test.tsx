@@ -63,9 +63,9 @@ function Host({ initialFocus }: { initialFocus?: 'settings' | 'composer' }) {
   </I18nProvider>;
 }
 
-async function ime(open: boolean, payload: 'native' | 'detail') {
+async function ime(open: boolean, payload: 'native' | 'detail', phase: 'start' | 'settled' = 'settled', height = 300) {
   await act(async () => {
-    const data = { open, height: open ? 300 : 0 };
+    const data = { open, height: open ? height : 0, phase, durationMs: 250, nativeResize: true };
     // Native Bridge.triggerJSEvent copies payload fields directly onto Event.
     window.dispatchEvent(payload === 'native'
       ? Object.assign(new Event('yuri:ime-state'), data)
@@ -78,7 +78,7 @@ describe('Android native IME close during Settings picker focus transfer', () =>
     await act(async () => root.render(<Host />));
     const previous = document.querySelector<HTMLInputElement>('[data-testid="settings-field"]')!;
     await act(async () => previous.focus());
-    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).not.toBe('');
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('0px');
     await ime(true, 'native');
     await act(async () => {
       const trigger = document.querySelector<HTMLElement>('[data-testid="model-trigger"]')!;
@@ -126,7 +126,7 @@ describe('Android native IME close during Settings picker focus transfer', () =>
     await act(async () => root.render(<Host initialFocus={initialFocus} />));
     const field = document.querySelector<HTMLElement>(`[data-testid="${initialFocus}-field"]`)!;
     expect(document.activeElement === field).toBe(true);
-    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('');
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('0px');
     const blur = vi.spyOn(field, 'blur');
     await ime(false, 'native');
     expect(document.activeElement === field).toBe(initialFocus === 'settings');
@@ -138,7 +138,7 @@ describe('Android native IME close during Settings picker focus transfer', () =>
     const input = document.querySelector<HTMLElement>('[data-testid="settings-field"]')!;
     await act(async () => input.focus());
     await ime(true, 'native');
-    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('300px');
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('0px');
     await ime(false, 'native');
     expect(document.activeElement === input).toBe(true);
     expectClosedGeometry();
@@ -161,7 +161,43 @@ describe('Android native IME close during Settings picker focus transfer', () =>
     expect(document.documentElement.classList.contains('yuri-kb-animating')).toBe(false);
     await act(async () => composer.focus());
     expect(document.activeElement === composer).toBe(true);
+    expect(document.documentElement.classList.contains('yuri-keyboard-open')).toBe(false);
+    await ime(true, 'native');
     expect(document.documentElement.classList.contains('yuri-keyboard-open')).toBe(true);
+  });
+
+  test('focus and changed IME heights never apply a second web inset or transform', async () => {
+    await act(async () => root.render(<Host />));
+    const composer = document.querySelector<HTMLElement>('[data-testid="composer-field"]')!;
+    const mover = composer.parentElement!;
+    const storage = vi.spyOn(Storage.prototype, 'setItem');
+    await act(async () => composer.focus());
+    for (const height of [280, 420, 320]) {
+      await ime(true, 'native', 'start', height);
+      expect(document.documentElement.classList.contains('yuri-kb-animating')).toBe(true);
+      await ime(true, 'native', 'settled', height);
+      for (const name of ['--yuri-keyboard-inset', '--yuri-kb-layout', '--yuri-kb-scroll-inset']) {
+        expect(document.documentElement.style.getPropertyValue(name)).toBe('0px');
+      }
+      expect(mover.style.transform).toBe('');
+      expect(mover.style.transition).toBe('');
+    }
+    expect(storage.mock.calls.some(([key]) => String(key).includes('ImeHeight'))).toBe(false);
+  });
+
+  test('cancelled native back retains composer focus and settled-open state', async () => {
+    await act(async () => root.render(<Host />));
+    const composer = document.querySelector<HTMLElement>('[data-testid="composer-field"]')!;
+    await act(async () => composer.focus());
+    await ime(true, 'native');
+    const blur = vi.spyOn(composer, 'blur');
+    await ime(false, 'native', 'start');
+    expect(document.activeElement).toBe(composer);
+    await ime(true, 'native');
+    expect(document.activeElement).toBe(composer);
+    expect(blur).not.toHaveBeenCalled();
+    expect(document.documentElement.classList.contains('yuri-keyboard-open')).toBe(true);
+    expect(document.documentElement.classList.contains('yuri-kb-animating')).toBe(false);
   });
 
   test('retains search focus when native hide arrives before the new field focuses', async () => {

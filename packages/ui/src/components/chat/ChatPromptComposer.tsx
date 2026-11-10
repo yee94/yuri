@@ -146,12 +146,19 @@ export const ChatPromptComposer: React.FC<ChatPromptComposerProps> = ({
     if (!textarea) return;
     // Inline uses JS sizing; collapse to the CSS minimum before measuring wrapped content.
     textarea.style.height = inline ? '0px' : 'auto';
-    const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
-    const contentHeight = inline ? Math.max(textarea.scrollHeight, 48) : textarea.scrollHeight;
+    const textareaStyle = window.getComputedStyle(textarea);
+    const maxHeight = Number.parseFloat(textareaStyle.maxHeight);
+    const compactHeight = inline ? Math.max(
+      Number.parseFloat(textareaStyle.minHeight) || 0,
+      (Number.parseFloat(textareaStyle.lineHeight) || 0)
+        + (Number.parseFloat(textareaStyle.paddingTop) || 0)
+        + (Number.parseFloat(textareaStyle.paddingBottom) || 0),
+    ) : 0;
+    const contentHeight = inline ? Math.max(textarea.scrollHeight, compactHeight) : textarea.scrollHeight;
     const nextHeight = Number.isFinite(maxHeight) ? Math.min(contentHeight, maxHeight) : contentHeight;
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = Number.isFinite(maxHeight) && contentHeight > maxHeight ? 'auto' : 'hidden';
-    const nextInlineGrown = nextHeight > 48;
+    const nextInlineGrown = nextHeight > Math.ceil(compactHeight);
     if (inline) setInlineGrown((current) => current === nextInlineGrown ? current : nextInlineGrown);
   });
 

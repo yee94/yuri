@@ -228,7 +228,7 @@ export const AssistantSessionComposer = ({ active, onChange, onVoiceSend, ...pro
     disableInputWhilePending={false} inputRef={inputRef}
     onSubmit={() => { if (!props.pending) props.onSubmit(); }}
     highlightedContent={highlighted} highlightRef={highlightRef}
-    textLayoutClassName={cn('whitespace-pre-wrap break-words overflow-hidden px-3 typography-markdown md:typography-ui-label', props.layout === 'inline' ? 'py-3 leading-6' : 'pt-4 pb-2', props.textLayoutClassName)}
+    textLayoutClassName={cn('whitespace-pre-wrap break-words overflow-hidden px-3 typography-markdown md:typography-ui-label', props.layout === 'inline' ? 'py-3 leading-6' : 'pt-4 pb-2', props.layout === 'inline' && props.isMobile && 'pl-2', props.textLayoutClassName)}
     onChange={(value, event) => {
       const next = reconcileComposerDocument(document, value, event?.target.selectionStart ?? value.length, event?.target.selectionEnd ?? value.length);
       commit(next.document, next.caret);

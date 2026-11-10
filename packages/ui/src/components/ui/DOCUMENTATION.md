@@ -535,7 +535,12 @@ Chat-hosted pickers additionally exercise the production composer pointer captur
 bunx vitest run --project @yuriai/ui packages/ui/src/components/ui/MobileWindowMotion.focus.test.tsx packages/ui/src/components/ui/MobileWindowMotion.android-focus.test.tsx
 ```
 
-These tests establish DOM focus behavior for supplied event sequences in happy-dom. Physical Android keyboard presentation and native event arrival order require device validation; full Settings data loading and deployed-bundle parity remain separate runtime checks.
+The Android native-viewport experiment also verifies zero secondary CSS inset or
+composer transform for changing IME heights. Native start-hide never blurs;
+cancelled Back settling open retains focus. These tests establish DOM focus
+behavior for supplied event sequences in happy-dom. Physical Android keyboard
+presentation and native event arrival order require device validation; full
+Settings data loading and deployed-bundle parity remain separate runtime checks.
 
 ## Grouped Cards
 

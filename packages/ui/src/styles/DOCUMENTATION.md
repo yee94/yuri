@@ -26,6 +26,20 @@ Dark mode retains the theme's selection tokens. Controls do not add local
 selection-color overrides. Raw theme selection colors used by CodeMirror and
 terminal text selection remain unchanged.
 
+## Android native IME viewport experiment
+
+On the Android A experiment APK, `ImeSyncBridge` translates the native WebView
+with system IME frames and pins a header-only bitmap at 1:1 native pixels.
+There is no full-page screenshot cover. Browser-composited header alpha is resolved
+against the current backdrop; the captured glass backdrop is temporarily static.
+Resizing occurs only at handoff. At rest `100dvh` excludes that inset: shared shell,
+chat-scroll, full-screen forms and body-portaled sheets must not subtract it
+again. The Android hook keeps `--yuri-keyboard-inset`, `--yuri-kb-layout` and
+`--yuri-kb-scroll-inset` at zero. Keyboard-only height/bottom CSS transitions and
+composer FLIP promotion/curtains are disabled on Android; sheet motion keeps its
+existing WAAPI owner. iOS and hosted browser layout are unchanged. Deliver the
+native and Web assets together, not as Web-only OTA to the previous shell.
+
 ## Android native scrollbars
 
 On `html.yuri-capacitor-app.yuri-platform-android`, `mobile.css` hides native

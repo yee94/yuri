@@ -231,7 +231,7 @@ test('inline contact centers the compact input and bottom-aligns measured multil
   const heightAtMeasurement: string[] = [];
   const renderInline = (value: string) => root.render(<AssistantSessionComposer
     active={false} layout="inline" isMobile value={value} onChange={() => {}} onSubmit={submit}
-    onAddFiles={() => {}} inputStyle={{ maxHeight: '128px' }}
+    onAddFiles={() => {}} inputStyle={{ maxHeight: '128px', lineHeight: '24px', paddingTop: '12px', paddingBottom: '12px' }}
   />);
   await act(async () => renderInline(''));
   Object.defineProperty(input(), 'scrollHeight', { configurable: true, get: () => {
@@ -272,6 +272,42 @@ test('inline contact centers the compact input and bottom-aligns measured multil
   expectCompact();
   expect(input().style.overflowY).toBe('hidden');
   expect(heightAtMeasurement.every((height) => height === '0px')).toBe(true);
+});
+
+test.each([0.9, 0.9718333333333333, 1, 1.029, 7 / 6])('inline contact uses scaled single-line metrics at density %s', async (scale) => {
+  const compactHeight = 48 * scale;
+  let measuredHeight = Math.round(compactHeight);
+  const renderInline = (value: string) => root.render(<AssistantSessionComposer
+    active={false} layout="inline" isMobile={scale !== 1} value={value} onChange={() => {}} onSubmit={submit}
+    inputStyle={{ maxHeight: `${128 * scale}px`, minHeight: `${36 * scale}px`, lineHeight: `${24 * scale}px`, paddingTop: `${12 * scale}px`, paddingBottom: `${12 * scale}px` }}
+  />);
+  await act(async () => renderInline(''));
+  Object.defineProperty(input(), 'scrollHeight', { configurable: true, get: () => measuredHeight });
+  const row = () => host.querySelector('[data-composer-layout="inline"]')!;
+  for (const value of ['Single line', '']) {
+    await act(async () => renderInline(value));
+    expect(Number.parseFloat(input().style.height)).toBeCloseTo(Math.max(compactHeight, measuredHeight), 3);
+    expect(row().classList.contains('items-center')).toBe(true);
+  }
+  measuredHeight = Math.round(72 * scale);
+  await act(async () => renderInline('Two\nlines'));
+  expect(row().classList.contains('items-end')).toBe(true);
+  expect(Number.parseFloat(input().style.height)).toBe(measuredHeight);
+  measuredHeight = Math.round(compactHeight);
+  await act(async () => renderInline(''));
+  expect(row().classList.contains('items-center')).toBe(true);
+});
+
+test.each([false, true])('inline contact text and reference overlay share mobile-only left inset (mobile=%s)', async (isMobile) => {
+  await act(async () => root.render(<AssistantSessionComposer
+    active={false} layout="inline" isMobile={isMobile} value="@session:ses_0" onChange={() => {}} onSubmit={submit} autoResize={false}
+  />));
+  const overlay = host.querySelector('[data-composer-highlight]')!;
+  for (const element of [input(), overlay]) {
+    expect(element.classList.contains('pl-2')).toBe(isMobile);
+    expect(element.classList.contains('px-3')).toBe(true);
+    expect(element.classList.contains('py-3')).toBe(true);
+  }
 });
 
 test('keyboard selection uses the shared chip display and canonical session codec', async () => {

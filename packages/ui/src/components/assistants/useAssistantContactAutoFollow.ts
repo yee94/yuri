@@ -375,12 +375,36 @@ export const useAssistantContactAutoFollow = ({
   useEventListener('keydown', handleKeyDown, listenerTarget)
   useEventListener('pointerdown', handlePointerDown, listenerTarget, passive)
 
+  // Android native IME: the WebView was translated by the keyboard, then the
+  // page absorbs that height at its top in one frame. Keep the presented
+  // position (following and reading alike) instead of letting it jump back.
+  const nativeLayoutAnchorRef = React.useRef<{ element: HTMLDivElement; top: number; height: number } | null>(null)
+  const handleNativeLayout = useEvent(() => {
+    const element = scrollNodeRef.current
+    nativeLayoutAnchorRef.current = element && activeRef.current
+      ? { element, top: element.scrollTop, height: element.clientHeight }
+      : null
+  })
+  const handleViewportResize = useEvent(() => {
+    const element = scrollNodeRef.current
+    const anchor = nativeLayoutAnchorRef.current
+    if (!element || anchor?.element !== element || anchor.height === element.clientHeight) return
+    nativeLayoutAnchorRef.current = null
+    stopFollowAnimation()
+    element.scrollTop = Math.max(0, anchor.top + anchor.height - element.clientHeight)
+    lastScrollTopRef.current = element.scrollTop
+    if (followingRef.current) pinToBottom()
+    else captureAnchor()
+  })
+  useEventListener('yuri:keyboard-native-layout', handleNativeLayout, active && typeof window !== 'undefined' ? window : noEventTarget)
+
   const handleContentResize = useEvent(() => {
     pinToBottom()
     restoreAnchor()
   })
   const canObserveResize = typeof ResizeObserver !== 'undefined'
   useResizeObserver(canObserveResize && active ? contentNode : null, handleContentResize)
+  useResizeObserver(canObserveResize && active ? scrollNode : null, handleViewportResize)
 
   return { scrollRef, contentRef, preparePrepend, followLatest }
 }
