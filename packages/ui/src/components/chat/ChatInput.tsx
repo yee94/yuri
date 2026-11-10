@@ -6731,6 +6731,19 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     // their own keyboard handling; Capacitor uses native chrome choreography.
     const composerFormRef = React.useRef<HTMLFormElement | null>(null);
 
+    const reservesDesktopComposerSpace = !isMobile && surface.kind === 'primary' && Boolean(currentSessionId) && !isComposerExpanded;
+    React.useLayoutEffect(() => {
+        if (!reservesDesktopComposerSpace) return;
+        const form = composerFormRef.current;
+        if (!form) return;
+        const height = form.offsetHeight;
+        if (height <= 0) return;
+        // Keep the transcript viewport fixed; composer content grows upward
+        // into its existing tail spacing instead of shrinking the chat again.
+        form.style.height = `${height}px`;
+        return () => { form.style.height = ''; };
+    }, [currentSessionId, reservesDesktopComposerSpace]);
+
     // Freeze the initial input/chrome reservation. Only Changes / TODO / queue
     // resize it afterwards; typing and height-handle motion stay local.
     const publishesComposerOccupancy = isMobile && surface.kind === 'primary' && !nativeIosComposerActive;
@@ -7246,6 +7259,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             }}
             className={cn(
                 "relative w-full pt-0 pb-4",
+                reservesDesktopComposerSpace && 'flex flex-col justify-end [&>.chat-input-column]:shrink-0',
                 isDesktopExpanded && 'flex h-full min-h-0 flex-col pt-4',
                 isMobileExpanded && 'flex h-full min-h-0 flex-col pt-1',
                 isMobile && 'bottom-safe-area yuri-mobile-composer'

@@ -8,7 +8,29 @@ import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime
 export type SessionShellLoaders = {
   locations: (signal: AbortSignal) => Promise<readonly { directory: string }[]>;
   shells: (directory: string, signal: AbortSignal) => Promise<readonly ShellInfo[]>;
+  latestUser?: (directory: string, sessionID: string, signal: AbortSignal) => Promise<number | null>;
 };
+
+export function latestShellOwnerUserQueryOptions(directory: string, sessionID: string, load = async (
+  directory: string, sessionID: string, signal: AbortSignal,
+): Promise<number | null> => {
+  const page = await opencodeClient.getScopedSdkClient(directory).message.list(
+    { sessionID, type: 'user', order: 'desc', limit: 1 }, { signal },
+  );
+  if (!Array.isArray(page.data)) throw new Error('session user boundary is unavailable');
+  const user = page.data[0];
+  if (!user) return null;
+  if (user.type !== 'user' || !Number.isFinite(user.time.created)) throw new Error('invalid session user boundary');
+  return user.time.created;
+}) {
+  return queryOptions({
+    queryKey: [getRuntimeTransportIdentity(), 'shellOwnerLatestUser', getRuntimeGeneration(), normalizeDirectoryKey(directory), sessionID],
+    queryFn: ({ signal }) => load(directory, sessionID, signal),
+    staleTime: 0,
+    gcTime: 5 * 60_000,
+    retry: false,
+  });
+}
 
 const defaultLoaders: SessionShellLoaders = {
   locations: (signal) => opencodeClient.getSdkClient().debug.location.list({ signal }),

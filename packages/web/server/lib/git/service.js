@@ -3374,8 +3374,14 @@ export async function resetToCommit(directory, hash, mode, force = false) {
 
 export async function getWorktrees(directory) {
   const directoryPath = normalizeDirectoryPath(directory);
-  if (!directoryPath || !fs.existsSync(directoryPath)) {
+  if (!directoryPath) {
     return [];
+  }
+  try {
+    fs.statSync(directoryPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return [];
+    throw error;
   }
   try {
     const directoryGit = await createGit(directoryPath);
@@ -3392,8 +3398,8 @@ export async function getWorktrees(directory) {
       path: entry.worktree,
     }));
   } catch (error) {
-    console.warn('Failed to list worktrees, returning empty list:', error?.message || error);
-    return [];
+    if (isNotGitRepositoryError(error)) return [];
+    throw error;
   }
 }
 

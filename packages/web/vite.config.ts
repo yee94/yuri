@@ -202,7 +202,9 @@ export default defineConfig(({ command }) => ({
       },
       '/api': {
         target: `http://127.0.0.1:${process.env.YURI_PORT || 3001}`,
-        changeOrigin: true,
+        // Preserve the browser-facing Host so cookie-authenticated mutations
+        // can validate Origin across the development proxy's separate ports.
+        changeOrigin: false,
         ws: true,
       },
     },

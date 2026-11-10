@@ -22,7 +22,7 @@ export const registerYuriRoutes = (app, dependencies) => {
     getCommittedHostMetadata,
   });
   registerTranscriptCacheRoutes(app, { transcriptCacheService });
-  registerContentSearchRoutes(app, { contentSearch: dependencies.contentSearch });
+  registerContentSearchRoutes(app, { contentSearch: dependencies.contentSearch, uiAuthController: dependencies.uiAuthController });
   registerConfigSyncRoutes(app, { express });
   if (dependencies.hostUpdates) registerHostUpdateRoutes(app, {
     express, runtime: dependencies.hostUpdates, uiAuthController: dependencies.uiAuthController,

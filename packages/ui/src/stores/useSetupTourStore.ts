@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { createInstanceScopedJSONStorage } from '@/lib/instanceScopedStorage';
 import { isRuntimeInstanceChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 
-export type SetupTourStep = 0 | 1 | 2;
+export type SetupTourStep = 0 | 1 | 2 | 3;
 type SetupTourProgress = { step: SetupTourStep; dismissed: boolean };
 type SetupTourStore = {
   progress: Record<string, SetupTourProgress>;
@@ -29,6 +29,13 @@ export const useSetupTourStore = create<SetupTourStore>()(persist((set) => ({
   })),
 }), {
   name: 'yuri-setup-tour',
+  version: 1,
+  migrate: (persisted) => {
+    const value = persisted as { progress?: Record<string, SetupTourProgress> } | undefined;
+    return { progress: Object.fromEntries(Object.entries(value?.progress ?? {}).map(([runtime, entry]) => [runtime,
+      entry && typeof entry === 'object' ? { ...entry, step: entry.step === 2 ? 3 : entry.step } : entry,
+    ])) };
+  },
   storage: createInstanceScopedJSONStorage(),
   partialize: (state) => ({ progress: state.progress }),
   merge: (persisted, current) => {
@@ -36,7 +43,7 @@ export const useSetupTourStore = create<SetupTourStore>()(persist((set) => ({
     const progress: Record<string, SetupTourProgress> = {};
     if (value?.progress && typeof value.progress === 'object') {
       for (const [runtime, entry] of Object.entries(value.progress)) {
-        if (entry && [0, 1, 2].includes(entry.step) && typeof entry.dismissed === 'boolean') {
+        if (entry && [0, 1, 2, 3].includes(entry.step) && typeof entry.dismissed === 'boolean') {
           progress[runtime] = { step: entry.step, dismissed: entry.dismissed };
         }
       }

@@ -117,6 +117,10 @@ export const REMIX_PUSHPIN_FILL_SVG =
 
 /** @type {Record<string, IconMapEntry>} */
 export const ICON_NAME_MAP = {
+  'connection-relay': { custom: '<g transform="scale(.75)" stroke-width="1.65"><path d="M9 21H8a5 5 0 0 1-1-9.9A7.2 7.2 0 0 1 20.8 9a5.9 5.9 0 0 1 4 11.5M11 19h10m-3-3 3 3-3 3M21 25H11m3-3-3 3 3 3"/><path d="m25 4 .5 1.5L27 6l-1.5.5L25 8l-.5-1.5L23 6l1.5-.5Z" fill="currentColor" stroke="none"/></g>' },
+  'connection-lan': { custom: '<g transform="scale(.75)" stroke-width="1.65"><rect x="5" y="18" width="22" height="9" rx="4"/><path d="M10 18v-4m12 4v-4M10 8a9 9 0 0 1 12 0m-9 3a4.7 4.7 0 0 1 6 0M10 22.5h3m8 0h1"/><circle cx="16" cy="14" r="1" fill="currentColor" stroke="none"/></g>' },
+  'connection-ssh': { custom: '<g transform="scale(.75)" stroke-width="1.65"><path d="M18 27H9a5 5 0 0 1-5-5V11a5 5 0 0 1 5-5h14a5 5 0 0 1 5 5v8M4 12h24m-19-3h.1m3 0h.1m-3 7 3.5 3L9 22m7 0h2M23 24v-2a2 2 0 0 1 4 0v2"/><rect x="21.5" y="24" width="7" height="5" rx="1.6"/></g>' },
+  'connection-local': { custom: '<g transform="scale(.75)" stroke-width="1.65"><rect x="6" y="5" width="20" height="17" rx="4"/><path d="M12 26h8m-4-4v4M3 27h26M10 18h12"/></g>' },
   "devices-connected": { custom: '<path d="M13 17H5a2.5 2.5 0 0 1-2.5-2.5v-8A2.5 2.5 0 0 1 5 4h12a2.5 2.5 0 0 1 2.5 2.5V8M8 20h4M10 17v3" /><rect x="15" y="10" width="7" height="11" rx="2" /><path d="M18 18.5h1" />' },
   "add": { lucide: "plus", fill: false },
   "changes": { custom: '<path d="M6 8h12M12 2v12M6 21h12" />' },
@@ -263,6 +267,7 @@ export const ICON_NAME_MAP = {
   "heart": { lucide: "heart", fill: false },
   "history": { lucide: "history", fill: false },
   "home": { lucide: "home", fill: false },
+  "home-fill": { custom: '<path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2h-4v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8H5a2 2 0 0 1-2-2Z" fill="currentColor" stroke="none"/>' },
   "hourglass": { custom: SOFT_HOURGLASS_SVG },
   "hourglass-fill": { lucide: "hourglass", fill: true },
   "image-download": { lucide: "image-down", fill: false },
@@ -288,6 +293,8 @@ export const ICON_NAME_MAP = {
   "lock-unlock": { lucide: "lock-open", fill: false },
   "loop-right-ai": { lucide: "refresh-cw", fill: false },
   "macbook": { lucide: "laptop", fill: false },
+  "mail": { lucide: "mail", fill: false },
+  "mail-open": { lucide: "mail-open", fill: false },
   "menu-2": { lucide: "menu", fill: false },
   "menu-fold-2": { lucide: "panel-left-close", fill: false },
   "menu-search": { lucide: "search", fill: false },

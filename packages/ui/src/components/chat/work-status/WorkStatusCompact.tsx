@@ -7,7 +7,7 @@ import { AgentAvatar } from '@/components/chat/AgentAvatar';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitStore, useGitStatus } from '@/stores/useGitStore';
+import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo } from '@/stores/useGitStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { normalizePath } from '@/lib/pathNormalization';
@@ -15,10 +15,14 @@ import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useWorkStatusSubagents } from './useWorkStatusSubagents';
 import { WorkStatusTodos } from './WorkStatusTodos';
+import { GuiPluginWorkStatus } from '@/components/gui-plugins/GuiPluginWorkStatus';
+import type { GuiWorkStatusInput } from '@/lib/gui-plugins/work-status';
 
 type Props = {
   sessionId: string | null;
   directory: string | null;
+  active?: boolean;
+  placement?: GuiWorkStatusInput['placement'];
 };
 
 const rowClassName = 'flex w-full min-w-0 items-center justify-start gap-2 text-left text-[13px] font-normal leading-5 tracking-normal text-muted-foreground';
@@ -26,11 +30,13 @@ const iconClassName = 'size-3.5 shrink-0';
 const revealCopyClassName = 'yuri-work-status-action pointer-events-none shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/copy:pointer-events-auto group-hover/copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100';
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
-export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => {
+export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, active = true, placement = 'inline' }) => {
   const { t } = useI18n();
   const { git } = useRuntimeAPIs();
   const ensureStatus = useGitStore((state) => state.ensureStatus);
   const gitStatus = useGitStatus(directory);
+  const gitLoading = useGitLoadingStatus(directory);
+  const isGitRepo = useIsGitRepo(directory);
   const projects = useProjectsStore((state) => state.projects);
   const availableWorktrees = useSessionUIStore((state) => state.availableWorktreesByProject);
   const sessionWorktree = useSessionUIStore((state) => sessionId ? state.worktreeMetadata.get(sessionId) : undefined);
@@ -86,14 +92,35 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => 
 
   const branch = gitStatus?.current || null;
   const changed = worktree?.worktreeStatus === 'pending' ? 0 : gitStatus?.files.length ?? 0;
-  let additions = 0;
-  let deletions = 0;
-  if (gitStatus?.diffStats) {
-    for (const entry of Object.values(gitStatus.diffStats)) {
+  const { additions, deletions } = React.useMemo(() => {
+    let additions = 0;
+    let deletions = 0;
+    for (const entry of Object.values(gitStatus?.diffStats ?? {})) {
       additions += entry?.insertions ?? 0;
       deletions += entry?.deletions ?? 0;
     }
-  }
+    return { additions, deletions };
+  }, [gitStatus?.diffStats]);
+  const pendingWorktree = worktree?.worktreeStatus === 'pending';
+  const hasGitSnapshot = !pendingWorktree && Boolean(gitStatus) && isGitRepo !== false;
+  const gitState = pendingWorktree ? 'unknown' : isGitRepo === false ? 'not-repository' : hasGitSnapshot ? 'ready' : 'unknown';
+  const hasDiffStats = hasGitSnapshot && Boolean(gitStatus?.diffStats);
+  const gitSummary = React.useMemo<GuiWorkStatusInput['git']>(() => {
+    return {
+      state: gitState,
+      loading: gitLoading,
+      branch: hasGitSnapshot ? branch : null,
+      changedFiles: hasGitSnapshot ? changed : null,
+      additions: hasDiffStats ? additions : null,
+      deletions: hasDiffStats ? deletions : null,
+    };
+  }, [gitState, gitLoading, hasGitSnapshot, branch, changed, hasDiffStats, additions, deletions]);
+  const pluginInput = React.useMemo<GuiWorkStatusInput>(() => ({
+    sessionId, directory, placement,
+    project: projectPath && projectLabel ? { id: project?.id, name: projectLabel, directory: projectPath } : null,
+    worktree: worktree ? { name: worktree.name?.trim() || basename(worktree.path), directory: worktree.path } : null,
+    git: gitSummary,
+  }), [sessionId, directory, placement, projectPath, projectLabel, project?.id, worktree, gitSummary]);
 
   const branchCopyKey = branch ? `branch:${branch}` : '';
   const worktreeCopyKey = worktree?.path ? `worktree:${worktree.path}` : '';
@@ -176,6 +203,8 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory }) => 
           ) : <span className="ml-auto tabular-nums">{changed}</span>}
         </Button>
       ) : null}
+
+      {active ? <GuiPluginWorkStatus input={pluginInput} /> : null}
 
       <WorkStatusTodos sessionId={sessionId} directory={directory} />
 

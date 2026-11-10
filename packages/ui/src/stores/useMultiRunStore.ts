@@ -245,7 +245,7 @@ export const useMultiRunStore = create<MultiRunStore>()(
                 };
 
                 if (await getWorktreeSetupWaitEnabled(project)) {
-                  await waitForWorktreeBootstrap(worktreeMetadata.path);
+                  await waitForWorktreeBootstrap(worktreeMetadata.worktreeRoot ?? worktreeMetadata.path);
                 }
 
                 const session = await opencodeClient.withDirectory(

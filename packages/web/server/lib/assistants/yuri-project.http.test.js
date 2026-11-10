@@ -21,14 +21,13 @@ import { createProjectRegistry } from '../projects/registry.js';
 const call = (name, args) => ({ completion: { choices: [{ message: { content: '', tool_calls: [{ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] } });
 
 describe('HTTP → real contact Agent → project registry → worker admission', () => {
-  it('delivers a sourced peer message over HTTP and wakes only the recipient without worker or relay tools', async () => {
+  it('delivers a sourced peer request over HTTP with normal tools without automatically starting a worker or return message', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-peer-http-'));
     const createWorker = vi.fn();
     const promptWorker = vi.fn();
     external.client = { session: { create: createWorker, prompt: promptWorker } };
     const complete = vi.fn(async ({ body }) => {
-      expect(body.tools.map((tool) => tool.function.name)).not.toContain('message_assistant');
-      expect(body.tools.map((tool) => tool.function.name)).not.toContain('assign_session');
+      expect(body.tools.map((tool) => tool.function.name)).toEqual(expect.arrayContaining(['message_assistant', 'assign_session', 'load_tools', 'bash']));
       expect(JSON.stringify(body.messages)).toContain('老大你好');
       return { completion: { choices: [{ message: { content: '小小白你好，收到了。' } }] } };
     });

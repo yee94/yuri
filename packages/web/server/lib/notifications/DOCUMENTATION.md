@@ -3,6 +3,40 @@
 ## Purpose
 This module provides notification message preparation utilities for the web server runtime, including text truncation and plain-text normalization for system notifications.
 
+## Shared session unread state
+
+`session-unread-store.js` owns durable session attention in
+`session-unread.sqlite` under the Host data directory, separately from notification
+delivery settings and the legacy in-memory attention/presence endpoints.
+`session-unread-runtime.js` subscribes to the existing global hub: root execution
+success/error (including legacy idle/error) increments attention without requiring
+an online client. Root/system visibility uses the session-index policy and an
+authoritative session record; child sessions do not create unread badges.
+Token/part/message deltas do no work. Each session serializes lifecycle boundaries
+and independently retries failed identity reads/writes with capped backoff.
+New execution rearms terminal deduplication and clears its previous error marker;
+successful completion markers survive new runs. Event sequence/clock fences reject
+older boundaries. Deleted sessions are removed. Commit/revision changes are atomic;
+failed commits retain the previous snapshot. Restart preserves read state and
+terminal deduplication. History predating this feature is default-read (the previous
+client notification store had no durable data to migrate).
+
+- `GET /api/yuri/session-unread` → `{ revision, sessions }`.
+- Each session row is `{ directory, unreadCount, hasError, manual, revision }`.
+- `PUT /api/yuri/session-unread/:id`, body `{ unread: true }`, explicitly marks a
+  root conversation unread, including an already-read/selected session.
+- Body `{ unread: false, expectedRevision }` acknowledges only that exact observed
+  row revision. A delayed read never clears a later completion or manual mark.
+- Successful commits publish `yuri:session-unread-changed` revision tips through
+  `/api/yuri/events`. Clients lead with GET and recover on stream-ready/reconnect.
+
+All authenticated clients of one Host share this state (not per-device or
+per-client-token). Web, Electron, hosted mobile and Capacitor use the same
+authenticated runtime HTTP/SSE transport, including Relay. Standalone VS Code
+connects directly to OpenCode and keeps its existing local notification state;
+it does not request Host-only unread routes. System push/tray delivery policies
+remain independent; manual unread does not manufacture a system notification.
+
 ## Entrypoints and structure
 
 Native push registration accepts optional `bundleId` and carries it through Host

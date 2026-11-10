@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node';
 import {
   collectAssistantSkillDirectories,
   createPiCodingRuntime,
@@ -24,6 +25,7 @@ const writeSkill = (root, name, description = `${name} skill`) => {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (temps.length > 0) {
     fs.rmSync(temps.pop(), { recursive: true, force: true });
   }
@@ -108,6 +110,38 @@ describe('formatPiCodingPrompt', () => {
 });
 
 describe('createPiCodingRuntime', () => {
+  it.each([undefined, 99999, 5])('caps the actual bash execution timeout for requested %s seconds', async (timeout) => {
+    const runtime = await createPiCodingRuntime(temp(), { homeDir: temp() });
+    const exec = vi.spyOn(NodeExecutionEnv.prototype, 'exec').mockResolvedValue({ ok: true, value: { stdout: '', stderr: '', exitCode: 0 } });
+    try {
+      const bash = runtime.tools.find((tool) => tool.name === 'bash');
+      expect(bash.parameters.properties.timeout.maximum).toBe(300);
+      await bash.execute('bounded', { command: 'unused mock command', ...(timeout === undefined ? {} : { timeout }) });
+      expect(exec).toHaveBeenCalledWith('unused mock command', expect.objectContaining({ timeout: timeout === 5 ? 5 : 300 }));
+    } finally { await runtime.close(); }
+  });
+
+  it('kills the real shell and its child on a shorter timeout', async () => {
+    const cwd = temp();
+    const runtime = await createPiCodingRuntime(cwd, { homeDir: temp() });
+    const pidFile = path.join(cwd, 'child-pids');
+    let pids = [];
+    try {
+      const bash = runtime.tools.find((tool) => tool.name === 'bash');
+      await expect(bash.execute('kill-tree', { command: 'sleep 60 & child=$!; printf "%s\\n" "$$" "$child" > child-pids; wait', timeout: 0.3 })).rejects.toThrow('timed out');
+      pids = fs.readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+      expect(pids).toHaveLength(2);
+      await vi.waitFor(() => {
+        for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+      });
+    } finally {
+      await runtime.close();
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* Fixture process already exited. */ }
+      }
+    }
+  });
+
   it('installs read/write/edit/bash and merges global plus project skills', async () => {
     const home = temp();
     const cwd = temp();

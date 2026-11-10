@@ -108,11 +108,24 @@ describe("idle prompt + interrupt (ticket 06)", () => {
       id: MESSAGE,
       text: "hello from inbox",
       delivery: "steer",
+      metadata: { client: { id: "yuri" } },
     }))
     expect(inbox.id).toBe(MESSAGE)
     expect(inbox.type).toBe("user")
     expect(inbox.delivery).toBe("steer")
     expect(inbox.sessionID).toBe(SESSION)
+  })
+
+  test.each(["steer", "queue"] as const)("declares Yuri on each %s prompt without mutating metadata or changing the input id", async (delivery) => {
+    const { postSessionPrompt } = await import("./session-prompt-api")
+    const metadata = { agent: "build", model: { providerID: "example", modelID: "model" }, client: { id: "other", surface: "web" } }
+    const input = { sessionID: SESSION, directory: "/repo", messageID: MESSAGE, text: "hello", delivery, metadata }
+    await postSessionPrompt(input)
+    await postSessionPrompt(input)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.body).toEqual({ id: MESSAGE, text: "hello", delivery, metadata: { ...metadata, client: { id: "yuri", surface: "web" } } })
+    expect(calls[1]!.body).toEqual(calls[0]!.body)
+    expect(metadata.client.id).toBe("other")
   })
 
   test("inbox item response does not become a transcript row", async () => {

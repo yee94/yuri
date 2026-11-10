@@ -83,8 +83,14 @@ Avatar pigment selection remains pure in `recipe.ts`: twelve mixed soft/vivid/
 neutral colors are available for new defaults and randomization, while existing
 opaque seeds retain the frozen original six-color mapping. New random choices
 are persisted as explicit v1 recipes; no read-time migration or per-frame random
-color is introduced. `engine.ts` owns the exact artwork pigments for all static,
-live and PNG consumers. Geometry, paint-mode caches and scheduling are unchanged.
+color is introduced. `palette.ts` owns the exact artwork pigments for all static,
+live and PNG consumers, consumed by `engine.ts`. It also maps contact user bubbles
+to that identity: luminous jade/cyan pigments stay exact with dark text;
+orange and midtone blue/violet/rose bubbles deepen for white text without changing the avatar
+pigments or hue families. Soft/neutral pigments use stronger
+same-hue fills. Text prefers white whenever its contrast reaches 4.5:1; brighter
+fills retain black text to meet that minimum, independently of the application theme. Geometry, paint-mode caches
+and scheduling are unchanged.
 
 `frameClock.ts` joins Motion's application-wide `frame.read` / `frame.render`
 pipeline. Any number of active avatars registers one shared read callback and

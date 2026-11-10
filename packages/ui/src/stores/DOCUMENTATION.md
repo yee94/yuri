@@ -159,6 +159,17 @@ same OTA channel override and beta→stable confirmation flow; Electron delegate
 checks/download/relaunch to main-process IPC, while Capacitor uses mobileUpdates.
 The desktop decision and pending-restart state are main-process authoritative and
 independent of the selected Host. Web and VS Code keep their existing package paths.
+`downloadError` is separate from general check/apply errors, so only failed
+downloads become resumable background tasks. Downloads synchronously reject
+duplicate starts; `downloadUpdate({ resume: true })` preserves the original
+version/channel and refuses changed candidates. Ordinary explicit new downloads
+can choose a newly checked version. Dismissal preserves active/failed downloads.
+Only version/channel/client-runtime intent is stored under
+`yuri-client-update-download`; no URLs, credentials, release contents or error
+messages are persisted. Restoring this intent reports an interruption, never
+live activity; Continue rechecks the native owner before retrying. Progress-only
+updates perform no persistence writes. Successful native-ready evidence clears
+the intent. This state belongs to the local client, not the selected Host.
 
 Use a store when state is:
 
@@ -379,7 +390,7 @@ windows do not inherit the local theme.
 
 `useModelPickerSectionsStore` persists model-picker section collapse choices for the empty-search view. `ModelPickerList` starts active-search results expanded, keeps collapse choices component-local during that search, and clears them when the search ends.
 
-`useUIStore` scopes the complete right workspace to the primary session: context-panel tabs, their order and active selection, open/expanded state, preview width, exact tool diff, and the right sidebar git/files selection. `contextPanelByDirectory` is the live directory-addressed projection consumed by existing panel actions and views, not a shared tab catalog. `syncWorkspacePanelsForSessionSwitch()` captures immutable panel references in `sessionWorkspacePanelById` (keyed by runtime plus session, bounded to 40 snapshots) and replaces the projection with the next session's complete snapshot. A session without a snapshot gets an empty closed panel; leaving a directory also clears its live tabs so Welcome/draft cannot reopen them. Pending file-navigation intents are cleared at the same boundary. Snapshots remain in-memory; persisted directory layout still provides startup continuity, and the initial selection before any snapshot exists preserves that layout. Callers that leave a real session must invoke the boundary: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
+`useUIStore` scopes the complete right workspace to the primary session: context-panel tabs, their order and active selection, open/expanded state, preview width, exact tool diff, and the right sidebar git/files selection. `contextPanelByDirectory` is the live directory-addressed projection consumed by existing panel actions and views, not a shared tab catalog. `syncWorkspacePanelsForSessionSwitch()` captures immutable panel references in `sessionWorkspacePanelById` (keyed by runtime plus session, bounded to 40 snapshots) and replaces the projection with the next session's complete snapshot. A session without a snapshot gets an empty closed panel; leaving a directory also clears its live tabs so Welcome/draft cannot reopen them. Pending file-navigation intents are cleared at the same boundary. Snapshots remain in-memory; persisted directory layout still provides startup continuity, and the initial selection before any snapshot exists preserves that layout. Callers that leave a real session must invoke the boundary: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`). A single store-owned session-switch intent subscription closes global model/agent pickers instantly; already-closed pickers skip the store write and persistence projection. ModelControls owns local mobile panels/tooltips and subscribes only while one is open, dismissing on intent or Activity cleanup. TextSelectionMenu uses one module-level subscription to clear the selection once and dismiss its sole visible menu; delayed selection reads reject stale intents.
 
 Exact tool patches selected from `edit`, `multiedit`, `write`, and `apply_patch` rows live in the transient `contextToolDiffByDirectory` map. Edit-style and write-style rows retain one file, while an `apply_patch` row retains every renderable file from that invocation. The persisted tab keeps only its target path, turn message, and focus line; regular diff navigation, scope changes, tab close, and runtime switches clear the transient patches.
 

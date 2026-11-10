@@ -54,7 +54,6 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
     let ro: ResizeObserver | undefined;
     let mo: MutationObserver | undefined;
     let frame: number | undefined;
-    let roDebounce: ReturnType<typeof setTimeout> | undefined;
     let active: string | undefined;
     let dirty = true;
 
@@ -113,17 +112,12 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
             return;
         }
 
-        clearTimeout(roDebounce);
-        roDebounce = undefined;
         ro?.disconnect();
         ro = undefined;
         if (CtorRO) {
             ro = new CtorRO(() => {
-                clearTimeout(roDebounce);
-                roDebounce = setTimeout(() => {
-                    dirty = true;
-                    schedule();
-                }, 100);
+                refreshOffsets();
+                schedule();
             });
             ro.observe(container);
             for (const element of nodes.values()) {
@@ -133,7 +127,7 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
 
         mo?.disconnect();
         mo = undefined;
-        if (CtorMO) {
+        if (CtorMO && !CtorRO) {
             mo = new CtorMO(() => {
                 dirty = true;
                 schedule();
@@ -210,8 +204,6 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
             caf(frame);
         }
         frame = undefined;
-        clearTimeout(roDebounce);
-        roDebounce = undefined;
         clear();
         ro?.disconnect();
         mo?.disconnect();

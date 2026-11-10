@@ -18,6 +18,7 @@ import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { MobileOtaUpdateNotice } from '@/components/update/MobileOtaUpdateNotice';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { YuriLogo } from '@/components/ui/YuriLogo';
 import { MobileConnectionWelcome } from './MobileConnectionWelcome';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
@@ -32,6 +33,7 @@ import { SettingsView } from '@/components/views/SettingsView';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { MobileSurfaceHeader } from '@/components/ui/MobileSurfaceHeader';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { getMobileWindowMotionController, MOBILE_SESSIONS_WINDOW_ID } from '@/components/ui/MobileWindowMotionRegistry';
 import { MobileSessionStatusBar } from '@/components/chat/MobileSessionStatusBar';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
@@ -112,7 +114,7 @@ import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { mobileBackNavigationCoordinator, useMobileNavigationDriver } from '@/mobile/mobileBackNavigation';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { autoConnectLastInstance, connectionDisplayUrl, getAutoConnectTargetLabel, isActiveRuntimeConnection, reprobeActiveConnection, useMobileConnection, type UseMobileConnection } from './mobileConnections';
-import { MobileConnectionMethodDivider, MobilePairingLinkForm } from './MobilePairingLinkForm';
+import { MobilePairingLinkForm } from './MobilePairingLinkForm';
 import { isQrScanSupported, scanConnectionQr } from './mobileQrScan';
 import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from './runtimeEndpointReset';
 import { useAppFontEffects } from './useAppFontEffects';
@@ -1112,49 +1114,65 @@ const MobileInstancesSurface: React.FC<{
   const conn = connection;
   const {
     connections, isBusy, isPasswordBusy, error, pendingConnection,
-    connect, submitPassword, cancelPassword, saveConnection, removeConnection, subscribeConnected, setError,
+    connect, submitPassword, cancelPassword, renameConnection, removeConnection, subscribeConnected, setError,
   } = conn;
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const editingConnection = editingId ? connections.find((connection) => connection.id === editingId) ?? null : null;
-  const isRelayOnlyEditing = editingConnection ? !editingConnection.candidates.some((c) => c.kind === 'direct') : false;
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
-  const [url, setUrl] = React.useState('');
   const [label, setLabel] = React.useState('');
-  const [clientToken, setClientToken] = React.useState('');
+  const [pairingLink, setPairingLink] = React.useState('');
+  const [addOpen, setAddOpen] = React.useState(false);
+  const addSheetId = React.useId();
+  const editSheetId = React.useId();
   const [password, setPassword] = React.useState('');
   const [isScanning, setIsScanning] = React.useState(false);
   const qrScanSupported = React.useMemo(() => isQrScanSupported(), []);
-  // The manual add/edit form is hidden until asked for — the sheet leads with
-  // the list of instances (with live status), not a wall of inputs.
-  const [formOpen, setFormOpen] = React.useState(false);
   // Which row is being connected to, for the per-row spinner.
   const [connectingId, setConnectingId] = React.useState<string | null>(null);
-  const handleConnected = useEvent(onConnect);
+  // The row whose last attempt failed, so a connection error is shown under that
+  // instance instead of inside the add section at the bottom.
+  const [failedId, setFailedId] = React.useState<string | null>(null);
+  const handleConnected = useEvent(() => {
+    setAddOpen(false);
+    setPairingLink('');
+    onConnect();
+  });
 
   React.useEffect(
     () => subscribeConnected(handleConnected),
     [handleConnected, subscribeConnected],
   );
 
-  // Populate/clear the form imperatively (on edit tap / cancel / save) rather than via
-  // an effect keyed on the derived connection object. With an effect, any churn of the
-  // connections list re-fires it and overwrites what the user is typing — the keyboard
-  // "resets" mid-edit. Imperative population is immune to that.
+  // Populate/clear the rename form imperatively (on edit tap / cancel / save)
+  // rather than via an effect keyed on the derived connection object. With an
+  // effect, any churn of the connections list re-fires it and overwrites what the
+  // user is typing — the keyboard "resets" mid-edit. Imperative population is
+  // immune to that.
   const resetForm = useEvent(() => {
     setEditingId(null);
-    setUrl('');
     setLabel('');
-    setClientToken('');
+    setFailedId(null);
     setError(null);
-    setFormOpen(false);
+    setAddOpen(false);
   });
 
-  const saveInstance = useEvent((event: React.FormEvent) => {
+  const closeAddSheet = useEvent(() => {
+    if (isBusy || isScanning) return;
+    setAddOpen(false);
+    setError(null);
+  });
+
+  const closeEditSheet = useEvent(() => {
+    if (isBusy || isScanning) return;
+    resetForm();
+  });
+
+  const saveLabel = useEvent((event: React.FormEvent) => {
     event.preventDefault();
-    // The id is what makes this an EDIT: saveConnection uses it to preserve the
-    // existing relay/https candidates (and the Keychain token they key) instead
-    // of rebuilding the instance from the single URL field.
-    void saveConnection({ id: editingId ?? undefined, url, label, clientToken }).then((saved) => {
+    if (!editingId || !label.trim()) return;
+    // Rename only: transport candidates and the Keychain token belong to the
+    // pairing handshake, so the editor never rebuilds them from typed values.
+    void renameConnection(editingId, label).then((saved) => {
       if (saved) resetForm();
     });
   });
@@ -1168,21 +1186,18 @@ const MobileInstancesSurface: React.FC<{
     setError(t('mobile.connect.link.invalid'));
   });
 
-  // Scan a pairing QR into the add/edit form fields (does not change edit mode, so
-  // the form-reset effect doesn't wipe the scanned values). The user reviews + saves.
+  // Scan a pairing QR. Pairing codes redeem immediately, and legacy token QRs
+  // carry everything needed, so both connect directly — same as the home scan.
   const handleScanInstance = useEvent(async () => {
     if (isScanning) return;
     setError(null);
+    setFailedId(null);
     setIsScanning(true);
     try {
       const result = await scanConnectionQr();
       switch (result.status) {
         case 'ok':
-          // Legacy token QR: prefill the manual form for review before saving.
-          setUrl(result.url);
-          if (result.label) setLabel(result.label);
-          if (result.clientToken) setClientToken(result.clientToken);
-          setFormOpen(true);
+          await connect({ url: result.url, label: result.label, clientToken: result.clientToken });
           break;
         case 'pairing':
           await conn.redeemPairingConnection(result.pairing);
@@ -1203,6 +1218,8 @@ const MobileInstancesSurface: React.FC<{
         default:
           break;
       }
+    } catch {
+      setError(t('mobile.connect.scan.failed'));
     } finally {
       setIsScanning(false);
     }
@@ -1241,6 +1258,29 @@ const MobileInstancesSurface: React.FC<{
   const inputClass = 'h-12 w-full rounded-[16px] border border-border/70 bg-surface-elevated px-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20';
 
   if (pendingConnection) {
+    if (pendingConnection.reason === 'pairing') {
+      return (
+        <div className="yuri-settings-page-content">
+          <SettingsGroup label={t('mobile.connect.pairing.expired')} itemId="instances.manage">
+            <div className="yuri-settings-group-row flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <Icon name="computer" className="size-6 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 flex-1 truncate typography-ui-label">{pendingConnection.label}</p>
+                {connections.some((item) => item.id === pendingConnection.id) ? (
+                  <Button variant="ghost" size="icon" disabled={isBusy || isScanning} aria-label={t('mobile.instances.deleteAria', { label: pendingConnection.label })} onClick={() => { setConfirmingDeleteId(pendingConnection.id); cancelPasswordPrompt(); }}>
+                    <Icon name="delete-bin" className="size-5" />
+                  </Button>
+                ) : null}
+              </div>
+              <p className="typography-small text-muted-foreground">{t('mobile.connect.pairing.reconnectHint')}</p>
+              {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+              {qrScanSupported ? <Button size="lg" disabled={isBusy || isScanning} onClick={() => void handleScanInstance()}><Icon name="scan-2" className="size-5" />{t('mobile.connect.scanQr')}</Button> : null}
+              <Button variant={qrScanSupported ? 'ghost' : 'default'} size="lg" disabled={isBusy || isScanning} onClick={() => { cancelPasswordPrompt(); setAddOpen(true); }}>{t('mobile.connect.link.useLink')}</Button>
+            </div>
+          </SettingsGroup>
+        </div>
+      );
+    }
     return (
       <div className="yuri-settings-page-content">
         <SettingsGroup
@@ -1269,7 +1309,7 @@ const MobileInstancesSurface: React.FC<{
               autoFocus
               className={inputClass}
             />
-            {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
+            {error ? <p role="alert" className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
             <Button type="submit" size="lg" className="mt-1 h-12 w-full" disabled={isPasswordBusy || !password.trim()}>
               {isPasswordBusy ? t('mobile.connect.connecting') : t('mobile.connect.unlockButton')}
             </Button>
@@ -1281,6 +1321,31 @@ const MobileInstancesSurface: React.FC<{
       </div>
     );
   }
+
+  const labelForm = (
+    <form className="flex flex-col gap-3" onSubmit={saveLabel}>
+      <label className="block space-y-1.5">
+        <span className="block typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
+        <Input
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder={t('mobile.instances.label.placeholder')}
+          autoComplete="off"
+          autoCapitalize="words"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={120}
+          autoFocus
+          disabled={isBusy || isScanning}
+          className="h-12 w-full text-[16px]"
+        />
+      </label>
+      {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+      <Button type="submit" size="lg" className="w-full" disabled={isBusy || isScanning || !label.trim()}>
+        {t('mobile.instances.saveEdit')}
+      </Button>
+    </form>
+  );
 
   return (
     <div className="yuri-settings-page-content">
@@ -1301,91 +1366,98 @@ const MobileInstancesSurface: React.FC<{
                 ? t('mobile.instances.status.connected')
                 : t('mobile.instances.status.saved');
             return (
-              <div
-                key={connection.id}
-                className={cn(
-                  'yuri-settings-group-row relative flex items-center',
-                  confirming && 'bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)]',
-                )}
-              >
-                {/* Full-card hit target so the whole row switches instances; action
-                    buttons sit above with z-10 and keep their own clicks. */}
-                <button
-                  type="button"
-                  aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: connection.label })}
-                  data-mobile-press-feedback="none"
-                  className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:pointer-events-none"
-                  onClick={() => {
-                    if (isActive) return;
-                    setConnectingId(connection.id);
-                    void connect({ id: connection.id, candidates: connection.candidates, clientToken: connection.clientToken, label: connection.label })
-                      .finally(() => setConnectingId(null));
-                  }}
-                  disabled={isActive || (isBusy && !isConnectingRow) || confirming}
-                  style={{ touchAction: 'manipulation' }}
-                />
-                <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 items-center gap-3">
-                  <span className="relative flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-interactive-hover text-foreground">
-                    <Icon name="server" className="size-[18px]" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="block truncate typography-ui-label text-foreground">{connection.label}</span>
-                    </span>
-                    <span className={cn(
-                      'block truncate typography-small',
-                      isActive && !isConnectingRow ? 'text-[var(--status-success)]' : 'text-muted-foreground',
-                    )}>
-                      {statusText}
-                    </span>
-                  </span>
-                </div>
-                <div className="relative z-10 flex shrink-0 items-center gap-0.5 pr-2">
-                  {confirming ? (
-                    <button
-                      type="button"
-                      aria-label={t('mobile.instances.confirmDeleteAria', { label: connection.label })}
-                      className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-destructive px-3 text-destructive-foreground transition-opacity active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
-                      onClick={() => confirmDelete(connection.id)}
-                      style={{ touchAction: 'manipulation' }}
-                    >
-                      <Icon name="delete-bin" className="size-[18px]" />
-                      <span className="typography-ui-label">{t('mobile.instances.delete')}</span>
-                    </button>
-                  ) : isConnectingRow ? (
-                    <span className="flex size-9 items-center justify-center text-muted-foreground" aria-hidden>
-                      <Icon name="loader-4" className="size-[18px] animate-spin" />
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={t('mobile.instances.edit')}
-                      className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      onClick={() => {
-                        setEditingId(connection.id);
-                        setUrl(connection.candidates.some((c) => c.kind === 'direct') ? connectionDisplayUrl(connection) : '');
-                        setLabel(connection.label);
-                        setClientToken(connection.clientToken || '');
-                        setError(null);
-                      }}
-                      style={{ touchAction: 'manipulation' }}
-                    >
-                      <Icon name="edit" className="size-[18px]" />
-                    </button>
+              <React.Fragment key={connection.id}>
+                <div
+                  className={cn(
+                    'yuri-settings-group-row relative flex items-center',
+                    confirming && 'bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)]',
                   )}
+                >
+                  {/* Full-card hit target so the whole row switches instances; action
+                      buttons sit above with z-10 and keep their own clicks. */}
                   <button
                     type="button"
-                    aria-label={confirming
-                      ? t('mobile.instances.cancelDeleteAria', { label: connection.label })
-                      : t('mobile.instances.deleteAria', { label: connection.label })}
-                    className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onClick={() => toggleConfirmDelete(connection.id)}
+                    aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: connection.label })}
+                    data-mobile-press-feedback="none"
+                    className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:pointer-events-none"
+                    onClick={() => {
+                      if (isActive) return;
+                      setError(null);
+                      setFailedId(connection.id);
+                      setConnectingId(connection.id);
+                      void connect({ id: connection.id, candidates: connection.candidates, clientToken: connection.clientToken, label: connection.label })
+                        .finally(() => setConnectingId(null));
+                    }}
+                    disabled={isActive || (isBusy && !isConnectingRow) || confirming}
                     style={{ touchAction: 'manipulation' }}
-                  >
-                    <Icon name={confirming ? 'close' : 'delete-bin'} className="size-[18px]" />
-                  </button>
+                  />
+                  <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 items-center gap-3">
+                    <span className="relative flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-interactive-hover text-foreground">
+                      <Icon name="server" className="size-[18px]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="block truncate typography-ui-label text-foreground">{connection.label}</span>
+                      </span>
+                      <span className={cn(
+                        'block truncate typography-small',
+                        isActive && !isConnectingRow ? 'text-[var(--status-success)]' : 'text-muted-foreground',
+                      )}>
+                        {statusText}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="relative z-10 flex shrink-0 items-center gap-0.5 pr-2">
+                    {confirming ? (
+                      <button
+                        type="button"
+                        aria-label={t('mobile.instances.confirmDeleteAria', { label: connection.label })}
+                        className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-destructive px-3 text-destructive-foreground transition-opacity active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                        onClick={() => confirmDelete(connection.id)}
+                        style={{ touchAction: 'manipulation' }}
+                      >
+                        <Icon name="delete-bin" className="size-[18px]" />
+                        <span className="typography-ui-label">{t('mobile.instances.delete')}</span>
+                      </button>
+                    ) : isConnectingRow ? (
+                      <span className="flex size-9 items-center justify-center text-muted-foreground" aria-hidden>
+                        <Icon name="loader-4" className="size-[18px] animate-spin" />
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={t('mobile.instances.edit')}
+                        className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onClick={() => {
+                          setEditingId(connection.id);
+                          setLabel(connection.label);
+                          setFailedId(null);
+                          setError(null);
+                        }}
+                        style={{ touchAction: 'manipulation' }}
+                      >
+                        <Icon name="edit" className="size-[18px]" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={confirming
+                        ? t('mobile.instances.cancelDeleteAria', { label: connection.label })
+                        : t('mobile.instances.deleteAria', { label: connection.label })}
+                      className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      onClick={() => toggleConfirmDelete(connection.id)}
+                      style={{ touchAction: 'manipulation' }}
+                    >
+                      <Icon name={confirming ? 'close' : 'delete-bin'} className="size-[18px]" />
+                    </button>
+                  </div>
                 </div>
-              </div>
+                {error && failedId === connection.id && !confirming ? (
+                  <div className="yuri-settings-group-row" role="alert">
+                    <p className="typography-small text-[var(--status-error)]">{error}</p>
+                  </div>
+                ) : null}
+              </React.Fragment>
             );
           })
         ) : (
@@ -1395,107 +1467,83 @@ const MobileInstancesSurface: React.FC<{
         )}
       </SettingsGroup>
 
-      {/* QR pairing is the primary path; the manual form stays hidden until
-          asked for (or until a row's edit button opens it). */}
-      <SettingsGroup
-        label={editingConnection ? t('mobile.instances.editTitle') : t('mobile.instances.addTitle')}
-        cardClassName={!formOpen && !editingConnection ? '!bg-background' : undefined}
-      >
-        {!formOpen && !editingConnection ? (
-          <div className="yuri-settings-group-row flex flex-col items-stretch gap-2">
-              {qrScanSupported ? (
-                <Button
-                  type="button"
-                  size="lg"
-                  className="h-12 w-full"
-                  onClick={() => void handleScanInstance()}
-                  disabled={isScanning}
-                >
-                  <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
-                  {t('mobile.connect.scanQr')}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="lg"
-                className="h-12 w-full"
-                onClick={() => { setError(null); setFormOpen(true); }}
-              >
-                <Icon name="add" className="size-[18px]" />
-                {t('mobile.instances.addManual')}
-              </Button>
-              {error ? <p className="px-1 text-center typography-small text-[var(--status-error)]">{error}</p> : null}
-          </div>
-        ) : (
-          <div className="yuri-settings-group-row flex flex-col gap-3">
-              <div className="flex min-h-8 items-center justify-end px-1">
-                <Button type="button" variant="ghost" size="xs" onClick={resetForm}>
-                  {t('mobile.instances.cancelEdit')}
-                </Button>
-              </div>
-              <form className="flex flex-col gap-3" onSubmit={saveInstance}>
-                {!isRelayOnlyEditing ? (
-                  <label className="block space-y-1.5">
-                    <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
-                    <input
-                      {...mobileInputKeyboardProps}
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      placeholder={t('mobile.connect.url.placeholder')}
-                      type="url"
-                      inputMode="url"
-                      autoCapitalize="none"
-                      className={inputClass}
-                    />
-                  </label>
-                ) : null}
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
-                  <input
-                    value={label}
-                    onChange={(event) => setLabel(event.target.value)}
-                    placeholder={t('mobile.instances.label.placeholder')}
-                    autoComplete="off"
-                    autoCapitalize="words"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className={inputClass}
-                  />
-                </label>
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
-                  <input
-                    {...mobileInputKeyboardProps}
-                    value={clientToken}
-                    onChange={(event) => setClientToken(event.target.value)}
-                    placeholder={t('mobile.connect.token.placeholder')}
-                    autoCapitalize="none"
-                    className={inputClass}
-                  />
-                  <p className="px-1 typography-micro text-muted-foreground">{t('mobile.connect.token.hint')}</p>
-                </label>
-                <Button type="submit" size="lg" className="mt-1 h-12 w-full">
-                  {editingConnection ? t('mobile.instances.saveEdit') : t('mobile.instances.saveNew')}
-                </Button>
-              </form>
-              {/* Pairing link is available when adding (not while editing an existing row). */}
-              {!editingConnection ? (
-                <>
-                  <MobileConnectionMethodDivider label={t('mobile.connect.link.divider')} />
-                  <MobilePairingLinkForm
-                    disabled={isBusy || isScanning}
-                    isBusy={isBusy}
-                    inputClassName={inputClass}
-                    onRedeem={handlePairingLinkRedeem}
-                    onInvalid={handlePairingLinkInvalid}
-                  />
-                </>
-              ) : null}
-              {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
-          </div>
-        )}
+      {/* Adding an instance uses the same two entries as the welcome screen:
+          scan a pairing QR, or redeem a connection link. Editing opens its own
+          sheet — transports and tokens belong to the pairing handshake, so the
+          sheet only renames. */}
+      <SettingsGroup label={t('mobile.instances.addTitle')}>
+        <div className="yuri-settings-group-row flex flex-col gap-3">
+          {qrScanSupported ? (
+            <Button
+              type="button"
+              size="lg"
+              className="w-full"
+              onClick={() => void handleScanInstance()}
+              disabled={isBusy || isScanning}
+            >
+              <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
+              {t('mobile.connect.scanQr')}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant={qrScanSupported ? 'ghost' : 'default'}
+            size="lg"
+            className="w-full"
+            disabled={isBusy || isScanning}
+            onClick={() => { setFailedId(null); setError(null); setAddOpen(true); }}
+          >
+            {t('mobile.connect.link.useLink')}
+          </Button>
+          {error && !addOpen && !editingConnection && !failedId ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+        </div>
       </SettingsGroup>
+
+      <MobileResizableSheet
+        id={`mobile-instance-edit-${editSheetId}`}
+        open={editingConnection !== null}
+        onOpenChange={(open) => { if (!open) closeEditSheet(); }}
+        fitContent
+        ariaLabel={t('mobile.instances.editTitle')}
+        closeAriaLabel={t('mobile.surface.closeAria')}
+        resizeAriaLabel={t('mobile.connect.options.resize')}
+      >
+        {/* No sheet header: the field label is the whole title. Dismissal stays
+            on the sheet's own gesture / scrim, so no close button is needed. */}
+        <ScrollableOverlay className="px-5 pb-5 pt-1" disableHorizontal fillContainer={false}>
+          {labelForm}
+        </ScrollableOverlay>
+      </MobileResizableSheet>
+
+      <MobileResizableSheet
+        id={`mobile-instance-add-${addSheetId}`}
+        open={addOpen}
+        onOpenChange={(open) => { if (!open) closeAddSheet(); }}
+        fitContent
+        title={<h2 className="truncate typography-ui-label font-semibold">{t('mobile.connect.link.useLink')}</h2>}
+        ariaLabel={t('mobile.connect.link.useLink')}
+        closeAriaLabel={t('mobile.surface.closeAria')}
+        resizeAriaLabel={t('mobile.connect.options.resize')}
+      >
+        <ScrollableOverlay className="px-5 py-5" disableHorizontal fillContainer={false}>
+          <div className="flex flex-col gap-5">
+            <p className="typography-small text-muted-foreground">{t('mobile.connect.link.help')}</p>
+            <MobilePairingLinkForm
+              value={pairingLink}
+              onValueChange={(value) => { setPairingLink(value); setError(null); }}
+              showPasteButton
+              disabled={isBusy || isScanning}
+              isBusy={isBusy}
+              inputClassName="min-w-0 flex-1 text-[16px]"
+              buttonVariant="default"
+              buttonClassName="yuri-welcome-primary w-full"
+              error={error}
+              onRedeem={handlePairingLinkRedeem}
+              onInvalid={handlePairingLinkInvalid}
+            />
+          </div>
+        </ScrollableOverlay>
+      </MobileResizableSheet>
     </div>
   );
 };

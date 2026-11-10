@@ -10,6 +10,9 @@ diagnostics use provider/location/session-active V2 routes and location query
 encoding, not removed V1 endpoints.
 
 ## Entrypoints and structure
+- `feature-routes-runtime.js` registers the Host-owned history importer before
+  the generic proxy, using the official client, project registry and session
+  index. Its domain contract is in `../history-import/DOCUMENTATION.md`.
 - `native-goal.js`: official `@opencode/schema/goal` RPC read adapter shared by
   scheduled tasks, Assistant reconciliation and notification suppression. It
   validates native state and distinguishes an absent plugin from transport/auth
@@ -83,6 +86,15 @@ encoding, not removed V1 endpoints.
 - `packages/web/server/lib/opencode/settings-normalization-runtime.js`: path/settings normalization and sanitization helpers runtime used by settings/routes/config wiring.
 - `packages/web/server/lib/opencode/theme-runtime.js`: custom theme JSON validation and theme directory loading runtime for settings utility routes.
 - `packages/web/server/lib/opencode/proxy.js`: OpenCode API/SSE forwarding and readiness-gate route registration.
+  - After the existing UI/tunnel authentication middleware, the proxy checks
+    browser provenance against the existing `isRequestOriginAllowed` policy.
+    Only approved origins have Fetch Metadata removed from the upstream copy:
+    those headers describe browser → Yuri, not Yuri → OpenCode. Origin, the
+    original request headers, Yuri credential validation and managed upstream
+    authentication are unchanged. Session/message reads, SSE, GUI bundle reads
+    and the generic proxy share this rule. Missing/failed approval leaves metadata
+    intact, so unknown browser origins retain upstream cross-site rejection. No
+    service CORS configuration or origin allowlist is expanded.
 - `npm-registry.js`: plugin package lookup used by `GET /api/config/plugins/registry`. It asks the user's own `npm view` first (run in the project directory, so scope registries, auth tokens and mirrors from `.npmrc` apply as they do for `npm install`) and falls back to a direct request to the public registry only when the CLI is unavailable; a CLI 404 is final. Results are cached per name and directory. The latest release's top-level package.json `icon` is returned as `icon` only when it is an `https://` URL or `data:image/` URI of at most ~1.5 MB; nested icon fields are not read or used as fallbacks.
 - `plugin-icon.js` owns the shared icon sanitizer and optional local package metadata read for Web/Electron/mobile and VS Code. Registry `path-ok` includes the nearest package manifest's top-level `icon` for directories or built entry files. Search stops at the first manifest, root or 32 parents; malformed, unreadable or >2 MiB manifests omit artwork without changing path status. No server-side image fetch occurs. Settings → Plugins renders package artwork directly; GUI sidebar/titlebar entries use official `IconName` without package-image substitution.
 

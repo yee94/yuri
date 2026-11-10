@@ -106,7 +106,7 @@ describe('Web/Electron shared backend GUI response', () => {
     const frames = [];
     let finish;
     const ended = new Promise((resolve) => { finish = resolve; });
-    const host = createTunnelHost({ connectionId: 'gui-response', getLocalPort: () => port, getBufferedAmount: () => 0,
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'gui-response', getLocalPort: () => port, getBufferedAmount: () => 0,
       sendFrame: (bytes) => { const frame = decodeTunnelFrame(bytes); frames.push(frame); if (frame.frameType === TunnelFrameType.StreamEnd) finish(); },
     });
     try {

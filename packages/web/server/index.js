@@ -94,7 +94,7 @@ import {
   projectSessionLifecyclePayload,
   projectSessionWithStoredMap,
 } from './lib/session-metadata/session-projection.js';
-import { createScheduledTasksRuntime } from './lib/scheduled-tasks/runtime.js';
+import { createScheduledTasksRuntime, isScheduledTasksRuntimeEnabled } from './lib/scheduled-tasks/runtime.js';
 import { createScheduledTaskRunHistoryStore } from './lib/scheduled-tasks/run-history-store.js';
 import { createServerStartupRuntime } from './lib/opencode/server-startup-runtime.js';
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
@@ -1009,6 +1009,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
     openCodeServeVersion,
   }),
   getOpenCodeAuthHeaders,
+  isRequestOriginAllowed,
   buildOpenCodeUrl,
   ensureOpenCodeApiPrefix,
   getUiNotificationClients: () => uiNotificationClients,
@@ -1185,9 +1186,9 @@ const waitForAgentPresence = (...args) => openCodeLifecycleRuntime.waitForAgentP
 const refreshOpenCodeAfterConfigChange = (...args) => openCodeLifecycleRuntime.refreshOpenCodeAfterConfigChange(...args);
 const startHealthMonitoring = () => openCodeLifecycleRuntime.startHealthMonitoring(HEALTH_CHECK_INTERVAL);
 const triggerHealthCheck = () => openCodeLifecycleRuntime.triggerHealthCheck();
-const scheduledTaskRunHistoryStore = createScheduledTaskRunHistoryStore({
+const scheduledTaskRunHistoryStore = isScheduledTasksRuntimeEnabled() ? createScheduledTaskRunHistoryStore({
   dbPath: path.join(YURI_DATA_DIR, 'scheduled-task-runs.sqlite'),
-});
+}) : null;
 const scheduledTasksRuntime = createScheduledTasksRuntime({
   projectConfigRuntime,
   listProjects: async () => {
@@ -1505,6 +1506,7 @@ async function main(options = {}) {
     getOpenCodeAuthHeaders,
     waitForOpenCodeReady,
     fetchFn: indexSessionDirectories.fetchSessionList,
+    createFetchBatch: indexSessionDirectories.createFetchBatch,
     isDirectoryMissing: indexSessionDirectories.isDirectoryMissing,
     resolveDirectory: indexSessionDirectories.resolveDirectory,
     projectSessions: (sessions) => {
@@ -1828,6 +1830,7 @@ async function main(options = {}) {
     readSettingsStrict: readSettingsFromDiskStrict,
     remoteClientAuthRuntime,
     getLocalPort: () => tunnelRuntimeContext.getActivePort(),
+    authorizeRequest: (req) => uiAuthController.authorizeRelayRequest(req),
     // One relay host per machine: every instance sharing this data dir shares
     // the relay identity (serverId), so concurrent hosts evict each other at
     // the relay worker and devices land on a random local instance.
@@ -1870,6 +1873,7 @@ async function main(options = {}) {
 
   await featureRoutesRuntime.registerRoutes(app, {
     express,
+    uiAuthController,
     crypto,
     fs,
     os,

@@ -61,8 +61,9 @@ test.skipIf(process.platform !== 'darwin' || !device || !products)(`real WKWebVi
   const echoes = new WebSocketServer({ server: origin });
   origin.on('upgrade', req => requests.push({ path: req.url, relayed: hostSockets.has(req.socket.remotePort) }));
   echoes.on('connection', socket => socket.on('message', data => socket.send(data.toString())));
-  const auth = createUiAuth({ requireClientAuth: true, clientAuthController: { authenticateBearerToken: async token => token === 'probe-client'
-    ? { ok: true, clientId: 'probe', sessionToken: 'client:probe' } : { ok: false } } });
+  const pairedClient = { id: 'probe', authMethod: 'pairing', pairingId: 'probe-pairing', usesRelay: true };
+  const auth = createUiAuth({ requireClientAuth: true, clientAuthController: { listClients: async () => [pairedClient], authenticateBearerToken: async token => token === 'probe-client'
+    ? { ok: true, clientId: 'probe', sessionToken: 'client:probe', client: pairedClient } : { ok: false } } });
   const api = express(); api.post('/auth/url-token', auth.handleUrlAuthToken); api.use(auth.requireAuth);
   const server = http.createServer(api);
   const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
@@ -86,7 +87,7 @@ test.skipIf(process.platform !== 'darwin' || !device || !products)(`real WKWebVi
       const ts = Date.now();
       return { ts, pk: Buffer.from(canonical).toString('base64url'), sig: crypto.sign('SHA256', Buffer.from(`${ts}.${serverId}.${role}.${connectionId ?? ''}`), { key: sign.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url') };
     } };
-    host = startRelayHost({ relayUrl: relay.wsUrl, identity, getLocalPort: () => server.address().port, onStatus() {}, logger: { warn() {}, info() {} } });
+    host = startRelayHost({ relayUrl: relay.wsUrl, identity, authorizeRequest: auth.authorizeRelayRequest, getLocalPort: () => server.address().port, onStatus() {}, logger: { warn() {}, info() {} } });
     await mkdir(join(app, 'Frameworks'), { recursive: true });
     for (const [directory, name] of [['Capacitor', 'Capacitor'], ['CapacitorCordova', 'Cordova']]) {
       await cp(join(products, directory, `${name}.framework`), join(app, 'Frameworks', `${name}.framework`), { recursive: true });

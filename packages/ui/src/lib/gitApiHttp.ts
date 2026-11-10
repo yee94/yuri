@@ -117,6 +117,19 @@ export const isGitDiscoveryGated = (value: unknown): boolean =>
   typeof value === 'function' && (value as unknown as Record<symbol, unknown>)[GIT_DISCOVERY_GATED] === true;
 
 const normalizeDirectoryKey = (directory: string): string => directory.trim();
+let discoveryCacheScope = '';
+const getDiscoveryCacheKey = (directory: string): string => {
+  const scope = `${getRuntimeGeneration()}\u0000${getRuntimeTransportIdentity()}`;
+  if (scope !== discoveryCacheScope) {
+    discoveryCacheScope = scope;
+    gitPrimaryRootCache.clear();
+    gitPrimaryRootInFlight.clear();
+    gitWorktreesCache.clear();
+    gitWorktreesInFlight.clear();
+    gitWorktreesCacheVersions.clear();
+  }
+  return `${scope}\u0000${normalizeDirectoryKey(directory)}`;
+};
 const getStatusCacheKey = (directory: string, mode?: 'light'): string =>
   mode === 'light' ? `${normalizeDirectoryKey(directory)}::light` : normalizeDirectoryKey(directory);
 
@@ -144,11 +157,11 @@ const invalidateGitStatusCache = (directory: string): void => {
 };
 
 const getWorktreesCacheVersion = (directory: string): number =>
-  gitWorktreesCacheVersions.get(normalizeDirectoryKey(directory)) ?? 0;
+  gitWorktreesCacheVersions.get(getDiscoveryCacheKey(directory)) ?? 0;
 
 /** Drop TTL + in-flight worktree listings after topology-changing create/delete. */
 export const invalidateGitWorktreesCache = (directory: string): void => {
-  const key = normalizeDirectoryKey(directory);
+  const key = getDiscoveryCacheKey(directory);
   if (!key) return;
   gitWorktreesCacheVersions.set(key, getWorktreesCacheVersion(directory) + 1);
   gitWorktreesCache.delete(key);
@@ -178,13 +191,11 @@ const writeGitDiscoveryCaches = (
     value: isGitRepository,
     expiresAt,
   });
-  const root = typeof primaryRoot === 'string' && primaryRoot
-    ? primaryRoot
-    : directory;
-  gitPrimaryRootCache.set(key, {
-    value: { root },
-    expiresAt,
-  });
+  if (typeof primaryRoot === 'string' && primaryRoot) {
+    gitPrimaryRootCache.set(getDiscoveryCacheKey(directory), { value: { root: primaryRoot }, expiresAt });
+  } else {
+    gitPrimaryRootCache.delete(getDiscoveryCacheKey(directory));
+  }
 };
 
 export type GitDiscoverEntry = {
@@ -209,6 +220,7 @@ export async function discoverGitRepositories(
     ),
   );
   const result = new Map<string, GitDiscoverEntry>();
+  const generation = getRuntimeGeneration();
   if (unique.length === 0) {
     return result;
   }
@@ -217,7 +229,7 @@ export async function discoverGitRepositories(
   const missing: string[] = [];
   for (const directory of unique) {
     const repoCached = gitRepoCache.get(directory);
-    const rootCached = gitPrimaryRootCache.get(directory);
+    const rootCached = gitPrimaryRootCache.get(getDiscoveryCacheKey(directory));
     if (
       repoCached && repoCached.expiresAt > now
       && rootCached && rootCached.expiresAt > now
@@ -251,7 +263,7 @@ export async function discoverGitRepositories(
       const primaryRoot = typeof entry.primaryRoot === 'string' && entry.primaryRoot
         ? entry.primaryRoot
         : null;
-      writeGitDiscoveryCaches(directory, isGitRepository, primaryRoot);
+      if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, isGitRepository, primaryRoot);
       result.set(directory, { isGitRepository, primaryRoot });
     }
   };
@@ -263,13 +275,13 @@ export async function discoverGitRepositories(
           checkIsGitRepository(directory),
           resolveGitPrimaryRoot(directory).then((value) => value.root).catch(() => directory),
         ]);
-        writeGitDiscoveryCaches(directory, isGitRepository, isGitRepository ? primary : null);
+        if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, isGitRepository, isGitRepository ? primary : null);
         result.set(directory, {
           isGitRepository,
           primaryRoot: isGitRepository ? primary : null,
         });
       } catch {
-        writeGitDiscoveryCaches(directory, false, null);
+        if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, false, null);
         result.set(directory, { isGitRepository: false, primaryRoot: null });
       }
     }));
@@ -412,7 +424,8 @@ export async function getGitStatus(directory: string, options?: { mode?: 'light'
 }
 
 export async function resolveGitPrimaryRoot(directory: string): Promise<{ root: string }> {
-  const key = normalizeDirectoryKey(directory);
+  const key = getDiscoveryCacheKey(directory);
+  const generation = getRuntimeGeneration();
   const now = Date.now();
   const cached = gitPrimaryRootCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -427,8 +440,9 @@ export async function resolveGitPrimaryRoot(directory: string): Promise<{ root: 
       throw new Error(`Failed to resolve git primary root: ${response.statusText}`);
     }
     const payload = await response.json().catch(() => ({})) as { root?: string };
-    const value = { root: typeof payload.root === 'string' && payload.root ? payload.root : directory };
-    gitPrimaryRootCache.set(key, {
+    if (typeof payload.root !== 'string' || !payload.root.trim()) throw new Error('Invalid git primary root response');
+    const value = { root: payload.root };
+    if (generation === getRuntimeGeneration()) gitPrimaryRootCache.set(key, {
       value,
       expiresAt: Date.now() + GIT_DISCOVERY_CACHE_TTL_MS,
     });
@@ -823,7 +837,8 @@ export async function generatePullRequestDescription(
 }
 
 export async function listGitWorktrees(directory: string): Promise<GitWorktreeInfo[]> {
-  const key = normalizeDirectoryKey(directory);
+  const key = getDiscoveryCacheKey(directory);
+  const generation = getRuntimeGeneration();
   const now = Date.now();
   const cached = gitWorktreesCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -841,7 +856,7 @@ export async function listGitWorktrees(directory: string): Promise<GitWorktreeIn
     }
     const value = await response.json() as GitWorktreeInfo[];
     // Drop stale completions that raced a create/delete invalidation.
-    if (startedVersion === getWorktreesCacheVersion(directory)) {
+    if (generation === getRuntimeGeneration() && startedVersion === getWorktreesCacheVersion(directory)) {
       gitWorktreesCache.set(key, {
         value,
         expiresAt: Date.now() + GIT_DISCOVERY_CACHE_TTL_MS,

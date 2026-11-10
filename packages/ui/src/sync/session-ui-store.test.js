@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { vi } from 'vitest';
+import { mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import * as runtimeAPIRegistry from '@/contexts/runtimeAPIRegistry';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -423,6 +424,19 @@ describe('openNewSessionDraft project binding', () => {
 
     expect(draft.open).toBe(true);
     expect(draft.directoryOverride).toBe('/projects/beta/src');
+  });
+
+  test('keeps nested project plus-clicks and implicit follow-up drafts on their exact working directory', () => {
+    const nested = { id: 'src', path: `${projectA.path}/src` };
+    useProjectsStore.setState({ projects: [projectA, nested], activeProjectId: projectA.id });
+    useSessionUIStore.setState({ availableWorktreesByProject: new Map([
+      [projectA.path, [{ path: projectA.path, projectDirectory: projectA.path, branch: 'main', label: 'main' }]],
+    ]) });
+    useSessionUIStore.getState().openNewSessionDraft({ directoryOverride: nested.path });
+    expect(useSessionUIStore.getState().newSessionDraft).toMatchObject({ selectedProjectId: 'src', directoryOverride: nested.path });
+    useSessionUIStore.setState({ currentSessionId: 'nested-session', currentSessionDirectory: nested.path });
+    useSessionUIStore.getState().openNewSessionDraft();
+    expect(useSessionUIStore.getState().newSessionDraft).toMatchObject({ selectedProjectId: 'src', directoryOverride: nested.path });
   });
 
   test('respects explicit selectedProjectId over active project', () => {
@@ -1234,6 +1248,24 @@ describe('materializeOpenDraftSession atomic lifecycle', () => {
 
   afterEach(() => {
     opencodeClient.createSession = originalCreateSession;
+  });
+
+  test('a missing nested worktree directory preserves the draft and never creates at the checkout root', async () => {
+    const directory = '/feature/src';
+    const statFile = vi.fn().mockRejectedValue(new Error('Directory not found'));
+    const registry = vi.spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockReturnValue({ files: { statFile } });
+    useSessionUIStore.setState({ availableWorktreesByProject: new Map([
+      [projectA.path, [{ path: directory, worktreeRoot: '/feature', projectDirectory: projectA.path, relativePath: 'src', branch: 'feature', label: 'feature' }]],
+    ]) });
+    try {
+      useSessionUIStore.getState().openNewSessionDraft({ selectedProjectId: projectA.id, directoryOverride: directory });
+      expect(await materializeOpenDraftSession({ providerID: 'p', modelID: 'm' })).toBeNull();
+      expect(statFile).toHaveBeenCalledWith(directory, { directory: '/feature' });
+      expect(createSessionCalls).toEqual([]);
+      expect(useSessionUIStore.getState().newSessionDraft).toMatchObject({ open: true, directoryOverride: directory, draftSubmitting: false });
+    } finally {
+      registry.mockRestore();
+    }
   });
 
   test('sets draftSubmitting synchronously before createSession resolves', () => {

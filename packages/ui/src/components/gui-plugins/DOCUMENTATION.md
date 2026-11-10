@@ -1,5 +1,17 @@
 # GUI plugin UI boundary
 
+`GuiPluginWorkStatus` consumes the independent `host.workStatus` catalog through
+the host-only context, below Changes and above Todos in `WorkStatusCompact`.
+React owns empty, natural-height containers; `host.mountWorkStatus` reuses the
+existing Solid owner/context renderer. No UI components cross frameworks.
+Entries inherit the host's CSS variables and plugin styles, with no host title,
+card, loading placeholder or failure banner. Empty containers are hidden.
+Session/directory and host changes replace the mount; live summary/placement
+updates go to the existing Solid signals. Reordering preserves foreign DOM.
+Hidden popup exit animation can retain the built-in rows, but plugin mounts are
+released as soon as the column becomes inactive. Remote/Relay desktop windows
+use the same path; mobile and VS Code do not have this placement.
+
 `GuiPluginTitlebarItems` consumes official global `TitlebarItem` contributions.
 Web/desktop renders them as full-width icon-and-label navigation rows below Bots,
 before pinned/in-progress sessions, rather than duplicating them in the left
@@ -108,6 +120,8 @@ error-reporting path as other manager actions. Contribution rows are dynamic ent
 registered individually in Settings search. The owning Plugins page remains the
 navigation entry. `GuiPluginCommands` is an independently filtered command-palette
 group with five-row previews and explicit expansion.
+`useGuiPluginCommandEntries` shares its live-snapshot filtering and command
+execution/error path with the global palette's mixed results and Commands filter.
 Initial plugin discovery is silent in the palette: no loading row or empty group
 is shown. Loaded commands remain usable during discovery and other plugins' failures;
 failed loading never adds an error/retry entry.

@@ -5,7 +5,7 @@
 <title>{{t:meta.title}}</title><meta name="description" content="{{attr:meta.desc}}">
 <meta name="theme-color" content="#0a0a09"><meta name="color-scheme" content="dark">
 <meta property="og:title" content="{{attr:meta.title}}"><meta property="og:description" content="{{attr:meta.desc}}">
-<meta property="og:image" content="{{base}}assets/art/hero.webp">
+<meta property="og:image" content="{{base}}assets/shots/workspace-diff.webp">
 <link rel="icon" href="{{base}}assets/brand/icon-512.webp">
 <link rel="alternate" hreflang="zh-CN" href="{{base}}"><link rel="alternate" hreflang="en" href="{{base}}en/">
 <link rel="stylesheet" href="{{base}}assets/vendor/devices.css"><link rel="stylesheet" href="{{base}}assets/site.css">
@@ -31,13 +31,13 @@
   </section>
 
   <section id="connect" class="connection" aria-labelledby="connect-title">
-    <div class="connection-stage">
+    <div class="connection-stage" data-switcher data-loading="{{attr:preview.loading}}" data-error="{{attr:preview.error}}">
       <img class="sync-art stage-art" src="{{base}}assets/art/sync.webp" alt="" width="1672" height="941" loading="lazy">
-      <header class="connection-heading wrap"><p class="section-label">{{t:page.connect}}</p><h2 id="connect-title">{{words:connect.title}}</h2><p class="description">{{t:page.connectSub}}</p></header>
+      <header class="connection-heading wrap"><p class="section-label">{{t:page.connect}}</p><h2 id="connect-title">{{words:connect.title}}</h2><p class="description">{{t:page.connectSub}}</p><div class="theme-choices" role="group" aria-label="{{attr:stage.views}}"><button type="button" data-choice="diff" aria-pressed="true">{{t:stage.diff}}</button><button type="button" data-choice="preview" aria-pressed="false">{{t:stage.preview}}</button></div><p class="preview-status" role="status" hidden></p></header>
       <div class="connection-visual wrap">
         <svg class="connection-lines" viewBox="0 0 1200 600" preserveAspectRatio="none" aria-hidden="true"><path d="M20 170 C180 170 120 340 380 340 S800 570 1110 250 M20 190 C180 190 120 360 380 360 S800 590 1110 270"/><path class="signal" d="M20 170 C180 170 120 340 380 340 S800 570 1110 250"/></svg>
         <div class="hardware-pair">
-          <figure class="sketch-laptop"><div class="laptop-display"><img src="{{img:home}}" alt="{{attr:stage.alt}}" width="1440" height="900" loading="lazy"></div><div class="laptop-base" aria-hidden="true"></div></figure>
+          <figure class="sketch-laptop"><div class="laptop-display"><img data-panel="diff" src="{{img:workspace-diff}}" alt="{{attr:stage.alt}}" width="3348" height="1936" loading="lazy"><img data-panel="preview" hidden src="{{img:workspace-preview}}" alt="{{attr:stage.previewAlt}}" width="3348" height="1936" loading="lazy"></div><div class="laptop-base" aria-hidden="true"></div></figure>
           <figure class="sketch-phone"><div class="sketch-phone-screen"><img src="{{img:m-home}}" alt="{{attr:mobile.alt}}" width="390" height="844" loading="lazy"></div></figure>
         </div>
       </div>

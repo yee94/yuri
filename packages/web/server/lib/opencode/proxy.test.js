@@ -2,6 +2,9 @@ import express from 'express';
 import request from 'supertest';
 import { createGlobalUiEventBroadcaster } from '../event-stream/runtime.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { createRequestSecurityRuntime } from '../security/request-security.js';
+import { createUiAuth } from '../ui-auth/ui-auth.js';
 
 import {
   createDirectoryQueryCanonicalizer,
@@ -41,6 +44,8 @@ const readyRuntime = () => ({
 
 const mountProxy = (options = {}) => {
   const app = express();
+  const { beforeProxy, ...proxyOptions } = options;
+  beforeProxy?.(app);
   // Fresh app each time — registerOpenCodeProxy guards on app setting.
   registerOpenCodeProxy(app, {
     fs: { promises: { realpath: async (v) => v } },
@@ -54,10 +59,90 @@ const mountProxy = (options = {}) => {
     getOpenCodeAuthHeaders: () => ({}),
     buildOpenCodeUrl: (path) => `http://127.0.0.1:4096${path}`,
     ensureOpenCodeApiPrefix: () => {},
-    ...options,
+    ...proxyOptions,
   });
   return app;
 };
+
+describe('approved client provenance at the upstream boundary', () => {
+  it.each(['/api/session/ses_1/message', '/api/agent', '/api/event', '/api/plugin/gui?id=fixture'])(
+    'accepts approved native clients without relaxing auth or unknown-origin rejection on %s', async (route) => {
+      const seen = [];
+      const originalMetadata = [];
+      const upstream = createServer((req, res) => {
+        seen.push({ origin: req.headers.origin, site: req.headers['sec-fetch-site'],
+          dest: req.headers['sec-fetch-dest'], user: req.headers['sec-fetch-user'], auth: req.headers.authorization });
+        if (req.headers.origin && req.headers['sec-fetch-site'] === 'cross-site') {
+          res.writeHead(403, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Cross-site requests to the API are not allowed' }));
+        }
+        if (req.headers.authorization !== 'Basic upstream-fixture') {
+          res.writeHead(401);
+          return res.end();
+        }
+        res.writeHead(200, { 'content-type': route === '/api/event' ? 'text/event-stream' : 'application/json' });
+        res.end(route === '/api/event' ? 'data: {"type":"server.connected"}\n\n' : '[]');
+      });
+      await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+      const base = `http://127.0.0.1:${upstream.address().port}`;
+      const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
+      const auth = createUiAuth({
+        requireClientAuth: true,
+        clientAuthController: { authenticateBearerToken: async token => token === 'fixture-client'
+          ? { ok: true, clientId: 'fixture-client' } : null },
+      });
+      const app = mountProxy({
+        beforeProxy: app => app.use('/api', auth.requireAuth, (req, res, next) => {
+          const names = ['origin', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-user'];
+          const snapshot = () => Object.fromEntries(names.map(name => [name, req.headers[name]]));
+          const before = snapshot();
+          res.on('finish', () => originalMetadata.push({ before, after: snapshot() }));
+          next();
+        }),
+        isRequestOriginAllowed: security.isRequestOriginAllowed,
+        getRuntime: () => ({ ...readyRuntime(), openCodeBaseUrl: base, openCodePort: upstream.address().port }),
+        buildOpenCodeUrl: path => `${base}${path}`,
+        getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic upstream-fixture' }),
+      });
+      try {
+        for (const origin of ['capacitor://localhost', 'https://localhost', 'yuri-ui://app']) {
+          const response = await request(app).get(route).set({ origin, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty', 'sec-fetch-user': '?1', authorization: 'Bearer fixture-client' });
+          expect(response.status).toBe(200);
+          expect(seen.at(-1)).toEqual({ origin, site: undefined, dest: undefined, user: undefined, auth: 'Basic upstream-fixture' });
+          expect(originalMetadata.at(-1).after).toEqual(originalMetadata.at(-1).before);
+          expect(originalMetadata.at(-1).after['sec-fetch-site']).toBe('cross-site');
+        }
+        const denied = await request(app).get(route).set({ origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site', authorization: 'Bearer fixture-client' });
+        expect(denied.status).toBe(403);
+        expect(seen.at(-1).site).toBe('cross-site');
+        await request(app).get(route).set({ host: 'yuri.example', origin: 'http://yuri.example', 'sec-fetch-site': 'same-origin', authorization: 'Bearer fixture-client' }).expect(200);
+        await request(app).get(route).set({ host: 'yuri.example', origin: 'http://yuri.example.attacker.invalid', 'sec-fetch-site': 'cross-site', authorization: 'Bearer fixture-client' }).expect(403);
+        const before = seen.length;
+        await request(app).get(route).set({ origin: 'capacitor://localhost', 'sec-fetch-site': 'cross-site', authorization: 'Bearer invalid-fixture' }).expect(401);
+        expect(seen).toHaveLength(before);
+        const unavailablePolicy = mountProxy({
+          isRequestOriginAllowed: async () => { throw Error('policy unavailable'); },
+          getRuntime: () => ({ ...readyRuntime(), openCodeBaseUrl: base, openCodePort: upstream.address().port }),
+          buildOpenCodeUrl: path => `${base}${path}`,
+          getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic upstream-fixture' }),
+        });
+        await request(unavailablePolicy).get(route).set({ origin: 'capacitor://localhost', 'sec-fetch-site': 'cross-site' }).expect(403);
+        expect(seen.at(-1).site).toBe('cross-site');
+        const missingPolicy = mountProxy({
+          getRuntime: () => ({ ...readyRuntime(), openCodeBaseUrl: base, openCodePort: upstream.address().port }),
+          buildOpenCodeUrl: path => `${base}${path}`,
+          getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic upstream-fixture' }),
+        });
+        await request(missingPolicy).get(route).set({ origin: 'capacitor://localhost', 'sec-fetch-site': 'cross-site' }).expect(403);
+        expect(seen.at(-1).site).toBe('cross-site');
+      } finally {
+        auth.dispose();
+        upstream.closeAllConnections();
+        await new Promise(resolve => upstream.close(resolve));
+      }
+    },
+  );
+});
 
 describe('credential response boundary', () => {
   it.each(['/api/credential', '/api/credential/', '/api/%63redential?directory=/repo'])('refuses raw credential list %s before upstream', async (path) => {

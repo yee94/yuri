@@ -5,6 +5,22 @@ OpenCode package identities and protocols remain third-party contracts.
 
 ## Tests
 
+The desktop header shows a neutral connection glyph when more than one instance
+is configured (including the local backend), independently of probe/auth status.
+An active remote always retains its entry even when its catalog is unavailable.
+The glyph follows the active transport:
+Relay, LAN/direct, SSH, or local. Its tooltip names the current machine; clicking
+opens the existing services panel. Inventory refreshes on mount,
+runtime changes, window focus, and returning from Settings, without background
+polling. The embedded instance list uses the same glyphs, compact transport/ping
+details, and a current-row check, preserving add, connect, default, and new-window
+actions. Addresses and the repeated current/default summary are omitted there.
+The services panel ignores hover/focus-leave dismissal; outside clicks and Escape
+still close it, subject to the existing pending-host-action guard.
+The header does not probe hosts. Remote windows use read-only `sshHostIds` from
+the desktop host catalog to classify SSH mirrors without privileged SSH reads.
+The active host remains visible even with older installers lacking that metadata.
+
 Remote Instances SSH row actions show a spinner and disable repeated clicks during
 the local request and every live bootstrap/reconnect phase, including installation
 and updates. Request failure releases the local lock so the user can retry.
@@ -106,14 +122,32 @@ The full-text index startup screen keeps the same transparent 120 × 120 CSS-pix
 
 ## Add-project directory picker
 
-Fresh desktop/web workspaces show the three-step setup tour (models, plugins,
-voice) instead of automatically opening Add Project. The decision waits for
+Fresh desktop/web workspaces show the four-step setup tour (models, plugins,
+history import, voice) instead of automatically opening Add Project. The decision waits for
 settings hydration and a successful authoritative project snapshot. Existing
 workspaces are not re-onboarded when their last project is removed. Progress and
 postponement are saved per connected instance; the command palette's **Open setup
 tour** resumes it. Hosted/native mobile supports explicit reopening; standalone
 VS Code, embedded chat and Mini Chat do not mount the tour. See
 `src/components/onboarding/DOCUMENTATION.md` for configuration and failure semantics.
+Import supports Claude Code, Codex, Cursor, DeepSeek Harness and OpenCode on the connected
+Host, with three equal columns of compact source cards, installation status and
+full-width read-only history lists (up to five per tool), with conversation text
+as subtitles. All sources start unchecked; group-heading checkboxes mirror
+source-card selection. Continuing without a selection starts no import.
+The subtitle explains duplicate skipping. Verified sample entries show “Already
+imported” asynchronously; unknown/failed checks have no badge. OpenCode attaches
+current-instance projects and existing sessions without creating copies.
+Source cards and group labels show lightweight metadata counts (`≈` for estimates,
+hidden when unavailable), while only five examples per tool are parsed. “Next” starts
+Host-owned full scanning, validation and import; the step shows phase progress
+and offers background continuation. Sidebar footer rows share import/index progress.
+There is no per-conversation selection, pagination or options toolbar.
+Selected conversations remain separate; source jobs never import skills, rules or
+settings. Completed and partially completed imports both leave the background list
+and let the tour advance without restarting; failure receipts remain intact. Paths stay out
+of the tour; conversations retain their project or use the current project when
+the source lacks one. It preserves source data and never replays tool calls.
 
 `DirectoryExplorerDialog` shares the desktop global-search translucent overlay
 material. Its directory list is a transparent scrolling region, never a nested
@@ -127,6 +161,16 @@ actions. Mobile omits keyboard hints and retains the controlled shared
 resizable sheet and 44px folder-navigation targets. Browsing, hidden folders,
 quick add, create/add, native folder selection and clone/identity behavior share
 the existing handlers across both layouts.
+The results frame uses `overflow-clip`, leaving the inner directory list as the
+only scroll owner even when touch-mode CSS rewrites `overflow-hidden` to auto.
+
+## Project settings
+
+The project dialog and Settings page share one grouped identity form. The dialog
+uses Settings control tokens and a collapsed existing-worktree list; Settings
+keeps that list expanded for search targets. Project actions and worktree setup
+command controls are no longer exposed on either surface. Identity auto-save and
+existing-worktree deletion retain their original owners.
 
 ## Assistant avatars
 
@@ -238,6 +282,10 @@ direct-only Hosts keep the shell-selected endpoint and adopt the stable saved
 `host:<id>` runtime key so an SSH forward's changed port does not lose UI context.
 Local windows do not reconnect another window's default remote Host. Web, VS Code
 and mobile do not participate in this native window-restore flow.
+Rejected credentials for a paired desktop Host show pairing-expired guidance
+and open local instance management to import a fresh connection link or remove
+the saved Host. Switch failures and Relay startup recovery preserve that signal;
+network failures and ordinary password-protected connections remain distinct.
 
 All runtime owners must agree on `__YURI_*`, `yuri:*`, `/api/yuri`, `Yuri*` native
 plugins, `yuri-ui` / `yuri-asset` schemes and `yuri_url_token` / `yuri_preview_token`
@@ -275,6 +323,10 @@ Saved-device connection failures in mobile history appear only as a solid error
 icon to the left of the overflow menu, without inline error details or retry copy.
 Tapping the icon retries that device immediately through the shared connection
 controller and replaces the error affordance with the row's connecting state.
+When a saved bearer credential is rejected, mobile shows a short pairing-expired
+recovery with QR scanning or a pairing link instead of a password prompt. A new
+password challenge without a saved credential remains available. Network and
+server failures do not count as a rejected pairing.
 
 ## Desktop conversation width
 
@@ -287,9 +339,12 @@ preview and its nested rail, while the panel close action hides it without delet
 An additional close shortcut on an already-empty preview closes the panel, not
 the OS window. The session overflow menu omits the redundant Changes panel entry;
 Git changes remain available in the preview's Git rail.
-The preview toolbar owns its always-visible joined Git/Files icon group
-(one rounded outline with internal dividers), expand and
-close actions. The preview's expand/restore button uses paired diagonal arrows and
+The preview toolbar owns its always-visible Git/Files icon controls, expand and
+close actions. Git/Files stay joined in one 28px-high outline with internal dividers.
+The group uses the primary header's `rounded-md`, `border-border/40` and transparent
+base; dividers use the same border token. Segments retain shared hover/selection
+tokens and inset keyboard focus. The primary header is unchanged.
+The preview's expand/restore button uses paired diagonal arrows and
 toggles the same full-workspace preview used when dragging leaves less than 350px
 for the conversation. Both use normal layout flow, identical spacing, the restore
 icon and an active resize handle. Dragging right can restore either fullscreen

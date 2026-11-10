@@ -6,8 +6,7 @@ import { ModelSelector } from '@/components/sections/agents/ModelSelector';
 import { PROJECT_COLORS, PROJECT_ICONS, PROJECT_COLOR_MAP as COLOR_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useI18n } from '@/lib/i18n';
-import { cn } from '@/lib/utils';
-import { SettingsField } from '@/components/sections/shared/SettingsGroup';
+import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
 import type { useProjectIdentityForm } from './useProjectIdentityForm';
 
 type ProjectIdentityFormState = ReturnType<typeof useProjectIdentityForm>;
@@ -57,8 +56,8 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
   const currentColorVar = color ? (COLOR_MAP[color] ?? null) : null;
 
   return (
-    <div className="yuri-settings-section-stack">
-      <SettingsField
+    <SettingsGroup>
+      <SettingsRow
         label={t('settings.projects.page.field.projectName')}
         itemId="projects.name"
       >
@@ -66,13 +65,12 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder={t('settings.projects.page.field.projectNamePlaceholder')}
+          aria-label={t('settings.projects.page.field.projectName')}
         />
-      </SettingsField>
+      </SettingsRow>
 
-      <SettingsField
-        label={t('settings.projects.page.field.defaultModel')}
-        description={t('settings.projects.page.field.defaultModelDescription')}
-        descriptionPlacement="outside"
+      <SettingsRow
+        label={t('settings.yuri.defaults.field.defaultModel')}
         itemId="projects.default-model"
       >
         <ModelSelector
@@ -80,50 +78,52 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
           modelId={parsedDefaultModel.modelId}
           onChange={handleDefaultModelChange}
           className="yuri-settings-inline-value"
+          placeholder={t('settings.yuri.defaults.option.default')}
+          showIcon={false}
         />
-      </SettingsField>
+      </SettingsRow>
 
-      <SettingsField
+      <SettingsRow
         label={t('settings.projects.page.field.accentColor')}
         itemId="projects.accent-color"
-      >
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
+        footer={(
+        <div className="flex flex-wrap items-center gap-1 pt-2">
+          <Button
             type="button"
+            variant="chip"
+            size="icon"
             onClick={() => setColor(null)}
-            className={cn(
-              'h-7 w-7 rounded-md border transition-colors flex items-center justify-center',
-              color === null
-                ? 'border-2 border-foreground bg-[var(--primary-base)]/10'
-                : 'border-border/40 hover:border-border hover:bg-[var(--surface-muted)]',
-            )}
+            aria-pressed={color === null}
+            aria-label={t('settings.projects.page.field.none')}
             title={t('settings.projects.page.field.none')}
           >
-            <Icon name="close" className="h-4 w-4 text-muted-foreground" />
-          </button>
+            <Icon name="close" className="size-4 text-muted-foreground" />
+          </Button>
           {PROJECT_COLORS.map((entry) => (
-            <button
+            <Button
               key={entry.key}
               type="button"
+              variant="chip"
+              size="icon"
               onClick={() => setColor(entry.key)}
-              className={cn(
-                'h-7 w-7 rounded-md border transition-colors',
-                color === entry.key
-                  ? 'border-2 border-foreground ring-1 ring-[var(--primary-base)]/40'
-                  : 'border-transparent hover:border-border/70',
-              )}
-              style={{ backgroundColor: entry.cssVar }}
+              aria-pressed={color === entry.key}
+              aria-label={entry.label}
               title={entry.label}
-            />
+            >
+              <span className="flex size-5 items-center justify-center rounded-full" style={{ backgroundColor: entry.cssVar }}>
+                {color === entry.key ? <Icon name="check" className="size-3 text-foreground" /> : null}
+              </span>
+            </Button>
           ))}
         </div>
-      </SettingsField>
+        )}
+      >{null}</SettingsRow>
 
-      <SettingsField
+      <SettingsRow
         label={t('settings.projects.page.field.projectIcon')}
         itemId="projects.icon"
-      >
-        <div className="flex w-full flex-col items-end gap-2">
+        footer={(
+        <div className="flex w-full flex-col items-start gap-2 pt-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -135,33 +135,29 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
               event.currentTarget.value = '';
             }}
           />
-          <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
+          <div className="flex flex-wrap items-center gap-1">
+          <Button
             type="button"
+            variant="chip"
+            size="icon"
             onClick={() => setIcon(null)}
-            className={cn(
-              'h-7 w-7 rounded-md border transition-colors flex items-center justify-center',
-              icon === null
-                ? 'border-2 border-foreground bg-[var(--primary-base)]/10'
-                : 'border-border/40 hover:border-border hover:bg-[var(--surface-muted)]',
-            )}
+            aria-pressed={icon === null}
+            aria-label={t('settings.projects.page.field.none')}
             title={t('settings.projects.page.field.none')}
           >
             <Icon name="close" className="h-4 w-4 text-muted-foreground" />
-          </button>
+          </Button>
           {PROJECT_ICONS.map((entry) => {
             const iconName = entry.Icon;
             return (
-              <button
+              <Button
                 key={entry.key}
                 type="button"
+                variant="chip"
+                size="icon"
                 onClick={() => setIcon(entry.key)}
-                className={cn(
-                  'h-7 w-7 rounded-md border transition-colors flex items-center justify-center',
-                  icon === entry.key
-                    ? 'border-2 border-foreground bg-[var(--primary-base)]/10'
-                    : 'border-transparent hover:border-border hover:bg-[var(--surface-muted)]',
-                )}
+                aria-pressed={icon === entry.key}
+                aria-label={entry.label}
                 title={entry.label}
               >
                 <Icon
@@ -169,13 +165,12 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
                   className="w-4 h-4"
                   style={currentColorVar && icon === entry.key ? { color: currentColorVar } : undefined}
                 />
-              </button>
+              </Button>
             );
           })}
           </div>
           {effectiveHasImageIcon && showImagePreview && (
             <div className="flex items-center gap-2 pt-1">
-            <span className="typography-meta text-muted-foreground">{t('settings.projects.page.field.preview')}</span>
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-[var(--surface-elevated)] p-1">
               <span
                 className="inline-flex h-4 w-4 items-center justify-center overflow-hidden rounded-[2px]"
@@ -205,7 +200,7 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
             </div>
           )}
           {effectiveHasImageIcon && (
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center gap-2">
             <input
               type="color"
               value={iconBackground ?? '#000000'}
@@ -213,18 +208,18 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
               className="h-7 w-9 cursor-pointer rounded border border-border bg-transparent p-1"
               aria-label={t('settings.projects.page.field.projectIconBackgroundAria')}
             />
-            <Input
-              value={iconBackground ?? ''}
-              onChange={(event) => setIconBackground(event.target.value)}
+             <Input
+               value={iconBackground ?? ''}
+               onChange={(event) => setIconBackground(event.target.value)}
+               aria-label={t('settings.projects.page.field.projectIconBackgroundAria')}
               placeholder="#000000"
               className="h-7 w-[8rem]"
             />
             <Button
               type="button"
-              size="xs"
-              variant="outline"
+              size="icon"
+              variant="ghost"
               onClick={() => setIconBackground(null)}
-              className="h-7 w-7 p-0"
               aria-label={t('settings.projects.page.field.clearIconBackgroundAria')}
               title={t('settings.projects.page.field.clearBackground')}
               disabled={!iconBackground}
@@ -233,12 +228,11 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
             </Button>
             </div>
           )}
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2">
           {!hasCustomIcon && (
             <>
               <Button
                 size="xs"
-                className="h-6 !font-normal"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploadingIcon}
               >
@@ -246,7 +240,6 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
               </Button>
               <Button
                 size="xs"
-                className="h-6 !font-normal"
                 variant="outline"
                 onClick={() => void handleDiscoverIcon()}
                 disabled={isDiscoveringIcon}
@@ -279,7 +272,8 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
           )}
           </div>
         </div>
-      </SettingsField>
-    </div>
+        )}
+      >{null}</SettingsRow>
+    </SettingsGroup>
   );
 };

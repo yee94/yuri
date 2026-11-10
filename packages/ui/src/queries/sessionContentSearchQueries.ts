@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { queryKeys } from '@/lib/queryRuntime';
+import { queryClient, queryKeys } from '@/lib/queryRuntime';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 
 export const SESSION_CONTENT_SEARCH_LIMIT = 30;
@@ -125,21 +125,36 @@ export type SessionContentIndexStatus = {
   updatedAt?: number | null;
 };
 
+function indexStatus(body: { index?: SessionContentIndexStatus }) {
+  const { index } = body;
+  if (!index || !['pending', 'indexing', 'ready', 'partial', 'error'].includes(index.phase)
+    || ![index.total, index.completed, index.failed, index.messages].every((value) => Number.isFinite(value) && value >= 0)
+    || (index.initializationRequired !== undefined && typeof index.initializationRequired !== 'boolean')
+    || [index.indexStartedAt, index.indexCompletedAt, index.coveredSince, index.verifiedAt, index.updatedAt]
+      .some((value) => value != null && !Number.isFinite(value))) throw new Error('Invalid content index status');
+  return index;
+}
+
+export async function resumeSessionContentIndex(transport: string, generation: number) {
+  const assertScope = () => {
+    if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration()) throw new Error('runtime_changed');
+  };
+  assertScope();
+  const response = await runtimeFetch('/api/yuri/content-search/resume', { method: 'POST' });
+  if (!response.ok) throw new Error('index_resume_failed');
+  const index = indexStatus(await response.json());
+  assertScope();
+  queryClient.setQueryData([transport, 'contentSearchStatus', generation], index);
+  return index;
+}
+
 export const sessionContentIndexStatusOptions = (fetch = runtimeFetch) => queryOptions({
   queryKey: [getRuntimeTransportIdentity(), 'contentSearchStatus', getRuntimeGeneration()],
   queryFn: async ({ signal }) => {
     const response = await fetch('/api/yuri/content-search', { signal });
     if (response.status === 404 || response.status === 501) return null;
     if (!response.ok) throw new Error(`Content index unavailable (${response.status})`);
-    const { index } = await response.json() as { index?: SessionContentIndexStatus };
-    if (!index || !['pending', 'indexing', 'ready', 'partial', 'error'].includes(index.phase)
-      || ![index.total, index.completed, index.failed, index.messages].every((value) => Number.isFinite(value) && value >= 0)
-      || (index.initializationRequired !== undefined && typeof index.initializationRequired !== 'boolean')
-      || [index.indexStartedAt, index.indexCompletedAt, index.coveredSince, index.verifiedAt, index.updatedAt]
-        .some((value) => value != null && !Number.isFinite(value))) {
-      throw new Error('Invalid content index status');
-    }
-    return index;
+    return indexStatus(await response.json());
   },
   refetchInterval: 3000,
   staleTime: 0,

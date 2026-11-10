@@ -6,6 +6,8 @@ Sorted compaction Activity uses localized Compacting / Compaction complete label
 
 This folder contains renderers for chat message parts (text, tools, reasoning, placeholders) and shared tool presentation helpers.
 
+`UserTextPart` also provides `variant="preview"` for the prompt navigator's compact question. It shares the normal Markdown/reference-chip pipeline and citation hints, but omits transcript search markers, interactive chip wrappers, and message collapse/expansion behavior. The enclosing preview owns clipping and turn-selection clicks; ordinary message rendering is unchanged.
+
 Tool grouping operates on visible Activity items: hidden reasoning and empty Thought placeholders do not split adjacent tools. Nonempty visible reasoning, narration, questions and other visible boundaries still retain their original positions. The source transcript and materialization inputs keep the original parts.
 
 The flat/live MessageBody path applies the same invisible-reasoning filter before collecting consecutive tools. Error status does not start a new group: successful and failed process tools remain adjacent in source order. `MessageList.contentRetention.test.tsx` exercises both live/sorted modes with empty and hidden Thought between successful and failed calls.
@@ -209,7 +211,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 ## Current important behavior
 
-- Tool rows, process folds, and the transcript StatusRow share `getToolRowBlockClass` for vertical spacing. StatusRow offsets the latest turn's existing `pb-1` with `-mt-1` so that boundary does not add a second gap. A ProgressiveGroup without a painted disclosure header is only a `flow-root`: its child rows own the padding, without another outer layer. StatusRow's content height follows its icon slot plus chip padding rather than a shorter fixed height.
+- Tool rows, process folds, and the transcript StatusRow share `getToolRowBlockClass` for vertical spacing. The transcript StatusRow uses `-mt-2` and `mb-2` to bring its content 4px closer to the preceding row while preserving its overall footprint. A ProgressiveGroup without a painted disclosure header is only a `flow-root`: its child rows own the padding, without another outer layer. StatusRow's content height follows its icon slot plus chip padding rather than a shorter fixed height.
 
 - When assistant text is the first content directly below the model header, `MessageBody` adds 6px mobile / 8px desktop top padding, matching the Activity block's top padding plus chip inset. Text after Activity or in continuation messages does not receive this header gap.
 

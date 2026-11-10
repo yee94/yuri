@@ -64,6 +64,8 @@ import {
     CHAT_TAIL_SPACER_MOBILE_HEIGHT,
 } from './lib/scroll/chatTailSpacer';
 import { TimelineDialog } from './TimelineDialog';
+import { TranscriptSearch } from './TranscriptSearch';
+import { TranscriptSearchContext } from './TranscriptSearchContext';
 import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
@@ -351,6 +353,11 @@ const ChatViewport = React.memo(({
     timelineHistoryAnchorToken,
 }: ChatViewportProps) => {
     const { t } = useI18n();
+    const searchTarget = React.useContext(TranscriptSearchContext);
+    const handleViewportHistoryScroll = useEvent(() => {
+        // Find navigates within the loaded snapshot, never through scroll paging.
+        if (!searchTarget) handleHistoryScroll();
+    });
     // Loading status is mutation-owned only (isLoadingOlder); background
     // prefetch/SWR loading never drives it.
     const loadOlderBusy = resolveMobileLoadOlderBusy({ isLoadingOlder });
@@ -534,7 +541,7 @@ const ChatViewport = React.memo(({
                     hideBottomShadow={isMobile}
                     tabIndex={0}
                     onClick={focusScrollContainer}
-                    onScroll={handleHistoryScroll}
+                    onScroll={handleViewportHistoryScroll}
                     data-scroll-shadow="true"
                     data-scrollbar="chat"
                 >
@@ -1507,6 +1514,12 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         goToBottom('instant');
         expandMobileComposer();
     });
+    const canOpenTranscriptSearch = useEvent((event: KeyboardEvent) => {
+        if (useUIStore.getState().activeMainTab !== 'chat' || hasBlockingChatOverlay()) return false;
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || composerSwapScopeRef.current?.contains(target)) return true;
+        return !target.closest('input, textarea, [contenteditable="true"], .cm-editor, .monaco-editor, .terminal-viewport-container');
+    });
     const scrollViewportOnSend = useEvent(() => {
         scrollToBottomOnSend();
     });
@@ -2179,6 +2192,8 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 				</div>
 			) : null}
 			{returnToParentButton}
+            <TranscriptSearch key={`find:${sessionViewKey ?? currentSessionId}`} messages={renderedViewportMessages}
+                enabled={active && !isDesktopExpandedInput} canOpen={canOpenTranscriptSearch} onNavigate={releaseAutoFollow}>
 			<ChatViewport
                 timelineHistoryAnchorToken={timelineHistoryAnchorToken}
 				key={currentSessionId}
@@ -2216,6 +2231,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                 isLoadingOlderPrompts={isLoadOlderBusy}
                 onLoadEarlierPrompts={handleLoadOlderClick}
             />
+            </TranscriptSearch>
 
             <div
                 key="composer-foot"

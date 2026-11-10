@@ -6,6 +6,36 @@ const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
 const prepareSource = source.slice(source.indexOf('const prepareDesktopHost ='), source.indexOf('const handleInvoke ='));
 const windowCases = source.slice(source.indexOf("    case 'desktop_new_window':"), source.indexOf("    case 'desktop_open_session_mini_chat_window':"));
 
+describe('stored SSH relay authorization', () => {
+  const relay = { relayUrl: 'wss://relay.example/ws', serverId: 'fixture', hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'fixture' } };
+  const readHosts = (host) => {
+    const context = vm.createContext({
+      URL, LOCAL_HOST_ID: 'local',
+      readSettingsRoot: () => ({ desktopSshInstances: [{ id: 'ssh-test' }], desktopHosts: [host] }),
+      sanitizeClientTokenForStorage: (token) => token,
+      sanitizeRuntimeRequestHeaders: () => ({}),
+      sanitizeHostUrlForStorage: (url) => url,
+    });
+    vm.runInContext(source.slice(source.indexOf('const sanitizeHostRelayForStorage ='), source.indexOf('const writeDesktopHostsConfig ='))
+      + '\nglobalThis.result = readDesktopHostsConfig();', context);
+    return context.result;
+  };
+  it('does not expose legacy auto-discovered relay during restart or reconnect', () => {
+    expect(readHosts({ id: 'ssh-test', url: 'http://127.0.0.1:4000', relay }).hosts[0].relay).toBeUndefined();
+  });
+  it('retains explicitly paired SSH transports and standalone paired hosts', () => {
+    expect(readHosts({ id: 'ssh-test', source: 'connect-link', url: 'http://127.0.0.1:4000', relay }).hosts[0].relay).toEqual(relay);
+    expect(readHosts({ id: 'paired-host', relay }).hosts[0].relay).toEqual(relay);
+  });
+  it('exposes only SSH mirror IDs as read-only catalog metadata', () => {
+    const config = readHosts({ id: 'ssh-test', url: 'http://127.0.0.1:4000' });
+    expect(config.sshHostIds).toEqual(['ssh-test']);
+    expect(config).not.toHaveProperty('desktopSshInstances');
+    expect(config).not.toHaveProperty('instances');
+    expect(readHosts({ id: 'paired-host', relay }).sshHostIds).toEqual([]);
+  });
+});
+
 const fixture = (ssh = true, packaged = true, local = true, paired = false) => {
   let host = { id: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token',
     ...(paired ? { relay: { serverId: 'fixture', relayUrl: 'wss://relay.example', hostEncPubJwk: {} } } : {}) };

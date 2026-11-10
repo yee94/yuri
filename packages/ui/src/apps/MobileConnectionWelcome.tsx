@@ -126,7 +126,7 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
     </Button>
   );
 
-  const sheetTitle = pendingConnection ? t('mobile.connect.password.label')
+  const sheetTitle = pendingConnection ? t(pendingConnection.reason === 'pairing' ? 'mobile.connect.pairing.expired' : 'mobile.connect.password.label')
     : panel === 'rename' ? t('mobile.connect.history.rename')
       : panel === 'remove' ? t('mobile.connect.history.remove') : t('mobile.connect.welcome.moreOptions');
 
@@ -219,7 +219,23 @@ export function MobileConnectionWelcome({ connection: conn }: { connection: UseM
         title={<h2 className="truncate typography-ui-label font-semibold">{sheetTitle}</h2>} ariaLabel={sheetTitle}
         closeAriaLabel={t('mobile.surface.closeAria')} resizeAriaLabel={t('mobile.connect.options.resize')}>
         <ScrollableOverlay className="px-5 py-5" disableHorizontal fillContainer={false}>
-          {pendingConnection ? (
+          {pendingConnection?.reason === 'pairing' ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <Icon name="computer" className="size-6 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 flex-1 truncate typography-ui-label">{pendingConnection.label}</p>
+                {connections.some((item) => item.id === pendingConnection.id) ? (
+                  <Button variant="ghost" size="icon" disabled={disabled} aria-label={t('mobile.instances.deleteAria', { label: pendingConnection.label })} onClick={() => { setEditingId(pendingConnection.id); conn.cancelPassword(); openPanel('remove'); }}>
+                    <Icon name="delete-bin" className="size-5" />
+                  </Button>
+                ) : null}
+              </div>
+              <p className="typography-small text-muted-foreground">{t('mobile.connect.pairing.reconnectHint')}</p>
+              {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+              {qrSupported ? scanButton(true) : null}
+              <Button variant={qrSupported ? 'ghost' : 'default'} size="lg" disabled={disabled} onClick={() => { conn.cancelPassword(); openPanel('more'); }}>{t('mobile.connect.link.useLink')}</Button>
+            </div>
+          ) : pendingConnection ? (
             <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!isBusy) void conn.submitPassword(password); }}>
               <p className="truncate typography-ui-label">{pendingConnection.label}</p>
               <Input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} aria-label={t('mobile.connect.password.label')} placeholder={t('mobile.connect.password.placeholder')} disabled={isBusy} />

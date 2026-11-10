@@ -59,6 +59,9 @@ export type DesktopHost = {
   source?: DesktopHostSource;
 };
 
+export const isPairedDesktopHost = (host: DesktopHost): boolean =>
+  Boolean(host.clientToken && (host.source === DESKTOP_HOST_SOURCE_CONNECT_LINK || host.relay));
+
 /**
  * Whether a persisted desktop host should appear in the host switcher.
  * Hidden hosts stay on disk; this is display-only.
@@ -108,6 +111,8 @@ const parseHostRelay = (value: unknown): DesktopHostRelay | null => {
 
 export type DesktopHostsConfig = {
   hosts: DesktopHost[];
+  /** Read-only SSH provenance; available to remote windows without SSH configuration access. */
+  sshHostIds?: string[];
   defaultHostId: string | null;
   initialHostChoiceCompleted: boolean;
   localOrigin?: string | null;
@@ -298,7 +303,10 @@ export const desktopHostsGet = async (): Promise<DesktopHostsConfig> => {
     raw.initialHostChoiceCompleted === true || raw.initial_host_choice_completed === true;
   const localOrigin = readString(raw, 'localOrigin') || readString(raw, 'local_origin');
 
-  return { hosts, defaultHostId, initialHostChoiceCompleted, localOrigin };
+  const sshHostIds = Array.isArray(raw.sshHostIds)
+    ? raw.sshHostIds.filter((id): id is string => typeof id === 'string' && hosts.some(host => host.id === id))
+    : undefined;
+  return { hosts, defaultHostId, initialHostChoiceCompleted, localOrigin, ...(sshHostIds ? { sshHostIds } : {}) };
 };
 
 export const desktopHostsSet = async (config: DesktopHostsConfigInput): Promise<void> => {

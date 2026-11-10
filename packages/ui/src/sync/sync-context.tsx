@@ -131,6 +131,7 @@ import { useTodosPersistStore } from "@/stores/useTodosPersistStore"
 import { promoteProjectForConversation, useSessionUIStore } from "./session-ui-store"
 import { toast } from "@/components/ui"
 import { appendNotification, clearSessionErrorNotifications } from "./notification-store"
+import { mountSessionUnreadSync } from './session-unread-sync'
 import { recordSessionError, summarizeOpenCodeError } from "./session-error-log"
 import {
   applyGlobalSessionActiveSnapshot,
@@ -2217,7 +2218,7 @@ export function handleEvent(
   childStores: ChildStoreManager,
   routingIndex: EventRoutingIndex,
 ) {
-  if (payload.type.startsWith('shell.') || payload.type === 'server.instance.disposed' || payload.type === 'location.shutdown') {
+  if (payload.type.startsWith('shell.') || payload.type === 'session.inbox.delivered' || payload.type === 'server.instance.disposed' || payload.type === 'location.shutdown') {
     getSessionShellActivity(childStores).event(rawDirectory, payload)
     if (payload.type.startsWith('shell.')) return
   }
@@ -2909,6 +2910,7 @@ export function SyncProvider(props: {
   // selection as everywhere else ('auto' falls back to SSE on WS failure).
   const messageStreamTransport = useConfigStore((state) => state.settingsMessageStreamTransport)
   useEffect(() => mountProjectOrderSync(), [])
+  useEffect(() => mountSessionUnreadSync(isViewedInCurrentSession), [])
   const childStoresRef = useRef<ChildStoreManager | null>(null)
   if (!childStoresRef.current) childStoresRef.current = new ChildStoreManager()
   const childStores = childStoresRef.current

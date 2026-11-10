@@ -70,6 +70,11 @@ precedence over a retained new-session draft. Selecting an Assistant writes
 without selecting an OpenCode session. Changing or clearing the Assistant drops
 the previous Assistant's focused child-session suffix. Returning to Chat restores
 `/session/new` when its draft is still open and no session is selected.
+Desktop sidebar project reveals consume that same draft's selected project ID
+and the existing session-switch intent revision. Global-search project selection
+continues through `openNewSessionDraft`; it does not introduce another project
+route, publish a separate selection, or reach into sidebar DOM. The sidebar owns
+one-shot, viewport-aware scrolling after the target header is mounted.
 
 The phone navigation store separately captures an Assistant-origin chat return
 target (contact ID and root tab). Popping the worker restores the contact page,

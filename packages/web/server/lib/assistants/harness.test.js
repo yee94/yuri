@@ -26,6 +26,39 @@ const toolCall = (name, args, id) => toolBatch([[name, args, id]])
 const notifyCall = (text, id) => ['notify_user', { text }, id]
 
 describe('createContactStreamFn', () => {
+  it.each([false, true])('enforces the deadline through the real Agent for readOnly=%s without retrying', async (readOnly) => {
+    vi.useFakeTimers();
+    let started;
+    const began = new Promise((resolve) => { started = resolve; });
+    let executionSignal;
+    const execute = vi.fn((_id, _params, signal) => {
+      executionSignal = signal;
+      started();
+      return new Promise(() => {});
+    });
+    const name = readOnly ? 'read_session' : 'register_project';
+    let round = 0;
+    const pending = runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: 'Run the operation once.', readOnly,
+      tools: [{ name, description: 'Fixture operation', parameters: { type: 'object', properties: {} }, execute }],
+      createChatCompletion: async ({ body }) => {
+        round++;
+        if (!readOnly && round === 1) return toolCall('load_tools', { domain: 'yuri.projects' });
+        if (round === (readOnly ? 1 : 2)) return toolCall(name, {});
+        expect(body.tools).toEqual([]);
+        expect(JSON.stringify(body.messages)).toContain('timed out after 300 seconds');
+        return { text: 'The operation timed out; its result is not confirmed.' };
+      },
+    });
+    try {
+      await began;
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect((await pending).text).toContain('timed out');
+      expect(executionSignal.aborted).toBe(true);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(round).toBe(readOnly ? 2 : 3);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('explains Markdown image delivery in the model prompt and publishes the image reply unchanged', async () => {
     const image = '![Photo](https://example.com/photo.png)';
     const result = await runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '找张图片发我',

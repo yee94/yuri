@@ -12,7 +12,7 @@ import { ThemeSystemContext } from '@/contexts/theme-system-context';
 import { getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { guiBundleOptions, guiInventoryOptions, refreshGuiBundles } from '@/queries/guiPluginQueries';
 import { guiPreferencesKey, readDisabledPlugins, writePluginEnabled } from './preferences';
-import { GuiFileIconsContext, GuiPluginsContext, getEmptySnapshot, type GuiPluginsContextValue } from './react';
+import { GuiFileIconsContext, GuiPluginHostContext, GuiPluginsContext, getEmptySnapshot, type GuiPluginsContextValue } from './react';
 import { getDesktopGuiPluginBridge, getDesktopGuiPluginWindowBridge } from '@/lib/desktop';
 import type { NativeGuiActivation } from './native-types';
 import { NativeGuiError, requestNativeGui } from './native-errors';
@@ -242,7 +242,9 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     host?.setSession(sessionID && directory ? { id: sessionID, directory } : undefined);
   }, [host, sessionID, directory]);
   React.useLayoutEffect(() => {
-    host?.appearanceCatalog.setOrder((inventoryQuery.data ?? []).flatMap((plugin) => plugin.id ? [plugin.id] : []));
+    const ids = (inventoryQuery.data ?? []).flatMap((plugin) => plugin.id ? [plugin.id] : []);
+    host?.appearanceCatalog.setOrder(ids);
+    host?.workStatus.setOrder(ids);
   }, [host, inventoryQuery.data]);
   React.useLayoutEffect(() => {
     host?.setAppearance({ locale, mode, narrow });
@@ -277,6 +279,7 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     requested, requestLoad, setEnabled, refresh,
   };
   return <GuiPluginsContext.Provider value={value}>
+    <GuiPluginHostContext.Provider value={host}>
     <GuiFileIconsContext.Provider value={host?.fileIcons ?? null}>
     <GuiAppearanceProvider host={host}>
     {children}
@@ -285,5 +288,6 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     {host && <ErrorBoundary key={`surface:${transport}`} fallback={<></>}><React.Suspense fallback={null}><Surface /></React.Suspense></ErrorBoundary>}
     </GuiAppearanceProvider>
     </GuiFileIconsContext.Provider>
+    </GuiPluginHostContext.Provider>
   </GuiPluginsContext.Provider>;
 }

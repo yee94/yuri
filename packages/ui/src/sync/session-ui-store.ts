@@ -40,6 +40,8 @@ import { waitForPendingDraftWorktreeRequest } from "@/lib/worktrees/pendingDraft
 import { waitForWorktreeBootstrap } from "@/lib/worktrees/worktreeBootstrap"
 import { getWorktreeSetupWaitEnabled } from "@/lib/yuriConfig"
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
+import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
+import { fileStatQueryOptions } from "@/queries/fileQueries"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
 import { ascendingId } from "./message-id"
@@ -853,8 +855,21 @@ const resolveProjectRefForWorktreeDirectory = (directory: string | null, project
 const waitForWorktreeBootstrapIfConfigured = async (directory: string | null, projectId?: string | null): Promise<void> => {
   if (!directory) return
   const project = resolveProjectRefForWorktreeDirectory(directory, projectId)
+  const worktree = project
+    ? useSessionUIStore.getState().availableWorktreesByProject.get(normalizePath(project.path) ?? project.path)
+      ?.find((entry) => normalizePath(entry.path) === normalizePath(directory))
+    : undefined
   if (project && await getWorktreeSetupWaitEnabled(project)) {
-    await waitForWorktreeBootstrap(directory)
+    await waitForWorktreeBootstrap(worktree?.worktreeRoot ?? directory)
+  }
+  if (worktree?.relativePath) {
+    const files = getRegisteredRuntimeAPIs()?.files
+    if (files?.statFile) {
+      await queryClient.fetchQuery({
+        ...fileStatQueryOptions(files, { scopeDirectory: directory, path: directory, options: { directory: worktree.worktreeRoot ?? directory } }),
+        staleTime: 0,
+      })
+    }
   }
 }
 
@@ -1390,7 +1405,8 @@ const loadPersistedWorktreeMap = (): Map<string, WorktreeMetadata[]> => {
     const entries = JSON.parse(raw) as Array<[string, WorktreeMetadata[]]>
     if (!Array.isArray(entries)) return new Map()
     return new Map(
-      entries.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])),
+      entries.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1]))
+        .map(([project, worktrees]) => [project, scopeProjectWorktrees(project, worktrees)]),
     )
   } catch {
     return new Map()
@@ -1625,6 +1641,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const key = runtimeMemoryKey(apiBaseUrl)
     const memory = runtimeSessionMemory.get(key)
     const restoredSessionId = memory?.sessionId ?? activeSessionByRuntime.get(key) ?? null
+    announceSessionSwitchIntent(restoredSessionId)
     setRuntimeInteractiveSessionRequestId(restoredSessionId)
     const restoredDraft = memory?.draft ? cloneDraft(memory.draft) : { ...DEFAULT_DRAFT }
     const restoredDirectory = memory?.directory ?? null
@@ -1679,6 +1696,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (existingDraft.draftSubmitting || existingDraft.draftEstablishing) {
       return
     }
+    // Same boundary as setCurrentSession: announce before dropping the session so
+    // session-scoped popups dismiss while their trigger is still mounted.
+    announceSessionSwitchIntent(null)
     // Same disarm as a session switch — this path does not go through setCurrentSession.
     get().clearStagedMessageEdit()
     let projectsState = useProjectsStore.getState()
@@ -2382,6 +2402,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
 
     try {
       const dir = directoryOverride ?? opencodeClient.getDirectory()
+      if (dir && get().availableWorktrees.some((entry) => entry.path === dir && entry.relativePath)) {
+        await waitForWorktreeBootstrapIfConfigured(dir)
+      }
       const session = await createSessionAction(title, dir, parentID ?? null, metadata)
       if (!session) {
         if (draftSnapshot && !get().newSessionDraft.open && !get().currentSessionId) {

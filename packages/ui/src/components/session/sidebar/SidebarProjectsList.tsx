@@ -28,6 +28,7 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { normalizePath } from './utils';
+import { scrollFocusedSessionRowIntoView } from './scrollFocusedSessionRow';
 
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
@@ -65,6 +66,7 @@ type Props = {
   sectionsForRender: ProjectSection[];
   projectSections: ProjectSection[];
   activeProjectId: string | null;
+  projectRevealTarget?: { projectId: string; revision: number } | null;
   showOnlyMainWorkspace: boolean;
   hasSessionSearchQuery: boolean;
   emptyState: React.ReactNode;
@@ -121,6 +123,23 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   // can resolve the scrolling ancestor synchronously (no getComputedStyle
   // walk) and skip the cost of a style recalc on every render.
   const scrollContainerRef = React.useRef<HTMLElement | null>(null);
+  const revealedProjectRef = React.useRef<Props['projectRevealTarget']>(null);
+  React.useLayoutEffect(() => {
+    const target = props.projectRevealTarget;
+    if (!target) {
+      revealedProjectRef.current = null;
+      return;
+    }
+    if (props.mobileVariant || props.showOnlyMainWorkspace || props.hasSessionSearchQuery) return;
+    const revealed = revealedProjectRef.current;
+    if (revealed?.projectId === target.projectId && revealed.revision === target.revision) return;
+    const header = scrollContainerRef.current?.querySelector<HTMLElement>(
+      `[data-sidebar-project-header="${CSS.escape(target.projectId)}"]`,
+    );
+    if (!header) return;
+    revealedProjectRef.current = target;
+    scrollFocusedSessionRowIntoView(header);
+  }, [props.projectRevealTarget, props.mobileVariant, props.showOnlyMainWorkspace, props.hasSessionSearchQuery, props.sectionsForRender]);
 
   // Memoize the result of getOrderedGroups. The callback is stable
   // (deps: [groupOrderByProject]) and `section.groups` is a stable

@@ -7,8 +7,8 @@ vi.mock('@/contexts/useThemeSystem', () => ({ useOptionalThemeSystem: () => ({ c
 vi.mock('@/queries/assistantQueries', () => ({ useAssistantUnreadTotal: () => state.unread, useAssistantSnapshotQuery: () => ({ data: state.avatar ? { seed: state.avatar } : null }) }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/assistants/ProceduralAssistantAvatar', () => ({
-  ProceduralAssistantAvatar: ({ size, motion, randomizeShape, eyeColor }: { size: number; motion: string; randomizeShape: boolean; eyeColor: string }) => (
-    <span data-procedural-avatar="" data-size={size} data-motion={motion} data-randomize-shape={String(randomizeShape)} data-eye-color={eyeColor} />
+  ProceduralAssistantAvatar: ({ size, motion, randomizeShape = false, eyeColor, playOnce, followPointer, blinkOnMount }: { size: number; motion: string; randomizeShape?: boolean; eyeColor: string; playOnce?: boolean; followPointer?: boolean; blinkOnMount?: boolean | 2 }) => (
+    <span data-procedural-avatar="" data-size={size} data-motion={motion} data-randomize-shape={String(randomizeShape)} data-eye-color={eyeColor} data-play-once={String(playOnce)} data-follow-pointer={String(followPointer)} data-blink-on-mount={String(blinkOnMount)} />
   ),
 }));
 import { MobileTabBar } from './MobileTabBar';
@@ -44,7 +44,10 @@ test('Bot navigation artwork stays centered with only gentle enlargement in the 
   const face = avatar?.querySelector('[data-procedural-avatar]');
   expect(face?.getAttribute('data-size')).toBe('23');
   expect(face?.getAttribute('data-motion')).toBe('idle');
-  expect(face?.getAttribute('data-randomize-shape')).toBe('true');
+  expect(face?.getAttribute('data-randomize-shape')).toBe('false');
+  expect(face?.getAttribute('data-play-once')).toBe('true');
+  expect(face?.getAttribute('data-follow-pointer')).toBe('false');
+  expect(face?.getAttribute('data-blink-on-mount')).toBe('2');
   expect(face?.getAttribute('data-eye-color')).toBe('white');
   state.variant = 'dark';
   await act(async () => root.render(<ThemeVariantContext.Provider value={state.variant}><MobileTabBar activeTab="assistant" onTabChange={() => undefined} /></ThemeVariantContext.Provider>));

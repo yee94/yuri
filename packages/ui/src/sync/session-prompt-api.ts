@@ -298,7 +298,13 @@ export async function postSessionPrompt(
   if (input.files?.length) body.files = input.files
   if (input.agents?.length) body.agents = input.agents
   if (input.skills?.length) body.skills = input.skills
-  if (input.metadata) body.metadata = input.metadata
+  body.metadata = {
+    ...input.metadata,
+    client: {
+      ...(record(input.metadata?.client) ? input.metadata.client : {}),
+      id: "yuri",
+    },
+  }
 
   const response = await runtimeFetch(path, {
     method: "POST",

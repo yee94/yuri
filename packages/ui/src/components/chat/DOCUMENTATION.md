@@ -1,6 +1,99 @@
 # Chat components
 
+## Mobile session read/unread actions
+
+The mobile Projects home, Sessions sheet (including the iPad sidebar), and status
+bar session menus share `mobile/sessionMenuModel.ts`. Read/unread sits directly
+below Pin/Unpin, using the same Mail/MailOpen icons and labels as desktop. Root
+sessions expose the action; child sessions omit it. `useSessionReadMenuAction`
+subscribes only to the targeted session's unread count and delegates mutations to
+the existing notification/Host sync boundary. Open menus reflect remote updates;
+failed writes retain authoritative state and show the existing error toast. Menu
+actions close the sheet without opening the conversation or clearing its reminder.
+
+## Find in loaded conversation
+
+`TranscriptSearch` handles Cmd/Ctrl+F on the active chat surface, Enter /
+Shift+Enter to cycle occurrences, and Escape to close and restore prior focus.
+It searches available user/assistant text, including folded intermediate replies,
+not tool output, reasoning, attachments, unloaded pages or unmaterialized slim
+content. Common Markdown formatting and link destinations are excluded from the
+text index. Custom rendered cards/math/reference chips may differ from the plain
+Markdown projection; these are not a full rendered-document search contract.
+
+Find state and query-result caches belong to the mounted session view. Closed
+find does not scan messages. An active query weakly caches results by immutable
+part-array identity so streaming updates do not rescan settled history. Display
+text is weakly cached by immutable Part identity; neither cache retains source
+messages or survives their collection. Query changes discard the result cache.
+
+`MessageList` temporarily overrides only the target turn's expansion without
+changing the user's stored disclosure choices. User text also bypasses its clamp
+while targeted. The existing list scroll owner first reveals the virtual row,
+then cancels index correction before aligning the mounted text range. It never
+calls history loading or timeline reveal APIs. `ChatViewport` suppresses
+scroll-event history paging while a find target is active; explicit user upward
+intent / load-earlier controls remain independent. Mutation observation exists
+only during an active hit and rebuilds CSS Custom Highlights after Markdown
+hydration or row recycling; it never wraps or replaces React-owned DOM. Only the
+initial hit positions the viewport, and user pointer/scroll input cancels that
+pending positioning. Closing, session changes and unmount clean up observers,
+animation frames and highlights. Older renderers without CSS Custom Highlights
+retain navigation but do not paint text highlights. This is shared renderer
+behavior, not an Electron-only native find/IPC implementation.
+
+The compact two-row popup has one material owner, a borderless integrated input,
+quiet navigation at the lower left and a tabular result count at the lower right.
+There are no search-mode switches or explanatory chrome. Ordinary hits use the
+system `Mark` / `MarkText` colors (bright yellow with readable text in Chromium);
+the current hit uses the theme accent with an underline and higher highlight
+priority. Custom styles may override `--chat-findMatch`,
+`--chat-findMatchForeground`, `--chat-findActiveMatch`, and
+`--chat-findActiveMatchForeground` without changing layout.
+
+## Streaming text fade
+
+`MarkstreamTextNode` selects `MotionStreamText` for live assistant/reasoning text
+when `disableStreamAnimation` is false, retaining that leaf through completion.
+Motion mini animates only newly appended, inline four-grapheme groups for 160ms
+with at most 80ms stagger. Existing text stays opaque. Each leaf bounds its active
+tail to 24 groups; finished groups compact into ordinary text nodes. Completion,
+replacement, reduced-motion and unmount stop outstanding animations. No per-frame
+React updates or scroll writes are added. Static history retains the library text
+renderer; whole-message/block entrance, library fade, typewriter batching and
+`smoothStreaming` remain disabled. Completion displays authoritative text immediately.
+
+Code line-number gutters inherit the connected code's font family, font size and
+line height before insertion. Waiting for the deferred wrap measurement let the
+13px default gutter temporarily stretch a 12px code body at stream completion;
+the later geometry sync still aligns wrapped lines but no longer corrects a
+different initial font size.
+
+## Turn-completion spacing
+
+The settled `AssistantMessageFooter` replaces the transcript's live status row
+without shrinking the list's total height for a single-line footer. Its top margin
+is 10px on desktop and 6px on mobile; the bottom margin is 12px on desktop and 8px
+on mobile. Distributing the extra space above and below the controls
+balances their distance from the body while accounting for the status wrapper's padding and
+collapsed margins as well as the message body's existing bottom spacing.
+Intermediate/interrupted TPS rows keep their original 6px/12px margins because
+they do not replace the live status. This is normal-flow spacing, not a delayed
+status removal, retained empty placeholder or extra scroll compensation. Verify
+the whole pin-reveal root and reading position at completion, not just Markdown
+height. Wrapped metadata/Changes controls can still legitimately add another row.
+
 ## Composer status popovers
+
+Desktop primary-session composers (including VS Code) snapshot their in-flow
+form height in the entry layout phase. That reservation stays fixed for the
+mounted conversation: attachments, Changes, TODO, queue and text growth extend
+upward into the transcript's existing tail spacing without shrinking its viewport
+or adding another scroll compensation. Contents remain bottom-aligned and do
+not shrink. Switching session or returning from expanded input takes a fresh
+snapshot; new-session drafts, secondary composers and mobile keep their existing
+layout owners. `ChatInput.hooks.test.tsx` guards one measurement across 50 updates
+and reservation cleanup on session/mode changes.
 
 `StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
 they open mutually exclusively, span the full composer column through
@@ -22,6 +115,105 @@ metadata access lives in `lib/sessionMetadata.ts`. Goal state instead comes from
 Git change lists and working-tree/session/turn diff previews remain independent.
 
 ## Scroll hot-path boundary
+
+The reserved mobile history-loading slot retains its height when idle, but its
+spinner pauses through the existing `role=status` / `aria-busy=false` scope in
+`index.css`. Invisible rotation still wakes WebKit on large transcripts. Only an
+authoritative load resumes it; the status slot never unmounts to save animation
+work or changes scroll geometry.
+
+The active-turn scroll spy reads cached turn offsets during scrolling. When
+`ResizeObserver` is available it refreshes geometry in the post-layout callback;
+streaming subtree mutations do not schedule an additional pre-layout scan. The
+mutation-driven fallback is used only without ResizeObserver. Registration and
+removal still invalidate the structural offset cache. The spy never writes scroll.
+
+History overscan keeps its existing surface-specific row-count ceiling, but
+`getHistoryRenderRange` also bounds extra rows to two observed viewports of
+distance on either side. Every core-visible row and its immediate neighbours
+remain mounted, even for a single very tall turn: core can retain that visible
+range while scrolling within it, so an adjacent row must be hydrated before the
+next boundary. Speech retains its independently pinned row. This reads only the
+virtualizer's measurement/viewport snapshots and at most the count-window
+candidates, never DOM geometry or the whole catalog. Missing measurements or an
+unmeasured viewport retain the count-window fallback. It does not migrate live
+tail turns or substitute estimated sizes for mounted content.
+
+When core clamps its range to the last history row while the viewport is in the
+separate live tail, that core row and its neighbour remain mounted. Pruning this
+last window introduced native remount/overflow-affordance height corrections and
+lost scroll steps in long transcripts; lower DOM/CPU alone does not justify that
+interaction regression.
+
+Markstream full-DOM mode keeps the library's node virtualization and deferral off.
+The version-pinned Bun patch also omits placeholder-height measurement in that
+mode; it does not disable height measurement for virtual/deferred consumers.
+`markstreamMeasurement.test.tsx` guards the installed dependency's real render path.
+
+`MarkstreamRendererImpl` paces streaming source updates at the existing platform
+Markdown cadence before entering its memoized renderer. Message/part identity
+keys the pacing lifetime; completion renders the authoritative text immediately.
+Streaming does not compute settled-height cache hashes. Disabled file references
+retain a content-independent context, and the code-block host context carries
+the stable part ID rather than the token-updated Part object. Enabled references
+still reset their content-scoped budget when content changes. Stable top-level
+AST reuse is enabled through the library parse option; differential tests cover
+Markdown boundaries, replacements and completion, not only append counts.
+
+Markstream's code adapter marks its source `sourceIsPaced`: the outer renderer
+already owns source cadence, so nested legacy code cards must not start a second
+reveal loop or mirror each source update into pacing state. The disabled inner
+pacing Hook receives a stable empty source; rendering uses the adapter's current
+authoritative fence text. This does not disable `live` parsing, incremental code
+highlighting or decoration. Standalone legacy Markdown keeps its existing pacing
+by default, and completion still renders the full source. The real adapter test
+covers 50 updates without a second rAF loop and preserves standalone animation.
+
+The nested legacy renderer also skips settled-height keys while its authoritative
+`isStreaming` flag is true, including when stream animation is disabled. Turning
+off animation does not make a growing reply a settled cache candidate. The real
+renderer regression covers 50 updates in each animation mode and records the
+height key again on completion.
+
+The pinned dependency also avoids resetting its smooth-stream controller when
+smoothing is off. The installed-library regression requires one commit per
+content update and verifies transitions between enabled/disabled smoothing.
+
+Native iOS primary transcripts promote each Markstream host to a separate
+compositing layer, so growing one reply does not make WebKit traverse every
+settled reply's touch regions. This uses the existing Capacitor/non-Android root
+scope, independent of native-composer preference or pointer capability. Content,
+normal-flow height, selection and scroll ownership are unchanged; no offscreen
+intrinsic-size substitution or extra scroll writer is introduced. Other runtimes
+and secondary surfaces retain their existing compositing. Nested popup content
+continues to use its existing portal owners.
+
+Only an authoritatively streaming host also promotes its nested code cards on
+native iOS. Completion removes that extra promotion; settled history never gains
+one layer per code card. This limits the layer-count cost while isolating the
+current reply's code subtree during growth. The host's streaming attribute comes
+from `isStreaming`, not DOM order, inferred activity or persisted message text.
+
+The first plain-code to highlighted-lines upgrade constructs a detached fragment
+and replaces the connected code body's children in one call. It must not empty
+the connected body and append lines individually; those intermediate sizes can
+clamp a native scroller before the replacement finishes. Subsequent prefix-diff
+updates retain unchanged leading line nodes. This invariant alone does not prove
+that every native bottom-follow loss has been resolved.
+
+Incremental code updates retain existing line wrappers and newline separators by
+index, including an unchanged trailing blank line. A changed earlier line must
+not remove and rebuild the suffix: even a temporarily missing trailing separator
+can make native WebKit clamp the transcript by one line and release bottom-follow.
+Only an authoritative decrease in line count removes trailing nodes. Both worker
+highlight output and the plain-text failure path use this same reconciliation.
+
+Preserving a streaming fence subtree does not freeze its language metadata. The
+incoming fence owns `data-md-lang`, `data-md-label`, and the code language class;
+these are synchronized without replacing line wrappers. A completed language
+name invalidates the applied-highlight marker even when source text is unchanged.
+Worker results must still match both current source and language before commit,
+so an earlier partial-language grammar cannot overwrite the authoritative one.
 
 Message hover chrome uses `lib/messageHover.ts` boundary handlers and the
 `data-message-hovered` scope marker. The handlers write only that DOM attribute;
@@ -571,9 +763,13 @@ controller boundary test verifies one request through the hold, current-user
 anchor recapture and post-adoption cleanup; `desktop-short` exercises real
 normal-flow → virtualized geometry.
 
+The left-side prompt navigation rail is enabled by default; saved enable/disable preferences remain authoritative. It appears for supported desktop chat surfaces with at least two turns, without automatically opening the hover/keyboard preview. Mobile and VS Code retain their existing exclusion.
+
+Shared `MessageReferenceChip` text and icon slots inherit the surrounding font size and line height. Image/attachment references do not have their own chip height or line-height reset; the same rule applies in transcript messages, queued previews and navigator previews. The painted icon remains 1em and does not define the text line box.
+
 The left-side rail highlights every prompt whose turn or message intersects the chat viewport, including a turn where only its assistant reply remains visible. `useVisiblePromptTurns` observes mounted transcript nodes with the chat scroller as its intersection root; virtual row additions, removals, and identity changes update registrations. Stable message ownership avoids reconnecting observers on text deltas, and unchanged visible sets retain their reference. Keyboard navigation's single active turn does not determine viewport highlighting.
 
-Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. User reference chips are removed before truncation. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
+Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. The question reuses `UserTextPart` in preview mode, including shared reference chips and Markdown; the reply reuses `SimpleMarkdownRenderer`. Rich renderers mount only for the highlighted prompt, not every tick. Reference-stripped, truncated text remains the tick's accessible label, not the preview source. Preview mode omits transcript search markers, message expansion and interactive chip wrappers. Preview clicks, including Markdown links, select the turn rather than navigating away; file-reference probing is disabled. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
 
 ## Markdown file-link navigation
 
@@ -684,7 +880,7 @@ Prepending older siblings or the real user retains the mounted turn identity and
 
 ## OpenCode response status presentation
 
-Settled assistant footers include `BackgroundActivityHint` after elapsed duration and before the absolute timestamp, inside the shared metadata gap group without its own margin or padding, on both desktop and mobile. Each footer derives task ownership from **that turn's** tool records via `collectBackgroundWorkScope`, then intersects those identities with the shared live session/shell inventory. It never displays a session-wide total: unrelated turns remain empty even while the session is working. The turn's direct shell IDs and dispatched child-session subtrees are deduplicated; one live subagent plus one live shell displays two tasks. The parent's own execution is excluded. Older turns may retain a hint only for work they actually launched that is still live; `isLatestTurn` is not task ownership authority. Historical `status: running` metadata supplies identity only, never proof of live work. Missing identities and zero live matches hide the hint; turns without work IDs mount no live subscription. Mini-chat surfaces omit it. The final assistant's memo comparison observes background identities from preceding steps in the same turn, so late tool metadata updates the right footer without treating every token change as relevant. This leaf adds no polling or transcript scans. Neither timeline nor classic layouts mount a separate expandable background-task list below the turn; tool details remain in the original Activity rows. `MessageBody.shell.test.tsx`, `BackgroundActivityHint.test.tsx`, and `renderCompare.test.ts` cover unrelated/latest turns, older owning turns, mixed counts, same-total identity replacement, and late preceding-step identity.
+Settled assistant footers include `BackgroundActivityHint` after elapsed duration and before the absolute timestamp, inside the shared metadata gap group without its own margin or padding, on both desktop and mobile. Each footer derives task ownership from **that turn's** tool records via `collectBackgroundWorkScope`, then intersects those identities with the shared live session/shell inventory. It never displays a session-wide total: unrelated turns remain empty even while the session is working. The turn's direct shell IDs and dispatched child-session subtrees are deduplicated; one live subagent plus one live shell displays two tasks. The parent's own execution is excluded. Older turns may retain a hint for their live subagents, but shell counts use the shared latest-authored-user-round filter; `isLatestTurn` is not task ownership authority. Historical `status: running` metadata supplies identity only, never proof of live work. Missing identities and zero live matches hide the hint; turns without work IDs mount no live subscription. Mini-chat surfaces omit it. The final assistant's memo comparison observes background identities from preceding steps in the same turn, so late tool metadata updates the right footer without treating every token change as relevant. This leaf adds no polling or transcript scans. Neither timeline nor classic layouts mount a separate expandable background-task list below the turn; tool details remain in the original Activity rows. `MessageBody.shell.test.tsx`, `BackgroundActivityHint.test.tsx`, and `renderCompare.test.ts` cover unrelated/latest turns, older owning turns, mixed counts, same-total identity replacement, and late preceding-step identity.
 
 Native retry events now supply absolute-millisecond deadlines, attempt and reason to `WorkingPlaceholder`. Its leaf countdown uses existing translated retry copy, displays attempt 1 as well, and does not infer seconds/relative delays from numeric magnitude. Expiry changes presentation only; authoritative execution state owns clearing and queue release. `WorkingPlaceholder.retry.test.tsx` mounts the row with a controlled clock through the real normalizer/reducer.
 
@@ -1028,7 +1224,7 @@ Activity disclosure settings define the initial state of cold settled turns: `co
 
 Turn anchors are user rows except OpenCode 2 native synthetic notices (`nativeType: 'synthetic'`: background, `<subagent …>`, `<shell …>` completion). After the first turn exists, those notices stay grouped but open no turn, so assistant steps that resume after a background completion continue the current turn instead of splitting the reply or moving between blocks when the notice's `time.created` is stamped at completion. A leading native synthetic row still anchors a turn.
 
-Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Header Working/Processed chrome may change when idle; that presentation cannot revoke retained expansion.
+Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Cold idle/historical turns may use Processed chrome; that presentation cannot revoke retained expansion. Once the latest mounted turn has been observed live, its existing turn-lifecycle claim also preserves active Activity presentation across busy/idle step gaps until its own terminal disposition arrives. The disclosure stays locked open without an elapsed header, indent rail, or TPS footer. This is presentation continuity only: it does not change authoritative session activity, Stop availability, or cold-history behavior. Final completion and errors release the active presentation. `MessageList.contentRetention.test.tsx` covers desktop/mobile step gaps, final completion, interruption, and cold idle history.
 
 The fallback/default-disclosure calculations below apply when MessageList has no explicit user choice, including after automatic live expansion is released on confirmed normal completion. Error/partial turns keep their automatic expansion until final content arrives. Activity justification records are the original intermediate model text at their native positions, not synthesized summaries.
 

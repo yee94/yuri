@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 
 import { createClientPairingRuntime } from './pairing.js';
 import { createRemoteClientAuthRuntime } from './remote-clients.js';
+import { createUiAuth } from '../ui-auth/ui-auth.js';
 
 const makeRuntime = async (options = {}) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-pairing-test-'));
@@ -36,10 +37,26 @@ const makeRuntime = async (options = {}) => {
 };
 
 describe('client auth pairing runtime', () => {
+  it('rejects relay redemption of a direct-only pairing without consuming it', async () => {
+    const { runtime, dir, remoteClientAuthRuntime } = await makeRuntime();
+    try {
+      const { pairing } = await runtime.createPairingSession();
+      const input = { pairingId: pairing.id, secret: pairing.secret, clientKind: 'mobile' };
+      await expect(runtime.redeemPairingSession({ ...input, viaRelay: true })).rejects.toThrow('Invalid or expired pairing session');
+      expect(remoteClientAuthRuntime.createClient).not.toHaveBeenCalled();
+      await expect(runtime.redeemPairingSession(input)).resolves.toMatchObject({ token: 'token-1' });
+      const relay = await runtime.createPairingSession({ usesRelay: true, relayUrl: 'wss://relay.example/ws' });
+      await expect(runtime.redeemPairingSession({
+        pairingId: relay.pairing.id, secret: relay.pairing.secret, viaRelay: true,
+      })).resolves.toMatchObject({ token: 'token-2' });
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
   it('keeps the same device paired through different relays independently across restart', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-pairing-relays-test-'));
     const authOptions = { fsPromises: fs, path, crypto, storePath: path.join(dir, 'clients.json') };
     const clients = createRemoteClientAuthRuntime(authOptions);
+    const relayAuth = createUiAuth({ requireClientAuth: true, clientAuthController: createRemoteClientAuthRuntime(authOptions) });
+    const authorize = (token) => relayAuth.authorizeRelayRequest({ method: 'GET', url: '/auth/session', headers: { authorization: `Bearer ${token}` } });
     const pairingOptions = {
       fsPromises: fs, path, crypto, storePath: path.join(dir, 'pairing.json'), remoteClientAuthRuntime: clients,
     };
@@ -54,6 +71,13 @@ describe('client auth pairing runtime', () => {
     try {
       const first = await pair('wss://relay-one.example/ws', 'Phone via first relay');
       const second = await pair('wss://relay-two.example/ws', 'Phone via second relay');
+      const ssh = await clients.createClient({ label: 'SSH', clientKind: 'desktop-local', authMethod: 'password' });
+      expect((await clients.authenticateBearerToken(ssh.token))?.ok).toBe(true);
+      expect(await authorize(ssh.token)).toBe(false);
+      await clients.revokeClient(ssh.client.id);
+      await clients.purgeRevokedClients();
+      expect(await authorize(first.token)).toBe(true);
+      expect(await authorize(second.token)).toBe(true);
       const reopened = createRemoteClientAuthRuntime(authOptions);
       expect((await reopened.listClients()).map((client) => client.id)).toEqual([first.client.id, second.client.id]);
       expect((await reopened.authenticateBearerToken(first.token))?.ok).toBe(true);
@@ -61,17 +85,22 @@ describe('client auth pairing runtime', () => {
 
       const replacement = await pair('wss://relay-one.example/ws', 'Phone via first relay again');
       expect(await reopened.authenticateBearerToken(first.token)).toBe(null);
+      expect(await authorize(first.token)).toBe(false);
+      expect(await authorize(replacement.token)).toBe(true);
       expect((await reopened.authenticateBearerToken(second.token))?.ok).toBe(true);
       expect((await reopened.authenticateBearerToken(replacement.token))?.ok).toBe(true);
       expect(await reopened.listClients()).toHaveLength(2);
 
       const direct = await pair(null, 'Phone via LAN');
+      expect(await authorize(direct.token)).toBe(false);
       expect(await reopened.listClients()).toHaveLength(3);
       await reopened.revokeClient(second.client.id);
       expect(await reopened.authenticateBearerToken(second.token)).toBe(null);
+      expect(await authorize(second.token)).toBe(false);
       expect((await reopened.authenticateBearerToken(replacement.token))?.ok).toBe(true);
       expect((await reopened.authenticateBearerToken(direct.token))?.ok).toBe(true);
     } finally {
+      relayAuth.dispose();
       await fs.rm(dir, { recursive: true, force: true });
     }
   });

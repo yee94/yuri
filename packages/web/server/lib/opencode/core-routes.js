@@ -1020,6 +1020,7 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
         return res.status(429).json({ error: 'Invalid or expired pairing session' });
       }
       const result = await clientPairingRuntime.redeemPairingSession({
+        viaRelay: Boolean(req.headers['x-yuri-relay-connection']),
         pairingId: req.body?.pairingId,
         secret: req.body?.secret,
         clientLabel: req.body?.clientLabel,

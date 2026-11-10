@@ -10,7 +10,9 @@
 
 Yuri is an OpenCode-powered workspace for coding, personal assistants and scheduled tasks. Conversations, files, terminals and previews stay together, with access from desktop, iOS, Android, browser and VS Code.
 
-![Yuri desktop workspace](site/assets/shots/en-home.webp)
+![Yuri desktop workspace with code diff review](site/assets/shots/workspace-diff.webp)
+
+![Yuri desktop workspace with an interactive preview](site/assets/shots/workspace-preview.webp)
 
 ## What you can do
 

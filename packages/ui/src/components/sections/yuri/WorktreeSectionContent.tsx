@@ -1,9 +1,5 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { SettingsToggleRow } from '@/components/sections/shared/SettingsGroup';
-import { Input } from '@/components/ui/input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import type { Session } from '@/lib/opencode/v2-types';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -13,29 +9,19 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useDeviceInfo } from '@/lib/device';
 import { checkIsGitRepository } from '@/lib/gitApi';
-import {
-  getWorktreeSetupCommands,
-  getWorktreeSetupWaitEnabled,
-  saveWorktreeSetupCommands,
-  saveWorktreeSetupWaitEnabled,
-} from '@/lib/yuriConfig';
 import { listProjectWorktrees } from '@/lib/worktrees/worktreeManager';
 import { sessionEvents } from '@/lib/sessionEvents';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { formatPathForDisplay, cn } from '@/lib/utils';
-import {
-  PROJECT_SETTINGS_CONTROL_WIDTH,
-  ProjectSettingsSubsection,
-} from '@/components/sections/projects/ProjectSettingsSubsection';
+import { ProjectSettingsSubsection } from '@/components/sections/projects/ProjectSettingsSubsection';
 import { useI18n } from '@/lib/i18n';
 
 export interface WorktreeSectionContentProps {
   projectRef?: { id: string; path: string } | null;
+  collapsible?: boolean;
 }
 
-const SETUP_COMMANDS_SAVE_DELAY_MS = 450;
-
-export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ projectRef: projectRefProp = null }) => {
+export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ projectRef: projectRefProp = null, collapsible = false }) => {
   const { t } = useI18n();
   const { isMobile, isTablet } = useDeviceInfo();
   const alwaysShowActions = isMobile || isTablet;
@@ -47,14 +33,9 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
   const sessions = useSessions();
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
 
-  const [setupCommands, setSetupCommands] = React.useState<string[]>([]);
-  const [waitForSetupCommands, setWaitForSetupCommands] = React.useState(false);
-  const [isLoadingCommands, setIsLoadingCommands] = React.useState(false);
-  const [commandsSnapshot, setCommandsSnapshot] = React.useState<string | null>(null);
   const [isGitRepoLocal, setIsGitRepoLocal] = React.useState<boolean | null>(null);
   const [availableWorktrees, setAvailableWorktrees] = React.useState<WorktreeMetadata[]>([]);
   const [isLoadingWorktrees, setIsLoadingWorktrees] = React.useState(false);
-  const isSavingCommandsRef = React.useRef(false);
 
   const projectRef = React.useMemo(() => {
     if (projectRefProp?.id && projectRefProp?.path) {
@@ -134,132 +115,6 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
     };
   }, [projectRef, isGitRepoLocal]);
 
-  React.useEffect(() => {
-    if (!projectRef) return;
-
-    let cancelled = false;
-    setIsLoadingCommands(true);
-
-    (async () => {
-      try {
-        const [commands, waitForSetup] = await Promise.all([
-          getWorktreeSetupCommands(projectRef),
-          getWorktreeSetupWaitEnabled(projectRef),
-        ]);
-        if (!cancelled) {
-          const nextCommands = commands.length > 0 ? commands : [''];
-          setSetupCommands(nextCommands);
-          setCommandsSnapshot(JSON.stringify(nextCommands));
-          setWaitForSetupCommands(waitForSetup);
-        }
-      } catch {
-        if (!cancelled) {
-          setSetupCommands(['']);
-          setCommandsSnapshot(JSON.stringify(['']));
-          setWaitForSetupCommands(false);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingCommands(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectRef]);
-
-  const persistSetupCommands = React.useCallback(async (commands: string[]): Promise<boolean> => {
-    if (!projectRef) {
-      return false;
-    }
-    const filtered = commands.filter((cmd) => cmd.trim().length > 0);
-    try {
-      const ok = await saveWorktreeSetupCommands(projectRef, filtered);
-      if (!ok) {
-        toast.error(t('settings.yuri.worktrees.setup.toast.saveFailed'));
-        return false;
-      }
-      setCommandsSnapshot(JSON.stringify(commands));
-      return true;
-    } catch {
-      toast.error(t('settings.yuri.worktrees.setup.toast.saveFailed'));
-      return false;
-    }
-  }, [projectRef, t]);
-
-  const commandsHaveChanges = React.useMemo(() => {
-    if (commandsSnapshot === null) {
-      return false;
-    }
-    return commandsSnapshot !== JSON.stringify(setupCommands);
-  }, [commandsSnapshot, setupCommands]);
-
-  React.useEffect(() => {
-    if (!commandsHaveChanges || isLoadingCommands || isSavingCommandsRef.current) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (isSavingCommandsRef.current) {
-        return;
-      }
-      isSavingCommandsRef.current = true;
-      void (async () => {
-        try {
-          await persistSetupCommands(setupCommands);
-        } finally {
-          isSavingCommandsRef.current = false;
-        }
-      })();
-    }, SETUP_COMMANDS_SAVE_DELAY_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [commandsHaveChanges, isLoadingCommands, persistSetupCommands, setupCommands]);
-
-  const handleSetupCommandChange = React.useCallback((index: number, value: string) => {
-    setSetupCommands((prev) => {
-      const next = [...prev];
-      next[index] = value;
-      return next;
-    });
-  }, []);
-
-  const handleAddCommand = React.useCallback(() => {
-    setSetupCommands((prev) => [...prev, '']);
-  }, []);
-
-  const handleRemoveCommand = React.useCallback((index: number) => {
-    setSetupCommands((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      return next.length > 0 ? next : [''];
-    });
-  }, []);
-
-  const handleCommandBlur = React.useCallback(() => {
-    if (!commandsHaveChanges || isSavingCommandsRef.current) {
-      return;
-    }
-    isSavingCommandsRef.current = true;
-    void (async () => {
-      try {
-        await persistSetupCommands(setupCommands);
-      } finally {
-        isSavingCommandsRef.current = false;
-      }
-    })();
-  }, [commandsHaveChanges, persistSetupCommands, setupCommands]);
-
-  const handleWaitForSetupCommandsChange = React.useCallback((enabled: boolean) => {
-    setWaitForSetupCommands(enabled);
-    if (projectRef) {
-      void saveWorktreeSetupWaitEnabled(projectRef, enabled);
-    }
-  }, [projectRef]);
-
   const handleDeleteWorktree = React.useCallback((worktree: WorktreeMetadata) => {
     const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '');
     const normalizedWorktreePath = normalize(worktree.path);
@@ -325,32 +180,6 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
     }
   }, [sessionsKey, isGitRepoLocal, projectPath, refreshWorktrees]);
 
-  const setupTooltip = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Icon name="information" className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
-      </TooltipTrigger>
-      <TooltipContent sideOffset={8} className="max-w-xs">
-        {t('settings.yuri.worktrees.setup.tooltipPrefix')}
-        {' '}
-        <code className="font-mono text-xs bg-sidebar-accent/50 px-1 rounded">$ROOT_PROJECT_PATH</code>
-        {' '}
-        {t('settings.yuri.worktrees.setup.tooltipSuffix')}
-      </TooltipContent>
-    </Tooltip>
-  );
-
-  const listTooltip = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Icon name="information" className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help" />
-      </TooltipTrigger>
-      <TooltipContent sideOffset={8} className="max-w-xs">
-        {t('settings.yuri.worktrees.list.tooltip')}
-      </TooltipContent>
-    </Tooltip>
-  );
-
   if (!projectPath) {
     return (
       <ProjectSettingsSubsection
@@ -378,59 +207,11 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
   }
 
   return (
-    <>
-      <ProjectSettingsSubsection
-        title={t('settings.projects.page.section.worktree')}
-        settingsItem="projects.worktree"
-        titleAccessory={setupTooltip}
-      >
-        {isLoadingCommands ? (
-          <p className="typography-meta text-muted-foreground">{t('settings.yuri.worktrees.setup.loading')}</p>
-        ) : (
-          <div className={cn('flex flex-col gap-2', PROJECT_SETTINGS_CONTROL_WIDTH)}>
-            {setupCommands.map((command, index) => (
-              <div key={index} className="yuri-settings-group-row flex w-full items-center gap-2">
-                <Input
-                  value={command}
-                  onChange={(e) => handleSetupCommandChange(index, e.target.value)}
-                  onBlur={handleCommandBlur}
-                  placeholder={t('settings.yuri.worktrees.setup.commandPlaceholder')}
-                  className="min-w-0 flex-1 font-mono text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleRemoveCommand(index)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                  aria-label={t('settings.yuri.worktrees.setup.removeCommandAria')}
-                >
-                  <Icon name="close" className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="!font-normal"
-              onClick={handleAddCommand}
-            >
-              <Icon name="add" className="h-3.5 w-3.5" />
-              {t('settings.yuri.worktrees.setup.addCommand')}
-            </Button>
-            <SettingsToggleRow
-              itemId="projects.worktree.setup.wait"
-              checked={waitForSetupCommands}
-              onChange={handleWaitForSetupCommandsChange}
-              label={t('settings.yuri.worktrees.setup.waitForCommands')}
-              ariaLabel={t('settings.yuri.worktrees.setup.waitForCommandsAria')}
-            />
-          </div>
-        )}
-      </ProjectSettingsSubsection>
-
       <ProjectSettingsSubsection
         title={t('settings.yuri.worktrees.list.title')}
-        titleAccessory={listTooltip}
+        settingsItem="projects.worktree"
+        collapsible={collapsible}
+        count={isLoadingWorktrees ? undefined : availableWorktrees.length}
       >
         {isLoadingWorktrees ? (
           <p className="typography-meta text-muted-foreground">{t('settings.yuri.worktrees.list.loading')}</p>
@@ -439,7 +220,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
             {t('settings.yuri.worktrees.list.empty')}
           </p>
         ) : (
-          <div className={cn('space-y-1', PROJECT_SETTINGS_CONTROL_WIDTH)}>
+          <div className="w-full space-y-1">
             {availableWorktrees.map((worktree) => (
               <div
                 key={worktree.path}
@@ -450,30 +231,28 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
                     <p className="typography-meta min-w-0 truncate text-foreground">
                       {worktree.label || worktree.branch || t('settings.yuri.worktrees.list.detachedHead')}
                     </p>
-                    <span className="typography-micro flex-shrink-0 self-center rounded bg-sidebar-accent/40 px-1.5 py-[1px] leading-none text-muted-foreground/60">
-                      OpenCode
-                    </span>
                   </div>
                   <p className="typography-micro truncate text-muted-foreground/60">
                     {formatPathForDisplay(worktree.path, homeDirectory)}
                   </p>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => handleDeleteWorktree(worktree)}
                   className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                    'text-muted-foreground transition-opacity focus-visible:opacity-100',
                     alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   )}
                   aria-label={t('settings.yuri.worktrees.list.deleteWorktreeAria', { name: worktree.branch || worktree.label || worktree.path })}
                 >
                   <Icon name="delete-bin" className="h-4 w-4" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
         )}
       </ProjectSettingsSubsection>
-    </>
   );
 };

@@ -495,6 +495,9 @@ const parseSessionEventPhase = (event) => {
   return { phase: '', sessionID };
 };
 
+export const isScheduledTasksRuntimeEnabled = (env = process.env) => env.NODE_ENV !== 'development'
+  && !['1', 'true'].includes(String(env.YURI_ELECTRON_DEV ?? '').trim().toLowerCase());
+
 export const createScheduledTasksRuntime = (deps) => {
   const {
     projectConfigRuntime,
@@ -505,6 +508,7 @@ export const createScheduledTasksRuntime = (deps) => {
     emitTaskRunEvent,
     notifyTaskRun,
     runHistoryStore = null,
+    env = process.env,
     logger = console,
     maxGlobalConcurrency = DEFAULT_GLOBAL_CONCURRENCY,
     maxProjectConcurrency = DEFAULT_PROJECT_CONCURRENCY,
@@ -520,6 +524,26 @@ export const createScheduledTasksRuntime = (deps) => {
      */
     onSystemSessionPersisted = null,
   } = deps;
+
+  if (!isScheduledTasksRuntimeEnabled(env)) {
+    const disabled = () => { throw new Error('Scheduled tasks are disabled in development.'); };
+    return {
+      start: async () => {},
+      stop: () => {},
+      syncAllProjects: async () => {},
+      syncProject: async () => disabled(),
+      runNow: async () => ({ ok: false, disabled: true, error: 'Scheduled tasks are disabled in development.' }),
+      observeSessionEvent: async () => {},
+      setTaskResultHandler: () => () => {},
+      getStatus: () => ({
+        disabled: true,
+        hasEnabledScheduledTasks: false,
+        hasRunningScheduledTasks: false,
+        enabledScheduledTasksCount: 0,
+        runningScheduledTasksCount: 0,
+      }),
+    };
+  }
 
   let started = false;
   let historyRecoveryController = null;

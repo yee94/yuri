@@ -266,6 +266,10 @@
   content-visibility: hidden;
 }
 
+[data-mobile-navigation-parked="true"]:not([data-mobile-back-revealing="true"]) .animate-spin {
+  animation-play-state: paused !important;
+}
+
 .yuri-mobile-floating-bottom-bar-frame {
   pointer-events: none;
   position: fixed;
@@ -501,8 +505,10 @@
   box-shadow: var(--yuri-popup-shadow);
 }
 
-:root.desktop-runtime[data-yuri-vibrancy] .yuri-session-context-menu {
-  --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+/* Native vibrancy is the material gate, independent of device classification.
+   Use a solid theme fill so sidebar titles cannot bleed through portaled popups. */
+:root[data-yuri-vibrancy] .yuri-popup-surface {
+  --yuri-popup-fill: var(--surface-elevated);
 }
 
 .yuri-popup-surface .yuri-popup-separator {
@@ -949,8 +955,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:last-child,
-.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:last-child {
+.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])),
+.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])) {
   --yuri-mobile-session-radius-end-end: calc(
     var(--yuri-mobile-inset-radius) - 1px
   );
@@ -959,7 +965,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-session-row:not(:last-child) {
+/* DnD accessibility nodes follow the rows; only another row needs a divider. */
+.yuri-mobile-session-row:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row]) {
   box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);
 }
 
@@ -3104,6 +3111,16 @@ button.yuri-mobile-schedule-assistant::before {
   :root.mobile-pointer:not(.desktop-runtime) [data-page-scroll-lock="true"] {
     overflow: hidden !important;
     overscroll-behavior: none;
+  }
+
+  /* Temporary experiment: keep the transcript's authored clipping instead of
+     turning every `.overflow-hidden` wrapper inside it into its own scrollport.
+     Nested scroll views absorb short reverse drags while the transcript is
+     still decelerating, so the reverse gesture never reaches the outer scroller. */
+  :root.mobile-pointer:not(.desktop-runtime)
+    .yuri-chat-scroll-content .overflow-hidden {
+    overflow: hidden !important;
+    -webkit-overflow-scrolling: auto;
   }
 
   /* Composer clip shells must stay clippers. The generic rewrite above

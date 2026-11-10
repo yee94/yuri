@@ -241,6 +241,7 @@ export const createClientPairingRuntime = ({
   const redeemPairingSession = async ({
     pairingId,
     secret,
+    viaRelay = false,
     clientLabel,
     clientKind,
     deviceName,
@@ -258,6 +259,7 @@ export const createClientPairingRuntime = ({
       const store = await readStore();
       const session = store.sessions.find((entry) => entry.id === normalizedId);
       if (!session) throw redeemError();
+      if (viaRelay && session.usesRelay !== true) throw redeemError();
       if (session.cancelledAt || session.usedAt) throw redeemError();
       if (Date.parse(session.expiresAt) <= Date.now()) throw redeemError();
       if (!session.allowedClientKinds.includes(normalizedKind)) throw redeemError();

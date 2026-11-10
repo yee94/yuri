@@ -7,6 +7,22 @@ import { Service as PluginHooksService } from '@opencode/core/plugin/hooks';
 import { LlmBridge, LLM_BRIDGE_VERSION } from './bridge-contract.js';
 
 const sensitiveBodyKeys = ['messages', 'input', 'system', 'instructions', 'tools', 'tool_choice'];
+const generationKeys = ['maxTokens', 'temperature', 'topP', 'topK', 'frequencyPenalty', 'presencePenalty', 'seed', 'stop'];
+// OpenCode 2.2.6 uses flat request/model options; the bundled SDK uses nested defaults.
+const legacyDefaults = options => options && ({
+  generation: Object.fromEntries(generationKeys.filter(key => options[key] !== undefined).map(key => [key, options[key]])),
+  providerOptions: options.providerOptions,
+  http: {
+    ...options.http, headers: options.headers,
+    timeout: typeof options.timeout === 'object' ? options.timeout.total : options.timeout,
+    headerTimeout: options.timeout?.headers, chunkTimeout: options.timeout?.chunk,
+  },
+});
+const flatRequest = (request, model) => {
+  const { generation, http, ...rest } = request;
+  const { headers, timeout, headerTimeout, chunkTimeout, ...wire } = http ?? {};
+  return { ...rest, ...generation, model, headers, http: wire, timeout: { total: timeout, headers: headerTimeout, chunk: chunkTimeout } };
+};
 const unavailable = () => Object.assign(new Error('External OpenCode clean inference runtime is unavailable or incompatible'), { code: 'unavailable' });
 const providerFailureData = error => {
   const reason = error?.reason;
@@ -51,14 +67,24 @@ export const generateBridgeResponse = input => Effect.gen(function* () {
   const { resolver, hooks } = yield* hostRuntime;
   const model = yield* resolver.resolve({ providerID: input.providerID, id: input.modelID, ...(input.variant ? { variant: input.variant } : {}) });
   if (!model) return yield* Effect.fail(unavailable());
-  if ([model.model.defaults?.http?.body, model.model.route.defaults?.http?.body].some(body => sensitiveBodyKeys.some(key => Object.hasOwn(body ?? {}, key)))) {
+  if ([model.model.defaults?.http?.body, model.model.route.defaults?.http?.body,
+    model.model.options?.http?.body, model.model.route.options?.http?.body].some(body => sensitiveBodyKeys.some(key => Object.hasOwn(body ?? {}, key)))) {
     return yield* Effect.fail(unavailable());
   }
+  const flatOptions = model.model.route.defaults === undefined;
   // This ID is cache affinity only; it does not create a durable OpenCode Session.
   const scope = { sessionID: `ses_${createHash('sha256').update(input.cacheKey).digest('hex')}`, agent: 'yuri-inference', model: model.ref, kind: 'generate' };
   const base = LLM.request({
     // The host and bundled SDK have distinct constructors; preserve the host's route, normalize its value wrapper.
-    model: LanguageModel.make(model.model),
+    model: LanguageModel.make(flatOptions ? {
+      ...model.model,
+      defaults: legacyDefaults(model.model.options),
+      compatibility: {
+        ...model.model.compatibility,
+        supportsPromptCacheKey: model.model.capabilities?.promptCacheKey,
+        supportsEffortUpdates: model.model.capabilities?.reasoning?.updates,
+      },
+    } : model.model),
     system: input.messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n'),
     messages: input.messages.filter(message => message.role !== 'system').map(toMessage),
     tools: input.tools ?? [],
@@ -74,9 +100,10 @@ export const generateBridgeResponse = input => Effect.gen(function* () {
   // Provider transports may construct requests with their own SDK's nominal model schema.
   // Cross that boundary with the original host wrapper, not the bundled SDK wrapper.
   const hostModel = route === model.model.route ? model.model : model.model.constructor.update(model.model, { route });
-  const hostRequest = request => ({ ...request, model: hostModel });
+  const hostRequest = request => flatOptions ? flatRequest(request, hostModel) : ({ ...request, model: hostModel });
   const bridgedRoute = {
     ...route,
+    ...(flatOptions ? { defaults: {}, headers: route.headers && (({ request }) => route.headers({ request: hostRequest(request) })) } : {}),
     body: { ...route.body, from: request => route.body.from(hostRequest(request)) },
     prepareTransport: (body, request, options) => route.prepareTransport(body, hostRequest(request), options),
     streamPrepared: (prepared, request, runtime, options) => route.streamPrepared(prepared, hostRequest(request), runtime, options),

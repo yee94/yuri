@@ -53,7 +53,7 @@ test('a failed relay probe does not block mobile markdown preview navigation', a
   const event = new MouseEvent('click', { bubbles: true, cancelable: true });
   await act(async () => link.dispatchEvent(event));
   expect(event.defaultPrevented).toBe(true);
-  expect(openContextFile).toHaveBeenCalledWith('/repo', '/repo/docs/report.md');
+  expect(openContextFile).toHaveBeenCalledWith('/repo', '/repo/docs/report.md', { closeFileTree: true });
 });
 
 test('legacy markdown opens an explicit custom-extension link before probing succeeds', async () => {
@@ -62,7 +62,7 @@ test('legacy markdown opens an explicit custom-extension link before probing suc
   const link = host.querySelector('a')!;
   expect(link).toBeTruthy();
   await act(async () => link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
-  expect(openContextFile).toHaveBeenCalledWith('/repo', '/repo/report.eficy');
+  expect(openContextFile).toHaveBeenCalledWith('/repo', '/repo/report.eficy', { closeFileTree: true });
 });
 
 test.each(['markstream', 'legacy'] as const)('%s probes and opens the decoded Chinese/emoji filename', async (renderer) => {
@@ -80,7 +80,7 @@ test.each(['markstream', 'legacy'] as const)('%s probes and opens the decoded Ch
   const link = host.querySelector('a')!;
   expect(link).not.toBeNull();
   await act(async () => link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
-  expect(openContextFile).toHaveBeenCalledWith('/repo', `/repo/${path}`);
+  expect(openContextFile).toHaveBeenCalledWith('/repo', `/repo/${path}`, { closeFileTree: true });
 });
 
 test.each(['mobile', 'desktop'] as const)('directory anchors cannot reload the %s application', async (surface) => {

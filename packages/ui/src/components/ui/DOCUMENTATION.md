@@ -209,7 +209,10 @@ the modifier owns the shared translucent fill, foreground, fine edge and short
 shadow through `--yuri-popup-fill`, `--yuri-popup-edge` and `--yuri-popup-shadow`
 in `styles/mobile.css`. The fill uses 50% of the theme elevated surface for
 readability, independently of picker-dialog translucency; popup shadows are
-deliberately shorter and lighter. Theme
+deliberately shorter and lighter. When `data-yuri-vibrancy` marks an Electron
+macOS window, every popup surface uses the solid theme elevated fill so sidebar
+text cannot bleed through. The material gate does not additionally depend on
+device-class initialization; blur, rim and shadow remain unchanged. Theme
 surface colors remain authoritative. Avoid default inline opaque backgrounds
 or copied shadow utilities on popup roots. Explicit caller styles still win.
 
@@ -250,6 +253,32 @@ matching content message for its snippet and navigation target. The five-row
 preview and “show more” count operate on these unique sessions. Content search
 limits are applied by the Host after session deduplication; expansion reveals the
 already fetched results rather than requesting another server page.
+The default **All** filter renders individual results in one flat relevance order,
+including GUI plugin commands. `lib/search/commandPaletteRank.ts` reuses the mention
+title tiers (exact, prefix, substring, fuzzy); descriptions, paths and content
+snippets provide lower-priority scores. Already-recalled authoritative hits are
+never discarded by this presentation pass. Equal scores preserve source order,
+including the session source's recency order. Empty queries keep recent chats first.
+Pinned filter buttons below the input select All, Chat, Files, Projects, Commands
+or Settings; Commands includes plugin commands. They preserve the query, existing
+search scope and Query observers, so filtering starts no new requests.
+Desktop filters use the shared extra-small button size, with the first label
+aligned to the input and result text inset; mobile retains its touch-sized buttons.
+Unmodified Left/Right arrows cycle these filters with wraparound and retain input
+focus; IME composition and modified arrows keep their normal editing behavior.
+Desktop shows the two arrow keycaps immediately after the filters using
+the same `Kbd variant="hint"` as conversation rows, followed by a localized
+“Switch” label. The first nine selectable rows in the current
+filtered, mixed display order use Command+1–9 on macOS and Ctrl+1–9 elsewhere.
+Every result type and category expansion row participates; changing filters or
+expanding results recomputes numbering. Numeric shortcuts and click/Enter share
+the same selection actions. Pending searches, IME and repeated keydowns cannot
+activate a numeric result. Mobile omits these hints and numeric bindings.
+Each source retains its five-row search preview and a category-labelled expansion row. Counts
+refer to loaded, deduplicated results, not an estimated total. Local categories
+remain usable while remote searches are pending; loading/errors only appear in
+applicable filters. Selection is controlled by result identity so late file hits
+cannot steal an active keyboard selection; changing query or category resets it.
 Each row displays a localized date and time beside its title: the matching
 message's creation time for content hits, otherwise the session's update time
 (falling back to creation time). Missing or invalid timestamps stay hidden.
@@ -277,7 +306,16 @@ results and show a compact muted status, not a red directory-list alert.
 Arrow-key navigation loops across the first and last selectable result via cmdk's
 `loop` contract, including mobile hardware keyboards.
 
-Conversation search remains global; commands consume registered contributions,
+Conversation search spans all currently added projects, not only the active one.
+Before ranking, preview counts and navigation, merged title/content results must
+resolve to a current project through `resolveProjectForSessionDirectory`, including
+registered worktrees. Unadded/closed projects and unresolved directories are
+excluded; recent-session previews apply ownership before their local row limit.
+Project closure also filters frozen keyboard-navigation snapshots immediately,
+and session activation rechecks current project/worktree state to reject stale rows.
+Readding a project can reuse retained search data; filtering does not delete Host
+index entries or sessions. This shared policy applies to desktop/web, VS Code and
+hosted/native mobile. Commands consume registered contributions,
 and project matches filter the existing project list only (no project discovery
 or directory scanning). File search requires a selected conversation with a known
 `currentSessionDirectory` belonging to a saved project. It makes exactly one
@@ -342,11 +380,11 @@ The mobile connection welcome also reuses the `yuri-image-loading` visual class 
 
 Coverage: `LoadingImage.test.tsx`, `markstreamImages.test.tsx`, `MobileFilesSurface.imagePreview.test.tsx`, and the existing attachment/preview contracts. Avatar/provider icons retain their existing icon-specific fallbacks.
 
-`ProviderLogo` and `ModelLogo` normalize brand images with `brightness-0` before
-applying dark-mode inversion. This keeps SVG marks monochrome and visible even
-when their source `currentColor` resolves to a light color; inversion alone would
-turn those marks black on a dark surface. Missing provider marks retain the
-theme-colored stack fallback.
+`ProviderLogo` and `ModelLogo` paint bundled brand SVGs as a `currentColor`/`bg-foreground`
+mask (`YuriWordmark` pattern) instead of `brightness-0` + `dark:invert`. CSS filters on
+`<img>` can be dropped by iOS WKWebView inside animated / backdrop-filtered overlays
+(mobile usage metadata sheet), leaving black marks invisible on dark surfaces. Missing
+provider marks retain the theme-colored stack fallback.
 
 Mobile file-detail images fill the available content width at their natural aspect ratio, including their loading frame; tall images scroll within the sheet. Fullscreen media previews portal to the body above mobile sheets (`z-index: 80`) and join `MobileWindowStack` while open on mobile, suspending the underlying sheet's modal input ownership until the preview closes. `imageGeometry.chrome.test.ts` checks width and fullscreen hit testing; `ToolOutputDialog.preview.test.tsx` checks modal ownership and restoration.
 
@@ -470,6 +508,10 @@ Global content search refreshes from the Host while open. The first navigation k
 Global search previews at most five rows per non-empty result group while a query is present. Each overflowing group offers a keyboard-selectable “Show more” row; explicit expansion is scoped to the current query and directory and resets when the palette is reopened. Conversation title and body hits share one group: a body hit includes the highlighted title and excerpt, replacing the duplicate title-only row. Multiple matching messages remain individually navigable. Desktop numeric shortcuts follow the visible combined rows and reveal the message when present. Empty groups render no heading. The empty-query recent-session view retains its existing limit.
 
 Desktop search has a responsive 56rem maximum width for excerpts. Native/hosted mobile uses the independent search push page; responsive web uses an opaque full-viewport search surface with the same back header, safe-area padding and keyboard viewport sizing. Neither mobile presentation uses the compact floating search card.
+
+The mobile search header sizes its back column from the actual button and leaves
+an explicit 8px gap before the field. The field uses the same density-scaled
+2.5rem height as `Button mobileIcon`, retaining the 36px touch minimum.
 
 `DialogContent` owns both the popup surface and its backdrop. Feature-specific dialog treatments pass popup styling through `className` and backdrop styling through `overlayClassName`; this keeps blur and dimming local to the owning dialog without changing every modal surface.
 

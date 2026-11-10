@@ -23,6 +23,7 @@ const { createScheduledTaskRunHistoryStore } = await import('./run-history-store
 const {
   computeNextRunAt,
   createScheduledTasksRuntime,
+  isScheduledTasksRuntimeEnabled,
   formatScheduledSessionTitle,
   parseScheduledCommandPrompt,
 } = await import('./runtime.js');
@@ -51,6 +52,46 @@ const createRuntime = (updateScheduledTaskState, overrides = {}) => createSchedu
   persistSessionMetadata: vi.fn(async () => ({})),
   logger: { info: vi.fn(), warn: vi.fn() },
   ...overrides,
+});
+
+describe('scheduled-tasks development isolation', () => {
+  it.each([
+    { NODE_ENV: 'development' },
+    { YURI_ELECTRON_DEV: '1' },
+    { NODE_ENV: 'production', YURI_ELECTRON_DEV: 'true' },
+  ])('does no scheduling, recovery, session processing or state writes in %j', async (env) => {
+    vi.useFakeTimers();
+    const update = vi.fn();
+    const list = vi.fn();
+    const listTasks = vi.fn();
+    const wait = vi.fn();
+    const history = { listRunningRuns: vi.fn(), listPendingResults: vi.fn(), acknowledgeResult: vi.fn(), finishRun: vi.fn() };
+    const handler = vi.fn();
+    const runtime = createRuntime(update, {
+      env, listProjects: list, waitForOpenCodeReady: wait, runHistoryStore: history,
+      projectConfigRuntime: { listScheduledTasks: listTasks, updateScheduledTaskState: update },
+    });
+    try {
+      expect(isScheduledTasksRuntimeEnabled(env)).toBe(false);
+      const cleanup = runtime.setTaskResultHandler(handler);
+      await runtime.start();
+      await runtime.start();
+      await runtime.syncAllProjects();
+      await expect(runtime.syncProject('project-1')).rejects.toThrow('disabled in development');
+      expect(await runtime.runNow('project-1', 'task-1')).toMatchObject({ ok: false, disabled: true });
+      await runtime.observeSessionEvent({ type: 'session.idle', properties: { sessionID: 'production-session' } });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runtime.getStatus()).toMatchObject({ disabled: true, hasRunningScheduledTasks: false });
+      for (const call of [list, listTasks, wait, update, handler, ...Object.values(history)]) expect(call).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      cleanup();
+      runtime.stop();
+    } finally { runtime.stop(); vi.useRealTimers(); }
+  });
+
+  it.each([{}, { NODE_ENV: 'production' }, { NODE_ENV: 'test' }, { YURI_ELECTRON_DEV: '0' }])('preserves normal execution policy for %j', (env) => {
+    expect(isScheduledTasksRuntimeEnabled(env)).toBe(true);
+  });
 });
 
 describe('scheduled-tasks history recovery', () => {

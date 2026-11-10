@@ -57,6 +57,19 @@ only own labels; no extra message fetch is needed.
 
 Todos sit under the changes row and follow the displayed session. The list is derived from the latest completed `todowrite` in the transcript (already cut at the revert boundary), because OpenCode v2 keeps no todo state and emits no `todo.updated`; an empty write clears it. Legacy live `todo` state and the persisted copy only cover sessions with no `todowrite` loaded. Rows use the same glyph set as OpenCode's native to-do pill: ring, half-filled in-progress (warning color), check, and slash. Cancelled items stay, struck through. The header shows completed/total, collapses the list, and turns into a green check once every item is completed or cancelled. The in-progress item is the only row in foreground color and scrolls into view as the plan advances. The group renders nothing without todos and is read-only.
 
+GUI `yuri.work-status` widgets occupy the space between Changes and Todos, even
+when the clean working tree has no Changes row. They receive this column's
+session/directory, resolved project/worktree, shared Git summary and inline/popover
+placement. Null Git counts mean unknown, never clean success; foreground loading
+is exposed separately and refresh failures retain the store's previous snapshot.
+The existing diff-stat aggregation is memoized by its snapshot and shared by the
+built-in row and plugins. Widgets add no Git reads or polling. The GUI catalog has
+an independent subscription and data updates preserve mounted foreign DOM.
+`active={visible}` releases plugin views immediately when hiding the popup, even
+while built-in rows remain for its exit transition. The slot has natural height,
+uses the column's scrolling, and adds no host chrome or component library.
+See `lib/gui-plugins/DOCUMENTATION.md` for registration, ordering and lifetime.
+
 Changes uses a vertical plus/minus glyph and opens the Git sidebar. The branch
 and worktree copy buttons, and the changes row, use the hand cursor. The
 desktop shell otherwise draws an arrow on buttons; these controls keep the

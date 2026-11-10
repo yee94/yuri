@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 import { buildCitationIconsFromParts, detectMessageReferences } from '@/lib/messages/references';
 import { getFullText } from '../lib/messagePreview';
 import { useVisiblePromptTurns } from '../hooks/useVisiblePromptTurns';
+import { SimpleMarkdownRenderer } from '../MarkdownRenderer';
+import UserTextPart from '../message/parts/UserTextPart';
 
 type PromptEntry = {
     turnId: string;
@@ -465,6 +467,7 @@ export function PromptNavigatorRail({
     }, [ensureWindowContains, isPanelVisible]);
 
     const highlightedPrompt = highlightedIndex !== null ? prompts[highlightedIndex] : undefined;
+    const highlightedParts = highlightedPrompt ? previewsByTurnId.get(highlightedPrompt.turnId) ?? [] : [];
     const replyPreview = highlightedPrompt ? repliesByTurnId?.get(highlightedPrompt.turnId) : undefined;
     // Overscan a few ticks beyond the window so they slide in under the
     // gradient mask instead of popping into existence at the edges.
@@ -592,18 +595,35 @@ export function PromptNavigatorRail({
                             onMouseEnter={cancelScheduledHide}
                             onMouseLeave={scheduleHide}
                             onMouseMove={(event) => event.stopPropagation()}
-                            onClick={(event) => {
+                            onClickCapture={(event) => {
+                                event.preventDefault();
                                 event.stopPropagation();
                                 handleSelect(highlightedIndex);
                             }}
                         >
-                            <p className="truncate font-medium leading-relaxed text-[var(--surface-foreground)]">
-                                {highlightedPrompt.preview || emptyPreviewLabel}
-                            </p>
+                            <div className="line-clamp-1 font-medium leading-relaxed text-[var(--surface-foreground)] [&_.markdown-content]:contents [&_.markdown-content_p]:inline">
+                                {highlightedParts.some((part) => part.type === 'text' && part.text.trim()) ? (
+                                    highlightedParts.filter((part) => part.type === 'text').map((part, index) => (
+                                        <UserTextPart
+                                            key={`${highlightedPrompt.turnId}:${part.id || index}`}
+                                            part={part}
+                                            messageId={highlightedPrompt.turnId}
+                                            messageParts={highlightedParts}
+                                            isMobile={false}
+                                            variant="preview"
+                                        />
+                                    ))
+                                ) : emptyPreviewLabel}
+                            </div>
                             {replyPreview ? (
-                                <p className="mt-2 line-clamp-4 whitespace-pre-line [overflow-wrap:anywhere] leading-relaxed text-[var(--surface-mutedForeground)]">
-                                    {replyPreview}
-                                </p>
+                                <div className="mt-2 line-clamp-4 [overflow-wrap:anywhere] leading-relaxed text-[var(--surface-mutedForeground)]">
+                                    <SimpleMarkdownRenderer
+                                        content={replyPreview}
+                                        enableFileReferences={false}
+                                        disableLinkSafety
+                                        className="[&_.markdown-content]:text-inherit [&_.markdown-content]:leading-relaxed [&_.markdown-content>*:first-child]:mt-0 [&_.markdown-content>*:last-child]:mb-0"
+                                    />
+                                </div>
                             ) : null}
                         </div>
                     ) : null}

@@ -63,6 +63,7 @@ import {
   type MobileMenuItem,
 } from '@/mobile/sessionMenuModel';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
+import { useSessionReadMenuAction } from '@/mobile/useSessionReadMenuAction';
 import {
   MOBILE_SHEET_EXPANDED_SNAP,
   useMobileSheetSnap,
@@ -236,7 +237,7 @@ function MobileActionButton({
       onClick={onClick}
       style={{ touchAction: 'manipulation' }}
     >
-      <Icon name={icon} className="size-5 shrink-0" />
+      <Icon name={icon} className="size-5 shrink-0 text-inherit" />
       <span className="truncate">{label}</span>
     </Button>
   );
@@ -451,11 +452,14 @@ export function SessionItem({
   const { t } = useI18n();
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
   const attention = needsAttention(session.id);
+  const { unread, onToggleRead } = useSessionReadMenuAction(session, sessionDirectory(session));
   const shareUrl = session.share?.url;
   const menuItems = React.useMemo(
     () => buildSessionMenuItems({
       pinned: isPinned,
       shared: Boolean(shareUrl),
+      unread,
+      onToggleRead,
       onRename,
       onTogglePin: onTogglePinned,
       onShare: shareUrl ? undefined : onShare,
@@ -464,7 +468,7 @@ export function SessionItem({
       onArchive,
       onDelete,
     }),
-    [isPinned, onArchive, onCopyShareUrl, onDelete, onRename, onShare, onTogglePinned, onUnshare, shareUrl],
+    [isPinned, onArchive, onCopyShareUrl, onDelete, onRename, onShare, onTogglePinned, onToggleRead, onUnshare, shareUrl, unread],
   );
 
   return (
@@ -698,6 +702,10 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   const [newWorktreeDialogOpen, setNewWorktreeDialogOpen] = React.useState(false);
   const [worktreeDialogProjectId, setWorktreeDialogProjectId] = React.useState<string | null>(null);
   const [actionTarget, setActionTarget] = React.useState<MobileActionTarget | null>(null);
+  const actionSession = actionTarget?.kind === 'session' ? actionTarget.session : null;
+  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
+    actionSession, actionSession ? sessionDirectory(actionSession) : undefined,
+  );
   const [pressedActionKey, setPressedActionKey] = React.useState<string | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
   const [renameDraft, setRenameDraft] = React.useState('');
@@ -1582,6 +1590,11 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     return buildSessionMenuItems({
       pinned: pinnedSessionIds.has(session.id),
       shared,
+      unread: actionSessionUnread,
+      onToggleRead: onToggleRead ? () => {
+        closeActionMenu();
+        onToggleRead();
+      } : undefined,
       onRename: () => {
         closeActionMenu();
         beginSessionRename(session);
@@ -1620,6 +1633,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     });
   }, [
     actionTarget,
+    actionSessionUnread,
     beginSessionRename,
     closeActionMenu,
     closeSessionPanel,
@@ -1628,6 +1642,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     handleHardDeleteSession,
     handleShareSession,
     handleUnshareSession,
+    onToggleRead,
     pinnedSessionIds,
     setActiveProjectIdOnly,
     startSessionDraftForDirectory,
@@ -1652,7 +1667,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         );
         if (!item.separated) return button;
         return (
-          <div key={item.id} className="mt-3 border-t border-[var(--surface-subtle)] pt-3">
+          <div key={item.id} className={actionTarget?.kind === 'project' ? 'border-t border-[var(--yuri-popup-divider)]' : 'mt-3 border-t border-[var(--surface-subtle)] pt-3'}>
             {button}
           </div>
         );

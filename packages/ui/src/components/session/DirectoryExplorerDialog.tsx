@@ -588,7 +588,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
   const resultsSection = (
     <ScrollableOverlay
-      outerClassName="yuri-directory-results"
+      outerClassName="yuri-directory-results overflow-clip"
       className="yuri-directory-list"
       aria-label={t('directoryExplorerDialog.browse.directories')}
       aria-busy={isLoading}

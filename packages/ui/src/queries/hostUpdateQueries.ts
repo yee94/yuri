@@ -86,3 +86,24 @@ export async function startHostUpdate(snapshot: HostUpdateSnapshot, transport: s
   if (typeof body.operation?.id !== 'string') throw new Error('Invalid update operation');
   return body.operation;
 }
+
+export async function resumeHostUpdate(operation: HostUpdateOperation, transport: string, generation: number) {
+  assertScope(transport, generation);
+  const snapshot = await refreshHostUpdateSnapshot(transport, generation, operation.channel);
+  assertScope(transport, generation);
+  const current = snapshot.operation;
+  if (current?.id === operation.id && current.version === operation.version
+    && current.channel === operation.channel && current.kind === operation.kind
+    && (isHostUpdateActive(current) || (current.status === 'succeeded' && snapshot.currentVersion === operation.version))) {
+    queryClient.setQueryData(hostUpdateQueryOptions(transport, generation).queryKey, snapshot);
+    return current;
+  }
+  if (snapshot.checkError || snapshot.update?.version !== operation.version || snapshot.update.kind !== operation.kind) {
+    throw new Error('update_plan_changed');
+  }
+  const resumed = await startHostUpdate(snapshot, transport, generation);
+  assertScope(transport, generation);
+  queryClient.setQueryData<HostUpdateSnapshot>(hostUpdateQueryOptions(transport, generation).queryKey, (previous) =>
+    ({ ...(previous ?? snapshot), operation: resumed }));
+  return resumed;
+}

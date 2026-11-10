@@ -45,6 +45,15 @@ a continuation are partial, not exhausted. The existing five-page sync budget an
 `hasMore` partial-result contract still apply. Explicit remote upstreams retain
 their directory query behavior; extension-only VS Code has no Host identity layer.
 
+Within one explicit-directory sync batch, the local physical-directory adapter
+shares identical raw upstream pages before filtering each directory independently.
+It retains at most five pages / 4 MiB of UTF-8 payload; over-budget pages are fetched
+normally, never truncated. URL, cursors and auth headers are part of page identity.
+Failures and aborted reads are not reusable success. Idle, interactive preemption,
+external index changes, runtime switch and stop discard the batch, so subsequent
+refreshes cannot reuse an earlier batch's snapshot. This does not change the single
+global 30-day startup backfill or any pagination/partial-result budget.
+
 Native `session.renamed` updates the existing runtime-scoped summary's title and
 update clock directly, publishing through the normal index revision path. It
 preserves activity ordering, pins and execution status; older/duplicate events

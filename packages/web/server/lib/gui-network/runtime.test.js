@@ -22,7 +22,7 @@ const destinations = new Set();
 beforeEach(async () => {
   root = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'gui-network-'));
   clients = createRemoteClientAuthRuntime({ fsPromises, path, crypto, storePath: path.join(root, 'clients.json') });
-  client = await clients.createClient({ label: 'GUI fixture', clientKind: 'mobile' });
+  client = await clients.createClient({ label: 'GUI fixture', clientKind: 'mobile', authMethod: 'pairing', pairingId: 'gui-fixture', usesRelay: true });
   auth = createUiAuth({ password: null, clientAuthController: clients, readSettingsFromDiskMigrated: async () => ({}) });
   const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
   const app = express();
@@ -111,6 +111,7 @@ it('uses the existing Relay dispatcher for TCP, with immediate data flush and un
   const targetPort = await target(socket => socket.on('data', bytes => socket.write(bytes)));
   const frames = [];
   const host = createTunnelHost({ connectionId: 'gui-network', getLocalPort: () => port,
+    authorizeRequest: auth.authorizeRelayRequest,
     sendFrame: (frame, immediate) => frames.push({ ...decodeTunnelFrame(frame), immediate }), getBufferedAmount: () => 0 });
   const control = value => host.handleFrame(encodeTunnelFrame(TunnelFrameType.WsText, 2, Buffer.from(JSON.stringify(value))));
   try {

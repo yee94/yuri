@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { createWorktreeTopologyCoordinator } from './worktreeTopologySync';
+import { scopeProjectWorktrees } from './projectWorktreeScope';
+import type { WorktreeMetadata } from '@/types/worktree';
 
 const fakeTimers = () => {
   const callbacks = new Map<number, () => void>(); let next = 0;
@@ -54,10 +56,11 @@ describe('worktree topology coordinator', () => {
     for (let i = 0; i < 50; i++) event({ type: 'worktree-topology-changed', projectDirectory: '/a' });
     timers.flush(); await settle();
     expect(calls).toBe(1);
+    expect(checks[0]()).toBe(false);
     first.resolve({ ...emptyResult, addedDirectories: ['/a/new'] });
     for (let i = 0; i < 10; i++) await settle();
     expect(calls).toBe(2);
-    expect(syncs).toEqual([['/a/new']]);
+    expect(syncs).toEqual([]);
     event({ type: 'event-stream-ready' }); timers.flush(); await settle();
     expect(calls).toBe(3);
     coordinator.stop();
@@ -101,6 +104,92 @@ describe('worktree topology coordinator', () => {
     refreshed.length = 0;
     eventListener?.({ type: 'event-stream-ready' }); timers.flush(); await settle();
     expect(refreshed.sort()).toEqual(['/a', '/b']); expect(synced).toEqual([]); coordinator.stop();
+  });
+
+  test('a shared checkout topology event refreshes nested projects but not independent repositories', async () => {
+    const timers = fakeTimers();
+    let event!: (event: { type: string; projectDirectory?: string }) => void;
+    const refreshed: string[] = [];
+    const coordinator = createWorktreeTopologyCoordinator({
+      isVSCode: () => false,
+      getProjects: () => [{ id: 'root', path: '/repo' }, { id: 'src', path: '/repo/src' }, { id: 'independent', path: '/repo/independent' }],
+      getCatalog: () => new Map([
+        ['/repo', [{ path: '/feature', worktreeRoot: '/feature' }]],
+        ['/repo/src', [{ path: '/feature/src', worktreeRoot: '/feature', relativePath: 'src' }]],
+      ]),
+      getActiveDirectories: () => [],
+      refresh: async (project) => { refreshed.push(project.path); return emptyResult; },
+      syncAdded: async () => {},
+      subscribeProjects: () => () => {}, subscribeCatalog: () => () => {}, subscribeSessions: () => () => {},
+      subscribeEvents: (listener) => { event = listener; return () => {}; }, subscribeRuntime: () => () => {}, generation: () => 1,
+      setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+    });
+    coordinator.start(); timers.flush(); await settle(); timers.flush(); await settle();
+    refreshed.length = 0;
+    for (let i = 0; i < 50; i++) event({ type: 'worktree-topology-changed', projectDirectory: '/repo' });
+    timers.flush(); await settle();
+    expect(refreshed.sort()).toEqual(['/repo', '/repo/src']);
+    coordinator.stop();
+  });
+
+  test.each(['/repo', '/repo/src', '/repo/other-scope'])('refreshes empty sibling catalogs after an event from %s', async (origin) => {
+    const timers = fakeTimers();
+    let event!: (event: { type: string; projectDirectory?: string }) => void;
+    const refreshed: string[] = [];
+    const coordinator = createWorktreeTopologyCoordinator({
+      isVSCode: () => false,
+      getProjects: () => [{ id: 'root', path: '/repo' }, { id: 'src', path: '/repo/src' }, { id: 'lib', path: '/repo/lib' }, { id: 'independent', path: '/repo/independent' }],
+      getCatalog: () => new Map(), getActiveDirectories: () => [],
+      refresh: async (project) => { refreshed.push(project.path); return { ...emptyResult, repositoryDirectory: project.id === 'independent' ? project.path : '/repo' }; },
+      resolveRepository: async (directory) => directory === '/repo/independent' ? directory : '/repo',
+      syncAdded: async () => {}, subscribeProjects: () => () => {}, subscribeCatalog: () => () => {}, subscribeSessions: () => () => {},
+      subscribeEvents: (listener) => { event = listener; return () => {}; }, subscribeRuntime: () => () => {}, generation: () => 1,
+      setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+    });
+    coordinator.start(); timers.flush();
+    for (let i = 0; i < 20; i++) await settle();
+    refreshed.length = 0;
+    event({ type: 'worktree-topology-changed', projectDirectory: origin });
+    for (let i = 0; i < 10; i++) await settle();
+    timers.flush(); for (let i = 0; i < 10; i++) await settle();
+    expect(refreshed.sort()).toEqual(['/repo', '/repo/lib', '/repo/src']);
+    coordinator.stop();
+  });
+
+  test('independent client coordinators recover add, remove and missed events after reconnect', async () => {
+    const timers = fakeTimers();
+    let checkouts = ['/repo'];
+    const clients = ['/repo', '/repo/src'].map((directory) => {
+      let event!: (event: { type: string; projectDirectory?: string }) => void;
+      const catalog = new Map<string, WorktreeMetadata[]>();
+      const coordinator = createWorktreeTopologyCoordinator({
+        isVSCode: () => false, getProjects: () => [{ id: directory, path: directory }],
+        getCatalog: () => catalog, getActiveDirectories: () => [], resolveRepository: async () => '/repo',
+        refresh: async () => {
+          const worktrees = scopeProjectWorktrees(directory, checkouts.map((path) => ({ path, worktreeRoot: path, projectDirectory: '/repo', branch: 'branch', label: 'branch' })));
+          catalog.set(directory, worktrees);
+          return { ...emptyResult, worktrees, repositoryDirectory: '/repo' };
+        },
+        syncAdded: async () => {}, subscribeProjects: () => () => {}, subscribeCatalog: () => () => {}, subscribeSessions: () => () => {},
+        subscribeEvents: (listener) => { event = listener; return () => {}; }, subscribeRuntime: () => () => {}, generation: () => 1,
+        setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+      });
+      return { coordinator, emit: (value: { type: string; projectDirectory?: string }) => event(value), paths: () => catalog.get(directory)?.map((entry) => entry.path) };
+    });
+    const flush = async () => { for (let i = 0; i < 10; i++) await settle(); timers.flush(); for (let i = 0; i < 20; i++) await settle(); };
+    try {
+      clients.forEach((client) => client.coordinator.start()); await flush();
+      expect(clients.map((client) => client.paths())).toEqual([[], []]);
+      checkouts.push('/feature');
+      clients.forEach((client) => client.emit({ type: 'worktree-topology-changed', projectDirectory: '/repo/src' })); await flush();
+      expect(clients.map((client) => client.paths())).toEqual([['/feature'], ['/feature/src']]);
+      checkouts = ['/repo'];
+      clients.forEach((client) => client.emit({ type: 'worktree-topology-changed', projectDirectory: '/repo' })); await flush();
+      expect(clients.map((client) => client.paths())).toEqual([[], []]);
+      checkouts.push('/missed');
+      clients.forEach((client) => client.emit({ type: 'event-stream-ready' })); await flush();
+      expect(clients.map((client) => client.paths())).toEqual([['/missed'], ['/missed/src']]);
+    } finally { clients.forEach((client) => client.coordinator.stop()); }
   });
 
   test('syncs persisted catalog worktrees whose session directories are still unloaded', async () => {

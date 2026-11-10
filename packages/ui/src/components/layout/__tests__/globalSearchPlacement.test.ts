@@ -31,10 +31,21 @@ describe('Electron global search placement', () => {
     expect(desktopBrandRenderIndex).toBeGreaterThan(-1);
     expect(projectsListIndex).toBeGreaterThan(desktopBrandRenderIndex);
 
+    // Desktop nav rows share that fixed region; they are not inside the scroll body.
+    const pinIndex = sessionSidebarSource.indexOf('const pinSidebarActionButtons =');
+    expect(sessionSidebarSource.slice(pinIndex, pinIndex + 160)).toContain('isDesktop && !isDesktopWindowFullscreen && !mobileVariant');
+    expect(sessionSidebarSource.slice(pinIndex, pinIndex + 160)).not.toContain('isDesktopShellRuntime');
+    const pinnedNavIndex = sessionSidebarSource.indexOf('{pinSidebarActionButtons ? (');
+    expect(pinnedNavIndex).toBeGreaterThan(desktopBrandRenderIndex);
+    expect(projectsListIndex).toBeGreaterThan(pinnedNavIndex);
+    expect(sessionSidebarSource.slice(pinnedNavIndex, pinnedNavIndex + 160)).toContain('shrink-0');
+
     // Empty brand config must not reserve a desktop brand/search row in scroll content.
+    // Pinned desktop nav is also excluded from the scroll body; mobile still carries the brand mark there.
     const topContentIndex = sessionSidebarSource.indexOf('const topContent =');
     const topContentSource = sessionSidebarSource.slice(topContentIndex, topContentIndex + 1_200);
     expect(topContentSource).not.toContain('<GlobalSearchButton');
+    expect(topContentSource).toContain('!pinSidebarActionButtons');
     expect(topContentSource).toContain('mobileVariant && hasSidebarBrand');
   });
 

@@ -122,6 +122,33 @@ test('password challenge uses the same sheet and keeps the history page beneath 
   expect(conn.cancelPassword).toHaveBeenCalledTimes(1);
 });
 
+test('rejected pairing offers scanning or a link without a password field', async () => {
+  conn.connections = saved;
+  conn.pendingConnection = { ...saved[0], reason: 'pairing' };
+  await render();
+  expect(document.body.textContent).toContain('mobile.connect.pairing.expired');
+  expect(document.body.textContent).toContain('mobile.connect.pairing.reconnectHint');
+  expect(document.querySelector('input[type="password"]')).toBeNull();
+  expect(button('mobile.connect.scanQr')).toBeTruthy();
+  await click(button('mobile.connect.link.useLink'));
+  expect(conn.cancelPassword).toHaveBeenCalledTimes(1);
+});
+
+test('a rejected saved device can be removed through the existing confirmation', async () => {
+  conn.connections = saved;
+  conn.pendingConnection = { ...saved[0], reason: 'pairing' };
+  vi.mocked(conn.removeConnection).mockResolvedValue(saved[0]);
+  await render();
+  await click(document.querySelector<HTMLElement>('[aria-label="mobile.instances.deleteAria"]')!);
+  expect(conn.cancelPassword).toHaveBeenCalledTimes(1);
+  expect(conn.removeConnection).not.toHaveBeenCalled();
+  conn.pendingConnection = null;
+  await render();
+  expect(document.body.textContent).toContain('mobile.connect.history.removeHint');
+  await click(button('mobile.connect.history.remove'));
+  expect(conn.removeConnection).toHaveBeenCalledWith('z');
+});
+
 test('clipboard denial leaves manual entry available without starting a connection', async () => {
   vi.spyOn(navigator.clipboard, 'readText').mockRejectedValue(new Error('denied'));
   await render(); await click(button('mobile.connect.welcome.moreOptions'));

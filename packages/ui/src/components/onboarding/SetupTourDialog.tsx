@@ -27,10 +27,11 @@ import type { SpeechSettings } from '@/lib/voice/speechSettings';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { tourPlugins, hasTourPlugin, saveRecommendedPlugins } from './tourPlugins';
+import { HistoryImportStep } from './HistoryImportStep';
 import './setup-tour.css';
 
 const specs = tourPlugins.map((plugin) => plugin.spec);
-const stepKeys = ['tour.models', 'tour.plugins', 'tour.voice'] as const;
+const stepKeys = ['tour.models', 'tour.plugins', 'tour.import', 'tour.voice'] as const;
 const providerChoices = [
   { id: 'openai', name: 'OpenAI' },
   { id: 'anthropic', name: 'Anthropic' },
@@ -98,6 +99,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
   const [page, setPage] = React.useState<'tour' | 'providers' | 'voice' | 'asr' | 'tts'>('tour');
   const [readme, setReadme] = React.useState<number | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [importAction, setImportAction] = React.useState<{ disabled: boolean; background?: boolean }>({ disabled: true });
   const [error, setError] = React.useState<string | null>(null);
   const generation = getRuntimeGeneration();
   const transport = getRuntimeTransportIdentity();
@@ -109,7 +111,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
   }, []);
   const plugins = usePluginsQuery();
   const metadata = useQuery({ ...pluginRegistryQueryOptions(directory, specs.slice(1), false, transport, true), enabled: step === 1 });
-  const speech = useQuery({ ...speechSettingsQueryOptions(transport), enabled: step === 2 });
+  const speech = useQuery({ ...speechSettingsQueryOptions(transport), enabled: step === 3 });
   const entries = plugins.data?.entries ?? [];
   const openProvider = (id?: string) => {
     const config = useConfigStore.getState();
@@ -122,8 +124,9 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
   const current = () => !lifetime.current?.signal.aborted && generation === getRuntimeGeneration() && transport === getRuntimeTransportIdentity();
   const move = (next: SetupTourStep) => { setPage('tour'); setError(null); useSetupTourStore.getState().move(runtime, next); };
   const finish = () => { if (current()) onClose(); };
-  const later = () => { if (step === 2) finish(); else move((step + 1) as SetupTourStep); };
+  const later = () => { if (step === 3) finish(); else move((step + 1) as SetupTourStep); };
   const proceed = async () => {
+    if (step === 2) { later(); return; }
     if (submitting.current || busy || !lifetime.current) return;
     submitting.current = true; setBusy(true); setError(null);
     try {
@@ -196,7 +199,8 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
               <div className="yuri-tour-plugins">{[1, 2].map((index) => <TourPluginCard key={index} index={index} info={metadata.data?.[specs[index]]} installed={hasTourPlugin(entries, specs[index])} selected={selected.includes(specs[index])} onSelect={() => setSelected((items) => items.includes(specs[index]) ? items.filter((spec) => spec !== specs[index]) : [...items, specs[index]])} onReadme={() => setReadme(index)} />)}</div>
               <a className="mt-4 inline-block typography-meta text-muted-foreground underline underline-offset-4 hover:text-foreground" href="https://opencode.ai/docs/ecosystem/#plugins" target="_blank" rel="noopener noreferrer">{t('tour.morePlugins')} ↗</a>
             </>}
-            {step === 2 && <>
+            {step === 2 && <HistoryImportStep onBusy={setBusy} directory={directory} onPrimaryChange={setImportAction} onComplete={() => move(3)} />}
+            {step === 3 && <>
               <div className="yuri-tour-voice-intro">
                 <h2>{t('tour.voiceHeading')}</h2>
                 <p>{t('tour.voiceIntro')}</p>
@@ -232,8 +236,9 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
         {(page !== 'tour' || readme !== null) && <Button variant="ghost" size="sm" disabled={busy} onClick={back}>{t('onboarding.common.actions.back')}</Button>}
         {readme === null && <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button variant="ghost" size="sm" disabled={busy} onClick={later}>{t('tour.later')}</Button>
-          {step === 2 ? <Button size="sm" disabled={busy} type={page === 'voice' ? 'submit' : 'button'} form={page === 'voice' ? 'yuri-tour-voice' : undefined} onClick={page === 'voice' ? undefined : finish}>{t(page === 'voice' ? 'settings.common.actions.saveChanges' : 'tour.finish')}</Button>
-            : <Button size="sm" disabled={busy || !plugins.data || plugins.isError} aria-busy={busy} onClick={() => void proceed()}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t('tour.continue')}</Button>}
+          {step === 2 ? <Button size="sm" type="submit" form="yuri-tour-import" disabled={busy || importAction.disabled} aria-busy={busy}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t(importAction.background ? 'historyImport.background' : 'historyImport.next')}</Button>
+            : step === 3 ? <Button size="sm" disabled={busy} type={page === 'voice' ? 'submit' : 'button'} form={page === 'voice' ? 'yuri-tour-voice' : undefined} onClick={page === 'voice' ? undefined : finish}>{t(page === 'voice' ? 'settings.common.actions.saveChanges' : 'tour.finish')}</Button>
+            : <Button size="sm" disabled={busy || step < 2 && (!plugins.data || plugins.isError)} aria-busy={busy} onClick={() => void proceed()}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t('tour.continue')}</Button>}
         </div>}
       </footer>
     </DialogContent>

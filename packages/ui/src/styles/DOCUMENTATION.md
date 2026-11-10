@@ -2,6 +2,20 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
+## Hidden spinner lifetime
+
+The parked mobile root-tab underlay pauses descendant `animate-spin` animations
+until it is revealed for page-back or becomes active again. Hiding it with
+`visibility`/`content-visibility` alone does not stop WebKit's animation-driven
+touch-region traversal. Visible secondary-page spinners remain running.
+
+The reserved chat-history status slot also pauses its spinner while its existing
+authoritative `aria-busy` is false. The slot and icon stay mounted with unchanged
+geometry; an actual history load resumes the animation. Neither rule changes
+scroll ownership, content mounting, native gestures or reduced-motion policy.
+`hiddenSpinner.test.ts` covers pause/resume and unrelated visible controls; native
+CPU and animation-progress checks are required separately.
+
 ## Control selection
 
 `lib/theme/cssGenerator.ts` owns the global `--interactive-selection` and
@@ -303,7 +317,12 @@ Phone conversation headers (session chat and Assistant) share `--yuri-mobile-hea
 and saturation on every runtime. Desktop pickers/composer catalogs retain
 `--yuri-overlay-translucent-fill` at 22%; anchored popups instead use
 `--yuri-popup-fill` at 50% of the theme elevated surface to suppress background
-text interference while retaining frost. Popup-only
+text interference while retaining frost. Electron windows marked with
+`data-yuri-vibrancy` use the solid theme elevated fill for every popup surface:
+the sidebar behind an anchored menu must not show through as competing text.
+That native material marker alone owns the override, without an additional
+`desktop-runtime` device-class gate. Blur, rim and shadow are preserved.
+Popup-only
 `--yuri-popup-edge` and `--yuri-popup-shadow` provide a fine theme-foreground rim
 and short contact elevation instead of the large overlay's 48px shadow. Light
 and dark values live in `mobile.css`, not duplicated component utility strings.

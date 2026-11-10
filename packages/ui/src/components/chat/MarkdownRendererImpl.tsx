@@ -427,6 +427,7 @@ interface MarkdownRendererProps {
   className?: string;
   isStreaming?: boolean;
   disableStreamAnimation?: boolean;
+  sourceIsPaced?: boolean;
   variant?: MarkdownVariant;
   onShowPopup?: (content: ToolPopupContent) => void;
   enableFileReferences?: boolean;
@@ -1230,6 +1231,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   className,
   isStreaming = false,
   disableStreamAnimation = false,
+  sourceIsPaced = false,
   variant = 'assistant',
   onShowPopup,
   enableFileReferences = true,
@@ -1252,7 +1254,8 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
 
   const live = isStreaming && !disableStreamAnimation;
   const streamingRenderCadence = resolveStreamingRenderCadence(getClientPlatform());
-  const pacedText = usePacedText(content, live, streamingRenderCadence.markdownPaceMs);
+  const pacedText = usePacedText(sourceIsPaced ? '' : content, live && !sourceIsPaced, streamingRenderCadence.markdownPaceMs);
+  const displayText = sourceIsPaced ? content : pacedText;
   const [richReady, revealRichContent] = useRichMarkdownReveal(live);
 
   useMermaidInlineInteractions({
@@ -1294,7 +1297,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
 
   useMorphdomMarkdown({
     containerRef,
-    text: pacedText,
+    text: displayText,
     streaming: live,
     cacheKey,
     syntaxVars,
@@ -1307,8 +1310,8 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   // showing the placeholder — neither height describes the settled render.
   useMarkdownHeightMemo(
     containerRef,
-    markdownHeightCacheKey(content, variant),
-    richReady && !live,
+    richReady && !isStreaming ? markdownHeightCacheKey(content, variant) : '',
+    richReady && !isStreaming,
   );
 
   const markdownContent = (
@@ -1327,7 +1330,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             'pointer-events-none absolute inset-0 overflow-clip',
           )}
         >
-          <MarkdownLoadingPlaceholder content={pacedText} />
+          <MarkdownLoadingPlaceholder content={displayText} />
         </div>
       )}
       <div
@@ -1353,6 +1356,7 @@ export const MarkdownRenderer = React.memo(MarkdownRendererImpl, (prev, next) =>
   return prev.content === next.content
     && prev.isStreaming === next.isStreaming
     && prev.disableStreamAnimation === next.disableStreamAnimation
+    && prev.sourceIsPaced === next.sourceIsPaced
     && prev.variant === next.variant
     && prev.isAnimated === next.isAnimated
     && prev.skipFadeIn === next.skipFadeIn

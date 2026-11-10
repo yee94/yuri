@@ -11,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from "@/lib/i18n";
 import { DeviceConnections } from './DeviceConnections';
 import { useUpdateStore } from '@/stores/useUpdateStore';
+import { SidebarBackgroundTasks } from './SidebarBackgroundTasks';
 
 type Props = {
   onOpenSettings: () => void;
@@ -27,7 +28,7 @@ const footerIconButtonClassName =
 const footerIconClassName =
   "size-4 text-foreground/55 transition-colors group-hover:text-foreground group-focus-visible:text-foreground";
 
-function SidebarUpdateButton({ onOpenUpdate }: { onOpenUpdate: () => void }) {
+function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () => void; hideDownload: boolean }) {
   const { t } = useI18n();
   const downloading = useUpdateStore((state) => state.downloading);
   const downloaded = useUpdateStore((state) => state.downloaded);
@@ -61,8 +62,10 @@ function SidebarUpdateButton({ onOpenUpdate }: { onOpenUpdate: () => void }) {
     : restarting
       ? t('updateDialog.status.updating')
       : downloaded
-        ? t('updateDialog.actions.restartToUpdate')
+        ? t('sessions.sidebar.footer.actions.restartUpdate')
         : t('sessions.sidebar.footer.actions.update'));
+
+  if (hideDownload && downloading) return null;
 
   return (
     <Tooltip>
@@ -71,13 +74,15 @@ function SidebarUpdateButton({ onOpenUpdate }: { onOpenUpdate: () => void }) {
           type="button"
           variant="ghost"
           size="icon"
-          className={`ml-auto ${footerIconButtonClassName} disabled:opacity-100`}
+          className={`${footerIconButtonClassName} disabled:opacity-100`}
           onClick={handleClick}
           disabled={restarting}
           aria-busy={restarting || undefined}
           aria-label={updateLabel}
         >
-          {downloading ? (
+          {downloaded ? (
+            <Icon name="restart" className={`${footerIconClassName} ${restarting ? 'motion-safe:animate-spin' : ''}`} />
+          ) : downloading ? (
             <svg
               viewBox="0 0 18 18"
               className={percent === null ? 'size-4 animate-spin' : 'size-4 -rotate-90'}
@@ -158,7 +163,10 @@ export function SidebarFooter({
           </Tooltip>
         </>
       ) : null}
-      {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} /> : null}
+      <div className="ml-auto flex min-w-0 items-center gap-1">
+        {showRuntimeButtons ? <SidebarBackgroundTasks compactWithRestart={Boolean(showUpdateButton && onOpenUpdate)} /> : null}
+        {showUpdateButton && onOpenUpdate ? <SidebarUpdateButton onOpenUpdate={onOpenUpdate} hideDownload={showRuntimeButtons} /> : null}
+      </div>
     </div>
   );
 }

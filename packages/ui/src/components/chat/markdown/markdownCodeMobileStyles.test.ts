@@ -45,6 +45,20 @@ afterEach(() => {
 });
 
 describe('mobile Markdown code block layout', () => {
+  test('new line numbers match code typography before the deferred geometry sync', () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+    const root = document.createElement('div');
+    root.innerHTML = '<pre><code style="font-size:12px;line-height:19.5px;font-family:monospace">one\ntwo\n</code></pre>';
+    document.body.appendChild(root);
+    injected.add(root);
+    decorateMarkdown(root, context);
+    applyMarkdownCodeBlockWrapState(root, true, context.labels);
+    const gutter = root.querySelector<HTMLElement>('[data-md-code-line-numbers]');
+    expect(gutter?.style.fontSize).toBe('12px');
+    expect(gutter?.style.lineHeight).toBe('19.5px');
+    expect(gutter?.style.fontFamily).toBe('monospace');
+  });
+
   test('the rendered code surface preserves source and exposes an aria-hidden line-number gutter', () => {
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
     const root = document.createElement('div');

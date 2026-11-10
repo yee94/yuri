@@ -23,27 +23,45 @@ export const ModelLogo: React.FC<ModelLogoProps> = ({
   fallback,
 }) => {
   const { src, onError: handleInternalError, hasLogo, brand } = useModelLogo(modelId, providerId);
+  const [failed, setFailed] = React.useState(false);
 
-  const handleError = React.useCallback(() => {
-    handleInternalError();
-    externalOnError?.();
-  }, [handleInternalError, externalOnError]);
+  React.useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
-  if (!hasLogo || !src) {
+  React.useEffect(() => {
+    if (!src || typeof Image === 'undefined') return;
+    let cancelled = false;
+    const image = new Image();
+    image.onerror = () => {
+      if (cancelled) return;
+      setFailed(true);
+      handleInternalError();
+      externalOnError?.();
+    };
+    image.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [src, handleInternalError, externalOnError]);
+
+  if (!hasLogo || !src || failed) {
     return <>{fallback ?? null}</>;
   }
 
+  // Paint as a currentColor mask instead of brightness-0/invert.
+  // iOS WKWebView can drop CSS filters on children of animated/
+  // backdrop-filtered overlays, leaving black marks invisible on dark surfaces.
   return (
-    <img
-      src={src}
-      alt={alt || `${brand || modelId || providerId || 'model'} logo`}
-      // brightness-0 压成纯黑，dark:invert 再翻成纯白，避免品牌原色（Claude 橙 / DeepSeek 蓝）残留
-      className={cn('brightness-0 dark:invert object-contain', className)}
-      loading="eager"
-      decoding="async"
-      fetchPriority="high"
+    <span
+      role="img"
+      aria-label={alt || `${brand || modelId || providerId || 'model'} logo`}
+      className={cn('inline-block shrink-0 bg-foreground', className)}
+      style={{
+        mask: `url("${src}") center / contain no-repeat`,
+        WebkitMask: `url("${src}") center / contain no-repeat`,
+      }}
       draggable={false}
-      onError={handleError}
     />
   );
 };

@@ -55,6 +55,7 @@ import {
   type HostRowProbeSnapshot,
 } from './desktopHostSwitcherDisplay';
 import { SshBootstrapErrorNotice } from './SshBootstrapErrorNotice';
+import { desktopHostConnectionIcon } from './desktopHostConnectionIcon';
 import {
   formatSshBootstrapErrorDescription,
   resolveManagedSshBootstrapErrorCode,
@@ -255,7 +256,7 @@ const resolveCurrentHost = (hosts: DesktopHost[]) => {
   // matching can't distinguish them — identify the active relay host by its
   // stable runtime key instead.
   const activeRuntimeKey = getRuntimeKey();
-  const relayMatch = hosts.find((h) => h.relay && runtimeKeyForHost(h) === activeRuntimeKey);
+  const relayMatch = hosts.find((h) => runtimeKeyForHost(h) === activeRuntimeKey);
   if (relayMatch) {
     return { id: relayMatch.id, label: relayMatch.label, url: relayMatch.url };
   }
@@ -383,8 +384,11 @@ export function DesktopHostSwitcherDialog({
     [sshHostIds],
   );
   const visibleHosts = React.useMemo(
-    () => allHosts.filter((host) => host.id === LOCAL_HOST_ID || isVisibleDesktopHost(host, sshInstanceIds)),
-    [allHosts, sshInstanceIds],
+    () => {
+      const activeId = resolveCurrentHost(allHosts).id;
+      return allHosts.filter((host) => host.id === LOCAL_HOST_ID || isVisibleDesktopHost(host, sshInstanceIds) || host.id === activeId);
+    },
+    [allHosts, sshInstanceIds, runtimeEndpointEpoch],
   );
 
   React.useEffect(() => {
@@ -449,6 +453,9 @@ export function DesktopHostSwitcherDialog({
         setLocalOrigin(cfg.localOrigin);
       }
       const nextSshHostIds: Record<string, true> = {};
+      for (const id of cfg.sshHostIds ?? []) {
+        nextSshHostIds[id] = true;
+      }
       for (const instance of sshCfg.instances) {
         nextSshHostIds[instance.id] = true;
       }
@@ -864,35 +871,10 @@ export function DesktopHostSwitcherDialog({
 
   const content = (
     <>
-      {embedded ? (
-        <div className="flex-shrink-0 border-b border-[var(--interactive-border)] px-3 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 flex items-baseline gap-1.5 typography-ui-label">
-              <span className="font-medium text-foreground">{t('desktopHostSwitcher.header.current')}</span>
-              <span className="max-w-[9rem] truncate text-muted-foreground">{redactSensitiveUrl(current.label)}</span>
-              <span className="text-muted-foreground/50">•</span>
-              <span className="font-medium text-foreground">{t('desktopHostSwitcher.header.default')}</span>
-              <span className="max-w-[9rem] truncate text-muted-foreground">{redactSensitiveUrl(currentDefaultLabel)}</span>
-            </div>
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors',
-                'hover:text-foreground hover:bg-interactive-hover',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
-              )}
-              onClick={() => void probeAll(visibleHosts)}
-              disabled={!desktopAvailable || isLoading || isProbing}
-              aria-label={t('desktopHostSwitcher.actions.refreshInstancesAria')}
-            >
-              <Icon name="refresh" className={cn('h-4 w-4', isProbing && 'animate-spin')} />
-            </button>
-          </div>
-        </div>
-      ) : (
+      {!embedded && (
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
-            <Icon name="server" className="h-5 w-5" />
+            <Icon name="connection-local" className="h-5 w-5" />
             {t('desktopHostSwitcher.title')}
           </DialogTitle>
           <DialogDescription>
@@ -940,6 +922,7 @@ export function DesktopHostSwitcherDialog({
               visibleHosts.map((host) => {
                 const isLocal = host.id === LOCAL_HOST_ID;
                 const isSsh = Boolean(sshHostIds[host.id]);
+                const canManageSsh = isSsh && canManageDesktopHosts();
                 const isActive = host.id === current.id;
                 const isDefault = (defaultHostId || LOCAL_HOST_ID) === host.id;
                 const status = statusById[host.id] || null;
@@ -949,7 +932,7 @@ export function DesktopHostSwitcherDialog({
                 // matches the badge (no stale direct latency + Relay).
                 const rowDisplay = resolveHostRowDisplay({
                   isActive,
-                  isSsh,
+                  isSsh: canManageSsh,
                   runtimeIsConnected,
                   runtimeConnectionPhase,
                   currentTransportIsRelay,
@@ -958,6 +941,14 @@ export function DesktopHostSwitcherDialog({
                 });
                 const statusKind = rowDisplay.statusKind;
                 const isViaRelay = rowDisplay.showViaRelay;
+                const connectionIcon = desktopHostConnectionIcon({
+                  isLocal,
+                  isSsh,
+                  isRelay: isActive ? currentTransportIsRelay : isViaRelay || Boolean(host.relay && !host.apiUrl),
+                });
+                const connectionLabel = connectionIcon === 'connection-local' ? t('desktopHostSwitcher.instance.local')
+                  : connectionIcon === 'connection-relay' ? 'Relay'
+                    : connectionIcon === 'connection-ssh' ? 'SSH' : 'LAN';
                 const isEditing = editingId === host.id;
                 const effectiveUrl = isLocal ? localOrigin : (normalizeHostUrl(host.url) || host.url);
                 const displayLabel = host.id === LOCAL_HOST_ID
@@ -975,7 +966,7 @@ export function DesktopHostSwitcherDialog({
                       'app-region-no-drag group flex items-center gap-2 px-2.5 py-2 rounded-md overflow-hidden',
                       // Dropdown (embedded): mobile-style card per host; the
                       // active host reads as selected, not just labelled.
-                      embedded && 'rounded-xl bg-[var(--surface-muted)] px-3 py-2.5',
+                      embedded && 'rounded-xl px-3 py-3',
                       embedded && isActive && 'bg-[var(--interactive-selection)]/25',
                       isEditing ? 'bg-interactive-hover/20' : 'hover:bg-interactive-hover/30'
                     )}
@@ -989,9 +980,10 @@ export function DesktopHostSwitcherDialog({
                       onClick={() => void handleSwitch(host)}
                       disabled={Boolean(switchingHostId)}
                       aria-busy={switchingHostId === host.id}
+                      aria-current={isActive ? 'true' : undefined}
                       aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: displayLabel })}
                     >
-                      {switchingHostId === host.id ? <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin flex-shrink-0" /> : <span className={cn('h-2 w-2 rounded-full flex-shrink-0', statusDotClass(statusKind))} />}
+                      <Icon name={switchingHostId === host.id ? 'loader-4' : connectionIcon} className={cn('size-8 shrink-0 text-muted-foreground', switchingHostId === host.id && 'animate-spin')} />
                       {/* Same reading order as the settings device list: name +
                           badges on the first line, a toned status line under it,
                           then the address. */}
@@ -1000,32 +992,40 @@ export function DesktopHostSwitcherDialog({
                           <span className="typography-ui-label font-medium truncate text-foreground">
                             {displayLabel}
                           </span>
-                          {isActive && (
+                          {isActive && !embedded && (
                             <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-border/50">
                               {t('desktopHostSwitcher.header.current')}
                             </span>
                           )}
-                          {isSsh && (
+                          {isSsh && !embedded && (
                             <span className="typography-micro flex-shrink-0 px-1 rounded leading-none pb-px text-[var(--status-info)] bg-[var(--status-info)]/10">
                               SSH
                             </span>
                           )}
                         </div>
-                        <div className={cn('typography-micro truncate', statusTextClass(statusKind))}>
-                          {isSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
+                        {embedded ? <div className="typography-micro flex items-center gap-2 text-muted-foreground">
+                          <span>{connectionLabel}</span>
+                          {rowDisplay.latencyMs != null && <span>{rowDisplay.latencyMs} ms</span>}
+                          {statusKind !== 'ok' && <span className={cn('truncate', statusTextClass(statusKind))}>
+                            {canManageSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
+                          </span>}
+                        </div> : <div className={cn('typography-micro truncate', statusTextClass(statusKind))}>
+                          <span className={cn('mr-1 inline-block h-1.5 w-1.5 rounded-full', statusDotClass(statusKind))} />
+                          {canManageSsh && (!isActive || switchingHostId === host.id) ? t(sshPhaseLabelKey(sshStatus?.phase)) : t(statusLabelKey(statusKind))}
                           {rowDisplay.latencyMs != null
                             ? t('desktopHostSwitcher.status.ping', { ms: rowDisplay.latencyMs })
                             : ''}
                           {isViaRelay ? ` · ${t('settings.remoteInstances.clientAuth.state.viaRelay')}` : ''}
-                        </div>
-                        <div className="typography-micro text-muted-foreground/70 truncate font-mono">
+                        </div>}
+                        {!embedded && <div className="typography-micro text-muted-foreground/70 truncate font-mono">
                           {displayUrl}
-                        </div>
+                        </div>}
                       </div>
                     </button>
 
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {isSsh && !isLocal && (
+                      {embedded && isActive && <Icon name="check" className="size-4 text-foreground" aria-label={t('desktopHostSwitcher.header.current')} />}
+                      {canManageSsh && !isLocal && (
                         (sshStatus?.phase === 'idle' || !sshStatus?.phase) ? (
                           <Button
                             type="button"
@@ -1042,10 +1042,7 @@ export function DesktopHostSwitcherDialog({
                             {t('desktopHostSwitcher.actions.connect')}
                           </Button>
                         ) : (
-                          <div
-                            className="h-8 w-8 opacity-0 pointer-events-none"
-                            aria-hidden="true"
-                          />
+                          null
                         )
                       )}
 
@@ -1056,14 +1053,15 @@ export function DesktopHostSwitcherDialog({
                             className={cn(
                               'app-region-no-drag h-8 w-8 rounded-md inline-flex items-center justify-center hover:bg-interactive-hover transition-colors',
                               isDefault
-                                ? 'text-primary hover:text-primary/80'
-                                : 'text-muted-foreground/60 hover:text-primary/80',
+                                ? 'bg-interactive-selection text-interactive-selection-foreground'
+                                : 'text-muted-foreground/60 hover:text-foreground',
                             )}
                             onClick={() => void setDefault(host.id)}
+                            aria-pressed={isDefault}
                             aria-label={isDefault ? t('desktopHostSwitcher.actions.defaultInstanceAria') : t('desktopHostSwitcher.actions.setAsDefaultAria')}
                             disabled={isSaving || (!isDefault && isBlockedDisplayStatus(statusKind))}
                           >
-                            {isDefault ? <Icon name="star-fill" className="h-4 w-4" /> : <Icon name="star" className="h-4 w-4" />}
+                            <Icon name={isDefault ? 'home-fill' : 'home'} className="h-4 w-4" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent sideOffset={6}>
@@ -1139,10 +1137,10 @@ export function DesktopHostSwitcherDialog({
           </div>
         )}
 
-        <div className="flex-shrink-0 border-t border-[var(--interactive-border)]">
+        <div className={cn('flex-shrink-0 border-t border-[var(--interactive-border)]', embedded && 'px-3 py-1')}>
           <button
             type="button"
-            className="w-full flex items-center gap-2 px-2 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-interactive-hover/30 transition-colors"
+            className={cn('w-full flex items-center gap-2 px-2 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-interactive-hover/30 transition-colors', embedded && 'rounded-xl px-3 py-3')}
             onClick={openRemoteInstancesSettings}
             disabled={Boolean(switchingHostId)}
           >

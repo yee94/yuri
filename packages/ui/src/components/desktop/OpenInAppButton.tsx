@@ -132,9 +132,8 @@ export const OpenInAppButton = ({ directory, className }: OpenInAppButtonProps) 
   return (
     <div
         className={cn(
-          'app-region-no-drag inline-flex h-7 items-center self-center rounded-[9px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px]',
-          'bg-[var(--surface-elevated)] overflow-hidden',
-          'border border-border/60',
+          'app-region-no-drag inline-flex h-7 w-12 items-center self-center overflow-hidden rounded-md border border-border/40 px-1',
+          'hover:bg-interactive-hover transition-colors',
           className
         )}
     >
@@ -142,8 +141,8 @@ export const OpenInAppButton = ({ directory, className }: OpenInAppButtonProps) 
         type="button"
         onClick={() => void (selectedApp ? handleOpen(selectedApp) : handleCopyPath())}
         className={cn(
-          'inline-flex h-full items-center px-2.5 typography-ui-label font-medium',
-          'text-foreground hover:bg-interactive-hover transition-colors',
+          'inline-flex h-full w-7 items-center justify-center typography-ui-label font-medium',
+          'text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
           isScanning && 'animate-pulse'
         )}
         aria-label={selectedApp ? t('openInApp.actions.openInAria', { app: selectedApp.label }) : t('openInApp.actions.copyPath')}
@@ -159,13 +158,12 @@ export const OpenInAppButton = ({ directory, className }: OpenInAppButtonProps) 
           <button
             type="button"
             className={cn(
-              'inline-flex h-full w-7 items-center justify-center',
-              'border-l border-[var(--interactive-border)] text-muted-foreground',
-              'hover:bg-interactive-hover hover:text-foreground transition-colors'
+              'inline-flex h-full w-3 items-center justify-center text-muted-foreground',
+              'hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary'
             )}
             aria-label={t('openInApp.actions.chooseAppAria')}
           >
-            <Icon name="arrow-down-s" className="h-4 w-4" />
+            <Icon name="arrow-down-s" className="size-2.5" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent

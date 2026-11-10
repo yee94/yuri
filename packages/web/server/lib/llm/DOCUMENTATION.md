@@ -68,8 +68,17 @@ contracts, keyed by the compatible OpenCode runtime. Missing services fail
 explicitly; protocol version alone does not prove compatibility with every future
 OpenCode release. The bundled SDK normalizes the host model's wrapper while
 retaining the host-owned route implementation; calls back into the host route
-restore its original model wrapper so nominal SDK schemas remain valid. It never instantiates an embedded
-OpenCode host. Requests use stateless HTTP, including for providers whose durable
+restore its original model wrapper so nominal SDK schemas remain valid.
+OpenCode 2.2.6 removed `route.defaults`, moved model presets to `model.options`,
+and flattened generation parameters, headers and timeouts on requests. For that
+host shape, the bridge projects presets into the bundled compiler's nested
+defaults and converts requests back to flat fields at the host route's body,
+header and transport boundaries. Host capabilities retain prompt-cache and
+effort-update semantics. Both legacy defaults and flat options are checked for
+context/tool body overrides. Legacy hosts retain their existing path; no host
+version guessing, dependency upgrade or parallel model resolver is required.
+It never instantiates an embedded OpenCode host. Requests use stateless HTTP,
+including for providers whose durable
 Agent sessions prefer WebSocket; providers requiring WebSocket-only operation are
 not established by this path.
 
@@ -135,6 +144,12 @@ Provider-owned deadlines and Host process loss remain possible failures.
 Focused tests cover clean wire messages, native empty-text tool calls, usage,
 model override rejection, host-resolved OAuth, transport-hook body replacement, sanitized RPC errors,
 session-free routing, long-running cancellation and retained side effects.
+Source and prebundle regressions also cover the 2.2.6 flat model/route contract,
+generation overrides, provider headers/body, phase timeouts and context-injection
+rejection. Real OpenCode 2.2.6 smoke checks passed for OpenAI and Magpie after the
+request-shape adaptation, plus the saved Summary AI model's connection probe,
+session-title and commit generation and a native tool call without Session API
+access. These do not establish all-provider compatibility.
 `experiments/llm-provider-bridge/production-smoke.mjs` calls the real small-model
 session-title path and the real pi Agent through the production gateway, external
 OpenCode RPC and a selected real provider. OpenAI/Codex and DeepSeek both passed

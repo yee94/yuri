@@ -398,6 +398,7 @@ describe('relay reasoning projection e2e (Host filter over private relay)', () =
 
       const identity = await buildIdentity();
       host = startRelayHost({
+        authorizeRequest: async () => true,
         relayUrl,
         identity,
         getLocalPort: () => origin!.port,

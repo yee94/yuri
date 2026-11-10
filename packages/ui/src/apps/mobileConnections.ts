@@ -111,6 +111,7 @@ export type MobilePendingConnection = {
   id: string;
   label: string;
   candidates: MobileTransportCandidate[];
+  reason?: 'pairing';
   // Present when the password unlock must ride the relay tunnel.
   relay?: MobileRelayConfig;
   relayGrant?: string;
@@ -465,7 +466,8 @@ const probeRelaySession = async (
     logConnect('relay:session', { ok: session?.ok === true, status: session?.status ?? null, hasToken: Boolean(token) });
     if (!session) return finish('unreachable');
     if (session.status === 401) return finish(token ? 'auth-failed' : 'needs-login');
-    if (!session.ok && session.status !== 404) return finish('auth-failed');
+    if (session.status === 403) return finish('auth-failed');
+    if (!session.ok && session.status !== 404) return finish('unreachable');
     const status = await readSessionStatus(session);
     if (status && status.disabled !== true && status.authenticated === false) {
       return finish(token ? 'auth-failed' : 'needs-login');
@@ -1120,9 +1122,15 @@ const establishLiveTransport = async (
   for (const candidate of candidates) {
     if (candidate.kind === 'relay') {
       const tunnel = createRelayTunnelClient(candidate.relay);
-      const health = await raceWithTimeout(RELAY_CONNECT_TIMEOUT_MS, tunnel.fetch('/health').catch(() => null));
-      logConnect('establish:relay:health', { ok: health?.ok === true, status: health?.status ?? null });
-      if (health?.ok) return { kind: 'relay', relay: candidate.relay, tunnel };
+      // ANY HTTP response proves the tunnel reached the host: the relay host
+      // answers every relayed request itself, but before a client credential
+      // exists its authorization gate legitimately returns 403 for everything
+      // except the pairing redeem (this is a pre-redeem reachability check, so a
+      // 200 is not available yet). Only a missing response — no host attached,
+      // handshake timeout — means unreachable.
+      const response = await raceWithTimeout(RELAY_CONNECT_TIMEOUT_MS, tunnel.fetch('/health').catch(() => null));
+      logConnect('establish:relay:health', { ok: response?.ok === true, status: response?.status ?? null });
+      if (response) return { kind: 'relay', relay: candidate.relay, tunnel };
       tunnel.close();
       continue;
     }
@@ -1490,6 +1498,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
           id: saved?.id ?? createUuid(),
           label,
           candidates,
+          ...(token ? { reason: 'pairing' as const } : {}),
           relay: relayCandidateOf({ candidates }) ?? undefined,
           relayGrant: grant,
         });
@@ -1503,6 +1512,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
         await writeSecureToken(runtimeKey, token);
       }
       persistMetadata({ id: saved?.id, label, candidates, clientToken: token });
+      setPendingConnection(null);
       switchToTransport(result.transport, token ?? null, { runtimeKey, grant });
       notifyConnected();
     } catch (error) {
@@ -1579,6 +1589,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
         }
       }
       persistMetadata({ label, candidates: deviceCandidates, clientToken: issuedToken });
+      setPendingConnection(null);
       // A relay transport hands its live redeem tunnel to the runtime (adopted
       // inside switchToTransport) — closing it here would tear down the runtime.
       switchToTransport(
@@ -1598,7 +1609,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
   });
 
   const submitPassword = useEvent(async (password: string) => {
-    if (!pendingConnection || !password.trim() || busyRef.current) return;
+    if (!pendingConnection || pendingConnection.reason === 'pairing' || !password.trim() || busyRef.current) return;
     setError(null);
     beginBusy('password');
     const { id, label, candidates } = pendingConnection;

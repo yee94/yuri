@@ -2922,7 +2922,7 @@ export const ContextPanel: React.FC<{
           aria-label={isExpanded ? t('contextPanel.actions.collapsePanel') : t('contextPanel.actions.expandPanel')}
           aria-pressed={isExpanded}
         >
-          <Icon name={isExpanded ? 'collapse-diagonal' : 'expand-diagonal'} className="size-3.5" />
+          <Icon name={isExpanded ? 'collapse-diagonal' : 'expand-diagonal'} className="size-4" />
         </Button>
         <Button
           type="button"

@@ -5,9 +5,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
@@ -100,24 +101,25 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
     setOpenSidebarMenuKey(open ? menuInstanceKey : null);
   }, [menuInstanceKey, setOpenSidebarMenuKey]);
 
-  const renderProjectMenuItems = (Item: React.ElementType) => (
+  const renderProjectMenuItems = (Item: React.ElementType, Separator: React.ElementType) => (
     <>
       {showCreateButtons && !isRepo && !hideDirectoryControls && onNewSession && (
         <Item onClick={onNewSession}>
-          <Icon name="add" className="mr-1.5 h-4 w-4" />
+          <Icon name="add" className="mr-1.5 h-4 w-4 text-inherit" />
           {t('sessions.sidebar.project.actions.newSession')}
         </Item>
       )}
       <Item onClick={onSyncSessions}>
-        <Icon name="refresh" className="mr-1.5 h-4 w-4" />
+        <Icon name="refresh" className="mr-1.5 h-4 w-4 text-inherit" />
         {t('sessions.sidebar.project.actions.syncSessions')}
       </Item>
       <Item onClick={onRenameStart}>
-        <Icon name="pencil-ai" className="mr-1.5 h-4 w-4" />
+        <Icon name="pencil-ai" className="mr-1.5 h-4 w-4 text-inherit" />
         {t('sessions.sidebar.project.actions.edit')}
       </Item>
+      <Separator />
       <Item onClick={onClose} className="text-destructive focus:text-destructive">
-        <Icon name="close" className="mr-1.5 h-4 w-4" />
+        <Icon name="close" className="mr-1.5 h-4 w-4 text-inherit" />
         {t('sessions.sidebar.project.actions.closeProject')}
       </Item>
     </>
@@ -171,7 +173,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                 />
               }
             >
-            <div className={cn('relative flex items-center gap-1.5 rounded-lg px-2 py-1.5', SIDEBAR_ROW_HOVER_CLASS)} {...attributes}>
+            <div data-sidebar-project-header={id} className={cn('relative flex items-center gap-1.5 rounded-lg px-2 py-1.5', SIDEBAR_ROW_HOVER_CLASS)} {...attributes}>
               <Tooltip>
                 <TooltipTrigger asChild>
                     <button
@@ -282,7 +284,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-[180px]">
-                      {renderProjectMenuItems(DropdownMenuItem)}
+                      {renderProjectMenuItems(DropdownMenuItem, DropdownMenuSeparator)}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
@@ -320,7 +322,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
             </div>
             </ContextMenuTrigger>
             <ContextMenuContent className="min-w-[180px]">
-              {renderProjectMenuItems(ContextMenuItem)}
+              {renderProjectMenuItems(ContextMenuItem, ContextMenuSeparator)}
             </ContextMenuContent>
           </ContextMenu>
         </>

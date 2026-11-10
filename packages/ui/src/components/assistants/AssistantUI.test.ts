@@ -21,7 +21,7 @@ describe('Assistant UI product contract', () => {
       read('../session/SessionSidebar.tsx'),
       read('../../apps/MobileApp.tsx'),
     ]);
-    const sidebarMenu = sidebar.slice(sidebar.indexOf('const topContent ='), sidebar.indexOf('const isInlineEditing'));
+    const sidebarMenu = sidebar.slice(sidebar.indexOf('const sidebarActionButtons ='), sidebar.indexOf('const topContent ='));
     expect(sidebarMenu.indexOf('sessions.sidebar.header.actions.newSession')).toBeLessThan(sidebarMenu.indexOf('sessions.sidebar.header.actions.scheduledTasks'));
     expect(sidebarMenu.indexOf('sessions.sidebar.header.actions.scheduledTasks')).toBeLessThan(sidebarMenu.indexOf('t("assistants.title")'));
     // Product entry only appears when the host supports Assistants and the global switch is on.
@@ -759,7 +759,7 @@ describe('Assistant UI product contract', () => {
     expect(conversation).not.toContain('<ChatContainer');
     expect(conversation).not.toContain('chat-content-max-width');
     expect(conversation).not.toContain('inputClassName=');
-    expect(conversation).toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
+    expect(conversation).not.toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
     expect(conversation).toContain('typography-markdown leading-6');
     expect(conversation).toContain("imageOnly ? 'p-0' : 'px-4 py-2.5'");
     expect(conversation).toContain('const imageOnly = useMarkdown &&');

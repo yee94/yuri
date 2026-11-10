@@ -55,6 +55,7 @@ import {
 import { useOpenCodeReadiness } from '@/hooks/useOpenCodeReadiness';
 import { eventMatchesShortcut, getEffectiveShortcutCombo, normalizeCombo } from '@/lib/shortcuts';
 import { markStartupTrace } from '@/lib/startupTrace';
+import { getSessionSwitchIntent, subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { focusComposerTextarea, resolveComposerTextarea } from './composerFocus';
 import { resolveChatInputCatalogReadiness, resolveChatInputSelectionVariantOptions, resolveModelVariantKeys } from './chatInputSurface';
 
@@ -556,11 +557,12 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         prevModelSelectorOpenRef.current = isModelSelectorOpen;
 
         if (!isModelSelectorOpen) {
+            setDesktopVariantTarget(null);
             setDesktopModelQuery('');
             keyboardOwnsModelSelectionRef.current = false;
             lastModelPointerPositionRef.current = null;
-            setPendingThinkingVariants(new Map());
-            setAdjustedThinkingModels(new Set());
+            setPendingThinkingVariants((current) => current.size ? new Map() : current);
+            setAdjustedThinkingModels((current) => current.size ? new Set() : current);
 
             if (wasOpen && !isCompact) {
                 setModelTooltipOpen(false);
@@ -576,6 +578,22 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             setAgentSearchQuery('');
         }
     }, [isAgentSelectorOpen]);
+
+    const hasLocalOverlay = Boolean(activeMobilePanel || mobileTooltipOpen || modelTooltipOpen);
+    React.useLayoutEffect(() => {
+        if (!hasLocalOverlay) return;
+        const dismiss = () => {
+            setActiveMobilePanel(null);
+            setMobileTooltipOpen(null);
+            setModelTooltipOpen(false);
+        };
+        const unsubscribe = subscribeSessionSwitchIntent(dismiss);
+        // Activity hides preserve state but tear down Effects.
+        return () => {
+            unsubscribe();
+            dismiss();
+        };
+    }, [hasLocalOverlay, setActiveMobilePanel]);
 
     const selectableDesktopAgents = React.useMemo(() => {
         return agents.filter((agent) => isPrimaryMode(agent.mode));
@@ -1523,8 +1541,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         if (longPressTimerRef.current) {
             clearTimeout(longPressTimerRef.current);
         }
+        const intent = getSessionSwitchIntent();
         longPressTimerRef.current = setTimeout(() => {
-            setMobileTooltipOpen(type);
+            if (getSessionSwitchIntent() === intent) setMobileTooltipOpen(type);
         }, LONG_PRESS_MS);
     }, []);
 

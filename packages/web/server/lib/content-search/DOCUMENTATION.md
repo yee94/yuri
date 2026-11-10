@@ -1,5 +1,14 @@
 # Global conversation content search
 
+`POST /api/yuri/content-search/resume` authenticates Host UI/client access without
+URL/preview tokens, rejects cross-origin cookie requests, and returns 202 with the
+current index status. It invokes the existing `sync({ resume: true })` in the
+background; concurrent retries share its flight. Explicit recovery reports
+`indexing` even for an already-initialized index. Successful durable session
+checkpoints and existing search hits are retained; unchanged successful sessions
+are skipped and failed/dirty sessions are retried. Failure remains `partial` or
+`error`, never an authoritative empty index. There is no destructive rebuild.
+
 The Host owns `content-search.sqlite` alongside the session index. This index is
 independent of browser transcript caches and includes all projects exposed by the
 active OpenCode runtime. `session.list` is called without a project/directory

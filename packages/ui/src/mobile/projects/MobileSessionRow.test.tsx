@@ -22,6 +22,14 @@ const mobileStyles = readFileSync(
 );
 
 describe('Mobile project group chrome', () => {
+  test('ignores trailing DnD accessibility nodes when painting row dividers', () => {
+    expect(mobileStyles).toContain(
+      '.yuri-mobile-session-row:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row]) {\n  box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);',
+    );
+    expect(mobileStyles).not.toContain('.yuri-mobile-session-row:not(:last-child)');
+    expect(mobileStyles).not.toContain('border-block-start-width: 0;');
+  });
+
   test('uses shared mobile border tokens with a quieter dark treatment', () => {
     expect(mobileStyles).toContain('--yuri-mobile-border: color-mix(');
     expect(mobileStyles).toContain('--yuri-mobile-divider: var(--yuri-mobile-border)');
@@ -84,7 +92,7 @@ describe('Mobile project group chrome', () => {
       /\.yuri-mobile-labeled-surface-group\s*>\s*\.yuri-mobile-session-row:first-child\s*\{[^}]*--yuri-mobile-session-radius-start-start:\s*calc\([^)]*var\(--yuri-mobile-inset-radius\)\s*-\s*1px[^)]*\);[^}]*--yuri-mobile-session-radius-start-end:/s,
     );
     expect(mobileStyles).toMatch(
-      /\.yuri-mobile-labeled-surface-group\s*>\s*\.yuri-mobile-session-row:last-child,\s*\.yuri-mobile-labeled-surface-group-content\s*>\s*\.yuri-mobile-session-row:last-child\s*\{[^}]*--yuri-mobile-session-radius-end-end:[^}]*--yuri-mobile-session-radius-end-start:/s,
+      /\.yuri-mobile-labeled-surface-group\s*>\s*\.yuri-mobile-session-row:not\(:has\(~ \.yuri-mobile-session-row, ~ \[data-session-sortable-row\]\)\),\s*\.yuri-mobile-labeled-surface-group-content\s*>\s*\.yuri-mobile-session-row:not\(:has\(~ \.yuri-mobile-session-row, ~ \[data-session-sortable-row\]\)\)\s*\{[^}]*--yuri-mobile-session-radius-end-end:[^}]*--yuri-mobile-session-radius-end-start:/s,
     );
     expect(source).toContain("cn('yuri-mobile-session-row relative isolate', className)");
     expect(source).not.toContain("cn('yuri-mobile-session-row relative isolate overflow-hidden', className)");

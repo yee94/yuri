@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { SidebarProjectsList } from './SidebarProjectsList';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import * as focusedRowScroll from './scrollFocusedSessionRow';
 
 const counters = vi.hoisted(() => ({ project: 0 }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -46,6 +47,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  vi.restoreAllMocks();
   host.remove(); vi.unstubAllGlobals();
 });
 
@@ -94,4 +96,76 @@ it('skips project hook and body work across 50 unrelated parent commits, and inv
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="sessions.sidebar.project.actions.newSession"]')!.click());
   expect(latestAction).toHaveBeenCalledWith({ directoryOverride: '/project' });
   expect(onNewSession).not.toHaveBeenCalled();
+});
+
+const buildRevealProps = (): React.ComponentProps<typeof SidebarProjectsList> => {
+  const noop = () => {};
+  const sections = Array.from({ length: 51 }, (_, index) => ({
+    project: { id: `project-${index}`, normalizedPath: `/project-${index}` }, groups: [],
+  }));
+  return {
+    hasLeadingSection: false, sectionsForRender: sections, projectSections: sections, activeProjectId: 'project-50',
+    showOnlyMainWorkspace: false, hasSessionSearchQuery: false, emptyState: null, searchEmptyState: null,
+    renderGroupSessions: vi.fn(() => null), homeDirectory: null, collapsedProjects: new Set(['project-50']),
+    hideDirectoryControls: false, projectRepoStatus: new Map(), mobileVariant: false, alwaysShowActions: true,
+    toggleProject: vi.fn(), setActiveProjectIdOnly: vi.fn(), setActiveMainTab: noop, setSessionSwitcherOpen: noop,
+    openNewSessionDraft: vi.fn(), openNewWorktreeDialog: noop, syncProjectSessions: vi.fn(), openProjectEditDialog: noop,
+    removeProject: noop, reorderProjects: vi.fn(), projectSortOrder: 'manual', getOrderedGroups: (_id, groups) => groups,
+    setGroupOrderByProject: noop, openSidebarMenuKey: null, setOpenSidebarMenuKey: noop, isInlineEditing: false,
+  };
+};
+
+it('reveals only the routed project header once per intent, preserving collapse, order and session demand', async () => {
+  const props = buildRevealProps();
+  const scroll = vi.spyOn(focusedRowScroll, 'scrollFocusedSessionRowIntoView').mockImplementation(() => {});
+  await act(async () => root.render(<SidebarProjectsList {...props} />));
+  expect(scroll).not.toHaveBeenCalled();
+  const target = { projectId: 'project-50', revision: 1 };
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={target} />));
+  const header = host.querySelector('[data-sidebar-project-header="project-50"]');
+  expect(header).not.toBeNull();
+  expect(scroll).toHaveBeenCalledExactlyOnceWith(header);
+  scroll.mockClear();
+  for (let index = 0; index < 50; index++) {
+    await act(async () => {
+      useGlobalSessionsStore.setState({ loadingDirectories: new Set([`/project-${index}`]) });
+      root.render(<SidebarProjectsList {...props} projectRevealTarget={{ ...target }} sectionsForRender={[...props.sectionsForRender]} topContent={<span>{index}</span>} />);
+    });
+  }
+  expect(scroll).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-sidebar-project-header="project-50"]')).toBe(header);
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={{ ...target, revision: 2 }} />));
+  expect(scroll).toHaveBeenCalledExactlyOnceWith(header);
+  expect(props.toggleProject).not.toHaveBeenCalled();
+  expect(props.reorderProjects).not.toHaveBeenCalled();
+  expect(props.setActiveProjectIdOnly).not.toHaveBeenCalled();
+  expect(props.syncProjectSessions).not.toHaveBeenCalled();
+  expect(props.openNewSessionDraft).not.toHaveBeenCalled();
+  expect(props.collapsedProjects.has('project-50')).toBe(true);
+});
+
+it('waits for a missing target header and a cleared sidebar filter without selecting another project', async () => {
+  const props = buildRevealProps();
+  const target = { projectId: 'project:late-50', revision: 3 };
+  const sections = [{ project: { id: target.projectId, normalizedPath: '/late-project' }, groups: [] }];
+  const scroll = vi.spyOn(focusedRowScroll, 'scrollFocusedSessionRowIntoView').mockImplementation(() => {});
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={target} />));
+  expect(scroll).not.toHaveBeenCalled();
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={target} sectionsForRender={sections} hasSessionSearchQuery />));
+  expect(scroll).not.toHaveBeenCalled();
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={target} sectionsForRender={sections} />));
+  const header = host.querySelector('[data-sidebar-project-header]');
+  expect(header?.getAttribute('data-sidebar-project-header')).toBe(target.projectId);
+  expect(scroll).toHaveBeenCalledExactlyOnceWith(header);
+  scroll.mockClear();
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={null} sectionsForRender={sections} />));
+  await act(async () => root.render(<SidebarProjectsList {...props} projectRevealTarget={target} sectionsForRender={sections} />));
+  expect(scroll).toHaveBeenCalledExactlyOnceWith(header);
+});
+
+it.each([{ mobileVariant: true }, { showOnlyMainWorkspace: true }])('does not reveal in the separate $mobileVariant/$showOnlyMainWorkspace layout', async (layout) => {
+  const props = buildRevealProps();
+  const scroll = vi.spyOn(focusedRowScroll, 'scrollFocusedSessionRowIntoView').mockImplementation(() => {});
+  await act(async () => root.render(<SidebarProjectsList {...props} {...layout} projectRevealTarget={{ projectId: 'project-50', revision: 1 }} />));
+  expect(scroll).not.toHaveBeenCalled();
 });

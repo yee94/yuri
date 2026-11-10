@@ -93,14 +93,6 @@ const resolveProjectRef = (directory: string): ProjectRef | null => {
     return null;
   }
 
-  const activeProject = useProjectsStore.getState().getActiveProject();
-  if (activeProject?.path) {
-    const activePath = normalizePath(activeProject.path);
-    if (normalized === activePath || normalized.startsWith(`${activePath}/`)) {
-      return { id: activeProject.id, path: activeProject.path };
-    }
-  }
-
   const matches = projects.filter((project) => {
     const projectPath = normalizePath(project.path);
     return normalized === projectPath || normalized.startsWith(`${projectPath}/`);
@@ -440,7 +432,7 @@ export async function createWorktreeSessionForNewBranch(
         kind,
       };
 
-      await waitForWorktreeBootstrapIfEnabled(projectRef, metadata.path);
+      await waitForWorktreeBootstrapIfEnabled(projectRef, metadata.worktreeRoot ?? metadata.path);
 
       const sessionStore = useSessionUIStore.getState();
       const session = await sessionStore.createSession(undefined, metadata.path);

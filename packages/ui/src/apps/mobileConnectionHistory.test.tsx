@@ -9,6 +9,8 @@ vi.mock('@/lib/runtime-switch', () => ({
 }));
 vi.mock('@/lib/platform', () => ({ isCapacitorApp: () => false, getClientPlatform: () => 'web' }));
 vi.mock('./MobileShareBridge', () => ({ publishNativeAssistantCatalog: vi.fn().mockResolvedValue(undefined) }));
+const relay = vi.hoisted(() => ({ fetch: vi.fn(), close: vi.fn() }));
+vi.mock('@/lib/relay/tunnel-client', () => ({ createRelayTunnelClient: () => relay }));
 
 const key = 'yuri.mobile.connections.v1';
 let root: ReturnType<typeof createRoot>;
@@ -48,6 +50,46 @@ test('metadata save and password challenge do not count as a successful connecti
   expect(controller.pendingConnection?.id).toBe('a');
   expect(controller.connections.map((item) => item.lastUsedAt)).toEqual([200, 100]);
   expect(connected).not.toHaveBeenCalled();
+});
+
+test('a rejected saved device credential requires pairing instead of a password', async () => {
+  await act(async () => { await controller.saveConnection({ id: 'a', label: 'Older', url: 'https://older.example', clientToken: 'old-token' }); });
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response('{}', { status: url.endsWith('/auth/session') ? 401 : 200 })));
+  await act(async () => { await controller.connect({ id: 'a', candidates: controller.connections[1].candidates }); });
+  expect(controller.pendingConnection).toMatchObject({ id: 'a', reason: 'pairing' });
+  await act(async () => { await controller.submitPassword('any password'); });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(connected).not.toHaveBeenCalled();
+});
+
+test('relay credential rejection requires pairing, while server failure stays an error', async () => {
+  const candidate = { kind: 'relay' as const, relay: { relayUrl: 'wss://relay.example', serverId: 'server', hostEncPubJwk: { kty: 'EC' } } };
+  await act(async () => { await controller.saveConnection({ label: 'Relay', candidates: [candidate], clientToken: 'old-token' }); });
+  const saved = controller.connections.find((item) => item.label === 'Relay')!;
+  relay.fetch.mockResolvedValueOnce(new Response('{}', { status: 403 }));
+  await act(async () => { await controller.connect({ id: saved.id, candidates: saved.candidates }); });
+  expect(controller.pendingConnection).toMatchObject({ id: saved.id, reason: 'pairing' });
+  expect(relay.close).toHaveBeenCalled();
+  await act(async () => controller.cancelPassword());
+  relay.fetch.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+  await act(async () => { await controller.connect({ id: saved.id, candidates: saved.candidates }); });
+  expect(controller.pendingConnection).toBeNull();
+  expect(controller.error).toBe('mobile.connect.error.unreachable');
+});
+
+test('successful re-pairing clears recovery and replaces the saved credential', async () => {
+  await act(async () => { await controller.saveConnection({ id: 'a', label: 'Older', url: 'https://older.example', clientToken: 'old-token' }); });
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/auth/session')) return new Response('{}', { status: 401 });
+    if (url.endsWith('/api/client-auth/pairing/redeem')) return Response.json({ clientToken: 'new-token' });
+    return Response.json({ ok: true });
+  }));
+  await act(async () => { await controller.connect({ id: 'a', candidates: controller.connections[1].candidates }); });
+  expect(controller.pendingConnection?.reason).toBe('pairing');
+  await act(async () => { await controller.redeemPairingConnection({ v: 2, pairingId: 'pairing', secret: 'secret', candidates: [{ type: 'lan', url: 'https://older.example' }] }); });
+  expect(controller.pendingConnection).toBeNull();
+  expect(controller.connections.find((item) => item.id === 'a')?.clientToken).toBe('new-token');
+  expect(connected).toHaveBeenCalledTimes(1);
 });
 
 test('only a successful retry moves the selected device ahead of unrelated devices', async () => {

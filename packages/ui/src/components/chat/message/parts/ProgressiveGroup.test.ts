@@ -239,7 +239,7 @@ describe('progressive activity presentation', () => {
         expect(activityHeaderSource).toContain("'ml-auto inline-flex max-w-[min(14rem,55%)] shrink-0 items-center'");
         expect(activityHeaderSource).not.toContain('flex-1');
         expect(activityHeaderSource).toContain('ml-auto');
-        expect(progressiveGroupSource).toContain("isMobile && 'pr-0'");
+        expect(progressiveGroupSource).toContain("isMobile && (isElapsedHeader ? 'pr-2' : 'pr-0')");
         expect(progressiveGroupSource.match(/aria-expanded=\{effectivelyExpanded\}/g)).toHaveLength(1);
         expect(progressiveGroupSource).toContain("? t('chat.activity.collapseAria')");
         expect(progressiveGroupSource).toContain(": t('chat.activity.expandAria')}");
@@ -375,8 +375,8 @@ describe('progressive activity presentation', () => {
         expect(progressiveGroupSource).toContain("isMobile ? 'typography-meta h-5' : 'typography-ui-label h-5 font-semibold'");
         expect(progressiveGroupSource).toContain('displayedTaskAvatarSeeds.slice(0, isMobile ? 2 : 3)');
         // Agents and chevron align right, opposite the status/duration.
-        // Mobile pr-0 flushes chevron; desktop keeps chip px-2 for symmetric hover wash.
-        expect(progressiveGroupSource).toContain("isMobile && 'pr-0'");
+        // Mobile elapsed summaries keep an inset; trailing chevrons remain flush.
+        expect(progressiveGroupSource).toContain("isMobile && (isElapsedHeader ? 'pr-2' : 'pr-0')");
         expect(progressiveGroupSource).toContain("'ml-auto inline-flex max-w-[min(14rem,55%)] shrink-0 items-center'");
         expect(progressiveGroupSource).toContain("isMobile && '-mr-0.5'");
         expect(progressiveGroupSource).not.toContain('ring-foreground');

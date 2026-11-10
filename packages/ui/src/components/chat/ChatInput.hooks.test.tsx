@@ -166,6 +166,60 @@ const host = document.createElement('div');
 const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); vi.restoreAllMocks(); });
 
+it('reserves desktop composer space once per conversation, not on accessory or draft growth', async () => {
+    let reservationEffect = '';
+    let formClass = '';
+    const findReservation = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && node.expression.getText(ast) === 'React.useLayoutEffect'
+            && node.getText(ast).includes('form.style.height')) reservationEffect = `${node.getText(ast)};`;
+        if (ts.isJsxOpeningElement(node) && node.tagName.getText(ast) === 'form') {
+            const attribute = node.attributes.properties.find(prop => ts.isJsxAttribute(prop) && prop.name.getText(ast) === 'className') as ts.JsxAttribute;
+            formClass = (attribute.initializer as ts.JsxExpression).expression!.getText(ast);
+        }
+        ts.forEachChild(node, findReservation);
+    };
+    findReservation(ast);
+    expect(reservationEffect).not.toBe('');
+    const Surface = surface<{ sessionID: string | null; height: number; mobile?: boolean; expanded?: boolean; kind?: string }>(`
+        const { sessionID: currentSessionId, height, mobile: isMobile = false, expanded: isComposerExpanded = false, kind = 'primary' } = props;
+        const surface = { kind };
+        const isDesktopExpanded = !isMobile && isComposerExpanded;
+        const isMobileExpanded = isMobile && isComposerExpanded;
+        const composerFormRef = React.useRef(null);
+        ${declarations.get('reservesDesktopComposerSpace')}
+        ${reservationEffect}
+        return <form ref={composerFormRef} className={${formClass}} data-height={height}>
+            <div className="chat-input-column"><textarea defaultValue="draft" /></div>
+        </form>;
+    `, { cn });
+    const measure = vi.fn(function (this: HTMLElement) { return Number(this.dataset.height); });
+    vi.spyOn(HTMLFormElement.prototype, 'offsetHeight', 'get').mockImplementation(measure);
+    await act(async () => root.render(<Surface sessionID="first" height={160} />));
+    const form = host.querySelector('form')!;
+    const textarea = form.querySelector('textarea');
+    expect(form.style.height).toBe('160px');
+    expect(form.className).toContain('flex flex-col justify-end');
+    expect(form.className).toContain('[&>.chat-input-column]:shrink-0');
+    for (let index = 0; index < 50; index++) {
+        await act(async () => root.render(<Surface sessionID="first" height={200 + index * 10} />));
+    }
+    expect(form.style.height).toBe('160px');
+    expect(form.querySelector('textarea')).toBe(textarea);
+    expect(measure).toHaveBeenCalledTimes(1);
+    await act(async () => root.render(<Surface sessionID="second" height={220} />));
+    expect(form.style.height).toBe('220px');
+    expect(measure).toHaveBeenCalledTimes(2);
+    await act(async () => root.render(<Surface sessionID="second" height={500} expanded />));
+    expect(form.style.height).toBe('');
+    await act(async () => root.render(<Surface sessionID="second" height={180} />));
+    expect(form.style.height).toBe('180px');
+    for (const props of [{ mobile: true }, { sessionID: null }, { kind: 'secondary' }]) {
+        await act(async () => root.render(<Surface sessionID="second" height={500} {...props} />));
+        expect(form.style.height).toBe('');
+    }
+    expect(measure).toHaveBeenCalledTimes(3);
+});
+
 const actionButtonDefaults = {
     isMobile: true,
     compact: false,

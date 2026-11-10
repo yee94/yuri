@@ -17,6 +17,7 @@
  * `yuri:markstream-react=0`. TanStack is the only production list engine.
  */
 export const MARKSTREAM_CHAT_STREAM_PERFORMANCE = {
+  parseOptions: { reuseStableTopLevelNodes: true },
   maxLiveNodes: 0,
   liveNodeBuffer: 0,
   batchRendering: false,

@@ -29,6 +29,7 @@ it('carries notification SSE and its replay cursor through the real encrypted tu
     let incoming = Promise.resolve();
     let outgoing = Promise.resolve();
     const host = createTunnelHost({
+      authorizeRequest: async () => true,
       connectionId: 'fixture', getLocalPort: () => origin.address().port, getBufferedAmount: () => socket.bufferedAmount,
       sendFrame: (frame) => {
         outgoing = outgoing.then(async () => socket.send(await channel.encryptor.encrypt(frame)));

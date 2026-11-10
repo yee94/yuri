@@ -843,7 +843,7 @@ const sanitizeHostRelayForStorage = (value) => {
 // the home network, relay away — mirrors the mobile connection model). Returns
 // null for entries that can't be stored (missing id, reserved 'local', or no
 // usable transport at all).
-const buildStoredHostEntry = (entry) => {
+const buildStoredHostEntry = (entry, sshInstanceIds) => {
   const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
   if (!id || id === LOCAL_HOST_ID) return null;
   const clientToken = sanitizeClientTokenForStorage(entry?.clientToken);
@@ -852,7 +852,9 @@ const buildStoredHostEntry = (entry) => {
   const tokenField = clientToken ? { clientToken } : {};
   const labelRaw = typeof entry?.label === 'string' && entry.label.trim() ? entry.label.trim() : '';
 
-  const relay = sanitizeHostRelayForStorage(entry?.relay);
+  const relay = sshInstanceIds.has(id) && entry?.source !== 'connect-link'
+    ? null
+    : sanitizeHostRelayForStorage(entry?.relay);
   const relayField = relay ? { relay } : {};
   const sourceField = entry?.source === 'connect-link' ? { source: 'connect-link' } : {};
   const directUrl = sanitizeHostUrlForStorage(entry?.url);
@@ -871,12 +873,14 @@ const buildStoredHostEntry = (entry) => {
 const readDesktopHostsConfig = () => {
   const root = readSettingsRoot();
   const hostsRaw = Array.isArray(root.desktopHosts) ? root.desktopHosts : [];
+  const sshInstanceIds = new Set((Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : []).map((entry) => entry?.id));
   const hosts = hostsRaw
-    .map(buildStoredHostEntry)
+    .map((entry) => buildStoredHostEntry(entry, sshInstanceIds))
     .filter(Boolean);
 
   return {
     hosts,
+    sshHostIds: hosts.filter((host) => sshInstanceIds.has(host.id)).map((host) => host.id),
     defaultHostId: typeof root.desktopDefaultHostId === 'string' && root.desktopDefaultHostId.trim()
       ? root.desktopDefaultHostId.trim()
       : null,
@@ -886,9 +890,10 @@ const readDesktopHostsConfig = () => {
 
 const writeDesktopHostsConfig = async (config) => {
   await mutateSettingsRoot((root) => {
+    const sshInstanceIds = new Set((Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : []).map((entry) => entry?.id));
     root.desktopHosts = Array.isArray(config?.hosts)
       ? config.hosts
-          .map(buildStoredHostEntry)
+          .map((entry) => buildStoredHostEntry(entry, sshInstanceIds))
           .filter(Boolean)
       : [];
     root.desktopDefaultHostId = typeof config?.defaultHostId === 'string' && config.defaultHostId.trim()
@@ -1725,8 +1730,8 @@ const spawnLocalServer = async () => {
       getOperation: () => desktopLocalUpdateOperation,
       getOta: () => desktopOta, getInstaller: () => desktopInstaller,
       isSupported: app.isPackaged && !isPreviewDesktop,
-      isBusy: () => state.installingUpdate || desktopUpdateActionBusy,
-      download: async (kind) => { desktopUpdateKind = kind; await downloadPendingUpdate({ remote: true }); },
+      isBusy: () => state.installingUpdate || desktopUpdateActionBusy || Boolean(desktopDownloadTask),
+      download: async (kind) => { await downloadPendingUpdate({ remote: true, kind }); },
       restart: async () => {
         if (desktopUpdateKind === 'installer') desktopInstaller.assertPending();
         else await desktopOta.assertPending();
@@ -3532,6 +3537,18 @@ const resolveInitialUrl = async () => {
 
 let desktopUpdateActionBusy = false;
 let desktopLocalUpdateOperation = null;
+let desktopDownloadTask = null;
+let desktopUpdateProgress = null;
+let desktopLastUpdateInfo = null;
+const desktopDownloadSnapshot = () => ({
+  downloading: Boolean(desktopDownloadTask),
+  progress: desktopDownloadTask ? desktopUpdateProgress : null,
+});
+const busyTargetVersion = () => {
+  if (!desktopDownloadTask) return null;
+  if (desktopUpdateKind === 'installer') return desktopInstaller?.version ?? null;
+  return desktopOta?.decision?.ota?.bundle?.releaseVersion ?? null;
+};
 const prepareDesktopUpdateRestart = () => {
   state.quitRequested = true;
   state.installingUpdate = true;
@@ -3558,19 +3575,30 @@ const beginLocalUpdateOperation = (status) => {
     kind: desktopUpdateKind === 'installer' ? 'installer' : 'ota', status, progress: null, error: null,
   };
 };
-const downloadPendingUpdate = async ({ remote = false } = {}) => {
+const downloadPendingUpdate = async ({ remote = false, kind } = {}) => {
   if (!desktopOta) throw new Error('Desktop OTA requires a packaged app');
   if (state.installingUpdate) throw new Error('An update is already being installed');
-  if (desktopUpdateActionBusy || (!remote && state.serverHandle?.hostUpdates?.isBusy())) throw new Error('An update operation is in progress');
-  desktopUpdateActionBusy = true;
-  if (!remote) beginLocalUpdateOperation('downloading');
-  emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Started', data: {} }));
-  try {
-    if (desktopUpdateKind === 'installer') await desktopInstaller.download();
+  // Multiple windows share one download: later callers join the running task.
+  if (desktopDownloadTask) return desktopDownloadTask;
+  const downloadKind = kind ?? desktopUpdateKind;
+  desktopUpdateKind = downloadKind;
+  const run = (async () => {
+    if (!remote) beginLocalUpdateOperation('downloading');
+    desktopUpdateProgress = null;
+    emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Started', data: {} }));
+    if (downloadKind === 'installer') await desktopInstaller.download();
     else await desktopOta.download();
     emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Finished', data: {} }));
-    emitToAllWindows('yuri:update-ready', { version: desktopUpdateKind === 'installer' ? desktopInstaller.version : desktopOta.state.queued?.releaseVersion, downloaded: true });
-  } finally { desktopUpdateActionBusy = false; if (!remote) desktopLocalUpdateOperation = null; setTaskbarProgress(-1); }
+    emitToAllWindows('yuri:update-ready', { version: downloadKind === 'installer' ? desktopInstaller.version : desktopOta.state.queued?.releaseVersion, downloaded: true });
+  })();
+  const task = run.finally(() => {
+    if (desktopDownloadTask === task) desktopDownloadTask = null;
+    if (!remote) desktopLocalUpdateOperation = null;
+    desktopUpdateProgress = null;
+    setTaskbarProgress(-1);
+  });
+  desktopDownloadTask = task;
+  return task;
 };
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
@@ -4723,27 +4751,40 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
-      if (desktopUpdateActionBusy || state.serverHandle?.hostUpdates?.isBusy()) throw new Error('An update operation is in progress');
-      desktopUpdateActionBusy = true;
-      beginLocalUpdateOperation('checking');
+      // A check never rejects because another window is checking or downloading;
+      // it reports the live download state instead so auto-update keeps running.
+      const tracked = !desktopUpdateActionBusy && !desktopDownloadTask;
+      if (tracked) { desktopUpdateActionBusy = true; beginLocalUpdateOperation('checking'); }
       try {
         if (isPreviewDesktop) throw new Error('Preview uses a separate application identity; install Preview updates manually');
         if (!desktopOta) throw new Error('Desktop OTA requires a packaged app');
         if (state.installingUpdate) throw new Error('An update is already being installed');
-        desktopInstaller.assertIdle();
-        const info = await desktopOta.check(args?.channelOverride);
+        if (desktopDownloadTask && desktopLastUpdateInfo) {
+          // A download owns the selection: report it without a competing request.
+          return { ...desktopLastUpdateInfo, version: busyTargetVersion() ?? desktopLastUpdateInfo.version, downloaded: false, ...desktopDownloadSnapshot() };
+        }
+        const busy = Boolean(desktopDownloadTask);
+        const info = await desktopOta.check(args?.channelOverride, { select: !busy });
+        if (busy) {
+          // Keep the in-flight target: never re-point the UI at another release.
+          return { ...info, version: busyTargetVersion() ?? info.version, downloaded: false, ...desktopDownloadSnapshot() };
+        }
         if (info.manualUpdate) {
           desktopUpdateKind = 'installer';
-          const version = desktopOta.decision.native.version;
+          const version = info.version;
           const result = await desktopInstaller.check(version, {
             channel: desktopOta.state.channel, rollback: info.isChannelRollback,
           });
-          return { ...info, ...result, version, manualUpdate: false, inAppApply: false };
+          const response = { ...info, ...result, version, manualUpdate: false, inAppApply: false, ...desktopDownloadSnapshot() };
+          if (!desktopDownloadTask) desktopLastUpdateInfo = response;
+          return response;
         }
         desktopInstaller.clear();
         desktopUpdateKind = 'ota';
-        return info;
-      } finally { desktopUpdateActionBusy = false; desktopLocalUpdateOperation = null; }
+        const response = { ...info, ...desktopDownloadSnapshot() };
+        if (!desktopDownloadTask) desktopLastUpdateInfo = response;
+        return response;
+      } finally { if (tracked) { desktopUpdateActionBusy = false; desktopLocalUpdateOperation = null; } }
     }
 
     case 'desktop_ota_ready':
@@ -6203,6 +6244,7 @@ app.whenReady().then(async () => {
     electronUpdater.autoUpdater.logger = log;
     desktopInstaller = new DesktopInstaller(electronUpdater.autoUpdater, {
       onProgress: (progress) => {
+        desktopUpdateProgress = { downloaded: progress.transferred, total: progress.total };
         if (desktopLocalUpdateOperation) desktopLocalUpdateOperation.progress = progress.percent;
         state.serverHandle?.hostUpdates?.progress(progress.percent);
         setTaskbarProgress(progress.percent / 100);
@@ -6216,6 +6258,7 @@ app.whenReady().then(async () => {
       nativeVersion: APP_VERSION,
       requireBackend: true,
       onProgress: (progress) => {
+        desktopUpdateProgress = { downloaded: progress.downloaded, total: progress.total };
         if (desktopLocalUpdateOperation) desktopLocalUpdateOperation.progress = progress.downloaded / progress.total * 100;
         state.serverHandle?.hostUpdates?.progress(progress.downloaded / progress.total * 100);
         setTaskbarProgress(progress.downloaded / progress.total);

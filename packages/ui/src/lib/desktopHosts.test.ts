@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 
 const {
   DESKTOP_HOST_SOURCE_CONNECT_LINK,
@@ -66,6 +66,19 @@ describe('resolveDesktopHostUrl', () => {
 });
 
 describe('desktop host runtime headers', () => {
+  test('reads only valid SSH mirror IDs without requesting privileged SSH configuration', async () => {
+    await withDesktopBridge(async (cmd) => {
+      expect(cmd).toBe('desktop_hosts_get');
+      return {
+        hosts: [{ id: 'ssh', label: 'Server', url: 'http://server.example' }],
+        sshHostIds: ['ssh', 'missing', null, 123],
+      };
+    }, async () => {
+      const config = await desktopHostsGet();
+      expect(config.sshHostIds).toEqual(['ssh']);
+      expect(isVisibleDesktopHost(config.hosts[0], new Set(config.sshHostIds))).toBe(true);
+    });
+  });
   test('restores a saved custom Relay endpoint for Desktop reconnects', async () => {
     await withDesktopBridge(async (cmd) => {
       expect(cmd).toBe('desktop_hosts_get');
@@ -237,4 +250,3 @@ describe('isSettingsLinkDesktopHost', () => {
     }), new Set(['ssh-1']))).toBe(false);
   });
 });
-

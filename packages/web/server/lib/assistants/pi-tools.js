@@ -9,6 +9,7 @@ import {
   loadSkills,
 } from '@earendil-works/pi-agent-core';
 import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node';
+import { CONTACT_TOOL_TIMEOUT_MS } from './tool-execution.js';
 
 const EXTERNAL_SKILL_ROOTS = Object.freeze(['.claude', '.agents']);
 
@@ -65,9 +66,19 @@ const bindHarnessTool = (tool, context) => ({
   name: tool.name,
   label: tool.label,
   description: tool.description,
-  parameters: tool.parameters,
+  parameters: tool.name === 'bash' ? {
+    ...tool.parameters,
+    properties: {
+      ...tool.parameters.properties,
+      timeout: { ...tool.parameters.properties.timeout, exclusiveMinimum: 0, maximum: CONTACT_TOOL_TIMEOUT_MS / 1000, default: CONTACT_TOOL_TIMEOUT_MS / 1000, description: 'Timeout in seconds. Defaults to 300; maximum 300 seconds.' },
+    },
+  } : tool.parameters,
   execute: (toolCallId, params, signal, onUpdate) => (
-    tool.execute(toolCallId, params, signal, onUpdate, context)
+    tool.execute(toolCallId, tool.name === 'bash' ? {
+      ...params,
+      timeout: params?.timeout === undefined ? CONTACT_TOOL_TIMEOUT_MS / 1000
+        : Math.min(params.timeout, CONTACT_TOOL_TIMEOUT_MS / 1000),
+    } : params, signal, onUpdate, context)
   ),
 });
 
@@ -77,6 +88,8 @@ export function formatPiCodingPrompt({ cwd, skillsPrompt = '' } = {}) {
     `Working directory: ${cwd}`,
     'You have application-owned pi coding tools in this directory: read, write, edit, bash.',
     'Use this directory as the starting point for workspace discovery and small, bounded tasks. Substantial implementation belongs in a worker session via assign_session; keep this contact focused on conversation, coordination, and reporting results.',
+    'For Yuri operations, use the mounted operation tools and load_tools first. Do not reverse-engineer internal HTTP routes or read application databases/configuration to bypass an unavailable operation. If the supported tools cannot perform the requested change, report that precise limitation instead of searching for a hidden API.',
+    'Keep file discovery bounded: choose one relevant project and a narrow subdirectory before searching. Never recursively grep the home directory, all of ~/Code, application data/config directories, or dependency trees. Exclude node_modules, .git, build output and caches in the search command itself; piping through grep -v or head does not bound the scan. Set an explicit short bash timeout (normally 10–20 seconds) for every lookup. If it times out or fails, narrow the scope or ask for the missing target; do not repeat or expand a stalled scan.',
     'These are not OpenCode native tools and not MCP. Skill directory entries below are instructions only — load a matching skill by calling read on its path; never invent skill or MCP tool names (no context7, gh_grep, webfetch, etc.).',
     'This is your working directory. Ignore any other cwd from the environment, including temporary generator workspaces under /var/folders or os.tmpdir.',
     'When the user asks pwd, the current directory, or to look at files, call bash/read yourself. Never say you have no terminal or cannot read or write files.',

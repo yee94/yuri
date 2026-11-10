@@ -6,6 +6,14 @@ import {
 } from './yuriEvents';
 
 describe('parseYuriEventEnvelope', () => {
+  test('parses unread revision tips and rejects invalid clocks', () => {
+    expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision: 4, occurredAt: 10 } }))
+      .toEqual({ type: 'session-unread-changed', revision: 4, occurredAt: 10 });
+    for (const revision of [-1, 0.5, '4', NaN]) {
+      expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision, occurredAt: 10 } })).toBeNull();
+    }
+    expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision: 4, occurredAt: Infinity } })).toBeNull();
+  });
   test('parses the session-order invalidation tip', () => {
     expect(parseYuriEventEnvelope({ type: 'yuri:session-order-changed', properties: { occurredAt: 2 } }))
       .toEqual({ type: 'session-order-changed', occurredAt: 2 });

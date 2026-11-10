@@ -30,6 +30,7 @@ import { normalizePath } from '@/lib/pathNormalization';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import { useMobileNavigationStore } from '../useMobileNavigationStore';
+import { useSessionReadMenuAction } from '../useSessionReadMenuAction';
 
 import {
   MobileProjectsHome,
@@ -137,6 +138,10 @@ export function MobileProjectsHomeContainer({
   const actionSessionDirectory = actionTarget?.kind === 'session'
     ? getSessionDirectory(actionTarget.session)
     : '';
+  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
+    actionTarget?.kind === 'session' ? actionTarget.session : null,
+    actionSessionDirectory,
+  );
   const isActionTranscriptRefreshing = Boolean(actionSessionId) && refreshingSessionId === actionSessionId;
   const refreshTranscriptDisabled = !actionSessionDirectory || isActionTranscriptRefreshing || isActionSessionBusy;
 
@@ -468,6 +473,7 @@ export function MobileProjectsHomeContainer({
         title: actionTarget.session.title?.trim() || t('mobile.sessions.untitled'),
         pinned: pinnedSessionIds.has(actionTarget.session.id),
         shared: Boolean(actionTarget.session.share?.url),
+        unread: actionSessionUnread,
       };
     }
     if (actionTarget.kind === 'project') {
@@ -481,7 +487,7 @@ export function MobileProjectsHomeContainer({
       kind: 'worktree',
       title: actionTarget.worktreeName,
     };
-  }, [actionTarget, pinnedSessionIds, t]);
+  }, [actionTarget, actionSessionUnread, pinnedSessionIds, t]);
 
   const sheetActions: MobileRowActionCallbacks = React.useMemo(() => {
     if (!actionTarget) return {};
@@ -493,6 +499,7 @@ export function MobileProjectsHomeContainer({
           setRenamingSession(session);
         },
         onTogglePin: () => togglePinnedSession(session.id),
+        onToggleRead,
         onShare: sharingAvailable && !session.share?.url
           ? () => {
               void handleShareFromMenu(session);
@@ -552,6 +559,7 @@ export function MobileProjectsHomeContainer({
     handleSyncProjectSessions,
     handleShareFromMenu,
     handleUnshareFromMenu,
+    onToggleRead,
     resolveWorktreeMetadata,
     sharingAvailable,
     startSessionDraftForDirectory,

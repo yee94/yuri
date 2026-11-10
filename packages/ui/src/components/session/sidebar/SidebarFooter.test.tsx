@@ -7,6 +7,7 @@ import { useUpdateStore } from '@/stores/useUpdateStore';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('./DeviceConnections', () => ({ DeviceConnections: () => null }));
+vi.mock('./SidebarBackgroundTasks', () => ({ SidebarBackgroundTasks: () => <div data-background-tasks /> }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,7 +15,7 @@ const initialState = useUpdateStore.getState();
 let root: ReturnType<typeof createRoot> | undefined;
 let host: HTMLDivElement;
 
-function renderFooter(onOpenUpdate: () => void) {
+function renderFooter(onOpenUpdate: () => void, showRuntimeButtons = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement('div');
   document.body.append(host);
@@ -23,7 +24,7 @@ function renderFooter(onOpenUpdate: () => void) {
     root!.render(
       <QueryClientProvider client={client}>
         <SidebarFooter
-          showRuntimeButtons={false}
+          showRuntimeButtons={showRuntimeButtons}
           showUpdateButton
           onOpenSettings={() => {}}
           onOpenShortcuts={() => {}}
@@ -47,6 +48,12 @@ afterEach(async () => {
 });
 
 describe('SidebarFooter update button', () => {
+  test('downloads use the shared background indicator instead of a second update ring', async () => {
+    useUpdateStore.setState({ downloading: true, available: true, progress: { downloaded: 20, total: 100 } });
+    const { render } = renderFooter(vi.fn(), true); await render();
+    expect(host.querySelector('[data-background-tasks]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="updateDialog.status.downloading"]')).toBeNull();
+  });
   test('a queued update restarts once through the mutation and stays disabled while pending', async () => {
     let resolveRestart: () => void = () => {};
     const restartToUpdate = vi.fn(() => new Promise<void>((resolve) => { resolveRestart = resolve; }));
@@ -55,19 +62,45 @@ describe('SidebarFooter update button', () => {
     const { render } = renderFooter(onOpenUpdate);
     await render();
 
+    expect(button().textContent).toBe('');
+    expect(button().querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
+    expect(button().className).not.toContain('bg-[var(--surface-muted)]');
+    expect(button().className).toContain('hover:bg-interactive-hover');
+    expect(button().className).toContain('size-7');
+
     await act(async () => button().click());
     await act(async () => button().click());
     await act(async () => button().click());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 
     expect(restartToUpdate).toHaveBeenCalledTimes(1);
     expect(onOpenUpdate).not.toHaveBeenCalled();
     expect(button().disabled).toBe(true);
     expect(button().getAttribute('aria-busy')).toBe('true');
     expect(button().getAttribute('aria-label')).toBe('updateDialog.status.updating');
+    expect(button().textContent).toBe('');
 
     resolveRestart();
     await act(async () => {});
     expect(restartToUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  test('finishing a background download reveals the restart icon without opening details', async () => {
+    const restartToUpdate = vi.fn(async () => {});
+    const onOpenUpdate = vi.fn();
+    useUpdateStore.setState({ downloading: true, downloaded: false, available: true, restartToUpdate });
+    const { render } = renderFooter(onOpenUpdate, true); await render();
+    expect(host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]')).toBeNull();
+    await act(async () => useUpdateStore.setState({ downloading: false, downloaded: true }));
+    const ready = host.querySelector('button[aria-label="sessions.sidebar.footer.actions.restartUpdate"]') as HTMLButtonElement;
+    expect(ready.textContent).toBe('');
+    expect(ready.querySelector('use')?.getAttribute('href')).toBe('#yuri-restart');
+    expect(ready.querySelector('[role="progressbar"]')).toBeNull();
+    expect(onOpenUpdate).not.toHaveBeenCalled();
+    expect(restartToUpdate).not.toHaveBeenCalled();
+    await act(async () => ready.click());
+    expect(restartToUpdate).toHaveBeenCalledOnce();
+    expect(onOpenUpdate).not.toHaveBeenCalled();
   });
 
   test('an undownloaded update still opens the update dialog', async () => {

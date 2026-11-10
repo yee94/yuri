@@ -21,6 +21,8 @@ import {
 } from '../fileReferenceActions';
 import { splitParagraphPathTokens } from '../fileReferenceSplit';
 import type { ToolPopupContent } from '../message/types';
+import { useMarkstreamHostContext } from './markstreamHostContext';
+import { MotionStreamText } from './MotionStreamText';
 
 type MarkstreamFileReferenceContextValue = OpenFileReferenceOptions & {
   enabled: boolean;
@@ -59,6 +61,7 @@ export const MarkstreamFileReferenceProvider: React.FC<{
   content,
   children,
 }) => {
+  const referenceContent = enabled ? content : '';
   const value = React.useMemo<MarkstreamFileReferenceContextValue>(() => ({
     enabled,
     insideLink: false,
@@ -67,8 +70,8 @@ export const MarkstreamFileReferenceProvider: React.FC<{
     editor,
     preferRuntimeEditor,
     onShowPopup,
-    slots: { used: 0, limit: getFileReferenceLinkLimit() },
-  }), [enabled, effectiveDirectory, editor, preferRuntimeEditor, onShowPopup, content]);
+    slots: { content: referenceContent, used: 0, limit: getFileReferenceLinkLimit() },
+  }), [enabled, effectiveDirectory, editor, preferRuntimeEditor, onShowPopup, referenceContent]);
 
   return (
     <MarkstreamFileReferenceContext.Provider value={value}>
@@ -143,13 +146,17 @@ const FileReferenceToken: React.FC<{
 
 export function MarkstreamTextNode(props: NodeComponentProps<{ type: 'text'; content: string; center?: boolean }>) {
   const ctx = React.useContext(MarkstreamFileReferenceContext);
+  const host = useMarkstreamHostContext();
+  const [TextRenderer] = React.useState(() => (
+    host.isStreaming && !host.disableStreamAnimation && host.variant !== 'tool' ? MotionStreamText : TextNode
+  ));
   const content = props.node.content ?? '';
   if (!ctx.enabled || ctx.insideLink) {
-    return <TextNode {...props} />;
+    return <TextRenderer {...props} fade={false} />;
   }
   const segments = splitParagraphPathTokens(content);
   if (segments.length === 1 && segments[0]?.kind !== 'path') {
-    return <TextNode {...props} />;
+    return <TextRenderer {...props} fade={false} />;
   }
 
   return (
@@ -157,7 +164,7 @@ export function MarkstreamTextNode(props: NodeComponentProps<{ type: 'text'; con
       {segments.map((segment, index) => (
         segment.kind === 'path'
           ? <FileReferenceToken key={`path-${index}-${segment.value}`} raw={segment.value} />
-          : <TextNode key={`text-${index}`} {...props} node={{ ...props.node, content: segment.value }} />
+          : <TextRenderer key={`text-${index}`} {...props} fade={false} node={{ ...props.node, content: segment.value }} />
       ))}
     </>
   );
