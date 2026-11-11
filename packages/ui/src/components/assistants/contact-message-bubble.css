@@ -49,6 +49,10 @@
   bottom: calc(var(--contact-composer-height, 0px) + 0.5rem);
 }
 
+.yuri-contact-conversation[data-composer-overlay][data-contact-layout="mobile"] [data-assistant-contact-avatar-rail] {
+  bottom: 0.5rem;
+}
+
 .yuri-contact-conversation[data-contact-layout="desktop"] [data-assistant-contact-composer] {
   padding-left: 2rem;
   padding-right: calc(2rem + var(--contact-scrollbar-width, 0px));

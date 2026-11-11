@@ -37,6 +37,9 @@ The scrollport reserves that height as bottom padding, preserving a fully visibl
 latest message and the existing 48px status slot. Composer resizing uses the same
 follow/reading-anchor owner, never a second scroll writer. Sticky avatar rails
 clear the overlay as well. Mini Chat retains the flow footer.
+On phone the sticky avatar rail uses an 0.5rem bottom inset: the scrollport's
+composer-height bottom padding already lifts its sticky boundary above the input.
+Adding composer height again would leave a full extra footer-height gap.
 Phone uses the same measured inset and existing keyboard viewport owner. Its
 composer host and home-indicator surroundings are transparent; a footer scrim
 fades over the upper 3.5rem and footer from transparent to 95% canvas opacity
