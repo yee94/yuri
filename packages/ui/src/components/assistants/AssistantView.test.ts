@@ -116,17 +116,31 @@ describe('AssistantView contact surface', () => {
     const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
     const workspaceRules = [...css.matchAll(/\.yuri-assistant-workspace\[data-assistant-layout="desktop"\] \{([^}]+)\}/g)]
     expect(workspaceRules).toHaveLength(2)
-    expect(workspaceRules[0][1]).toContain('padding: 0 0 1rem 1rem')
-    expect(workspaceRules[1][1]).toContain('padding: 0 0 0.625rem 0.625rem')
+    expect(workspaceRules[0][1]).toContain('padding: 0 0 0 var(--assistant-workspace-inset)')
+    expect(workspaceRules[0][1]).toContain('--assistant-workspace-inset: 1rem')
+    expect(workspaceRules[1][1]).toContain('--assistant-workspace-inset: 0.625rem')
   })
 
-  test('lets the desktop workspace own the composer bottom inset without changing phone or Mini Chat spacing', async () => {
+  test('insets the floating desktop catalog and composer independently of the full-height message canvas', async () => {
     const [css, surface] = await Promise.all([
       readFile(join(directory, 'assistant-workspace.css'), 'utf8'),
       readFile(join(directory, 'AssistantConversationSurface.tsx'), 'utf8'),
     ])
     const composerInset = css.match(/\.yuri-assistant-workspace\[data-assistant-layout="desktop"\] \[data-assistant-contact-composer\] > form \{([^}]+)\}/)?.[1]
     expect(composerInset).toContain('padding-bottom: 0;')
+    const catalog = css.match(/\.yuri-assistant-catalog-panel \{([^}]+)\}/)?.[1]
+    expect(catalog).toContain('margin-block: var(--assistant-workspace-inset, 1rem)')
+    const footer = css.match(/\.yuri-assistant-workspace\[data-assistant-layout="desktop"\] \[data-assistant-contact-composer\] \{([^}]+)\}/)?.[1]
+    expect(footer).toContain('padding-bottom: var(--assistant-workspace-inset)')
+    expect(css).not.toContain('.yuri-assistant-pane {')
+    const composerMaterial = css.match(/\.yuri-assistant-workspace \[data-composer-material\] \{([^}]+)\}/)?.[1]
+    expect(composerMaterial).toContain('box-shadow: var(--assistant-composer-shadow)')
+    const bubbleCss = await readFile(join(directory, 'contact-message-bubble.css'), 'utf8')
+    const overlay = bubbleCss.match(/\[data-composer-overlay\] \[data-assistant-contact-composer\] \{([^}]+)\}/)?.[1]
+    expect(overlay).toContain('position: absolute')
+    expect(overlay).toContain('pointer-events: none')
+    expect(bubbleCss).toContain('padding-bottom: var(--contact-composer-height, 0px)')
+    expect(bubbleCss).toContain('scroll-padding-bottom: var(--contact-composer-height, 0px)')
     expect(surface).toContain("'relative w-full pt-1.5 pb-4'")
     expect(surface).toContain("isMobile && 'bottom-safe-area yuri-mobile-composer'")
   })
@@ -159,12 +173,18 @@ describe('AssistantView contact surface', () => {
     expect(css).toContain('background: var(--surface-background)')
     expect(css).toContain('--assistant-panel-background: color-mix(in srgb, var(--surface-background) 97%, black)')
     expect(css).toContain('--assistant-panel-background: color-mix(in srgb, var(--surface-background) 94%, white)')
-    const darkMaterial = css.match(/:root\.dark \.yuri-assistant-wallpaper \{([^}]+)\}/)?.[1]
+    const darkMaterial = css.match(/:root\.dark \.yuri-assistant-wallpaper,\s*:root\.dark \.yuri-assistant-mobile-header \{([^}]+)\}/)?.[1]
     expect(darkMaterial).toContain('94%, white')
     expect(darkMaterial).toContain('--assistant-panel-shadow: none')
+    expect(darkMaterial).toContain('--assistant-composer-shadow: none')
+    expect(darkMaterial).toContain('--assistant-tag-shadow: none')
     expect(darkMaterial).toContain('--assistant-bubble-filter: none')
-    expect(css).toContain('--assistant-panel-shadow: 0 2px 8px')
-    expect(css).toContain('--assistant-bubble-filter: drop-shadow(')
+    const lightMaterial = css.match(/\.yuri-assistant-wallpaper,\s*\.yuri-assistant-mobile-header \{([^}]+)\}/)?.[1]
+    expect(lightMaterial).toContain('--assistant-panel-shadow: 0 4px 12px color-mix(in srgb, var(--surface-foreground) 12%, transparent)')
+    expect(lightMaterial).toContain('--assistant-composer-shadow: 0 3px 10px color-mix(in srgb, var(--surface-foreground) 14%, transparent)')
+    expect(lightMaterial).toContain('--assistant-tag-shadow: 0 1px 3px color-mix(in srgb, var(--surface-foreground) 10%, transparent)')
+    expect(lightMaterial).toContain('--assistant-bubble-filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--surface-foreground) 16%, transparent))')
+    expect(css).toContain('.yuri-assistant-workspace .yuri-contact-bubble .yuri-contact-bubble-outline')
     expect(css).not.toContain('oklch(')
     expect(css).toContain('[data-contact-bubble-direction="incoming"]')
     expect(css).toContain('--contact-bubble-fill: var(--assistant-panel-background)')
@@ -195,19 +215,23 @@ describe('AssistantView contact surface', () => {
     expect(source).toContain('onOpenSettings={onMobileOpenSettings}')
   })
 
-  test('keeps global liquid-glass actions outside Assistant shadow and focus overrides', async () => {
+  test('preserves shared liquid-glass action material and focus in both themes', async () => {
     const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
     expect(css).toContain('[data-slot="button"]:not(.yuri-mobile-floating-action)) {\n  box-shadow: none !important;')
     expect(css).toContain('[data-slot="button"]:not(.yuri-mobile-floating-action):focus-visible')
-    expect(css).not.toMatch(/\.yuri-mobile-floating-action\s*\{/)
+    for (const [, selector] of css.matchAll(/([^{}]+)\{[^{}]*\}/g)) {
+      expect(selector.replaceAll(':not(.yuri-mobile-floating-action)', '')).not.toContain('.yuri-mobile-floating-action')
+    }
   })
 
-  test('keeps a silhouette shadow on the avatar and halves the flush-top header scrim', async () => {
+  test('keeps the dark avatar shadow and a single short scrim, with no light avatar shadow', async () => {
     const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
     const avatarShadow = css.match(/\.yuri-assistant-header-identity \[data-assistant-working-avatar\] \{([^}]+)\}/)?.[1]
     expect(avatarShadow).toContain('filter: drop-shadow(')
     expect(avatarShadow).toContain('light-dark(var(--surface-foreground), var(--surface-background))')
-    const scrim = css.match(/\.yuri-mobile-detail-navigation::before \{([^}]+)\}/)?.[1]
+    expect(css).toContain(':root:not(.dark) .yuri-assistant-header-identity [data-assistant-working-avatar] {\n  filter: none;')
+    const scrim = css.match(/\.yuri-assistant-mobile-header::before \{([^}]+)\}/)?.[1]
+    expect(css).toContain('.yuri-assistant-mobile-header::after {\n  content: none;')
     expect(scrim).toContain('height: 4.5rem')
     expect(scrim).toContain('inset: 0 0 auto')
     expect(scrim).toContain('mask-image: linear-gradient(to right, transparent, currentColor 20%, currentColor 80%, transparent)')
@@ -215,7 +239,7 @@ describe('AssistantView contact surface', () => {
     expect(header).toContain('padding-top: 0')
     const identity = css.match(/\.yuri-assistant-header-identity\[data-slot="button"\] \{([^}]+)\}/)?.[1]
     expect(identity).toContain('margin-top: 0.5rem')
-    expect(css).toContain('padding: 0 0 1rem 1rem')
+    expect(css).toContain('padding: 0 0 0 var(--assistant-workspace-inset)')
     expect(css).toContain('padding-top: var(--yuri-safe-area-top, 0px)')
     const back = css.match(/\.yuri-mobile-detail-navigation-content > button \{([^}]+)\}/)?.[1]
     expect(back).toContain('margin-top: calc((0.5rem + 28px) * var(--dpt-n, 1))')

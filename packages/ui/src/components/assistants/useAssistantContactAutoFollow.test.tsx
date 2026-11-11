@@ -53,40 +53,53 @@ type ProbeProps = {
   revision: number
   geometry: Geometry
   nodeKey?: string
+  composer?: { height: number; reads: number }
 }
 
 let probeFollowLatest: ReturnType<typeof useAssistantContactAutoFollow>['followLatest'] | null = null
 
-const Probe: React.FC<ProbeProps> = ({ active, assistantID, revision, geometry, nodeKey }) => {
+const Probe: React.FC<ProbeProps> = ({ active, assistantID, revision, geometry, nodeKey, composer }) => {
+  const composerRef = React.useRef<HTMLElement | null>(null)
   const { scrollRef, contentRef, followLatest } = useAssistantContactAutoFollow({
     active,
     assistantID,
     contentRevision: revision,
+    overlayComposerRef: composer ? composerRef : undefined,
   })
   probeFollowLatest = followLatest
   const attachScroller = React.useMemo<React.RefCallback<HTMLDivElement>>(() => (node) => {
     if (node && !Object.prototype.hasOwnProperty.call(node, 'scrollHeight')) {
+      const inset = () => Number.parseFloat(node.parentElement?.style.getPropertyValue('--contact-composer-height') || '0')
       Object.defineProperties(node, {
         clientHeight: { configurable: true, get: () => geometry.client },
-        scrollHeight: { configurable: true, get: () => geometry.height },
+        scrollHeight: { configurable: true, get: () => geometry.height + inset() },
         scrollTop: {
           configurable: true,
           get: () => geometry.top,
           set: (value: number) => {
             geometry.writes += 1
-            geometry.top = Math.max(0, Math.min(value, geometry.height - geometry.client))
+            geometry.top = Math.max(0, Math.min(value, geometry.height + inset() - geometry.client))
           },
         },
       })
     }
     scrollRef(node)
   }, [geometry, scrollRef])
+  const attachComposer = React.useMemo<React.RefCallback<HTMLElement>>(() => (node) => {
+    composerRef.current = node
+    if (node && composer) Object.defineProperty(node, 'offsetHeight', {
+      configurable: true, get: () => { composer.reads += 1; return composer.height },
+    })
+  }, [composer])
 
   return (
+    <div data-test-surface="">
     <div key={nodeKey} ref={attachScroller} data-test-scroller="">
       <div ref={contentRef} data-test-content="">
         <div data-test-nested="" data-message-id="test-message" />
       </div>
+    </div>
+    {composer ? <footer ref={attachComposer} data-test-composer="" /> : null}
     </div>
   )
 }
@@ -146,6 +159,40 @@ const touch = (target: Element, type: string, clientY?: number, clientX = 20) =>
 }
 
 describe('useAssistantContactAutoFollow', () => {
+  test('reserves overlay composer height, follows resizing only at the bottom, and does no work for unrelated renders', async () => {
+    const geometry: Geometry = { top: 0, height: 2000, client: 700, writes: 0 }
+    const composer = { height: 52, reads: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry, composer })
+    const footer = probe.scroller.parentElement!.querySelector('[data-test-composer]')!
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('52px')
+    expect(geometry.top).toBe(1352)
+    const reads = composer.reads
+    const writes = geometry.writes
+    for (let revision = 1; revision <= 50; revision++) await probe.render({ revision })
+    expect(composer.reads).toBe(reads)
+    expect(geometry.writes).toBe(writes)
+
+    composer.height = 100
+    TestResizeObserver.emit(footer)
+    expect(geometry.top).toBe(1400)
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('100px')
+    wheel(probe.scroller, -40)
+    geometry.top = 900
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    composer.height = 140
+    TestResizeObserver.emit(footer)
+    expect(geometry.top).toBe(900)
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('140px')
+    await probe.render({ active: false })
+    const inactiveReads = composer.reads
+    TestResizeObserver.emit(footer)
+    expect(composer.reads).toBe(inactiveReads)
+    expect(TestResizeObserver.instances.some(observer => observer.observed.has(footer))).toBe(false)
+    await probe.render({ active: true, composer: undefined })
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('0px')
+    expect(geometry.top).toBe(1300)
+  })
+
   test.each([true, false])('Android native IME layout keeps the presented position (following=%s)', async (following) => {
     const geometry: Geometry = { top: 0, height: 2000, client: 700, writes: 0 }
     const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })

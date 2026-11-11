@@ -60,6 +60,7 @@ const MobileAssistantConversationHeader: React.FC<MobileAssistantConversationHea
 
   return (
     <MobileDetailNavigation
+      className="yuri-assistant-mobile-header"
       title={assistant ? <AssistantHeaderIdentity assistant={assistant} onClick={openSettings} /> : t('assistants.title')}
       backAriaLabel={t('assistants.actions.backToChat')}
       onBack={onBack}
@@ -283,6 +284,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
           warning={warning}
           active={active}
           overlayHeader={isMobileSurface}
+          overlayComposer={!isMobileSurface}
         />
       </div>
     </div>

@@ -10,18 +10,34 @@ The repeating tile is 504 × 1036 CSS pixels, preserving the artwork's aspect ra
 flattened stylesheet resolves the image from the same entry in dev and builds.
 The canvas retains `surface.background`. Contact/header panels and incoming
 bubbles use that theme background mixed in sRGB: 6% white in dark mode, 3% black
-in light mode, with no accent tint or color-space conversion. Light panels and
-composer material have a subtle shared shadow; incoming bubble shadows follow
-only their SVG silhouette. Dark mode disables both shadows. The mask's faint lines use muted-foreground and
+in light mode, with no accent tint or color-space conversion. Light elevation is
+role-specific: panels/cards use a 4px/12px shadow at 12% foreground, composer
+material uses 3px/10px at 14%, and name/date tags use 1px/3px at 10%. Both incoming
+and outgoing bubbles use a short SVG-silhouette 1px/1px drop shadow at 16%.
+Dark mode disables all four elevation tokens. The mask's faint lines use muted-foreground and
 primary theme tokens; no runtime image fetch, timer or canvas rendering is used.
 
 Desktop uses an inset rounded contact panel with transparent transcript/composer
 surroundings. The workspace has no right inset, keeping the transcript scrollbar
 at its right edge while message/composer content retains its own padding.
-The desktop workspace alone owns the bottom inset: its composer form has no
-additional bottom padding, aligning the visible input material with the catalog
-panel's bottom edge at both desktop spacings. Phone safe-area and Mini Chat
-composer spacing remain unchanged.
+The desktop workspace and conversation pane have no bottom inset: the scrollport
+fills the entire canvas. `--assistant-workspace-inset` (1rem, 0.625rem below 900px)
+instead gives the catalog its own block margins and the overlay footer its bottom
+padding. Input material and catalog still align, but messages scroll behind and
+below the floating composer. Its shadow fits inside the pane without changing
+overflow clipping. Phone safe-area and Mini Chat composer spacing are unchanged.
+
+The desktop workspace opts into `AssistantConversationSurface.overlayComposer`:
+the footer is an absolute overlay, and the transcript scrollport extends behind
+it to the pane bottom. Only the composer column receives pointer events; the
+transparent gutters pass scrolling through. `useAssistantContactAutoFollow`
+measures the footer's layout height once on attachment and on border-box resize,
+publishing `--contact-composer-height` without React state or per-keystroke work.
+The scrollport reserves that height as bottom padding, preserving a fully visible
+latest message and the existing 48px status slot. Composer resizing uses the same
+follow/reading-anchor owner, never a second scroll writer. Sticky avatar rails
+clear the overlay as well. Phone native-keyboard layouts and Mini Chat retain the
+flow footer; they do not opt into the desktop overlay.
 On phone the active Assistant tab puts the wallpaper on the non-scrolling
 `MobileTabsRoot` shell, covering page gutters and the dock area for long or short
 lists. The catalog is transparent, with independent contact-row surfaces rather
@@ -34,16 +50,21 @@ identity control. The transcript reserves space beneath the overlay on both layo
 Back's center aligns with the 56px design-point-scaled avatar, not the combined
 avatar/name height; its 40px shared button and safe-area owner remain unchanged.
 Back uses the shared `mobileGlass` / `mobileIcon` Button material. Assistant's
-shadow/focus resets exclude `.yuri-mobile-floating-action`, preserving the global
-glass fill, reflection, backdrop blur/saturation, shadow and focus tokens in both
-themes and reduced-transparency mode; only its position is Assistant-owned.
+focus resets exclude `.yuri-mobile-floating-action`, preserving glass fill,
+reflection, backdrop blur/saturation and focus tokens. Assistant glass actions,
+including the catalog add button, keep the shared shadow in both themes without
+local material overrides.
+`yuri-assistant-mobile-header` owns the phone header layout and material tokens
+on the header itself, not through workspace ancestors. The native IME mirror
+clones only that header, so its centering, Back alignment, name fill and scrim
+remain identical without copying the page or changing native tap-index paths.
+The Assistant header disables the shared navigation's `::after` fade, leaving
+only its own short `::before` scrim in both live and mirrored headers.
 The scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
 and through an alpha mask over its left/right 20% edges; the avatar/name
 control keeps a separate 0.5rem top gap (below the system safe area on phone).
-Only its avatar has a silhouette drop shadow in
-both themes, independent of the panel material's theme-specific shadow policy.
-Dark panels and composer/control material are shadow-free; light mode adds
-subtle elevation to separate the pale surfaces from the canvas. Keyboard focus
+Only its dark-theme avatar has a silhouette drop shadow; light-theme avatars
+have no filter shadow. Light surfaces use their role-specific elevation tokens. Keyboard focus
 retains an explicit outline. Incoming bubbles use the panel surface here; outgoing
 bubbles retain their avatar-derived fill. Other app tabs and Settings keep their
 existing surfaces, and Mini Chat keeps its existing shell.
@@ -51,11 +72,10 @@ existing surfaces, and Mini Chat keeps its existing shell.
 Session, Bot and scheduled-task contact cards share the incoming-message panel
 fill, opaque at rest and on hover. Hover mixes that fill with 6% black in sRGB
 for a subtle darker state, never a translucent interactive overlay.
-Light cards use the shared panel shadow; dark cards have
-none. Outside the wallpaper workspace, the shared card fill falls back to the
+Light cards share the panel shadow; dark cards have none. Outside the wallpaper workspace, the shared card fill falls back to the
 same muted surface as incoming text. Focus rings and card navigation are unchanged.
 
-Workspace/pane frames remain `overflow-clip`; only the catalog/transcript (or
+Workspace/pane frames remain `overflow-clip`. Only the catalog/transcript (or
 the existing phone page) owns scrolling. Contact identity, row keys, read markers,
 failure/retry, menus, swipe, composer sizing and keyboard ownership are unchanged.
 

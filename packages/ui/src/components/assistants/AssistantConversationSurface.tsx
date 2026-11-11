@@ -101,6 +101,7 @@ type AssistantConversationSurfaceProps = {
   warning?: string | null
   active: boolean
   overlayHeader?: boolean
+  overlayComposer?: boolean
 }
 
 /**
@@ -119,6 +120,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   warning,
   active,
   overlayHeader = false,
+  overlayComposer = false,
 }) => {
   const { t, locale } = useI18n()
   const transportIdentity = useRuntimeTransportIdentity()
@@ -305,14 +307,15 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     } catch { /* Query retains the loaded transcript and exposes the retry state. */ }
     finally { pageFlightRef.current = false }
   })
+  const composerRef = React.useRef<HTMLElement | null>(null)
   const { scrollRef, contentRef, preparePrepend, followLatest } = useAssistantContactAutoFollow({
     active,
     assistantID: assistant.id,
     contentRevision: `${transcript[0]?.messageID}:${transcript.length}:${streamingTextLength}:${contactQuery.isFetchingPreviousPage}:${contactQuery.hasPreviousPage}:${contactQuery.isFillingMessageGap}`,
     onLoadEarlier: () => { void loadEarlier(true) },
+    overlayComposerRef: overlayComposer ? composerRef : undefined,
   })
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
-  const composerRef = React.useRef<HTMLElement | null>(null)
   const pendingSendFlightRef = React.useRef<{ messageID: string; source: ContactSendFlightSource; ready: boolean } | null>(null)
   // The morph owns the flown row's entrance; the generic append fade must not also run.
   const flownMessageIDRef = React.useRef<string | null>(null)
@@ -590,7 +593,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const optimisticByID = new Map(scopedOptimisticTurns.map((turn) => [turn.messageID, turn]))
 
   return (
-    <div ref={surfaceRef} className="yuri-contact-conversation flex min-h-0 flex-1 flex-col bg-transparent" data-contact-layout={isMobile ? 'mobile' : 'desktop'}>
+    <div ref={surfaceRef} className="yuri-contact-conversation flex min-h-0 flex-1 flex-col bg-transparent" data-contact-layout={isMobile ? 'mobile' : 'desktop'} data-composer-overlay={overlayComposer || undefined}>
       <div
         ref={scrollRef}
         className={cn(

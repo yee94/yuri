@@ -23,6 +23,7 @@ type UseAssistantContactAutoFollowOptions = {
   assistantID: string
   contentRevision: string | number
   onLoadEarlier?: () => void
+  overlayComposerRef?: React.RefObject<HTMLElement | null>
 }
 
 type UseAssistantContactAutoFollowResult = {
@@ -86,6 +87,7 @@ export const useAssistantContactAutoFollow = ({
   assistantID,
   contentRevision,
   onLoadEarlier,
+  overlayComposerRef,
 }: UseAssistantContactAutoFollowOptions): UseAssistantContactAutoFollowResult => {
   const scrollNodeRef = React.useRef<HTMLDivElement | null>(null)
   const [scrollNode, setScrollNode] = React.useState<HTMLDivElement | null>(null)
@@ -374,6 +376,17 @@ export const useAssistantContactAutoFollow = ({
     rememberUserIntent('scrollbar')
   })
 
+  const syncComposerInset = useEvent(() => {
+    const owner = scrollNodeRef.current?.parentElement
+    if (!owner || !activeRef.current) return false
+    const height = overlayComposerRef?.current?.offsetHeight ?? 0
+    const inset = `${height}px`
+    if (owner.style.getPropertyValue('--contact-composer-height') === inset) return false
+    owner.style.setProperty('--contact-composer-height', inset)
+    return true
+  })
+  React.useLayoutEffect(() => { syncComposerInset() }, [active, scrollNode, overlayComposerRef, syncComposerInset])
+
   React.useLayoutEffect(() => {
     const identity = active ? assistantID : null
     const element = scrollNodeRef.current
@@ -394,7 +407,7 @@ export const useAssistantContactAutoFollow = ({
     pinToBottom()
     restoreAnchor()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- these values own rerun semantics; useEvent keeps the writer current.
-  }, [active, assistantID, contentRevision, scrollNode, reducedMotion])
+  }, [active, assistantID, contentRevision, scrollNode, reducedMotion, overlayComposerRef])
 
   React.useLayoutEffect(() => () => { stopFollowAnimation(); settleFollow(false) }, [active, assistantID, scrollNode, stopFollowAnimation, settleFollow])
 
@@ -439,9 +452,13 @@ export const useAssistantContactAutoFollow = ({
     pinToBottom()
     restoreAnchor()
   })
+  const handleComposerResize = useEvent(() => {
+    if (syncComposerInset()) handleContentResize()
+  })
   const canObserveResize = typeof ResizeObserver !== 'undefined'
   useResizeObserver(canObserveResize && active ? contentNode : null, handleContentResize)
   useResizeObserver(canObserveResize && active ? scrollNode : null, handleViewportResize)
+  useResizeObserver(canObserveResize && active && overlayComposerRef ? overlayComposerRef : null, handleComposerResize, { box: 'border-box' })
 
   return { scrollRef, contentRef, preparePrepend, followLatest }
 }
