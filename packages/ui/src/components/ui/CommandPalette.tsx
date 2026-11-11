@@ -46,6 +46,7 @@ import './command-palette.css';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
+import { ProjectIconImage } from '@/lib/projectMeta';
 import { sessionTitleSearchQueryOptions } from '@/queries/sessionTitleSearchQueries';
 import { sessionContentSearchQueryOptions, type SessionContentSearchHit } from '@/queries/sessionContentSearchQueries';
 import { focusChatMessage } from '@/components/chat/hooks/useChatTurnNavigation';
@@ -715,7 +716,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   const projectForSession = (session: Session) => {
     const directory = normalizePath(worktreeMetadata.get(session.id)?.projectDirectory || resolveGlobalSessionDirectory(session) || '');
     const project = resolveProjectForSessionDirectory(projects, availableWorktreesByProject, directory);
-    return project?.label || (project?.path || directory).split('/').pop() || '';
+    return { project, label: project?.label || (project?.path || directory).split('/').pop() || '' };
   };
 
   const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && fileSearchQuery.isError;
@@ -839,7 +840,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                 if (result.group === 'sessions') {
                   const { session, hit } = result.item;
                   const title = result.title;
-                  const project = projectForSession(session);
+                  const { project, label: projectLabel } = projectForSession(session);
                   const timestamp = hit?.createdAt ?? session.time?.updated ?? session.time?.created;
                   const date = new Date(timestamp ?? NaN);
                   const hasTime = Number.isFinite(date.getTime());
@@ -867,7 +868,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
                           </span>
                         ) : null}
                       </div>
-                      <span className="yuri-global-search-session-project min-w-0 truncate text-muted-foreground" title={project}>{project}</span>
+                      <span className="yuri-global-search-session-project flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground" title={projectLabel}>
+                        {project?.iconImage ? <ProjectIconImage project={project} className="size-3.5 shrink-0 object-contain" /> : null}
+                        <span className="min-w-0 truncate">{projectLabel}</span>
+                      </span>
                       {shortcutHint}
                     </CommandItem>
                   );

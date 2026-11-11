@@ -13,6 +13,12 @@ const fileSearch = vi.hoisted(() => vi.fn(async (_request: { directory: string; 
 const readFile = vi.hoisted(() => vi.fn(async (_path: string) => ({ content: '', exists: true })));
 const titleSignal = vi.hoisted(() => vi.fn((_signal: AbortSignal) => {}));
 const contentSignal = vi.hoisted(() => vi.fn<(_signal: AbortSignal) => void | Promise<void>>(() => {}));
+const iconFetch = vi.hoisted(() => vi.fn(async (_path: string) => new Response(new Blob(['icon'], { type: 'image/png' }))));
+
+vi.mock('@/lib/runtime-fetch', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/runtime-fetch')>(),
+  runtimeFetch: iconFetch,
+}));
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: 'en-US' }) }));
 vi.mock('@/components/ui', () => ({ toast: { error: vi.fn() } }));
@@ -66,6 +72,7 @@ vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeTransportIdentity: () => 'test',
   getRuntimeGeneration: () => 1,
   getRuntimeKey: () => 'test',
+  getRuntimeApiBaseUrl: () => '',
   subscribeRuntimeEndpointChanged: () => () => {},
 }));
 vi.mock('@/components/chat/hooks/useChatTurnNavigation', () => ({ focusChatMessage: vi.fn() }));
@@ -161,6 +168,55 @@ test.each(['page', 'dialog'] as const)('%s excludes unowned recent conversations
   } finally {
     await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
     useGlobalSessionsStore.setState({ activeSessions: [] });
+    client.clear(); host.remove();
+  }
+});
+
+test.each(['page', 'dialog'] as const)('%s shows configured project images beside conversation project names', async (presentation) => {
+  const projects = [
+    { id: `${presentation}-custom`, path: '/project', label: 'Custom project', iconImage: { mime: 'image/png', updatedAt: 1, source: 'custom' as const } },
+    { id: `${presentation}-auto`, path: '/project/nested', label: 'Site project', iconImage: { mime: 'image/png', updatedAt: 1, source: 'auto' as const } },
+    { id: `${presentation}-plain`, path: '/plain', label: 'Plain project' },
+  ];
+  useProjectsStore.setState({ projects });
+  useSessionUIStore.setState({ availableWorktreesByProject: new Map([
+    ['/project', [{ path: '/worktree', projectDirectory: '/project', branch: 'feature', label: 'Feature' }]],
+  ]) });
+  const sessions = [
+    { id: 'custom', title: 'Custom conversation', directory: '/worktree', time: { updated: 3 } },
+    { id: 'auto', title: 'Site conversation', directory: '/project/nested/src', time: { updated: 2 } },
+    { id: 'plain', title: 'Plain conversation', directory: '/plain', time: { updated: 1 } },
+  ];
+  useGlobalSessionsStore.setState({ activeSessions: sessions });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['search', ''], sessions);
+  const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:project-icon');
+  iconFetch.mockClear();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  useUIStore.getState().setCommandPaletteOpen(true);
+  const projectCell = (id: string) => document.querySelector(`[data-value="session:${id}"] .yuri-global-search-session-project`)!;
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><CommandPalette presentation={presentation} /></QueryClientProvider>));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(projectCell('custom').querySelector('img')?.getAttribute('src')).toBe('blob:project-icon');
+    expect(projectCell('custom').textContent).toBe('Custom project');
+    expect(projectCell('auto').querySelector('img')?.getAttribute('src')).toBe('blob:project-icon');
+    expect(projectCell('auto').textContent).toBe('Site project');
+    expect(projectCell('plain').querySelector('img')).toBeNull();
+    expect(projectCell('plain').textContent).toBe('Plain project');
+    expect(iconFetch.mock.calls.map(([path]) => path).sort()).toEqual(projects.slice(0, 2).map(project => `/api/projects/${project.id}/icon`).sort());
+    await act(async () => projectCell('custom').querySelector('img')!.dispatchEvent(new Event('error')));
+    expect(projectCell('custom').querySelector('img')).toBeNull();
+    expect(projectCell('custom').textContent).toBe('Custom project');
+    await act(async () => useProjectsStore.setState({ projects: projects.map(project => ({ ...project, iconImage: undefined })) }));
+    expect(projectCell('auto').querySelector('img')).toBeNull();
+    expect(projectCell('auto').textContent).toBe('Site project');
+  } finally {
+    await act(async () => { root.unmount(); useUIStore.getState().setCommandPaletteOpen(false); });
+    useGlobalSessionsStore.setState({ activeSessions: [] });
+    createUrl.mockRestore();
     client.clear(); host.remove();
   }
 });

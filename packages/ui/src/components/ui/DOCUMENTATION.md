@@ -295,6 +295,9 @@ cannot steal an active keyboard selection; changing query or category resets it.
 Each row displays a localized date and time beside its title: the matching
 message's creation time for content hits, otherwise the session's update time
 (falling back to creation time). Missing or invalid timestamps stay hidden.
+The project column reuses `ProjectIconImage` for custom uploads and automatically
+discovered site icons beside the project name, including nested-project and
+worktree ownership. Missing, loading or failed images retain the name-only fallback.
 
 Global-search layout is scoped by `data-global-search` in `command-palette.css`,
 including contributed plugin commands; shared Command primitives are unchanged.
