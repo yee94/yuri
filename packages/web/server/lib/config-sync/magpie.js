@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { collectMagpieAuth, restoreMagpieAuth, validateMagpieAuth, verifyMagpieAuth } from './magpie-auth.js';
 
 const MAX_BYTES = 64 * 1024 * 1024;
@@ -234,6 +235,31 @@ export function createMagpieSync({
   return {
     inventory,
     repairInstallation,
+    ensureGateway: () => exclusive(async () => {
+      const binary = await ensure();
+      const help = await run(binary, ['serve', '--help'], { env, timeout: 10_000 });
+      if (!/\bserve\b/.test(help)) throw new Error('Installed Magpie does not support the gateway');
+      const healthy = async () => {
+        try { await run(binary, ['healthcheck'], { env, timeout: 5_000 }); return true; }
+        catch { return false; }
+      };
+      if (await healthy()) return { ready: true };
+      if (platform === 'win32') throw new Error('Automatic Magpie gateway startup requires a POSIX host with tmux');
+      let running = false;
+      try { await run('tmux', ['has-session', '-t', '=yuri-magpie'], { env, timeout: 5_000 }); running = true; }
+      catch { /* Missing sessions are created; existing sessions are never replaced. */ }
+      if (!running) {
+        const quoted = `'${binary.replaceAll("'", "'\\''")}'`;
+        const environment = ['HOME', 'XDG_CONFIG_HOME'].filter((key) => typeof env[key] === 'string')
+          .flatMap((key) => ['-e', `${key}=${env[key]}`]);
+        await run('tmux', ['new-session', '-d', '-s', 'yuri-magpie', ...environment, `${quoted} serve`], { env, timeout: 10_000 });
+      }
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (await healthy()) return { ready: true };
+        await delay(250);
+      }
+      throw new Error('Magpie gateway did not become healthy; check the yuri-magpie tmux session');
+    }),
     download: () => exclusive(async () => {
       if (!(await inventory()).available) throw new Error('No Magpie configuration found on source');
       const binary = await ensure();

@@ -1,6 +1,7 @@
 import Capacitor
 import Foundation
 import Network
+import UIKit
 import WebKit
 
 /// The WebView always connects through this gateway. Ordinary app bootstrap uses
@@ -20,6 +21,7 @@ private final class GuiSocksServer {
     private var emit: (([String: Any]) -> Void)?
     private var directTargets: Set<String> = []
     private var listener: NWListener?
+    private var onListenerLost: (() -> Void)?
     private var streams: [UInt32: Stream] = [:]
     private var nextID: UInt32 = 0
     private var stopped = false
@@ -40,35 +42,66 @@ private final class GuiSocksServer {
         }
     }
 
-    func start(_ completion: @escaping (Result<UInt16, Error>) -> Void) {
+    func start(onLost: @escaping () -> Void, _ completion: @escaping (Result<UInt16, Error>) -> Void) {
         queue.async {
-            do {
-                let parameters = NWParameters.tcp
-                parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-                let listener = try NWListener(using: parameters)
-                self.listener = listener
-                var replied = false
-                listener.stateUpdateHandler = { state in
-                    guard !replied else { return }
+            self.onListenerLost = onLost
+            self.listen(completion)
+        }
+    }
+
+    /// iOS defuncts listening sockets while the app is suspended (TN2277). Accepted
+    /// streams are independent of the listener, so rebinding only replaces the entry point.
+    func relisten(_ completion: @escaping (Result<UInt16, Error>) -> Void) {
+        queue.async { self.listen(completion) }
+    }
+
+    private func dropListener() {
+        guard let old = listener else { return }
+        listener = nil
+        old.stateUpdateHandler = nil
+        old.newConnectionHandler = nil
+        old.cancel()
+    }
+
+    private func listen(_ completion: @escaping (Result<UInt16, Error>) -> Void) {
+        guard !stopped else { completion(.failure(URLError(.cancelled))); return }
+        dropListener()
+        do {
+            let parameters = NWParameters.tcp
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+            let listener = try NWListener(using: parameters)
+            self.listener = listener
+            var replied = false
+            listener.stateUpdateHandler = { state in
+                guard self.listener === listener else { return }
+                if replied {
                     switch state {
-                    case .ready:
-                        replied = true
-                        if !self.stopped, let port = listener.port { completion(.success(port.rawValue)) }
-                        else { completion(.failure(URLError(.cancelled))) }
-                    case .failed(let error): replied = true; completion(.failure(error))
-                    case .cancelled: replied = true; completion(.failure(URLError(.cancelled)))
+                    case .failed, .cancelled:
+                        self.dropListener()
+                        if !self.stopped { self.onListenerLost?() }
                     default: break
                     }
+                    return
                 }
-                listener.newConnectionHandler = { self.accept($0) }
-                listener.start(queue: self.queue)
-                self.queue.asyncAfter(deadline: .now() + 5) {
-                    guard !replied else { return }
-                    replied = true; listener.cancel()
-                    completion(.failure(URLError(.timedOut)))
+                switch state {
+                case .ready:
+                    replied = true
+                    if !self.stopped, let port = listener.port { completion(.success(port.rawValue)) }
+                    else { completion(.failure(URLError(.cancelled))) }
+                case .failed(let error): replied = true; self.dropListener(); completion(.failure(error))
+                case .cancelled: replied = true; self.dropListener(); completion(.failure(URLError(.cancelled)))
+                default: break
                 }
-            } catch { completion(.failure(error)) }
-        }
+            }
+            listener.newConnectionHandler = { self.accept($0) }
+            listener.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 5) {
+                guard !replied else { return }
+                replied = true
+                if self.listener === listener { self.dropListener() } else { listener.cancel() }
+                completion(.failure(URLError(.timedOut)))
+            }
+        } catch { completion(.failure(error)) }
     }
 
     private func accept(_ connection: NWConnection) {
@@ -246,7 +279,8 @@ private final class GuiSocksServer {
     func stop() {
         queue.async {
             self.stopped = true
-            self.listener?.cancel()
+            self.onListenerLost = nil
+            self.dropListener()
             for id in Array(self.streams.keys) { self.close(id, notify: false) }
         }
     }
@@ -274,6 +308,12 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
     private var wireSession: URLSession?
     private var prepared = false
     private var prepareCalls: [CAPPluginCall] = []
+    private var proxyStore: WKWebsiteDataStore?
+    private var port: UInt16?
+    private var excluded: [String] = []
+    private var backgrounded = false
+    private var rebinding = false
+    private var rebindAgain = false
 
     @objc func capabilities(_ call: CAPPluginCall) {
         if #available(iOS 17.0, *) { call.resolve(["supported": prepared]) }
@@ -288,7 +328,9 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
             guard self.server == nil else { return }
             let server = GuiSocksServer()
             self.server = server
-            server.start { result in
+            server.start(onLost: { [weak self] in
+                DispatchQueue.main.async { self?.rebindProxy() }
+            }) { result in
                 DispatchQueue.main.async {
                     let calls = self.prepareCalls
                     self.prepareCalls.removeAll()
@@ -297,14 +339,64 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
                         server.stop(); self.server = nil
                         for call in calls { call.reject("proxy_failed") }
                     case .success(let port):
-                        let previous = store.proxyConfigurations
-                        var proxy = ProxyConfiguration(socksv5Proxy: .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!))
-                        proxy.allowFailover = false
-                        store.proxyConfigurations = [proxy]
-                        self.restore = { store.proxyConfigurations = previous }
+                        // Ordinary application networking keeps its original path; the
+                        // data store only points at this gateway while a plugin view holds a lease.
+                        self.port = port
+                        self.proxyStore = store
                         self.prepared = true
+                        let center = NotificationCenter.default
+                        center.addObserver(self, selector: #selector(self.didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+                        center.addObserver(self, selector: #selector(self.willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
                         for call in calls { call.resolve() }
                     }
+                }
+            }
+        }
+    }
+
+    /// Points the data store at the gateway only while a lease is active. Yuri's own
+    /// endpoints are excluded at the WebView layer so they never touch the gateway.
+    private func activateProxy() {
+        guard #available(iOS 17.0, *), scope != nil, let port, let store = proxyStore else { return }
+        if restore == nil {
+            let previous = store.proxyConfigurations
+            restore = { store.proxyConfigurations = previous }
+        }
+        var proxy = ProxyConfiguration(socksv5Proxy: .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!))
+        proxy.allowFailover = false
+        proxy.excludedDomains = excluded
+        store.proxyConfigurations = [proxy]
+    }
+
+    private func deactivateProxy() {
+        restore?()
+        restore = nil
+    }
+
+    @objc private func didEnterBackground() { backgrounded = true }
+
+    @objc private func willEnterForeground() {
+        guard backgrounded else { return }
+        backgrounded = false
+        rebindProxy()
+    }
+
+    /// iOS defuncts the loopback listener while suspended and the proxy has no failover,
+    /// so an open plugin view would stop loading. Rebind and repoint an active lease.
+    private func rebindProxy(attempt: Int = 0) {
+        guard prepared, let server else { return }
+        if rebinding { rebindAgain = true; return }
+        rebinding = true
+        server.relisten { result in
+            DispatchQueue.main.async {
+                self.rebinding = false
+                guard self.server === server else { return }
+                if case .success(let port) = result { self.port = port; self.activateProxy() }
+                if self.rebindAgain {
+                    self.rebindAgain = false
+                    self.rebindProxy()
+                } else if case .failure = result, attempt < 5 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.rebindProxy(attempt: attempt + 1) }
                 }
             }
         }
@@ -316,10 +408,12 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
               !hostname.isEmpty, !hostname.contains("*"), url.user == nil, url.password == nil, url.fragment == nil
         else { call.reject("invalid_relay"); return }
         var direct = Set<String>()
+        var hosts = Set<String>()
         for case let target as JSObject in (call.getArray("direct") ?? []).prefix(32) {
             guard let hostname = target["hostname"] as? String, !hostname.isEmpty,
                   let port = target["port"] as? Int, port > 0, port <= 65535 else { call.reject("invalid_direct"); return }
             direct.insert(GuiSocksServer.targetKey(hostname, port))
+            hosts.insert(hostname.lowercased())
         }
         DispatchQueue.main.async {
             guard self.prepared, let server = self.server else { call.reject("unsupported"); return }
@@ -330,13 +424,18 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
                 self.wires.removeAll()
                 self.wireSession?.invalidateAndCancel(); self.wireSession = nil
             }
-            self.scope = owner; self.relayURL = url
+            self.scope = owner; self.relayURL = url; self.excluded = Array(hosts)
             server.setRelayEmitter({ [weak self] event in
                 DispatchQueue.main.async {
                     guard self?.scope == owner else { return }
                     self?.notifyListeners("stream", data: event.merging(["scope": owner]) { _, new in new })
                 }
-            }, direct: direct, completion: { call.resolve() })
+            }, direct: direct, completion: {
+                DispatchQueue.main.async {
+                    if self.scope == owner { self.activateProxy() }
+                    call.resolve()
+                }
+            })
         }
     }
     @objc func send(_ call: CAPPluginCall) {
@@ -353,9 +452,13 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
             for wire in self.wires.values { wire.cancel(with: .goingAway, reason: nil) }
             self.wires.removeAll(); self.relayURL = nil
             self.wireSession?.invalidateAndCancel(); self.wireSession = nil
-            self.scope = nil
-            if let server = self.server { server.setRelayEmitter(nil, completion: { call.resolve() }) }
-            else { call.resolve() }
+            self.scope = nil; self.excluded = []
+            self.deactivateProxy()
+            // The gateway exists only for a lease; the next lease binds a fresh one.
+            NotificationCenter.default.removeObserver(self)
+            self.server?.stop(); self.server = nil
+            self.port = nil; self.proxyStore = nil; self.prepared = false; self.backgrounded = false
+            call.resolve()
         }
     }
 
@@ -438,5 +541,5 @@ public class YuriGuiNetworkPlugin: CAPPlugin, CAPBridgedPlugin, URLSessionWebSoc
             call.resolve()
         }
     }
-    deinit { server?.stop(); restore?() }
+    deinit { NotificationCenter.default.removeObserver(self); server?.stop(); restore?() }
 }

@@ -88,32 +88,29 @@ Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet �
 
 ### Capacitor 网络生命周期
 
-`mobile-main.tsx` 先等待轻量 `mobile-network-bridge.ts` 的 `prepare`，再动态导入
-runtime 配置，避免应用网络先建立连接。常驻 SOCKS 网关在没有 GUI 租约时直接
-转发普通应用 TCP；原生 `capabilities.supported` 只表示准备成功，不表示零旁路。
+**增量原则：应用自身网络保持原路。** 启动、同步、发消息、扫码配对新设备等都不经过
+插件网关；`mobile-main.tsx` 不再预装代理。只有挂载中的插件视图（`GuiPluginMount` 的
+page/panel/settings）和内置 HTML 预览（特定后缀文件、`localhost` 链接 Sheet）通过
+`MobileHtmlNetworkBoundary` 持有 `acquireMobileHtmlNetwork` 租约，此时才走 Relay。
 
-目标是**可达性**：插件在手机上看到的网络与 Host 一致（Host 本机、Host 内网与公网
+目标是**可达性**：插件视图在手机上看到的网络与 Host 一致（Host 本机、Host 内网与公网
 均从 Host 发起）。它不是插件沙箱，也不承诺零旁路。
 
-`GuiPluginsProvider` 在创建 host、求值 CJS 和执行 setup **之前**取得
-`acquireMobileHtmlNetwork` 共享租约，底层仍由 `openMobileGuiNetwork` 持有。取得租约只是
-把本地网关切到插件出口，不等待 Relay：插件 Relay 通道在第一条插件 TCP 连接时才建立，
-空闲 60 秒后关闭。插件加载、页面注册和入口显示因此不依赖 Relay 握手。内置 HTML
-文件预览及 URL Sheet 也申请同一个 owner；它们需要握手返回的 Host HTTP origin，
-所以显式 `connect()`，失败时显示重试。缺少新版原生桥、iOS 17+ 代理能力或已配对 Relay
-时不执行移动插件代码，错误保留在插件设置中。LAN 连接也使用同一已保存设备的 Relay
-candidate；不猜测其他设备或降级手机直连。
+网关按需存在：租约打开时 `prepare` 绑定 loopback SOCKS 监听，`start` 把 WebView 代理指向它；
+`stop`（最后一个 owner 释放）恢复原代理配置并关闭监听，没有插件视图时不占用 socket。插件加载、CJS 求值和 setup 走原路，
+不等待租约；setup 期间的插件请求同样走原路。插件 Relay 通道在第一条插件 TCP 连接时才
+建立，空闲 60 秒后关闭。内置 HTML 需要握手返回的 Host HTTP origin，所以显式
+`connect()`，失败时显示重试；插件视图只路由出口，不等待握手。缺少新版原生桥、
+iOS 17+ 代理能力或已配对 Relay 时，对应视图显示错误与重试，不影响应用其他功能。
 
-**Yuri 自身连接永远不进入插件出口。** `start` 携带 `direct` 目标：当前 Relay 服务器、
-当前 runtime 地址和已保存的 LAN 候选（host:port）。网关在 SOCKS 握手时按目标分流，
-这些连接直连；其余连接走插件 Relay。主应用的消息同步因此不受插件流量或插件通道
-故障影响。
+**租约期间 Yuri 自身连接也不进入插件出口。** `start` 携带 `direct` 目标：当前 Relay
+服务器、当前 runtime 地址和已保存的 LAN 候选。这些主机在 WebView 代理层排除
+（iOS `excludedDomains`、Android `addBypassRule`），网关内再按 host:port 兜底直连。
 
-租约覆盖整个 host，因此页面、Panel、Settings、setup 和插件后台任务共用代理；
-关闭单个页面不释放租约。插件通道断开只关闭在途插件连接并通知 owner，不 dispose
-插件、不结束租约；下一条连接以指数退避（1s 起、30s 封顶）重连，成功后清零。
-HTML 消费者先移除内容再释放，最后一个 owner 才结束插件出口。正常清理先释放 host
-owner，再 abort 网络；`stop` 关闭流和 wire，恢复普通应用转发，但保留 WebView 代理配置。
+插件通道断开只关闭在途插件连接并通知 owner，不 dispose 插件、不结束租约；下一条连接以
+指数退避（1s 起、30s 封顶）重连，成功后清零。视图先移除内容再释放，最后一个 owner
+才结束插件出口。iOS 挂起会作废 loopback 监听，Android accept 循环异常也会结束监听；
+两端都会重新绑定，并把仍在租约中的代理指向新端口，回到前台不需要重启应用。
 并发 acquire 等待上次 release，旧 generation 的回调丢弃；打开失败的租约不被后续 owner
 共享。页面被权威移除会关闭，所属插件失败则保留错误页；其他插件的失败不阻碍关闭已移除页面。
 

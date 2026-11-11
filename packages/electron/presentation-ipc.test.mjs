@@ -23,13 +23,13 @@ function fixture(url = 'yuri-ui://app/session/test') {
     authorize: (received) => checks.isLocalSender(received.sender), send: vi.fn(), report: vi.fn(),
   });
   checks = new Function('state', 'UI_PROTOCOL', 'guiPluginHost', 'BrowserWindow', 'isGuiPluginUiUrl',
-    `${localChecks}\nreturn { isLocalSender, isGuiPluginWindow };`)(state, 'yuri-ui', host, BrowserWindow, isGuiPluginUiUrl);
+    `${localChecks}\nreturn { isLocalSender, isLocalUiSender, isGuiPluginWindow };`)(state, 'yuri-ui', host, BrowserWindow, isGuiPluginUiUrl);
   const handlers = new Map();
   const invoke = vi.fn(async () => null);
   const invokeSource = source.slice(source.indexOf("ipcMain.handle('yuri:invoke'"), source.indexOf("ipcMain.handle('yuri:dialog:open'"));
-  new Function('ipcMain', 'isLocalSender', 'isGuiPluginWindow', 'isRemoteIpcCommandAllowed', 'BrowserWindow', 'handleInvoke', 'log', invokeSource)(
+  new Function('ipcMain', 'isLocalSender', 'isGuiPluginWindow', 'isRemoteIpcCommandAllowed', 'BrowserWindow', 'handleInvoke', 'log', 'isLocalUiSender', invokeSource)(
     { handle: (channel, handler) => handlers.set(channel, handler) }, checks.isLocalSender, checks.isGuiPluginWindow,
-    isRemoteIpcCommandAllowed, BrowserWindow, invoke, { warn: vi.fn() });
+    isRemoteIpcCommandAllowed, BrowserWindow, invoke, { warn: vi.fn() }, checks.isLocalUiSender);
   const imageDiskCache = Object.fromEntries(['lookup', 'clear', 'acquire', 'append', 'commit', 'release', 'releaseOwner']
     .map((name) => [name, vi.fn(async () => ({ leaseId: 'lease', url: 'yuri-asset://cache/test' }))]));
   const virtualAssetRegistry = Object.fromEntries(['create', 'push', 'finish', 'cancel']
@@ -47,6 +47,26 @@ function fixture(url = 'yuri-ui://app/session/test') {
 }
 
 describe('application presentation IPC in window-only documents', () => {
+  it.each(['yuri-ui://app/session/test', 'http://localhost:5173/session/test'])(
+    'permits saved-host preparation in the restricted client UI, not raw SSH management: %s', async (url) => {
+      const f = fixture(url);
+      try {
+        await f.host.handle(f.event, 'window-only');
+        await expect(f.handlers.get('yuri:invoke')(f.event, 'desktop_host_prepare', { hostId: 'saved' })).resolves.toBeNull();
+        expect(f.invoke).toHaveBeenCalledExactlyOnceWith(f.window, 'desktop_host_prepare', { hostId: 'saved' });
+        await expect(f.handlers.get('yuri:invoke')(f.event, 'desktop_ssh_connect', { id: 'saved' })).rejects.toThrow('IPC not available');
+        await expect(f.handlers.get('yuri:invoke')({ ...f.event, senderFrame: {} }, 'desktop_host_prepare', { hostId: 'saved' })).rejects.toThrow('main desktop application frame');
+      } finally { await f.host.dispose(); }
+    });
+
+  it.each(['yuri-ui://app/preview.html', 'http://localhost:5173/api/preview/test'])(
+    'blocks SSH preparation from a same-origin non-application document: %s', async (url) => {
+      const f = fixture(url);
+      try {
+        await expect(f.handlers.get('yuri:invoke')(f.event, 'desktop_host_prepare', { hostId: 'saved' })).rejects.toThrow('main desktop application frame');
+        expect(f.invoke).not.toHaveBeenCalled();
+      } finally { await f.host.dispose(); }
+    });
   it.each(['yuri-ui://app/session/test', 'http://localhost:5173/session/test',
     'yuri-ui://app/plugins/example/board', 'http://localhost:5173/plugins/example/board'])(
     'keeps image and preview bridges usable after real plugin restriction: %s', async (url) => {

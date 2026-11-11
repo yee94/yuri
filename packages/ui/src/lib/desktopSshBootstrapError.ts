@@ -1,6 +1,8 @@
 import type { I18nKey } from '@/lib/i18n';
 
 export const MANAGED_SSH_BOOTSTRAP_ERROR_CODES = [
+  'shellStartup',
+  'configSync',
   'nodeRuntimeMissing',
   'packageManagerMissing',
   'nativeBinding',
@@ -26,6 +28,8 @@ export const isManagedSshBootstrapErrorCode = (value: unknown): value is Managed
 
 export const classifyManagedSshBootstrapError = (raw: string | null | undefined): ManagedSshBootstrapErrorCode => {
   const text = String(raw || '');
+  if (/shell startup|fresh .* shell|SSH command did not start/i.test(text)) return 'shellStartup';
+  if (/Initial SSH config sync failed/i.test(text)) return 'configSync';
   if (/requires Node\.js \d+|no supported Node runtime/i.test(text)) return 'nodeRuntimeMissing';
   if (/neither bun nor npm/i.test(text)) return 'packageManagerMissing';
   if (/better-sqlite3|node_gyp_bins|gyp ERR|failed to prepare better-sqlite3/i.test(text)) return 'nativeBinding';
@@ -62,6 +66,10 @@ export const resolveManagedSshBootstrapErrorCode = (
 
 export const sshBootstrapErrorTitleKey = (code: ManagedSshBootstrapErrorCode): I18nKey => {
   switch (code) {
+    case 'shellStartup':
+      return 'desktopHostSwitcher.sshError.shellStartup.title';
+    case 'configSync':
+      return 'desktopHostSwitcher.sshError.configSync.title';
     case 'nodeRuntimeMissing':
       return 'desktopHostSwitcher.sshError.nodeRuntimeMissing.title';
     case 'packageManagerMissing':
@@ -93,6 +101,10 @@ export const sshBootstrapErrorTitleKey = (code: ManagedSshBootstrapErrorCode): I
 
 export const sshBootstrapErrorGuidanceKey = (code: ManagedSshBootstrapErrorCode): I18nKey => {
   switch (code) {
+    case 'shellStartup':
+      return 'desktopHostSwitcher.sshError.shellStartup.guidance';
+    case 'configSync':
+      return 'desktopHostSwitcher.sshError.configSync.guidance';
     case 'nodeRuntimeMissing':
       return 'desktopHostSwitcher.sshError.nodeRuntimeMissing.guidance';
     case 'packageManagerMissing':

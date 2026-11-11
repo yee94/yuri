@@ -21,6 +21,7 @@ export const registerScheduledTaskSessionSkill = (app, {
   getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
   readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
   scheduledTaskRouter,
+  remoteConnectionsAdapter = null,
   registrationFile = resolveSharedServiceRegistrationPath(),
   createClient = () => makeOpenCodeV2Client({
     baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract,
@@ -86,7 +87,7 @@ export const registerScheduledTaskSessionSkill = (app, {
         key: SCHEDULED_TASK_SKILL_KEY,
         value: `Yuri built-in skill: scheduled tasks. When the user asks to create, find, edit, pause, resume or delete scheduled tasks (including other projects and global tasks), load the skill by running:\n${scheduledTaskSkillCommand(executable, script, encoded, 'describe')}\nThe result supplies the workflow and authenticated task-management commands. Prefer this session's tasks when the target is unspecified. Do not ask for credentials or project IDs.`,
       });
-      await installCustomization(client, created.id);
+      await installCustomization(client, created.id, remoteConnectionsAdapter ? { hostOrigin, upstreamOrigin, registrationFile } : undefined);
       return res.json({ data: created });
     } catch {
       let retainedSessionID = created?.id;

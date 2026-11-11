@@ -334,12 +334,13 @@ export const useNativeMobileChrome = (): void => {
     void import('@capacitor/keyboard').then(async ({ Keyboard }) => {
       if (disposed) return;
       // Keyboard choreography:
-      //   Android, and iOS with the WebView composer — the native IME owner
+      //   Android/iOS bottom WebView composers — the native IME owner
       //            translates the WebView with the system keyboard animation;
       //            a pinned header WebView holds the header during motion and
       //            the page absorbs the height at its top once the keyboard rests.
       //   iOS with the native liquid-glass composer — resize:none + shell
       //            shrink (--yuri-kb-layout); the native overlay pins itself.
+      //   Ordinary fields — only local overlay/scroll insets, no page lift.
       const platform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
       const isAndroid = platform === 'android';
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined);
@@ -392,46 +393,67 @@ export const useNativeMobileChrome = (): void => {
         safeBottomPx = shell ? parseFloat(getComputedStyle(shell).paddingBottom) || 0 : 0;
       };
 
-      // ── Native IME owner (Android always; iOS WebView composer path) ─────
+      // ── Native IME owner (bottom WebView composers only) ────────────────
       // Native translates the WebView with the system keyboard animation and
       // a pinned header WebView holds the header; JS only receives bookends.
       // iOS hands the keyboard back to the web path below whenever the native
       // liquid-glass composer is active (it owns its own keyboard pin).
       const iosNativeIme = !isAndroid && platform === 'ios';
-      const syncIosNativeIme = () => {
-        const enabled = !root.classList.contains(NATIVE_IOS_COMPOSER_CLASS);
-        if (enabled === iosNativeImeEnabled) return;
-        iosNativeImeEnabled = enabled;
-        if (enabled) {
-          // Leave no web-path lift behind when native takes over.
-          setInset(0);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', 0);
-          root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating', 'yuri-kb-caret-hold', 'yuri-kb-hide');
-          layoutApplied = false;
-          keyboardOpen = false;
-        }
+      let nativeImeEnabled: boolean | null = null;
+      const syncNativeIme = () => {
+        const active = document.activeElement;
+        const deferred = iosNativeIme && shouldDeferWebKeyboardToNativeComposer(
+          root.classList.contains(NATIVE_IOS_COMPOSER_CLASS), active,
+        );
+        // A plain blur can start interactive dismissal. Retain its native owner
+        // through the close animation; a newly focused ordinary field releases
+        // it immediately, even when the IME sends no further frame change.
+        const enabled = !deferred && (isTextFieldLike(active)
+          ? isComposerKeyboardTarget(active)
+          : nativeImeEnabled === true);
+        if (enabled === nativeImeEnabled) return;
+        nativeImeEnabled = enabled;
+        // Leave no previous owner's shell lift behind on either handoff.
+        setInset(enabled ? 0 : keyboardHeight);
+        setVar('--yuri-kb-layout', 0);
+        measureSafeBottom();
+        setVar('--yuri-kb-scroll-inset', enabled ? 0 : Math.max(0, keyboardHeight - safeBottomPx));
+        root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating', 'yuri-kb-caret-hold', 'yuri-kb-hide');
+        layoutApplied = false;
+        keyboardOpen = !enabled && keyboardHeight > 0;
         root.classList.toggle('yuri-native-ime', enabled);
         void nativeImeHeader.setImeSync({ enabled }).catch(() => undefined);
       };
-      let iosNativeImeEnabled: boolean | null = null;
       if (isAndroid || iosNativeIme) {
-        if (isAndroid) root.classList.add('yuri-native-ime');
         setInset(0);
         setVar('--yuri-kb-layout', 0);
         setVar('--yuri-kb-scroll-inset', 0);
         const handleImeState = (event: Event) => {
           type ImeState = {
             open?: boolean;
+            height?: number;
             phase?: 'start' | 'settled';
             durationMs?: number;
           };
           const nativeEvent = event as Event & ImeState & { detail?: ImeState };
-          if (iosNativeIme && !iosNativeImeEnabled) return;
+          if (iosNativeIme && !nativeImeEnabled) return;
           // Capacitor triggerJSEvent exposes payload fields on the event object;
           // CustomEvent detail remains supported for browser/test dispatches.
           const detail = nativeEvent.detail ?? nativeEvent;
           if (typeof detail.open !== 'boolean') return;
+          if (typeof detail.height === 'number') {
+            keyboardHeight = detail.open ? detail.height / (isAndroid ? window.devicePixelRatio || 1 : 1) : 0;
+          }
+          if (isAndroid && !nativeImeEnabled) {
+            // No native translation for ordinary inputs. Only their local
+            // overlay/scroll region reserves keyboard space, never the shell.
+            setInset(keyboardHeight);
+            measureSafeBottom();
+            setVar('--yuri-kb-scroll-inset', Math.max(0, keyboardHeight - safeBottomPx));
+            root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating');
+            dispatchKb('yuri:keyboard-settled', { open: detail.open, nativeResize: false });
+            return;
+          }
           const animating = detail.phase === 'start';
           root.classList.toggle('yuri-keyboard-open', detail.open || animating);
           root.classList.toggle('yuri-kb-animating', animating);
@@ -457,17 +479,19 @@ export const useNativeMobileChrome = (): void => {
         cleanup.push(() => window.removeEventListener('yuri:ime-state', handleImeState));
         // Pinned header WebView + top layout offset (see nativeImeHeader).
         if (!disposed) cleanup.push(startNativeImeHeader());
-        if (isAndroid) return;
-        syncIosNativeIme();
-        const composerObserver = new MutationObserver(syncIosNativeIme);
+        syncNativeIme();
+        document.addEventListener('focusin', syncNativeIme, true);
+        const composerObserver = new MutationObserver(syncNativeIme);
         composerObserver.observe(root, { attributes: true, attributeFilter: ['class'] });
         cleanup.push(() => {
           composerObserver.disconnect();
+          document.removeEventListener('focusin', syncNativeIme, true);
           root.classList.remove('yuri-native-ime');
           void nativeImeHeader.setImeSync({ enabled: false }).catch(() => undefined);
         });
+        if (isAndroid) return;
       }
-      const webKeyboardActive = () => !(iosNativeIme && iosNativeImeEnabled);
+      const webKeyboardActive = () => !(iosNativeIme && nativeImeEnabled);
 
       // ── iOS: shrink the shell immediately (no transform FLIP) ────────────
       const IOS_IME_RATIO_STORAGE_KEY = 'yuri.iosImeHeightRatio.v1';

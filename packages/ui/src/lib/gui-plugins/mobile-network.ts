@@ -6,7 +6,7 @@ import { getRuntimeApiBaseUrl, getRuntimeGeneration, subscribeRuntimeEndpointCha
 import { refreshRuntimeUrlAuthToken, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { createMobileGuiWireFactory } from './mobile-network-wire';
-import { mobileGuiNetworkBridge as plugin, type MobileGuiDirectTarget, type MobileGuiNetworkEvent as NativeEvent } from './mobile-network-bridge';
+import { mobileGuiNetworkBridge as plugin, prepareMobileGuiNetwork, type MobileGuiDirectTarget, type MobileGuiNetworkEvent as NativeEvent } from './mobile-network-bridge';
 
 const CHUNK = 16 * 1024;
 const WINDOW = 128 * 1024;
@@ -263,6 +263,8 @@ export async function openMobileGuiNetwork(signal: AbortSignal, onFailure: () =>
   const aborted = () => { void release().catch(() => {}); };
   try {
     await previous;
+    assertCurrent();
+    await prepareMobileGuiNetwork();
     assertCurrent();
     if (!(await plugin.capabilities()).supported) throw new Error('unsupported');
     assertCurrent();

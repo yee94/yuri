@@ -59,16 +59,17 @@ Website URLs, cookies, browser cross-origin checks and end-to-end website TLS
 remain browser-owned. No hostname bypass or direct fallback is configured, but
 the current iOS implementation has a verified platform routing bypass below.
 
-Mobile startup prepares the persistent gateway before importing runtime network
-configuration. The Provider switches it to plugin egress before evaluating any GUI
-bundle, and keeps the lease until the host is disposed, covering setup, panels and
-settings as well as pages. Closing a page does not release it. Switching is local:
-the plugin Relay channel connects on the first plugin connection and reconnects with
-backoff after loss without disposing plugins. Yuri's own Relay, runtime and LAN
-endpoints always connect directly, so plugin traffic cannot stall application sync.
-Apps appears as soon as an enabled GUI plugin exists; its sheet shows loading/retry. Built-in HTML files and URL sheets hold
-independent references; the final release returns the gateway to ordinary application
-forwarding while retaining the proxy.
+This is an increment: application networking (startup, sync, sending, pairing a new
+device by QR) keeps its original path and never touches the gateway. The WebView proxy
+points at the gateway only while a plugin view (page/panel/settings) or built-in HTML
+preview is mounted; the loopback listener is bound for that lease, and the last release
+restores the previous proxy configuration and closes the listener. Plugin
+loading and setup do not wait for, or use, the gateway. The plugin Relay channel connects
+on the first plugin connection and reconnects with backoff after loss. While a lease is
+held, Yuri's own Relay, runtime and LAN hosts are excluded at the WebView proxy layer.
+iOS defuncts the loopback listener while suspended and Android's accept loop can end;
+both rebind and repoint an active lease, so returning to the app needs no restart.
+Apps appears as soon as an enabled GUI plugin exists; its sheet shows loading/retry.
 Old shells, iOS below 17,
 Android WebViews without `PROXY_OVERRIDE`, and connections without a saved Relay
 candidate cannot activate native GUI plugins. Hosted mobile global pages remain
@@ -336,15 +337,17 @@ is Android 11+; older systems use the compatibility callback.
 `yuri:ime-state` sends `phase: start | settled`, visibility, informational window-px
 height, system duration and `nativeResize: true` only at bookends or standalone
 inset changes. `useNativeMobileChrome` sets presentation state but never caches
-height, transforms the composer, or subtracts another CSS inset. Portaled sheets,
-question fields and the chat use the same resized viewport. Only settled native
+height for prediction or transforms the composer. Native translation and page
+offset handoff are enabled only while a bottom `.yuri-mobile-composer` input owns
+focus. Search, question cards and other fields leave the full page in place and
+reserve only local overlay/scroll space. Only settled native
 close blurs a focused composer; Settings/picker search retain focus, and cancelled
 Back preserves the composer. `useChatAutoFollow` retains scroll ownership: its
 ordinary resize observer keeps following at the live edge. Before native layout,
 `yuri:keyboard-native-layout` captures the viewport in that same owner; released
 history compensates once for the native translation already shown, without
 acquiring follow. Thus A moves history too (unlike the earlier resize experiment).
-iOS, hosted mobile and desktop retain their existing behavior.
+Hosted mobile and desktop retain their existing behavior.
 
 Install this experiment as a debug APK with its matching bundled Web assets;
 do not publish the Web changes alone to older native shells. Native frame sizing
@@ -360,6 +363,17 @@ replay button/link taps but cannot own editable focus or preserve search-page
 ancestor selectors. Global search therefore retains its live header and styling;
 returning to a conversation restores the ordinary mirror. This is a shared web
 bundle change; physical Android/iOS keyboard validation is still required.
+
+`YuriNativeHeader.setImeSync` gates the native lift on both platforms. A focus
+transfer to an ordinary input releases the lift immediately, without waiting for
+another keyboard notification. A plain blur retains the owner through native
+keyboard dismissal/cancellation. iOS native liquid-glass input retains its own
+owner; bottom Side Chat uses the web-composer path. iOS records keyboard frames
+while disabled so a search-to-chat transfer can recover an already-open keyboard;
+stale animation completions cannot settle a newer owner. Ownership updates are
+focus/class-driven, not per keystroke. The complete fix requires new iOS/Android
+native builds; older iOS shells can accept the focus gate via the web bundle but
+do not have the already-open-keyboard recovery. Older Android shells lack the gate.
 
 ## Native iOS Composer
 

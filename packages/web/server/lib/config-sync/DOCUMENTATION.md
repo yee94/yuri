@@ -74,6 +74,7 @@ Routes under `/api/yuri/config-sync/*` (global `/api` auth gate: session or clie
 | PUT | `/credentials` | Bounded credential import for local pull and SSH-forwarded transfer |
 | GET | `/magpie/inventory` | `{ magpie: { available, installed } }`, metadata only; never installs |
 | PUT | `/magpie` | Magpie config/authorization restore and verification for local pull and SSH-forwarded transfer; installs missing CLI |
+| POST | `/magpie/gateway` | Explicit headless gateway preparation: verified CLI install/reuse and healthcheck; POSIX tmux upsert when not already healthy |
 | POST | `/finalize` | Confirm backup generation + success receipt |
 | POST | `/abort` | Clear inflight |
 
@@ -107,3 +108,14 @@ Selected sync also publishes `~/.local/bin/magpie` (`magpie.exe` on Windows), a 
 The `magpie` transfer kind exports a bounded `magpie-sync-v2` JSON envelope containing the encrypted native backup, a random per-transfer passphrase and portable authorizations. The envelope is sensitive and stays in memory on authenticated sync transports; Relay adds its existing E2EE. New receivers accept old `magpie-sync-v1` config-only envelopes with the original warning behavior; old receivers reject v2 rather than silently discarding its accounts. Upgrade both hosts for authorization sync. Validate the entire envelope before installation or restore. Passphrases go to child stdin, never argv, run logs or disk. Private temporary directories hold native encrypted backups and, during native Codex import only, a mode-0600 credential file; both are removed on success/failure. Raw child output is sanitized before reporting. A zero exit with genuinely missing/unsupported sign-ins, unavailable agent settings, or plugins that Magpie could not install returns `magpieWarnings` (`sign_in_required`, `agent_settings_skipped`, `plugin_install_failed`). Plugin-install failures no longer abort the transfer: remaining configuration and accounts continue, verification skips accounts for plugins that never appeared on the destination, and the receipt warns. The sign-in warning is recomputed after authorization transfer, not copied from the pre-transfer native restore. Receipts carry these codes through SSH/direct/Relay and desktop IPC to localized completion warnings. Provider/API-key, library and other account-import failures remain errors. CLI failure can leave configuration and earlier accounts applied; retry merges idempotently. There is no cross-application rollback, and process termination can interrupt cleanup.
 
 `/put/magpie` requires a selected prepared plan and finalize requires its receipt. Standalone `/magpie` is the corresponding authenticated host operation for SSH and local pull. Both use one host-local import/export lock. Desktop main only moves bytes and resolves the local host at call time; the web host owns process execution and installation, including under backend OTA. Web/mobile hosts can receive this operation; the initiating wizard remains desktop-only. No credential values enter previews or sync-run summaries.
+
+Explicit session SSH setup additionally calls `/magpie/gateway` when Magpie is
+installed on the source, independently of transferable config availability.
+`ensureGateway` shares the host Magpie lock, verifies `serve` support and reuses
+a passing native `healthcheck`. Otherwise it reuses/creates the user's
+`yuri-magpie` tmux session running the verified CLI's `serve`, then requires a
+passing healthcheck. It does not replace unhealthy sessions, expose a web admin
+page, change gateway bindings/keys or install tmux. Windows startup is explicitly
+unsupported when no gateway is already healthy. Failures are sanitized; the
+session setup adapter records a warning without disconnecting SSH. Gateway
+health is not evidence of model inference or successfully transferred accounts.

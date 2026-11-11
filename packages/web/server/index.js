@@ -1872,6 +1872,7 @@ async function main(options = {}) {
   relayService.registerRoutes(app);
 
   await featureRoutesRuntime.registerRoutes(app, {
+    remoteConnectionsAdapter: options.remoteConnectionsAdapter,
     express,
     uiAuthController,
     crypto,

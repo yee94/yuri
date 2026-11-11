@@ -30,6 +30,12 @@ export interface StartWebUiServerOptions {
   messageQueueDbPath?: string | null;
   messageQueueAttachmentRoot?: string | null;
   hostUpdateStateFile?: string;
+  /** Local desktop session bridge only; not exposed as renderer/native IPC. */
+  remoteConnectionsAdapter?: {
+    list: () => Promise<unknown>;
+    setup: (input: { id?: string; sshCommand?: string; nickname?: string }) => Promise<unknown>;
+    pair: (input: { id?: string; relayUrl?: string; label?: string }) => Promise<unknown>;
+  };
   getHostUpdateVersion?: () => string;
   remoteDesktopAdapter?: {
     supported: boolean;

@@ -13,7 +13,21 @@ vi.mock('@/lib/runtime-fetch', () => ({
   runtimeFetch: async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }),
 }));
 
-vi.mock('@capacitor/keyboard', () => ({ Keyboard: { setAccessoryBarVisible: async () => undefined } }));
+const keyboard = vi.hoisted(() => ({
+  listeners: new Map<string, (info: { keyboardHeight: number }) => void>(),
+  setImeSync: vi.fn(async (_options: { enabled: boolean }) => undefined),
+}));
+vi.mock('@/mobile/nativeImeHeader', () => ({
+  nativeImeHeader: { setImeSync: keyboard.setImeSync },
+  startNativeImeHeader: () => () => undefined,
+}));
+vi.mock('@capacitor/keyboard', () => ({ Keyboard: {
+  setAccessoryBarVisible: async () => undefined,
+  addListener: async (event: string, handler: (info: { keyboardHeight: number }) => void) => {
+    keyboard.listeners.set(event, handler);
+    return { remove: async () => { keyboard.listeners.delete(event); } };
+  },
+} }));
 vi.mock('@capacitor/status-bar', () => ({ StatusBar: {
   setOverlaysWebView: async () => undefined, setBackgroundColor: async () => undefined,
   setStyle: async () => undefined, show: async () => undefined,
@@ -25,6 +39,8 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  keyboard.listeners.clear();
+  keyboard.setImeSync.mockClear();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal('Capacitor', { isNativePlatform: () => true, getPlatform: () => 'android' });
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -42,9 +58,104 @@ afterEach(async () => {
   container.remove();
   document.getElementById('mobile-overlay-root')?.remove();
   document.documentElement.classList.remove('yuri-native-app-active');
+  document.documentElement.classList.remove('yuri-native-ios-composer');
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe.each(['ios', 'android'])('%s native IME lift ownership', (platform) => {
+  beforeEach(() => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true, getPlatform: () => platform });
+  });
+
+  test('search and ordinary question inputs never arm whole-page translation', async () => {
+    await act(async () => root.render(<Host initialFocus="settings" />));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    expect(document.documentElement.classList.contains('yuri-native-ime')).toBe(false);
+    await act(async () => keyboard.listeners.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    expect(document.documentElement.style.getPropertyValue('--yuri-kb-layout')).toBe('0px');
+    const question = document.createElement('textarea');
+    container.append(question);
+    await act(async () => question.focus());
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    expect(document.documentElement.classList.contains('yuri-native-ime')).toBe(false);
+  });
+
+  test('composer to search transfer releases lift without waiting for another keyboard frame', async () => {
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+    await ime(true, 'native');
+    const search = container.querySelector<HTMLInputElement>('input')!;
+    await act(async () => search.focus());
+    expect(document.activeElement).toBe(search);
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    expect(document.documentElement.classList.contains('yuri-native-ime')).toBe(false);
+    expect(document.documentElement.classList.contains('yuri-keyboard-open')).toBe(false);
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('300px');
+    await act(async () => container.querySelector<HTMLTextAreaElement>('textarea')!.focus());
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('0px');
+  });
+
+  test('blur and cancelled dismiss retain native choreography; typing does not republish ownership', async () => {
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await ime(true, 'native');
+    keyboard.setImeSync.mockClear();
+    await act(async () => {
+      for (let index = 0; index < 50; index++) composer.dispatchEvent(new Event('input', { bubbles: true }));
+      composer.blur();
+    });
+    expect(keyboard.setImeSync).not.toHaveBeenCalled();
+    await ime(false, 'native', 'start');
+    await act(async () => composer.focus());
+    await ime(true, 'native');
+    expect(document.activeElement).toBe(composer);
+    expect(keyboard.setImeSync).not.toHaveBeenCalled();
+  });
+
+  test('no focused input leaves native lift off and unmount releases the owner', async () => {
+    await act(async () => root.render(<Host />));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    await act(async () => container.querySelector<HTMLTextAreaElement>('textarea')!.focus());
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+    const detachedSearch = container.querySelector<HTMLInputElement>('input')!;
+    const anotherField = document.createElement('input');
+    document.body.append(anotherField);
+    await act(async () => root.render(null));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    keyboard.setImeSync.mockClear();
+    anotherField.focus();
+    anotherField.remove();
+    expect(detachedSearch.isConnected).toBe(false);
+    expect(keyboard.setImeSync).not.toHaveBeenCalled();
+  });
+
+  if (platform === 'ios') test('native composer yields only to the bottom Side Chat, never search', async () => {
+    document.documentElement.classList.add('yuri-native-ios-composer');
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    const sideChat = document.createElement('form');
+    sideChat.className = 'yuri-mobile-composer';
+    sideChat.dataset.btwComposer = '';
+    const field = document.createElement('textarea');
+    sideChat.append(field);
+    container.append(sideChat);
+    await act(async () => field.focus());
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+    await act(async () => container.querySelector<HTMLInputElement>('input')!.focus());
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+  });
+
+  if (platform === 'ios') test('native composer ownership changes release the web lift before another focus', async () => {
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+    await act(async () => document.documentElement.classList.add('yuri-native-ios-composer'));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: false });
+    await act(async () => document.documentElement.classList.remove('yuri-native-ios-composer'));
+    expect(keyboard.setImeSync).toHaveBeenLastCalledWith({ enabled: true });
+  });
 });
 
 function Host({ initialFocus }: { initialFocus?: 'settings' | 'composer' }) {
@@ -138,7 +249,7 @@ describe('Android native IME close during Settings picker focus transfer', () =>
     const input = document.querySelector<HTMLElement>('[data-testid="settings-field"]')!;
     await act(async () => input.focus());
     await ime(true, 'native');
-    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('0px');
+    expect(document.documentElement.style.getPropertyValue('--yuri-keyboard-inset')).toBe('300px');
     await ime(false, 'native');
     expect(document.activeElement === input).toBe(true);
     expectClosedGeometry();

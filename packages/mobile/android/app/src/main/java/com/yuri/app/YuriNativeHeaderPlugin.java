@@ -32,6 +32,15 @@ public class YuriNativeHeaderPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setImeSync(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        getActivity().runOnUiThread(() -> {
+            ((MainActivity) getActivity()).setImeSyncEnabled(enabled);
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
     public void update(PluginCall call) {
         JSObject data = call.getData();
         getActivity().runOnUiThread(() -> {

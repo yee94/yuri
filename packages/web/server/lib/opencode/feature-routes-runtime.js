@@ -1,4 +1,5 @@
 import { registerFsRoutes } from '../fs/routes.js';
+import { registerRemoteConnectionsSkill } from '../gui-customization/remote-connections.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
 import { registerSessionMetadataRoutes } from '../session-metadata/routes.js';
@@ -130,6 +131,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
       getIsExternalOpenCode = () => false,
       getIsSharedOpenCodeService = () => false,
+      remoteConnectionsAdapter = null,
       forceResolvedOpenCodeBinary = null,
       upgradeOpenCodeCli = null,
       restartOpenCode = null,
@@ -255,6 +257,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
       readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
       scheduledTaskRouter,
+      remoteConnectionsAdapter,
+    });
+    registerRemoteConnectionsSkill(app, {
+      express, adapter: remoteConnectionsAdapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
     });
     registerCustomizationSessionSkill(app, {
       express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady,

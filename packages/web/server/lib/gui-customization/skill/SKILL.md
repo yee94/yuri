@@ -1,11 +1,11 @@
 ---
 name: yuri-customization
-description: Customize Yuri through GUI plugins for appearance, work-status widgets, global pages, custom file previews, export actions, panels, commands, and settings.
+description: Configure Yuri SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
 ---
 
 # Yuri customization
 
-Use a standard OpenCode GUI plugin to change the running Yuri UI without modifying Yuri's source or installation. This skill describes Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
+For SSH setup, configuration sync or Relay pairing, first check this session's pointer for its exact bound local desktop helper command. Without that command, report unavailable and stop this branch: a script file or another capability's binding does not enable it. With the command, follow [remote connections](references/remote-connections.md). For UI changes, use the plugin workflow below. Its GUI contracts describe Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
 
 ## Workflow
 

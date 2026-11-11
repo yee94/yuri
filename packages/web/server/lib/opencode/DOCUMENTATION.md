@@ -539,7 +539,13 @@ When adding or changing Host HTTP APIs that mobile/desktop clients reach over Pr
     - `GET /api/client-auth/pairing/transports`: returns direct transport availability. `relayAvailable` is true for desktop and SSH-managed remote hosts (`YURI_RUNTIME=desktop|ssh-remote`); local `dev` / `web` / ordinary CLI servers report false and omit Relay URL fields so the create-device dialog never defaults to Anywhere or probes the relay.
    - `GET /connect`
    - `POST /api/system/probe-url`
-   - `app.use('/api', ...)` auth/tunnel guard
+    - `app.use('/api', ...)` auth/tunnel guard
+      - The scheduled-task and remote-connection session bridges admit only
+        loopback POST without Origin and with the shared OpenCode service Basic
+        credential. Browser/session/bearer/Relay auth cannot enter these paths.
+        Each bridge then verifies the admitted session's Host binding; the remote
+        connection bridge also requires the injected local Electron adapter.
+        See `../gui-customization/DOCUMENTATION.md` for operations and limits.
 - `registerSettingsUtilityRoutes(app, dependencies)`: registers small settings utility endpoints:
    - `GET /api/config/themes`
    - `POST /api/config/reload`

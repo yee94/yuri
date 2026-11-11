@@ -28,7 +28,7 @@ type HeaderPayload = {
 
 type NativeHeaderPlugin = {
   update(payload: HeaderPayload): Promise<void>;
-  /** iOS only: native keyboard choreography, off while the native composer owns IME. */
+  /** Native lift is reserved for focused bottom web composers, never ordinary fields. */
   setImeSync(options: { enabled: boolean }): Promise<void>;
   addListener(event: 'shown', handler: (event: { seq: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'tap', handler: (event: { path: string }) => void): Promise<PluginListenerHandle>;

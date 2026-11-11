@@ -50,6 +50,7 @@ final class ImeSyncBridge {
     private View rootView;
     private WebView webView;
     private int currentInset;
+    private boolean enabled;
     /** IME px the page layout currently absorbs (acknowledged). */
     private int webOffset;
     private int requestedOffset = -1;
@@ -94,7 +95,7 @@ final class ImeSyncBridge {
                 if (imeAnimations.isEmpty()) {
                     currentInset = imeInset(insets);
                     applyTranslation();
-                    requestOffset(currentInset);
+                    requestOffset(enabled ? currentInset : 0);
                     reportImeState(insets, "settled", 0);
                 }
                 return new WindowInsetsCompat.Builder(insets)
@@ -174,7 +175,7 @@ final class ImeSyncBridge {
                 if (settled != null) {
                     currentInset = imeInset(settled);
                     applyTranslation();
-                    requestOffset(currentInset);
+                    requestOffset(enabled ? currentInset : 0);
                     if (currentInset == webOffset) releaseHeader();
                     reportImeState(settled, "settled", 0);
                 }
@@ -187,6 +188,20 @@ final class ImeSyncBridge {
         return (animation.getTypeMask() & WindowInsetsCompat.Type.ime()) != 0;
     }
 
+    void setEnabled(boolean next) {
+        if (enabled == next) return;
+        enabled = next;
+        applyTranslation();
+        requestOffset(enabled && imeAnimations.isEmpty() ? currentInset : 0);
+        if (enabled && !imeAnimations.isEmpty()) engageHeader();
+        if (!enabled) releaseHeader();
+        // A focus transfer need not cause another inset dispatch. Refresh the
+        // local field inset / composer state from the current native geometry.
+        lastImeHeight = -1;
+        WindowInsetsCompat now = rootView == null ? null : ViewCompat.getRootWindowInsets(rootView);
+        if (now != null) reportImeState(now, imeAnimations.isEmpty() ? "settled" : "start", 0);
+    }
+
     private static int imeInset(WindowInsetsCompat insets) {
         return Math.max(0, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom);
     }
@@ -195,7 +210,7 @@ final class ImeSyncBridge {
         if (webView == null) return;
         // Always the live IME frame. Until the page drops a stale top offset
         // the strip under the pinned header shows page background only.
-        float next = -currentInset;
+        float next = enabled ? -currentInset : 0;
         if (webView.getTranslationY() != next) webView.setTranslationY(next);
     }
 
@@ -227,6 +242,7 @@ final class ImeSyncBridge {
      * coincide at the top.
      */
     private void engageHeader() {
+        if (!enabled) return;
         NativeHeaderHost header = NativeHeaderHost.current;
         headerGeneration++;
         if (header == null || webView == null || !header.ready()) return;
@@ -243,7 +259,7 @@ final class ImeSyncBridge {
             if (token != headerGeneration || webView == null) return;
             webView.postVisualStateCallback(token, new WebView.VisualStateCallback() {
                 @Override public void onComplete(long requestId) {
-                    if (token != headerGeneration || !imeAnimations.isEmpty()) return;
+                    if (token != headerGeneration || (enabled && !imeAnimations.isEmpty())) return;
                     header.setEngaged(false);
                 }
             });

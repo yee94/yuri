@@ -34,6 +34,12 @@ The header does not probe hosts. Remote windows use read-only `sshHostIds` from
 the desktop host catalog to classify SSH mirrors without privileged SSH reads.
 The active host remains visible even with older installers lacking that metadata.
 
+Desktop window titles resolve saved Host/SSH labels by runtime identity before
+URL matching, including Relay's virtual loopback addresses. They refresh on
+runtime switches and window focus and update native titles on macOS as well as
+other desktop platforms. Title metadata uses runtime-scoped Query state; unrelated
+project metadata and parent renders do not trigger catalog reloads.
+
 Remote Instances SSH row actions show a spinner and disable repeated clicks during
 the local request and every live bootstrap/reconnect phase, including installation
 and updates. Request failure releases the local lock so the user can retry.
@@ -270,6 +276,12 @@ marks the active instance, and switches through the shared mobile connection
 controller in one tap. Busy connections disable switching. A failed connection or
 password challenge opens the existing instance surface; Settings retains instance
 management. With no saved instances, the menu keeps the instance-management entry.
+
+The phone Projects home carries each project's `iconImage` metadata from the
+project store through its home model into the circular project badge. Custom
+uploads and automatically discovered site logos use the shared `ProjectIconImage`
+runtime asset loader; missing, loading or failed images retain the configured
+built-in icon. Replacing or removing the image updates the badge from project state.
 
 The Host version row in About and the desktop remote-instance menu share
 `HostVersionUpdate`. It checks `/api/system/update` through the active runtime,

@@ -1,5 +1,12 @@
 # UI Stores
 
+`openSettingsAtItem` atomically selects a Settings page, opens its surface and
+queues a transient `settingsFocusItemId`. The sidebar logo targets
+`appearance.sidebar-brand`; the mounted Appearance input consumes the request
+after modal focus setup, scrolls into view and selects its text. Closing Settings
+or switching pages cancels pending focus. The request is never persisted and
+ordinary Settings opens do not autofocus the brand field.
+
 Native `openContextPreview`/`openContextBrowser` actions open the transient
 `mobile/useMobileHtmlPreviewStore` URL sheet. Targets carry the runtime generation,
 are not persisted, and are hidden on runtime switch. The sheet and GUI host share

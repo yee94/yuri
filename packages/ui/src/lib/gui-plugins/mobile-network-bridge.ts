@@ -14,12 +14,14 @@ type GuiNetworkPlugin = MobileGuiWireBridge & {
   addListener(event: 'stream', callback: (event: MobileGuiNetworkEvent) => void): Promise<PluginListenerHandle>;
 };
 export const mobileGuiNetworkBridge = registerPlugin<GuiNetworkPlugin>('YuriGuiNetwork');
-let preparation: Promise<void> | undefined;
 
-/** Bootstrap before importing application modules that can create network sessions. */
+/**
+ * Binds the loopback gateway for a lease (idempotent while bound). It does not change
+ * the WebView proxy; native `start` routes through it and the final `stop` tears it down.
+ */
 export function prepareMobileGuiNetwork(): Promise<void> {
   if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable('YuriGuiNetwork')) return Promise.resolve();
   // Old/unsupported shells keep ordinary application networking; native start
   // rejects GUI activation unless preparation completed successfully.
-  return preparation ??= mobileGuiNetworkBridge.prepare().catch(() => {});
+  return mobileGuiNetworkBridge.prepare().catch(() => {});
 }

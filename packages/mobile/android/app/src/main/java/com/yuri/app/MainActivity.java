@@ -11,6 +11,12 @@ public class MainActivity extends BridgeActivity {
     static final String ACTION_ASSISTANT_OPEN_READY = "com.yuri.app.ASSISTANT_OPEN_READY";
 
     private ImeSyncBridge imeSyncBridge;
+    private boolean imeSyncEnabled;
+
+    void setImeSyncEnabled(boolean enabled) {
+        imeSyncEnabled = enabled;
+        if (imeSyncBridge != null) imeSyncBridge.setEnabled(enabled);
+    }
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -49,6 +55,7 @@ public class MainActivity extends BridgeActivity {
                 getBridge().getWebView().post(() -> {
                     imeSyncBridge = new ImeSyncBridge(this);
                     imeSyncBridge.attach();
+                    imeSyncBridge.setEnabled(imeSyncEnabled);
                 })
             );
         }

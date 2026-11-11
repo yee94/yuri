@@ -48,6 +48,7 @@ public class YuriGuiNetworkPlugin extends Plugin {
     private volatile ServerSocket listener;
     private volatile URI relayEndpoint;
     private volatile Set<String> directTargets = new HashSet<>();
+    private volatile Set<String> bypassHosts = new HashSet<>();
     private volatile boolean prepared;
     private boolean destroyed;
     private final List<PluginCall> prepareCalls = new ArrayList<>();
@@ -78,39 +79,54 @@ public class YuriGuiNetworkPlugin extends Plugin {
         if (prepared) { call.resolve(); return; }
         prepareCalls.add(call);
         if (prepareCalls.size() > 1) return;
-        io.execute(() -> {
-            try {
-                ServerSocket server = new ServerSocket(0, 32, InetAddress.getByAddress(new byte[] {127, 0, 0, 1}));
-                synchronized (this) {
-                    if (destroyed) { server.close(); return; }
-                    listener = server;
-                }
-                getActivity().runOnUiThread(() -> {
-                    synchronized (this) { if (destroyed || listener != server) return; }
-                    try {
-                        ProxyConfig config = new ProxyConfig.Builder()
-                            .addProxyRule("socks://127.0.0.1:" + server.getLocalPort())
-                            .removeImplicitRules()
-                            .build();
-                        ProxyController.getInstance().setProxyOverride(config, Runnable::run, () -> finishPrepare(null));
-                    } catch (Exception error) { finishPrepare("proxy_failed"); }
-                });
-                while (listener == server && !server.isClosed()) {
-                    Socket socket = server.accept();
-                    synchronized (this) {
-                        if (listener != server || streams.size() >= 32) { socket.close(); continue; }
-                        long id = sequence.updateAndGet(value -> value >= 0xffffffffL ? 1 : value + 1);
-                        Stream stream = new Stream(socket);
-                        String owner = scope;
-                        streams.put(id, stream);
-                        io.execute(() -> read(owner, id, stream));
-                    }
-                }
-            } catch (Exception error) {
-                emit(scope, new JSObject().put("type", "failed"));
-                finishPrepare("proxy_failed");
+        io.execute(() -> listen(0));
+    }
+
+    /**
+     * Ordinary application networking keeps its original path: the WebView only
+     * routes through this gateway while a plugin view holds a lease. A lost accept
+     * loop rebinds and repoints an active override instead of stranding plugin views.
+     */
+    private void listen(int attempt) {
+        ServerSocket server;
+        try {
+            server = new ServerSocket(0, 32, InetAddress.getByAddress(new byte[] {127, 0, 0, 1}));
+        } catch (Exception error) {
+            synchronized (this) { if (destroyed) return; }
+            if (!prepared) { finishPrepare("proxy_failed"); return; }
+            if (attempt < 5) {
+                try { Thread.sleep(1000); } catch (InterruptedException interrupted) { return; }
+                listen(attempt + 1);
             }
-        });
+            return;
+        }
+        synchronized (this) {
+            if (destroyed) { try { server.close(); } catch (Exception ignored) { } return; }
+            listener = server;
+        }
+        finishPrepare(null);
+        applyProxy();
+        try {
+            while (listener == server && !server.isClosed()) {
+                Socket socket = server.accept();
+                synchronized (this) {
+                    if (listener != server || streams.size() >= 32) { socket.close(); continue; }
+                    long id = sequence.updateAndGet(value -> value >= 0xffffffffL ? 1 : value + 1);
+                    Stream stream = new Stream(socket);
+                    String owner = scope;
+                    streams.put(id, stream);
+                    io.execute(() -> read(owner, id, stream));
+                }
+            }
+        } catch (Exception error) {
+            boolean rebind;
+            synchronized (this) {
+                rebind = !destroyed && listener == server;
+                if (rebind) listener = null;
+            }
+            try { server.close(); } catch (Exception ignored) { }
+            if (rebind) listen(0);
+        }
     }
 
     private synchronized void finishPrepare(String error) {
@@ -119,6 +135,31 @@ public class YuriGuiNetworkPlugin extends Plugin {
             if (prepared) call.resolve(); else call.reject("proxy_failed");
         }
         prepareCalls.clear();
+    }
+
+    /** Applies or clears the WebView override to match the current lease. */
+    private void applyProxy() {
+        final String owner;
+        final ServerSocket server;
+        final Set<String> bypass;
+        synchronized (this) {
+            if (destroyed) return;
+            owner = scope; server = listener; bypass = bypassHosts;
+        }
+        getActivity().runOnUiThread(() -> {
+            synchronized (this) { if (destroyed || !java.util.Objects.equals(scope, owner) || listener != server) return; }
+            try {
+                if (owner == null || server == null) {
+                    ProxyController.getInstance().clearProxyOverride(Runnable::run, () -> {});
+                    return;
+                }
+                ProxyConfig.Builder builder = new ProxyConfig.Builder()
+                    .addProxyRule("socks://127.0.0.1:" + server.getLocalPort())
+                    .removeImplicitRules();
+                for (String host : bypass) builder.addBypassRule(host);
+                ProxyController.getInstance().setProxyOverride(builder.build(), Runnable::run, () -> {});
+            } catch (Exception ignored) { }
+        });
     }
 
     @PluginMethod public synchronized void start(PluginCall call) {
@@ -133,20 +174,25 @@ public class YuriGuiNetworkPlugin extends Plugin {
         } catch (Exception error) { call.reject("invalid_relay"); return; }
         if (!prepared) { call.reject("unsupported"); return; }
         Set<String> direct = new HashSet<>();
+        Set<String> hosts = new HashSet<>();
         try {
             JSArray targets = call.getArray("direct", new JSArray());
             for (int i = 0; i < targets.length() && i < 32; i++) {
                 org.json.JSONObject target = targets.getJSONObject(i);
                 String hostname = target.optString("hostname", "");
                 int port = target.optInt("port", 0);
-                if (!hostname.isEmpty() && port > 0 && port <= 65535) direct.add(targetKey(hostname, port));
+                if (!hostname.isEmpty() && port > 0 && port <= 65535) {
+                    direct.add(targetKey(hostname, port));
+                    hosts.add(hostname.contains(":") ? "[" + hostname + "]" : hostname);
+                }
             }
         } catch (Exception error) { call.reject("invalid_direct"); return; }
         // JS serializes leases, so an existing scope belongs to a reloaded document
         // that can no longer release it. Replace it instead of failing forever.
         if (scope != null) releaseRelay();
-        scope = next; relayEndpoint = relay; directTargets = direct;
+        scope = next; relayEndpoint = relay; directTargets = direct; bypassHosts = hosts;
         for (Long id : streams.keySet()) close(null, id, false);
+        applyProxy();
         call.resolve();
     }
 
@@ -297,6 +343,11 @@ public class YuriGuiNetworkPlugin extends Plugin {
         String owner = call.getString("scope");
         if (owner == null || !owner.equals(scope)) { call.resolve(); return; }
         releaseRelay();
+        // The gateway exists only for a lease; the next lease binds a fresh one.
+        ServerSocket server = listener;
+        listener = null; prepared = false;
+        try { if (server != null) server.close(); } catch (Exception ignored) { }
+        applyProxy();
         call.resolve();
     }
     private void releaseRelay() {
@@ -304,6 +355,7 @@ public class YuriGuiNetworkPlugin extends Plugin {
         scope = null;
         relayEndpoint = null;
         directTargets = new HashSet<>();
+        bypassHosts = new HashSet<>();
         for (WebSocket wire : wires.values()) wire.cancel();
         wires.clear();
         for (Long id : streams.keySet()) close(owner, id, false);

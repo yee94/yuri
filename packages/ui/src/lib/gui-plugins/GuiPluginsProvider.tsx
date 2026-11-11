@@ -199,13 +199,8 @@ export function GuiPluginsProvider({ children, ready = true }: { children: React
     let loaded: GuiPluginHost | undefined;
     setHostError(null);
     void afterGuiPaint(controller.signal).then(async () => {
-      // Routing plugin egress is a local gateway switch; the plugin Relay channel
-      // connects on first plugin request, so loading never waits for it. A lost
-      // channel only fails in-flight plugin requests and reconnects on next use.
-      if (mobileNetworkRequired) {
-        const { acquireMobileHtmlNetwork } = await import('@/lib/preview/mobile-html-network');
-        await acquireMobileHtmlNetwork(controller.signal, () => {});
-      }
+      // Loading keeps the application's original network path. Only mounted plugin
+      // views hold the Relay egress lease (GuiPluginMount), so sync never depends on it.
       return Promise.all([import('./host'), import('@/lib/opencode/gui'), import('@/components/chat/fileReferenceActions')]);
     }).then(([{ GuiPluginHost }, { createGuiClient }, { openFileReference }]) => {
       if (controller.signal.aborted || getRuntimeTransportIdentity() !== transport) return;

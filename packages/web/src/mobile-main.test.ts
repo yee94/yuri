@@ -8,16 +8,10 @@ vi.mock('@yuriai/ui/index.css', () => ({}));
 vi.mock('@yuriai/ui/styles/fonts', () => ({}));
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); vi.resetModules(); });
 
-it('prepares the native gateway before runtime configuration can open network connections', async () => {
+it('starts the application on its original network path without the plugin gateway', async () => {
   vi.stubGlobal('window', {});
-  let prepared!: () => void;
-  fixture.prepare.mockImplementation(() => new Promise<void>(resolve => { prepared = resolve; }));
   await import('./mobile-main');
-  expect(fixture.prepare).toHaveBeenCalledOnce();
-  expect(fixture.configure).not.toHaveBeenCalled();
-  expect(fixture.render).not.toHaveBeenCalled();
-  prepared();
   await vi.waitFor(() => expect(fixture.render).toHaveBeenCalledOnce());
   expect(fixture.render).toHaveBeenCalledWith({ marker: 'runtime' });
-  expect(fixture.configure).toHaveBeenCalledOnce();
+  expect(fixture.prepare).not.toHaveBeenCalled();
 });

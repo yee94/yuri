@@ -7,9 +7,13 @@ import { Button } from '@/components/ui/button';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
 
 type Network = { hostOrigin?: string };
-type Props = { children: (network?: Network) => React.ReactNode };
+type Props = {
+  children: (network?: Network) => React.ReactNode;
+  /** Built-in HTML needs the Host HTTP origin; plugin views only need egress routed. */
+  connect?: boolean;
+};
 
-function NativeBoundary({ children }: Props) {
+function NativeBoundary({ children, connect = true }: Props) {
   const { t } = useI18n();
   const generation = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
   const [attempt, retry] = React.useReducer(value => value + 1, 0);
@@ -25,14 +29,14 @@ function NativeBoundary({ children }: Props) {
       if (!controller.signal.aborted) setResult({ generation, attempt, failed: true });
     };
     // HTML needs the Host's HTTP origin from the channel handshake, so it connects now.
-    void acquireMobileHtmlNetwork(controller.signal, fail)
-      .then(lease => lease.connect(controller.signal))
+    void acquireMobileHtmlNetwork(controller.signal, connect ? fail : () => {})
+      .then(lease => connect ? lease.connect(controller.signal) : {})
       .then(network => {
         if (!controller.signal.aborted && !lost) setResult({ generation, attempt, network });
       }).catch(fail);
     // Passive cleanup runs after the iframe/HTML descendants have been removed.
     return () => controller.abort();
-  }, [generation, attempt, failed]);
+  }, [generation, attempt, failed, connect]);
   if (failed) return <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3">
     <FilePreviewError message={t('contextPanel.preview.proxyError')} />
     <Button size="sm" onClick={retry}>{t('contextPanel.preview.actions.retry')}</Button>
@@ -41,7 +45,10 @@ function NativeBoundary({ children }: Props) {
   return children(current.network);
 }
 
-/** No built-in HTML or plugin-owned descendants execute before the native lease. */
-export function MobileHtmlNetworkBoundary({ children }: Props) {
-  return isCapacitorApp() ? <NativeBoundary>{children}</NativeBoundary> : children();
+/**
+ * Built-in HTML and plugin views route through Relay only while mounted; the rest of
+ * the application keeps its original network path.
+ */
+export function MobileHtmlNetworkBoundary({ children, connect }: Props) {
+  return isCapacitorApp() ? <NativeBoundary connect={connect}>{children}</NativeBoundary> : children();
 }

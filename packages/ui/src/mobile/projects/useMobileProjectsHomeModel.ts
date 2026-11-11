@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { Session } from '@/lib/opencode/v2-types';
+import type { ProjectEntry } from '@/lib/api/types';
 
 import {
   getMobileSessionDefaultVisibleCount,
@@ -132,6 +133,7 @@ type ProjectMeta = {
   label: string;
   path: string;
   icon?: string | null;
+  iconImage?: ProjectEntry['iconImage'];
   worktrees: WorktreeMetadata[];
 };
 
@@ -239,6 +241,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
           label: getProjectLabel(path, project.label),
           path,
           icon: project.icon,
+          iconImage: project.iconImage,
           worktrees: orderWorktrees(
             worktreeOrderByProject[project.id],
             worktreesByProject.get(path) ?? [],
@@ -565,6 +568,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
         name: node.project.label,
         path: node.project.path,
         icon: iconName,
+        iconImage: node.project.iconImage,
         sessionCount: node.totalSessions,
         activityLabel: formatRelativeShort(node.latestActivity) || undefined,
         active: node.isActive,

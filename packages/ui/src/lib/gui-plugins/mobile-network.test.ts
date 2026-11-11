@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => fixture.native, isPluginAvailable: () => true },
   registerPlugin: () => ({
+    prepare: async () => {},
     capabilities: async () => ({ supported: fixture.supported }),
     start: (...args: unknown[]) => fixture.start(...args),
     stop: (...args: unknown[]) => fixture.stop(...args),

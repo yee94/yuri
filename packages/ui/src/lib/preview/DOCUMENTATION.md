@@ -12,7 +12,9 @@ Yuri's own Relay/runtime/LAN endpoints always bypass plugin egress.
 `MobileHtmlNetworkBoundary` gates built-in HTML execution on that lease and calls
 `connect()` for the Host HTTP origin. On failure or runtime switch it removes iframe
 descendants before passive cleanup aborts its owner. It exposes a local retry. Ordinary web/desktop/VS Code rendering passes
-through without a native lease. GUI CJS/setup remains gated by its Provider.
+through without a native lease. `GuiPluginMount` uses it with `connect={false}`: plugin
+views route egress while mounted without waiting for the handshake. Plugin loading and
+setup take no lease, and the rest of the application keeps its original network path.
 
 Native mobile `openExternalUrl` loopback links (including bare `localhost:port`),
 `openContextPreview`, and `openContextBrowser` open `MobileHtmlPreviewSheet`.

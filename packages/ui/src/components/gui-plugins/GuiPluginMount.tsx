@@ -5,18 +5,29 @@ import { useI18n } from '@/lib/i18n';
 import { toast } from '@/components/ui';
 import { GuiPreviewActions } from './GuiPreviewActions';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
+import { MobileHtmlNetworkBoundary } from '@/components/preview/MobileHtmlNetworkBoundary';
+import { isCapacitorApp } from '@/lib/platform';
 
 type Host = NonNullable<ReturnType<typeof useGuiPlugins>['host']>;
 
-/** React owns this empty container; the host exclusively owns its descendants. */
-export const GuiPluginMount = React.memo(function GuiPluginMount({ host, contributionKey, kind, revision, fallback, actions }: {
+type Props = {
   host: Host;
   contributionKey: string;
   kind: 'panel' | 'settings' | 'page';
   revision?: string;
   fallback?: React.ReactNode;
   actions?: HTMLElement;
-}) {
+};
+
+/** Native mobile routes plugin egress through Relay only while a plugin view is mounted. */
+export const GuiPluginMount = React.memo(function GuiPluginMount(props: Props) {
+  return isCapacitorApp()
+    ? <MobileHtmlNetworkBoundary connect={false}>{() => <GuiPluginContainer {...props} />}</MobileHtmlNetworkBoundary>
+    : <GuiPluginContainer {...props} />;
+});
+
+/** React owns this empty container; the host exclusively owns its descendants. */
+function GuiPluginContainer({ host, contributionKey, kind, revision, fallback, actions }: Props) {
   const { t } = useI18n();
   const container = React.useRef<HTMLDivElement>(null);
   const [localActions] = React.useState(() => document.createElement('div'));
@@ -77,4 +88,4 @@ export const GuiPluginMount = React.memo(function GuiPluginMount({ host, contrib
       {pending ? <div className="absolute inset-0 flex">{fallback}</div> : null}
     </div>
   );
-});
+}

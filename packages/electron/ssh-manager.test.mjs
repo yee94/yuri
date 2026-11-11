@@ -660,6 +660,190 @@ describe('buildRemoteManagedNodeSelectionFunctions', () => {
     ]);
     expect(selected.endsWith(`${path.sep}odd23${path.sep}node`)).toBe(true);
   });
+
+  test('keeps the Node whose installed Yuri SQLite binding actually loads', async () => {
+    const root = await makeTempDir();
+    const compatible = path.join(root, 'compatible');
+    const newer = path.join(root, 'newer');
+    for (const [dir, version, status] of [[compatible, '22.19.0', 0], [newer, '24.1.0', 1]]) {
+      await fsp.mkdir(dir);
+      await fsp.writeFile(path.join(dir, 'node'), `#!/bin/sh\nif [ "$1" = '-p' ]; then echo '${version}'; else exit ${status}; fi\n`, { mode: 0o755 });
+      await fsp.writeFile(path.join(dir, 'yuri'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+    const result = spawnSync('/bin/sh', ['-c', `${buildRemoteManagedNodeSelectionFunctions()}\nconsider_node '${newer}/node'\nconsider_node '${compatible}/node'\nconsider_node '${newer}/node'\nprintf '%s' "$best_node_bin"`], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(path.join(compatible, 'node'));
+  });
+});
+
+describe('managed remote command isolation', () => {
+  test.each([false, true])('does not read login profiles and handles shell banners (interrupted=%s)', async (interrupted) => {
+    const home = await makeTempDir();
+    const bin = path.join(home, 'bin');
+    await fsp.mkdir(bin);
+    await fsp.writeFile(path.join(home, '.profile'), 'echo profile-was-read\nexit 0\n');
+    await fsp.writeFile(path.join(bin, 'ssh'), `#!/bin/sh\nfor last do :; done\necho 'company shell banner'\n${interrupted ? 'exit 0' : 'exec /bin/sh -c "$last"'}\n`, { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    const oldHome = process.env.HOME;
+    process.env.PATH = `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+    process.env.HOME = home;
+    try {
+      const manager = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+      const command = manager.runManagedRemoteCommand({ args: [], destination: 'fixture' }, 'control', 'printf isolated');
+      if (interrupted) await expect(command).rejects.toThrow('SSH command did not start');
+      else expect(await command).toBe('isolated');
+    } finally { process.env.PATH = oldPath; process.env.HOME = oldHome; }
+  });
+});
+
+describe('first-install configuration sync', () => {
+  const fixture = async () => {
+    const home = await makeTempDir();
+    const manager = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+    manager.getLocalSyncExecutor = () => ({ magpieInventory: async () => ({ available: true, installed: true }) });
+    manager.applyOpencodeConfigSyncToSession = vi.fn(async () => ({ ok: true }));
+    const session = { instance: { id: 'new', remoteYuri: { mode: 'managed' } } };
+    return { manager, session, home };
+  };
+
+  test('atomically appends/reuses session SSH instances without replacing unrelated settings or credentials', async () => {
+    const { manager, home } = await fixture();
+    await manager.mutateSettingsRoot((root) => ({ ...root, projects: [{ id: 'project' }],
+      desktopHosts: [{ id: 'other', url: 'http://127.0.0.1:4321', clientToken: 'fixture-existing' }],
+      desktopSshInitialConfigSyncPending: ['other'] }));
+    const one = { id: 'one', sshCommand: 'ssh user@one', nickname: 'One' };
+    const two = { id: 'two', sshCommand: 'ssh user@two' };
+    await Promise.all([manager.saveSessionConnection(one), manager.saveSessionConnection(two), manager.saveSessionConnection(one)]);
+    const restarted = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+    const root = restarted.readSettingsRoot();
+    expect(root.projects).toEqual([{ id: 'project' }]);
+    expect(root.desktopSshInstances.map(({ id }) => id)).toEqual(['one', 'two']);
+    expect(root.desktopHosts).toContainEqual({ id: 'other', url: 'http://127.0.0.1:4321', clientToken: 'fixture-existing' });
+    expect(root.desktopHosts.find(({ id }) => id === 'one').label).toBe('One');
+    expect(root.desktopSshInitialConfigSyncPending).toEqual(['other']);
+    expect(root.desktopSshInstances[0].remoteYuri.mode).toBe('managed');
+  });
+
+  test.each([{ installed: false, available: false }, { installed: true, available: false }])('chooses the first-install source from installation: %j', async (magpie) => {
+    const { manager, session } = await fixture();
+    manager.getLocalSyncExecutor = () => ({ magpieInventory: async () => magpie });
+    await manager.setInitialConfigSyncPending('new', true);
+    await manager.initializeRemoteConfig('new', session);
+    expect(manager.applyOpencodeConfigSyncToSession).toHaveBeenCalledWith(expect.anything(), {
+      direction: 'push', selections: { providerCredentials: !magpie.installed, magpie: false },
+    });
+  });
+
+  test('syncs local configuration through installed Magpie once, with a durable retry marker', async () => {
+    const { manager, session, home } = await fixture();
+    await manager.setInitialConfigSyncPending('new', true);
+    await manager.initializeRemoteConfig('new', session);
+    expect(manager.applyOpencodeConfigSyncToSession).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'new', session }),
+      { direction: 'push', selections: { providerCredentials: false, magpie: true } },
+    );
+    const restarted = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+    restarted.applyOpencodeConfigSyncToSession = vi.fn();
+    await restarted.initializeRemoteConfig('new', session);
+    expect(restarted.applyOpencodeConfigSyncToSession).not.toHaveBeenCalled();
+  });
+
+  test('a failed sync remains pending across restarts and is retryable', async () => {
+    const { manager, session, home } = await fixture();
+    await manager.setInitialConfigSyncPending('new', true);
+    manager.applyOpencodeConfigSyncToSession.mockRejectedValueOnce(new Error('destination unavailable'));
+    await expect(manager.initializeRemoteConfig('new', session)).rejects.toThrow('Initial SSH config sync failed');
+    const restarted = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+    restarted.getLocalSyncExecutor = manager.getLocalSyncExecutor;
+    restarted.applyOpencodeConfigSyncToSession = vi.fn(async () => ({ ok: true }));
+    await restarted.initializeRemoteConfig('new', session);
+    expect(restarted.applyOpencodeConfigSyncToSession).toHaveBeenCalledOnce();
+    expect(restarted.readSettingsRoot().desktopSshInitialConfigSyncPending).toEqual([]);
+  });
+
+  test('existing installations and external servers never auto-sync', async () => {
+    const { manager, session } = await fixture();
+    await manager.initializeRemoteConfig('new', session);
+    await manager.setInitialConfigSyncPending('new', true);
+    session.instance.remoteYuri.mode = 'external';
+    await manager.initializeRemoteConfig('new', session);
+    expect(manager.applyOpencodeConfigSyncToSession).not.toHaveBeenCalled();
+  });
+
+  test('first install records pending sync before an interrupted package installation', async () => {
+    const { manager, session } = await fixture();
+    manager.ensureManagedNodeRuntime = vi.fn();
+    manager.currentRemoteYuriVersion = async () => null;
+    manager.remoteCommandExists = async () => false;
+    manager.installYuriManaged = async () => {
+      expect(manager.readSettingsRoot().desktopSshInitialConfigSyncPending).toContain('new');
+      throw new Error('installation interrupted');
+    };
+    await expect(manager.ensureRemoteServer(session.instance, {}, 'control')).rejects.toThrow('installation interrupted');
+    expect(manager.readSettingsRoot().desktopSshInitialConfigSyncPending).toEqual(['new']);
+  });
+
+  test('an existing broken CLI is not misidentified as a new install or repaired before daemon discovery', async () => {
+    const { manager, session } = await fixture();
+    manager.ensureManagedNodeRuntime = vi.fn();
+    manager.currentRemoteYuriVersion = async () => null;
+    manager.remoteCommandExists = async () => true;
+    manager.ensureRemoteYuriNativeBinding = vi.fn();
+    manager.installYuriManaged = vi.fn();
+    manager.runManagedRemoteCommand = async () => { throw new Error('better-sqlite3 ABI mismatch'); };
+    await expect(manager.ensureRemoteServer(session.instance, {}, 'control')).rejects.toThrow('better-sqlite3');
+    expect(manager.ensureRemoteYuriNativeBinding).not.toHaveBeenCalled();
+    expect(manager.installYuriManaged).not.toHaveBeenCalled();
+    expect(manager.readSettingsRoot().desktopSshInitialConfigSyncPending).toBeUndefined();
+  });
+
+  test.each([false, true])('the real connect path waits for optional sync but remains connected on sync failure (syncFails=%s)', async (syncFails) => {
+    const { manager, home } = await fixture();
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/sh\nfor last do :; done\nexec /bin/sh -c "$last"\n', { mode: 0o755 });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}:${originalPath}`;
+    try {
+      manager.resolveSshConfig = vi.fn();
+      manager.controlPathForInstance = () => path.join(home, 'fixture.sock');
+      manager.spawnMasterProcess = async () => ({ kill: vi.fn() });
+      manager.waitForMasterReady = vi.fn();
+      manager.ensureRemoteServer = async () => ({ remotePort: 23469, startedByUs: true, uiPassword: 'fixture-password' });
+      manager.spawnMainForward = async (_p, _c, _host, port) => {
+        const server = http.createServer((_req, res) => res.end('{}'));
+        await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
+        servers.push(server);
+        return { exitCode: null, kill: vi.fn() };
+      };
+      manager.issueClientToken = async () => 'fixture-token';
+      manager.spawnMonitor = vi.fn();
+      let finish;
+      let started;
+      const syncing = new Promise(resolve => { started = resolve; });
+      manager.applyOpencodeConfigSyncToSession = vi.fn(() => new Promise((resolve, reject) => {
+        finish = () => syncFails ? reject(new Error('destination unavailable')) : resolve({ ok: true });
+        started();
+      }));
+      await manager.setInitialConfigSyncPending('new', true);
+      const connected = manager.connectBlocking(manager.sanitizeInstance({ id: 'new', sshCommand: 'ssh fixture' }));
+      const outcome = connected.then(() => null, error => error);
+      await syncing;
+      expect(manager.statuses.get('new').phase).not.toBe('ready');
+      expect(manager.spawnMonitor).not.toHaveBeenCalled();
+      finish();
+      expect(await outcome).toBeNull();
+      expect(manager.statuses.get('new').phase).toBe('ready');
+      expect(manager.statuses.get('new').requiresUserAction).toBe(false);
+      expect(manager.sessions.has('new')).toBe(true);
+      expect(manager.readSettingsRoot().desktopSshInitialConfigSyncPending).toEqual(syncFails ? ['new'] : []);
+      if (syncFails) {
+        expect(manager.statuses.get('new').detail).toContain('Initial SSH config sync failed');
+        expect(manager.logs.get('new').some(line => line.includes('[WARN] Initial SSH config sync failed'))).toBe(true);
+      }
+      expect(manager.spawnMonitor).toHaveBeenCalledExactlyOnceWith('new');
+    } finally { process.env.PATH = originalPath; }
+  });
 });
 
 describe('managed SSH relay host defaults', () => {
@@ -984,6 +1168,77 @@ describe('ensureRemoteOpenCodeCli latest 2.x', () => {
     return manager;
   };
 
+  test('absolute runtime pins survive a symlinked HOME, newer PATH Node, and CLI shadowing', async () => {
+    const root = await makeTempDir();
+    const home = path.join(root, 'real-home');
+    const alias = path.join(root, 'home-link');
+    const bin = path.join(home, "CLI's bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.symlinkSync(home, alias);
+    const cli = path.join(bin, 'opencode');
+    fs.writeFileSync(cli, '#!/bin/sh\necho 2.9.0\n', { mode: 0o755 });
+    const env = { ...process.env, HOME: alias, SHELL: '/bin/bash', PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` };
+    const manager = createManager('2.0.12');
+    manager.runManagedRemoteCommand = async (_p, _c, script) => {
+      const result = spawnSync('/bin/sh', ['-c', script], { env, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout;
+    };
+    await manager.ensureRemoteLoginPath({}, '');
+    const newer = path.join(root, 'newer');
+    fs.mkdirSync(newer);
+    fs.writeFileSync(path.join(newer, 'node'), '#!/bin/sh\necho 30.0.0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(newer, 'opencode'), '#!/bin/sh\necho 1.18.0\n', { mode: 0o755 });
+    const result = spawnSync('/bin/sh', ['-c', `${buildRemoteManagedRuntimePrefix()}\nopencode --version\nnode -p 'process.versions.node'\nprintf '%s' "$OPENCODE_BINARY"`], {
+      env: { ...env, PATH: `${newer}:${env.PATH}` }, encoding: 'utf8',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.split('\n')).toEqual(['2.9.0', process.versions.node, cli]);
+  });
+
+  test('finds a working 2.x behind a stale pinned 1.x without reinstalling', async () => {
+    const home = await makeTempDir();
+    const bin = path.join(home, '.bun', 'bin');
+    const config = path.join(home, '.config', 'yuri');
+    fs.mkdirSync(bin, { recursive: true }); fs.mkdirSync(config, { recursive: true });
+    const stale = path.join(home, 'old-opencode');
+    const current = path.join(bin, 'opencode');
+    fs.writeFileSync(stale, '#!/bin/sh\necho 1.18.0\n', { mode: 0o755 });
+    fs.writeFileSync(current, '#!/bin/sh\necho 2.9.0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(config, 'ssh-runtime.sh'), `YURI_SSH_NODE=${JSON.stringify(process.execPath)}\nYURI_SSH_OPENCODE=${JSON.stringify(stale)}\n`);
+    const manager = createManager('2.0.12');
+    manager.remoteCommandExists = vi.fn(() => { throw new Error('must reuse the verified CLI'); });
+    manager.runManagedRemoteCommand = async (_p, _c, script) => {
+      const result = spawnSync('/bin/sh', ['-c', `${buildRemoteManagedRuntimePrefix()}\n${script}`], {
+        env: { ...process.env, HOME: home, SHELL: '/bin/bash' }, encoding: 'utf8',
+      });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout;
+    };
+    await manager.ensureRemoteOpenCodeCli({}, '', 'bun');
+    expect(manager.remoteCommandExists).not.toHaveBeenCalled();
+    expect((await manager.currentRemoteOpenCodeVersion({}, ''))).toBe('2.9.0');
+    expect(fs.readFileSync(path.join(config, 'ssh-opencode-path'), 'utf8').trim()).toBe(current);
+  });
+
+  test('managed bootstrap survives a login profile that replaces bash with zsh', async () => {
+    const home = await makeTempDir();
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'opencode'), '#!/bin/sh\necho 2.9.0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(home, '.bash_profile'), 'exec /bin/zsh\n');
+    const manager = createManager('2.0.12');
+    manager.runManagedRemoteCommand = async (_p, _c, script) => {
+      const result = spawnSync('/bin/sh', ['-c', script], {
+        env: { ...process.env, HOME: home, SHELL: '/bin/bash', PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` }, encoding: 'utf8', timeout: 5000,
+      });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout;
+    };
+    await expect(manager.ensureRemoteLoginPath({}, '')).resolves.toBeUndefined();
+    expect(fs.readFileSync(path.join(home, '.bash_profile'), 'utf8')).toContain('exec /bin/zsh\n');
+  });
+
   test.each(['npm', 'bun'])('repairs a Bun install with blocked postinstall when preferring %s', async (preferred) => {
     const manager = createManager('2.0.23');
     let bunPostinstallRan = false;
@@ -1098,9 +1353,31 @@ describe('ensureRemoteOpenCodeCli latest 2.x', () => {
     expect(first).toContain('# user configuration\nexport USER_SETTING=preserved\n');
     expect(probe().status).toBe(0);
     expect(probe().stdout.trim()).toBe('2.9.0');
-    // An early return prevents the appended PATH from running; bootstrap must fail.
+    // An early return prevents terminal PATH setup, not managed absolute-path execution.
     fs.writeFileSync(rc, 'return 0\n' + first);
-    await expect(manager.ensureRemoteLoginPath({}, '')).rejects.toThrow('unavailable in a fresh');
+    await expect(manager.ensureRemoteLoginPath({}, '')).resolves.toBeUndefined();
+  });
+});
+
+describe('managed Yuri package installation', () => {
+  test('falls back from absent Bun to npm and verifies the requested version', async () => {
+    const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '1.2.3', emit() {} });
+    manager.remoteCommandExists = async (_p, _c, tool) => tool === 'npm';
+    manager.runManagedRemoteCommand = vi.fn();
+    manager.currentRemoteYuriVersion = async () => '1.2.3';
+    await manager.installYuriManaged({}, '', '1.2.3', 'bun');
+    expect(manager.runManagedRemoteCommand).toHaveBeenCalledExactlyOnceWith({}, '', 'npm install -g @yuriai/web@1.2.3 --force');
+    manager.currentRemoteYuriVersion = async () => '1.2.2';
+    await expect(manager.installYuriManaged({}, '', '1.2.3', 'bun')).rejects.toThrow('requested version');
+  });
+
+  test('Bun installation explicitly permits native postinstall scripts', async () => {
+    const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '1.2.3', emit() {} });
+    manager.remoteCommandExists = async (_p, _c, tool) => tool === 'bun';
+    manager.runManagedRemoteCommand = vi.fn();
+    manager.currentRemoteYuriVersion = async () => '1.2.3';
+    await manager.installYuriManaged({}, '', '1.2.3', 'bun');
+    expect(manager.runManagedRemoteCommand).toHaveBeenCalledExactlyOnceWith({}, '', 'bun add -g @yuriai/web@1.2.3 --trust');
   });
 });
 
@@ -1509,7 +1786,7 @@ describe('SSH portable plugin config sync', () => {
 
     const bin = await makeTempDir();
     const quote = (value) => `'${value.replace(/'/g, `'\\''`)}'`;
-    await fsp.writeFile(path.join(bin, 'ssh'), `#!/bin/sh\nfor last do :; done\neval "set -- $last"\nHOME=${quote(remote)} exec /bin/sh -c "$3"\n`, { mode: 0o755 });
+    await fsp.writeFile(path.join(bin, 'ssh'), `#!/bin/sh\nfor last do :; done\nHOME=${quote(remote)} exec /bin/sh -c "$last"\n`, { mode: 0o755 });
     const originalPath = process.env.PATH;
     const homedir = vi.spyOn(os, 'homedir').mockReturnValue(local);
     process.env.PATH = `${bin}${path.delimiter}${originalPath}`;

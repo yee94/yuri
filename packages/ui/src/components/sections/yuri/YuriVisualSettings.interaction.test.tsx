@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   error: vi.fn(),
   dockBadge: vi.fn(),
+  ui: { settingsFocusItemId: null as string | null, isSettingsDialogOpen: false },
 }));
 vi.mock('@/lib/desktop', () => ({
   invokeDesktop: mocks.invoke,
@@ -22,14 +23,18 @@ vi.mock('@/contexts/useThemeSystem', () => ({ useThemeSystem: () => ({ available
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false }) }));
 vi.mock('@/hooks/usePwaDetection', () => ({ usePwaDetection: () => ({ browserTab: false }) }));
 vi.mock('@/stores/useUIStore', () => ({
-  useUIStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+  useUIStore: Object.assign((selector: (state: Record<string, unknown>) => unknown) => selector({
     dockBadgeEnabled: false,
     setDockBadgeEnabled: mocks.dockBadge,
     showReasoningTraces: true,
+    ...mocks.ui,
+  }), {
+    getState: () => mocks.ui,
+    setState: (patch: Partial<typeof mocks.ui>) => Object.assign(mocks.ui, patch),
   }),
 }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (selector: (state: object) => unknown) => selector({}) }));
-vi.mock('@/stores/useSidebarBrandStore', () => ({ useSidebarBrandStore: (selector: (state: object) => unknown) => selector({}) }));
+vi.mock('@/stores/useSidebarBrandStore', () => ({ useSidebarBrandStore: (selector: (state: object) => unknown) => selector({ sidebarBrandName: 'My Studio' }) }));
 vi.mock('@/stores/messageQueueStore', () => ({ useMessageQueueStore: (selector: (state: object) => unknown) => selector({}) }));
 vi.mock('@/lib/iosNativeUi', () => ({
   canShowIosNativeUiSetting: () => false,
@@ -45,6 +50,8 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.ui.settingsFocusItemId = null;
+  mocks.ui.isSettingsDialogOpen = false;
   mocks.invoke.mockResolvedValue({ enabled: true, requiresRestart: true });
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   window.__YURI_ELECTRON__ = { macVibrancy: false, macVibrancySupported: true };
@@ -67,6 +74,34 @@ const renderSettings = async (visibleSettings: React.ComponentProps<typeof YuriV
 const option = (item: string, enabled: boolean) => host.querySelectorAll<HTMLButtonElement>(`[data-settings-item="${item}"] button[role="radio"]`)[enabled ? 1 : 0]!;
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]:not([data-ending-style])');
 const dialogButton = (key: string) => [...dialog()!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === key)!;
+
+test('a logo focus request selects the brand name once and does not steal later focus', async () => {
+  mocks.ui.settingsFocusItemId = 'appearance.sidebar-brand';
+  mocks.ui.isSettingsDialogOpen = true;
+  await renderSettings(['sidebarBrand']);
+  await act(async () => { await new Promise(resolve => window.requestAnimationFrame(resolve)); });
+  const input = host.querySelector<HTMLInputElement>('[data-settings-item="appearance.sidebar-brand"] input')!;
+  expect(document.activeElement).toBe(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe('My Studio'.length);
+  expect(mocks.ui.settingsFocusItemId).toBeNull();
+  input.blur();
+  await renderSettings(['sidebarBrand']);
+  expect(document.activeElement).not.toBe(input);
+});
+
+test('closing before the deferred focus cancels the request without moving focus', async () => {
+  const frames: FrameRequestCallback[] = [];
+  const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { frames.push(callback); return frames.length; });
+  mocks.ui.settingsFocusItemId = 'appearance.sidebar-brand';
+  mocks.ui.isSettingsDialogOpen = true;
+  try {
+    await renderSettings(['sidebarBrand']);
+    mocks.ui.isSettingsDialogOpen = false;
+    await act(async () => frames.forEach(callback => callback(0)));
+    expect(document.activeElement).not.toBe(host.querySelector('input'));
+  } finally { raf.mockRestore(); }
+});
 
 test('navigation keeps the editor keymap without an editor toolbar preference', async () => {
   await renderSettings(['fileEditorKeymap']);

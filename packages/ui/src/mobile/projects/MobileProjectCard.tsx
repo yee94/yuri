@@ -10,6 +10,8 @@ import {
   type MobileLongPressController,
 } from '@/components/ui/mobileLongPress';
 import { useI18n } from '@/lib/i18n';
+import type { ProjectEntry } from '@/lib/api/types';
+import { ProjectIconImage } from '@/lib/projectMeta';
 import { cn } from '@/lib/utils';
 
 import { MobileFloatingSurface } from '../MobileSurface';
@@ -21,6 +23,7 @@ export type MobileProjectCardModel = {
   name: string;
   path: string;
   icon?: IconName;
+  iconImage?: ProjectEntry['iconImage'];
   tone?: MobileProjectTone;
   sessionCount: number;
   activityLabel?: string;
@@ -154,7 +157,13 @@ export function MobileProjectCard({
             style={TONE_STYLES[project.tone ?? 'neutral']}
             aria-hidden
           >
-            <Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />
+            {project.iconImage ? (
+              <ProjectIconImage
+                project={project}
+                className="size-6 object-contain"
+                fallback={<Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />}
+              />
+            ) : <Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />}
           </span>
 
           <span className="flex min-w-0 flex-1 flex-col gap-1">

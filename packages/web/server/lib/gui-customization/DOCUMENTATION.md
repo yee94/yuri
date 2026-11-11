@@ -60,7 +60,44 @@ real host. The reference is included in the immutable staged resource inventory.
   this Host's filesystem. GUI plugin contracts themselves remain available on
   their supported clients. Existing sessions do not gain the pointer retroactively.
 
-The feature adds no HTTP resource endpoint, credential or native privilege.
+## Remote connection capability
+
+The same skill routes SSH/config-sync/Relay requests to `references/remote-connections.md`.
+For shared-service sessions only, an injected Electron `remoteConnectionsAdapter`
+adds a bound helper command to the existing pointer. The immutable inventory also
+stages `remote-connections-client.mjs` as `remote-connections.mjs` only for bound
+sessions; no credential is written into the instructions or helper. Bound and
+unbound resource sets have separate content fingerprints and preparation caches.
+Other admission modes retain the reference, but no executable helper or local
+desktop command. A staged script or another capability's binding is not admission.
+The pointer states this unavailable branch explicitly. The connection reference
+stops on a missing/denied helper instead of falling back to settings/credential
+reads, direct HTTP or source-derived access; successful fallback is not evidence
+that the session capability worked. This is authoring guidance, not an OS sandbox
+for agents that already have local shell access.
+The helper marks HTTP 401/403/501 and unusable bindings as `terminal: true`,
+with a stop/re-admission receipt rather than recommending `list` after an auth
+failure. Other failures return operation-specific recovery. All remote operations
+share the same gate; successful `describe` is the workflow's entry condition.
+
+`remote-connections.js` owns `/api/yuri/session-skills/remote-connections`.
+The global API gate and route both require loopback POST, no Origin and the
+shared service Basic credential. The route re-reads the session's admission-owned
+`metadata.yuri.scheduledTaskSkill.hostOrigin` binding before dispatch. This reuses
+the shared-service admission identity, not scheduled-task domain operations.
+Browser bearer/Relay clients cannot use the bridge. There is no generic IPC,
+shell, filesystem, credential-read or settings-write operation. Requests have
+bounded allowlisted input; results contain metadata and explicit one-time pairing
+links, never long-lived credentials or raw upstream errors. Pairing responses and
+all bridge responses use `Cache-Control: no-store`.
+
+Electron owns atomic SSH upsert and per-target asynchronous setup; the Host route
+is a narrow dispatcher. Agent callers start each target and poll `list`, so a
+short tool deadline does not strand other targets. Repeated active requests join
+the target operation. Saved instances survive restart; setup receipts do not.
+The pairing operation calls the existing authenticated Host pairing API, never
+writes pairing stores or grants SSH-only connections Relay provenance.
+
 Package publishing includes the entire web `server` directory, so the Markdown
 resources ship with the backend and resolve relative to this module in packaged
 Electron as well as web installs. Fingerprinted resources remain readable by old
@@ -71,7 +108,12 @@ sessions across backend upgrades.
 `session-skill.test.js` exercises staging, complete resource availability, short
 per-session pointers, managed admission/rollback/adopted sessions and external
 ownership. Shared-service admission is covered by
-`../scheduled-tasks/session-skill.test.js`. The UI test
+`../scheduled-tasks/session-skill.test.js`, including execution of the exact
+staged remote helper through the real API auth gate and rejection after a Host
+binding change. `remote-connections.test.js` covers unsupported runtimes and
+origin rejection. Electron's `session-connections.test.mjs` covers per-target
+partial failure, active-operation reuse, source selection and pairing payloads;
+Magpie gateway and HTTP tests live in `../config-sync/`. The UI test
 `packages/ui/src/lib/gui-plugins/skill-examples.test.ts` transpiles the shipped
 global-page and custom-file templates and runs them through the real GUI host,
 plugin context, navigation, file read, mount and cleanup. These are contract

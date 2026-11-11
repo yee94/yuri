@@ -1,11 +1,24 @@
 import React from 'react';
+import { queryOptions, useQuery } from '@tanstack/react-query';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { isDesktopLocalOriginActive, isDesktopShell } from '@/lib/desktop';
 import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
 import { setDesktopWindowTitle } from '@/lib/desktopNative';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { useI18n } from '@/lib/i18n';
 
 const APP_TITLE = 'Yuri';
+
+const getWindowRuntimeIdentity = () => `${getRuntimeKey()}\0${getRuntimeTransportIdentity()}`;
+
+const windowHostsOptions = (identity: string) => queryOptions({
+  queryKey: ['desktop-window-hosts', identity],
+  queryFn: async ({ signal }) => {
+    const config = await desktopHostsGet();
+    signal.throwIfAborted();
+    return config.hosts;
+  },
+});
 
 const getProjectNameFromPath = (path: string): string => {
   const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -19,6 +32,7 @@ const buildWindowTitle = (projectLabel: string | null, instanceLabel: string | n
 };
 
 export const useWindowTitle = () => {
+  const { t } = useI18n();
   const projectLabel = useProjectsStore((state) => {
     if (!state.activeProjectId) {
       return null;
@@ -27,60 +41,14 @@ export const useWindowTitle = () => {
     return project ? getProjectNameFromPath(project.path) || null : null;
   });
 
-  const [instanceLabel, setInstanceLabel] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined' || !isDesktopShell()) {
-      setInstanceLabel(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshInstanceLabel = async () => {
-      try {
-        if (isDesktopLocalOriginActive()) {
-          if (!cancelled) {
-            setInstanceLabel(null);
-          }
-          return;
-        }
-
-        const localOrigin = window.__YURI_LOCAL_ORIGIN__ || window.location.origin;
-        const runtimeApiBaseUrl = getRuntimeApiBaseUrl();
-
-        if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) {
-          if (!cancelled) {
-            setInstanceLabel(null);
-          }
-          return;
-        }
-
-        const cfg = await desktopHostsGet();
-        const match = cfg.hosts.find((host) => runtimeApiBaseUrl ? locationMatchesHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false);
-        const nextLabel = match?.label?.trim() ? redactSensitiveUrl(match.label.trim()) : 'Instance';
-        if (!cancelled) {
-          setInstanceLabel(nextLabel);
-        }
-      } catch {
-        if (!cancelled) {
-          setInstanceLabel('Instance');
-        }
-      }
-    };
-
-    void refreshInstanceLabel();
-
-    const handleFocus = () => {
-      void refreshInstanceLabel();
-    };
-
-    window.addEventListener('focus', handleFocus);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, []);
+  const identity = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getWindowRuntimeIdentity, getWindowRuntimeIdentity);
+  const remote = isDesktopShell() && !isDesktopLocalOriginActive();
+  const { data: hosts } = useQuery({ ...windowHostsOptions(identity), enabled: remote });
+  const runtimeKey = getRuntimeKey();
+  const hostId = runtimeKey.startsWith('host:') ? runtimeKey.slice(5) : null;
+  const apiUrl = getRuntimeApiBaseUrl();
+  const host = hosts?.find(entry => hostId ? entry.id === hostId : Boolean(apiUrl && locationMatchesHost(apiUrl, getDesktopHostApiUrl(entry))));
+  const instanceLabel = remote ? (host?.label?.trim() ? redactSensitiveUrl(host.label.trim()) : t('desktopHostSwitcher.title')) : null;
 
   const title = React.useMemo(() => buildWindowTitle(projectLabel, instanceLabel), [projectLabel, instanceLabel]);
 
@@ -95,11 +63,6 @@ export const useWindowTitle = () => {
 
     const applyTitle = async () => {
       try {
-        const isMac = typeof navigator !== 'undefined' && /Macintosh|Mac OS X/.test(navigator.userAgent || '');
-        if (isMac) {
-          return;
-        }
-
         await setDesktopWindowTitle(title);
       } catch {
         return;

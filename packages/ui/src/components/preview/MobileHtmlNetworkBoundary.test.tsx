@@ -64,6 +64,17 @@ it('shows retry when the Host channel cannot connect, then renders after a succe
   expect(container.querySelector('iframe')).not.toBeNull();
 });
 
+it('routes plugin views through the lease without dialling the Host, and releases on unmount', async () => {
+  const connect = vi.fn();
+  fixture.acquire.mockResolvedValue({ connect, release: async () => {} });
+  await act(async () => root.render(<MobileHtmlNetworkBoundary connect={false}>{() => <div data-plugin-view />}</MobileHtmlNetworkBoundary>));
+  expect(container.querySelector('[data-plugin-view]')).not.toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  const signal = fixture.acquire.mock.calls[0][0] as AbortSignal;
+  await act(async () => root.render(null));
+  expect(signal.aborted).toBe(true);
+});
+
 it('leaves ordinary web rendering independent of the native gateway', async () => {
   fixture.native = false;
   await act(async () => render());

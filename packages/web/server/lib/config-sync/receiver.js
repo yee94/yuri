@@ -275,6 +275,7 @@ export const createConfigSyncReceiver = (deps = {}) => {
     buildInventory,
     credentialInventory: () => credentials.inventory(),
     magpieInventory: () => magpie.inventory(),
+    ensureMagpieGateway: () => magpie.ensureGateway(),
     importMagpie: async (stream) => magpie.import(await readStreamToBuffer(stream, { maxBytes: OPENCODE_CONFIG_SYNC_MAX_BYTES })),
     importCredentials: async (stream) => credentials.import(await readStreamToBuffer(stream, { maxBytes: OPENCODE_CONFIG_SYNC_MAX_BYTES })),
   };

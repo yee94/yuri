@@ -9,6 +9,15 @@ import {
 } from './desktopSshBootstrapError';
 
 describe('classifyManagedSshBootstrapError', () => {
+  test('separates shell interference and initial sync from CLI installation errors', () => {
+    expect(classifyManagedSshBootstrapError('OpenCode CLI is unavailable in a fresh bash shell; check shell startup PATH overrides')).toBe('shellStartup');
+    expect(classifyManagedSshBootstrapError('SSH command did not start; check remote shell startup files')).toBe('shellStartup');
+    expect(classifyManagedSshBootstrapError('Initial SSH config sync failed: Permission denied')).toBe('configSync');
+    for (const code of ['shellStartup', 'configSync'] as const) {
+      expect(sshBootstrapErrorTitleKey(code)).toBe(`desktopHostSwitcher.sshError.${code}.title`);
+      expect(sshBootstrapErrorGuidanceKey(code)).toBe(`desktopHostSwitcher.sshError.${code}.guidance`);
+    }
+  });
   test('classifies missing Node 22+', () => {
     expect(classifyManagedSshBootstrapError(
       'Managed SSH remote requires Node.js 22+; no supported Node runtime was found on the remote host',

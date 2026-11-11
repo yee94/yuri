@@ -16,7 +16,7 @@ test('IME frames only translate the main WebView; layout and JS are bookend-only
   expect(native).toContain('token != offsetGeneration');
   // Close follows live frames: no translation hold waiting for the page.
   expect(native).not.toContain('holdInset');
-  expect(native).toContain('float next = -currentInset;');
+  expect(native).toContain('float next = enabled ? -currentInset : 0;');
   expect(native).toContain('requestOffset(0)');
 });
 
@@ -43,6 +43,25 @@ test('activity uses adjustResize and releases its IME owner on teardown', () => 
   const manifest = readFileSync(path.join(mobile, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
   expect(manifest).toContain('adjustResize');
   expect(java('MainActivity.java')).toContain('imeSyncBridge.detach()');
+});
+
+test('native translation and layout handoff are scoped to the focused bottom composer', () => {
+  expect(native).toContain('private boolean enabled;');
+  expect(native).toContain('requestOffset(enabled ? currentInset : 0)');
+  expect(native).toContain('requestOffset(enabled && imeAnimations.isEmpty() ? currentInset : 0)');
+  const engage = native.slice(native.indexOf('private void engageHeader()'), native.indexOf('private void releaseHeader()'));
+  expect(engage).toContain('if (!enabled) return;');
+  expect(java('YuriNativeHeaderPlugin.java')).toContain('public void setImeSync(PluginCall call)');
+  expect(java('MainActivity.java')).toContain('imeSyncBridge.setEnabled(imeSyncEnabled)');
+
+  const ios = readFileSync(path.join(mobile, 'ios/App/App/YuriNativeHeaderPlugin.swift'), 'utf8');
+  // The keyboard stays open across search -> composer transfers. Its most recent
+  // notification is recorded even when the ordinary field owns focus.
+  expect(ios.indexOf('latestKeyboardNotification = note')).toBeLessThan(ios.indexOf('guard imeSync'));
+  expect(ios).toContain('if let note = self.latestKeyboardNotification { self.handleKeyboard(note) }');
+  // A disabled/re-enabled session must not accept an older animation completion.
+  expect(ios).toContain('generation == self.imeGeneration');
+  expect(ios).toContain('webView?.layer.removeAllAnimations()');
 });
 
 test('iOS WebView composer path uses the same native IME owner and pinned header', () => {

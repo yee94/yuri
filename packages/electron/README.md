@@ -43,7 +43,7 @@ Desktop instance switches revalidate the target's authentication before committi
 
 SSH connections do not authorize Relay fallback. Remote Relay hosting/status is not pairing consent: SSH bootstrap only stores its forwarded endpoint and SSH credential. Stored SSH mirror hosts expose Relay only with explicit `connect-link` pairing provenance; legacy auto-discovered descriptors are filtered on read/write and removed on the next SSH update. Explicitly paired credentials and Relay identity are preserved during SSH updates. Restart restoration and reconnect therefore remain SSH-only until pairing is authorized. This main-process policy requires an updated installer.
 
-Explicit local instance switches, new windows (default host, saved host ID, or saved URL), and fresh default-host launches pass saved SSH targets through the SSH manager, including Relay-paired targets and targets with a live Ready session. These entries run the normal connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Only saved-window restoration tries existing authenticated direct/Relay transports before initialization. If both transports fail, restoration performs one normal SSH initialization and retries with the newly persisted endpoint and credentials. Explicit SSH management remains local-only; restricted/remote documents may resolve paired transports but cannot trigger SSH initialization through window commands. Preparation failure blocks navigation/window creation and concurrent connects share one attempt. The `desktop_host_prepare` IPC requires an updated installer; UI OTA alone cannot supply it.
+Explicit instance switches from the client-owned UI, new windows (default host, saved host ID, or saved URL), and fresh default-host launches pass saved SSH targets through the local client's SSH manager, including Relay-paired targets and targets with a live Ready session. These entries run the normal connect/bootstrap pipeline: managed bootstrap includes installation/version alignment and runtime checks; external SSH mode retains its probe-only policy. Only saved-window restoration tries existing authenticated direct/Relay transports before initialization. If both transports fail, restoration performs one normal SSH initialization and retries with the newly persisted endpoint and credentials. A client-owned application main frame may initialize a saved SSH target even when its current runtime or GUI plugin document is remote/window-only. This narrow saved-host operation does not grant SSH configuration, filesystem, shell, or native-plugin privileges to that document. Remote-origin documents still cannot initialize SSH; subframes and preview/API documents cannot invoke host-switch/window initialization. Preparation failure blocks navigation/window creation and concurrent connects share one attempt. These main-process changes require an updated installer, not UI OTA alone.
 
 Managed SSH bootstrap discovers registered daemons through `yuri status --json` and confirms each live runtime before choosing a retained `ssh-remote` Host. Within the remote user's CLI data scope it consolidates SSH-managed daemons, preserving manually launched web and desktop runtimes. A matching running version with valid in-memory/configured credentials is reused even without a preferred port. Missing credentials after desktop restart or a stale running version requires a verified stop and replacement on the same port; credentials are not persisted for reuse. Package upgrades drain managed daemons before replacing installation files. Shutdown uses `yuri stop --port ... --json`, whose registry/PID checks and signal fallback work with password-protected Hosts. Discovery or shutdown failure blocks replacement rather than adding another database writer. A failed install leaves the old daemon stopped and surfaces the error for retry. External SSH mode remains probe-only. These lifecycle fixes are installer-owned.
 
@@ -86,7 +86,7 @@ pages, subframes and window-only documents cannot obtain runtime credentials.
 
 Window-only application documents may report a validated saved Host/endpoint
 commit without regaining native privileges. Their instance switcher avoids SSH
-polling and uses paired direct/Relay connections. Native instance management
+polling and uses the local client's saved-host preparation before transport selection. Native instance management
 opens `/settings/remote-instances` in a separate local window; returning to local
 performs a full document navigation with main-owned local credentials, never a
 soft permission reset. File/Shell/SSH/configuration IPC remains restricted in the
@@ -97,6 +97,16 @@ from native SSH configuration. This lets remote/window-only renderers retain and
 identify SSH rows without granting `desktop_ssh_instances_get` or exposing SSH
 commands, passwords, or configuration. The metadata requires an updated installer;
 the UI still retains the active remote entry on older installers.
+
+Window titles include the saved SSH/Host label (the configured nickname, otherwise
+the SSH destination) alongside the active project and Yuri. Runtime identity wins
+over loopback/Relay URL matching, and switches update the title without waiting for
+window focus. Labels and native titles also update on macOS.
+
+Saved-host windows load the client-owned UI in both HMR and bundled modes; only
+their API runtime changes. Development windows must not load remote HTML merely
+because the selected backend is remote. Explicit `YURI_SERVER_URL` retains its
+separate development override behavior.
 
 ## Leased image disk cache
 
@@ -180,6 +190,21 @@ After authorization, each pending/active capture owns a `prevent-display-sleep` 
 | `direct-config-sync.mjs` | Direct Yuri host sync over HTTP `/api/yuri/config-sync/*` (`host:<id>` targets) |
 | Magpie config sync | Source discovery and native CLI provisioning/backup/restore are host-owned in `packages/web/server/lib/config-sync/magpie.js`; main/SSH/direct/Relay transfer the selected opaque payload. Missing target CLIs install on apply, never during preview. See the config-sync module documentation for discovery, native backup scope and partial-failure behavior. |
 | `ssh-manager.mjs` | SSH host import, connection lifecycle, tunnel/port forwarding helpers; managed OpenCode config sync via shared `@yuriai/web/server/lib/config-sync` (plan/executor/generational backup) with per-target mutex and run records |
+| `session-connections.mjs` | Local-session SSH setup adapter: atomic append/reuse, independent per-target setup receipts and Relay pairing through existing Host auth; no window switching or renderer IPC |
+
+New local shared-service sessions receive the remote-connection reference and bound
+helper through the built-in customization skill. The server admits only loopback,
+service-authenticated, Host-bound session requests. Other runtimes and private/external
+OpenCode do not receive this native adapter command. SSH setup accepts destinations
+and ports (or saved IDs), not arbitrary options/passwords. Setup is asynchronous;
+list receipts distinguish SSH readiness from configuration and gateway completion.
+Failures remain per-target; sync/gateway failure preserves a ready SSH tunnel.
+Installed local Magpie selects the Magpie path even without transferable config
+(an explicit warning); otherwise setup transfers OpenCode credentials. A selected
+remote gateway uses the headless CLI and an upserted `yuri-magpie` tmux session.
+Pairing returns an expiring v2 link from the existing local/SSH Host API; it neither
+redeems it nor gives an SSH-only saved host Relay fallback. These native changes
+require an updated installer, not UI/backend OTA alone.
 
 Relay config sync runs in the renderer (`packages/ui/src/lib/relay/relay-config-sync.ts`) because the E2EE tunnel client is UI-owned. Main process helpers pack/extract local tars (`desktop_relay_sync_pack_local` / `desktop_relay_sync_apply_local`) and append `relay:<serverId>` run records. `credentialPayload` carries versioned V2 credential bytes; `providerCredentials` carries metadata. Only the current credential API protocol is supported. Local credential operations use authenticated local-host HTTP so OTA backends resolve their own OpenCode service client. Identity is pinned to `serverId`; a changed fingerprint fails with `relay_identity_changed`.
 
@@ -389,7 +414,27 @@ Managed Desktop / `yuri serve` / HMR discovery still does **not** prefer a packa
 
 SSH reuses any working OpenCode 2.x, independently of the desktop packaging pin. Missing or incompatible CLIs are installed with `@opencode/cli@2`, resolving the registry's latest stable 2.x (never 1.x or 3.x). Bun installs use `--trust` so the required postinstall prepares the executable, including when repairing an existing blocked install. A successful package-manager exit is still verified through `opencode --version` on the managed PATH; a broken Bun binary can otherwise shadow a healthy npm install.
 
-On every managed SSH bootstrap, including reuse of an existing 2.x, the selected CLI and Node directories are written to `~/.config/yuri/ssh-path.sh` (`ssh-path.fish` for fish). Bootstrap appends an idempotent source line to zsh's `.zprofile`/`.zshrc` (honoring `ZDOTDIR`), bash's `.bashrc` and active login profile, POSIX shells' `.profile`, or fish's `config.fish`. Existing user content is preserved. Fresh login and interactive shells must run `opencode --version` as 2.x with the managed PATH removed before bootstrap succeeds. Unsupported shells, write errors, and failed probes are reported as failures; additive PATH setup remains for inspection/retry, and no CLI reinstall is attempted for a PATH-setup failure. Already-open terminals need a new shell to load the change.
+Managed SSH commands run non-login `/bin/sh -c` with `ENV`/`BASH_ENV` cleared, never an interactive login shell. A command-start marker discards preceding shell banners and distinguishes startup-file interception from a missing CLI. Transport/startup failures propagate instead of being treated as an absent installation. This cannot prevent the SSH server's outer user shell from reading its own startup files; interception there is reported as `shellStartup`.
+
+On every successful managed bootstrap, the verified absolute Node and CLI paths are recorded in `~/.config/yuri/ssh-runtime.sh`. Later commands reuse those paths instead of reselecting Node after a PATH/profile change. Missing or unsupported pinned Node falls back to discovery. For existing installations, Node selection first prefers a runtime that can actually open Yuri's `better-sqlite3` binding, then even majors, sibling npm and version. Discovery includes version managers, DevCloud and Homebrew, with POSIX version comparison on Linux/macOS. The selected Node directory is forced first for install, native repair and server startup; invalid inherited Python paths are discarded before native rebuild.
+
+Pinned CLI invocations use their absolute executables, not just PATH ordering.
+The selected OpenCode path is also exported as `OPENCODE_BINARY` for the managed
+server's child runtime. If the visible/pinned OpenCode is broken or no longer 2.x,
+discovery checks other absolute candidates before installing and records a verified
+replacement in `ssh-opencode-path` beside the runtime snapshot. Thus a stale Bun
+or npm command cannot permanently hide a working 2.x installation. Yuri package
+installation must expose the exact requested version before bootstrap proceeds.
+
+The selected directories are also written to `~/.config/yuri/ssh-path.sh` (`ssh-path.fish` for fish). Bootstrap appends an idempotent source line to zsh's `.zprofile`/`.zshrc` (honoring inherited absolute `ZDOTDIR`), bash's `.bashrc` and active login profile, POSIX shells' `.profile`, or fish's `config.fish`. Existing user content is preserved. This terminal setup is best-effort: unsupported shells, read-only startup files, early returns or `exec zsh` do not invalidate verified managed executables. Bootstrap checks OpenCode through its absolute path, never by starting the user's interactive shell. Already-open terminals need a new shell to load the additive PATH setup.
+
+First-time managed Yuri installation attempts one automatic local-to-remote configuration sync after the authenticated SSH forward exists and before `ready`. It reuses the normal allowlist/filtering, generational backups and run records: installed local Magpie selects its native transfer when available; otherwise OpenCode provider credentials use the credential API. An installed but unconfigured Magpie does not fall back to OpenCode credentials. The source is never the currently viewed remote runtime. The internal `desktopSshInitialConfigSyncPending` ID list is written before installation, cleared only after successful sync, and retained across failed installation/sync and desktop restart for retry. Automatic sync is optional: any sync failure is recorded as a warning in SSH logs and the ready status detail, without tearing down the tunnel, blocking navigation or setting `requiresUserAction`. The installed runtime and already completed sync stages remain available; reconnect retries pending sync through the same idempotent engine, and manual sync still reports its own errors normally. Magpie partial warnings remain in SSH logs. Session setup reuses the first-install receipt to avoid transferring twice, and clears a pending marker after a successful explicit retry. Existing installations/upgrades and external servers do not automatically overwrite remote configuration. Deleting an SSH record removes its pending marker. This behavior is installer-owned.
+
+SSH authentication, supported/usable runtimes and required CLIs, verified daemon
+shutdown before replacement, service health, the main forward and client-token
+authentication remain mandatory. Optional configuration transfer, terminal startup
+file setup and extra/LAN forwards must not invalidate an otherwise usable main
+connection. Optional failures remain warnings/retryable work, never empty success.
 
 `prepare:opencode-cli` stages `resources/opencode-cli` for packaging/CI; runtime discovery (`resolveOpencodeCliPath`) still ignores that copy — it is only a last-resort after install failure.
 

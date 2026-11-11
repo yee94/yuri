@@ -20,6 +20,7 @@ import { createDesktopUpdateAdapter } from './host-update.mjs';
 import { createRemoteDesktopAdapter } from './remote-desktop.mjs';
 import electronUpdater from 'electron-updater';
 import { ElectronSshManager, planOpenCodeConfigSync, parseSshCommand } from './ssh-manager.mjs';
+import { createSessionConnections } from './session-connections.mjs';
 import { buildSshEditorUrl, sshEditorAppIds } from './ssh-editor.mjs';
 import { createDirectConfigSyncController, createDirectTargetExecutor } from './direct-config-sync.mjs';
 import { probeHostAuthentication } from './host-auth-probe.mjs';
@@ -1739,6 +1740,8 @@ const spawnLocalServer = async () => {
   const { startWebUiServer } = backend;
 
   const handle = await startWebUiServer({
+    remoteConnectionsAdapter: createSessionConnections({ sshManager, getLocalExecutor: getLocalSyncExecutor,
+      getLocalHost: () => ({ apiUrl: state.sidecarUrl || state.localOrigin, clientToken: readDesktopLocalClientToken() }) }),
     remoteDesktopAdapter,
     hostUpdateStateFile: path.join(app.getPath('userData'), 'host-update.json'),
     getHostUpdateVersion: () => desktopOta?.version ?? APP_VERSION,
@@ -2453,7 +2456,7 @@ const switchToHostById = async (rawId) => {
       log.warn('[electron] deep-link host not found:', id);
       return;
     }
-    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url;
+    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
     apiBaseUrl = host.apiUrl || host.url;
     clientToken = host.clientToken || '';
     requestHeaders = sanitizeRuntimeRequestHeaders(host.requestHeaders || {});
@@ -3155,7 +3158,7 @@ const openMainWindow = async () => {
   }
 
   const config = readDesktopHostsConfig();
-  const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+  const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
   const host = config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID
     ? config.hosts.find((entry) => entry.id === config.defaultHostId)
     : null;
@@ -3176,10 +3179,7 @@ const openMainWindow = async () => {
   const apiBaseUrl = host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || '';
   const clientToken = host?.clientToken || resolveStoredClientTokenForUrl(apiBaseUrl, config) || state.clientToken || '';
   const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || {});
-  const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
-    ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
-    : localUiUrl;
-  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  return activateMainWindow(localUiUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
 };
 
 const createAdditionalWindow = async (url, runtimeConfig = {}) => {
@@ -3467,8 +3467,7 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
     probe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
     if (probe.status === 'unreachable') probe = await probeHostWithTimeout(apiBaseUrl, 10_000, clientToken, requestHeaders);
   }
-  const initialUrl = host && !relayHostId && probe?.status !== 'unreachable' && !shouldUsePackagedUi()
-    ? host.url : localUiUrl;
+  const initialUrl = localUiUrl;
   return {
     initialUrl, localOrigin, localUiUrl, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId,
     bootOutcome: computeBootOutcome({ envTargetUrl: null, probe, config: { ...config, defaultHostId: hostId }, localAvailable: Boolean(localUrl) }),
@@ -4205,7 +4204,7 @@ const prepareDesktopHost = async (hostId, browserWindow) => {
   let host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
   if (!host) throw new Error('Host not found');
   if (sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
-    if (!isLocalSender(browserWindow?.webContents)) {
+    if (!isLocalUiSender(browserWindow?.webContents)) {
       if (host.relay) return host;
       throw new Error('SSH preparation requires a local desktop page');
     }
@@ -4883,10 +4882,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         || state.clientToken
         || readDesktopLocalClientToken();
       const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || state.requestHeaders || {});
-      const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
-        ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
-        : localUiUrl;
-      await createAdditionalWindow(targetUrl, {
+      await createAdditionalWindow(localUiUrl, {
         apiBaseUrl: normalizeHostUrl(apiBaseUrl) || apiBaseUrl,
         clientToken: sanitizeClientTokenForStorage(clientToken),
         requestHeaders,
@@ -4947,7 +4943,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const hostId = typeof args.hostId === 'string' ? args.hostId.trim() : '';
       const host = await prepareDesktopHost(hostId, browserWindow);
       if (host.relay) {
-        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
         await createAdditionalWindow(windowUrl, {
           apiBaseUrl: '',
           clientToken: host.clientToken || '',
@@ -4958,7 +4954,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
       const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
       if (!targetUrl) throw new Error('Invalid URL');
-      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
+      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
       await createAdditionalWindow(windowUrl, {
         apiBaseUrl: targetUrl,
         clientToken: host.clientToken || '',
@@ -4981,7 +4977,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const providedToken = typeof args.clientToken === 'string' ? args.clientToken : '';
       const clientToken = preparedHost?.clientToken || sanitizeClientTokenForStorage(providedToken) || resolveStoredClientTokenForUrl(targetUrl, config);
       const requestHeaders = sanitizeRuntimeRequestHeaders(preparedHost?.requestHeaders || args.requestHeaders || savedHost?.requestHeaders || {});
-      let windowUrl = targetUrl;
+      let windowUrl = state.localUiOrigin || state.sidecarUrl || state.localOrigin;
       const runtimeConfig = { apiBaseUrl: targetUrl, clientToken, requestHeaders };
       if (shouldUsePackagedUi()) {
         windowUrl = buildPackagedUiUrl('/index.html');
@@ -5749,6 +5745,11 @@ ipcMain.on('yuri:window-runtime', (event) => {
 });
 
 ipcMain.handle('yuri:invoke', async (event, command, args) => {
+  if (['desktop_host_prepare', 'desktop_new_window', 'desktop_new_window_for_host', 'desktop_new_window_at_url'].includes(command)
+    && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame
+      || (isLocalUiSender(event.sender) && !isGuiPluginWindow(event)))) {
+    throw new Error('Host switching requires the main desktop application frame');
+  }
   if ((command === 'desktop_open_local_host_settings' || command === 'desktop_switch_to_local')
     && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
     throw new Error('Local window navigation requires the main desktop frame');

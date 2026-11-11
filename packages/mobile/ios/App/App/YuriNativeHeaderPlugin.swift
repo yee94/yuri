@@ -69,6 +69,8 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
 
     private var imeSync = false
     private var keyboardOverlap: CGFloat = 0
+    private var latestKeyboardNotification: Notification?
+    private var imeGeneration = 0
     private var headerGeneration = 0
     private var keyboardObservers: [NSObjectProtocol] = []
     private var offsetObservation: NSKeyValueObservation?
@@ -98,9 +100,15 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         let enabled = call.getBool("enabled") ?? false
         DispatchQueue.main.async { [weak self] in
             guard let self else { return call.resolve() }
+            guard enabled != self.imeSync else { return call.resolve() }
             if !enabled { self.resetIme() }
             self.imeSync = enabled
-            if enabled { self.publishSafeArea() }
+            if enabled {
+                self.publishSafeArea()
+                // Focus can move from search to chat with an already-open IME;
+                // UIKit need not send another keyboard frame in that case.
+                if let note = self.latestKeyboardNotification { self.handleKeyboard(note) }
+            }
             call.resolve()
         }
     }
@@ -250,6 +258,7 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
     }
 
     private func handleKeyboard(_ note: Notification) {
+        latestKeyboardNotification = note
         guard imeSync, let main = webView, let window = main.window,
               let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
@@ -269,6 +278,8 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         // restart it.
         guard overlap != keyboardOverlap else { return }
         keyboardOverlap = overlap
+        imeGeneration += 1
+        let generation = imeGeneration
         let open = overlap > 0
         engageHeader()
         publishLift(overlap)
@@ -281,7 +292,7 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
         UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curveRaw << 16), .beginFromCurrentState]) {
             self.setLift(overlap)
         } completion: { [weak self] _ in
-            guard let self, self.keyboardOverlap == overlap else { return }
+            guard let self, self.imeSync, generation == self.imeGeneration else { return }
             self.settle(overlap)
         }
     }
@@ -316,6 +327,9 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
     }
 
     private func resetIme() {
+        imeGeneration += 1
+        webView?.layer.removeAllAnimations()
+        header?.layer.removeAllAnimations()
         keyboardOverlap = 0
         setLift(0)
         publishLift(0)

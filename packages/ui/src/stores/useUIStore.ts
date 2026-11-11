@@ -784,6 +784,7 @@ interface UIStore {
 
   // Settings IA (new shell)
   settingsPage: string;
+  settingsFocusItemId: string | null;
   devicePairingRequested: boolean;
   settingsHasOpenedOnce: boolean;
   settingsProjectsSelectedId: string | null;
@@ -975,6 +976,7 @@ interface UIStore {
   applyTheme: () => void;
   setSidebarSection: (section: SidebarSection) => void;
   setSettingsPage: (slug: string) => void;
+  openSettingsAtItem: (slug: string, itemId: string) => void;
   setSettingsProjectsSelectedId: (projectId: string | null) => void;
   setSettingsRemoteInstancesSelectedId: (instanceId: string | null) => void;
   setEventStreamStatus: (status: EventStreamStatus, hint?: string | null) => void;
@@ -1155,6 +1157,7 @@ export const useUIStore = create<UIStore>()(
         isAgentSelectorInstant: false,
         sidebarSection: 'sessions',
         settingsPage: 'home',
+        settingsFocusItemId: null,
         devicePairingRequested: false,
         settingsHasOpenedOnce: false,
         settingsProjectsSelectedId: null,
@@ -2097,7 +2100,7 @@ export const useUIStore = create<UIStore>()(
         setSettingsDialogOpen: (open) => {
           set((state) => {
             if (!open) {
-              return { isSettingsDialogOpen: false };
+              return { isSettingsDialogOpen: false, settingsFocusItemId: null };
             }
             if (state.settingsHasOpenedOnce) {
               return { isSettingsDialogOpen: true };
@@ -2151,7 +2154,11 @@ export const useUIStore = create<UIStore>()(
         },
 
         setSettingsPage: (slug) => {
-          set({ settingsPage: slug });
+          set((state) => state.settingsPage === slug ? state : { settingsPage: slug, settingsFocusItemId: null });
+        },
+
+        openSettingsAtItem: (slug, itemId) => {
+          set({ settingsPage: slug, settingsFocusItemId: itemId, isSettingsDialogOpen: true, settingsHasOpenedOnce: true });
         },
 
         setSettingsProjectsSelectedId: (projectId) => {

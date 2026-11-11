@@ -21,13 +21,23 @@ describe('built-in customization instructions', () => {
     const entry = put.mock.calls[0][0];
     expect(entry).toMatchObject({ sessionID: 'ses_one', key: 'yuri.customization' });
     expect(entry.value.length).toBeLessThan(1500);
-    const file = JSON.parse(entry.value.match(/read (".*?") before/)[1]);
+    const file = JSON.parse(entry.value.match(/read (".*?") first/)[1]);
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
-    for (const name of ['appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
+    for (const name of ['appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
+    expect(entry.value).not.toContain('Bound local desktop helper');
+    expect(entry.value).toContain('No bound SSH/Relay command is provided');
+    expect(entry.value).toContain('There is no credential/filesystem fallback');
+    await expect(fs.stat(path.join(path.dirname(file), 'remote-connections.mjs'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await fs.readFile(file, 'utf8')).toContain('(references/icons.md)');
     expect(await fs.readFile(path.join(path.dirname(file), 'references', 'global-pages.md'), 'utf8')).toContain('(icons.md)');
     expect(await fs.readFile(path.join(path.dirname(file), 'references', 'appearance.md'), 'utf8')).toContain('yuri.branding');
     expect(put.mock.calls[1][0].value).toBe(entry.value);
+    await install(client, 'ses_bound', { hostOrigin: 'http://127.0.0.1:4000', upstreamOrigin: 'http://127.0.0.1:4096', registrationFile: path.join(root, 'service.json') });
+    const bound = put.mock.calls[2][0].value;
+    const boundFile = JSON.parse(bound.match(/read (".*?") first/)[1]);
+    expect(boundFile).not.toBe(file);
+    expect(bound).toContain('Bound local desktop helper:');
+    expect(await fs.readFile(path.join(path.dirname(boundFile), 'remote-connections.mjs'), 'utf8')).toContain('/api/yuri/session-skills/remote-connections');
   });
   it('initializes managed sessions, rolls back failures, preserves adopted sessions and skips external/shared ownership', async () => {
     const root = await directory();

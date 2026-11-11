@@ -12,9 +12,10 @@ import { createProjectConfigRuntime } from '../projects/project-config.js';
 import { registerScheduledTaskRoutes } from './routes.js';
 import { registerScheduledTaskSessionSkill } from './session-skill.js';
 import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_PATH } from './session-skill-contract.js';
+import { registerRemoteConnectionsSkill, REMOTE_CONNECTIONS_SKILL_PATH } from '../gui-customization/remote-connections.js';
 
 describe('built-in session skill with authenticated Host', () => {
-  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup;
+  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup, connections;
   const upstreamOrigin = 'http://127.0.0.1:4096';
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-skill-'));
@@ -65,6 +66,9 @@ describe('built-in session skill with authenticated Host', () => {
       buildOpenCodeUrl: () => upstreamOrigin, getOpenCodeAuthHeaders: () => auth,
     };
     const router = express.Router();
+    connections = { list: vi.fn(async () => ({ instances: [] })), setup: vi.fn(async () => ({ id: 'ssh_one', running: true })),
+      pair: vi.fn(async () => ({ url: 'yuri://connect?v=2&p=fixture', expiresAt: '2099-01-01' })) };
+    registerRemoteConnectionsSkill(app, { express, adapter: connections, getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth, createClient: () => sdk });
     registerScheduledTaskRoutes(router, {
       ...common, projectConfigRuntime: store, scheduledTasksRuntime: { syncProject: sync },
       loadCatalog: async () => ({ models: [{ providerID: 'test', modelID: 'model' }] }),
@@ -73,6 +77,7 @@ describe('built-in session skill with authenticated Host', () => {
       ...common, express, yuriDataDir: root, registrationFile,
       getIsSharedOpenCodeService: () => true, waitForOpenCodeReady: async () => {},
       createClient: () => sdk, scheduledTaskRouter: router,
+      remoteConnectionsAdapter: connections,
       validateDirectoryPath: async (directory) => {
         try { return { ok: true, directory: await fs.realpath(directory) }; } catch { return { ok: false }; }
       },
@@ -155,6 +160,50 @@ describe('built-in session skill with authenticated Host', () => {
       expect(response.status).toBe(403);
     }
     expect(authorizeScheduledTaskSkillRequest({ method: 'POST', headers: { authorization: auth.Authorization }, socket: { remoteAddress: '192.0.2.1' } }, auth)).toBe(false);
+  });
+
+  it('executes the staged remote helper through the real API auth gate and session binding', async () => {
+    const session = await create();
+    const pointer = entries.get(`${session.id}:customization`);
+    expect(pointer).not.toContain(password);
+    const command = pointer.split('Bound local desktop helper: ')[1];
+    const described = await run(command);
+    expect(described.code).toBe(0);
+    expect(described.value.supported).toBe(true);
+    expect(Object.keys(described.value.commands)).toEqual(['list', 'setup', 'pair']);
+    const { commands: cmd } = described.value;
+    expect((await run(cmd.list)).value).toEqual({ instances: [] });
+    expect((await run(cmd.setup, { sshCommand: 'ssh user@host' })).value).toEqual({ id: 'ssh_one', running: true });
+    expect(connections.setup).toHaveBeenCalledExactlyOnceWith({ sshCommand: 'ssh user@host' });
+    expect((await run(cmd.pair, {})).value.url).toContain('yuri://connect');
+    for (const headers of [{}, { Authorization: 'Bearer test-browser-client' }, { ...auth, Origin: origin }, { Authorization: 'Basic wrong' }]) {
+      const response = await fetch(`${origin}${REMOTE_CONNECTIONS_SKILL_PATH}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ sessionID: session.id, operation: 'setup', input: { sshCommand: 'host' } }) });
+      expect(response.status).toBe(403);
+    }
+    expect(connections.setup).toHaveBeenCalledTimes(1);
+    sessions.get(session.id).metadata.yuri.scheduledTaskSkill.hostOrigin = 'http://127.0.0.1:1';
+    const denied = await run(cmd.setup, { sshCommand: 'host' });
+    expect(denied.code).toBe(1);
+    expect(denied.value).toMatchObject({ status: 403, terminal: true });
+    expect(denied.value.recovery).toContain('Stop this workflow');
+    expect(denied.value.recovery).not.toContain('Use the bound list');
+    expect(denied.stdout + denied.stderr).not.toContain(password);
+    expect(connections.setup).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects unbounded connection input and sanitizes remote errors', async () => {
+    const session = await create();
+    const request = (operation, input) => fetch(`${origin}${REMOTE_CONNECTIONS_SKILL_PATH}`, { method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ sessionID: session.id, operation, input }) });
+    for (const input of [{}, { id: 'one', sshCommand: 'host' }, { sshCommand: 'host', password: 'secret' }, { sshCommand: ['host'] }]) expect((await request('setup', input)).status).toBe(400);
+    expect((await request('pair', { relayUrl: 'wss://user:secret@relay.example.invalid' })).status).toBe(400);
+    connections.setup.mockRejectedValueOnce(new Error('invalid_input'));
+    expect((await request('setup', { sshCommand: 'host -oProxyCommand=anything' })).status).toBe(400);
+    connections.setup.mockRejectedValue(new Error('private-token /machine/path'));
+    const response = await request('setup', { sshCommand: 'host' });
+    expect(response.status).toBe(503);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.text()).not.toMatch(/private-token|machine\/path/);
   });
 
   it('lists all projects with this session first and manages another session task by project and ID', async () => {
