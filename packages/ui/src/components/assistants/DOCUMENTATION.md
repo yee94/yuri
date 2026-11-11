@@ -95,6 +95,14 @@ view and leaves when the group leaves. Prepends adopt a surviving member's group
 key so adding the earlier card does not remount its existing reply/reading anchor.
 All three card types use `--contact-bubble-radius`, with no tail; their fixed size,
 padding and navigation contracts remain unchanged.
+Non-tail SVG corners use circular arcs, matching the cards' CSS `border-radius`
+geometry; a quadratic curve through the corner does not produce the same contour
+even when its nominal radius is identical. Joined message corners retain their
+smaller radius, and the tail remains part of the single closed silhouette.
+Attachment images (cached and legacy), Markdown images in both renderers and
+their loading frames also use `--contact-bubble-radius`, without tails. The frame
+and actual image bounds share that radius through loading, success and failure;
+reserved heights, intrinsic aspect ratios and preview activation are unchanged.
 
 Group spacing is owned by the outer group, not its first message: incoming replies
 start with 16px clearance, and a new outgoing turn starts with 24px. The first group

@@ -59,6 +59,9 @@ const VISIBILITY_ATTRIBUTES = new Set(['class', 'style', 'inert', 'aria-hidden',
 // The header's own visibility is ours (source hide) or collapse's; parked tab
 // underlays and covered secondary pages hide an ancestor instead.
 const isCandidate = (element: HTMLElement): boolean => {
+  // The native mirror only replays button/link taps and cannot own text input.
+  // Keep editable headers in their live DOM, including ancestor-scoped styles.
+  if (element.querySelector('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return false;
   if (element.getClientRects().length === 0 || element.offsetHeight <= 0) return false;
   if (element.closest('[inert],[aria-hidden="true"]')) return false;
   const parent = element.parentElement;

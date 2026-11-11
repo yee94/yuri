@@ -39,3 +39,24 @@ test.each([true, false])('draws body and tail as one closed path (outgoing=%s), 
   expect(host.querySelector('svg')).toBeNull()
   expect(host.querySelector('time')).toBeNull()
 })
+
+test.each([16, 18])('uses the same circular %spx corners as CSS-rounded cards', async (radius) => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => DOMRect.fromRect({ width: 160, height: 80 }))
+  const style = document.createElement('div').style
+  style.borderTopLeftRadius = `${radius}px`
+  style.borderTopRightRadius = `${radius}px`
+  style.borderBottomLeftRadius = '6px'
+  style.borderBottomRightRadius = `${radius}px`
+  vi.spyOn(window, 'getComputedStyle').mockReturnValue(style)
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  roots.push({ host, root })
+  await act(async () => root.render(<ContactMessageBubble outgoing={false} joinedBefore={false} joinedAfter createdAt={1000} time="13:29" mobile={radius === 18}>消息</ContactMessageBubble>))
+  const path = host.querySelector('path')!.getAttribute('d')!
+  expect(path).toContain(`A ${radius} ${radius} 0 0 1 168 ${radius}`)
+  expect(path).toContain(`A ${radius} ${radius} 0 0 1 ${168 - radius} 80`)
+  expect(path).toContain('A 6 6 0 0 1 8 74')
+  expect(path).toContain(`A ${radius} ${radius} 0 0 1 ${8 + radius} 0`)
+  expect(path).not.toContain('Q ')
+})

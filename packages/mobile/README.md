@@ -354,6 +354,13 @@ cancelled-close focus, and following versus historical reading ownership.
 
 The shared UI focus regression tests exercise the production hook and real picker sheet with simulated native events; device event ordering, IME/compositor frame pacing, Chinese composition and OEM keyboard-height changes require physical Android validation.
 
+The shared `mobile/nativeImeHeader.ts` mirror bridge keeps headers with input,
+textarea, select or editable content in the main WebView. The pinned mirror can
+replay button/link taps but cannot own editable focus or preserve search-page
+ancestor selectors. Global search therefore retains its live header and styling;
+returning to a conversation restores the ordinary mirror. This is a shared web
+bundle change; physical Android/iOS keyboard validation is still required.
+
 ## Native iOS Composer
 
 - On supported primary chat surfaces, enabled native iOS UI takes precedence over hold-to-talk. The dictation preference is preserved, but hold-to-talk is inactive while the native composer owns input; disabling native UI restores it.

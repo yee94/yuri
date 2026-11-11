@@ -961,6 +961,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
     const { root, host } = await mountSurface();
     const cached = host.querySelector<HTMLImageElement>('img[data-assistant-contact-image]')!;
     expect(cached.getAttribute('src')).toBe('yuri-asset://shot');
+    expect(cached.classList.contains('rounded-[var(--contact-bubble-radius,1.125rem)]')).toBe(true);
     expect(cached.getAttribute('role')).toBe('button');
     await act(async () => { cached.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     expect(host.querySelector('[data-test-preview-dialog]')?.getAttribute('data-image')).toBe('yuri-asset://shot');
@@ -970,6 +971,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
     const { host: legacyHost } = await mountSurface();
     const legacy = legacyHost.querySelector<HTMLImageElement>('img[data-assistant-contact-image]')!;
     expect(legacy.getAttribute('src')).toBe('data:image/png;base64,AA');
+    expect(legacy.classList.contains('rounded-[var(--contact-bubble-radius,1.125rem)]')).toBe(true);
     await act(async () => { legacy.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     expect(legacyHost.querySelector('[data-test-preview-dialog]')?.getAttribute('data-image')).toBe('data:image/png;base64,AA');
   });

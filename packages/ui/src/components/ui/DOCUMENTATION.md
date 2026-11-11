@@ -240,6 +240,13 @@ The memoized CommandPalette observes session rows/status only while open or whil
 its exit animation retains results. After `onOpenChangeComplete(false)`, its
 selectors return stable inactive values. Reopening reads the current catalog.
 The page presentation keeps its existing search and focus behavior.
+Native IME header mirroring excludes headers containing input, textarea, select,
+or editable content. The mirror is a button/link tap-replay surface, not an input
+owner, and cloning the search header also drops its ancestor-scoped geometry.
+Search keeps its live header, focus and shared glass styling throughout keyboard
+transitions; returning to a non-editable conversation header restores mirroring.
+`mobile/nativeImeHeader.test.ts` covers exclusion, stale mirror acknowledgments,
+search/back transitions, unrelated DOM updates and ordinary button tap replay.
 `CommandPalette.mobile.test.tsx` covers 50 closed-catalog updates with zero commits
 and the existing mobile search/navigation behavior.
 
@@ -372,7 +379,7 @@ Decoded transcript images use `width: fit-content` on the frame and an in-flow, 
 
 Content frame geometry must also constrain the child image: the unlayered rules in `image-loading.css` override the lazy Markdown theme's intrinsic sizing, contain the image in the 160px frame, and clip overflow. Do not add a separate attachment image height such as `h-32`; resource placeholders and decoded images share the frame height. `imageGeometry.chrome.test.ts` loads the real theme after the shared stylesheet and checks both image bounds and the next message's position across loading, loaded and error phases.
 
-Standalone Assistant Markdown image bubbles mark `data-assistant-contact-media` and have no painted outer backing. Inside that scope, decoded images use natural aspect-ratio bounds capped at the reserved frame height, with the same 1.35rem radius as ordinary Assistant bubbles. The frame remains height-stable and centers the image; transparent spare space must not expose a second bubble silhouette. Both Markstream and legacy presentation wrappers share these rules and the Chromium geometry regression.
+Standalone Assistant Markdown image bubbles mark `data-assistant-contact-media` and have no painted outer backing. Inside that scope, decoded images use natural aspect-ratio bounds capped at the reserved frame height. Assistant attachment images and both Markdown presentation wrappers use `--contact-bubble-radius` on the frame and actual image, matching message/card circular corners without tails, including loading and error phases. The frame remains height-stable and centers the image; transparent spare space must not expose a second bubble silhouette. Other conversation surfaces retain their existing radii. Both Markstream and legacy presentation wrappers share these rules and the Chromium geometry regression.
 
 `LoadingImage` owns content-image presentation on desktop and mobile, including direct and Relay connections: reserve a dotted shimmer canvas while a runtime URL is pending and while the browser loads the bytes; reveal the image only on `load` or a successful cached decode (`complete && naturalWidth > 0`). Resource failures and browser `error` stop the animation and show the translated failure state without painting the browser's broken-image glyph. A source/srcSet change resets the image boundary; detached image events cannot reveal the next source.
 

@@ -38,13 +38,13 @@ export function ContactMessageBubble({ children, outgoing, joinedBefore, joinedA
     const right = x + w
     const bottomRight = outgoing && !joinedAfter
       ? `V ${h - 10} C ${right} ${h - 5} ${right + 3} ${h - 1} ${right + 8} ${h}`
-      : `V ${h - br} Q ${right} ${h} ${right - br} ${h}`
+      : `V ${h - br} A ${br} ${br} 0 0 1 ${right - br} ${h}`
     const bottomLeft = !outgoing && !joinedAfter
       ? `H 0 C 5 ${h - 1} ${x} ${h - 5} ${x} ${h - 10}`
-      : `H ${x + bl} Q ${x} ${h} ${x} ${h - bl}`
+      : `H ${x + bl} A ${bl} ${bl} 0 0 1 ${x} ${h - bl}`
     outline.setAttribute('viewBox', `0 0 ${w + 16} ${h}`)
     // Body and tail are one closed silhouette, with no overlapping seam.
-    path.setAttribute('d', `M ${x + tl} 0 H ${right - tr} Q ${right} 0 ${right} ${tr} ${bottomRight} ${bottomLeft} V ${tl} Q ${x} 0 ${x + tl} 0 Z`)
+    path.setAttribute('d', `M ${x + tl} 0 H ${right - tr} A ${tr} ${tr} 0 0 1 ${right} ${tr} ${bottomRight} ${bottomLeft} V ${tl} A ${tl} ${tl} 0 0 1 ${x + tl} 0 Z`)
   })
   React.useLayoutEffect(() => {
     drawOutline()
