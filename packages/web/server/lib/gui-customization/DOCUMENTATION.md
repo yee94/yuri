@@ -7,6 +7,12 @@ short discovery pointer enters `session.instructions.entry` under
 no global OpenCode config, installed user skills, project files or old sessions
 are modified.
 
+Interactive Yuri contacts reuse this same shipped entry and references through
+the assistant-only pointer in `../assistants/builtin-skills.js`. Their pi tools
+run on the Host, so the pointer names the package-local resource directly rather
+than staging a Session instruction. It advertises no bound desktop helper and
+grants no SSH/config-sync/Relay capability. Read-only background reviews omit it.
+
 References are organized by capability: window APIs, appearance, UI surfaces, plugin styles, global pages, work-status widgets, icons,
 file parsing/previews, preview actions/exports, and package workflow. Host contracts
 and verification criteria are separate from illustrative templates and case
