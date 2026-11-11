@@ -284,7 +284,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
           warning={warning}
           active={active}
           overlayHeader={isMobileSurface}
-          overlayComposer={!isMobileSurface}
+          overlayComposer
         />
       </div>
     </div>

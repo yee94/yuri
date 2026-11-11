@@ -27,7 +27,7 @@ padding. Input material and catalog still align, but messages scroll behind and
 below the floating composer. Its shadow fits inside the pane without changing
 overflow clipping. Phone safe-area and Mini Chat composer spacing are unchanged.
 
-The desktop workspace opts into `AssistantConversationSurface.overlayComposer`:
+The desktop and phone workspaces opt into `AssistantConversationSurface.overlayComposer`:
 the footer is an absolute overlay, and the transcript scrollport extends behind
 it to the pane bottom. Only the composer column receives pointer events; the
 transparent gutters pass scrolling through. `useAssistantContactAutoFollow`
@@ -36,8 +36,16 @@ publishing `--contact-composer-height` without React state or per-keystroke work
 The scrollport reserves that height as bottom padding, preserving a fully visible
 latest message and the existing 48px status slot. Composer resizing uses the same
 follow/reading-anchor owner, never a second scroll writer. Sticky avatar rails
-clear the overlay as well. Phone native-keyboard layouts and Mini Chat retain the
-flow footer; they do not opt into the desktop overlay.
+clear the overlay as well. Mini Chat retains the flow footer.
+Phone uses the same measured inset and existing keyboard viewport owner. Its
+composer host and home-indicator surroundings are transparent; a footer scrim
+fades over the upper 3.5rem and footer from transparent to 95% canvas opacity
+without fully hiding messages below. The input material is opaque without an
+added border, keeping transcript text from competing with the draft; the phone
+name pill is 94% opaque with a subtle outline. The phone header owns a separate
+full-width scrim extending through the top safe area plus 10rem, fading from 95%
+through 80% and 45% to transparent below the name. The native
+keyboard transition curtain below the composer remains separate from this scrim.
 On phone the active Assistant tab puts the wallpaper on the non-scrolling
 `MobileTabsRoot` shell, covering page gutters and the dock area for long or short
 lists. The catalog is transparent, with independent contact-row surfaces rather
@@ -60,7 +68,7 @@ clones only that header, so its centering, Back alignment, name fill and scrim
 remain identical without copying the page or changing native tap-index paths.
 The Assistant header disables the shared navigation's `::after` fade, leaving
 only its own short `::before` scrim in both live and mirrored headers.
-The scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
+The desktop scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
 and through an alpha mask over its left/right 20% edges; the avatar/name
 control keeps a separate 0.5rem top gap (below the system safe area on phone).
 Only its dark-theme avatar has a silhouette drop shadow; light-theme avatars

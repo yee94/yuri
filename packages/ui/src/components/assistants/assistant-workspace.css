@@ -195,6 +195,18 @@
   content: none;
 }
 
+.yuri-assistant-mobile-header::before {
+  height: calc(var(--yuri-safe-area-top, 0px) + 10rem);
+  opacity: 1;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--surface-background) 95%, transparent),
+    color-mix(in srgb, var(--surface-background) 80%, transparent) 35%,
+    color-mix(in srgb, var(--surface-background) 45%, transparent) 65%,
+    transparent);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .yuri-assistant-mobile-header .yuri-mobile-detail-navigation-content {
   min-height: 6rem;
   align-items: start;
@@ -217,6 +229,34 @@
 
 .yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-transcript] {
   padding-top: calc(max(0.625rem, var(--yuri-safe-area-top, 0px)) + 7rem);
+}
+
+:root .yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-composer] > .yuri-mobile-composer {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] .yuri-mobile-composer::after {
+  content: none;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-composer]::before {
+  content: "";
+  position: absolute;
+  inset: -3.5rem 0 0;
+  pointer-events: none;
+  background: var(--surface-background);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 82%) 55%, rgb(0 0 0 / 95%));
+  mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 82%) 55%, rgb(0 0 0 / 95%));
+}
+
+.yuri-assistant-mobile-header .yuri-assistant-header-name {
+  background: color-mix(in srgb, var(--assistant-panel-background) 94%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-foreground) 16%, transparent);
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] :is([data-assistant-contact-composer-surface]:not([data-composer-animated-resize]), [data-composer-material]) {
+  background: var(--assistant-panel-background);
 }
 
 .yuri-assistant-mobile-catalog-page {

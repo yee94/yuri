@@ -4160,7 +4160,7 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Capacitor chat safe-area cover: keep the home-indicator / navigation foot
    on the semantic page background while preserving higher overlay layers. */
-:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer)::before,
+:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer):not(:has(.yuri-assistant-workspace[data-assistant-layout="mobile"]))::before,
 :root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-readonly-prompt-foot)::before {
   content: "";
   position: fixed;

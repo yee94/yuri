@@ -84,7 +84,7 @@ test('phone identity uses its Settings stack while Back remains independently av
   const settings = vi.fn();
   await act(async () => root.render(<AssistantView onMobileBack={back} onMobileOpenSettings={settings} />));
   const header = host.querySelector('.yuri-mobile-detail-navigation')!;
-  expect(host.querySelector('[data-transcript]')?.hasAttribute('data-composer-overlay')).toBe(false);
+  expect(host.querySelector('[data-transcript]')?.getAttribute('data-composer-overlay')).toBe('true');
   expect(header.querySelectorAll('button')).toHaveLength(2);
   const backButton = header.querySelector<HTMLButtonElement>('[aria-label="assistants.actions.backToChat"]')!;
   expect(backButton.classList.contains('yuri-mobile-floating-action')).toBe(true);
