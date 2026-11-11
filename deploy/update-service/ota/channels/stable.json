@@ -39,13 +39,13 @@
       "status": "published",
       "installUrl": "https://testflight.apple.com/join/pN5SSHeg"
     },
-    "desktop": {
+    "android": {
       "version": "0.2.38",
       "build": 962,
       "status": "published",
       "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.2.38"
     },
-    "android": {
+    "desktop": {
       "version": "0.2.38",
       "build": 962,
       "status": "published",
