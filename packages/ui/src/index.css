@@ -4,6 +4,7 @@
 @import "./styles/typography.css";
 @import "./styles/settings.css";
 @import "./styles/mobile.css";
+@import "./components/assistants/assistant-workspace.css";
 /* Load KaTeX styles eagerly with the main bundle. Importing them inside the
    lazy MarkdownRendererImpl chunk meant a stylesheet was injected late on the
    first markdown render of a session; that late injection triggered a style
@@ -14,6 +15,10 @@
    open forced a whole-document style recalc (~90ms with a long transcript). */
 @import "./components/chat/message/mediaPreviewTransition.css";
 @source "./**/*.{ts,tsx,css}";
+
+.yuri-assistant-wallpaper {
+  --assistant-wallpaper-pattern: url("./assets/assistant-wallpaper/telegram-pattern.svg");
+}
 
 ::highlight(yuri-speech) {
   color: var(--foreground);

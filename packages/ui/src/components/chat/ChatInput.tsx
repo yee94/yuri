@@ -962,7 +962,6 @@ type ComposerActionButtonsProps = {
     footerIconButtonClass: string;
     stopFooterIconButtonClass?: string;
     compactCircleButtonClass?: string;
-    sendIconSizeClass: string;
     stopIconSizeClass: string;
     canSend: boolean;
     canAbort: boolean;
@@ -987,7 +986,6 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
         footerIconButtonClass,
         stopFooterIconButtonClass,
         compactCircleButtonClass,
-        sendIconSizeClass,
         stopIconSizeClass,
         canSend,
         canAbort: sessionCanAbort,
@@ -1044,13 +1042,12 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
         : (stopFooterIconButtonClass ?? footerIconButtonClass);
     const circleGlyphClass = stopIconSizeClass;
     const showStop = canAbort && (!isMobile || !hasContent);
-    const showSendCircle = !showStop && (!actionAvailability.sendDisabled || inFlight);
 
     const sendButton = (
         <button
             type={isMobile ? 'button' : 'submit'}
             data-composer-send="true"
-            data-composer-circle={showSendCircle ? 'true' : undefined}
+            data-composer-circle="true"
             disabled={actionAvailability.sendDisabled}
             aria-busy={inFlight || undefined}
             {...keepKeyboardFocusProps}
@@ -1061,23 +1058,12 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
                 event.preventDefault();
                 onPrimaryAction();
             }}
-            className={cn(
-                showSendCircle ? circleButtonClass : footerIconButtonClass,
-                showSendCircle
-                    ? undefined
-                    : actionAvailability.sendDisabled
-                        ? actionAvailability.disabledClass
-                        : 'text-primary hover:text-primary',
-            )}
+            className={cn(circleButtonClass, 'disabled:opacity-50')}
             aria-label={sendInFlight || (!showStop && inFlight)
                 ? t(queueInFlight ? 'chat.chatInput.actions.queuingMessageAria' : 'chat.chatInput.actions.sendingMessageAria')
                 : t('chat.chatInput.actions.sendMessageAria')}
         >
-            {showSendCircle ? (
-                <SendCircleIcon className={circleGlyphClass} spinning={Boolean(inFlight && !showStop)} />
-            ) : (
-                <Icon name="send-plane-2" className={sendIconSizeClass} />
-            )}
+            <SendCircleIcon className={circleGlyphClass} spinning={Boolean(inFlight && !showStop)} />
         </button>
     );
 
@@ -1091,14 +1077,13 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
     // Keep the floating control visible while queue admission is in flight even
     // after the composer cleared, so the user sees an immediate "queuing" state.
     const showFloatingSend = !isMobile && !compact && (hasContent || queueInFlight);
-    const floatingSendReady = !actionAvailability.sendDisabled && !queueInFlight;
     return (
         <div className={cn('relative z-30 overflow-visible', compact && 'h-full')}>
             {showFloatingSend ? (
                 <button
                     type="button"
                     data-composer-send="true"
-                    data-composer-circle={floatingSendReady || queueInFlight ? 'true' : undefined}
+                    data-composer-circle="true"
                     disabled={actionAvailability.sendDisabled || queueInFlight}
                     aria-busy={queueInFlight || undefined}
                     {...keepKeyboardFocusProps}
@@ -1108,19 +1093,12 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
                         onPrimaryAction();
                     }}
                     className={cn(
-                        floatingSendReady || queueInFlight ? circleButtonClass : footerIconButtonClass,
-                        'absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-1',
-                        floatingSendReady || queueInFlight
-                            ? undefined
-                            : actionAvailability.disabledClass,
+                        circleButtonClass,
+                        'absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-1 disabled:opacity-50',
                     )}
                     aria-label={primaryAria}
                 >
-                    {floatingSendReady || queueInFlight ? (
-                        <SendCircleIcon className={circleGlyphClass} spinning={queueInFlight} />
-                    ) : (
-                        <Icon name="send-plane-2" className={sendIconSizeClass} />
-                    )}
+                    <SendCircleIcon className={circleGlyphClass} spinning={queueInFlight} />
                 </button>
             ) : null}
             <button
@@ -1145,7 +1123,6 @@ const ComposerActionButtons = React.memo(function ComposerActionButtons(props: C
     && prev.footerIconButtonClass === next.footerIconButtonClass
     && prev.stopFooterIconButtonClass === next.stopFooterIconButtonClass
     && prev.compactCircleButtonClass === next.compactCircleButtonClass
-    && prev.sendIconSizeClass === next.sendIconSizeClass
     && prev.stopIconSizeClass === next.stopIconSizeClass
     && prev.canSend === next.canSend
     && prev.canAbort === next.canAbort
@@ -6943,7 +6920,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 footerIconButtonClass={footerIconButtonClass}
                                 stopFooterIconButtonClass={stopFooterIconButtonClass}
                                 compactCircleButtonClass={compactCircleButtonClass}
-                                sendIconSizeClass={sendIconSizeClass}
                                 stopIconSizeClass={stopIconSizeClass}
                                 canSend={canSend}
                                 canAbort={canAbort}
@@ -7026,7 +7002,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                         isMobile={isMobile}
                         footerIconButtonClass={footerIconButtonClass}
                         stopFooterIconButtonClass={stopFooterIconButtonClass}
-                        sendIconSizeClass={sendIconSizeClass}
                         stopIconSizeClass={stopIconSizeClass}
                         canSend={canSend}
                         canAbort={canAbort}
@@ -7104,7 +7079,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     isMobile={isMobile}
                     footerIconButtonClass={footerIconButtonClass}
                     stopFooterIconButtonClass={stopFooterIconButtonClass}
-                    sendIconSizeClass={sendIconSizeClass}
                     stopIconSizeClass={stopIconSizeClass}
                     canSend={canSend}
                     canAbort={canAbort}

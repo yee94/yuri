@@ -78,10 +78,10 @@ Object.assign(window, { avatarPerformance: {
       do { previous = writes; await frames(4); } while (writes !== previous && performance.now() < deadline);
     }
   },
-  async synchronized() {
-    render(1, 0, 'working', true, true);
+  async synchronized(motion: 'idle' | 'working' = 'working') {
+    render(1, 0, motion, true, true);
     await frames(20);
-    render(20, 0, 'working', true, true);
+    render(20, 0, motion, true, true);
     await frames(3);
     const samples: boolean[] = [];
     for (let i = 0; i < 60; i++) {

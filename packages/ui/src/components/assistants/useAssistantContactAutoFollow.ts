@@ -30,11 +30,11 @@ type UseAssistantContactAutoFollowResult = {
   contentRef: React.RefCallback<HTMLDivElement>
   preparePrepend: () => void
   /**
-   * The user's own send re-attaches bottom follow from any reading position.
+   * The user's own send smoothly re-attaches bottom follow from any position.
    * `timing` shapes only the next follow animation, so the list can travel on
    * the same curve as the send transition.
    */
-  followLatest: (timing?: FollowTiming) => void
+  followLatest: (timing?: FollowTiming, onSettled?: (reachedBottom: boolean) => void) => void
 }
 
 type FollowTiming = { duration: number; ease: readonly [number, number, number, number] }
@@ -103,7 +103,15 @@ export const useAssistantContactAutoFollow = ({
   const initialPositionedRef = React.useRef(false)
   const followAnimationRef = React.useRef<{ stop: () => void } | null>(null)
   const followTargetRef = React.useRef<number | null>(null)
+  const followGenerationRef = React.useRef(0)
+  const followSettledRef = React.useRef<((reachedBottom: boolean) => void) | null>(null)
+  const settleFollow = useEvent((reachedBottom: boolean) => {
+    const callback = followSettledRef.current
+    followSettledRef.current = null
+    callback?.(reachedBottom)
+  })
   const stopFollowAnimation = useEvent(() => {
+    followGenerationRef.current += 1
     followAnimationRef.current?.stop()
     followAnimationRef.current = null
     followTargetRef.current = null
@@ -117,6 +125,15 @@ export const useAssistantContactAutoFollow = ({
   const contentRef = React.useMemo<React.RefCallback<HTMLDivElement>>(() => (node) => {
     setContentNode((current) => current === node ? current : node)
   }, [])
+
+  const syncViewportInset = useEvent(() => {
+    const element = scrollNodeRef.current
+    const owner = element?.parentElement
+    if (!element || !owner || !activeRef.current) return
+    const inset = `${Math.max(0, element.offsetWidth - element.clientWidth)}px`
+    if (owner.style.getPropertyValue('--contact-scrollbar-width') !== inset) owner.style.setProperty('--contact-scrollbar-width', inset)
+  })
+  React.useLayoutEffect(() => { syncViewportInset() }, [active, scrollNode, syncViewportInset])
 
   const captureAnchor = useEvent(() => {
     const root = scrollNodeRef.current
@@ -151,20 +168,28 @@ export const useAssistantContactAutoFollow = ({
   })
   const preparePrepend = useEvent(() => {
     stopFollowAnimation()
+    settleFollow(false)
     followingRef.current = false
     lastScrollTopRef.current = scrollNodeRef.current?.scrollTop ?? 0
     captureAnchor()
   })
 
   const followTimingRef = React.useRef<FollowTiming | null>(null)
-  const followLatest = useEvent((timing?: FollowTiming) => {
+  const followLatest = useEvent((timing?: FollowTiming, onSettled?: (reachedBottom: boolean) => void) => {
     const element = scrollNodeRef.current
-    if (!activeRef.current || !element) return
-    followTimingRef.current = timing ?? null
+    if (!activeRef.current || !element) { onSettled?.(false); return }
+    stopFollowAnimation()
+    settleFollow(false)
+    const returningFromHistory = !isAtBottom(readScrollGeometry(element))
+    followSettledRef.current = returningFromHistory ? onSettled ?? null : null
+    // Returning through history uses the normal follow curve; the bubble flight
+    // starts only after that travel finishes, rather than aiming offscreen.
+    followTimingRef.current = returningFromHistory && onSettled ? null : timing ?? null
     followingRef.current = true
     anchorRef.current = null
     userIntentRef.current = null
     lastScrollTopRef.current = element.scrollTop
+    if (!returningFromHistory) onSettled?.(true)
   })
 
   const pinToBottom = useEvent(() => {
@@ -179,6 +204,7 @@ export const useAssistantContactAutoFollow = ({
       followingRef.current = false
       lastScrollTopRef.current = geometry.scrollTop
       captureAnchor()
+      settleFollow(false)
       return false
     }
     const initial = !initialPositionedRef.current
@@ -186,6 +212,7 @@ export const useAssistantContactAutoFollow = ({
     if (isAtBottom(geometry)) {
       stopFollowAnimation()
       lastScrollTopRef.current = geometry.scrollTop
+      settleFollow(true)
       return false
     }
     const target = Math.max(0, geometry.scrollHeight - geometry.clientHeight)
@@ -193,27 +220,31 @@ export const useAssistantContactAutoFollow = ({
       if (followTargetRef.current === target) return false
       stopFollowAnimation()
       followTargetRef.current = target
+      const generation = followGenerationRef.current
       const timing = followTimingRef.current
       followTimingRef.current = null
       followAnimationRef.current = animate(element.scrollTop, target, {
         duration: timing?.duration ?? 0.22,
         ease: timing ? [...timing.ease] : 'easeOut',
         onUpdate: (top) => {
-          if (!activeRef.current || !followingRef.current || scrollNodeRef.current !== element) return
+          if (followGenerationRef.current !== generation || !activeRef.current || !followingRef.current || scrollNodeRef.current !== element) return
           const maximum = Math.max(0, element.scrollHeight - element.clientHeight)
           if (element.scrollTop < Math.min(lastScrollTopRef.current, maximum) - 0.5) {
             followingRef.current = false
             stopFollowAnimation()
             lastScrollTopRef.current = element.scrollTop
             captureAnchor()
+            settleFollow(false)
             return
           }
           element.scrollTop = Math.min(Math.max(element.scrollTop, top), maximum)
           lastScrollTopRef.current = element.scrollTop
         },
         onComplete: () => {
+          if (followGenerationRef.current !== generation) return
           followAnimationRef.current = null
           followTargetRef.current = null
+          pinToBottom()
         },
       })
       return true
@@ -221,6 +252,7 @@ export const useAssistantContactAutoFollow = ({
     stopFollowAnimation()
     element.scrollTop = target
     lastScrollTopRef.current = element.scrollTop
+    settleFollow(true)
     return true
   })
 
@@ -243,6 +275,8 @@ export const useAssistantContactAutoFollow = ({
 
   const releaseFollow = useEvent(() => {
     stopFollowAnimation()
+    settleFollow(false)
+    followTimingRef.current = null
     followingRef.current = false
     captureAnchor()
   })
@@ -345,6 +379,8 @@ export const useAssistantContactAutoFollow = ({
     const element = scrollNodeRef.current
     if (activeIdentityRef.current !== identity || baselineNodeRef.current !== element) {
       stopFollowAnimation()
+      settleFollow(false)
+      followTimingRef.current = null
       initialPositionedRef.current = false
       activeIdentityRef.current = identity
       baselineNodeRef.current = element
@@ -360,7 +396,7 @@ export const useAssistantContactAutoFollow = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- these values own rerun semantics; useEvent keeps the writer current.
   }, [active, assistantID, contentRevision, scrollNode, reducedMotion])
 
-  React.useLayoutEffect(() => () => { stopFollowAnimation() }, [active, assistantID, scrollNode, stopFollowAnimation])
+  React.useLayoutEffect(() => () => { stopFollowAnimation(); settleFollow(false) }, [active, assistantID, scrollNode, stopFollowAnimation, settleFollow])
 
   const noEventTarget = React.useMemo(() => () => undefined, [])
   const listenerTarget = active && scrollNode ? scrollNode : noEventTarget
@@ -386,6 +422,7 @@ export const useAssistantContactAutoFollow = ({
       : null
   })
   const handleViewportResize = useEvent(() => {
+    syncViewportInset()
     const element = scrollNodeRef.current
     const anchor = nativeLayoutAnchorRef.current
     if (!element || anchor?.element !== element || anchor.height === element.clientHeight) return

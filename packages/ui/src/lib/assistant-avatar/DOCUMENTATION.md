@@ -21,8 +21,10 @@ recipe or visual geometry changes as a result of this runtime extraction.
 List/header faces default to `followPointer` while idle; the React leaf enables gaze only
 when `(any-hover: hover) and (any-pointer: fine)` matches, updating on capability
 changes rather than using viewport width. Transcript/processing/empty/error faces
-pass `followPointer={false}` on every device. `AssistantWorkingAvatar` supplies
-the assistant ID as `animationKey`, independently of its saved recipe seed.
+pass `followPointer={false}` on every device: they never own pointer tracking but
+mirror their contact's shared pose when another visible slot follows the pointer.
+`AssistantWorkingAvatar` supplies the assistant ID as `animationKey`, independently
+of its saved recipe seed.
 
 `runtime.ts` is the non-React seam. `mountAvatarAnimation(host, { id, seed,
 animationKey?, randomizeShape?, eyeColor? })` returns only:
@@ -31,7 +33,8 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
   during continuous non-idle work/size changes. `active` is the view's intersecting, foreground,
   non-reduced-motion eligibility. Saved recipe motion-off is also enforced here.
   `blinkOnMount: true` opts into one native blink on the first eligible update, consumed
-  for this renderer's lifetime. It does not replay on foreground/intersection return.
+  for a standalone renderer's lifetime or once per mounted contact group. Late contact
+  slots mirror the current eyes without replaying it. It does not replay on foreground/intersection return.
   First appearance during working consumes the greeting without a local blink,
   joining the shared eyes immediately. `blinkOnMount: 2` plays two native blinks on the same
   resting player, with a short open-eye gap, without entering working/thinking or
@@ -56,14 +59,15 @@ animationKey?, randomizeShape?, eyeColor? })` returns only:
    reduced-motion or unmount interruption cancels it; visibility return and unrelated
    renders never replay it. Other callers retain their existing continuous motion.
 - `hover()`: trigger the bounded existing shrink/rebound outside working; eligible idle faces
-  lazily start a resting player only for the hover excursion.
+  lazily start a resting player only for the hover excursion. Contact slots broadcast
+  that interaction to every visible instance of the same contact.
 - `dispose()`: idempotently release subscriptions/pointer ownership and remove
   only this instance's SVG. Updates after disposal are ignored.
 
 The React leaf owns standard observer/media/document Hooks and updates eligible
 animation state in a layout effect before paint; the runtime owns all
 imperative resources and per-frame DOM work. Mount paints a still face once.
-Inactive instances allocate no player or frame subscription. Idle faces without
+Inactive instances allocate no player or frame subscription. Standalone idle faces without
 pointer following, `animateIdle` or `playOnce` hold the exact reference static pose (looking up-right), with
 no player, pointer lease or frame work outside an opted-in first-visible blink. Hover briefly animates that settled pose,
 then restores it and releases the player/clock. Returning from work to idle does
@@ -104,19 +108,24 @@ containment and the source body's spring interpolation are unchanged. This is a
 shared scheduler and ownership simplification, not a claim that SVG morphing has
 become GPU/compositor-only animation.
 
-All working contact faces share a window-scoped timeline keyed by
-`[animationKey, seed]`, including list, header and transcript slots of different
-sizes. A common compact clip/geometry mode keeps normalized frames identical;
-resizing never restarts or splits the timeline. It advances once per shared frame
-timestamp; newly mounted or returning visible faces immediately paint its current
-pose. Working ignores pointer gaze, local hover and appearance blinks so an
-individual instance cannot diverge. Idle retains its existing gaze/hover policy.
-Resuming work during an idle hover clears the local interaction and immediately
-repaints the current shared frame before the next browser paint.
-Each instance still renders its own SVG. Last consumer release removes the
-timeline; if all consumers go inactive,
-resume starts a fresh bounded timeline instead of replaying background time.
-Different assistant IDs and recipes never share mutable state.
+`contactAnimation.ts` owns one window-scoped player keyed by
+`[animationKey, seed, eyeColor]` for explicitly keyed contact faces, including list,
+header, card and transcript slots of different sizes. A common compact clip/geometry
+mode keeps normalized frames identical in idle, working and transitions. Geometry
+and interactions advance once per contact per shared paint, then the same model is
+painted into each eligible SVG. Resizing and late mounts never restart the player.
+One first-visible pointer-enabled slot supplies the contact's gaze origin; other
+slots mirror it, including pointer-disabled transcript faces. Hover and the single
+first-appearance greeting belong to the contact, not each newly mounted slot.
+Any eligible working slot suppresses gaze, hover and greeting for the whole contact;
+returning to idle eases the same player to rest. Resuming work clears shared idle
+interactions and repaints all visible slots before the next browser paint.
+No per-frame React work, extra timer or catalog-wide subscription is introduced.
+Quiet contacts retain only mounted-slot ownership, with no player, pointer lease
+or frame subscription. All-inactive contacts release live resources; returning
+slots join a fresh bounded player without background replay or another greeting.
+Last unmount removes the group. Different assistant IDs and recipes never share
+mutable state. Unkeyed standalone/navigation animation retains its independent policy.
 
 ## Independent performance gate
 

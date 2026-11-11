@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { uploadAssistantAttachment, type AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-upload'
 import { AssistantContactAttachment } from './AssistantContactAttachment'
 import { ContactUserMessagePart } from './ContactUserMessagePart'
+import { ContactMessageBubble } from './ContactMessageBubble'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { useRuntimeTransportIdentity } from '@/components/chat/imageSource'
 import type { ToolPopupContent } from '@/components/chat/message/types'
@@ -59,7 +60,7 @@ import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { needsScheduleCardDetails } from './scheduleCardPresentation'
 import { AssistantSessionCard } from './AssistantSessionCard'
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar'
-import { createContactTimeFormatter, getContactTimeSeparators } from './contactMessageTime'
+import { createContactDateFormatter, getContactTimeSeparators } from './contactMessageTime'
 import { useAssistantContactWorkingStore } from './assistantWorking'
 import { useAssistantContactAutoFollow } from './useAssistantContactAutoFollow'
 import {
@@ -220,6 +221,41 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   while (latestMessageIndex >= 0 && isContactError(visibleMessages[latestMessageIndex])) latestMessageIndex -= 1
   const transcript = visibleMessages.filter((message, index) => !isContactError(message) || index > latestMessageIndex)
   const timeSeparators = getContactTimeSeparators(transcript)
+  const groupScope = `${transportIdentity}:${assistant.id}`
+  const committedGroupsRef = React.useRef<{ scope: string; keys: Map<string, string> } | null>(null)
+  const previousGroupKeys = committedGroupsRef.current?.scope === groupScope ? committedGroupsRef.current.keys : null
+  const contactGroups: Array<{ key: string; rows: Array<{ message: AssistantContactMessage; index: number }> }> = []
+  const assignedGroupKeys = new Set<string>()
+  const nextGroupKeys = new Map<string, string>()
+  for (const [index, message] of transcript.entries()) {
+    const lastGroup = contactGroups.at(-1)
+    const previous = lastGroup?.rows.at(-1)?.message
+    const rowKey = contactRenderKey(message)
+    if (lastGroup && previous && message.role !== 'user' && message.role === previous.role
+      && message.turnID === previous.turnID && message.fromAssistantID === previous.fromAssistantID
+      && !isContactError(message) && !isContactError(previous)) {
+      lastGroup.rows.push({ message, index })
+    } else {
+      const previousKey = previousGroupKeys?.get(rowKey)
+      const key = previousKey && !assignedGroupKeys.has(previousKey) ? previousKey : rowKey
+      contactGroups.push({ key, rows: [{ message, index }] })
+      assignedGroupKeys.add(key)
+    }
+    nextGroupKeys.set(rowKey, contactGroups.at(-1)!.key)
+  }
+  // Reuse a surviving member's group key when a page prepends the card that
+  // precedes its reply. The existing bubble DOM and reading anchor stay mounted.
+  for (const group of contactGroups) {
+    if (group.rows.some(({ message }) => previousGroupKeys?.get(contactRenderKey(message)) === group.key)) continue
+    const survivingKey = group.rows.map(({ message }) => previousGroupKeys?.get(contactRenderKey(message)))
+      .find((key) => key && !assignedGroupKeys.has(key))
+    if (!survivingKey) continue
+    assignedGroupKeys.delete(group.key)
+    group.key = survivingKey
+    assignedGroupKeys.add(survivingKey)
+    for (const { message } of group.rows) nextGroupKeys.set(contactRenderKey(message), survivingKey)
+  }
+  React.useLayoutEffect(() => { committedGroupsRef.current = { scope: groupScope, keys: nextGroupKeys } })
   const reducedMotion = useReducedMotion()
   const entryScope = `${transportIdentity}:${assistant.id}`
   const committedEntryRef = React.useRef<{ scope: string; ready: boolean; lastID: string | null } | null>(null)
@@ -240,10 +276,12 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   })
   const today = new Date().toDateString()
   const todayLabel = t('common.date.today')
-  const formatMessageTime = React.useMemo(
-    () => createContactTimeFormatter(locale, todayLabel, new Date(today)),
-    [locale, todayLabel, today],
+  const yesterdayLabel = t('common.date.yesterday')
+  const formatMessageDate = React.useMemo(
+    () => createContactDateFormatter(locale, todayLabel, yesterdayLabel, new Date(today)),
+    [locale, todayLabel, yesterdayLabel, today],
   )
+  const bubbleTime = React.useMemo(() => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }), [locale])
   const sending = contactOptimisticSending(scopedOptimisticTurns)
   const processing = contactTurnPreviewWorking(scopedTurnPreviews)
   // Server working is authoritative across remount; local preview is temporary.
@@ -275,11 +313,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   })
   const surfaceRef = React.useRef<HTMLDivElement | null>(null)
   const composerRef = React.useRef<HTMLElement | null>(null)
-  const pendingSendFlightRef = React.useRef<{ messageID: string; source: ContactSendFlightSource } | null>(null)
+  const pendingSendFlightRef = React.useRef<{ messageID: string; source: ContactSendFlightSource; ready: boolean } | null>(null)
   // The morph owns the flown row's entrance; the generic append fade must not also run.
   const flownMessageIDRef = React.useRef<string | null>(null)
   const stopSendFlightRef = React.useRef<(() => void) | null>(null)
-  const [sendFlight, setSendFlight] = React.useState<{ scope: string; messageID: string } | null>(null)
+  const [sendFlight, setSendFlight] = React.useState<{ scope: string; messageID: string; phase: 'scrolling' | 'flying' } | null>(null)
   const captureSendFlightSource = (): ContactSendFlightSource | null => {
     const surface = composerRef.current?.querySelector<HTMLElement>('[data-assistant-contact-composer-surface]')
     const field = surface?.querySelector('textarea')
@@ -287,7 +325,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   }
   React.useLayoutEffect(() => {
     const pending = pendingSendFlightRef.current
-    if (!pending) return
+    if (!pending?.ready || !active) return
     pendingSendFlightRef.current = null
     const row = Array.from(surfaceRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])
       .find((node) => node.dataset.messageId === pending.messageID)
@@ -451,11 +489,24 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     // A retry reuses its mounted row; only a fresh text bubble morphs out of the field.
     // Voice sends never painted their text in the field, so there is nothing to morph.
     const flightSource = textOnly && voiceText === undefined && !retryID && active && !reducedMotion ? captureSendFlightSource() : null
-    pendingSendFlightRef.current = flightSource ? { messageID: begun.messageID, source: flightSource } : null
-    setSendFlight(flightSource ? { scope: entryScope, messageID: begun.messageID } : null)
+    stopSendFlightRef.current?.()
+    stopSendFlightRef.current = null
+    const pendingFlight = flightSource ? { messageID: begun.messageID, source: flightSource, ready: false } : null
+    pendingSendFlightRef.current = pendingFlight
+    setSendFlight(flightSource ? { scope: entryScope, messageID: begun.messageID, phase: 'scrolling' } : null)
     flownMessageIDRef.current = flightSource ? begun.messageID : flownMessageIDRef.current
     if (!retryID) {
-      followLatest(flightSource ? { duration: CONTACT_SEND_FLIGHT_DURATION_S, ease: CONTACT_SEND_FLIGHT_VERTICAL_EASE } : undefined)
+      followLatest(
+        flightSource ? { duration: CONTACT_SEND_FLIGHT_DURATION_S, ease: CONTACT_SEND_FLIGHT_VERTICAL_EASE } : undefined,
+        pendingFlight ? (reachedBottom) => {
+          if (pendingSendFlightRef.current !== pendingFlight) return
+          if (!reachedBottom) pendingSendFlightRef.current = null
+          else pendingFlight.ready = true
+          setSendFlight((current) => current?.messageID === begun.messageID
+            ? reachedBottom ? { ...current, phase: 'flying' } : null
+            : current)
+        } : undefined,
+      )
       setDraft((current) => current === text ? '' : current)
       setAttachments((current) => current.filter((attachment) => !staged.includes(attachment)))
     }
@@ -539,7 +590,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const optimisticByID = new Map(scopedOptimisticTurns.map((turn) => [turn.messageID, turn]))
 
   return (
-    <div ref={surfaceRef} className="flex min-h-0 flex-1 flex-col bg-background">
+    <div ref={surfaceRef} className="yuri-contact-conversation flex min-h-0 flex-1 flex-col bg-transparent" data-contact-layout={isMobile ? 'mobile' : 'desktop'}>
       <div
         ref={scrollRef}
         className={cn(
@@ -594,7 +645,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
             <p className="mt-2 max-w-xs typography-ui leading-6 text-muted-foreground/80">{t('assistants.contact.empty')}</p>
           </div>
         ) : (
-          <div ref={contentRef} className="relative mx-auto flex w-full max-w-[42rem] flex-col pb-12" data-assistant-contact-content="">
+          <div ref={contentRef} className="relative mx-auto flex w-full flex-col pb-12" data-assistant-contact-content="">
             {contactQuery.isPending ? <p role="status" className="py-3 text-center typography-micro text-muted-foreground">{t('common.loading')}</p> : null}
             {contactQuery.hasPreviousPage || contactQuery.hasMessageGap ? <div className="mb-3 flex flex-col items-center gap-1" data-assistant-contact-pagination="" aria-busy={contactQuery.isFetchingPreviousPage || contactQuery.isFillingMessageGap}>
               {contactQuery.previousPageError ? <p role="alert" className="typography-micro text-[var(--status-error)]">{t('chat.history.loadOlderFailed')}</p> : null}
@@ -603,30 +654,53 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                 {t(contactQuery.isFetchingPreviousPage || contactQuery.isFillingMessageGap ? 'chat.history.loadingMore' : contactQuery.previousPageError || contactQuery.hasMessageGap ? 'chat.history.retry' : 'chat.history.loadOlder')}
               </Button>
             </div> : null}
-            {transcript.map((message, messageIndex) => {
+            {contactGroups.map((group) => {
+              const first = group.rows[0].message
+              const incoming = first.role !== 'user' && !isContactError(first)
+              const groupSender = first.role === 'peer' && first.fromAssistantID
+                ? snapshotQuery.data?.assistants.find((item) => item.id === first.fromAssistantID)
+                : assistant
+              const groupSenderName = first.role === 'peer' ? peerName(first.fromAssistantID, first.fromAssistantName) : displayName
+              return <div key={`${entryScope}:${group.key}`} className={cn('relative flex w-full', !timeSeparators.has(first.messageID) && (incoming ? 'mt-4 first:mt-0' : 'mt-6 first:mt-0'))} data-assistant-contact-group="">
+                {incoming ? <div className={cn('sticky bottom-2 flex shrink-0 self-end justify-center pb-0.5', isMobile ? 'mr-2.5 w-9' : 'mr-2 w-6')} data-assistant-contact-avatar-rail="">
+                  <AssistantWorkingAvatar
+                    name={groupSender?.id || first.fromAssistantID || assistant.id}
+                    avatarSeed={groupSender?.avatarSeed ?? (first.fromAssistantID ? undefined : assistant.avatarSeed)}
+                    size={isMobile ? 32 : 24}
+                    label={groupSenderName}
+                    working={active ? Boolean(groupSender?.working || groupSender?.activeContactTurn) : undefined}
+                    showWorkingDot={false}
+                    followPointer={false}
+                  />
+                </div> : null}
+                <div className="min-w-0 flex-1">
+                {group.rows.map(({ message, index: messageIndex }) => {
               const renderKey = `${entryScope}:${contactRenderKey(message)}`
               const previousMessage = messageIndex > 0 ? transcript[messageIndex - 1] : null
+              const nextMessage = transcript[messageIndex + 1]
               const separatorTimestamp = timeSeparators.get(message.messageID)
               const hasTimeSeparator = separatorTimestamp !== undefined
               const timeSeparator = hasTimeSeparator ? (
                 <div className="flex w-full justify-center px-4 pt-7 pb-4 first:pt-1" data-assistant-contact-time="">
                   <time dateTime={new Date(separatorTimestamp).toISOString()} className="text-[11px] font-normal leading-4 tabular-nums text-muted-foreground/70">
-                    {formatMessageTime(separatorTimestamp)}
+                    {formatMessageDate(separatorTimestamp)}
                   </time>
                 </div>
               ) : null
               const isUser = message.role === 'user'
               const isPeer = message.role === 'peer'
+              const sameSender = (other: AssistantContactMessage | null | undefined) => other
+                && !isContactError(other)
+                && other.role === message.role
+                && other.turnID === message.turnID
+                && other.fromAssistantID === message.fromAssistantID
+              const joinedBefore = Boolean(!hasTimeSeparator && sameSender(previousMessage))
+              const joinedAfter = Boolean(nextMessage && !timeSeparators.has(nextMessage.messageID) && sameSender(nextMessage))
               const sameAssistantRun = message.role === 'assistant'
                 && !hasTimeSeparator
                 && previousMessage?.role === 'assistant'
                 && previousMessage.turnID === message.turnID
-              const startsTurn = previousMessage?.turnID !== message.turnID
-              const showAvatar = !isUser && (isPeer || !sameAssistantRun)
               const senderName = isPeer ? peerName(message.fromAssistantID, message.fromAssistantName) : displayName
-              const sender = isPeer && message.fromAssistantID
-                ? snapshotQuery.data?.assistants.find((item) => item.id === message.fromAssistantID)
-                : assistant
               const optimistic = optimisticByID.get(message.messageID)
               const preview = previewByTurnID.get(message.turnID)
               const failedPreviewRow = message.status === 'failed' && message.messageID.endsWith(':preview:failed')
@@ -661,31 +735,14 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                   className={cn(
                     'flex w-full',
                     isUser ? 'justify-end' : 'justify-start',
-                    hasTimeSeparator ? 'mt-0' : startsTurn ? 'mt-6 first:mt-0' : sameAssistantRun ? 'mt-1.5' : 'mt-3',
+                    hasTimeSeparator ? 'mt-0' : joinedBefore ? 'mt-2' : 'mt-4 first:mt-0',
                   )}
                   data-assistant-contact-role={message.role}
                   data-assistant-contact-turn-status={optimistic?.status ?? message.status}
                   data-assistant-contact-run-start={message.role === 'assistant' && !sameAssistantRun ? '' : undefined}
                 >
-                  {!isUser ? (
-                    <div className="mr-2.5 flex w-9 shrink-0 justify-center pt-0.5">
-                      {showAvatar ? (
-                        <AssistantWorkingAvatar
-                          name={sender?.id || message.fromAssistantID || assistant.id}
-                          avatarSeed={sender?.avatarSeed ?? (message.fromAssistantID ? undefined : assistant.avatarSeed)}
-                          size={32}
-                          label={senderName}
-                          working={active ? Boolean(sender?.working || sender?.activeContactTurn) : undefined}
-                          showWorkingDot={false}
-                          followPointer={false}
-                        />
-                      ) : (
-                        <span className="size-8" aria-hidden />
-                      )}
-                    </div>
-                  ) : null}
                   <div className={cn(
-                    'relative flex min-w-0 flex-col gap-1.5',
+                    'relative flex min-w-0 flex-col gap-2',
                     isUser ? 'max-w-[min(82%,30rem)] items-end' : 'max-w-[min(84%,34rem)] items-start',
                   )}>
                     {isPeer ? (
@@ -716,25 +773,18 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                         // ambiguous Markdown keep the ordinary text-bubble spacing.
                         const imageOnly = useMarkdown && /^!\[(?:\\.|[^\]\\\n])*\]\(\s*(?:<[^>\n]+>|[^\s()]+)(?:\s+"[^"\n]*")?\s*\)$/.test(part.text.trim())
                         return userPart((
-                          <div
+                          <ContactMessageBubble
                             key={`${renderKey}:text:${index}`}
-                            aria-label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
-                            data-assistant-contact-text=""
-                            data-assistant-contact-media={imageOnly || undefined}
-                            style={isUser ? { backgroundColor: userMessageColors.background, color: userMessageColors.foreground } : undefined}
-                            className={cn(
-                              'min-w-0 max-w-full [overflow-wrap:anywhere] rounded-[1.35rem] typography-markdown leading-6',
-                              isMobile && !imageOnly && 'touch-manipulation [-webkit-user-select:all] [user-select:all]',
-                              imageOnly ? 'p-0' : 'px-4 py-2.5',
-                              useMarkdown ? null : 'whitespace-pre-wrap',
-                              imageOnly
-                                ? 'text-foreground'
-                                : isUser
-                                ? 'rounded-[1.15rem] rounded-br-lg'
-                                : isPeer
-                                  ? 'rounded-[1.25rem] border border-dashed border-border/50 bg-[var(--surface-muted)]/70 text-foreground'
-                                  : 'bg-[var(--surface-muted)] text-foreground',
-                            )}
+                            label={isPeer ? t('assistants.contact.peer.aria', { name: senderName }) : undefined}
+                            outgoing={isUser}
+                            joinedBefore={joinedBefore}
+                            joinedAfter={joinedAfter}
+                            createdAt={message.createdAt}
+                            time={bubbleTime.format(message.createdAt)}
+                            mobile={isMobile}
+                            media={imageOnly}
+                            colors={isUser ? userMessageColors : undefined}
+                            hidden={active && sendFlight?.scope === entryScope && sendFlight.messageID === message.messageID}
                           >
                             {useMarkdown ? (
                               <MarkdownRenderer
@@ -748,14 +798,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                                 className="w-full min-w-0 [overflow-wrap:anywhere]"
                               />
                             ) : part.text}
-                          </div>
+                          </ContactMessageBubble>
                         ), `${renderKey}:text:${index}`)
                       }
                       return null
                     })}
-                    {optimistic?.status === 'sending' ? (
-                      <p className="absolute right-1 top-full mt-1 typography-micro text-muted-foreground/75">{t('assistants.contact.sending')}</p>
-                    ) : null}
                     {readPosition?.messageID === message.messageID ? <AssistantReadMarker
                       key={`${transportIdentity}:${assistant.id}:${readPosition.generation}:${readPosition.ordinal}`}
                       assistantID={assistant.id}
@@ -765,8 +812,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                 </motion.div>
                 </React.Fragment>
               )
+                })}
+                </div>
+              </div>
             })}
-            <div className="pointer-events-none absolute bottom-1 left-[2.875rem] flex h-10 items-center" data-assistant-contact-status-slot="">
+            <div className="pointer-events-none absolute bottom-1 left-[var(--contact-avatar-gutter)] flex h-10 items-center" data-assistant-contact-status-slot="">
               {!sending && sendFlight?.scope !== entryScope && (processing || serverWorking) ? (
                 <motion.div
                   role="status"
@@ -777,11 +827,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                   className="relative inline-flex h-9 origin-bottom-left items-center gap-1 rounded-[1.35rem] bg-[var(--surface-muted)] px-4 text-muted-foreground/70"
                   data-assistant-contact-processing=""
                 >
-                  <div className="absolute -left-[2.875rem] top-0.5 flex w-9 justify-center" data-assistant-contact-processing-avatar="">
+                  <div className={cn('absolute -left-[var(--contact-avatar-gutter)] top-0.5 flex justify-center', isMobile ? 'w-9' : 'w-6')} data-assistant-contact-processing-avatar="">
                     <AssistantWorkingAvatar
                       name={assistant.id}
                       avatarSeed={assistant.avatarSeed}
-                      size={32}
+                      size={isMobile ? 32 : 24}
                       label={displayName}
                       working={active ? serverWorking : undefined}
                       showWorkingDot={false}
@@ -799,7 +849,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
       </div>
       <footer
         ref={composerRef}
-        className="relative z-10 shrink-0 bg-background pt-1"
+        className="relative z-10 shrink-0 bg-transparent pt-1"
         data-assistant-contact-composer=""
       >
         {sendError ? (
@@ -814,7 +864,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          <div className="chat-input-column relative overflow-visible">
+          <div className="relative overflow-visible" data-contact-composer-column="">
             <AssistantSessionComposer
               key={`${transportIdentity}:${assistant.id}`}
               active={active}

@@ -224,6 +224,7 @@ export const AssistantSessionComposer = ({ active, onChange, onVoiceSend, ...pro
       onInsert={insertDictation} onSend={sendDictation} onRelease={ignoreDictationRelease}
       onHintChange={setDictationHint} />}
     <ChatPromptComposer {...props} value={document.text} pending={props.pending}
+    animateResize={active && props.layout === 'inline'}
     placeholder={placeholder}
     disableInputWhilePending={false} inputRef={inputRef}
     onSubmit={() => { if (!props.pending) props.onSubmit(); }}

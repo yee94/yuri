@@ -8,10 +8,22 @@ import { useAssistantContactWorkingStore } from './assistantWorking';
 const contactEvents = vi.hoisted(() => ({
   handler: null as ((event: Record<string, unknown>) => void) | null,
 }));
-const contactQueryState = vi.hoisted(() => ({ cardSharingBubble: false, extraMessages: 0, earlier: 0, imageFilePart: false as false | 'legacy' | 'cached', hasPreviousPage: false, isFetchingPreviousPage: false, previousPageError: null as Error | null, fetchPreviousPage: vi.fn(), hasMessageGap: false, isFillingMessageGap: false, retryMessageGap: vi.fn() }));
+const contactQueryState = vi.hoisted(() => ({ cardSharingBubble: false, groupPrependStage: 0, extraMessages: 0, earlier: 0, imageFilePart: false as false | 'legacy' | 'cached', hasPreviousPage: false, isFetchingPreviousPage: false, previousPageError: null as Error | null, fetchPreviousPage: vi.fn(), hasMessageGap: false, isFillingMessageGap: false, retryMessageGap: vi.fn() }));
 const attachmentIO = vi.hoisted(() => ({ upload: vi.fn(), send: vi.fn(), display: vi.fn(), blob: vi.fn(), release: vi.fn() }));
 const unreadUI = vi.hoisted(() => ({ settingsOpen: false }));
 const viewportUI = vi.hoisted(() => ({ isMobile: false }));
+const sendMotion = vi.hoisted(() => ({ numbers: [] as Array<{ from: number; to: number; onUpdate: (value: number) => void; onComplete: () => void }> }));
+vi.mock('motion/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('motion/react')>();
+  return {
+    ...actual,
+    useReducedMotion: () => false,
+    animate: (from: unknown, to: unknown, options: { onUpdate?: (value: number) => void; onComplete?: () => void }) => {
+      if (typeof from === 'number' && typeof to === 'number' && options.onUpdate) sendMotion.numbers.push({ from, to, onUpdate: options.onUpdate, onComplete: options.onComplete ?? (() => {}) });
+      return { stop: vi.fn() };
+    },
+  };
+});
 const failureUI = vi.hoisted(() => ({ failed: false }));
 const translationReads = vi.hoisted(() => vi.fn((key: string) => key));
 const avatarUI = vi.hoisted(() => ({ empty: false, loadFailed: false, peer: false, peerWorking: false, recruited: false }));
@@ -99,6 +111,11 @@ vi.mock('@/queries/assistantQueries', () => ({
           text: 'hello',
           cards: [],
         },
+        ...(['card', 'reply'] as const).filter((kind) => contactQueryState.groupPrependStage >= (kind === 'card' ? 2 : 1)).map((kind) => ({
+          messageID: `${assistantID}:prepend:${kind}`, assistantID, role: 'assistant', turnID: `${assistantID}:prepend`, bubbleIndex: 0, createdAt: 3, ordinal: kind === 'card' ? 2 : 3, status: 'complete', fromAssistantID: null, fromAssistantName: null,
+          parts: kind === 'card' ? [{ type: 'card', cardType: 'session', sessionID: 'ses_prepend', directory: '/workspace', title: 'earlier card' }] : [{ type: 'text', text: 'existing reply' }],
+          text: '', cards: [],
+        })),
         // Server shape: a text bubble and a card in one turn share bubbleIndex 0.
         ...(contactQueryState.cardSharingBubble ? (['bubble:1', 'card:1'] as const).map((suffix, index) => ({
           messageID: `${assistantID}:card-turn:${suffix}`, assistantID, role: 'assistant', turnID: `${assistantID}:card-turn`, bubbleIndex: 0, createdAt: 3, ordinal: 2 + index, status: 'complete', fromAssistantID: null, fromAssistantName: null,
@@ -245,6 +262,7 @@ test('legacy schedule lookup is active-only, composite-keyed, and not reindexed 
 });
 
 afterEach(async () => {
+  sendMotion.numbers = [];
   scheduleUI.cards = [];
   scheduleUI.data = { tasks: [] };
   scheduleUI.reads.mockClear();
@@ -254,6 +272,7 @@ afterEach(async () => {
   }
   contactEvents.handler = null;
   contactQueryState.cardSharingBubble = false;
+  contactQueryState.groupPrependStage = 0;
   contactQueryState.extraMessages = 0;
   contactQueryState.earlier = 0;
   contactQueryState.imageFilePart = false;
@@ -272,6 +291,100 @@ afterEach(async () => {
 });
 
 describe('AssistantConversationSurface scroll ownership', () => {
+  test('keeps different turns separated outside their first rows and spaces same-turn bubbles', async () => {
+    contactQueryState.cardSharingBubble = true;
+    contactQueryState.extraMessages = 2;
+    const { host } = await mountSurface();
+    const first = host.querySelector('[data-message-id="assistant-a:refetch:0"]')!;
+    const second = host.querySelector('[data-message-id="assistant-a:refetch:1"]')!;
+    const firstGroup = first.closest('[data-assistant-contact-group]');
+    const secondGroup = second.closest('[data-assistant-contact-group]');
+    expect(firstGroup).not.toBe(secondGroup);
+    expect(firstGroup?.classList.contains('mt-4')).toBe(true);
+    expect(secondGroup?.classList.contains('mt-4')).toBe(true);
+    const card = host.querySelector('[data-message-id="assistant-a:card-turn:card:1"]')!;
+    const text = host.querySelector('[data-message-id="assistant-a:card-turn:bubble:1"]')!;
+    expect(card.closest('[data-assistant-contact-group]')).toBe(text.closest('[data-assistant-contact-group]'));
+    expect(card.classList.contains('mt-2')).toBe(true);
+  });
+
+  test.each(['arrival', 'interruption'] as const)('keeps the outgoing bubble hidden until smooth scroll %s, then starts or cancels its flight', async (outcome) => {
+    const { host, scroller } = await mountSurface();
+    let top = 120;
+    const existingRows = scroller.querySelectorAll('[data-message-id]').length;
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, get: () => 9000 + (scroller.querySelectorAll('[data-message-id]').length - existingRows) * 60 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = value; } },
+    });
+    scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -80 }));
+    scroller.dispatchEvent(new Event('scroll'));
+    const field = host.querySelector('textarea')!;
+    field.parentElement!.setAttribute('data-assistant-contact-composer-surface', '');
+    await act(async () => { field.value = 'Ship it'; field.dispatchEvent(new Event('input', { bubbles: true })); });
+    attachmentIO.send.mockImplementationOnce(() => new Promise(() => {}));
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-send]')!.click());
+    const bubble = host.querySelector<HTMLElement>('[data-assistant-contact-turn-status="sending"] [data-assistant-contact-text]')!;
+    expect(top).toBe(120);
+    expect(bubble.style.visibility).toBe('hidden');
+    expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+    const scroll = sendMotion.numbers.find(animation => animation.from === 120 && animation.to === 8760)!;
+    expect(scroll).toBeTruthy();
+    scroll.onUpdate(4400);
+    expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+    if (outcome === 'interruption') {
+      await act(async () => scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -80 })));
+      await act(async () => scroll.onComplete());
+      expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+      expect(bubble.style.visibility).toBe('');
+    } else {
+      await act(async () => { scroll.onUpdate(8760); scroll.onComplete(); });
+      expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeTruthy();
+      const flight = sendMotion.numbers.find(animation => animation.from === 0 && animation.to === 1)!;
+      expect(flight).toBeTruthy();
+      await act(async () => { flight.onUpdate(1); flight.onComplete(); });
+      expect(bubble.style.visibility).toBe('');
+      expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+    }
+  });
+
+  test('a send from history never snaps or delays admission while mounting the outgoing row', async () => {
+    const { host, scroller } = await mountSurface();
+    let top = 120;
+    const writes: Array<{ top: number; rows: number }> = [];
+    const rowCount = () => scroller.querySelectorAll('[data-message-id]').length;
+    const existingRows = rowCount();
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, get: () => 9000 + (rowCount() - existingRows) * 60 },
+      scrollTop: {
+        configurable: true,
+        get: () => top,
+        set: (value: number) => { top = value; writes.push({ top, rows: rowCount() }); },
+      },
+    });
+    scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -80 }));
+    scroller.dispatchEvent(new Event('scroll'));
+    const input = host.querySelector('textarea')!;
+    await act(async () => {
+      input.value = 'Ship it';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(top).toBe(120);
+    expect(writes).toHaveLength(0);
+    attachmentIO.send.mockImplementationOnce(() => {
+      expect(top).toBe(120);
+      expect(rowCount()).toBe(existingRows);
+      return new Promise(() => {});
+    });
+
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-send]')!.click());
+    expect(attachmentIO.send).toHaveBeenCalledOnce();
+    expect(writes.every((write) => write.rows === existingRows + 1 && write.top < 8760)).toBe(true);
+    expect(rowCount()).toBe(existingRows + 1);
+    expect(input.value).toBe('');
+  });
+
   test.each([
     { layout: 'desktop', isMobile: false, theme: 'light' },
     { layout: 'desktop', isMobile: false, theme: 'dark' },
@@ -298,10 +411,10 @@ describe('AssistantConversationSurface scroll ownership', () => {
         const swatch = document.createElement('div');
         swatch.style.backgroundColor = expected.background;
         swatch.style.color = expected.foreground;
-        expect(bubble.style.backgroundColor).toBe(swatch.style.backgroundColor);
+        expect(bubble.style.getPropertyValue('--contact-bubble-fill')).toBe(expected.background);
         expect(bubble.style.color).toBe(swatch.style.color);
         expect(bubble.className).not.toContain('--primary-');
-        expect(host.querySelector<HTMLElement>('[data-assistant-contact-role="assistant"] [data-assistant-contact-text]')!.style.backgroundColor).toBe('');
+        expect(host.querySelector<HTMLElement>('[data-assistant-contact-role="assistant"] [data-assistant-contact-text]')!.style.getPropertyValue('--contact-bubble-fill')).toBe('');
       }
     } finally {
       if (previousTheme === null) document.documentElement.removeAttribute('data-theme');
@@ -318,29 +431,68 @@ describe('AssistantConversationSurface scroll ownership', () => {
     const sender = { ...assistant('assistant-a'), avatarSeed: 'speaking-bot-face' };
     await act(async () => root.render(<AssistantConversationSurface assistant={sender} active />));
     expect(host.querySelector('[data-test-card-avatar]')?.getAttribute('data-test-card-avatar')).toBe('new-bot-face');
-    expect(host.querySelector('[data-assistant-contact-role="assistant"] [data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('speaking-bot-face');
+    expect(host.querySelector('[data-assistant-contact-role="assistant"]')?.closest('[data-assistant-contact-group]')?.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('speaking-bot-face');
     await act(async () => root.render(<AssistantConversationSurface assistant={{ ...sender, avatarSeed: 'edited-speaking-face' }} active />));
-    expect(host.querySelector('[data-assistant-contact-role="assistant"] [data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('edited-speaking-face');
+    expect(host.querySelector('[data-assistant-contact-role="assistant"]')?.closest('[data-assistant-contact-group]')?.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar')).toBe('edited-speaking-face');
     expect(host.querySelector('[data-test-card-avatar]')?.getAttribute('data-test-card-avatar')).toBe('new-bot-face');
   });
 
-  test('message and processing avatars share the larger 32px size and aligned gutter', async () => {
+  test.each([false, true])('message and processing avatars share a compact desktop / full mobile gutter (mobile=%s)', async (isMobile) => {
+    viewportUI.isMobile = isMobile;
     contactQueryState.extraMessages = 1;
     const { host } = await mountSurface();
-    const message = host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-assistant-working-avatar]')!;
-    expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe('32');
+    const message = host.querySelector('[data-message-id="assistant-a:refetch:0"]')!.closest('[data-assistant-contact-group]')!.querySelector('[data-assistant-working-avatar]')!;
+    expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe(isMobile ? '32' : '24');
     expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-follow-pointer')).toBe('false');
-    expect(message.parentElement?.classList.contains('w-9')).toBe(true);
+    expect(message.parentElement?.classList.contains(isMobile ? 'w-9' : 'w-6')).toBe(true);
     await act(async () => contactEvents.handler?.({
       type: 'contact-turn-start', assistantID: 'assistant-a', turnID: 'larger-avatar', occurredAt: 4,
     }));
     const processing = host.querySelector('[data-assistant-contact-processing-avatar]')!;
-    expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe('32');
+    expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe(isMobile ? '32' : '24');
     expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-follow-pointer')).toBe('false');
-    expect(processing.classList.contains('w-9')).toBe(true);
-    expect(processing.classList.contains('-left-[2.875rem]')).toBe(true);
-    expect(host.querySelector('[data-assistant-contact-status-slot]')?.classList.contains('left-[2.875rem]')).toBe(true);
+    expect(processing.classList.contains(isMobile ? 'w-9' : 'w-6')).toBe(true);
+    expect(processing.classList.contains('-left-[var(--contact-avatar-gutter)]')).toBe(true);
+    expect(host.querySelector('[data-assistant-contact-status-slot]')?.classList.contains('left-[var(--contact-avatar-gutter)]')).toBe(true);
     expect(host.querySelector('[data-assistant-working-dot]')).toBeNull();
+  });
+
+  test('one bottom-sticky avatar is owned by the entire card-and-text group, not a row', async () => {
+    contactQueryState.cardSharingBubble = true;
+    const { host } = await mountSurface();
+    await act(async () => contactEvents.handler?.({
+      type: 'contact-bubble-delta', assistantID: 'assistant-a', turnID: 'assistant-a:card-turn', bubbleIndex: 1,
+      delta: '改好了，这是最后一条回复。', done: true, occurredAt: 4,
+    }));
+    const earlier = host.querySelectorAll('[data-message-id^="assistant-a:card-turn:"]');
+    for (const row of earlier) expect(row.querySelector('[data-assistant-working-avatar]')).toBeNull();
+    const last = host.querySelector('[data-message-id="assistant-a:card-turn:preview:1"]')!;
+    const group = last.closest('[data-assistant-contact-group]')!;
+    expect(group.querySelectorAll('[data-message-id]')).toHaveLength(3);
+    expect(group.querySelectorAll('[data-assistant-working-avatar]')).toHaveLength(1);
+    expect(last.querySelector('[data-assistant-working-avatar]')).toBeNull();
+    const rail = group.querySelector('[data-assistant-contact-avatar-rail]')!;
+    expect(rail.classList.contains('self-end')).toBe(true);
+    expect(rail.classList.contains('sticky')).toBe(true);
+    expect(rail.classList.contains('bottom-2')).toBe(true);
+    expect(last.querySelector('[data-contact-bubble-joined-before]')).toBeTruthy();
+  });
+
+  test.each([false, true])('prepending a card keeps the entire group, reply and sticky avatar mounted (mobile=%s)', async (isMobile) => {
+    viewportUI.isMobile = isMobile;
+    contactQueryState.groupPrependStage = 1;
+    const { host, root } = await mountSurface();
+    const reply = host.querySelector('[data-message-id="assistant-a:prepend:reply"]')!;
+    const group = reply.closest('[data-assistant-contact-group]')!;
+    const avatar = group.querySelector('[data-assistant-contact-avatar-rail]')!;
+    contactQueryState.groupPrependStage = 2;
+    await act(async () => root.render(<AssistantConversationSurface assistant={assistant('assistant-a')} active />));
+    expect(host.querySelector('[data-message-id="assistant-a:prepend:reply"]')).toBe(reply);
+    expect(reply.closest('[data-assistant-contact-group]')).toBe(group);
+    expect(group.querySelector('[data-assistant-contact-avatar-rail]')).toBe(avatar);
+    expect(group.querySelectorAll('[data-message-id]')).toHaveLength(2);
+    expect(group.querySelector('[data-message-id]')?.getAttribute('data-message-id')).toBe('assistant-a:prepend:card');
+    expect(group.querySelectorAll('[data-assistant-contact-avatar-rail]')).toHaveLength(1);
   });
 
   test('settled transcript avatars follow the same live idle and working states as the header', async () => {
@@ -352,7 +504,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
     </>);
     await act(async () => render(false));
     const header = () => host.querySelector('[data-test-header] [data-avatar-motion]');
-    const transcript = () => host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-avatar-motion]');
+    const transcript = () => host.querySelector('[data-message-id="assistant-a:refetch:0"]')?.closest('[data-assistant-contact-group]')?.querySelector('[data-avatar-motion]');
     expect(header()?.getAttribute('data-avatar-motion')).toBe('idle');
     expect(transcript()?.getAttribute('data-avatar-motion')).toBe('idle');
     await act(async () => render(true));
@@ -392,7 +544,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
     contactQueryState.extraMessages = 1;
     avatarUI.peer = true;
     const { host, root } = await mountSurface();
-    const face = () => host.querySelector('[data-assistant-contact-role="peer"] [data-avatar-motion]');
+    const face = () => host.querySelector('[data-assistant-contact-role="peer"]')?.closest('[data-assistant-contact-group]')?.querySelector('[data-avatar-motion]');
     expect(face()?.getAttribute('data-avatar-motion')).toBe('idle');
     await act(async () => root.render(<AssistantConversationSurface assistant={{ ...assistant('assistant-a'), working: true }} active />));
     expect(face()?.getAttribute('data-avatar-motion')).toBe('idle');
@@ -420,11 +572,10 @@ describe('AssistantConversationSurface scroll ownership', () => {
     }));
     const bubble = host.querySelector('[data-message-id="media-spacing:preview:0"] [data-assistant-contact-text]');
     expect(bubble).toBeTruthy();
-    expect(bubble?.classList.contains('p-0')).toBe(compact);
-    expect(bubble?.classList.contains('px-4')).toBe(!compact);
     expect(bubble?.hasAttribute('data-assistant-contact-media')).toBe(compact);
-    expect(bubble?.classList.contains('bg-[var(--surface-muted)]')).toBe(!compact);
-    expect(host.querySelector('[data-message-id="assistant-a:user"] [data-assistant-contact-text]')?.classList.contains('px-4')).toBe(true);
+    expect(bubble?.querySelector('time') === null).toBe(compact);
+    expect(bubble?.querySelector('svg') === null).toBe(compact);
+    expect(bubble?.classList.contains('yuri-contact-bubble')).toBe(true);
   });
 
   test('working transitions reuse the reserved footer without adding transcript rows', async () => {
@@ -490,21 +641,28 @@ describe('AssistantConversationSurface scroll ownership', () => {
     expect(useAssistantContactWorkingStore.getState().workingByID['assistant-a']).toBe(false);
   });
 
-  test('time separators span the transcript and keep message anchors stable as replies stream', async () => {
+  test('day separators span the transcript and keep message anchors stable as replies stream', async () => {
     const { host } = await mountSurface();
     const firstRow = host.querySelector('[data-message-id="assistant-a:user"]');
     expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(1);
     expect(host.querySelector('time')?.getAttribute('datetime')).toBe(new Date(1).toISOString());
+    expect(host.querySelector('time')?.textContent).not.toContain(':');
     expect(firstRow?.previousElementSibling?.hasAttribute('data-assistant-contact-time')).toBe(true);
     await act(async () => contactEvents.handler?.({
       type: 'contact-bubble-delta', assistantID: 'assistant-a', turnID: 'later-turn', bubbleIndex: 0,
       delta: 'A later reply', done: false, occurredAt: 600001,
     }));
-    expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(2);
+    expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(1);
     expect(host.querySelector('[data-message-id="assistant-a:user"]')).toBe(firstRow);
     await act(async () => contactEvents.handler?.({
       type: 'contact-bubble-delta', assistantID: 'assistant-a', turnID: 'later-turn', bubbleIndex: 0,
       delta: ' with more text', done: true, occurredAt: 600100,
+    }));
+    expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(1);
+    expect(host.querySelector('[data-message-id="assistant-a:user"]')).toBe(firstRow);
+    await act(async () => contactEvents.handler?.({
+      type: 'contact-bubble-delta', assistantID: 'assistant-a', turnID: 'another-day', bubbleIndex: 0,
+      delta: 'Another day', done: true, occurredAt: 172800001,
     }));
     expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(2);
     expect(host.querySelector('[data-message-id="assistant-a:user"]')).toBe(firstRow);
@@ -520,12 +678,12 @@ describe('AssistantConversationSurface scroll ownership', () => {
       activeContactTurn: { turnID: 'assistant-a:refetch-turn:0', messageID: 'assistant-a:user', status: 'running', admittedAt: 2 },
     };
     await act(async () => root.render(<AssistantConversationSurface assistant={busy} active />));
-    expect(host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-assistant-contact-text]')?.textContent).toBe('refetched 0');
+    expect(host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-assistant-contact-body]')?.textContent).toBe('refetched 0');
     expect(host.querySelectorAll('[data-assistant-contact-processing]')).toHaveLength(1);
     await act(async () => root.render(null));
     await act(async () => root.render(<AssistantConversationSurface assistant={assistant('assistant-a')} active />));
     expect(host.querySelector('[data-assistant-contact-processing]')).toBeNull();
-    expect(host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-assistant-contact-text]')?.textContent).toBe('refetched 0');
+    expect(host.querySelector('[data-message-id="assistant-a:refetch:0"] [data-assistant-contact-body]')?.textContent).toBe('refetched 0');
   });
 
   test('shows a completed public message while the turn is still working', async () => {
@@ -539,7 +697,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
       type: 'contact-bubble-delta', assistantID: busy.id, turnID: 'live-turn', bubbleIndex: 0,
       delta: '我先检查配置，再保存修改。', done: true, occurredAt: 3,
     }));
-    expect(Array.from(host.querySelectorAll('[data-assistant-contact-text]')).map((node) => node.textContent)).toContain('我先检查配置，再保存修改。');
+    expect(Array.from(host.querySelectorAll('[data-assistant-contact-body]')).map((node) => node.textContent)).toContain('我先检查配置，再保存修改。');
     expect(host.querySelector('[data-assistant-contact-processing]')).toBeTruthy();
     expect(host.querySelector('[data-stop]')).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[data-send]')?.disabled).toBe(false);

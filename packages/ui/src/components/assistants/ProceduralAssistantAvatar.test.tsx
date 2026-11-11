@@ -404,6 +404,40 @@ test('first appearance during work joins the shared eyes without a local blink',
   expect(frames.size).toBe(0);
 });
 
+test.each(['round', 'star', 'flower'] as const)('all %s contact slots share idle gaze, hover, greeting and work transitions', async shape => {
+  mouseAvailable = true;
+  let now = performance.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const seed = encodeAssistantAvatar({ ...resolveAssistantAvatar('always-same'), shape });
+  const render = (count: number, working = false) => root.render(<>{[64, 40, 28].slice(0, count).map((size, index) =>
+    <div key={index} data-face={index}><LiveAssistantWorkingAvatar name="always-same" avatarSeed={seed} size={size} working={working} followPointer={index !== 2} /></div>,
+  )}</>);
+  const pose = (index: number) => [...host.querySelectorAll(`[data-face="${index}"] svg path, [data-face="${index}"] svg g`)].map(node => [node.getAttribute('d'), node.getAttribute('transform')]);
+  const same = () => {
+    expect(pose(1)).toEqual(pose(0));
+    if (host.querySelector('[data-face="2"]')) expect(pose(2)).toEqual(pose(0));
+  };
+  await act(async () => render(2));
+  await intersect(true);
+  host.querySelectorAll('[data-avatar-motion]').forEach((node, index) => vi.spyOn(node, 'getBoundingClientRect').mockReturnValue({ left: index * 200, top: index * 50, width: 44, height: 44 } as DOMRect));
+  window.dispatchEvent(Object.assign(new Event('pointermove'), { pointerType: 'mouse', clientX: 33, clientY: 11 }));
+  for (let i = 0; i < 20; i++) { now += 34; frame(now); same(); }
+  await act(async () => render(3));
+  await intersect(true);
+  same();
+  host.querySelector('[data-face="1"] [data-avatar-motion]')!.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+  for (let i = 0; i < 30; i++) { now += 34; frame(now); same(); }
+  for (const working of [true, false, true, false]) {
+    await act(async () => render(3, working));
+    same();
+    for (let i = 0; i < 50; i++) { now += 34; frame(now); same(); }
+  }
+  await intersect(false);
+  expect(frames.size).toBe(0);
+  await intersect(true);
+  same();
+});
+
 test('list and header idle faces follow an available mouse while transcript idle faces stay still', async () => {
   mouseAvailable = true;
   const original = avatarEngine.createAssistantAvatarPlayer;
@@ -468,13 +502,13 @@ test('late-mounted working transcript faces join the same pose even during hover
   expect(frames.size).toBe(0);
 });
 
-test('working timelines advance once per shared paint, isolate identities and release the last consumer', () => {
-  const original = avatarEngine.createAssistantAvatarTimeline;
+test('contact players advance once per shared paint, isolate identities and release the last consumer', () => {
+  const original = avatarEngine.createAssistantAvatarPlayer;
   const advances: ReturnType<typeof vi.fn>[] = [];
-  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarTimeline').mockImplementation((...args) => {
-    const timeline = original(...args), advance = vi.fn(timeline.advance);
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args), advance = vi.fn(player.advance);
     advances.push(advance);
-    return { ...timeline, advance };
+    return { ...player, advance };
   });
   const mount = (id: string, animationKey = 'bot-a', seed = 'same-face', size = 32) => {
     const node = document.createElement('span');
@@ -513,6 +547,70 @@ test('working timelines advance once per shared paint, isolate identities and re
   } finally {
     faces.forEach((face) => face.dispose());
   }
+});
+
+test('twenty same-contact slots share one model evaluation and pointer read per paint with no work on no-op updates', () => {
+  let now = performance.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const original = avatarEngine.createAssistantAvatarPlayer;
+  const advance = vi.fn();
+  const create = vi.spyOn(avatarEngine, 'createAssistantAvatarPlayer').mockImplementation((...args) => {
+    const player = original(...args);
+    return { ...player, advance: (...input) => { advance(); return player.advance(...input); } };
+  });
+  const reads = vi.fn(() => ({ left: 0, top: 0, width: 44, height: 44 } as DOMRect));
+  const faces = Array.from({ length: 20 }, (_, index) => {
+    const node = document.createElement('span'); host.append(node);
+    vi.spyOn(node, 'getBoundingClientRect').mockImplementation(reads);
+    const animation = mountAvatarAnimation(node, { id: `shared-${index}`, seed: 'shared-scale', animationKey: 'shared-scale' });
+    const state = { active: true, motion: 'idle' as const, size: index % 2 ? 28 : 64, followPointer: index < 10 };
+    animation.update(state);
+    return { ...animation, state };
+  });
+  try {
+    expect(create).toHaveBeenCalledOnce();
+    const writes = vi.spyOn(Element.prototype, 'setAttribute');
+    advance.mockClear(); reads.mockClear();
+    for (let i = 0; i < 50; i++) faces.forEach(face => face.update(face.state));
+    for (let i = 0; i < 1000; i++) window.dispatchEvent(Object.assign(new Event('pointermove'), { pointerType: 'mouse', clientX: i, clientY: i }));
+    expect(writes).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    expect(advance).not.toHaveBeenCalled();
+    for (let i = 0; i < 60; i++) { now += 34; frame(now); }
+    expect(advance).toHaveBeenCalledTimes(60);
+    expect(reads).toHaveBeenCalledTimes(60);
+    faces.forEach(face => face.update({ ...face.state, followPointer: false }));
+    for (let i = 0; i < 60; i++) { now += 34; frame(now); }
+    expect(frames.size).toBe(0);
+    writes.mockClear(); advance.mockClear(); reads.mockClear();
+    now += 34; frame(now);
+    expect(writes).not.toHaveBeenCalled();
+    expect(advance).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+  } finally { faces.forEach(face => face.dispose()); }
+  expect(frames.size).toBe(0);
+});
+
+test('a returning offscreen contact slot paints the shared rest pose after hover has finished', () => {
+  let now = performance.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const firstHost = document.createElement('span'), secondHost = document.createElement('span');
+  host.append(firstHost, secondHost);
+  const first = mountAvatarAnimation(firstHost, { id: 'rest-first', seed: 'return-rest', animationKey: 'return-rest' });
+  const state = { active: true, motion: 'idle' as const, size: 44, followPointer: false };
+  first.update(state);
+  first.hover();
+  now += 100; frame(now);
+  const second = mountAvatarAnimation(secondHost, { id: 'rest-second', seed: 'return-rest', animationKey: 'return-rest' });
+  try {
+    second.update({ ...state, active: false });
+    for (let i = 0; i < 60; i++) { now += 34; frame(now); }
+    expect(frames.size).toBe(0);
+    second.update(state);
+    const pose = (node: Element) => [...node.querySelectorAll('path, g')].map(item => [item.getAttribute('d'), item.getAttribute('transform')]);
+    expect(pose(secondHost)).toEqual(pose(firstHost));
+    expect(frames.size).toBe(0);
+  } finally { first.dispose(); second.dispose(); }
 });
 
 test('ordinary idle faces keep the reference static pose without frames, gaze listeners or pointer writes', async () => {
@@ -807,7 +905,7 @@ test('contact-row hover targets text and whitespace without retriggering on avat
   const add = vi.spyOn(row, 'addEventListener'), remove = vi.spyOn(row, 'removeEventListener');
   for (let i = 1; i <= 50; i++) await act(async () => render(i));
   await act(async () => render(51, true));
-  expect(players).toHaveBeenCalledTimes(2);
+  expect(players).toHaveBeenCalledTimes(1);
   expect(add.mock.calls.filter(([type]) => type === 'pointerenter')).toHaveLength(0);
   expect(remove.mock.calls.filter(([type]) => type === 'pointerenter')).toHaveLength(0);
   enter(row); expect(hover).toHaveBeenCalledTimes(1);

@@ -112,11 +112,107 @@ describe('AssistantView synthetic part consumption', () => {
 })
 
 describe('AssistantView contact surface', () => {
-  test('phone gear delegates directly to its page-stack owner', async () => {
+  test('keeps the desktop transcript scrollbar at the workspace right edge', async () => {
+    const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
+    const workspaceRules = [...css.matchAll(/\.yuri-assistant-workspace\[data-assistant-layout="desktop"\] \{([^}]+)\}/g)]
+    expect(workspaceRules).toHaveLength(2)
+    expect(workspaceRules[0][1]).toContain('padding: 0 0 1rem 1rem')
+    expect(workspaceRules[1][1]).toContain('padding: 0 0 0.625rem 0.625rem')
+  })
+
+  test('lets the desktop workspace own the composer bottom inset without changing phone or Mini Chat spacing', async () => {
+    const [css, surface] = await Promise.all([
+      readFile(join(directory, 'assistant-workspace.css'), 'utf8'),
+      readFile(join(directory, 'AssistantConversationSurface.tsx'), 'utf8'),
+    ])
+    const composerInset = css.match(/\.yuri-assistant-workspace\[data-assistant-layout="desktop"\] \[data-assistant-contact-composer\] > form \{([^}]+)\}/)?.[1]
+    expect(composerInset).toContain('padding-bottom: 0;')
+    expect(surface).toContain("'relative w-full pt-1.5 pb-4'")
+    expect(surface).toContain("isMobile && 'bottom-safe-area yuri-mobile-composer'")
+  })
+
+  test('gives message bodies proportional leading without changing composer metrics', async () => {
+    const css = await readFile(join(directory, 'contact-message-bubble.css'), 'utf8')
+    expect(css.match(/--contact-body-leading:/g)).toHaveLength(1)
+    expect(css).toContain('--contact-body-leading: 1.65;')
+    expect(css).toContain('line-height: var(--contact-body-leading, 1.65);')
+    expect(css).toContain('--markdown-list-line-height: 1.5;')
+    expect(css).toContain('--markdown-paragraph-spacing: 0.5em;')
+    expect(css).toContain('margin-block: 0.15em;')
+    expect(css).toContain('margin-block: 0.35em !important;')
+    expect(css).toContain('margin-bottom: 0 !important;')
+    expect(css).toContain('.markdown-content li > :is(p, .paragraph-node)')
+    expect(css).toContain('font-size: var(--contact-body-size, var(--text-markdown));')
+    expect(css).toContain('line-height: 1.25rem;')
+    expect(css).toContain('.yuri-contact-bubble-time {')
+  })
+
+  test('uses variant-aware theme material without changing the wallpaper canvas', async () => {
+    const [css, entry, mobile, artwork, license] = await Promise.all([
+      readFile(join(directory, 'assistant-workspace.css'), 'utf8'),
+      readFile(join(directory, '../../index.css'), 'utf8'),
+      readFile(join(directory, '../../mobile/assistant/MobileAssistantTab.tsx'), 'utf8'),
+      readFile(join(directory, '../../assets/assistant-wallpaper/telegram-pattern.svg'), 'utf8'),
+      readFile(join(directory, '../../assets/assistant-wallpaper/LICENSE'), 'utf8'),
+    ])
+    expect(entry).toContain('@import "./components/assistants/assistant-workspace.css"')
+    expect(css).toContain('background: var(--surface-background)')
+    expect(css).toContain('--assistant-panel-background: color-mix(in srgb, var(--surface-background) 97%, black)')
+    expect(css).toContain('--assistant-panel-background: color-mix(in srgb, var(--surface-background) 94%, white)')
+    const darkMaterial = css.match(/:root\.dark \.yuri-assistant-wallpaper \{([^}]+)\}/)?.[1]
+    expect(darkMaterial).toContain('94%, white')
+    expect(darkMaterial).toContain('--assistant-panel-shadow: none')
+    expect(darkMaterial).toContain('--assistant-bubble-filter: none')
+    expect(css).toContain('--assistant-panel-shadow: 0 2px 8px')
+    expect(css).toContain('--assistant-bubble-filter: drop-shadow(')
+    expect(css).not.toContain('oklch(')
+    expect(css).toContain('[data-contact-bubble-direction="incoming"]')
+    expect(css).toContain('--contact-bubble-fill: var(--assistant-panel-background)')
+    expect(css).toContain('box-shadow: var(--assistant-panel-shadow)')
+    expect(css).toContain('filter: var(--assistant-bubble-filter)')
+    expect(css).toContain(':root.dark .yuri-assistant-wallpaper :is([data-composer-material]')
+    expect(css).toContain('outline: 2px solid var(--interactive-focus-ring)')
+    expect(css).toContain('[data-assistant-contact-transcript] > :is(')
+    expect(entry).toContain('--assistant-wallpaper-pattern: url("./assets/assistant-wallpaper/telegram-pattern.svg")')
+    expect(css).toContain('mask: var(--assistant-wallpaper-pattern)')
+    expect(css.match(/center top \/ 504px 1036px repeat/g)).toHaveLength(2)
+    expect(mobile).toContain("cn('yuri-assistant-mobile-catalog-page', className)")
+    const shell = await readFile(join(directory, '../../mobile/MobileTabsRoot.tsx'), 'utf8')
+    expect(shell).toContain("selectedTab === 'assistant' && 'yuri-assistant-wallpaper'")
+    const catalog = css.match(/\.yuri-assistant-mobile-catalog-page \.yuri-mobile-assistant-catalog \{([^}]+)\}/)?.[1]
+    expect(catalog).toContain('background: transparent')
+    expect(catalog).not.toContain('border-radius')
+    expect(catalog).not.toContain('box-shadow')
+    expect(artwork).toContain('viewBox="0 0 1440 2960"')
+    expect(artwork).not.toMatch(/<script|<foreignObject|https?:\/\/(?!www\.w3\.org)/i)
+    expect(license).toContain('GNU GENERAL PUBLIC LICENSE')
+  })
+
+  test('phone identity delegates directly to its page-stack owner', async () => {
     const source = await readFile(join(directory, 'AssistantView.tsx'), 'utf8')
     const header = source.slice(source.indexOf('const MobileAssistantConversationHeader:'), source.indexOf('type AssistantListItemProps'))
     expect(header).toContain('if (onOpenSettings) {\n      onOpenSettings(assistant.id);\n      return;')
     expect(source).toContain('onOpenSettings={onMobileOpenSettings}')
+  })
+
+  test('keeps a silhouette shadow on the avatar and halves the flush-top header scrim', async () => {
+    const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
+    const avatarShadow = css.match(/\.yuri-assistant-header-identity \[data-assistant-working-avatar\] \{([^}]+)\}/)?.[1]
+    expect(avatarShadow).toContain('filter: drop-shadow(')
+    expect(avatarShadow).toContain('light-dark(var(--surface-foreground), var(--surface-background))')
+    const scrim = css.match(/\.yuri-mobile-detail-navigation::before \{([^}]+)\}/)?.[1]
+    expect(scrim).toContain('height: 4.5rem')
+    expect(scrim).toContain('inset: 0 0 auto')
+    expect(scrim).toContain('mask-image: linear-gradient(to right, transparent, currentColor 20%, currentColor 80%, transparent)')
+    const header = css.match(/\.yuri-assistant-conversation-header \{([^}]+)\}/)?.[1]
+    expect(header).toContain('padding-top: 0')
+    const identity = css.match(/\.yuri-assistant-header-identity\[data-slot="button"\] \{([^}]+)\}/)?.[1]
+    expect(identity).toContain('margin-top: 0.5rem')
+    expect(css).toContain('padding: 0 0 1rem 1rem')
+    expect(css).toContain('padding-top: var(--yuri-safe-area-top, 0px)')
+    const back = css.match(/\.yuri-mobile-detail-navigation-content > button \{([^}]+)\}/)?.[1]
+    expect(back).toContain('margin-top: calc((0.5rem + 28px) * var(--dpt-n, 1))')
+    expect(back).toContain('translate: 0 -50%')
   })
   test('keeps localized creation actions in populated desktop and mobile headers', async () => {
     const desktop = await readFile(join(directory, 'AssistantView.tsx'), 'utf8')
@@ -147,16 +243,17 @@ describe('AssistantView contact surface', () => {
     expect(source).toContain('<AssistantConversationSurface')
     expect(source).not.toContain('ensureAssistantSession')
     expect(source).not.toContain('refreshBinding')
-    expect(source).toContain('<AssistantContactStatus assistantID={assistant.id}')
-    expect(source).toContain('lastContactAt={assistant.latestMessagePreview?.createdAt}')
+    expect(source).toContain('<AssistantHeaderIdentity assistant={assistant} onClick={openConversationSettings}')
+    expect(source).toContain('<AssistantHeaderIdentity assistant={assistant} onClick={openSettings}')
     expect(source).toContain("t('assistants.conversation.openSettings')")
-    expect(source).toContain("actions={assistant ? [{ icon: 'settings-3'")
-    expect(source).toContain('<Icon name="settings-3"')
+    expect(source).not.toContain('<AssistantContactStatus')
+    expect(source).not.toContain('<Icon name="settings-3"')
     expect(source).toContain('openAssistantSettings(assistant.id')
-    expect(source).toContain('flex h-16')
-    expect(source).toContain('rounded-full text-muted-foreground/65')
-    expect(source).toContain('border-l border-[var(--surface-subtle)]')
-    expect(source).toContain('size={40}')
+    expect(source).toContain('yuri-assistant-header-name truncate')
+    expect(source).toContain('yuri-assistant-catalog-panel')
+    expect(source).toContain('yuri-assistant-conversation-header')
+    expect(source).not.toContain('border-l border-[var(--surface-subtle)]')
+    expect(source).toContain('size={56}')
   })
 
   test('pending capability or snapshot uses a loading spinner, not unavailable copy', async () => {

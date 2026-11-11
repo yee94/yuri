@@ -10,7 +10,7 @@ test.skip('keyboard curtain never creates an outer assistant scrollport or chang
   const view = readFileSync(join(here, 'AssistantView.tsx'), 'utf8')
   const surface = readFileSync(join(here, 'AssistantConversationSurface.tsx'), 'utf8')
   const workspace = view.match(/className="([^"]+)" data-presentation="workspace"/)![1]
-  const pane = view.match(/className=\{cn\('(relative flex min-h-0 min-w-0 flex-1 flex-col [^']+)'/)![1]
+  const pane = view.match(/className="(relative flex min-h-0 min-w-0 flex-1 flex-col [^"]+)"/)![1]
   const transcript = surface.match(/'(min-h-0 flex-1 overflow-x-hidden overflow-y-auto [^']+)'/)![1]
   const content = surface.match(/className="([^"]+)" data-assistant-contact-content/)![1]
   const form = surface.match(/className=\{cn\('(relative w-full [^']+)', isMobile && '([^']+)'/)!

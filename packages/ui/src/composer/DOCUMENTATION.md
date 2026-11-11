@@ -131,6 +131,9 @@ within, without a shadow. Focus never further intensifies hover.
 Color transitions take 150ms and respect reduced motion.
 Mobile web expanded composers inherit this shared material without CSS overrides;
 compact composers use the same light/dark fill, border and shadow recipe.
+Session web composer Send controls always use the inverted filled-circle arrow,
+including empty or blocked drafts and floating follow-up controls. Disabled Send
+keeps the same geometry at 50% opacity; admission and Stop behavior are unchanged.
 The attached queue card shares the composer's palette and border on desktop and
 mobile without stacking another elevation shadow. Its dark fill uses 4% foreground
 instead of the input's 8% to separate the rear queue from the front input.

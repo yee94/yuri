@@ -164,7 +164,7 @@ export const ChatPromptComposer: React.FC<ChatPromptComposerProps> = ({
 
   React.useLayoutEffect(() => {
     resizeTextarea();
-  }, [autoResize, expanded, inline, textareaProps?.fillContainer, value]);
+  }, [autoResize, expanded, inline, textareaProps?.fillContainer, value, resizeTextarea]);
   useResizeObserver(inline && autoResize && !expanded && !textareaProps?.fillContainer ? localInputRef : null, resizeTextarea);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

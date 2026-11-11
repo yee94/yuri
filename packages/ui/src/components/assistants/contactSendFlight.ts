@@ -67,7 +67,8 @@ export const captureContactSendFlightSource = (
   compact = false,
 ): ContactSendFlightSource | null => {
   if (!field.value.trim()) return null
-  const surfaceStyle = window.getComputedStyle(surface)
+  const material = surface.querySelector<HTMLElement>('[data-composer-material]') ?? surface
+  const surfaceStyle = window.getComputedStyle(material)
   const textBox = contentBox(field)
   // Reference-highlighting composers paint text through an overlay and keep the field transparent.
   const painted = field.parentElement?.querySelector<HTMLElement>('[data-composer-highlight]')
@@ -75,7 +76,7 @@ export const captureContactSendFlightSource = (
   if (painted) textStyle.color = window.getComputedStyle(painted).color
   return {
     compact,
-    background: box(surface.getBoundingClientRect()),
+    background: box(material.getBoundingClientRect()),
     backgroundColor: surfaceStyle.backgroundColor,
     radii: readRadii(surfaceStyle),
     text: field.value,
@@ -110,6 +111,8 @@ export const startContactSendFlight = (
   onSettled?: () => void,
 ): (() => void) => {
   const bubbleStyle = window.getComputedStyle(bubble)
+  const outline = bubble.querySelector('.yuri-contact-bubble-outline path')
+  const bubbleColor = outline ? window.getComputedStyle(outline).fill : bubbleStyle.backgroundColor
   const targetRadii = readRadii(bubbleStyle)
   const initialTarget = box(bubble.getBoundingClientRect())
   const initialText = contentBox(bubble)
@@ -135,7 +138,7 @@ export const startContactSendFlight = (
   const sourceText = layer({ ...source.textStyle, left: '0px', top: '0px', width: `${source.textBox.width}px` })
   sourceText.textContent = source.text
   const targetText = layer({ ...textStyleOf(bubbleStyle), left: '0px', top: '0px', width: `${initialText.width}px` })
-  targetText.textContent = bubble.textContent ?? ''
+  targetText.textContent = (bubble.querySelector('[data-assistant-contact-body]') ?? bubble).textContent ?? ''
   clip.append(sourceText, targetText)
 
   const place = (elapsed: number) => {
@@ -180,7 +183,7 @@ export const startContactSendFlight = (
   place(0)
   document.body.appendChild(clip)
   running.push(
-    animate(clip, { backgroundColor: [source.backgroundColor, bubbleStyle.backgroundColor] }, {
+    animate(clip, { backgroundColor: [source.backgroundColor, bubbleColor] }, {
       duration: BACKGROUND_COLOR_DURATION_S,
       ease: 'linear',
     }),

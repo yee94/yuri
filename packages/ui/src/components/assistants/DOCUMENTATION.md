@@ -1,5 +1,118 @@
 # Assistant UI
 
+## Floating Assistant workspace
+
+`assistant-workspace.css` is loaded eagerly from `index.css`. The Assistant
+workspace and phone catalog own a locally bundled Telegram Web K line-art
+wallpaper (source and separate asset license in `assets/assistant-wallpaper/`).
+The repeating tile is 504 × 1036 CSS pixels, preserving the artwork's aspect ratio.
+`index.css` owns its asset URL through `--assistant-wallpaper-pattern`, so the
+flattened stylesheet resolves the image from the same entry in dev and builds.
+The canvas retains `surface.background`. Contact/header panels and incoming
+bubbles use that theme background mixed in sRGB: 6% white in dark mode, 3% black
+in light mode, with no accent tint or color-space conversion. Light panels and
+composer material have a subtle shared shadow; incoming bubble shadows follow
+only their SVG silhouette. Dark mode disables both shadows. The mask's faint lines use muted-foreground and
+primary theme tokens; no runtime image fetch, timer or canvas rendering is used.
+
+Desktop uses an inset rounded contact panel with transparent transcript/composer
+surroundings. The workspace has no right inset, keeping the transcript scrollbar
+at its right edge while message/composer content retains its own padding.
+The desktop workspace alone owns the bottom inset: its composer form has no
+additional bottom padding, aligning the visible input material with the catalog
+panel's bottom edge at both desktop spacings. Phone safe-area and Mini Chat
+composer spacing remain unchanged.
+On phone the active Assistant tab puts the wallpaper on the non-scrolling
+`MobileTabsRoot` shell, covering page gutters and the dock area for long or short
+lists. The catalog is transparent, with independent contact-row surfaces rather
+than one enclosing card; other tabs retain their own canvas. The conversation
+header is only a centered live avatar and pill-shaped name, clickable to open that
+Bot's Settings; its background is a fading theme-canvas scrim, not a card or drop
+shadow. It omits last-contact/typing text, gear and Mini Chat actions (Mini Chat
+remains in contact menus). Phone navigation retains Back independently of the
+identity control. The transcript reserves space beneath the overlay on both layouts.
+Back's center aligns with the 56px design-point-scaled avatar, not the combined
+avatar/name height; its 40px shared button and safe-area owner remain unchanged.
+The scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
+and through an alpha mask over its left/right 20% edges; the avatar/name
+control keeps a separate 0.5rem top gap (below the system safe area on phone).
+Only its avatar has a silhouette drop shadow in
+both themes, independent of the panel material's theme-specific shadow policy.
+Dark panels and composer/control material are shadow-free; light mode adds
+subtle elevation to separate the pale surfaces from the canvas. Keyboard focus
+retains an explicit outline. Incoming bubbles use the panel surface here; outgoing
+bubbles retain their avatar-derived fill. Other app tabs and Settings keep their
+existing surfaces, and Mini Chat keeps its existing shell.
+
+Session, Bot and scheduled-task contact cards share the incoming-message panel
+fill, opaque at rest and on hover. Hover mixes that fill with 6% black in sRGB
+for a subtle darker state, never a translucent interactive overlay.
+Light cards use the shared panel shadow; dark cards have
+none. Outside the wallpaper workspace, the shared card fill falls back to the
+same muted surface as incoming text. Focus rings and card navigation are unchanged.
+
+Workspace/pane frames remain `overflow-clip`; only the catalog/transcript (or
+the existing phone page) owns scrolling. Contact identity, row keys, read markers,
+failure/retry, menus, swipe, composer sizing and keyboard ownership are unchanged.
+
+## Telegram-style contact geometry and composer motion
+
+`ContactMessageBubble` owns the text bubble's entire filled SVG silhouette. Body
+and tail use one closed path, not a separately attached triangle or overlapping
+paint layers. Resize observation updates that path without React state or frame
+work; unrelated renders do not remeasure it. Consecutive messages from the same
+sender and turn share 8px gaps and joined-side corners; only the last bubble has a tail.
+The compact bottom-right timestamp reserves inline space on the final text line.
+No delivery/read checkmarks or sending label are rendered. Existing failed-send
+indicators and retry snapshots remain unchanged. User fill still follows the Bot's
+avatar palette; incoming text uses the theme's muted surface.
+
+`contact-message-bubble.css` defines one shared contact column for messages and
+composer: desktop 45.5rem (Telegram's 47.5rem container minus its two 1rem insets),
+bounded by available space; mobile retains its 42rem cap. The scroll owner publishes
+the actual native scrollbar width so the footer has the same usable width and
+horizontal center as the transcript, including classic desktop scrollbars.
+Desktop uses the UI-label body size, 24px message avatars and 40px composer rails;
+mobile retains the Markdown size, 32px avatars and 48px rails. Message body leading
+is 1.65 times the current font size on both layouts, including inherited Markdown
+text; composer metrics and compact timestamps remain unchanged. Header, catalog
+and primary Chat sizes are unchanged.
+Within contact bubbles, lists use 1.5 leading and 0.15em item margins; prose uses
+0.5em paragraph spacing. List paragraphs do not add another margin, and final
+lists have no trailing margin. These scoped overrides cover both Markdown engines
+without changing primary Chat's typography.
+
+Consecutive incoming rows from the same sender and turn share one
+`data-assistant-contact-group`, including all card, file and text rows. One avatar
+occupies a bottom-sticky sibling rail spanning the entire group, 8px above the
+transcript viewport bottom. Its containing block is the group, never just its last
+message: the avatar stays above the composer while any of that group remains in
+view and leaves when the group leaves. Prepends adopt a surviving member's group
+key so adding the earlier card does not remount its existing reply/reading anchor.
+All three card types use `--contact-bubble-radius`, with no tail; their fixed size,
+padding and navigation contracts remain unchanged.
+
+Group spacing is owned by the outer group, not its first message: incoming replies
+start with 16px clearance, and a new outgoing turn starts with 24px. The first group
+and date separators retain their own spacing. Message parts and same-turn rows
+use 8px gaps. A first-row margin reset therefore cannot collapse two turns together.
+
+Active inline contact composers opt into `ChatComposerSurface.animateResize`.
+Its memoized material leaf owns the existing shared surface paint. On a real size
+change, Motion animates only the paint's bottom-origin `scaleY` and the input
+shell's translation over 200ms. Layout height and glyph scale are never animated;
+bottom-aligned attachment/send rails receive no transform. Interrupted growth
+starts from the current visual pose. Reduced motion, deactivation and unmount
+stop animations and clear text transforms. Default consumers do not mount this
+leaf or its observer. Text editing, reference overlays, focus, IME and max-height
+textarea scrolling remain with the existing composer.
+
+Focused tests cover the single silhouette, no remeasurement on 50 parent renders,
+transform-only growth/retarget/cleanup, smooth return-before-flight, cancellation,
+and unchanged request timing. Development-browser checks measured equal message
+and composer bounds and zero action-icon drift across 50 input events. This is
+not production-build timing or native-device keyboard/animation acceptance.
+
 ## Inline composer geometry
 
 `ChatPromptComposer` derives the inline single-line height from the textarea's
@@ -478,7 +591,8 @@ rest pose. Visibility resumes create a bounded player without replaying backgrou
 time. Working wrappers and the legacy `animated` prop select the source `working`
 state (Working_A–F, looking around), not the three-dot `thinking` morph. Explicit
 idle/thinking/happy states remain available independently. Working uses the same
-compact clip/geometry mode at every display size. Other states below
+compact clip/geometry mode at every display size. Explicitly keyed contact faces
+also use that same mode during idle and transitions. Other standalone states below
 48px select the source compact clips;
 resizing updates that mode on the same state machine, not the viewBox or eye size.
 The saved motion-off switch bypasses live observers altogether. At rest,
@@ -495,21 +609,25 @@ face releasing it removes all listeners and discards the sample. Transcript,
 touch-only, standalone historical, picker, native-PNG and saved motion-off faces
 never acquire it.
 
-Working list/header/transcript/processing faces share the same window-scoped
-timeline for their assistant ID and saved recipe, regardless of slot size or
+List/header/card/transcript/processing faces share one window-scoped player for
+their assistant ID and saved recipe in every state, regardless of slot size or
 pointer capability. New messages and returning visible rows immediately join the
-current pose before paint rather than starting a separate clip. Timeline evaluation
-runs once per shared paint; SVG rendering remains instance-local. Working disables
-local mouse gaze, hover and first-appearance blinks to keep every normalized frame
-identical. First appearance during work consumes the greeting without deferring it.
-The last eligible consumer releases its timeline, with no background replay.
+current pose before paint rather than starting a separate clip or greeting blink.
+One first-visible pointer-enabled slot supplies a shared gaze origin; idle hover
+and appearance blinks are also shared, including with pointer-disabled transcript
+slots. Working suppresses those interactions for the whole contact. Idle/work
+transitions reuse that player and broadcast the same frame to every eligible SVG.
+Model evaluation runs once per contact per paint; SVG rendering remains instance-local.
+Quiet or all-inactive contacts release player, clock and pointer resources without
+background replay. Last unmount removes the contact group.
 
-The shared clock measures all active face rectangles before any SVG writes,
+The shared clock measures active gaze-origin rectangles before any SVG writes,
 only when a mouse sample exists. This preserves gaze after scrolling/layout moves
 without a long-lived geometry cache, per-event layout reads or read/write
-interleaving. At twenty visible faces the upper bound is twenty rectangle reads
+interleaving. At twenty distinct visible contacts the upper bound is twenty rectangle reads
 per paint (600/second at 30Hz), regardless of pointer-event frequency. Unchanged
-gaze vectors do not call the runtime again.
+gaze vectors do not call the runtime again. Twenty slots of the same contact use
+one rectangle read and one model evaluation per paint.
 
 Outside working, mouse hover triggers one .65-second whole-avatar shrink/rebound (down to 82%,
 then up to 104% where containment permits), with a smooth-envelope sway of the
@@ -575,7 +693,7 @@ remain static images with no observers. Standalone history/pickers do not opt in
 
 ## Contact message time separators
 
-The contact transcript inserts a centered, muted timestamp before the first visible message, after a gap greater than five minutes, and across local calendar days. Timestamps use message `createdAt` and the viewer's local timezone: today plus 24-hour time, localized month/day for earlier dates, and the year for other years. Labels refresh on the next render after a local day change; no timer or extra request is introduced. One linear pass compares visible rows; internal settle-only records and empty processing previews do not consume boundaries. Cards, attachments, and errors participate. Prepending history recomputes boundaries from loaded rows, preserving message DOM anchors and the existing auto-follow owner. A separator also restarts the assistant avatar grouping.
+The contact transcript inserts a centered, muted date before the first visible message and across local calendar days, never for time gaps within a day. Separators use message `createdAt` and the viewer's local timezone: localized Today/Yesterday labels, localized month/day for earlier dates, and the year for other years, without a time. Message bubbles retain their 24-hour timestamps, and the header's last-contact timestamp is unchanged. Labels refresh on the next render after a local day change; no timer or extra request is introduced. One linear pass compares visible rows; internal settle-only records and empty processing previews do not consume boundaries. Cards, attachments, and errors participate. Prepending history recomputes boundaries from loaded rows, preserving message DOM anchors and the existing auto-follow owner. A separator also restarts the assistant avatar grouping.
 
 ## Homepage message previews
 
@@ -599,6 +717,13 @@ It subscribes only to that Assistant's live working entry and contact cache,
 introduces no history request or timer, and never derives activity from timestamps.
 
 Desktop sidebar rows and mobile catalog cards share `getAssistantMessagePreview` and `ASSISTANT_MESSAGE_PREVIEW_CLASS`: one title line plus one muted preview line, truncated with an ellipsis. A 44px softly rounded square avatar matches the combined title/preview height; the desktop conversation header uses a 40px face matching its two text lines. `AssistantDTO.latestMessagePreview` comes from the runtime-scoped snapshot and all Assistant mutation responses. The server selects the latest visible user/assistant message by its authoritative ordinal (peer messages map to user); internal tool content stays server-filtered. The UI displays nonempty text after whitespace normalization, including supplied filenames/card titles. Empty text uses the existing image/file/session/assistant/schedule locale label; null or a legacy missing field uses `assistants.contact.empty`. The parser normalizes missing fields to null. Configuration `defaultPrompt` stays in Settings.
+
+Text previews hide common Markdown markers (emphasis, inline code, headings, quotes,
+lists, fences and link/image wrappers) through lightweight string replacements on
+the server-bounded 500-character snapshot. Link labels and image alt text remain;
+incomplete image/link tails from snapshot truncation are tolerated. This is not a
+Markdown parser or renderer, performs no resource loads and leaves stored messages
+and transcript rendering untouched. Attachment filenames and card titles remain literal.
 
 Preview freshness follows the existing snapshot revision/events, foreground reconcile, and focus/reconnect query path. List rows add zero history requests, transcript-cache reads, or message subscriptions. Creation, selection, avatars, working dots, and context/long-press edit/delete ownership remain unchanged.
 
@@ -653,6 +778,8 @@ and row heights. The dimensions below are the 1× baseline, not unscaled mobile
 pixel constraints. Native iOS scaling and user density must preserve the bottom
 inset. The native-density browser regression applies the production design-point
 PostCSS transform and checks all three card types at 0.9×, 1×, iOS 7/6× and 1.2×.
+The shared `--contact-bubble-radius` rule above supersedes the legacy 1.35rem
+outer radius in the baseline description below; cards never draw a tail.
 
 - Cards are first-class in-transcript UI (`type: 'card'`, `cardType` `session` | `assistant` | `schedule`), not markdown links and not Activity/tool rows.
 - The three card types share a 148px-high, 19rem-wide frame, capped at the transcript column width (`max-w-full min-w-0`), with 40/20/20/48px grid rows in `contactCardChrome.ts`. Short titles and missing optional fields never change the height. Surface, 1.35rem radius and padding match ordinary Assistant messages: `surface.muted`, `px-4 py-2.5`, no resting border, outline, shadow or divider. Keyboard focus retains its ring. Titles stay single-line with ellipsis and native full-value titles; the outer frame does not clip content or avatars. Assistant cards emphasize their saved 32px avatar and vertically centered name; Assistant and Session cards reuse `ContactCardModelLine` for the same muted brain icon + single-line `provider/model`. Conversation mode is hidden. Session project, optional diff and model occupy one information region with 16px rows and 6px gaps; model/entry-arrow placement is unchanged with or without diff. Only complete/idle receipts show actual non-zero `summary.additions` / `deletions` / `files`; missing and all-zero summaries create no statistics node. Working, retry, question, failure and cancellation never display historical diff. Schedule cards keep a single-line prompt, then frequency followed by time in one compact, baseline-aligned, bottom-aligned row (6px gap), not opposite ends or stacked lines. A single clock is 1.25em; rules/dates/multiple times use compact text. Timezone and metadata icons are hidden without changing stored schedule semantics. Missing time remains explicitly labelled, never inferred as the next run. All layouts are shared by web, Electron, VS Code, hosted mobile and Capacitor. Whole-card click/Enter/Space retain the existing session/contact/exact-task navigation; no extra CTA button is added.
@@ -694,21 +821,25 @@ The Assistant UI owns the current-runtime Assistant surface. Its product informa
 
 Working status is a **10px green dot** (`size-2.5`) on the bottom-right of the assistant avatar **only in the outer assistant list** (`AssistantWorkingAvatar`, `data-assistant-working-dot`). The conversation header and transcript avatars never show it. The avatar and dot share a fixed-size relative wrapper so the marker cannot drift with flex/text baseline. **Server snapshot is authoritative:** `AssistantDTO.working` / `activeContactTurn` from TanStack snapshot HTTP recover list green dots after APP restart or reconnect. Spoken bubbles and cards that have already published live in `GET /contact/messages` (same ids as turn-end persist) so another device or remount sees them while the turn is still running. Local optimistic send and SSE token-level bubble-delta previews are temporary continuity only for the in-flight bubble and must not become the durable source. The 3-dot processing row seeds from `activeContactTurn` on remount and stays through partial spoken bubbles until a real turn settle. When snapshot is idle and its revision covers admission, local admitted/streaming overlays clear (missed SSE end recovery); a newer send or still-sending optimistic turn is never wiped by a stale idle snapshot. TanStack foreground-reconciles snapshot/contact on a fixed cadence (busy ~2.5s, idle ~15s; `refetchIntervalInBackground: false`) so missed SSE start/end/revision tips still converge without APP restart; focus/reconnect and tip invalidation remain. Green dots cannot stick after a missed end, and completed replies appear without relying on heartbeat-only streams. `admission_timeout` re-checks the original `messageID` instead of minting a new send; durable server error bubbles recover failed state without SSE. Failed turn overlays are ephemeral: a newer user turn, history wipe, or vanished turnID drops them so a timeout cannot trail into the next conversation. Local false idle must not cover server busy; a stale `contact-turn-end` for an older `turnID` must not wipe a newer turn. Assigned-session busy in Chat does not keep the list badge on. This is Grok-Bot contact language, not an OpenCode Activity banner.
 
-`AssistantConversationSurface` is the contact transcript: short bubbles, first-class session cards, and inbound peer DMs. User text stays a compact avatar-mapped identity-color bubble; assistant text uses an unbordered `surface-muted` fill, generous line height, and relaxed padding so replies feel spoken against `bg-background`. Contact bubbles share `--text-markdown` (`typography-markdown`) so user and assistant body text are the same size; peer keeps a quiet dashed muted bubble. Assistant and peer text render through the shared `MarkdownRenderer` (markstream-react by default, marked fallback). User bubbles stay plain text. Internal `yuri.settle.*` markers are skipped (not shown as plain-text notices). File-reference underlines stay off — this is spoken contact, not Chat. It does **not** host `ChatContainer`, Activity, tools, or thinking. Assign tool results appear as those same bubbles/cards, not OpenCode Activity. The composer reuses the shared `ChatPromptComposer` / `ChatComposerSurface` shell in `layout="inline"` — one compact ~48px idle row with paperclip on the left, a textarea that keeps a 48px idle rail and always measures soft-wrap or explicit-newline `scrollHeight` (`min-h-12`, `py-3`, `leading-6`, `max-h-32`), and Chat’s filled `SendCircleIcon` (`data-composer-send`, `bg-foreground`) on the right in ready / muted-empty / spinning-busy states. No empty footer band. Visual wrapping grows the pill up to `max-h-32`, then enables textarea scrolling; measured multiline height bottom-aligns the fixed 48px paperclip and send rails. Still a message box only: no `ChatInput`, slash commands, model/agent picker, or `/card` / `/dm`. Attach (paperclip + paste + drag-drop for images and files) is required and reuses `ChatPromptComposer` `onAddFiles`. Android paperclip opens the same photos/files half-sheet as primary chat before either picker. iOS and other non-Android surfaces open the file picker directly and must not show that sheet. Mobile applies `yuri-mobile-composer-surface` and `bottom-safe-area`; it does not copy the Chat pill-swap or `MobileFloatingSurface` catalog card. Composer send appends the user bubble (text + file previews) immediately and retains the draft and previews until upload and admission succeed. The pending composer and synchronous gate serialize submit; failure keeps the draft with Retry and reuses its original messageID/uploadIDs. Successful admission clears only the submitted draft and attachments, then owns a separate processing/streaming preview. The three-dot working marker stays after any spoken bubbles until that turn ends. The contact POST uses a 15s admission timeout and completes on the server’s `202` persistence acknowledgement. An admission timeout rechecks the original messageID before showing a failed user turn with `assistants.contact.timedOut`; structured server errors keep their supplied `error.message`. After admission, the authoritative user row reconciles independently from the turn preview keyed by that same `yuri_contact_*` turn ID. Consecutive Assistant rows sharing a `turnID` form one visual run: the first row owns the 28px avatar, later bubbles retain its indent, same-run gaps stay tight, and new turns open with substantially more vertical air. Processing is a small `surface-muted` typing pill beside that first avatar, using three staggered opacity pulses with reduced-motion support. A live streaming bubble carries a restrained pulsing caret while its real SSE delta text grows. Contact turn SSE streams real bubble deltas into local per-Assistant previews; completed bubbles remain visible while later bubble indexes begin, and the authoritative contact GET replaces previews after turn end. Delta events never act as revision watermarks and never invalidate the contact query individually. Settings still owns assistant create/edit/delete and model selection.
+`AssistantConversationSurface` is the contact transcript: short Telegram-style bubbles, first-class session cards, and inbound peer DMs. `ContactMessageBubble` owns the geometry described above; user fill follows the Bot's identity palette, while assistant and peer fill uses the muted surface. Assistant/peer text goes through the shared `MarkdownRenderer` (markstream-react, marked fallback); user text stays plain. Internal `yuri.settle.*` markers are hidden and file-reference underlines stay off. This surface does not host `ChatContainer`, Activity, tools or thinking. Assign results appear as bubbles/cards, not OpenCode Activity.
+
+The composer reuses `ChatPromptComposer` / `ChatComposerSurface` in inline layout: paperclip, autosizing textarea and the existing circular send control, with no empty footer band. Desktop/mobile dimensions and transform-only growth are specified above. Soft-wrap and authored newlines grow to `max-h-32`, then scroll inside the textarea. It remains a message box, not `ChatInput` or a slash/model/agent picker. Paperclip, paste and drop reuse `onAddFiles`; Android alone offers the shared photos/files sheet. Mobile retains `yuri-mobile-composer-surface` and `bottom-safe-area`, not the primary Chat pill-swap.
+
+Submission immediately transfers the sent draft and attachments into its optimistic row/retry snapshot; admission never clears a subsequent draft. The pending state and synchronous gate serialize submit. Failures keep the original messageID/uploadIDs and per-part retry indicators. The contact POST retains its 15s admission timeout and server `202` persistence acknowledgement; uncertain admission rechecks the original messageID. The authoritative user row reconciles independently from the turn preview keyed by that same `yuri_contact_*` turn ID. Same-turn assistant rows share an avatar indent; same-sender adjacent messages keep tight gaps. The reserved typing pill uses three staggered opacity pulses with reduced-motion support. Real contact SSE deltas populate per-Assistant previews; completed bubbles remain while later indexes start, and authoritative GET reconciles them after turn end. Delta events are not revision watermarks and do not individually invalidate the contact query. Settings retains create/edit/delete and model selection.
 
 Markdown image/mermaid activation in contact bubbles matches session-body rendering: the surface passes `onShowPopup` into the shared `MarkdownRenderer` and hosts one lazy `ToolOutputDialog` image viewer (`useUIStore.setImagePreviewOpen` marks the global overlay). Activating a runtime-file image (absolute path / `file://`) opens the shared viewer, whose `useResolvedImageSource` streams it through the runtime API; on the marked fallback renderer the same prop also enables runtime-file image auto-load. Transcript attachment images (`AssistantContactAttachment`) share the same contract: inline images are focusable buttons that open the viewer with the leased display URL (legacy URL parts use their direct web/data/blob source). Switching assistants or unmounting the surface closes the viewer and releases the overlay flag. File-reference underlines remain off.
 
-Standalone inline Markdown images have no bubble padding or painted bubble background on any platform, rather than the text bubble's 16px horizontal / 10px vertical padding. Detection is conservative: captions, multiple images and ambiguous syntax retain text spacing. `data-assistant-contact-media` scopes the shared image presentation: the decoded image keeps its intrinsic aspect ratio and the ordinary assistant bubble's 1.35rem radius, so rounded corners apply to the visible image rather than a letterboxed rectangle. Both Markdown renderers use this treatment. The transparent fixed-height frame still owns loading geometry; removing the backing does not move subsequent rows when bytes arrive.
+Standalone inline Markdown images have no text-bubble padding, SVG background or timestamp. Detection is conservative: captions, multiple images and ambiguous syntax retain text spacing. `data-assistant-contact-media` keeps the shared intrinsic-aspect image presentation and rounded image corners in both Markdown renderers. The transparent fixed-height frame still owns loading geometry; removing the backing does not move subsequent rows when bytes arrive.
 
 Contact history starts with the query-owned latest 20 messages. The surface consumes `data.messages`, `fetchPreviousPage`, `hasPreviousPage`, `isFetchingPreviousPage`, `previousPageError`, `hasMessageGap`, `isFillingMessageGap`, and `retryMessageGap`. A quiet top button and upward gestures within 80px share one in-flight request; failed paging preserves rows and waits for explicit Retry. Gap recovery has a visible status and the same request gate. Initial loading and initial failure have accessible feedback and retry.
 
-A fresh user send (not a same-ID retry) re-attaches bottom follow through `followLatest`, so the transcript scrolls to the new bubble even from a released reading position. All sends clear the text field immediately (iMessage behavior), independently of animation eligibility or upload/admission latency, and hand the text back on failure unless the user typed something new. Admission completion never clears the next draft, even when it matches the sent text. Sends with attachments keep their previews until admission; failure retains previews and the existing upload/message retry identity.
+A fresh user send (not a same-ID retry) re-attaches bottom follow through `followLatest`, never an immediate snap from history. The optimistic bubble reserves its natural layout immediately and admission proceeds without waiting for animation. For an eligible text morph, that bubble stays hidden while the single scroll owner smoothly returns to the latest position; arrival then starts its 300ms flight from the captured composer. Already-bottom sends start their flight with the new row's synchronized insertion scroll. Upward input, pagination, replacement sends, deactivation, identity/node changes and unmount cancel the pending flight and reveal the ordinary row. Stale animation completions cannot start a later flight. Reduced motion positions immediately without a morph; same-ID retries keep their row and reading position. Submission clears only the sent draft and transfers attachments to its retry snapshot; admission never clears the next draft and failure retains the outgoing row.
 
 The send transition (`contactSendFlight.ts`) uses Telegram-iOS `ChatMessageTransitionNode` text-input → bubble bezier parameters: 300ms; horizontal edges on `cubic-bezier(0.23, 1, 0.32, 1)`, bottom edge and height on `cubic-bezier(0.199, 0.011, 0.279, 0.910)`. One `aria-hidden` fixed overlay starts at the composer surface's exact frame and corner radii and morphs, bottom-anchored, into the bubble's frame and radii. Only the outer shell paints a background: its computed composer color transitions directly to the computed message color over 150ms, without overlapping translucent background layers. The typed text travels from the field's text origin (including its scroll offset) into the bubble while fading out over 100ms and the bubble text fades in over 80ms. The follow scroll uses the same vertical curve and duration (Telegram's `verticalListCurve`). The real bubble keeps its layout and is only `visibility: hidden`; its rectangle is re-read every frame so the overlay lands wherever the scroll owner moved it. The flown row skips the generic append fade. Voice, attachment, retry and reduced-motion sends do not morph. Deactivation, Assistant/runtime switches and unmount remove the overlay.
 
 The three-dot status renders inside an assistant-style `surface-muted` bubble (36px tall) that scales in from its bottom-left; it stays absolutely positioned in the reserved 48px bottom padding.
 
-Transcript message avatars and the typing bubble use 32px artwork in a shared 36px left gutter, with a 10px gap before message/status bubbles, without the list-only green dot. Avatar and dots share visibility and entry animation on desktop and mobile; the typing avatar does not add transcript height. Header and catalog avatar sizes are unchanged.
+Transcript group avatars and the typing bubble use 24px desktop artwork with an 8px gap, or 32px mobile artwork in a 36px gutter with a 10px gap. One sticky rail spans every card/file/text row in an incoming turn group, rather than belonging to its first or last row. Neither avatar shows the list-only green dot; the typing avatar does not add transcript height. Header and catalog avatar sizes are unchanged.
 
 Desktop send flights start beside the typed text with a compact shell: target bubble width plus 32px, at least 120px and capped by the composer width. Mobile retains the full composer starting frame. Both land on the same measured target bubble.
 
@@ -718,7 +849,7 @@ Newly appended contact rows enter with a 180ms opacity/4px translation animation
 
 Assistant bubble React keys, part keys and Markdown renderer identity use runtime + assistant + turn + bubble index, so replacing a `:preview:*` message with its authoritative message preserves the mounted bubble and Markdown tree. Error rows retain their message identity. `data-message-id` and read acknowledgements continue to carry the actual message ID.
 
-Transient state does not own transcript geometry. The content container always reserves 48px of bottom padding; one absolutely positioned three-dot status lives there during local processing/server work after the send/flight gate clears. Admitted preview rows stay in the domain model but are filtered from the rendered transcript before grouping/time separators. Sending labels are out of flow, and contact bubbles have no extra streaming-caret line. Working start/end, admission and streaming completion therefore do not insert/remove status-row height. No measured-height cache or monotonic min-height lock is used: primary text, images and cards retain natural layout.
+Transient state does not own transcript geometry. The content container always reserves 48px of bottom padding; one absolutely positioned three-dot status lives there during local processing/server work after the send/flight gate clears. Admitted preview rows stay in the domain model but are filtered from the rendered transcript before grouping/time separators. No sending label or extra streaming-caret line is painted. Working start/end, admission and streaming completion therefore do not insert/remove status-row height. No measured-height cache or monotonic min-height lock is used: primary text, images and cards retain natural layout.
 
 The 1px read marker is absolutely positioned at the bottom of its relative bubble/error container. It still participates in intersection/read acknowledgement checks but never adds a flex gap or changes transcript height as the read cursor advances.
 

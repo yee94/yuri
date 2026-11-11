@@ -2,13 +2,10 @@ import { partitionAssistantContacts } from './sortAssistantContacts';
 import { AssistantContactMenu } from './AssistantContactMenu';
 import { AssistantPinnedContacts } from './AssistantPinnedContacts';
 import React from 'react';
-import { toast } from 'sonner';
-import { canOpenAssistantMiniChat, openAssistantMiniChat } from '@/lib/assistant-mini-chat';
 import { AssistantUnreadBadge } from './AssistantUnreadBadge';
 import { AssistantMarkAllReadButton } from './AssistantMarkAllReadButton';
 import { useEvent } from '@reactuses/core';
 import { AssistantWorkingAvatar } from './AssistantWorkingAvatar';
-import { AssistantContactStatus } from './AssistantContactStatus';
 import { useAssistantWorking } from './assistantWorking';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
@@ -33,11 +30,25 @@ type MobileAssistantConversationHeaderProps = {
   onOpenSettings?: (assistantID: string) => void;
 };
 
+function AssistantHeaderIdentity({ assistant, onClick }: {
+  assistant: NonNullable<MobileAssistantConversationHeaderProps['assistant']>;
+  onClick: () => void;
+}) {
+  const { t } = useI18n();
+  const displayName = getAssistantPresentation(assistant.name).displayName || assistant.name;
+  return (
+    <Button type="button" variant="ghost" className="yuri-assistant-header-identity" onClick={onClick}
+      aria-label={t('assistants.conversation.openSettings')} title={displayName}>
+      <AssistantWorkingAvatar name={assistant.id} avatarSeed={assistant.avatarSeed} size={56} label={displayName}
+        working={Boolean(assistant.working || assistant.activeContactTurn)} showWorkingDot={false} />
+      <span className="yuri-assistant-header-name truncate typography-ui-label font-medium">{displayName}</span>
+    </Button>
+  );
+}
+
 const MobileAssistantConversationHeader: React.FC<MobileAssistantConversationHeaderProps> = ({ assistant, onBack, onOpenSettings }) => {
   const { t } = useI18n();
   const mobileActions = useMobileAppActions();
-  const presentation = assistant ? getAssistantPresentation(assistant.name) : null;
-  const displayName = assistant && presentation ? presentation.displayName || assistant.name : '';
   const openSettings = useEvent(() => {
     if (!assistant) return;
     if (onOpenSettings) {
@@ -49,27 +60,9 @@ const MobileAssistantConversationHeader: React.FC<MobileAssistantConversationHea
 
   return (
     <MobileDetailNavigation
-      title={
-        assistant ? (
-          <span className="inline-flex min-w-0 items-center gap-2.5">
-            <AssistantWorkingAvatar
-              name={assistant.id}
-              avatarSeed={assistant.avatarSeed}
-              size={40}
-              label={displayName}
-              working={Boolean(assistant.working || assistant.activeContactTurn)}
-              showWorkingDot={false}
-            />
-            <span className="min-w-0">
-              <span className="block truncate font-medium leading-5 tracking-[-0.01em]">{displayName || t('assistants.title')}</span>
-              <AssistantContactStatus assistantID={assistant.id} serverWorking={Boolean(assistant.working || assistant.activeContactTurn)} lastContactAt={assistant.latestMessagePreview?.createdAt} />
-            </span>
-          </span>
-        ) : (displayName || t('assistants.title'))
-      }
+      title={assistant ? <AssistantHeaderIdentity assistant={assistant} onClick={openSettings} /> : t('assistants.title')}
       backAriaLabel={t('assistants.actions.backToChat')}
       onBack={onBack}
-      actions={assistant ? [{ icon: 'settings-3', ariaLabel: t('assistants.conversation.openSettings'), onClick: openSettings }] : []}
       overlay
     />
   );
@@ -122,10 +115,10 @@ const AssistantListItem: React.FC<AssistantListItemProps> = ({
           aria-selected={selected}
           onClick={handleSelect}
           className={cn(
-            'flex w-full min-h-11 items-center gap-3 rounded-xl border px-3 py-3 text-left outline-none transition-[background-color,border-color,opacity] duration-150 ease-out active:bg-interactive-active focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] motion-reduce:transition-none',
+            'yuri-assistant-contact-row flex w-full min-h-11 items-center gap-3 rounded-xl border border-transparent px-3 py-3 text-left outline-none transition-[background-color,opacity] duration-150 ease-out active:bg-interactive-active focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] motion-reduce:transition-none',
             selected
-              ? 'border-border/50 bg-[var(--surface-elevated)]'
-              : 'border-transparent hover:bg-interactive-hover',
+              ? 'bg-interactive-selection text-interactive-selection-foreground'
+              : 'hover:bg-interactive-hover',
           )}
         >
           <AssistantWorkingAvatar name={assistantID} avatarSeed={avatarSeed} size={44} label={displayName} working={working} hoverTarget={hoverTarget} />
@@ -206,10 +199,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
     assistantCount: snapshot?.assistants.length ?? 0,
     hasAssistant: Boolean(assistant),
   });
-  const renderState = (icon: 'cloud-off' | 'error-warning' | 'ai-agent', title: string, description?: string, action?: React.ReactNode) => <div className="relative flex h-full min-h-0 flex-col">{isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : null}<div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"><Icon name={icon} className="size-6 text-muted-foreground" /><h1 className="mt-4 typography-ui-header font-semibold">{title}</h1>{description ? <p className="mt-2 max-w-md typography-ui text-muted-foreground">{description}</p> : null}{action ? <div className="mt-5">{action}</div> : null}</div></div>;
+  const renderState = (icon: 'cloud-off' | 'error-warning' | 'ai-agent', title: string, description?: string, action?: React.ReactNode) => <div className="yuri-assistant-wallpaper yuri-assistant-workspace relative flex h-full min-h-0 flex-col overflow-clip" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>{isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : null}<div className="yuri-assistant-state flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"><Icon name={icon} className="size-6 text-muted-foreground" /><h1 className="mt-4 typography-ui-header font-semibold">{title}</h1>{description ? <p className="mt-2 max-w-md typography-ui text-muted-foreground">{description}</p> : null}{action ? <div className="mt-5">{action}</div> : null}</div></div>;
   if (workspaceState === 'loading') {
     return (
-      <div className="relative flex h-full min-h-0 flex-col">
+      <div className="yuri-assistant-wallpaper yuri-assistant-workspace relative flex h-full min-h-0 flex-col overflow-clip" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>
         {isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : null}
         <div
           className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"
@@ -225,27 +218,26 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
   if (workspaceState === 'unavailable') return renderState('cloud-off', t('assistants.state.unavailable'));
   if (workspaceState === 'onboarding') return renderState('ai-agent', t('assistants.onboarding.title'), t('assistants.onboarding.description'), <Button onClick={openCreateSettings}>{t('assistants.onboarding.action')}</Button>);
   if (!snapshot || !assistant) return renderState('cloud-off', t('assistants.state.unavailable'));
-  const presentation = getAssistantPresentation(assistant.name);
   const warning = snapshotQuery.isError ? t('assistants.state.staleSnapshot') : null;
   return (
-    <div className="relative flex h-full min-h-0 overflow-clip bg-background" data-presentation="workspace">
+    <div className="relative flex h-full min-h-0 overflow-clip yuri-assistant-wallpaper yuri-assistant-workspace" data-presentation="workspace" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>
       {isMobileSurface ? null : (
-        <section className="flex h-full min-h-0 w-[clamp(16rem,22vw,20rem)] shrink-0 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center gap-3 px-4 pb-1 pt-4 sm:px-5">
+        <section className="flex h-full min-h-0 w-[clamp(15rem,20vw,17.5rem)] shrink-0 flex-col overflow-clip yuri-assistant-catalog-panel">
+          <header className="flex shrink-0 items-center gap-3 px-4 py-4 sm:px-5">
             <h1 className="min-w-0 truncate typography-ui-label font-semibold text-foreground">{t('assistants.title')}</h1>
             <AssistantMarkAllReadButton snapshot={snapshot} compact rowClassName="flex min-w-0 flex-1 justify-end" />
             <Button
               type="button"
               variant="mobileGlass"
               size="mobileIcon"
-              className="size-8 min-h-0 min-w-0 !shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_1px_2px_rgb(0_0_0/0.05)] dark:!shadow-[var(--yuri-mobile-glass-shadow)]"
+              className="size-8 min-h-0 min-w-0"
               aria-label={t('assistants.settings.create')}
               onClick={openCreateSettings}
             >
               <Icon name="add" className="size-4" />
             </Button>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 sm:px-4" role="listbox" aria-label={t('assistants.listAria')}>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" role="listbox" aria-label={t('assistants.listAria')}>
             <AssistantPinnedContacts contacts={contacts.pinned} selectedAssistantID={selectedAssistantID} onSelect={selectAssistant} onEdit={openEditSettings} onDelete={requestDeleteAssistant} />
             <div className="flex flex-col gap-1 pt-1">
               {contacts.unpinned.map((item) => {
@@ -278,31 +270,12 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
         open={deleteTarget !== null}
         onOpenChange={handleDeleteDialogOpenChange}
       />
-      <div className={cn('relative flex min-h-0 min-w-0 flex-1 flex-col overflow-clip bg-background', !isMobileSurface && 'border-l border-[var(--surface-subtle)]')}>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-clip yuri-assistant-pane">
         {isMobileSurface ? (
           <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} />
         ) : (
-          <header className="flex h-16 shrink-0 items-center gap-3.5 border-b border-[var(--surface-subtle)]/70 px-5 sm:px-7">
-            <AssistantWorkingAvatar name={assistant.id} avatarSeed={assistant.avatarSeed} size={40} label={presentation.displayName || assistant.name} working={Boolean(assistant.working || assistant.activeContactTurn)} showWorkingDot={false} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate typography-ui-label font-semibold leading-5 tracking-[-0.01em] text-foreground">{presentation.displayName}</div>
-              <AssistantContactStatus assistantID={assistant.id} serverWorking={Boolean(assistant.working || assistant.activeContactTurn)} lastContactAt={assistant.latestMessagePreview?.createdAt} />
-            </div>
-            {canOpenAssistantMiniChat() ? (
-              <Button type="button" variant="ghost" size="icon" className="text-muted-foreground/65" onClick={() => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); }} aria-label={t('sessions.sidebar.session.menu.openMiniChatWindow')} title={t('sessions.sidebar.session.menu.openMiniChatWindow')}>
-                <Icon name="external-link" className="size-4" />
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0 rounded-full text-muted-foreground/65 transition-colors hover:text-foreground"
-              onClick={openConversationSettings}
-              aria-label={t('assistants.conversation.openSettings')}
-            >
-              <Icon name="settings-3" className="size-4" />
-            </Button>
+          <header className="yuri-assistant-conversation-header">
+            <AssistantHeaderIdentity assistant={assistant} onClick={openConversationSettings} />
           </header>
         )}
         <AssistantConversationSurface

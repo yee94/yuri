@@ -55,4 +55,28 @@ describe('Assistant snapshot message preview', () => {
     expect(ASSISTANT_MESSAGE_PREVIEW_CLASS).toContain('truncate');
     expect(ASSISTANT_MESSAGE_PREVIEW_CLASS).not.toContain('line-clamp-2');
   });
+
+  test.each([
+    ['**跳过与失败：** **3 条误存 global 的记录**', '跳过与失败： 3 条误存 global 的记录'],
+    ['![Telegram Bot API Update 事件总线](https://example.com/image.png)', 'Telegram Bot API Update 事件总线'],
+    ['![Telegram Bot API Update 事件总线…', 'Telegram Bot API Update 事件总线…'],
+    ['[查看说明](https://example.com/docs)', '查看说明'],
+    ['[查看说明](https://example.com/截断', '查看说明'],
+    ['### 标题\n> 引用\n- [x] 完成\n1. 下一步', '标题 引用 完成 下一步'],
+    ['`run_task` 与 ***强调***、_斜体_、~~旧内容~~', 'run_task 与 强调、斜体、旧内容'],
+    ['```ts\nconst ready = true;\n```', 'const ready = true;'],
+    ['```ts const ready = true; ```', 'const ready = true;'],
+    ['<b>不渲染 HTML</b> &amp; 原样保留', '<b>不渲染 HTML</b> &amp; 原样保留'],
+    ['普通消息 C#、a * b、snake_case_name、foo__bar__baz、[状态]、2 + 3 = 5', '普通消息 C#、a * b、snake_case_name、foo__bar__baz、[状态]、2 + 3 = 5'],
+  ])('hides common Markdown markers without rendering: %s', (text, expected) => {
+    const message = { ...preview, text };
+    expect(getAssistantMessagePreview(message, t)).toBe(expected);
+    expect(message.text).toBe(text);
+  });
+
+  test('keeps attachment filenames and card titles literal', () => {
+    for (const fallbackKind of ['file', 'session'] as const) {
+      expect(getAssistantMessagePreview({ ...preview, fallbackKind, text: '**literal**_name.txt' }, t)).toBe('**literal**_name.txt');
+    }
+  });
 });

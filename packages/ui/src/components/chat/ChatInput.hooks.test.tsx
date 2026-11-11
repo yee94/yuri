@@ -226,7 +226,6 @@ const actionButtonDefaults = {
     footerIconButtonClass: 'footer-action',
     stopFooterIconButtonClass: 'trailing-circle',
     compactCircleButtonClass: 'compact-circle',
-    sendIconSizeClass: 'send-icon',
     stopIconSizeClass: 'circle-icon',
     canSend: true,
     canAbort: true,
@@ -271,7 +270,7 @@ it.each([false, true])('mobile actions switch Send and Stop in one trailing slot
         expect(host.querySelectorAll('[data-composer-send]')).toHaveLength(1);
     }
     const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
-    expect(send.className).toBe(slotClass);
+    expect(send.className).toBe(`${slotClass} disabled:opacity-50`);
     expect(send.dataset.composerCircle).toBe('true');
     expect(send.className).not.toContain('absolute');
     await act(async () => send.click());
@@ -308,6 +307,39 @@ it('desktop keeps its floating follow-up Send and Stop controls', async () => {
     await act(async () => root.render(<ActionButtons {...actionButtonDefaults} isMobile={false} />));
     expect(host.querySelector('[data-composer-stop]')).not.toBeNull();
     expect(host.querySelector('[data-composer-send]')?.className).toContain('absolute');
+});
+
+it.each([
+    { isMobile: false, compact: false },
+    { isMobile: true, compact: false },
+    { isMobile: true, compact: true },
+])('idle Send keeps its filled circle when disabled (%o)', async ({ isMobile, compact }) => {
+    const onPrimaryAction = vi.fn();
+    const props = { ...actionButtonDefaults, isMobile, compact, canAbort: false, onPrimaryAction };
+    await act(async () => root.render(<ActionButtons {...props} canSend={false} hasContent={false} />));
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.disabled).toBe(true);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.className).toContain('disabled:opacity-50');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+    await act(async () => send.click());
+    expect(onPrimaryAction).not.toHaveBeenCalled();
+
+    await act(async () => root.render(<ActionButtons {...props} />));
+    expect(host.querySelector('[data-composer-send]')).toBe(send);
+    expect(send.disabled).toBe(false);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+});
+
+it('blocked desktop follow-up Send keeps its filled circle and disabled opacity', async () => {
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults} isMobile={false} submissionBlocked />));
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.disabled).toBe(true);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.className).toContain('disabled:opacity-50');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+    expect(host.querySelector('[data-composer-stop]')).not.toBeNull();
 });
 
 it.each([true, false])('/new opens the visible draft through the production primary backend (phone shell: %s)', async (phone) => {

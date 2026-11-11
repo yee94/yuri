@@ -174,7 +174,7 @@ function extractJavaSurface(source) {
   const methods = new Set()
   const events = new Set()
   // Match @PluginMethod … public void name( across optional annotations/whitespace.
-  for (const match of source.matchAll(/@PluginMethod(?:\([^)]*\))?\s*(?:public\s+)?void\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+  for (const match of source.matchAll(/@PluginMethod(?:\([^)]*\))?\s*(?:public\s+)?(?:synchronized\s+)?void\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
     methods.add(match[1])
   }
   for (const match of source.matchAll(/notifyListeners\(\s*"([^"]+)"/g)) {

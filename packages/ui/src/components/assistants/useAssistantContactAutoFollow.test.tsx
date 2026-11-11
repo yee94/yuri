@@ -55,7 +55,7 @@ type ProbeProps = {
   nodeKey?: string
 }
 
-let probeFollowLatest: (() => void) | null = null
+let probeFollowLatest: ReturnType<typeof useAssistantContactAutoFollow>['followLatest'] | null = null
 
 const Probe: React.FC<ProbeProps> = ({ active, assistantID, revision, geometry, nodeKey }) => {
   const { scrollRef, contentRef, followLatest } = useAssistantContactAutoFollow({
@@ -518,6 +518,94 @@ describe('useAssistantContactAutoFollow', () => {
     geometry.height += 60
     await probe.render({ revision: 2 })
     expect(geometry.top).toBe(geometry.height - geometry.client)
+  })
+
+  test.each([true, false])('smoothly returns to the tail before notifying the send flight (reduced=%s)', async (reduced) => {
+    motionState.reduced = reduced
+    motionState.animate.mockReturnValue({ stop: vi.fn() })
+    const geometry: Geometry = { top: 0, height: 9000, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    wheel(probe.scroller, -80)
+    geometry.top = 120
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    geometry.writes = 0
+    const timing = { duration: 0.3, ease: [0.199, 0.011, 0.279, 0.91] as const }
+    const settled = vi.fn()
+
+    act(() => { probeFollowLatest?.(timing, settled) })
+    expect(geometry.top).toBe(120)
+    expect(geometry.writes).toBe(0)
+    expect(settled).not.toHaveBeenCalled()
+    expect(motionState.animate).not.toHaveBeenCalled()
+
+    // The outgoing bubble reserves layout while hidden; admission never waits.
+    geometry.height += 60
+    await probe.render({ revision: 1 })
+    if (reduced) {
+      expect(geometry.top).toBe(8760)
+      expect(motionState.animate).not.toHaveBeenCalled()
+      expect(settled).toHaveBeenCalledExactlyOnceWith(true)
+    } else {
+      expect(motionState.animate).toHaveBeenCalledExactlyOnceWith(120, 8760, expect.objectContaining({ duration: 0.22, ease: 'easeOut' }))
+      const animation = motionState.animate.mock.calls[0][2]
+      animation.onUpdate(4400)
+      expect(geometry.top).toBe(4400)
+      expect(settled).not.toHaveBeenCalled()
+      animation.onUpdate(8760)
+      animation.onComplete()
+      expect(geometry.top).toBe(8760)
+      expect(settled).toHaveBeenCalledExactlyOnceWith(true)
+    }
+  })
+
+  test('an own send stops the previous follow animation, but does not write at the bottom', async () => {
+    motionState.reduced = false
+    const stop = vi.fn()
+    motionState.animate.mockReturnValue({ stop })
+    const geometry: Geometry = { top: 600, height: 900, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    geometry.height += 120
+    await probe.render({ revision: 1 })
+    motionState.animate.mock.calls[0][2].onUpdate(630)
+    act(() => { probeFollowLatest?.() })
+    expect(stop).toHaveBeenCalledOnce()
+    expect(geometry.top).toBe(630)
+    geometry.top = 720
+    geometry.writes = 0
+    act(() => { probeFollowLatest?.() })
+    expect(geometry.writes).toBe(0)
+    expect(motionState.animate).toHaveBeenCalledOnce()
+
+    await probe.render({ active: false })
+    geometry.top = 100
+    act(() => { probeFollowLatest?.() })
+    expect(geometry.top).toBe(100)
+    expect(geometry.writes).toBe(0)
+  })
+
+  test.each(['gesture', 'inactive', 'identity', 'replacement'] as const)('cancels a pending send flight on %s and ignores stale completion', async (reason) => {
+    motionState.reduced = false
+    motionState.animate.mockReturnValue({ stop: vi.fn() })
+    const geometry: Geometry = { top: 600, height: 900, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    wheel(probe.scroller, -80)
+    geometry.top = 120
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    const settled = vi.fn()
+    act(() => probeFollowLatest?.(undefined, settled))
+    await probe.render({ revision: 1 })
+    const animation = motionState.animate.mock.calls[0][2]
+    animation.onUpdate(300)
+    if (reason === 'gesture') wheel(probe.scroller, -20)
+    if (reason === 'inactive') await probe.render({ active: false })
+    if (reason === 'identity') await probe.render({ assistantID: 'b' })
+    if (reason === 'replacement') act(() => probeFollowLatest?.())
+    expect(settled).toHaveBeenCalledExactlyOnceWith(false)
+    const before = { top: geometry.top, writes: geometry.writes }
+    animation.onUpdate(600)
+    animation.onComplete()
+    expect({ top: geometry.top, writes: geometry.writes }).toEqual(before)
+    expect(settled).toHaveBeenCalledOnce()
   })
 
   test('compensates growth above the reader that lands in the same frame as a wheel scroll', async () => {
