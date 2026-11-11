@@ -681,7 +681,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
               const separatorTimestamp = timeSeparators.get(message.messageID)
               const hasTimeSeparator = separatorTimestamp !== undefined
               const timeSeparator = hasTimeSeparator ? (
-                <div className="flex w-full justify-center px-4 pt-7 pb-4 first:pt-1" data-assistant-contact-time="">
+                <div className="flex w-full justify-center px-4 py-4" data-assistant-contact-time="">
                   <time dateTime={new Date(separatorTimestamp).toISOString()} className="text-[11px] font-normal leading-4 tabular-nums text-muted-foreground/70">
                     {formatMessageDate(separatorTimestamp)}
                   </time>

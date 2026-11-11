@@ -81,9 +81,12 @@ test('phone identity uses its Settings stack while Back remains independently av
   await act(async () => root.render(<AssistantView onMobileBack={back} onMobileOpenSettings={settings} />));
   const header = host.querySelector('.yuri-mobile-detail-navigation')!;
   expect(header.querySelectorAll('button')).toHaveLength(2);
+  const backButton = header.querySelector<HTMLButtonElement>('[aria-label="assistants.actions.backToChat"]')!;
+  expect(backButton.classList.contains('yuri-mobile-floating-action')).toBe(true);
+  expect(backButton.classList.contains('size-10')).toBe(true);
   await act(async () => header.querySelector<HTMLButtonElement>('.yuri-assistant-header-identity')!.click());
   expect(settings).toHaveBeenCalledExactlyOnceWith('bot-a');
   expect(state.settings).not.toHaveBeenCalled();
-  await act(async () => header.querySelector<HTMLButtonElement>('[aria-label="assistants.actions.backToChat"]')!.click());
+  await act(async () => backButton.click());
   expect(back).toHaveBeenCalledOnce();
 });

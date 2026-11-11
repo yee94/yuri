@@ -124,7 +124,7 @@
   box-shadow: none;
 }
 
-:root.dark .yuri-assistant-wallpaper :is([data-composer-material], .yuri-mobile-floating-surface, [data-slot="button"]) {
+:root.dark .yuri-assistant-wallpaper :is([data-composer-material], .yuri-mobile-floating-surface, [data-slot="button"]:not(.yuri-mobile-floating-action)) {
   box-shadow: none !important;
 }
 
@@ -134,7 +134,7 @@
   box-shadow: var(--assistant-panel-shadow);
 }
 
-.yuri-assistant-wallpaper [data-slot="button"]:focus-visible {
+.yuri-assistant-wallpaper [data-slot="button"]:not(.yuri-mobile-floating-action):focus-visible {
   outline: 2px solid var(--interactive-focus-ring);
   outline-offset: 2px;
 }

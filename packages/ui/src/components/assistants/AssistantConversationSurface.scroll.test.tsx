@@ -647,6 +647,9 @@ describe('AssistantConversationSurface scroll ownership', () => {
     expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(1);
     expect(host.querySelector('time')?.getAttribute('datetime')).toBe(new Date(1).toISOString());
     expect(host.querySelector('time')?.textContent).not.toContain(':');
+    const firstSeparator = host.querySelector('[data-assistant-contact-time]');
+    expect(firstSeparator?.classList.contains('py-4')).toBe(true);
+    expect(firstSeparator?.className).not.toMatch(/(?:^|\s)(?:first:)?p[tb]-/);
     expect(firstRow?.previousElementSibling?.hasAttribute('data-assistant-contact-time')).toBe(true);
     await act(async () => contactEvents.handler?.({
       type: 'contact-bubble-delta', assistantID: 'assistant-a', turnID: 'later-turn', bubbleIndex: 0,
@@ -665,6 +668,9 @@ describe('AssistantConversationSurface scroll ownership', () => {
       delta: 'Another day', done: true, occurredAt: 172800001,
     }));
     expect(host.querySelectorAll('[data-assistant-contact-time]')).toHaveLength(2);
+    for (const separator of host.querySelectorAll('[data-assistant-contact-time]')) {
+      expect(separator.className).toBe(firstSeparator?.className);
+    }
     expect(host.querySelector('[data-message-id="assistant-a:user"]')).toBe(firstRow);
   });
 

@@ -33,6 +33,10 @@ remains in contact menus). Phone navigation retains Back independently of the
 identity control. The transcript reserves space beneath the overlay on both layouts.
 Back's center aligns with the 56px design-point-scaled avatar, not the combined
 avatar/name height; its 40px shared button and safe-area owner remain unchanged.
+Back uses the shared `mobileGlass` / `mobileIcon` Button material. Assistant's
+shadow/focus resets exclude `.yuri-mobile-floating-action`, preserving the global
+glass fill, reflection, backdrop blur/saturation, shadow and focus tokens in both
+themes and reduced-transparency mode; only its position is Assistant-owned.
 The scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
 and through an alpha mask over its left/right 20% edges; the avatar/name
 control keeps a separate 0.5rem top gap (below the system safe area on phone).
@@ -692,6 +696,9 @@ Offscreen/hidden/reduced-motion faces do not play it, and saved motion-off faces
 remain static images with no observers. Standalone history/pickers do not opt in.
 
 ## Contact message time separators
+
+Date tags have equal 1rem block padding above and below, including the first tag
+in a message group; group-first styling must not shrink only the upper gap.
 
 The contact transcript inserts a centered, muted date before the first visible message and across local calendar days, never for time gaps within a day. Separators use message `createdAt` and the viewer's local timezone: localized Today/Yesterday labels, localized month/day for earlier dates, and the year for other years, without a time. Message bubbles retain their 24-hour timestamps, and the header's last-contact timestamp is unchanged. Labels refresh on the next render after a local day change; no timer or extra request is introduced. One linear pass compares visible rows; internal settle-only records and empty processing previews do not consume boundaries. Cards, attachments, and errors participate. Prepending history recomputes boundaries from loaded rows, preserving message DOM anchors and the existing auto-follow owner. A separator also restarts the assistant avatar grouping.
 

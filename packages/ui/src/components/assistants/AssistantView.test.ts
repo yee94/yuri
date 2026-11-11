@@ -195,6 +195,13 @@ describe('AssistantView contact surface', () => {
     expect(source).toContain('onOpenSettings={onMobileOpenSettings}')
   })
 
+  test('keeps global liquid-glass actions outside Assistant shadow and focus overrides', async () => {
+    const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
+    expect(css).toContain('[data-slot="button"]:not(.yuri-mobile-floating-action)) {\n  box-shadow: none !important;')
+    expect(css).toContain('[data-slot="button"]:not(.yuri-mobile-floating-action):focus-visible')
+    expect(css).not.toMatch(/\.yuri-mobile-floating-action\s*\{/)
+  })
+
   test('keeps a silhouette shadow on the avatar and halves the flush-top header scrim', async () => {
     const css = await readFile(join(directory, 'assistant-workspace.css'), 'utf8')
     const avatarShadow = css.match(/\.yuri-assistant-header-identity \[data-assistant-working-avatar\] \{([^}]+)\}/)?.[1]
