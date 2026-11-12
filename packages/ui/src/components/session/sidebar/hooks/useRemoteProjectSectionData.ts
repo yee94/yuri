@@ -9,8 +9,12 @@ import { queryClient } from '@/lib/queryRuntime';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { isVisibleGlobalSession } from '@/stores/globalSessions';
 import { projectSession, type Session } from '@/lib/opencode/v2-types';
-import { buildRemoteFolderView } from '../remoteSessionFolders';
+import { createSessionNodeComparator } from '../sessionSortableOrder';
 import { remoteSummaryOptions, useRemoteSummaries } from './useRemoteProjectNavigation';
+import { useSessionGrouping } from './useSessionGrouping';
+import type { WorktreeMetadata } from '@/types/worktree';
+import { normalizeDirectoryKey } from '@/lib/pathNormalization';
+import { formatDirectoryName } from '@/lib/utils';
 
 /** Host-scoped reads and one projection for rendering, keyboard navigation and drag order. */
 export function useRemoteProjectSectionData(project: RemoteProject, registry: HostRuntimeRegistry, search: string) {
@@ -78,12 +82,33 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     }
     return [...merged.values()];
   }, [snapshot, titleSearch.data, moreSessions.data, query, ownsDirectory]);
-  const rows = React.useMemo(() => directories.flatMap((directory) => directory.sessions.map((session) => ({ session, directory: directory.directory }))), [directories]);
+  const rows = React.useMemo(() => directories.flatMap((directory) => directory.sessions.filter((session) => !session.time?.archived).map((session) => ({ session, directory: directory.directory }))), [directories]);
+  const pinnedIds = React.useMemo(() => new Set(snapshot?.pinnedSessionIds ?? []), [snapshot?.pinnedSessionIds]);
+  const worktrees = React.useMemo<WorktreeMetadata[]>(() => (snapshot?.worktrees?.projectDirectories[project.path] ?? [])
+    .filter((path) => path !== project.path && ownsDirectory(path))
+    .map((path) => ({ path, projectDirectory: project.path, branch: '', label: formatDirectoryName(path, null) || path })), [snapshot?.worktrees, project.path, ownsDirectory]);
+  const emptyMetadata = React.useMemo(() => new Map<string, WorktreeMetadata>(), []);
+  const emptyBranches = React.useMemo(() => new Map<string, string | null>(), []);
+  const grouping = useSessionGrouping({ homeDirectory: null, worktreeMetadata: emptyMetadata, pinnedSessionIds: pinnedIds, gitBranches: emptyBranches, isVSCode: false });
+  const { buildGroupedSessions } = grouping;
+  const groups = React.useMemo(() => {
+    const rawPaths = new Map([project.path, ...worktrees.map((worktree) => worktree.path), ...directories.map((entry) => entry.directory)]
+      .map((path) => [normalizeDirectoryKey(path), path]));
+    const grouped = buildGroupedSessions(rows.map(({ session }) => session), project.path, worktrees, null, worktrees.length > 0);
+    const ungrouped = grouped.filter((group) => group.isArchivedBucket).flatMap((group) => group.sessions);
+    return grouped.filter((group) => !group.isArchivedBucket).map((group) => {
+      const directory = group.directory ? rawPaths.get(normalizeDirectoryKey(group.directory)) ?? group.directory : null;
+      return { ...group, sessions: group.isMain ? [...group.sessions, ...ungrouped] : group.sessions, directory, folderScopeKey: directory };
+    });
+  }, [buildGroupedSessions, rows, project.path, worktrees, directories]);
   const matching = React.useMemo(() => query ? rows.filter(({ session }) => (session.title ?? '').toLocaleLowerCase().includes(query)) : rows, [query, rows]);
   const views = React.useMemo(() => {
     const pinned = new Set(snapshot?.pinnedSessionIds ?? []);
-    return directories.map((directory) => ({ directory, view: buildRemoteFolderView(matching.filter((row) => row.directory === directory.directory),
-      snapshot?.folders?.foldersMap[directory.directory] ?? [], snapshot?.order?.sessionOrderByScope[directory.directory] ?? [], pinned) }));
+    return directories.map((directory) => {
+      const members = matching.filter((row) => row.directory === directory.directory);
+      return { directory, view: { orderedRows: [...members].sort(createSessionNodeComparator(members,
+        snapshot?.order?.sessionOrderByScope[directory.directory], snapshot?.order?.sessionOrderActivityByScope[directory.directory], pinned)) } };
+    });
   }, [directories, matching, snapshot]);
   const busy = online && rows.some(({ session }) => {
     const status = (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type;
@@ -96,7 +121,7 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     if (pageLimit && online) await moreSessions.refetch({ throwOnError: true });
     if (query && online) await titleSearch.refetch({ throwOnError: true });
   });
-  return { host, online, query, snapshot, directories, rows, views, busy, refresh, setPageLimit,
+  return { host, online, query, snapshot, directories, rows, views, groups, grouping, pinnedIds, busy, refresh, setPageLimit,
     hidden: Boolean(query && matching.length === 0 && snapshot),
     loading: summaries.isPending, loadingMore: moreSessions.isFetching,
     error: summaries.error?.message || titleSearch.error?.message || moreSessions.error?.message };

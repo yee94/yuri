@@ -18,6 +18,33 @@ shared Dialog/MobileResizableSheet presentation for all three steps and the pure
 machine list. `RemoteDirectoryExplorerDialog` only adapts model state to that
 presentation. It adds no separate configuration inventory or mobile terminal.
 
+Only available saved Hosts count as additional machines; disconnected saved Hosts
+remain choices, while removed references do not. Cold catalog discovery shows only
+loading, never a speculative machine step. Empty/unsupported catalogs go directly
+to the existing local picker; discovery failures expose an error alongside local
+browsing. The machine step's footer opens Remote Instances Settings directly in
+the shared SSH editor's new-entry mode (`settingsRemoteInstancesSelectedId: 'new'`).
+Settings' Add SSH actions use that same mode. Opening it does not persist a
+placeholder Host or connect; Create saves, while Connect saves then connects.
+
+`useDirectoryMachineModel` owns selection and the Query connection mutation.
+Remote Next uses `registry.connectHost(hostId, { verify: true })`: cached online or
+connecting badges do not authorize entering the directory step. The shared flight
+awaits the Hub's SSH preparation and authenticated capability admission. Pending
+stays on the machine step; failure preserves selection/error for explicit retry.
+Changing selection (including A→B→A), closing/reopening, unmounting or switching
+Hub fences late navigation. Local Next remains immediate. No polling or extra
+status/content stream is introduced for readiness.
+
+Picker errors do not insert banners or retry rows. Connection failures occupy the
+machine row's fixed status slot; catalog and directory-operation failures use the
+same reserved header slot. The shared Tooltip reveals details on hover/keyboard
+focus (long press on touch). The existing primary action owns connection retry.
+Success/error states retain row, header and footer geometry; both footer actions
+use the same compact button recipe, and machine labels/status/steps share sizing.
+The SSH action aligns its plus icon and label with the machine icons and names;
+hover/focus and the existing Settings navigation remain intact.
+
 `remoteDirectoryQueries` owns home/list Query options, DTO parsing and the
 post-body scope fence. `useRemoteDirectoryExplorerModel` owns path selection,
 registration mutation and navigation. Query owns pending/error/request lifecycle;

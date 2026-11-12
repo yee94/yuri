@@ -52,6 +52,7 @@ import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-st
 import { isQuestionFormMetadata } from '@/sync/v2-runtime';
 import { isSessionRetryAction, resolveRetryActionCopy } from '@/sync/session-retry-action';
 import { StatusRowContainer } from './StatusRowContainer';
+import { ComposerFoot, DesktopComposerEdgeFade, DraftComposerFoot } from './ComposerFoot';
 import { TranscriptScrollControls } from './components/TranscriptScrollControls';
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { getFullText } from './lib/messagePreview';
@@ -196,12 +197,6 @@ const CHAT_SCROLL_STYLE = {
     overscrollBehaviorY: 'contain',
 } as const;
 
-const DesktopComposerEdgeFade: React.FC = () => (
-    <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-full z-0 h-11 bg-gradient-to-t from-[var(--surface-background)] to-transparent"
-    />
-);
 const CHAT_NAVIGATION_IGNORED_TARGET_SELECTOR = [
     'a[href]',
     'button',
@@ -2015,19 +2010,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						/>
 					</div>
 				) : null}
-				<div
-					className={cn(
-						'relative z-10 flex min-h-0',
-						isMobile && 'yuri-mobile-composer-foot',
-						isDesktopExpandedInput
-							? 'flex-1 bg-background'
-							: useCompactDraftLayout
-								? cn('bg-background', 'px-0')
-								: 'flex-1 items-center justify-center bg-background px-0 pb-[6vh]'
-					)}
-				>
+				<DraftComposerFoot isMobile={isMobile} expanded={isDesktopExpandedInput} compact={useCompactDraftLayout}>
                         {promptSurface}
-				</div>
+				</DraftComposerFoot>
 			</div>
         );
     }
@@ -2077,18 +2062,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						</div>
 					) : null}
 				</div>
-				<div
-					key="composer-foot"
-					className={cn(
-						'relative z-10',
-						isMobile && 'yuri-mobile-composer-foot',
-						isDesktopExpandedInput
-							? 'flex-1 min-h-0 bg-background'
-							: 'bg-background',
-					)}
-				>
+				<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
 					{promptSurface}
-				</div>
+				</ComposerFoot>
 			</div>
 		);
 	}
@@ -2135,19 +2111,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     </div>
                 </div>
-                <div
-                    key="composer-foot"
-                    className={cn(
-                        'relative z-10',
-                        isMobile && 'yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay',
-						isDesktopExpandedInput
-							? 'flex-1 min-h-0 bg-background'
-							: 'bg-background'
-					)}
-				>
-                    {!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
+                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
                     {promptSurface}
-				</div>
+				</ComposerFoot>
             </div>
         );
     }
@@ -2173,18 +2139,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     ) : null}
                 </div>
-                <div
-                    key="composer-foot"
-                    className={cn(
-                        'relative z-10',
-                        isMobile && 'yuri-mobile-composer-foot',
-					isDesktopExpandedInput
-						? 'flex-1 min-h-0 bg-background'
-						: 'bg-background'
-					)}
-				>
+                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
                     {promptSurface}
-				</div>
+				</ComposerFoot>
             </div>
         );
     }
@@ -2238,17 +2195,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
             />
             </TranscriptSearch>
 
-            <div
-                key="composer-foot"
-                className={cn(
-                    'relative z-10',
-                    isMobile && 'yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay',
-                    isDesktopExpandedInput
-                        ? 'flex-1 min-h-0 bg-background'
-                        : 'bg-background'
-                )}
-            >
-                {!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
+            <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
                 <TranscriptScrollControls
                     scrollRef={scrollRef}
                     active={active && !isDesktopExpandedInput}
@@ -2256,7 +2203,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                     onScrollToBottom={navigation.resumeToLatest}
                 />
                 {promptSurface}
-            </div>
+            </ComposerFoot>
 
 
             <TimelineDialog
@@ -2266,8 +2213,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                 directory={effectiveSessionDirectory}
                 onRevertMessage={onRevertMessage}
                 onScrollToMessage={timelineController.scrollToMessage}
-                onScrollByTurnOffset={navigation.scrollByTurnOffset}
-                onResumeToLatest={resumeToLatestInstant}
                 canLoadEarlier={timelineController.historySignals.canLoadEarlier}
                 isLoadingEarlier={isLoadOlderBusy}
                 onLoadEarlier={handleLoadOlderClick}

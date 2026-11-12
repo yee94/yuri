@@ -50,6 +50,7 @@ import type { PendingPairingRecord, RemoteClientRecord } from '@/lib/api/types';
 import { buildPairingConnectionPayload, encodePairingConnectionPayload, parsePairingConnectionPayload, type PairingEndpointCandidate } from '@/lib/connectionPayload';
 import {
   buildDefaultSyncSelections,
+  createDesktopSshInstance,
   desktopSshLogsClear,
   desktopSshLogs,
   desktopSshSyncOpencodeConfigApply,
@@ -1042,13 +1043,17 @@ export const RemoteInstancesPage: React.FC = () => {
 
   const selectedId = useUIStore((state) => state.settingsRemoteInstancesSelectedId);
   const setSelectedId = useUIStore((state) => state.setSettingsRemoteInstancesSelectedId);
+  const isNewInstance = selectedId === 'new';
+  const newInstance = React.useMemo(() => selectedId === 'new' && showInstanceManagement
+    ? createDesktopSshInstance(`ssh-${createUuid()}`, '')
+    : null, [selectedId, showInstanceManagement]);
 
   const selectedInstance = React.useMemo(() => {
     if (!selectedId) return null;
     return instances.find((instance) => instance.id === selectedId) || null;
   }, [instances, selectedId]);
 
-  const [draft, setDraft] = React.useState<DesktopSshInstance | null>(null);
+  const [draft, setDraft] = React.useState<DesktopSshInstance | null>(selectedInstance ?? newInstance);
   const [logDialogOpen, setLogDialogOpen] = React.useState(false);
   const [logDialogLoading, setLogDialogLoading] = React.useState(false);
   const [logDialogError, setLogDialogError] = React.useState<string | null>(null);
@@ -1113,9 +1118,6 @@ export const RemoteInstancesPage: React.FC = () => {
   }, [addDeviceAdvancedOpen, addDeviceRelayUrlError]);
   const [transportOptions, setTransportOptions] = React.useState<PairingTransportOptions | null>(null);
   const revokedClientCount = React.useMemo(() => remoteClients.filter((client) => Boolean(client.revokedAt)).length, [remoteClients]);
-  const [sshAddDialogOpen, setSshAddDialogOpen] = React.useState(false);
-  const [sshCommandDraft, setSshCommandDraft] = React.useState('ssh user@example.com');
-  const [sshNameDraft, setSshNameDraft] = React.useState('');
 
   React.useEffect(() => {
     if (!showInstanceManagement) return;
@@ -1353,26 +1355,6 @@ export const RemoteInstancesPage: React.FC = () => {
     await persistDirectHosts(nextHosts, nextDefault);
   }, [directDefaultHostId, directHosts, persistDirectHosts]);
 
-  const createSshInstanceFromDialog = React.useCallback(async () => {
-    const command = sshCommandDraft.trim();
-    if (!command) {
-      toast.error(t('settings.remoteInstances.page.toast.sshCommandRequired'));
-      return;
-    }
-    const id = `ssh-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    try {
-      await createFromCommand(id, command, sshNameDraft.trim() || undefined);
-      setSelectedId(id);
-      setSshAddDialogOpen(false);
-      setSshCommandDraft('ssh user@example.com');
-      setSshNameDraft('');
-      toast.success(t('settings.remoteInstances.page.toast.instanceCreated'));
-    } catch (error) {
-      toast.error(t('settings.remoteInstances.sidebar.toast.createFailed'), {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, [createFromCommand, setSelectedId, sshCommandDraft, sshNameDraft, t]);
 
   const setDefaultDirectHost = React.useCallback(async (id: string) => {
     await persistDirectHosts(directHosts, id);
@@ -1758,8 +1740,8 @@ export const RemoteInstancesPage: React.FC = () => {
   }, [clientAuth, loadRemoteClients]);
 
   React.useEffect(() => {
-    setDraft(selectedInstance);
-  }, [selectedInstance]);
+    setDraft(selectedInstance ?? newInstance);
+  }, [selectedInstance, newInstance]);
 
   React.useEffect(() => {
     if (!showInstanceManagement || !selectedId) {
@@ -1870,7 +1852,9 @@ export const RemoteInstancesPage: React.FC = () => {
 
     try {
       await upsertInstance(normalized);
+      if (isNewInstance) setSelectedId(normalized.id);
       toast.success(t('settings.remoteInstances.page.toast.instanceSaved'));
+      return normalized;
     } catch (error) {
       toast.error(t('settings.remoteInstances.page.toast.saveFailed'), {
         description: error instanceof Error ? error.message : String(error),
@@ -1948,10 +1932,10 @@ export const RemoteInstancesPage: React.FC = () => {
     }
   }, [createImportedInstance, patternDestination, patternHost, t]);
 
-  const connectWithPortRecovery = React.useCallback(async () => {
-    if (!selectedInstance) return;
+  const connectWithPortRecovery = useEvent(async (instance = selectedInstance) => {
+    if (!instance) return;
     try {
-      await connect(selectedInstance.id);
+      await connect(instance.id);
       return;
     } catch (error) {
       if (!isPortInUseError(error)) {
@@ -1964,9 +1948,9 @@ export const RemoteInstancesPage: React.FC = () => {
       }
 
       const nextInstance: DesktopSshInstance = {
-        ...selectedInstance,
+        ...instance,
         localForward: {
-          ...selectedInstance.localForward,
+          ...instance.localForward,
           preferredLocalPort: randomPort(),
         },
       };
@@ -1975,7 +1959,7 @@ export const RemoteInstancesPage: React.FC = () => {
       await connect(nextInstance.id);
       toast.success(t('settings.remoteInstances.sidebar.toast.retriedWithRandomPort'));
     }
-  }, [connect, selectedInstance, t, upsertInstance]);
+  });
 
   const readLogsForInstance = React.useCallback(async (id: string) => {
     const lines = await desktopSshLogs(id, 600);
@@ -2088,8 +2072,8 @@ export const RemoteInstancesPage: React.FC = () => {
     setSyncDialogOpen(true);
   }, []);
 
-  const handlePrimaryConnectionAction = React.useCallback(() => {
-    if (!draft) {
+  const handlePrimaryConnectionAction = useEvent(() => {
+    if (!draft || isPrimaryActionPending || isSaving || isRemoving) {
       return;
     }
 
@@ -2097,7 +2081,10 @@ export const RemoteInstancesPage: React.FC = () => {
     const instanceId = draft.id;
 
     setIsPrimaryActionPending(true);
-    const operation = wasConnected ? disconnect(instanceId) : connectWithPortRecovery();
+    const operation = wasConnected ? disconnect(instanceId) : (async () => {
+      const instance = isNewInstance || hasChanges ? await handleSave() : selectedInstance;
+      if (instance) await connectWithPortRecovery(instance);
+    })();
     void operation
       .catch((error) => {
         const key = wasConnected
@@ -2120,7 +2107,7 @@ export const RemoteInstancesPage: React.FC = () => {
       .finally(() => {
         setIsPrimaryActionPending(false);
       });
-  }, [canDisconnect, connectWithPortRecovery, disconnect, draft, isReady, status, t]);
+  });
 
   const handleRetryAction = React.useCallback(() => {
     if (!draft) {
@@ -2312,7 +2299,7 @@ export const RemoteInstancesPage: React.FC = () => {
           label={t('settings.remoteInstances.sidebar.title')}
           action={visibleDirectHosts.length > 0 || instances.length > 0 ? (
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button type="button" size="xs" className="!font-normal" onClick={() => setSshAddDialogOpen(true)}>
+              <Button type="button" size="xs" className="!font-normal" onClick={() => setSelectedId('new')}>
                 <Icon name="add" className="h-3.5 w-3.5" />
                 {t('settings.remoteInstances.sidebar.actions.addSshInstance')}
               </Button>
@@ -2327,7 +2314,7 @@ export const RemoteInstancesPage: React.FC = () => {
                 <Icon name="device-desktop" className="mb-5 size-16 text-muted-foreground/45" />
                 <p className="typography-ui-label font-medium text-foreground">{t('settings.remoteInstances.quick.sshTitle')}</p>
                 <p className="mt-2 max-w-sm typography-meta leading-relaxed text-muted-foreground">{t('settings.remoteInstances.quick.sshHint')}</p>
-                <Button type="button" variant="secondary" size="sm" className="mt-6 gap-2 rounded-xl" onClick={() => setSshAddDialogOpen(true)}>
+                <Button type="button" variant="secondary" size="sm" className="mt-6 gap-2 rounded-xl" onClick={() => setSelectedId('new')}>
                   <Icon name="add" className="size-4" />
                   {t('settings.remoteInstances.sidebar.actions.addSshInstance')}
                 </Button>
@@ -2872,28 +2859,6 @@ export const RemoteInstancesPage: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {showInstanceManagement ? <Dialog open={sshAddDialogOpen} onOpenChange={setSshAddDialogOpen}>
-          <DialogContent className="yuri-settings-workspace yuri-settings-workspace-desktop sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{t('settings.remoteInstances.sidebar.actions.addSshInstance')}</DialogTitle>
-            </DialogHeader>
-            <form className="yuri-settings-section-stack" onSubmit={(event) => { event.preventDefault(); void createSshInstanceFromDialog(); }}>
-              <SettingsGroup>
-                <SettingsRow label={t('settings.remoteInstances.page.field.sshCommand')} className="yuri-settings-ssh-command-row">
-                  <Input value={sshCommandDraft} onChange={(event) => setSshCommandDraft(event.target.value)} aria-label={t('settings.remoteInstances.page.field.sshCommand')} placeholder={t('settings.remoteInstances.page.field.sshCommandPlaceholder')} disabled={isSaving} autoFocus />
-                </SettingsRow>
-                <SettingsRow label={t('settings.remoteInstances.page.field.nickname')}>
-                  <Input value={sshNameDraft} onChange={(event) => setSshNameDraft(event.target.value)} aria-label={t('settings.remoteInstances.page.field.nickname')} placeholder={t('settings.remoteInstances.page.field.nicknamePlaceholder')} disabled={isSaving} />
-                </SettingsRow>
-              </SettingsGroup>
-              <DialogFooter>
-                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setSshAddDialogOpen(false)} disabled={isSaving}>{t('settings.common.actions.cancel')}</Button>
-                <Button type="submit" size="xs" className="!font-normal" disabled={isSaving || !sshCommandDraft.trim()}>{t('settings.common.actions.create')}</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog> : null}
-
         <DesktopLanAccessSettings />
         <RemoteDesktopSettings />
 
@@ -2957,19 +2922,19 @@ export const RemoteInstancesPage: React.FC = () => {
     );
   }
 
-  const instanceTitle = draft.nickname?.trim() || draft.sshParsed?.destination || draft.id;
+  const instanceTitle = draft.nickname?.trim() || (isNewInstance ? t('settings.remoteInstances.sidebar.actions.addSshInstance') : draft.sshParsed?.destination || draft.id);
 
   return (
-    <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open && !isRemoving) setSelectedId(null); }}>
+    <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open && !isRemoving && !isSaving && !isPrimaryActionPending) setSelectedId(null); }}>
       <DialogContent className="yuri-settings-workspace yuri-settings-workspace-desktop yuri-settings-section-stack sm:max-w-2xl">
       <SettingsActionHeader actions={<>
-        <Button type="button" variant="ghost" size="icon" onClick={() => void handleRemoveInstance()} disabled={isSaving || isRemoving} aria-busy={isRemoving} aria-label={t('settings.common.actions.delete')}>
+        {!isNewInstance ? <><Button type="button" variant="ghost" size="icon" onClick={() => void handleRemoveInstance()} disabled={isSaving || isRemoving} aria-busy={isRemoving} aria-label={t('settings.common.actions.delete')}>
           <Icon name={isRemoving ? 'refresh' : 'delete-bin'} className={cn('size-4', isRemoving && 'animate-spin')} />
         </Button>
         <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void handleOpenLogs()} disabled={isRemoving}>
           <Icon name="terminal-window" className="h-3.5 w-3.5" />
           {t('settings.remoteInstances.page.actions.logs')}
-        </Button>
+        </Button></> : null}
         {status?.localUrl ? <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void handleOpenCurrentInstance()} disabled={isRemoving}>
           <Icon name="external-link" className="h-3.5 w-3.5" />
           {t('settings.remoteInstances.page.actions.open')}
@@ -2978,11 +2943,11 @@ export const RemoteInstancesPage: React.FC = () => {
           <Icon name="refresh" className="h-3.5 w-3.5" />
           {retryButtonLabel}
         </Button> : null}
-        <Button type="button" size="xs" className="!font-normal" onClick={handlePrimaryConnectionAction} disabled={isPrimaryActionPending || isRetryPending || isRemoving}>
+        <Button type="button" size="xs" className="!font-normal" onClick={handlePrimaryConnectionAction} disabled={!draft.sshCommand.trim() || isSaving || isPrimaryActionPending || isRetryPending || isRemoving}>
           <Icon name={canDisconnect ? 'stop' : 'plug-2'} className="h-3.5 w-3.5" />
           {primaryButtonLabel}
         </Button>
-        <Button type="button" size="xs" className="!font-normal" onClick={() => void handleSave()} disabled={!hasChanges || isSaving || isRemoving} aria-busy={isSaving}>{t('settings.common.actions.saveChanges')}</Button>
+        <Button type="button" size="xs" className="!font-normal" onClick={() => void handleSave()} disabled={(!isNewInstance && !hasChanges) || !draft.sshCommand.trim() || isSaving || isRemoving || isPrimaryActionPending} aria-busy={isSaving}>{t(isNewInstance ? 'settings.common.actions.create' : 'settings.common.actions.saveChanges')}</Button>
       </>}>
         <DialogHeader className="gap-1">
           <DialogTitle className="truncate">{instanceTitle}</DialogTitle>

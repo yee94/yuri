@@ -176,6 +176,46 @@ describe('Host Runtime Registry production boundary', () => {
     expect(fetch.mock.calls[0]).toEqual(['/api/hosts/a/connect', { method: 'POST' }]);
   });
 
+  it.each(['connected', 'connecting'] as const)('verified directory admission awaits a real handshake instead of cached %s', async (state) => {
+    const { registry, fetch } = makeRegistry();
+    registry.applyCatalog({ supported: true, hubId: 'hub-a', projects: [], hosts: [host('a', state)] });
+    let finish!: (response: Response) => void;
+    fetch.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const ready = vi.fn();
+    const pending = registry.connectHost('a', { verify: true });
+    void pending.then(ready);
+    expect(registry.connectHost('a', { verify: true })).toBe(pending);
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/hosts/a/connect', { method: 'POST' });
+    // A zero-reference Host has no status stream, even after HTTP admission succeeds.
+    finish(Response.json({ host: { ...host('a', 'connecting'), version: 'verified-version' } }));
+    await pending;
+    expect(ready).toHaveBeenCalledOnce();
+  });
+
+  it('verified admission propagates initialization failure and can retry without a second connection flight', async () => {
+    const { registry, fetch } = makeRegistry();
+    registry.applyCatalog({ supported: true, hubId: 'hub-a', projects: [], hosts: [host('a', 'connecting')] });
+    fetch.mockResolvedValueOnce(Response.json({ error: 'remote_service_starting' }, { status: 503 }));
+    await expect(registry.connectHost('a', { verify: true })).rejects.toThrow('remote_service_starting');
+    fetch.mockResolvedValueOnce(Response.json({ host: host('a') }));
+    await registry.connectHost('a', { verify: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a late verified handshake cannot restore a removed Host', async () => {
+    const { registry, fetch } = makeRegistry();
+    registry.applyCatalog({ supported: true, hubId: 'hub-a', projects: [], hosts: [host('a', 'idle')] });
+    let finish!: (response: Response) => void;
+    fetch.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = registry.connectHost('a', { verify: true });
+    registry.applyCatalog({ supported: true, hubId: 'hub-a', projects: [], hosts: [] });
+    finish(Response.json({ host: host('a') }));
+    await expect(pending).rejects.toThrow('unavailable');
+    expect(registry.getHost('a')).toBeUndefined();
+  });
+
   it('rejects late requests when an already offline Host becomes unavailable without another state transition', async () => {
     const { registry, fetch } = makeRegistry();
     const offline = { ...host('a', 'offline'), available: true };

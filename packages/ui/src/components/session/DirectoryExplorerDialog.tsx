@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useUIStore } from '@/stores/useUIStore';
 import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
 import { useFileSystemAccess } from '@/hooks/useFileSystemAccess';
 import { cn } from '@/lib/utils';
@@ -11,7 +12,7 @@ import { toast } from '@/components/ui';
 import { IdentityDropdown } from '@/components/views/git/GitHeader';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useDeviceInfo } from '@/lib/device';
-import { DirectoryExplorerSurface, DirectoryMachineList } from './DirectoryExplorerViews';
+import { DirectoryExplorerSurface, DirectoryMachineActions, DirectoryMachineList } from './DirectoryExplorerViews';
 import { Icon } from "@/components/icon/Icon";
 import { opencodeClient } from '@/lib/opencode/client';
 import { useI18n } from '@/lib/i18n';
@@ -22,6 +23,7 @@ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Kbd } from '@/components/ui/kbd';
 import { getHostRuntimeRegistry, supportsRemoteProjects, useRemoteHostCatalog } from '@/queries/remoteProjectQueries';
 import { RemoteDirectoryExplorerDialog } from './RemoteDirectoryExplorerDialog';
+import { useDirectoryMachineModel } from './useDirectoryMachineModel';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import type { HostLocation } from '@/lib/remote-projects/location';
 import './directory-explorer-dialog.css';
@@ -145,37 +147,47 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   const device = useDeviceInfo();
   const isMobile = resolveDirectoryExplorerMobileLayout(props.forceMobile, device.isMobile);
   const catalog = useRemoteHostCatalog(props.open, true);
-  const [hostId, setHostId] = React.useState('');
-  const [step, setStep] = React.useState<'machine' | 'directory'>('machine');
-  React.useEffect(() => {
-    if (!props.open) { setHostId(''); setStep('machine'); }
-  }, [props.open]);
   const registry = React.useMemo(() => catalog.data?.supported ? getHostRuntimeRegistry(catalog.data) : null, [catalog.data]);
+  const machine = useDirectoryMachineModel(props.open, registry, props.onOpenChange);
+  const { hostId, step } = machine;
+  const openSshSettings = useEvent(() => {
+    machine.changeOpen(false);
+    const ui = useUIStore.getState();
+    ui.setSettingsRemoteInstancesSelectedId('new');
+    ui.setSettingsPage('remote-instances');
+    ui.setSettingsDialogOpen(true);
+  });
   const selectableHosts = catalog.data?.hosts.filter((host) => host.available !== false) ?? [];
   const selectedHost = selectableHosts.find((host) => host.id === hostId);
-  const hasMachines = catalog.data?.supported && selectableHosts.length > 0;
-  const showMachines = supportsRemoteProjects() && step === 'machine'
-    && (hasMachines || catalog.isPending || catalog.isError);
-  const steps = <div className="flex shrink-0 items-center gap-2 whitespace-nowrap py-2 typography-micro text-muted-foreground">
+  const hasMachines = supportsRemoteProjects() && catalog.data?.supported && selectableHosts.length > 0;
+  const showMachines = hasMachines && step === 'machine';
+  if (supportsRemoteProjects() && catalog.isPending && !catalog.data) {
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} mobile={isMobile} footer={null}>
+      <p role="status" className="yuri-directory-empty text-muted-foreground">{t('common.loading')}</p>
+    </DirectoryExplorerSurface>;
+  }
+  const steps = <div className="yuri-directory-step flex shrink-0 items-center gap-2 whitespace-nowrap py-2 text-muted-foreground">
     <span className={showMachines ? 'text-foreground' : undefined}>{t('remoteProjects.machine')}</span>
     <Icon name="arrow-right-s" className="size-3 shrink-0" />
     <span className={!showMachines ? 'text-foreground' : undefined}>{t('directoryExplorerDialog.browse.directories')}</span>
   </div>;
   if (showMachines) {
-    const canContinue = !hostId || Boolean(registry && selectedHost
-      && selectedHost.state !== 'unauthorized' && selectedHost.state !== 'incompatible');
-    const footer = <div className="yuri-directory-actions"><Button size="sm" disabled={!canContinue} onClick={() => setStep('directory')}>{t('remoteProjects.next')}</Button></div>;
-    return <DirectoryExplorerSurface open={props.open} onOpenChange={props.onOpenChange} mobile={isMobile} footer={footer}>
-      <DirectoryMachineList hosts={selectableHosts} selectedId={hostId} onSelect={setHostId} pending={catalog.isPending}
-        error={catalog.error} onRetry={() => void catalog.refetch()} steps={steps} />
+    const canContinue = !machine.pending && (!hostId || Boolean(registry && selectedHost
+      && selectedHost.state !== 'unauthorized' && selectedHost.state !== 'incompatible'));
+    const footer = <DirectoryMachineActions pending={machine.pending} failed={Boolean(machine.error)} canContinue={canContinue}
+      onNext={machine.next} onAddSsh={openSshSettings} />;
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} mobile={isMobile} footer={footer} error={catalog.error?.message}>
+      <DirectoryMachineList hosts={selectableHosts} selectedId={hostId} onSelect={machine.selectHost} pending={catalog.isPending}
+        error={machine.error} steps={steps} />
     </DirectoryExplorerSurface>;
   }
-  const machinePicker = hasMachines ? <div className="flex min-w-0 items-center gap-2">
-    <Button variant="ghost" size="icon" onClick={() => setStep('machine')} aria-label={t('header.actions.backAria')}>
+  const machinePicker = hasMachines ? <div className="flex min-w-0 items-center gap-2 py-1">
+    <Button variant="ghost" size="xs" className="-ml-1.5 shrink-0 gap-1 text-muted-foreground" onClick={machine.back} aria-label={t('header.actions.backAria')}>
       <Icon name="arrow-left-s" className="size-4" />
+      {t('remoteProjects.machine')}
     </Button>
-    {steps}
-    {hostId ? <span className="ml-auto truncate typography-micro text-muted-foreground">{selectedHost?.name ?? hostId}</span> : null}
+    <Icon name="arrow-right-s" className="size-3 shrink-0 text-muted-foreground" />
+    <span className="yuri-directory-name min-w-0 truncate text-muted-foreground">{hostId ? selectedHost?.name ?? hostId : t('remoteProjects.local')}</span>
   </div> : null;
   if (hostId && registry) return <RemoteDirectoryExplorerDialog key={`${registry.hubId}:${hostId}`} {...props} registry={registry} hostId={hostId} machinePicker={machinePicker} onRegistered={async (project) => {
     registry.assertCurrent();
@@ -593,7 +605,6 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   const inputSection = (
     <div className="yuri-directory-inputs">
       <fieldset disabled={isConfirming} className="min-w-0">{machinePicker}</fieldset>
-      {discoveryError ? <p role="alert" className="text-xs text-destructive">{discoveryError}</p> : null}
       {isCloneMode ? (
         <div className="yuri-directory-field">
           <Input
@@ -631,6 +642,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
           autoCorrect="off"
           autoCapitalize="off"
         />
+        {!isMobile ? showHiddenToggle : null}
       </div>
     </div>
   );
@@ -765,7 +777,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   );
 
   return <DirectoryExplorerSurface open={open} onOpenChange={onOpenChange} mobile={isMobile}
-    trailing={showHiddenToggle} hints={shortcutHints} footer={renderFooter()} initialFocus={false}>
+    trailing={isMobile ? showHiddenToggle : undefined} hints={shortcutHints} footer={renderFooter()} initialFocus={false} error={discoveryError}>
     {content}
   </DirectoryExplorerSurface>;
 };

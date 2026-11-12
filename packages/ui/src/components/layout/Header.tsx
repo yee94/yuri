@@ -1822,7 +1822,10 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                   ? <RemoteHeaderSessionTitle key={locationKey(remoteSession.location)} entry={remoteRegistry.resolve(remoteSession.location)} sessionId={remoteSession.sessionId} fallback={currentSessionTitle} />
                   : currentSessionTitle}
               </span>
-              {isRemoteProject ? <span className="ml-2 max-w-36 truncate typography-meta text-muted-foreground" title={remoteHostName}>{remoteHostName}</span> : null}
+              {isRemoteProject ? <span className="ml-2 inline-flex min-w-0 max-w-36 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
+                <Icon name="computer" className="size-3 shrink-0" />
+                <span className="truncate">{remoteHostName}</span>
+              </span> : null}
             </button>
           </SessionSwitcherDropdown>
         </div>

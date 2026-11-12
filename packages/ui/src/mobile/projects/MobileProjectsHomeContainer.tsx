@@ -20,6 +20,9 @@ import { deleteSessionsWithUndo, showArchivedSessionsUndoToast } from '@/lib/ses
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useRemoteProjectNavigation } from '@/components/session/sidebar/hooks/useRemoteProjectNavigation';
+import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
+import { sortProjectEntries } from '@/lib/projectOrder';
+import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { parseRemoteProject } from '@/lib/remote-projects/types';
 import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
@@ -117,6 +120,7 @@ export function MobileProjectsHomeContainer({
   const openDraft = useMobileNavigationStore((state) => state.openDraft);
   const openSession = useMobileNavigationStore((state) => state.openSession);
   const projects = useProjectsStore((state) => state.projects);
+  const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const remoteNavigation = useRemoteProjectNavigation();
   const remoteProjects = React.useMemo(() => projects.filter((project) => project.hostId).map(parseRemoteProject), [projects]);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
@@ -603,7 +607,8 @@ export function MobileProjectsHomeContainer({
       <MobileProjectsHome
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}
-        projectOrderIds={projects.map((project) => project.id)}
+        projectOrderIds={sortProjectEntries(projects, projectSortOrder).map((project) => project.id)}
+        renderRemoteProject={remoteNavigation.registry ? (project) => <RemoteProjectSection project={project} registry={remoteNavigation.registry!} mobile reorderEnabled={false} /> : undefined}
         remoteError={remoteNavigation.catalog.error?.message}
         className={className}
         projects={model.projects}

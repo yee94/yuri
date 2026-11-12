@@ -73,7 +73,9 @@ test('failed Hub registration preserves the raw path and dialog for idempotent r
   const add = [...container.querySelectorAll('button')].find(button => button.textContent === 'directoryExplorerDialog.actions.addProject')!;
   await act(async () => add.click()); await flush();
   expect(container.querySelector('input')!.value).toBe('/workspace');
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe('Remote machine went offline');
+  expect(container.querySelector('button[aria-label="Remote machine went offline"]')).not.toBeNull();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.textContent).not.toContain('Remote machine went offline');
   expect(close).not.toHaveBeenCalled(); expect(registered).not.toHaveBeenCalled();
   expect(add.disabled).toBe(false);
 });

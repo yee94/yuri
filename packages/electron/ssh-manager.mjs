@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   OPENCODE_AGENTS_ROOT_PROBE_MARKER,
@@ -2926,6 +2927,23 @@ find_opencode
       }
     };
     this.monitorTimers.set(id, setTimeout(tick, MONITOR_INITIAL_POLL_MS));
+  }
+
+  async ensureConnected(id) {
+    const trimmed = String(id || '').trim();
+    if (this.connecting.has(trimmed)) return this.connecting.get(trimmed);
+    const instance = this.readInstances().instances.find((entry) => entry?.id === trimmed);
+    const session = this.sessions.get(trimmed);
+    if (instance && session && this.statuses.get(trimmed)?.phase === 'ready') {
+      const desired = this.sanitizeInstance(instance);
+      const initialized = this.sanitizeInstance(session.instance);
+      // Bootstrap persists its chosen forward port, including an automatically allocated port.
+      if (desired.localForward.preferredLocalPort === session.localPort) {
+        initialized.localForward.preferredLocalPort = session.localPort;
+      }
+      if (isDeepStrictEqual(desired, initialized)) return;
+    }
+    return this.connect(trimmed);
   }
 
   async connect(id) {

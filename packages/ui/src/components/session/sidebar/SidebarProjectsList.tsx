@@ -69,6 +69,7 @@ type Props = {
   remoteSearch?: string;
   remoteError?: string;
   projectOrderIds?: string[];
+  onRemoteActivityItems?: (projectId: string, items: import('./SidebarPinnedSessions').PinnedItem[]) => void;
   onRemoteNavigationTargets?: (projectId: string, targets: SessionNavigationTarget[]) => void;
   hostRegistry?: HostRuntimeRegistry;
   topContent?: React.ReactNode;
@@ -123,14 +124,14 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   const remoteById = new Map((props.remoteProjects ?? []).map((project) => [project.id, project]));
   const remoteSections: ProjectSection[] = (props.remoteProjects ?? []).map((project) => ({ project: { id: project.id, hostId: project.hostId, normalizedPath: project.path }, groups: [] }));
   const allSections = [...props.sectionsForRender, ...remoteSections];
-  if (props.projectOrderIds?.length && props.projectSortOrder === 'manual') {
+  if (props.projectOrderIds?.length) {
     const ranks = new Map(props.projectOrderIds.map((id, index) => [id, index]));
     allSections.sort((a, b) => (ranks.get(a.project.id) ?? Infinity) - (ranks.get(b.project.id) ?? Infinity));
   }
   const remoteSection = (id: string) => {
     const project = remoteById.get(id);
     if (!project) return null;
-    return props.hostRegistry ? <RemoteProjectSection key={id} project={project} registry={props.hostRegistry} search={props.remoteSearch} mobile={props.mobileVariant} reorderEnabled={props.projectReorderEnabled} onNavigationTargets={props.onRemoteNavigationTargets} />
+    return props.hostRegistry ? <RemoteProjectSection key={id} project={project} registry={props.hostRegistry} search={props.remoteSearch} mobile={props.mobileVariant} reorderEnabled={props.projectReorderEnabled} onNavigationTargets={props.onRemoteNavigationTargets} onActivityItems={props.onRemoteActivityItems} />
       : <div key={id} className="px-2 py-1 text-xs text-muted-foreground"><span>{project.label || project.path} · {project.hostId}</span><p role={props.remoteError ? 'alert' : 'status'}>{props.remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
   };
   const projectSensors = useSensors(

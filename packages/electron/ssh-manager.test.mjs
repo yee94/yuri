@@ -89,6 +89,69 @@ test('concurrent connect callers share preparation while the old connection is c
   expect(manager.connecting.size).toBe(0);
 });
 
+test('aggregate directory admission reuses only a ready SSH session with the current configuration', async () => {
+  const dir = await makeTempDir();
+  const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
+  const initial = manager.sanitizeInstance({ id: 'ssh-test', sshCommand: 'ssh developer@workstation.invalid' });
+  let saved = { ...initial, localForward: { ...initial.localForward, preferredLocalPort: 12345 } };
+  manager.readInstances = () => ({ instances: [saved] });
+  manager.sessions.set('ssh-test', { instance: initial, localPort: 12345 });
+  manager.statuses.set('ssh-test', { phase: 'ready' });
+  manager.connect = vi.fn(async () => {});
+  for (let request = 0; request < 3; request++) await manager.ensureConnected('ssh-test');
+  expect(manager.connect).not.toHaveBeenCalled();
+  const readyConfig = saved;
+  const changedConfigurations = [
+    { sshCommand: 'ssh developer@another-workstation.invalid' },
+    { auth: { sshPassword: { enabled: true, store: 'never', value: 'synthetic-test-value' } } },
+    { remoteYuri: { ...readyConfig.remoteYuri, preferredPort: 12346 } },
+    { localForward: { ...readyConfig.localForward, preferredLocalPort: 12346 } },
+  ];
+  for (const changed of changedConfigurations) {
+    saved = { ...readyConfig, ...changed };
+    await manager.ensureConnected('ssh-test');
+  }
+  expect(manager.connect).toHaveBeenCalledTimes(changedConfigurations.length);
+  expect(manager.connect).toHaveBeenLastCalledWith('ssh-test');
+});
+
+test.each(['idle', 'config_resolved', 'auth_check', 'master_connecting', 'remote_probe', 'forwarding', 'error'])(
+  'aggregate admission awaits initialization rather than accepting SSH phase %s', async (phase) => {
+    const dir = await makeTempDir();
+    const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
+    const instance = manager.sanitizeInstance({ id: 'ssh-test', sshCommand: 'ssh developer@workstation.invalid' });
+    manager.readInstances = () => ({ instances: [instance] });
+    manager.sessions.set('ssh-test', { instance, localPort: 12345 });
+    manager.statuses.set('ssh-test', { phase });
+    let complete;
+    manager.connect = vi.fn(() => new Promise((resolve) => { complete = resolve; }));
+    const ready = vi.fn();
+    const pending = manager.ensureConnected('ssh-test').then(ready);
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    expect(manager.connect).toHaveBeenCalledExactlyOnceWith('ssh-test');
+    complete(); await pending;
+    expect(ready).toHaveBeenCalledOnce();
+  },
+);
+
+test('aggregate admission shares the entire in-flight initialization even after its main tunnel is ready', async () => {
+  const dir = await makeTempDir();
+  const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });
+  let complete;
+  manager.connecting.set('ssh-test', new Promise((resolve) => { complete = resolve; }));
+  manager.statuses.set('ssh-test', { phase: 'ready' });
+  manager.connect = vi.fn(async () => {});
+  const ready = vi.fn();
+  const first = manager.ensureConnected('ssh-test').then(ready);
+  const second = manager.ensureConnected('ssh-test').then(ready);
+  await Promise.resolve();
+  expect(ready).not.toHaveBeenCalled();
+  expect(manager.connect).not.toHaveBeenCalled();
+  complete(); await Promise.all([first, second]);
+  expect(ready).toHaveBeenCalledTimes(2);
+});
+
 test('an explicit connection initializes and checks versions even when an SSH session is already ready', async () => {
   const dir = await makeTempDir();
   const manager = new ElectronSshManager({ settingsFilePath: path.join(dir, 'settings.json'), appVersion: '0.0.0-test', emit() {} });

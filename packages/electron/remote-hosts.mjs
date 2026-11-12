@@ -20,7 +20,7 @@ export function createDesktopRemoteHostsAdapter({ readHosts, sshManager, subscri
     },
     async prepareHost(id) {
       if (sshManager.readInstances().instances.some((instance) => instance.id === id)) {
-        try { await sshManager.connect(id); }
+        try { await sshManager.ensureConnected(id); }
         catch (error) {
           const reason = classifyManagedSshBootstrapError(error?.message);
           const code = reason === 'sshAuth' ? 'remote_ssh_authentication_failed'

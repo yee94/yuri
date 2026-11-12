@@ -47,6 +47,13 @@ export type MobileProjectCardProps = {
   iconSlot?: React.ReactNode;
 };
 
+export function MobileProjectSurface({ children, ...props }: MobileProjectCardProps & { children?: React.ReactNode }) {
+  return <MobileFloatingSurface asChild><section className="yuri-mobile-project-shell" aria-label={props.project.name}>
+    <MobileProjectCard {...props} embedded />
+    {children}
+  </section></MobileFloatingSurface>;
+}
+
 const TONE_STYLES: Record<MobileProjectTone, React.CSSProperties | undefined> = {
   neutral: undefined,
   info: { color: 'var(--status-info)', backgroundColor: 'var(--status-info-background)' },

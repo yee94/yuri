@@ -136,13 +136,14 @@ export class HostRuntimeRegistry {
   getHost = (hostId: string): RemoteHost | undefined => this.hosts.get(hostId);
 
   /** Visible project demand wakes a Host once; concurrent panes share that request. */
-  connectHost(hostId: string): Promise<void> {
+  connectHost(hostId: string, { verify = false }: { verify?: boolean } = {}): Promise<void> {
     this.assertCurrent();
     const previous = this.connections.get(hostId);
     if (previous) return previous;
     const host = this.hosts.get(hostId);
-    if (host?.state === 'connected' || host?.state === 'connecting') return Promise.resolve();
-    if (host?.available === false) return Promise.reject(new Error('Remote Host is unavailable'));
+    // Directory entry must await bootstrap/auth admission, not a cached status badge.
+    if (!verify && (host?.state === 'connected' || host?.state === 'connecting')) return Promise.resolve();
+    if ((verify && !host) || host?.available === false) return Promise.reject(new Error('Remote Host is unavailable'));
     const flight = (async () => {
       const response = await this.requestHost(hostId, 'connect', { method: 'POST' });
       const payload: unknown = await response.json();
@@ -154,6 +155,7 @@ export class HostRuntimeRegistry {
       const value = payload && typeof payload === 'object' ? payload as { host?: unknown } : undefined;
       const connected = parseRemoteHost(value?.host);
       if (connected.id !== hostId) throw new Error('Remote Host connection response identity mismatch');
+      if (!this.hosts.has(hostId) || this.hosts.get(hostId)?.available === false) throw new Error('Remote Host is unavailable');
       if (!this.updateHost(connected)) throw new Error('Stale Remote Host scope response');
     })();
     this.connections.set(hostId, flight);

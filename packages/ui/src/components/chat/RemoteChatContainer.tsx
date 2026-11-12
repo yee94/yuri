@@ -2,7 +2,7 @@ import React from 'react';
 import { useEvent, useEventListener } from '@reactuses/core';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { HostLocation } from '@/lib/remote-projects/location';
-import { locationKey } from '@/lib/remote-projects/location';
+import { locationKey, REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { HostRuntimeProvider, useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useRemoteHostCatalog, getHostRuntimeRegistry, type RemoteHostSummaries } from '@/queries/remoteProjectQueries';
@@ -49,6 +49,8 @@ import { resolveRetryActionCopy } from '@/sync/session-retry-action';
 import type { I18nKey } from '@/lib/i18n';
 import { NativeSessionInboxChips } from './QueuedMessageChips';
 import ToolOutputDialog from './message/ToolOutputDialog';
+import { StatusRow } from './StatusRow';
+import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
 import type { ToolPopupContent } from './message/types';
 
 type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
@@ -157,6 +159,9 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const [picks, setPicks] = React.useState<Record<string, ChatInputSurface['selection']['value']>>({});
   const selectionKey = state.sessionKey(sessionId ?? 'new');
   const picked = picks[selectionKey];
+  const selectionSessionID = sessionId ?? REMOTE_NEW_SESSION_DRAFT_ID;
+  const rememberedModel = useSelectionStore((store) => store.getSessionModelSelection(selectionSessionID, location));
+  const rememberedAgent = useSelectionStore((store) => store.getSessionAgentSelection(selectionSessionID, location));
   const session = snapshot.session;
   const catalogDefault = React.useMemo(() => {
     const catalog = providersQuery.data;
@@ -169,12 +174,17 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const defaultModelSeparator = draftOptions?.defaultModel?.indexOf('/') ?? -1;
   const defaultProviderID = defaultModelSeparator > 0 ? draftOptions?.defaultModel?.slice(0, defaultModelSeparator) : undefined;
   const defaultModelID = defaultModelSeparator > 0 ? draftOptions?.defaultModel?.slice(defaultModelSeparator + 1) : undefined;
-  const selection = React.useMemo(() => ({
-    providerID: picked?.providerID ?? (sessionId ? useSelectionStore.getState().getSessionModelSelection(sessionId, location)?.providerId : undefined) ?? (session && readSessionModelProviderId(session)) ?? defaultProviderID ?? catalogDefault?.providerID,
-    modelID: picked?.modelID ?? (sessionId ? useSelectionStore.getState().getSessionModelSelection(sessionId, location)?.modelId : undefined) ?? (session && readSessionModelId(session)) ?? defaultModelID ?? catalogDefault?.modelID,
-    agent: picked?.agent ?? (sessionId ? useSelectionStore.getState().getSessionAgentSelection(sessionId, location) : undefined) ?? session?.agent ?? agentsQuery.data?.[0]?.name,
-    variant: picked?.variant ?? (session && readSessionModelVariant(session)) ?? undefined,
-  }), [picked, session, agentsQuery.data, location, sessionId, defaultProviderID, defaultModelID, catalogDefault]);
+  const baseSelection = React.useMemo(() => ({
+    providerID: picked?.providerID ?? rememberedModel?.providerId ?? (session && readSessionModelProviderId(session)) ?? defaultProviderID ?? catalogDefault?.providerID,
+    modelID: picked?.modelID ?? rememberedModel?.modelId ?? (session && readSessionModelId(session)) ?? defaultModelID ?? catalogDefault?.modelID,
+    agent: picked?.agent ?? rememberedAgent ?? session?.agent ?? agentsQuery.data?.[0]?.name,
+    variant: picked ? picked.variant : (session && readSessionModelVariant(session)) ?? undefined,
+  }), [picked, session, agentsQuery.data, rememberedModel, rememberedAgent, defaultProviderID, defaultModelID, catalogDefault]);
+  const rememberedVariant = useSelectionStore((store) => baseSelection.agent && baseSelection.providerID && baseSelection.modelID
+    ? store.getAgentModelVariantForSession(selectionSessionID, baseSelection.agent, baseSelection.providerID, baseSelection.modelID, location) : undefined);
+  const selection = React.useMemo(() => ({ ...baseSelection,
+    variant: picked ? picked.variant : rememberedVariant ?? baseSelection.variant,
+  }), [baseSelection, picked, rememberedVariant]);
   const draftKey = React.useMemo(() => remoteSessionDraftKey(location, sessionId), [location, sessionId]);
   const draftID = draftKeyString(draftKey);
   useInputStore((store) => store.drafts[draftID]?.attachments);
@@ -334,8 +344,10 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const change = useEvent((next: ChatInputSurface['selection']['value']) => {
     assertWritable();
     setPicks((previous) => ({ ...previous, [selectionKey]: next }));
-    if (sessionId && next.providerID && next.modelID) state.selectModel(sessionId, next.providerID, next.modelID);
-    if (sessionId && next.agent) state.selectAgent(sessionId, next.agent);
+    if (next.providerID && next.modelID) state.selectModel(selectionSessionID, next.providerID, next.modelID);
+    if (next.agent) state.selectAgent(selectionSessionID, next.agent);
+    if (next.agent && next.providerID && next.modelID) useSelectionStore.getState().saveAgentModelVariantForSession(
+      selectionSessionID, next.agent, next.providerID, next.modelID, next.variant, location);
   });
   const selectionStillCurrent = useEvent((key: string) => key === selectionKey);
   const history = React.useMemo(() => messages.filter((row) => row.info.role === 'user').map((row) => row.parts.flatMap((part) => part.type === 'text' && !part.synthetic ? [part.text] : []).join('\n')).filter(Boolean), [messages]);
@@ -490,7 +502,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     if (!restored) throw new Error('Remote inbox draft changed');
   });
   const nativeInboxAction = useEvent((action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => action === 'edit' ? editInbox(id) : inboxAction(action, id));
-  surface.nativeInbox = <NativeSessionInboxChips items={inbox} readOnly={readOnly || !active} onAction={nativeInboxAction} onShowPopup={setInboxPopup} />;
+  surface.nativeInbox = <NativeSessionInboxChips items={inbox.filter((item) => !data?.messagesByID[item.id])} readOnly={readOnly || !active} onAction={nativeInboxAction} onShowPopup={setInboxPopup} />;
   return <SessionSurfaceContext.Provider value={sessionSurface}>
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-remote-chat={locationKey(location)}>
       {(catalogDemand || modelPickerOpen) && (providersQuery.error || agentsQuery.error) ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">
@@ -498,7 +510,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
         <Button size="xs" onClick={() => { void Promise.all([providersQuery.refetch(), agentsQuery.refetch()]); }}>{t('chat.history.retry')}</Button>
       </div> : null}
       {error || observationError ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">{error ?? observationError}<Button size="xs" onClick={() => { if (sessionId) void Promise.all([state.repository.refreshFromAuthority(state.scope(sessionId)), state.refreshMetadata(sessionId)]).then(() => { setError(null); setObservationError(null); }).catch(report); }}>{t('chat.history.retry')}</Button></div> : null}
-      <TranscriptSearch messages={messages} enabled={active && !expanded} canOpen={() => !document.querySelector('[role="dialog"]')} onNavigate={follow.releaseAutoFollow}>
+      {sessionId || isMobile ? <TranscriptSearch messages={messages} enabled={active && !expanded} canOpen={() => !document.querySelector('[role="dialog"]')} onNavigate={follow.releaseAutoFollow}>
       {Viewport ? <Viewport currentSessionId={sessionId ?? 'remote-new-session'} virtualizerKey={surface.surfaceID}
         timelineHistoryAnchorToken={anchorToken} isDesktopExpandedInput={expanded} isMobile={isMobile} stickyUserHeader={stickyUserHeader}
         directory={location.directory} scrollRef={follow.scrollRef} messageListRef={listRef} pendingRevealWork={timeline.pendingRevealWork}
@@ -512,7 +524,10 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
         onSelectTurn={(id) => void timeline.scrollToTurn(id)} showPromptNavigator={!isMobile && promptNavigator}
         canLoadEarlierPrompts={timeline.historySignals.canLoadEarlier} isLoadingOlderPrompts={timeline.isLoadingOlder}
         onLoadEarlierPrompts={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)}
-        transcriptStatusRow={<span role="status" className="typography-meta text-muted-foreground">{busy ? t('chat.assistantStatus.working') : null}</span>} /> :
+        transcriptStatusRow={<StatusRow isWorking={busy} isGenericStatus showTodos={false}
+          isWaitingForPermission={snapshot.permissions.length > 0} isTurnSettled={snapshot.status?.type === 'idle'}
+          retryInfo={snapshot.status?.type === 'retry' ? snapshot.status : null} agentName={selection.agent}
+          showAssistantStatus={busy || snapshot.permissions.length > 0} />} /> :
       <ScrollShadow ref={follow.scrollRef} className="chat-scroll min-h-0 flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }} onScroll={timeline.handleHistoryScroll}>
         {retryActionCopy ? <div className="chat-column px-3 py-2">
           <div className="typography-ui-label text-foreground">{retryActionCopy.title}</div>
@@ -531,12 +546,16 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
           {snapshot.forms.map((form) => <FormCard key={form.id} form={form} directory={location.directory} />)}
         </> : null}
       </ScrollShadow>}
-      </TranscriptSearch>
+      </TranscriptSearch> : null}
       {session?.revert && sessionId && !readOnly && active ? <Button size="xs" onClick={() => { assertWritable(); void postSessionRevertClear({ scope: entry, sessionID: sessionId }).then(() => state.refreshMetadata(sessionId)).catch(report); }}>{t('chat.revertIndicator.redo')}</Button> : null}
-      <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
+      {!sessionId ? <DraftComposerFoot isMobile={isMobile} expanded={expanded} compact={isMobile}>
+        <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
+      </DraftComposerFoot> : <ComposerFoot isMobile={isMobile} expanded={expanded}>
+        <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
+      </ComposerFoot>}
       {inboxPopup ? <ToolOutputDialog popup={inboxPopup} isMobile={isMobile} onOpenChange={(open) => { if (!open) setInboxPopup(null); }} /> : null}
       {sessionId ? <TimelineDialog open={timelineOpen && active} onOpenChange={setTimelineOpen} sessionID={sessionId} directory={location.directory}
-        onRevertMessage={revert} onScrollToMessage={timeline.scrollToMessage} onResumeToLatest={() => follow.goToBottom()}
+        onRevertMessage={revert} onScrollToMessage={timeline.scrollToMessage}
         canLoadEarlier={timeline.historySignals.canLoadEarlier} isLoadingEarlier={timeline.isLoadingOlder}
         onLoadEarlier={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)} /> : null}
     </div>

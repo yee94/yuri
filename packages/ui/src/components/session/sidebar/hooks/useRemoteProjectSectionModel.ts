@@ -1,7 +1,5 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
-import type { DragEndEvent } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
 import { useI18n } from '@/lib/i18n';
 import type { HostRuntimeEntry, HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { RemoteProject } from '@/lib/remote-projects/types';
@@ -13,10 +11,13 @@ import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { openRemoteProjectSession } from '@/router/openRemoteProjectSession';
 import { createUuid } from '@/lib/uuid';
 import { toast } from '@/components/ui';
-import { visibleRemoteRows, canMoveRemoteFolder, type RemoteDragItem, type RemoteFolderNode } from '../remoteSessionFolders';
-import type { RemoteProjectShellProps, RemoteSummaryRowProps, RemoteFolderBranchProps } from '../remoteProjectPresentation';
+import type { RemoteProjectShellProps, RemoteSummaryRowProps } from '../remoteProjectPresentation';
+import type { SessionFolder } from '@/stores/useSessionFoldersStore';
 import type { RemoteSummarySnapshot } from './useRemoteProjectNavigation';
 import { useRemoteProjectSectionData } from './useRemoteProjectSectionData';
+import type { Session } from '@/lib/opencode/v2-types';
+import { formatDirectoryName } from '@/lib/utils';
+import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 
 const writes = new WeakMap<HostRuntimeRegistry, Map<string, Promise<void>>>();
 function serializeWrite(registry: HostRuntimeRegistry, hostId: string, action: () => Promise<void>) {
@@ -40,10 +41,19 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   const data = useRemoteProjectSectionData(project, registry, search);
   const { online, query, snapshot, rows, views, directories, refresh } = data;
   const active = useProjectsStore((state) => state.activeProjectId === project.id);
+  const mobileExpanded = useMobileSessionTreeStore((state) => state.projectExpanded[project.id] ?? true);
   const selectedSession = useSessionNavigationStore((state) => state.remoteSession?.projectId === project.id ? state.remoteSession.sessionId : null);
   const [selected, setSelected] = React.useState<Map<string, string>>(new Map());
   const [worktreeOpen, setWorktreeOpen] = React.useState(false);
   const [childTargets, setChildTargets] = React.useState<Map<string, Array<{ sessionId: string; directory: string }>>>(new Map());
+  const [groupTargets, setGroupTargets] = React.useState<Map<string, Session[]>>(new Map());
+  const reportGroupTargets = useEvent((key: string, sessions: Session[]) => setGroupTargets((previous) => {
+    const current = previous.get(key) ?? [];
+    if (current.length === sessions.length && current.every((session, index) => session.id === sessions[index].id && session.directory === sessions[index].directory)) return previous;
+    const next = new Map(previous);
+    if (sessions.length) next.set(key, sessions); else next.delete(key);
+    return next;
+  }));
   const reportChildTargets = useEvent((parentId: string, targets: Array<{ sessionId: string; directory: string }>) => setChildTargets((previous) => {
     const current = previous.get(parentId) ?? [];
     if (current.length === targets.length && current.every((target, index) => target.sessionId === targets[index].sessionId && target.directory === targets[index].directory)) return previous;
@@ -67,7 +77,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     } catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); setError(message); toast.error(message); }
     finally { flightRef.current = false; setPending(false); }
   });
-  const entryFor = (directory: string) => registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory });
+  const entryFor = (directory: string) => registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory: directory.startsWith('__archived__:') ? directory.slice('__archived__:'.length) : directory });
   const request = async (directory: string, path: string, method: string, body?: unknown, captured?: HostRuntimeEntry) => {
     const entry = captured ?? entryFor(directory);
     const response = await entry.fetch(path, { method, ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
@@ -97,6 +107,10 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     setEditor(null);
   }) : Promise.resolve();
   const toggleCollapse = useEvent(() => {
+    if (mobile) {
+      useMobileSessionTreeStore.getState().setProjectExpanded(project.id, !mobileExpanded);
+      return;
+    }
     // Layout is Hub-owned; metadata never goes through the remote mutation endpoint.
     useProjectsStore.getState().setProjectCollapsed(project.id, !project.sidebarCollapsed);
   });
@@ -143,7 +157,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   };
   const sessionProps = (session: SessionIndexSession, scope: string, depth = 0): RemoteSummaryRowProps => ({
     session, active: selectedSession === session.id, search: query, selected: selected.has(session.id), pending: pending || !online,
-    dragItem: { kind: 'session', directory: scope, id: session.id }, reorderable: depth === 0,
+    dragItem: { directory: scope, id: session.id }, reorderable: depth === 0,
     status: online ? (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type : 'unknown',
     pinned: Boolean(snapshot?.pinnedSessionIds.includes(session.id) || session.time.pinned), unread: snapshot?.unread?.sessions[session.id]?.unreadCount ?? 0,
     onSelect: () => openRow(session, scope),
@@ -157,6 +171,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   });
   const moveSessions = (directory: string, ids: string[], folderId: string | null, beforeSessionId?: string) => mutate(async () => {
     if (!online) throw new Error(t('remoteProjects.host-unavailable'));
+    if (ids.length === 1 && selected.has(ids[0])) ids = [...selected].filter(([, scope]) => scope === directory).map(([id]) => id);
     const entry = entryFor(directory);
     const previous = await readRemoteResponse(await entry.fetch('/api/session-folders')) as NonNullable<RemoteSummarySnapshot['folders']>;
     if (registry.resolve(entry.location).connectionGeneration !== entry.connectionGeneration) throw new Error(t('remoteProjects.host-unavailable'));
@@ -195,34 +210,6 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
       throw cause;
     }
   });
-  const moveFolder = (directory: string, id: string, parentId: string | null, beforeId?: string) => updateFolder(directory, (payload) => {
-    const folders = payload.foldersMap[directory] ?? [];
-    if (!canMoveRemoteFolder(folders, id, parentId)) throw new Error(t('remoteProjects.invalidFolderMove'));
-    const folder = folders.find((folder) => folder.id === id)!;
-    folder.parentId = parentId;
-    if (beforeId && beforeId !== id) {
-      const from = folders.findIndex((folder) => folder.id === id);
-      const to = folders.findIndex((folder) => folder.id === beforeId);
-      if (to >= 0) payload.foldersMap[directory] = arrayMove(folders, from, to);
-    }
-  });
-  const handleDragEnd = useEvent(({ active: dragged, over }: DragEndEvent) => {
-    if (!over || dragged.id === over.id || !online || pending || query) return;
-    const source = dragged.data.current as RemoteDragItem | undefined;
-    const target = over.data.current as RemoteDragItem | undefined;
-    if (!source || !target || source.directory !== target.directory) return;
-    const folders = snapshot?.folders?.foldersMap[source.directory] ?? [];
-    if (source.kind === 'folder') {
-      const parentId = target.kind === 'folder' ? target.id : target.kind === 'folder-position' ? folders.find((folder) => folder.id === target.id)?.parentId ?? null : target.kind === 'root' ? null : undefined;
-      if (parentId !== undefined && canMoveRemoteFolder(folders, source.id, parentId)) void moveFolder(source.directory, source.id, parentId, target.kind === 'folder-position' ? target.id : undefined);
-      return;
-    }
-    if (source.kind !== 'session' || target.kind === 'folder-position') return;
-    const folderId = target.kind === 'folder' ? target.id : target.kind === 'session' ? folders.find((folder) => folder.sessionIds.includes(target.id))?.id ?? null : null;
-    const ids = selected.has(source.id) ? [...selected].filter(([, directory]) => directory === source.directory).map(([id]) => id) : [source.id];
-    if (!ids.includes(target.id)) void moveSessions(source.directory, ids, folderId, target.kind === 'session' ? target.id : undefined);
-  });
-  const [visibleCount, setVisibleCount] = React.useState(30);
   React.useLayoutEffect(() => {
     if (!onNavigationTargets) return;
     const targets: SessionNavigationTarget[] = [];
@@ -233,18 +220,17 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
       for (const child of childTargets.get(sessionId) ?? []) append(child.sessionId, child.directory, seen);
     };
     if (query || !project.sidebarCollapsed) {
-      for (const { view } of views) {
-        const seen = new Set<string>();
-        for (const { session, directory } of visibleRemoteRows(view, new Set(snapshot?.folders?.collapsedFolderIds ?? []), visibleCount, Boolean(query))) append(session.id, directory, seen);
-      }
+      const seen = new Set<string>();
+      for (const group of data.groups) for (const session of groupTargets.get(`${project.id}:${group.id}`) ?? []) append(session.id, session.directory || group.directory || project.path, seen);
     }
     onNavigationTargets(project.id, targets);
-  }, [onNavigationTargets, snapshot, project.id, project.sidebarCollapsed, query, visibleCount, views, childTargets]);
-  const folderProps = (node: RemoteFolderNode, scope: string, depth: number): Omit<RemoteFolderBranchProps, 'children' | 'renderRow'> => ({
-    node, directory: scope, depth, disabled: !online || pending || Boolean(query), folders: snapshot?.folders?.foldersMap[scope] ?? [], visibleCount,
+  }, [onNavigationTargets, project.id, project.path, project.sidebarCollapsed, query, childTargets, groupTargets, data.groups]);
+  const folderProps = (folder: SessionFolder, scope: string) => {
+    const node = { folder };
+    return {
     collapsed: !query && Boolean(snapshot?.folders?.collapsedFolderIds.includes(node.folder.id)),
     onToggle: () => void updateFolder(scope, (payload) => { payload.collapsedFolderIds = payload.collapsedFolderIds.includes(node.folder.id) ? payload.collapsedFolderIds.filter((id) => id !== node.folder.id) : [...payload.collapsedFolderIds, node.folder.id]; }),
-    onRename: (name) => void updateFolder(scope, (payload) => { const folder = payload.foldersMap[scope]?.find((folder) => folder.id === node.folder.id); if (!folder) throw new Error(t('remoteProjects.folderMissing')); folder.name = name; }),
+    onRename: (name: string) => void updateFolder(scope, (payload) => { const folder = payload.foldersMap[scope]?.find((folder) => folder.id === node.folder.id); if (!folder) throw new Error(t('remoteProjects.folderMissing')); folder.name = name; }),
     onRenameStart: () => setEditor({ kind: 'folder', id: scope, folderId: node.folder.id, value: node.folder.name }),
     onDelete: () => void updateFolder(scope, (payload) => {
       const removed = new Set([node.folder.id]);
@@ -256,12 +242,12 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     }),
     onNewSession: () => openRemoteProjectSession(project, registry, null, scope, mobile, { targetFolderId: node.folder.id }),
     onNewSubFolder: () => setEditor({ kind: 'folder', id: scope, parentId: node.folder.id, value: '' }),
-    onMove: (parentId) => void moveFolder(scope, node.folder.id, parentId),
-  });
+    };
+  };
   const projectProps: Omit<RemoteProjectShellProps, 'children'> = {
     project, registry, sessionCount: rows.length,
-    label: `${project.label || project.path}${data.busy ? ` · ${t('remoteProjects.running')}` : ''}`,
-    collapsed: !query && Boolean(project.sidebarCollapsed), active, loading: data.loading,
+    label: project.label || formatDirectoryName(project.path, null) || project.path,
+    collapsed: !query && (mobile ? !mobileExpanded : Boolean(project.sidebarCollapsed)), active, loading: data.loading,
     isRepo: Boolean(snapshot?.worktrees?.projectDirectories[project.path]?.length), reorderEnabled,
     actions: {
       disabled: !online || pending,
@@ -274,9 +260,10 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
       close: () => { void mutate(async () => { await useProjectsStore.getState().removeProject(project.id); }); },
     },
   };
-  return { data, projectProps, sessionProps, folderProps, handleDragEnd, reportChildTargets, pending, error: error || data.error,
-    worktreeOpen, setWorktreeOpen, editor, setEditor, saveEditor, projectIcon, setProjectIcon, projectColor, setProjectColor, visibleCount,
-    loadMore: (hasMore: boolean) => { const next = visibleCount + 30; setVisibleCount(next); if (hasMore) data.setPageLimit(next); },
+  return { data, projectProps, sessionProps, folderProps, reportChildTargets, pending, error: error || data.error,
+    updateFolder, moveSessions, reportGroupTargets, selectedSession,
+    openDraft: (directory: string, targetFolderId?: string) => openRemoteProjectSession(project, registry, null, directory, mobile, { targetFolderId }),
+    worktreeOpen, setWorktreeOpen, editor, setEditor, saveEditor, projectIcon, setProjectIcon, projectColor, setProjectColor,
     newFolder: (directory?: string) => setEditor({ kind: 'folder', id: directory, value: '' }),
     bulk: {
       count: selected.size,

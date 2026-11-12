@@ -20,6 +20,12 @@ into the in-process backend. Its catalog belongs to this computer and is
 independent of every window's active runtime. SSH initialization reuses the native
 manager; explicit pairing provenance remains required for Relay fallback. Native
 settings changes reconcile the server-owned gateway without a background poll.
+Aggregate admission uses the manager's `ensureConnected`: it awaits any complete
+in-flight initialization, reuses a live Ready session only when its normalized
+SSH configuration still matches (accounting for the persisted chosen forward
+port), and otherwise initializes normally. Thus directory reads after verified
+admission do not disconnect and bootstrap that same ready tunnel again. Explicit
+instance switches still use the normal `connect` pipeline described below.
 The backend owns credentials, remote references, partitioned summaries and real
 HTTP/terminal/preview forwarding; renderers receive only public host descriptors.
 See `../web/server/lib/remote-hosts/DOCUMENTATION.md`. The adapter and host-aware

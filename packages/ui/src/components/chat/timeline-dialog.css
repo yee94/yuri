@@ -45,8 +45,7 @@
   padding-bottom: 0.25rem;
 }
 
-.yuri-timeline-history button,
-.yuri-timeline-toolbar button {
+.yuri-timeline-history button {
   font-size: 0.6875rem;
   line-height: 1.125rem;
 }
@@ -138,14 +137,6 @@
   pointer-events: auto;
 }
 
-.yuri-timeline-toolbar {
-  display: flex;
-  flex-shrink: 0;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.25rem 1rem 0.75rem;
-}
-
 .yuri-timeline-empty {
   padding: 2.5rem 1rem;
   font-size: 0.75rem;
@@ -163,8 +154,4 @@
   height: 2.75rem;
   min-height: 2.75rem;
   column-gap: 0.5rem;
-}
-
-.yuri-timeline-mobile .yuri-timeline-toolbar {
-  padding-bottom: 0.5rem;
 }

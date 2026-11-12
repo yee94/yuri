@@ -9,6 +9,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { RemoteProjectSection } from './RemoteProjectSection';
 import { createEventPipeline } from '@/sync/event-pipeline';
 import { opencodeClient } from '@/lib/opencode/client';
+import { remoteHostSummariesQueryOptions } from '@/queries/remoteProjectQueries';
 
 type Socket = { onmessage: ((event: { data: string }) => void) | null; onopen: (() => void) | null;
   onclose: (() => void) | null; onerror: (() => void) | null; close(): void; send(): void; readyState: number };
@@ -121,7 +122,8 @@ it('mobile remote projects reuse the floating project/session cards and keep man
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => render(false));
     expect(container.querySelector('.yuri-mobile-project-card')).toBeNull();
-    expect(container.querySelector('input[type="checkbox"]')).not.toBeNull();
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(container.querySelector('.yuri-group-body [data-session-title]')).not.toBeNull();
     await act(async () => {
       registry.applyCatalog({ supported: true, hubId, hosts: [{ ...host, state: 'offline' }], projects: [project] });
       render(true);
@@ -138,4 +140,40 @@ it('mobile remote projects reuse the floating project/session cards and keep man
   } finally {
     await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear();
   }
+});
+
+it('desktop remote sessions use shared groups, activity-aware order, pagination and matching keyboard targets', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
+  useProjectsStore.setState({ projects: [project], activeProjectId: null, hubProjectLayout: null });
+  let updated = 1;
+  const session = (id: string, time: number) => ({ id, title: id, time: { created: time, updated: time } });
+  const fetch = vi.fn(async () => Response.json({ hubId, hostId, stale: false,
+    directories: [{ directory: project.path, sessions: [session('first', 4), session('second', 3), session('third', 2), session('fourth', updated)], hasMore: false },
+      { directory: '/fixtures/checkout', sessions: [session('checkout-session', 5)], hasMore: false }],
+    worktrees: { projectDirectories: { [project.path]: [project.path, '/fixtures/checkout'] }, staleProjectDirectories: [] },
+    order: { sessionOrderByScope: { [project.path]: ['first', 'second', 'third', 'fourth'] }, sessionOrderActivityByScope: { [project.path]: { first: 4, second: 3, third: 2, fourth: 1 } } },
+  }));
+  const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => { throw new Error('Sidebar must not read transcripts'); } });
+  registry.applyCatalog({ supported: true, hubId, hosts: [host], projects: [project] });
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container);
+  const targets = vi.fn();
+  const rows = () => [...container.querySelectorAll('[data-session-row]')].map((row) => row.getAttribute('data-session-row'));
+  try {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} onNavigationTargets={targets} /></QueryClientProvider>));
+    await vi.waitFor(() => expect(rows()).toEqual(['first', 'second', 'third', 'checkout-session']));
+    expect(container.textContent).not.toContain('remoteProjects.newFolder');
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(container.querySelector('[aria-label="remoteProjects.reorder"]')).toBeNull();
+    expect(container.querySelectorAll('.yuri-group')).toHaveLength(2);
+    updated = 10;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteHostSummariesQueryOptions(registry, hostId).queryKey }); });
+    await vi.waitFor(() => expect(rows()).toEqual(['fourth', 'first', 'second', 'checkout-session']));
+    expect(targets.mock.lastCall?.[1].map((target: { sessionId: string }) => target.sessionId)).toEqual(rows());
+    const more = [...container.querySelectorAll('button')].find((button) => button.textContent === 'sessions.sidebar.group.showMore')!;
+    await act(async () => more.click());
+    expect(rows()).toEqual(['fourth', 'first', 'second', 'third', 'checkout-session']);
+    expect(targets.mock.lastCall?.[1].map((target: { sessionId: string }) => target.sessionId)).toEqual(rows());
+  } finally { await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); }
 });

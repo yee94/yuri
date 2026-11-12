@@ -2502,7 +2502,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       <SidebarProjectsList
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}
-        projectOrderIds={allProjects.map((project) => project.id)}
+        projectOrderIds={sortProjectEntries(allProjects, projectSortOrder).map((project) => project.id)}
         remoteSearch={sessionSearchQuery}
         remoteError={remoteNavigation.catalog.error?.message}
         onRemoteNavigationTargets={handleRemoteNavigationTargets}

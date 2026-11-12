@@ -198,8 +198,6 @@ describe.each([false, true])('TimelineDialog closed-work gate (mobile=%s)', (isM
             sessionID="session-1"
             directory="/tmp/project"
             onScrollToMessage={async (id) => { counters.navigatedIDs.push(id); return counters.navigationSucceeds; }}
-            onScrollByTurnOffset={(offset) => { counters.turnOffsets.push(offset); }}
-            onResumeToLatest={() => { counters.latestCalls += 1; }}
             canLoadEarlier={counters.canLoadEarlier}
             onLoadEarlier={() => { counters.loadEarlierCalls += 1; }}
         />
@@ -316,17 +314,11 @@ describe.each([false, true])('TimelineDialog closed-work gate (mobile=%s)', (isM
     expect(open).toBe(false);
   });
 
-  test('retains compact previous-turn and latest navigation actions', async () => {
+  test('does not show previous-turn or latest navigation actions', async () => {
     await renderHost();
     await act(async () => { setOpen(true); });
-    const action = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('.yuri-timeline-toolbar button')].find(button => button.textContent === text)!;
-    await act(async () => { action('chat.timeline.actions.previousTurn').click(); });
-    expect(counters.turnOffsets).toEqual([-1]);
-    expect(open).toBe(false);
-    await act(async () => { setOpen(true); });
-    await act(async () => { action('chat.timeline.actions.latest').click(); });
-    expect(counters.latestCalls).toBe(1);
-    expect(open).toBe(false);
+    expect(container.textContent).not.toContain('chat.timeline.actions.previousTurn');
+    expect(container.textContent).not.toContain('chat.timeline.actions.latest');
   });
 
   test('search keeps full-text filtering, looping arrows and Enter navigation', async () => {

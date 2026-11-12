@@ -160,7 +160,7 @@ const SessionFolderItemBase = <TSessionNode,>({
   const folderPadLeft = getSidebarRowPaddingLeft(depth);
 
   return (
-    <Collapsible open={!isCollapsed} className={cn('yuri-folder')}>
+    <Collapsible open={!isCollapsed} className={cn('yuri-folder')} data-session-folder={folder.id}>
       {/* Folder header – also acts as a drop zone when droppableRef is provided */}
       <div
         ref={droppableRef}

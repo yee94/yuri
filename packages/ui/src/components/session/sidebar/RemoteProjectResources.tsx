@@ -14,7 +14,7 @@ import { isVisibleGlobalSession } from '@/stores/globalSessions';
 import { projectSession } from '@/lib/opencode/v2-types';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP } from '@/lib/projectMeta';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
-import { buildRemoteFolderView } from './remoteSessionFolders';
+import { createSessionNodeComparator } from './sessionSortableOrder';
 
 /** Optional resources stay on leaf observers, separate from the project summary and command lifetimes. */
 export function RemoteProjectIcon({ project, registry, className }: { project: RemoteProject; registry: HostRuntimeRegistry; className: string }) {
@@ -79,7 +79,10 @@ export function RemoteChildSessions({ registry, hostId, directory, sessionId, di
     staleTime: 30_000,
     placeholderData: (previous, previousQuery) => previousQuery?.queryKey[1] === registry.hubId && previousQuery.queryKey[2] === hostId && previousQuery.queryKey[3] === entry.key && previousQuery.queryKey[6] === sessionId ? previous : undefined,
   });
-  const sortedChildren = React.useMemo(() => buildRemoteFolderView((query.data?.sessions ?? []).map((session) => ({ session, directory: session.directory || directory })), [], [], new Set(pinnedSessionIds)).orderedRows, [query.data?.sessions, directory, pinnedSessionIds]);
+  const sortedChildren = React.useMemo(() => {
+    const rows = (query.data?.sessions ?? []).map((session) => ({ session, directory: session.directory || directory }));
+    return rows.sort(createSessionNodeComparator(rows, undefined, undefined, new Set(pinnedSessionIds)));
+  }, [query.data?.sessions, directory, pinnedSessionIds]);
   React.useLayoutEffect(() => { onVisibleTargets(sessionId, expanded ? sortedChildren.map(({ session, directory }) => ({ sessionId: session.id, directory })) : []); }, [onVisibleTargets, sessionId, expanded, sortedChildren]);
   React.useEffect(() => () => onVisibleTargets(sessionId, []), [onVisibleTargets, sessionId]);
   const onEvent = useEvent(({ directory: eventDirectory, payload }: { directory?: string; payload: unknown }) => {

@@ -12,13 +12,13 @@ identity fields. `SessionSidebar` and `MobileProjectsHomeContainer` now consume
 the Hub catalog and preserve the Hub reference ID, host and raw path. Their
 local ownership/worktree projections exclude remote projects; `RemoteProjectSection`
 consumes the shared per-Host summaries Query instead of a Hub local child store.
-Desktop sections mix both kinds in Hub project order; mobile uses the same remote
-model with mobile presentation adapters and keeps instance switching intact. Remote host status stays on that
+Desktop and mobile sections mix both kinds through `sortProjectEntries`, including
+manual, alphabetical, added-date and recent modes. Remote host status stays on that
 host's leaf subscription, and token events do not invalidate structural lists.
 
 ### Remote section module ownership
 
-- `RemoteProjectSection` composes the list, drag scope and editors. It does not
+- `RemoteProjectSection` composes the Host adapters and editors. It does not
   fetch summaries or implement remote writes in JSX callbacks.
 - `hooks/useRemoteProjectSectionData` owns summary/search/page Queries, ownership
   projection, pin/manual ordering and refresh. It does not render either platform.
@@ -27,11 +27,23 @@ host's leaf subscription, and token events do not invalidate structural lists.
   navigation targets. Both presentations invoke these same commands.
 - `remoteProjectPresentation` defines the data/intent contract. Mobile does not
   inherit `SortableProjectItem` props; desktop-only menu state stays in its adapter.
-- `RemoteProjectRows` owns shared scoped sortable bindings and desktop adapters.
-  `RemoteProjectMobileViews` adapts the same contract to `MobileProjectCard`,
-  `MobileSessionRow`, `MobileFloatingSurface` and `MobileLabeledSurfaceGroup`.
-  Nested folders retain their inset; collapsed projects have no empty group padding.
-  Desktop checkboxes/handles and inline new-folder actions do not render on mobile.
+- `RemoteSessionGroups` binds remote snapshots and commands to the existing
+  `useSessionGrouping` and `SessionGroupSection`, including folder layout,
+   worktree headers, default row limits and More/Fewer controls. Its source
+  input prevents reads of same-path Hub folders/pagination and local destructive
+   commands. Visible keyboard targets come from that renderer's actual projection.
+   Archived sessions and the archive header are omitted on both platforms. Active
+   sessions placed in the grouping fallback bucket flow into the main group;
+   their original Host directories remain intact for navigation and commands.
+- `SessionRowLayout`, `SessionRowContent`, `SessionRowTitle` and `SessionRowActions`
+  own the desktop row geometry shared by local `SessionNodeItem` and the remote
+  command adapter. Remote data never mounts the local session subscriptions.
+- `RemoteMobileSessionGroups` adapts Host summaries to `MobileProjectGroups`;
+  both kinds use `MobileProjectSurface`, `MobileProjectCard`, `MobileSessionRow`,
+  the same workspace labels, row drag scope, root-session filter and pagination
+  limits. Mobile expansion uses the existing project/worktree expansion store.
+  There is no remote-only directory/folder list, checkbox, drag handle or inline
+  create-folder row. Action sheets retain captured Host commands.
 - `RemoteProjectResources` keeps optional icon and expanded-child Query lifetimes
   on their existing leaf observers, separate from summary/model lifetimes.
 
@@ -45,22 +57,22 @@ The model opens raw session IDs through `useSessionNavigationStore`.
 Title, archive, pin, unread, folder and order writes use the captured registry
 entry; failed writes leave the confirmed snapshot intact and display the error.
 Folder writes serialize per Host and read the full remote folder snapshot before
-changing a scope. Desktop sections reuse `SessionFolderItem`; both presentations recursively render
-the `parentId` tree (subfolders before their sessions, then ungrouped sessions).
-The same projection owns visible keyboard targets and drag order. Pinned sessions
-use `compareSessionsByPinnedAndTime` before manual order; a manual order cannot
-place an unpinned session ahead of a pinned one. Expanded children join the same
-keyboard target tree and use the same pin/time comparator.
+changing a scope. Desktop sections reuse `SessionFolderItem` and its `parentId`
+tree; mobile follows its existing flat root-session/worktree presentation.
+The same projection owns visible keyboard targets and drag order. All sessions
+use `createSessionNodeComparator`: saved manual order and its activity baseline
+share the original rule, promoting newly active sessions without reshuffling
+unchanged peers; pin/time ordering is the shared fallback. Expanded children join
+the same keyboard target tree and use the same pin/time comparator.
 
-Folder headers accept scoped session/folder drops; folder-position gaps reorder
-siblings, header drops nest, and the root area unnests. Move menus remain available
-for non-drag interaction. Cycles and cross-directory drags are rejected. Multi-
-selected sessions move together within their directory. Cross-folder session
-drops confirm membership before writing order; if the latter fails, compensation
-restores the previous folder snapshot. Failed compensation refreshes authority and
-reports both failures rather than claiming rollback succeeded. Without optimistic
-tree changes, a failed folder/nesting write preserves the last confirmed tree.
-Deleting a folder removes its descendant folders, not their sessions.
+`SessionFolderDndScope` owns session dragging on both sources. Folder drops change
+membership; row drops reorder within the same folder. Modifier-click selection
+keeps multi-session folder moves without permanent checkboxes. Remote-only folder
+drag handles and nesting drop zones are removed. Nested-folder creation and deletion
+use the existing folder controls; deleting a folder releases its descendants'
+sessions. Failed writes preserve the confirmed tree and selection. Host metadata
+keys and raw filesystem paths are retained, including Windows separators; normalized
+paths are used only for grouping/ownership comparison.
 
 Host summaries' authoritative worktree topology supplies outside-root directory
 ownership. Explicit/most-specific project references still win; raw cwd stays

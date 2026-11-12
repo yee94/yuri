@@ -15,6 +15,17 @@ The local Host is the configuration source, regardless of other windows' selecte
 
 Remote Magpie startup reuses a healthy gateway or the `yuri-magpie` tmux session. Automatic startup requires a POSIX target with tmux. No desktop environment is needed. Missing tmux, gateway health failure or sync failure leaves a working SSH connection intact with warnings; retry setup after fixing that target. Configuration/accounts already applied remain and existing sync backup rules apply. External/probe-only SSH instances are not modified by this workflow.
 
+### Reconnection and update acceptance
+
+For managed SSH connections, report these checks separately. Use the bound helper or Settings → Remote instances; the availability gate below still applies.
+
+- **Reconnect:** retry the saved instance ID after disconnecting, and again after restarting the desktop. Each attempt must finish with `running:false` and `phase:ready`; open that remote workspace and verify an authenticated operation against its OpenCode service. A prior ready receipt or a standalone web server's health response does not establish this result.
+- **Runtime readiness:** the executable selected by managed SSH startup must load its server dependencies, load native modules in the selected runtime, and reach authenticated service readiness. A CLI version response or successful package installation alone is insufficient. Record the actual runtime/package versions when available; otherwise mark that evidence unavailable.
+- **Update:** when a different target version is available, reconnect through the normal managed entry. Verify that version alignment completes, the running remote Host reports the target version, and its workspace remains usable. Disconnect and reconnect once more to confirm the updated installation is selected again. Record the before/target/running versions; without a version transition, report update acceptance as unverified.
+- **Installation ownership:** the executable used on subsequent connections must resolve to the installation that the managed updater replaces. A manually deployed checkout, wrapper or redirected executable requires evidence that an update replaces the selected installation and the next connection uses it; successful startup alone does not prove updateability.
+
+Report connection, runtime and update evidence independently from configuration-sync and gateway receipts. If an update or startup fails, report its failed stage and retain the saved instance for retry; success requires a subsequent normal managed connection to reach readiness. These are acceptance criteria, not authorization to rewrite runtime files, executable links or credentials outside the supported setup flow.
+
 ## Relay pairing
 
 Pipe `{}` to `pair` to create a one-time Relay link for **this local desktop**. Use `{"id":"<ready SSH instance>"}` to create one on that remote Host instead. An explicitly requested Relay endpoint can be supplied as `relayUrl`; `label` names the pairing. The normal Host pairing API owns expiry, redemption, Relay enablement and authorization.

@@ -352,6 +352,22 @@ const EMPTY_PENDING_CLIENT: readonly SessionComposerPendingItem[] = [];
 const EMPTY_PENDING_OPERATION_KINDS: ReadonlySet<ServerQueueOperationKind> = new Set();
 const EMPTY_STEERING_MESSAGE_IDS: ReadonlySet<string> = new Set();
 
+function QueueCard({ isMobile, children }: { isMobile: boolean; children: React.ReactNode }) {
+    return <div className={cn('yuri-composer-queue relative z-0 -mb-5 w-full', isMobile ? 'px-2' : 'px-4')}>
+        <div data-yuri-queue-card="" className={cn(
+            // Match composer palette; dark queue sits behind the brighter input. PC radius = chat input 1.5rem.
+            'overflow-hidden border border-[color-mix(in_srgb,var(--interactive-border)_50%,transparent)] bg-[var(--surface-background)] text-foreground dark:border-transparent dark:bg-[color-mix(in_srgb,var(--surface-background),var(--surface-foreground)_4%)]',
+            isMobile ? 'rounded-[1.25rem]' : 'rounded-3xl',
+        )}>
+            <div data-yuri-queue-card-body="" className={cn('flex flex-col',
+                // Match composer footer left inset.
+                isMobile ? 'px-1.5 py-1' : 'gap-0.5 px-3 py-1',
+            )}>{children}</div>
+            <div data-yuri-queue-composer-overlap="" aria-hidden="true" className={isMobile ? 'h-4' : 'h-5'} />
+        </div>
+    </div>;
+}
+
 /** Native Host inbox uses the mature queue row without mounting any Hub queue owner. */
 export const NativeSessionInboxChips = memo(({ items, readOnly = false, onAction, onShowPopup }: {
     items: readonly SessionInboxOverlayItem[];
@@ -361,16 +377,11 @@ export const NativeSessionInboxChips = memo(({ items, readOnly = false, onAction
 }) => {
     const isMobile = useUIStore((state) => state.isMobile);
     if (!items.length) return null;
-    return <div className={cn('yuri-composer-queue relative z-0 -mb-5 w-full', isMobile ? 'px-2' : 'px-4')}>
-        <div data-yuri-queue-card="" className={cn('overflow-hidden border border-[color-mix(in_srgb,var(--interactive-border)_50%,transparent)] bg-[var(--surface-background)] text-foreground dark:border-transparent dark:bg-[color-mix(in_srgb,var(--surface-background),var(--surface-foreground)_4%)]', isMobile ? 'rounded-[1.25rem]' : 'rounded-3xl')}>
-            <div data-yuri-queue-card-body="" className={cn('flex flex-col', isMobile ? 'px-1.5 py-1' : 'gap-0.5 px-3 py-1')}>
+    return <QueueCard isMobile={isMobile}>
                 <DndContext><SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
                     {items.map((item) => <NativeInboxRow key={item.id} item={item} readOnly={readOnly} isMobile={isMobile} onAction={onAction} onShowPopup={onShowPopup} />)}
                 </SortableContext></DndContext>
-            </div>
-            <div aria-hidden="true" className="h-5" />
-        </div>
-    </div>;
+    </QueueCard>;
 });
 
 function NativeInboxRow({ item, readOnly, isMobile, onAction, onShowPopup }: {
@@ -924,28 +935,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
     }
 
     return (
-        <div className={cn(
-            'yuri-composer-queue relative z-0 -mb-5 w-full',
-            isMobile ? 'px-2' : 'px-4',
-        )}>
-            <div
-                data-yuri-queue-card=""
-                className={cn(
-                    // Match composer palette; dark queue sits behind the brighter input. PC radius = chat input 1.5rem.
-                    'overflow-hidden border border-[color-mix(in_srgb,var(--interactive-border)_50%,transparent)] bg-[var(--surface-background)] text-foreground dark:border-transparent dark:bg-[color-mix(in_srgb,var(--surface-background),var(--surface-foreground)_4%)]',
-                    isMobile ? 'rounded-[1.25rem]' : 'rounded-3xl',
-                )}
-            >
-                <div
-                    data-yuri-queue-card-body=""
-                    className={cn(
-                        'flex flex-col',
-                        isMobile
-                            // Match composer footer left inset.
-                            ? 'px-1.5 py-1'
-                            : 'gap-0.5 px-3 py-1',
-                    )}
-                >
+        <QueueCard isMobile={isMobile}>
                     {hasQueueSurface ? (
                         <DndContext
                             sensors={sensors}
@@ -994,14 +984,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
                             {trailing}
                         </>
                     ) : null}
-                </div>
-                <div
-                    data-yuri-queue-composer-overlap=""
-                    aria-hidden="true"
-                    className={isMobile ? 'h-4' : 'h-5'}
-                />
-            </div>
-        </div>
+        </QueueCard>
     );
 });
 

@@ -32,11 +32,10 @@ export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile,
         <Icon name="folder-add" className="size-4 shrink-0 text-muted-foreground" />
         <Input className="min-w-0 flex-1 font-mono" aria-label={t('directoryExplorerDialog.pathInput.placeholder')} value={directory} onChange={(event) => setPath(event.target.value)} disabled={pending} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
       </div>
-      {error || home.error || listing.error ? <p role="alert" className="break-words typography-micro text-destructive">{error?.message || home.error?.message || listing.error?.message}</p> : null}
     </div>
     <ScrollableOverlay className="yuri-directory-list" outerClassName="yuri-directory-results" disableHorizontal>
-      {listing.isFetching || home.isPending ? <p role="status" className="yuri-directory-empty text-muted-foreground">{t('directoryExplorerDialog.browse.loading')}</p> : null}
-      <div className="yuri-directory-row hover:bg-interactive-hover/50">
+      {listing.isFetching || home.isPending ? <p role="status" className="yuri-directory-name flex items-center justify-center gap-2 py-3 text-muted-foreground"><Icon name="refresh" className="size-3.5 animate-spin" />{t('directoryExplorerDialog.browse.loading')}</p> : null}
+      {!home.isPending && !listing.isPending ? <><div className="yuri-directory-row hover:bg-interactive-hover/50">
         <button type="button" className="yuri-directory-entry" disabled={pending || !directory || directory === '/'} onClick={() => setPath(directory.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '') || '/')} aria-label={t('remoteProjects.parent')}>
           <Icon name="arrow-left-s" className="size-4 shrink-0 text-muted-foreground" /><span className="yuri-directory-name">..</span>
         </button>
@@ -45,7 +44,7 @@ export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile,
         <button type="button" className="yuri-directory-entry" disabled={pending} onClick={() => setPath(child.path)}>
           <Icon name="folder-6" className="size-4 shrink-0 text-muted-foreground" /><span className="yuri-directory-name truncate">{child.name}</span>
         </button>
-      </div>)}
+      </div>)}</> : null}
     </ScrollableOverlay>
   </div>;
   const footer = <div className="yuri-directory-actions">
@@ -53,5 +52,6 @@ export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile,
     <Button size="xs" disabled={pending || !directory || listing.isError || listing.isPending} onClick={() => void submit(false)}>{t(pending ? 'directoryExplorerDialog.actions.adding' : 'directoryExplorerDialog.actions.addProject')}</Button>
   </div>;
   const changeOpen = (next: boolean) => { if (!pending) onOpenChange(next); };
-  return <DirectoryExplorerSurface open={open} onOpenChange={changeOpen} mobile={forceMobile ?? device.isMobile} footer={footer}>{body}</DirectoryExplorerSurface>;
+  return <DirectoryExplorerSurface open={open} onOpenChange={changeOpen} mobile={forceMobile ?? device.isMobile} footer={footer}
+    error={error?.message || home.error?.message || listing.error?.message}>{body}</DirectoryExplorerSurface>;
 }

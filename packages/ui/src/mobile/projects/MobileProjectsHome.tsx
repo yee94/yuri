@@ -21,7 +21,6 @@ import { PINNED_SESSION_ORDER_SCOPE } from '@/components/session/sidebar/pinnedS
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
-import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
 import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import {
   useSessionActivity,
@@ -33,6 +32,7 @@ import { MobileTabPageHeader } from '../MobileTabPageHeader';
 import { MobileFloatingSurface, MobileLabeledSurfaceGroup } from '../MobileSurface';
 import {
   MobileProjectCard,
+  MobileProjectSurface,
   type MobileProjectCardModel,
 } from './MobileProjectCard';
 import {
@@ -94,6 +94,7 @@ export type MobileProjectHomeItem = MobileProjectCardModel & {
 };
 
 export type MobileProjectsHomeProps = {
+  renderRemoteProject?: (project: import('@/lib/remote-projects/types').RemoteProject) => React.ReactNode;
   remoteProjects?: import('@/lib/remote-projects/types').RemoteProject[];
   projectOrderIds?: string[];
   remoteError?: string;
@@ -522,6 +523,7 @@ function MobileWorktreeGroupLabel({
 }
 
 export function MobileProjectsHome({
+  renderRemoteProject,
   remoteProjects,
   projectOrderIds,
   remoteError,
@@ -692,83 +694,28 @@ export function MobileProjectsHome({
         [...projects.map((project) => ({ kind: 'local' as const, project })), ...(remoteProjects ?? []).map((project) => ({ kind: 'remote' as const, project }))]
           .sort((a, b) => projectOrderIds ? projectOrderIds.indexOf(a.project.id) - projectOrderIds.indexOf(b.project.id) : 0)
           .map((entry) => {
-          if (entry.kind === 'remote') return hostRegistry ? <RemoteProjectSection key={entry.project.id} project={entry.project} registry={hostRegistry} mobile reorderEnabled={false} /> : <div key={entry.project.id} className="text-xs text-muted-foreground"><span>{entry.project.label || entry.project.path} · {entry.project.hostId}</span><p role={remoteError ? 'alert' : 'status'}>{remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
+          if (entry.kind === 'remote') return renderRemoteProject ? <React.Fragment key={entry.project.id}>{renderRemoteProject(entry.project)}</React.Fragment> : <div key={entry.project.id} className="text-xs text-muted-foreground"><span>{entry.project.label || entry.project.path} · {entry.project.hostId}</span><p role={remoteError ? 'alert' : 'status'}>{remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
           const project = entry.project;
           const projectExpanded = project.expanded;
-          const mainWorkspace = project.worktrees.find((entry) => entry.kind === 'main')
-            ?? (project.worktrees.length === 1 && !project.worktrees[0]?.kind ? project.worktrees[0] : undefined);
-          const linkedWorktrees = project.worktrees.filter((entry) => entry !== mainWorkspace);
-
-          const mainSessions = mainWorkspace?.sessions ?? [];
 
           return (
-            <MobileFloatingSurface key={project.id} asChild>
-              <section className="yuri-mobile-project-shell" aria-label={project.name}>
-              {/* Project header and every workspace/session group share one parent surface. */}
-              <MobileProjectCard
+            <MobileProjectSurface key={project.id}
                 project={project}
                 hostRegistry={hostRegistry}
                 expanded={projectExpanded}
                 embedded
                  onToggle={() => onToggleProject(project)}
                 onOpenActions={() => onOpenProjectActions(project)}
-              />
-
+               >
+              {/* Project header and every workspace/session group share one parent surface. */}
               {projectExpanded ? (
-                <div className="yuri-mobile-project-groups" role="group" aria-label={project.name}>
-                  {/* Main workspace sessions flow directly below the project header. */}
-                  {mainSessions.length > 0 ? (
-                    <div className="yuri-mobile-labeled-surface-group">
-                      <SessionList
-                        sessions={mainSessions}
-                        orderScope={mainWorkspace?.path}
-                        onReorderSessions={onReorderSessions}
-                        onSelectSession={onSelectSession}
-                        onPinSession={onPinSession}
-                        onArchiveSession={onArchiveSession}
-                        onOpenSessionActions={onOpenSessionActions}
-                      />
-                    </div>
-                  ) : null}
-
-                  {/* Every linked worktree gets an independent label + session card. */}
-                  {linkedWorktrees.map((worktree) => {
-                    const worktreeExpanded = Boolean(worktree.expanded);
-                    return (
-                      <MobileLabeledSurfaceGroup
-                        key={worktree.id}
-                        className="yuri-mobile-worktree-group"
-                        ariaLabel={worktree.name}
-                        label={(
-                          <MobileWorktreeGroupLabel
-                            project={project}
-                            worktree={worktree}
-                            expanded={worktreeExpanded}
-                            onToggle={() => onToggleWorktree(project, worktree)}
-                            onNewSession={onNewWorktreeSession}
-                            onOpenActions={onOpenWorktreeActions}
-                            onDelete={onDeleteWorktree}
-                          />
-                        )}
-                      >
-                        {worktreeExpanded && worktree.sessions.length > 0 ? (
-                          <SessionList
-                            sessions={worktree.sessions}
-                            orderScope={worktree.path}
-                            onReorderSessions={onReorderSessions}
-                            onSelectSession={onSelectSession}
-                            onPinSession={onPinSession}
-                            onArchiveSession={onArchiveSession}
-                            onOpenSessionActions={onOpenSessionActions}
-                          />
-                        ) : null}
-                      </MobileLabeledSurfaceGroup>
-                    );
-                  })}
-                </div>
+                <MobileProjectGroups project={project} onToggleWorktree={onToggleWorktree} onNewWorktreeSession={onNewWorktreeSession}
+                  onOpenWorktreeActions={onOpenWorktreeActions} onDeleteWorktree={onDeleteWorktree}
+                  renderSessions={(worktree) => <SessionList sessions={worktree.sessions} orderScope={worktree.path}
+                    onReorderSessions={onReorderSessions} onSelectSession={onSelectSession} onPinSession={onPinSession}
+                    onArchiveSession={onArchiveSession} onOpenSessionActions={onOpenSessionActions} />} />
               ) : null}
-              </section>
-            </MobileFloatingSurface>
+            </MobileProjectSurface>
           );
         })
       )}
@@ -779,4 +726,23 @@ export function MobileProjectsHome({
       </button>
     </main>
   );
+}
+
+export function MobileProjectGroups({ project, renderSessions, onToggleWorktree, onNewWorktreeSession, onOpenWorktreeActions, onDeleteWorktree }: {
+  project: MobileProjectHomeItem;
+  renderSessions(worktree: MobileWorktreeGroup): React.ReactNode;
+} & Pick<MobileProjectsHomeProps, 'onToggleWorktree' | 'onNewWorktreeSession' | 'onOpenWorktreeActions' | 'onDeleteWorktree'>) {
+  const main = project.worktrees.find((entry) => entry.kind === 'main')
+    ?? (project.worktrees.length === 1 && !project.worktrees[0]?.kind ? project.worktrees[0] : undefined);
+  return <div className="yuri-mobile-project-groups" role="group" aria-label={project.name}>
+    {/* Main workspace sessions flow directly below the project header. */}
+    {main && main.sessions.length > 0 ? <div className="yuri-mobile-labeled-surface-group">{renderSessions(main)}</div> : null}
+    {/* Every linked worktree gets an independent label + session card. */}
+    {project.worktrees.filter((entry) => entry !== main).map((worktree) => <MobileLabeledSurfaceGroup key={worktree.id}
+      className="yuri-mobile-worktree-group" ariaLabel={worktree.name}
+      label={<MobileWorktreeGroupLabel project={project} worktree={worktree} expanded={Boolean(worktree.expanded)}
+        onToggle={() => onToggleWorktree(project, worktree)} onNewSession={onNewWorktreeSession} onOpenActions={onOpenWorktreeActions} onDelete={onDeleteWorktree} />}>
+      {worktree.expanded && worktree.sessions.length > 0 ? renderSessions(worktree) : null}
+    </MobileLabeledSurfaceGroup>)}
+  </div>;
 }

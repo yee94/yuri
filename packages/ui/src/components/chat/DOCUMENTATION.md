@@ -49,7 +49,14 @@ or mint desktop-local outside-file grants.
 
 Remote submission captures inline comments and synthetic context with their
 attachments, consumes only captured resources after success, and retains them on
-failure. New-draft delivery uses a null session ID, not the editor's placeholder.
+failure. Remote identity is an icon beside the new-draft Project label, with only
+the machine name on hover; existing sessions do not add a Project row above the
+composer. Local and remote conversations share `ComposerFoot`, `StatusRow` and
+the queue card layout, including the mobile overlap and desktop edge fade.
+Remote status inputs come from the bound Host snapshot, never Hub activity.
+Desktop new drafts share `DraftComposerFoot` with the local draft view and omit
+the empty transcript viewport, so the welcome heading and composer stay centered.
+New-draft delivery uses a null session ID, not the editor's placeholder.
 Read-only checks guard mutation handlers as well as the visible controls.
 Model/Agent catalogs load on explicit picker demand, not on typing or opening a
 session. A cold send without a captured choice ensures the provider catalog at

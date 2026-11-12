@@ -93,7 +93,8 @@
   outline-offset: 2px;
 }
 
-.yuri-directory-name {
+.yuri-directory-name,
+.yuri-directory-step {
   font-size: 0.75rem;
   font-weight: 400;
   line-height: 1.25rem;
@@ -101,9 +102,28 @@
 
 .yuri-directory-hidden-toggle,
 .yuri-directory-added,
-.yuri-directory-actions button {
+.yuri-directory-footer button {
   font-size: 0.6875rem;
+  font-weight: 400;
   line-height: 1.125rem;
+}
+
+.yuri-directory-status-slot {
+  position: relative;
+  display: flex;
+  width: 2.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.yuri-directory-machine-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .yuri-directory-empty {

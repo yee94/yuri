@@ -218,6 +218,11 @@ tooltip only after the active row's delay, anchoring to that existing element;
 inactive rows must not instantiate floating roots or trigger-position observers.
 Ordinary trigger-based tooltips retain their existing behavior.
 
+`TooltipContent.positionerClassName` scopes the outer positioning layer separately
+from popup content styling. Its default remains `z-50`; the directory picker's
+error hints use `z-[70]` so they remain above the mobile sheet's `z-[60]` layer.
+Changing the content's z-index alone cannot escape that outer stacking context.
+
 Menus (including submenus and context menus), desktop Select, Changed files,
 status overlays and device connections use
 `yuri-mobile-overlay-surface yuri-popup-surface`. The base owns blur/saturation;

@@ -38,7 +38,7 @@ describe('DirectoryExplorerDialog mobile layout', () => {
   });
 
   test('keeps the show-hidden action in the mobile sheet header', () => {
-    expect(componentSource).toContain('trailing={showHiddenToggle}');
+    expect(componentSource).toContain('trailing={isMobile ? showHiddenToggle : undefined}');
     expect(componentSource).not.toContain('<div className="flex shrink-0 justify-end px-3">{showHiddenToggle}</div>');
     expect(componentSource).toContain('aria-pressed={showHidden}');
   });

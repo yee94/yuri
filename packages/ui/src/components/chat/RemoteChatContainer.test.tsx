@@ -15,6 +15,9 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { getHostRuntimeServices } from '@/lib/remote-projects/runtime';
 import { useUIStore } from '@/stores/useUIStore';
+import { useSelectionStore } from '@/sync/selection-store';
+import { REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
+import { HostRuntimeProvider } from '@/contexts/HostRuntimeProvider';
 
 const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, surface: null as ChatInputSurface | null }));
 vi.mock('@/queries/remoteProjectQueries', () => ({
@@ -101,6 +104,44 @@ vi.mock('./FormCard', () => ({ FormCard: () => null }));
 
 afterEach(() => { fixture.surface = null; vi.restoreAllMocks(); });
 
+test('draft model, agent and variant survive remount without crossing local, Host or directory boundaries', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const previous = useSelectionStore.getState();
+  const location = { hubId: 'selection-hub', hostId: 'a', directory: '/repo' };
+  const registry = new HostRuntimeRegistry(location.hubId, { transportIdentity: 'selection-test', isCurrent: () => true,
+    sdk: () => ({}) as OpenCodeClient, service: () => ({}) as ReturnType<HostRuntimeEntry['service']>,
+    fetch: async () => Response.json({ sessions: {} }),
+  });
+  registry.applyCatalog({ hubId: location.hubId, supported: true, projects: [], hosts: ['a', 'b'].map((id) => ({ id, name: id, source: 'direct' as const, state: 'connected' as const })) });
+  fixture.registry = registry;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const node = document.createElement('div'); const root = createRoot(node);
+  const render = async (target: typeof location) => {
+    await act(async () => root.render(null));
+    await act(async () => root.render(<QueryClientProvider client={client}><HostRuntimeProvider registry={registry} location={target}><RemoteChatContainer location={target} sessionId={null} /></HostRuntimeProvider></QueryClientProvider>));
+  };
+  try {
+    useSelectionStore.getState().saveSessionModelSelection(REMOTE_NEW_SESSION_DRAFT_ID, 'local', 'local-model');
+    useSelectionStore.getState().saveSessionAgentSelection(REMOTE_NEW_SESSION_DRAFT_ID, 'local-agent');
+    await render(location);
+    const chosen = { providerID: 'remote', modelID: 'remote-model', agent: 'remote-agent', variant: 'high' };
+    await act(async () => fixture.surface!.selection.change!(chosen));
+    for (const target of [{ ...location, hostId: 'b' }, { ...location, directory: '/other' }]) {
+      await render(target);
+      expect(fixture.surface!.selection.value.providerID).toBeUndefined();
+      expect(fixture.surface!.selection.value.agent).toBeUndefined();
+      expect(fixture.surface!.selection.value.variant).toBeUndefined();
+    }
+    await render(location);
+    expect(fixture.surface!.selection.value).toEqual(chosen);
+    expect(useSelectionStore.getState().getSessionModelSelection(REMOTE_NEW_SESSION_DRAFT_ID)).toEqual({ providerId: 'local', modelId: 'local-model' });
+    expect(useSelectionStore.getState().getSessionAgentSelection(REMOTE_NEW_SESSION_DRAFT_ID)).toBe('local-agent');
+    expect(useSelectionStore.getState().lastUsedProvider).toEqual({ providerID: 'local', modelID: 'local-model' });
+  } finally {
+    await act(async () => root.unmount()); client.clear(); registry.dispose(); useSelectionStore.setState(previous);
+  }
+});
+
 test('production remote pane observes, paints and sends to its Host, never the local queue; draft create keeps the owner alive', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const location = { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' };
@@ -177,6 +218,8 @@ test('production remote pane observes, paints and sends to its Host, never the l
     expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ sessionId: 'created', location });
     expect(requests.some((request) => request.path === '/api/hosts/remote/api/session/created/prompt')).toBe(true);
     expect(getRemoteInputStore(location).getState().getDraft(remoteSessionDraftKey(location, 'created'))?.text).toBe('');
+    await act(async () => root.render(render('created')));
+    expect(element.querySelector('[data-transcript]')?.textContent).toContain('First remote send');
     expect(requests.some((request) => request.path.includes('message-queue') || request.path.includes('transcript-cache'))).toBe(false);
     expect(requests.every((request) => request.path.startsWith('/api/hosts/remote/'))).toBe(true);
     const beforeTimeline = requests.length;

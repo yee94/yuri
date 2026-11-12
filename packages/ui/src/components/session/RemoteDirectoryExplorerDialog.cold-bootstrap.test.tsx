@@ -211,7 +211,8 @@ test('failed registration after mkdir preserves the path and allows add-only ret
   await act(async () => matching('mkdir')[0].respond({ success: true }));
   await act(async () => writes()[0].respond({ error: 'Registration failed' }));
   await flush();
-  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(container.querySelector('.yuri-directory-status-slot button')).not.toBeNull();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelector('input')?.value).toBe('/workspace');
   expect(registration.openRemoteSession).not.toHaveBeenCalled();
   await act(async () => action('addProject').click());

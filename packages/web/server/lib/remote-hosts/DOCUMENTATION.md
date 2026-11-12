@@ -83,7 +83,13 @@ not proxy capabilities.
   checkout: `/repo/src` with checkouts `/repo` and `/other` maps `/other/src`,
   never the entire `/other`. Filesystem presence remains a remote operation;
   the Hub does not stat or resolve these paths on its own filesystem.
-- `POST /api/hosts/:hostId/connect`: explicit foreground wake.
+- `POST /api/hosts/:hostId/connect`: explicit foreground wake. The response awaits
+  native SSH preparation and authenticated capability admission; callers entering
+  the directory picker wait for this acknowledgement, not a cached status label.
+  Without project references no status stream is opened, so the response's live
+  status can still be `connecting` despite successful HTTP admission. Subsequent
+  short requests reuse the native manager's matching live Ready tunnel rather
+  than repeatedly restarting SSH initialization.
 - `POST /api/hosts/:hostId/subscriptions {directory,sessionId?}`: content lease;
   `DELETE /.../subscriptions/:id` releases only the authenticated owner's lease.
 - `/api/hosts/:hostId/api/*`: supported project/session APIs preserve method,

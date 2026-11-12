@@ -57,6 +57,12 @@ type DeleteFolderConfirm = {
 } | null;
 
 type Props = {
+  onVisibleSessions?: (groupKey: string, sessions: Session[]) => void;
+  source?: {
+    folders: SessionFolder[];
+    pagination?: { hasMore: boolean; loadingMore?: boolean };
+    actionsDisabled?: boolean;
+  };
   group: SessionGroup;
   groupKey: string;
   isArchivedLoading?: boolean;
@@ -246,6 +252,8 @@ const collectGroupSessions = (nodes: SessionNode[]): Session[] => {
 };
 
 const areGroupPropsEqual = (prev: Props, next: Props): boolean => {
+  if (prev.source !== next.source) return false;
+  if (prev.onVisibleSessions !== next.onVisibleSessions) return false;
   // Bail on Object.is for the props that drive the most work: the group
   // itself, its key, and the group-level chrome. These change rarely and
   // any change should force a re-render of this group.
@@ -423,13 +431,15 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
 
   const searchData = hasSessionSearchQuery ? groupSearchDataByGroup.get(group) : null;
   const displayMode = useSessionDisplayStore((state) => state.displayMode);
-  const scopeFolders = useSessionFoldersStore((state) => folderScopeKey ? state.foldersMap[folderScopeKey] ?? EMPTY_FOLDERS : EMPTY_FOLDERS);
+  const localFolders = useSessionFoldersStore((state) => !props.source && folderScopeKey ? state.foldersMap[folderScopeKey] ?? EMPTY_FOLDERS : EMPTY_FOLDERS);
+  const scopeFolders = props.source?.folders ?? localFolders;
   // VS Code always uses the expanded layout (see SessionNodeItem).
   const isMinimalMode = displayMode === 'minimal' && !isVSCodeRuntime();
   const paginationDirectory = group.isArchivedBucket ? null : normalizePath(group.directory ?? null);
-  const sessionPagination = useGlobalSessionsStore((state) => (
-    paginationDirectory ? state.activePaginationByDirectory.get(paginationDirectory) : undefined
+  const localPagination = useGlobalSessionsStore((state) => (
+    !props.source && paginationDirectory ? state.activePaginationByDirectory.get(paginationDirectory) : undefined
   ));
+  const sessionPagination = props.source ? props.source.pagination : localPagination;
   const isCollapsed = hasSessionSearchQuery ? false : collapsedGroups.has(groupKey);
   const maxVisible = getDefaultProjectGroupVisibleCount();
   const nonArchivedVisibleCount = Math.max(maxVisible, visibleSessionCount ?? maxVisible);
@@ -608,6 +618,14 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
     hasSessionSearchQuery,
   }), [allFoldersForGroup, collapsedFolderIds, hasSessionSearchQuery, visibleSessions]);
   const hasRemoteSessions = sessionPagination?.hasMore === true;
+  const { onVisibleSessions } = props;
+  React.useLayoutEffect(() => {
+    onVisibleSessions?.(groupKey, isCollapsed && !hideGroupLabel ? [] : visibleSortableSessionOrder.sessionIds.flatMap((id) => {
+      const node = nodeBySessionId.get(id);
+      return node ? [node.session] : [];
+    }));
+  }, [onVisibleSessions, groupKey, isCollapsed, hideGroupLabel, visibleSortableSessionOrder, nodeBySessionId]);
+  React.useEffect(() => () => onVisibleSessions?.(groupKey, []), [onVisibleSessions, groupKey]);
   const isLoadingRemoteSessions = sessionPagination?.loadingMore === true;
   // At the default page only More is offered. After the user (or navigation
   // auto-reveal) expands past that page, Fewer stays available even when
@@ -872,6 +890,8 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
       <DroppableFolderWrapper key={folder.id} folderId={folder.id}>
         {(droppableRef, isDropTarget) => (
           <SessionFolderItem
+            allowNestedSubfolders={Boolean(props.source)}
+            actionsDisabled={props.source?.actionsDisabled || Boolean(props.source && group.isArchivedBucket)}
             folder={folder}
             sessions={nodes}
             subFolderItems={subFolderItems}
@@ -881,6 +901,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
               if (folderScopeKey) renameFolder(folderScopeKey, folder.id, name);
             }}
             onDelete={() => {
+              if (props.source && group.isArchivedBucket) return;
               if (group.isArchivedBucket) {
                 // Delete sessions in the folder
                 // Empty folders are auto-hidden by useArchivedAutoFolders
@@ -943,7 +964,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
               if (mobileVariant) setSessionSwitcherOpen(false);
               openNewSessionDraft({ directoryOverride: group.directory, targetFolderId: folder.id });
             }}
-            onNewSubFolder={depth === 0 ? () => {
+            onNewSubFolder={depth === 0 || props.source ? () => {
               if (!folderScopeKey) return;
               createFolderAndStartRename(folderScopeKey, folder.id);
             } : undefined}
@@ -1204,7 +1225,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
             ) : null}
           </div>
         </div>
-        {group.isArchivedBucket && allGroupSessions.length > 0 ? (
+        {!props.source && group.isArchivedBucket && allGroupSessions.length > 0 ? (
           <div className={cn('absolute right-0.5 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1227,7 +1248,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
             </Tooltip>
           </div>
         ) : null}
-        {group.directory && !group.isMain && group.worktree ? (
+        {!props.source && group.directory && !group.isMain && group.worktree ? (
           <div className={cn('absolute right-7 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1266,6 +1287,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
                   }}
                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                   aria-label={t('sessions.sidebar.group.actions.newDraftInGroupAria', { label: group.label })}
+                  disabled={props.source?.actionsDisabled}
                  >
                    <Icon name="add" className="h-4 w-4" />
                  </button>

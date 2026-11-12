@@ -17,14 +17,18 @@ import { MobileChatHeader } from '@/mobile/chat/MobileChatHeader';
 import { HostRuntimeContext } from '@/contexts/hostRuntimeContext';
 import { getHostRuntimeServices } from '@/lib/remote-projects/runtime';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { remoteDragId, type RemoteDragItem } from './sidebar/remoteSessionFolders';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 import type { SessionFolder } from '@/stores/useSessionFoldersStore';
 
-const mocks = vi.hoisted(() => ({ localDirectory: vi.fn(), localSelection: vi.fn(), events: new Set<(event: unknown) => void>(), dragEnd: undefined as ((event: DragEndEvent) => void) | undefined }));
+const mocks = vi.hoisted(() => ({ localDirectory: vi.fn(), localSelection: vi.fn(), events: new Set<(event: unknown) => void>(), dragContexts: new Map<string, (event: DragEndEvent) => void>() }));
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>();
-  return { ...actual, DndContext: (props: React.ComponentProps<typeof actual.DndContext>) => { mocks.dragEnd = props.onDragEnd; return <actual.DndContext {...props} />; } };
+  return { ...actual, DndContext: (props: React.ComponentProps<typeof actual.DndContext>) => {
+    for (const child of React.Children.toArray(props.children)) if (React.isValidElement<{ items?: string[] }>(child)) {
+      for (const id of child.props.items ?? []) if (props.onDragEnd) mocks.dragContexts.set(id, props.onDragEnd);
+    }
+    return <actual.DndContext {...props} />;
+  } };
 });
 vi.mock('@/lib/persistence', () => ({ updateDesktopSettings: vi.fn(async () => {}) }));
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: (listener: (event: unknown) => void) => { mocks.events.add(listener); return () => mocks.events.delete(listener); } }));
@@ -68,12 +72,28 @@ function registry(fetch: (path: string, init?: { method?: string; body?: BodyIni
 }
 
 const renderedIds = (scope: Element = container) => [...scope.querySelectorAll('[data-remote-session]')].map((row) => row.getAttribute('data-remote-session'));
+type RemoteDragItem = { kind: 'session' | 'folder'; directory: string; id: string };
+const remoteDragId = (item: RemoteDragItem) => `${item.kind === 'session' ? 'session-drag' : 'folder-drop'}:${item.id}`;
 const drag = async (source: RemoteDragItem, target: RemoteDragItem) => {
-  await act(async () => mocks.dragEnd?.({ activatorEvent: new MouseEvent('mousedown'), collisions: null, delta: { x: 0, y: 0 },
-    active: { id: remoteDragId(source), data: { current: source }, rect: { current: { initial: null, translated: null } } },
-    over: { id: remoteDragId(target), data: { current: target }, rect: new DOMRect(), disabled: false } }));
+  await act(async () => mocks.dragContexts.get(remoteDragId(source))?.({ activatorEvent: new MouseEvent('mousedown'), collisions: null, delta: { x: 0, y: 0 },
+    active: { id: remoteDragId(source), data: { current: { type: source.kind, sessionId: source.id, sessionDirectory: source.directory } }, rect: { current: { initial: null, translated: null } } },
+    over: { id: remoteDragId(target), data: { current: { type: target.kind, folderId: target.id } }, rect: new DOMRect(), disabled: false } }));
   await flush(); await flush();
 };
+test.each([false, true])('remote project omits archives without dropping active nested-directory sessions (mobile=%s)', async (mobile) => {
+  const original = snapshot('a');
+  const directory = `${project('a').path}/nested`;
+  const data = { ...original, directories: [...original.directories, { ...original.directories[0], directory, sessions: [
+    { ...original.directories[0].sessions[0], id: 'nested-active', title: 'Nested active', directory },
+    { ...original.directories[0].sessions[0], id: 'archived-only', title: 'Archived only', directory, time: { created: 1, updated: 1, archived: 2 } },
+  ] }] };
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(async () => json(data))} mobile={mobile} /></QueryClientProvider>));
+  await flush(); await flush();
+  expect(container.textContent).toContain('Nested active');
+  expect(container.textContent).not.toContain('Archived only');
+  expect(container.textContent).not.toContain('sessions.sidebar.grouping.archived');
+});
+
 function folderFixture() {
   const value = snapshot('a');
   const session = (id: string, created: number, updated: number) => ({ ...value.directories[0].sessions[0], id, title: id, time: { created, updated } });
@@ -131,7 +151,7 @@ test('Host-authoritative external worktrees appear under the owning project with
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ projectId: project('a').id, sessionId: 'external-session', location: { hubId: 'hub', hostId: 'a', directory: external } });
 });
 
-test.each([false, true])('real folders render parentId recursively and keyboard order follows the same nested/collapsed tree (mobile=%s)', async (mobile) => {
+test('desktop shared folders render parentId recursively and keyboard order follows the same nested/collapsed tree', async () => {
   const data = folderFixture();
   const targets = vi.fn<(_project: string, targets: SessionNavigationTarget[]) => void>();
   const fetch = vi.fn(async (path: string, init?: { method?: string; body?: BodyInit | null }) => {
@@ -140,39 +160,56 @@ test.each([false, true])('real folders render parentId recursively and keyboard 
     return json(data.folders);
   });
   const entry = registry(fetch);
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onNavigationTargets={targets} mobile={mobile} /></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onNavigationTargets={targets} /></QueryClientProvider>));
   await flush(); await flush();
-  expect(container.querySelector('[data-remote-folder="parent"] [data-remote-folder="child"]')).not.toBeNull();
+  expect(container.querySelector('[data-session-folder="parent"] [data-session-folder="child"]')).not.toBeNull();
   expect(renderedIds()).toEqual(['child-session', 'parent-session', 'other-session', 'root-session']);
   expect(targets.mock.lastCall?.[1].map((target) => target.sessionId)).toEqual(renderedIds());
-  const parentHeader = container.querySelector<HTMLElement>(mobile ? '[data-remote-folder="parent"] button[aria-expanded="true"]' : '[data-remote-folder="parent"] [aria-label="sessions.sidebar.folderItem.collapseAria"]')!;
+  const parentHeader = container.querySelector<HTMLElement>('[data-session-folder="parent"] [aria-label="sessions.sidebar.folderItem.collapseAria"]')!;
   await act(async () => parentHeader.click()); await flush(); await flush();
   expect(targets.mock.lastCall?.[1].map((target) => target.sessionId)).toEqual(['other-session', 'root-session']);
 });
 
-test.each([false, true])('mounted drag moves sessions across folders and nests folders on the captured Host, rejecting descendant cycles (mobile=%s)', async (mobile) => {
+test('shared desktop drag moves sessions across folders on the captured Host without introducing folder-only drag behavior', async () => {
   const data = folderFixture(); const directory = project('a').path;
   const fetch = vi.fn(async (path: string, init?: { method?: string; body?: BodyInit | null }) => {
     if (path.endsWith('/summaries')) return json(data);
     if (init?.method === 'POST') data.folders = JSON.parse(String(init.body));
     return json(data.folders);
   });
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(fetch)} mobile={mobile} /></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(fetch)} /></QueryClientProvider>));
   await flush(); await flush();
   await drag({ kind: 'session', directory, id: 'child-session' }, { kind: 'folder', directory, id: 'other' });
   expect(data.folders.foldersMap[directory].find((folder) => folder.id === 'child')?.sessionIds).toEqual([]);
   expect(data.folders.foldersMap[directory].find((folder) => folder.id === 'other')?.sessionIds).toEqual(['other-session', 'child-session']);
-  expect(renderedIds(container.querySelector('[data-remote-folder="other"]')!)).toEqual(['other-session', 'child-session']);
+  expect(renderedIds(container.querySelector('[data-session-folder="other"]')!)).toEqual(['other-session', 'child-session']);
   await drag({ kind: 'folder', directory, id: 'other' }, { kind: 'folder', directory, id: 'child' });
-  expect(data.folders.foldersMap[directory].find((folder) => folder.id === 'other')?.parentId).toBe('child');
-  expect(container.querySelector('[data-remote-folder="parent"] [data-remote-folder="child"] [data-remote-folder="other"]')).not.toBeNull();
+  expect(data.folders.foldersMap[directory].find((folder) => folder.id === 'other')?.parentId).toBeNull();
   fetch.mockClear();
   await drag({ kind: 'folder', directory, id: 'parent' }, { kind: 'folder', directory, id: 'other' });
   expect(fetch).not.toHaveBeenCalled();
 });
 
-test('failed cross-folder order write compensates membership and leaves the confirmed tree/selection intact', async () => {
+test('mobile uses the existing flat project list and compact pagination, not a remote-only folder tree', async () => {
+  const data = folderFixture();
+  for (const session of data.directories[0].sessions) session.metadata.yuri.sessionStatus.type = 'idle';
+  const fetch = vi.fn(async () => json(data));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(fetch)} mobile /></QueryClientProvider>));
+  await flush(); await flush();
+  const titles = () => [...container.querySelectorAll('.yuri-mobile-session-title')].map((node) => node.textContent);
+  expect(titles()).toEqual(['root-session', 'other-session', 'child-session']);
+  expect(container.querySelector('[data-session-folder]')).toBeNull();
+  expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  await click('sessions.sidebar.group.showMore');
+  expect(titles()).toEqual(['root-session', 'other-session', 'child-session', 'parent-session']);
+  await click('sessions.sidebar.group.showFewer');
+  expect(titles()).toEqual(['root-session', 'other-session', 'child-session']);
+});
+
+test('failed shared same-folder reorder leaves membership, confirmed order and selection intact', async () => {
   const data = folderFixture(); const directory = project('a').path;
+  data.folders.foldersMap[directory].find((folder) => folder.id === 'child')!.sessionIds.push('parent-session');
+  data.folders.foldersMap[directory].find((folder) => folder.id === 'parent')!.sessionIds = [];
   const original = structuredClone(data.folders);
   const fetch = vi.fn(async (path: string, init?: { method?: string; body?: BodyInit | null }) => {
     if (path.endsWith('/summaries')) return json(data);
@@ -184,15 +221,15 @@ test('failed cross-folder order write compensates membership and leaves the conf
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
   await flush(); await flush();
   const before = queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey);
-  await act(async () => container.querySelector<HTMLInputElement>('[data-remote-session="child-session"] input[type="checkbox"]')!.click());
-  await drag({ kind: 'session', directory, id: 'child-session' }, { kind: 'session', directory, id: 'other-session' });
+  await act(async () => container.querySelector('[data-remote-session="child-session"] [data-session-title]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })));
+  await drag({ kind: 'session', directory, id: 'child-session' }, { kind: 'session', directory, id: 'parent-session' });
   expect(data.folders.foldersMap).toEqual(original.foldersMap);
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey)).toBe(before);
-  expect(renderedIds(container.querySelector('[data-remote-folder="child"]')!)).toEqual(['child-session']);
+  expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session', 'parent-session']);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('order write failed');
-  expect(container.querySelector<HTMLInputElement>('[data-remote-session="child-session"] input[type="checkbox"]')?.checked).toBe(true);
+  expect(container.querySelector('[data-remote-session="child-session"]')?.getAttribute('data-session-selected')).toBe('true');
   const writes = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
-  expect(writes.map(([path]) => path)).toEqual(['/api/hosts/a/api/session-folders', '/api/hosts/a/api/session-folders/order', '/api/hosts/a/api/session-folders']);
+  expect(writes.map(([path]) => path)).toEqual(['/api/hosts/a/api/session-folders/order']);
 });
 
 test('a selected group moves together across folders and clears selection only after Host confirmation', async () => {
@@ -204,10 +241,10 @@ test('a selected group moves together across folders and clears selection only a
   });
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(fetch)} /></QueryClientProvider>));
   await flush(); await flush();
-  for (const id of ['parent-session', 'child-session']) await act(async () => container.querySelector<HTMLInputElement>(`[data-remote-session="${id}"] input[type="checkbox"]`)!.click());
+  for (const id of ['parent-session', 'child-session']) await act(async () => container.querySelector(`[data-remote-session="${id}"] [data-session-title]`)!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })));
   await drag({ kind: 'session', directory, id: 'child-session' }, { kind: 'folder', directory, id: 'other' });
   expect(data.folders.foldersMap[directory].find((folder) => folder.id === 'other')?.sessionIds).toEqual(['other-session', 'parent-session', 'child-session']);
-  expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0);
+  expect(container.querySelectorAll('[data-session-selected="true"]')).toHaveLength(0);
 });
 
 test('a Host generation change during folder body decoding cannot write a stale tree through a new entry', async () => {
@@ -225,13 +262,13 @@ test('a Host generation change during folder body decoding cannot write a stale 
   const entry = registry(fetch);
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
   await flush(); await flush(); fetch.mockClear();
-  await drag({ kind: 'folder', directory, id: 'other' }, { kind: 'folder', directory, id: 'child' });
+  await drag({ kind: 'session', directory, id: 'other-session' }, { kind: 'folder', directory, id: 'child' });
   expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/hosts/a/api/session-folders']);
-  expect(container.querySelector('[data-remote-folder="child"] [data-remote-folder="other"]')).toBeNull();
+  expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session']);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('remoteProjects.host-unavailable');
 });
 
-test('folder sibling drops reorder the recursive tree, failed nesting keeps it intact, and deletion releases descendant sessions', async () => {
+test('shared folder actions preserve failed mutations and deletion releases descendant sessions', async () => {
   const data = folderFixture(); const directory = project('a').path; let rejectFolderWrite = false;
   const targets = vi.fn<(_project: string, targets: SessionNavigationTarget[]) => void>();
   const fetch = vi.fn(async (path: string, init?: { method?: string; body?: BodyInit | null }) => {
@@ -245,17 +282,16 @@ test('folder sibling drops reorder the recursive tree, failed nesting keeps it i
   const entry = registry(fetch);
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onNavigationTargets={targets} /></QueryClientProvider>));
   await flush(); await flush();
-  await drag({ kind: 'folder', directory, id: 'other' }, { kind: 'folder-position', directory, id: 'parent' });
-  expect(renderedIds()).toEqual(['other-session', 'child-session', 'parent-session', 'root-session']);
+  expect(renderedIds()).toEqual(['child-session', 'parent-session', 'other-session', 'root-session']);
   expect(targets.mock.lastCall?.[1].map((target) => target.sessionId)).toEqual(renderedIds());
   const before = queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey);
   rejectFolderWrite = true;
-  await drag({ kind: 'folder', directory, id: 'other' }, { kind: 'folder', directory, id: 'child' });
+  await drag({ kind: 'session', directory, id: 'other-session' }, { kind: 'folder', directory, id: 'child' });
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey)).toBe(before);
-  expect(container.querySelector('[data-remote-folder="child"] [data-remote-folder="other"]')).toBeNull();
+  expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session']);
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('folder write rejected');
   rejectFolderWrite = false;
-  const parent = container.querySelector('[data-remote-folder="parent"]')!;
+  const parent = container.querySelector('[data-session-folder="parent"]')!;
   await act(async () => parent.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.folderItem.deleteFolderAria"]')!.click());
   await flush(); await flush();
   expect(data.folders.foldersMap[directory].map((folder) => folder.id)).toEqual(['other']);
@@ -274,7 +310,7 @@ test('new sub-folder action on the shared folder UI writes its actual parentId a
   });
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(fetch)} /></QueryClientProvider>));
   await flush(); await flush();
-  const child = container.querySelector('[data-remote-folder="child"]')!;
+  const child = container.querySelector('[data-session-folder="child"]')!;
   await act(async () => child.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.folderItem.newSubfolderAria"]')!.click());
   const input = container.querySelector<HTMLInputElement>('form input')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Grandchild folder'); input.dispatchEvent(new Event('input', { bubbles: true })); });
@@ -285,7 +321,7 @@ test('new sub-folder action on the shared folder UI writes its actual parentId a
   await click('sessions.sidebar.session.rename.save');
   const created = data.folders.foldersMap[directory].find((folder) => folder.name === 'Grandchild folder');
   expect(created?.parentId).toBe('child');
-  expect(container.querySelector(`[data-remote-folder="parent"] [data-remote-folder="child"] [data-remote-folder="${created?.id}"]`)).not.toBeNull();
+  expect(container.querySelector(`[data-session-folder="parent"] [data-session-folder="child"] [data-session-folder="${created?.id}"]`)).not.toBeNull();
 });
 
 test('the shared remote folder New action opens a Host draft with targetFolderId, never a local draft', async () => {
@@ -293,7 +329,7 @@ test('the shared remote folder New action opens a Host draft with targetFolderId
   const localDirectory = vi.spyOn(useDirectoryStore.getState(), 'setDirectory');
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
   await flush(); await flush();
-  await act(async () => container.querySelector<HTMLButtonElement>('[data-remote-folder="child"] [aria-label="sessions.sidebar.folderItem.newSessionAria"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-session-folder="child"] [aria-label="sessions.sidebar.folderItem.newSessionAria"]')!.click());
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ sessionId: null, location: { hubId: 'hub', hostId: 'a', directory: project('a').path }, draft: { targetFolderId: 'child' } });
   expect(localDirectory).not.toHaveBeenCalled();
 });
@@ -397,9 +433,11 @@ test('older sessions are demand-paged from the Host SDK, preserving explicit cur
   const entry = registry(async () => { const value = snapshot('a'); return json({ ...value, directories: [{ ...value.directories[0], hasMore: true }] }); }, () => ({ session: { list } }) as unknown as OpenCodeClient);
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
   await flush(); await flush(); expect(list).not.toHaveBeenCalled();
-  await click('remoteProjects.showMore');
-  expect(list).toHaveBeenCalledTimes(2);
-  expect(list.mock.calls[1][0]).toMatchObject({ cursor: 'next-page' });
+  await click('sessions.sidebar.group.showMore');
+  expect(list).toHaveBeenCalledTimes(1);
+  await click('sessions.sidebar.group.showMore');
+  expect(list).toHaveBeenCalledTimes(3);
+  expect(list.mock.calls[2][0]).toMatchObject({ cursor: 'next-page' });
   expect(container.textContent).toContain('Older one'); expect(container.textContent).toContain('Older two');
 });
 

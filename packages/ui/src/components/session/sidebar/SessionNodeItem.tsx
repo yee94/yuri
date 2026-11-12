@@ -30,6 +30,7 @@ import { messagesFromTranscriptData } from '@/sync/transcript-repository-observe
 import { useSync } from '@/sync/use-sync';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
+import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import type { SessionNode } from './types';
@@ -1218,8 +1219,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         <ContextMenu.Root open={isContextMenuOpen} onOpenChange={handleContextMenuOpenChange} onOpenChangeComplete={handleMenuOpenChangeComplete}>
           <ContextMenu.Trigger
             render={
-              <div
+              <SessionRowLayout
                 ref={rowElementRef}
+                active={isActive}
+                selected={isRowSelected}
                 data-session-row={session.id}
                 data-session-scope={sessionDirectory ?? ''}
                 data-session-focus-scope={renderContext}
@@ -1231,7 +1234,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 className={cn(
                   // Full-width chip; nest indent lives on the inner content row
                   // so ContextMenu render-prop merges cannot drop paddingLeft.
-                  'group relative my-0.5 flex cursor-pointer items-center rounded-lg py-1.5 pr-2',
                   // Codex-style: inset neutral chip — never theme/primary tint.
                   isActive && !isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
                   isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
@@ -1241,16 +1243,13 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             }
           >
           {subsessionChevron}
-          <div
-            className="flex min-w-0 flex-1 items-center"
-            style={{ paddingLeft: getSidebarRowPaddingLeft(depth) }}
-          >
+          <SessionRowContent depth={depth}>
           <div className="flex min-w-0 flex-1 items-center">
               {/* Inherit sidebar TooltipProvider — no delayDuration here, so
                   Base UI grouping can hand the hover card between rows. */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button
+                  <SessionRowTitle
                     type="button"
                     data-session-title
                     onPointerDown={handleRowPointerDown}
@@ -1269,7 +1268,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                     className={cn(
                       // No padding transition: busy ring / unread dot must snap away
                       // the moment hover reveals actions (no slide-with-padding).
-                      'relative flex min-w-0 flex-1 cursor-pointer flex-col gap-0 overflow-hidden rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none has-[[data-sidebar-shortcut-number]]:!pr-0',
                       isTouchPressed && 'bg-[color-mix(in_srgb,var(--surface-foreground)_8%,transparent)]',
                       alwaysShowActions
                         ? (isVSCode ? revealPaddingClass : alwaysActionPaddingClass)
@@ -1320,7 +1318,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       ) : null}
                       {shortcutNumber ? <SessionShortcutHint number={shortcutNumber} /> : null}
                     </div>
-                  </button>
+                  </SessionRowTitle>
                 </TooltipTrigger>
                 {/* VS Code already shows project context via workspace headers, so
                     the per-row metadata card is redundant noise there.
@@ -1360,7 +1358,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 ) : null}
               </Tooltip>
           </div>
-          </div>
+          </SessionRowContent>
 
           {streamingIndicator && !mobileVariant ? (
             <div className={cn('absolute top-1/2 -translate-y-1/2 z-10', isMinimalMode ? 'right-0' : 'right-[30px]')}>
@@ -1368,7 +1366,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             </div>
           ) : null}
 
-          <div className={cn(
+          <SessionRowActions visible={isSessionMenuOpen || (alwaysShowActions && !isVSCode)} className={cn(
             // Instant show/hide with the trailing status marker — no opacity fade.
             'absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 transition-none group-has-[[data-sidebar-shortcut-number]]:hidden',
             isSessionMenuOpen
@@ -1451,7 +1449,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               onArchive={handleQuickArchiveClick}
               onDelete={handleQuickHardDeleteClick}
             />
-          </div>
+          </SessionRowActions>
           </ContextMenu.Trigger>
           {contextMenuContent}
         </ContextMenu.Root>

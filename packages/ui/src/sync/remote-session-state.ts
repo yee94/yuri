@@ -308,6 +308,15 @@ export function createRemoteSessionState(
         assertCurrent()
         const host = registry.getHost(entry.location.hostId!)
         if (host?.state !== 'connected') throw new Error(`Remote Host is ${host?.state ?? 'unavailable'}`)
+        const optimistic = captured.delivery !== 'queue' ? normalizeSessionProjectionMessage(captured.sessionID, {
+          id: captured.messageID, type: 'user', text: captured.text, time: { created: Date.now() },
+          model: captured.selection ? toOfficialModelRef(captured.selection) : undefined,
+          agent: captured.selection?.agent,
+          files: captured.files?.map((file) => ({ name: file.name, source: { type: 'uri', uri: file.uri } })),
+        }) : null
+        if (optimistic) repository.apply(scope(captured.sessionID), { type: 'optimistic-add', message: optimistic.info,
+          parts: optimistic.parts.map((part) => ({ ...part, __yuriOptimistic: true })) })
+        try {
         const sdk = entry.sdk()
         if (captured.delivery !== 'queue' && captured.selection) {
           const session = await sdk.session.get({ sessionID: captured.sessionID })
@@ -324,7 +333,11 @@ export function createRemoteSessionState(
             assertCurrent()
           }
         }
-        return postSessionPrompt({ ...captured, scope: entry, directory: entry.location.directory })
+        return await postSessionPrompt({ ...captured, scope: entry, directory: entry.location.directory })
+        } catch (error) {
+          if (optimistic) repository.apply(scope(captured.sessionID), { type: 'optimistic-remove', messageID: optimistic.info.id })
+          throw error
+        }
       })
       sends.set(input.sessionID, flight)
       const cleanup = () => { if (sends.get(input.sessionID) === flight) sends.delete(input.sessionID) }

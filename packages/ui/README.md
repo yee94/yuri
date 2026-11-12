@@ -115,6 +115,11 @@ Remote Instances SSH row actions show a spinner and disable repeated clicks duri
 the local request and every live bootstrap/reconnect phase, including installation
 and updates. Request failure releases the local lock so the user can retry.
 
+Adding SSH from Settings or the add-project machine picker opens the same SSH
+editor directly. New entries remain unsaved drafts until Create or Connect;
+Connect saves the current fields first, and a failed save leaves the draft open.
+Closing an unsaved editor creates no connection. Logs and delete appear only for
+saved entries.
 The SSH editor uses one shared Settings card, with connection, logs, delete and
 save actions in its header rather than a separate toolbar row. Managed
 connections expose command, name and SSH password; existing external connections
@@ -244,8 +249,10 @@ material. Its directory list is a transparent scrolling region, never a nested
 card with its own fill, border or shadow. Header, path field, directory content
 and footer use aligned 24px desktop / 16px mobile content insets. Local layout
 and compact type live in `src/components/session/directory-explorer-dialog.css`.
-Explanatory subtitles and directory headings are omitted. Desktop shortcut hints
-use the shared `Kbd variant="hint"` badges with sprite `Icon` keys; macOS shows
+Explanatory subtitles and directory headings are omitted.
+The desktop show-hidden toggle sits at the right of the path input row, aligned
+with its content inset; mobile retains the compact sheet-header action.
+Desktop shortcut hints use the shared `Kbd variant="hint"` badges with sprite `Icon` keys; macOS shows
 Command, other platforms show Ctrl. The footer may wrap without squeezing its
 actions. Mobile omits keyboard hints and retains the controlled shared
 resizable sheet and 44px folder-navigation targets. Browsing, hidden folders,

@@ -6131,6 +6131,14 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         && !draftBusy;
 
     const selectedDraftProject = React.useMemo(() => {
+        const remoteLocation = hostRuntime?.entry.location;
+        if (remoteLocation?.hostId) {
+            const activeRemote = projects.find((project) => project.id === activeProjectId
+                && project.hostId === remoteLocation.hostId && project.hubId === remoteLocation.hubId);
+            return activeRemote ?? projects.find((project) => project.hostId === remoteLocation.hostId
+                && project.hubId === remoteLocation.hubId
+                && normalizeDirectoryKey(project.path) === normalizeDirectoryKey(remoteLocation.directory)) ?? null;
+        }
         const explicit = newSessionDraft?.selectedProjectId
             ? projects.find((project) => project.id === newSessionDraft.selectedProjectId) ?? null
             : null;
@@ -6146,13 +6154,14 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         }
 
         return projects[0] ?? null;
-    }, [activeProjectId, newSessionDraft?.selectedProjectId, projects]);
+    }, [activeProjectId, newSessionDraft?.selectedProjectId, projects, hostRuntime?.entry.location]);
 
     const selectedDraftProjectPath = React.useMemo(
         () => normalizePath(selectedDraftProject?.path ?? null),
         [selectedDraftProject?.path],
     );
-    const draftProjectLabel = selectedDraftProject ? getProjectDisplayLabel(selectedDraftProject) : null;
+    const draftProjectLabel = selectedDraftProject ? getProjectDisplayLabel(selectedDraftProject)
+        : hostRuntime?.entry.location.hostId ? formatDirectoryName(hostRuntime.entry.location.directory, null) : null;
 
     const selectedDraftProjectBranches = useGitBranches(selectedDraftProjectPath);
     const selectedDraftProjectBranchesFetchedAt = useGitStore(
@@ -7562,6 +7571,13 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     insideInputColumn
                     showPendingChanges={!newSessionDraftOpen && hasPendingChanges}
                 />
+                {hostRuntime?.entry.location.hostId && surfaceHasNewDraft && !isVSCode && !draftBusy ? <div className="mb-1.5 flex min-w-0 items-center gap-1.5 px-0.5 typography-micro font-medium text-foreground/80">
+                    <span className="inline-flex h-6 min-w-0 items-center gap-1.5 px-1.5">
+                        <Icon name="folder" className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{draftProjectLabel || formatDirectoryName(hostRuntime.entry.location.directory, null)}</span>
+                        <RemoteHostIndicator registry={hostRuntime.registry} hostId={hostRuntime.entry.location.hostId} nameOnlyTip />
+                    </span>
+                </div> : null}
                 {!isMobile && showDraftTargetSelectors ? (
                     <div className="mb-1.5 flex min-w-0 items-center gap-1.5 px-0.5">
                         {selectedDraftProject ? (
@@ -8255,10 +8271,7 @@ const RemoteChatInput: React.FC<ChatInputProps & { registry: HostRuntimeRegistry
     const host = useRemoteHost(registry, hostId);
     const supported = supportsRemoteProjects();
     const blocked = !supported || host?.state !== 'connected';
-    return <>
-        <RemoteHostIndicator registry={registry} hostId={hostId} composer unsupported={!supported} />
-        <ChatInputRuntime {...props} submissionBlocked={props.submissionBlocked || blocked} />
-    </>;
+    return <ChatInputRuntime {...props} submissionBlocked={props.submissionBlocked || blocked} />;
 };
 
 const ChatInputComponent: React.FC<ChatInputProps> = (props) => {

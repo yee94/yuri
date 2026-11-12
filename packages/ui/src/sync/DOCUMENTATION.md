@@ -64,6 +64,10 @@ IndexedDB blob references, with no schema migration and identical local keys.
 Selection-store model/agent/variant reads and writes accept an optional final
 Location argument; remote choices never fall back to a bare session ID or update
 the local `lastUsedProvider` preference.
+Remote draft selections use `REMOTE_NEW_SESSION_DRAFT_ID` under that same Location
+key. The remote composer subscribes to its own saved model/agent/variant, so an
+unmount while switching projects does not reset the draft's selection or borrow
+the local default. Directory and Host changes resolve separate saved selections.
 
 `remote-input-store.getRemoteInputStore(location)` owns the production remote
 composer's separate, per-Hub draft store. Its namespaced metadata sink and default

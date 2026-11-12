@@ -780,6 +780,37 @@ describe('Remote Host production HTTP contract', () => {
     expect(remote.capabilityRequests).toBe(1);
   });
 
+  it('explicit connect waits through SSH preparation and remote admission without starting directory or status reads', async () => {
+    const remote = await host();
+    const descriptor = { id: 'ssh-cold', source: 'ssh', apiUrl: remote.url, clientToken: remote.issued.token };
+    let sshReady;
+    let serviceReady;
+    const sshGate = new Promise((resolve) => { sshReady = resolve; });
+    remote.setCapabilityGate(new Promise((resolve) => { serviceReady = resolve; }));
+    const prepareHost = vi.fn(async () => { await sshGate; return descriptor; });
+    const hub = await host({ adapter: { listHosts: async () => [descriptor], prepareHost }, requestTimeoutMs: 5000 });
+    let completed = false;
+    const connection = hub.call('/api/hosts/ssh-cold/connect', 'POST').then((response) => { completed = true; return response; });
+    try {
+      await wait(() => expect(prepareHost).toHaveBeenCalledOnce());
+      expect(completed).toBe(false);
+      expect(remote.requests).toBe(0);
+      sshReady();
+      await wait(() => expect(remote.capabilityRequests).toBe(1));
+      expect(completed).toBe(false);
+      serviceReady();
+      const response = await connection;
+      expect(response.status).toBe(200);
+      expect((await response.json()).host).toMatchObject({ id: 'ssh-cold', version: 'test-version' });
+      expect(remote.requests).toBe(1);
+      expect(remote.statusStreams).toBe(0);
+      expect(remote.indexRequests).toBe(0);
+    } finally {
+      sshReady(); serviceReady();
+      await connection;
+    }
+  });
+
   it('isolates colliding host/session paths, keeps offline partitions and fairly bounds refresh work with a stalled host', async () => {
     const stats = { active: 0, max: 0 };
     const remotes = await Promise.all(Array.from({ length: 3 }, () => host({ indexStats: stats })));
