@@ -18,8 +18,14 @@ export function createDesktopRemoteHostsAdapter({ readHosts, sshManager, subscri
       for (const host of hosts) if (host.source === 'ssh' && host.pairingSource !== 'connect-link') delete host.relay;
       return hosts;
     },
-    async prepareHost(id) {
+    async prepareHost(id, { onProgress } = {}) {
       if (sshManager.readInstances().instances.some((instance) => instance.id === id)) {
+        const unsubscribe = onProgress && sshManager.subscribeStatus?.(id, ({ phase }) => {
+          const progress = { remote_probe: 'checking', installing: 'installing', updating: 'updating',
+            server_detecting: 'starting', server_starting: 'starting', forwarding: 'connecting',
+            config_resolved: 'connecting', auth_check: 'connecting', master_connecting: 'connecting', ready: 'connecting' }[phase];
+          if (progress) onProgress(progress);
+        });
         try { await sshManager.ensureConnected(id); }
         catch (error) {
           const reason = classifyManagedSshBootstrapError(error?.message);
@@ -28,6 +34,7 @@ export function createDesktopRemoteHostsAdapter({ readHosts, sshManager, subscri
               : reason === 'yuriCliIncompatible' ? 'remote_incompatible' : 'remote_ssh_unavailable';
           throw Object.assign(new Error(code), { code, status: code === 'remote_incompatible' ? 409 : 503 });
         }
+        finally { unsubscribe?.(); }
       }
       const host = (await this.listHosts()).find((entry) => entry.id === id);
       if (!host) throw Object.assign(new Error('host_unavailable'), { code: 'host_unavailable', status: 404 });

@@ -1,6 +1,7 @@
 import type { ProjectEntry } from '@/lib/api/types';
 
 export type HostConnectionState = 'idle' | 'connecting' | 'connected' | 'degraded' | 'offline' | 'unauthorized' | 'incompatible';
+export type HostPreparationPhase = 'connecting' | 'checking' | 'installing' | 'updating' | 'starting';
 
 export interface RemoteHost {
   id: string;
@@ -8,6 +9,7 @@ export interface RemoteHost {
   name: string;
   source: 'ssh' | 'relay' | 'direct';
   state: HostConnectionState;
+  preparationPhase?: HostPreparationPhase;
   available?: boolean;
   /** Authorization/descriptor identity, independent of transient transport generation. */
   scopeGeneration?: string;
@@ -58,6 +60,9 @@ export const parseRemoteHost = (input: unknown): RemoteHost => {
     source: value.source as RemoteHost['source'], state: value.state as HostConnectionState,
   };
   if (typeof value.generation === 'string') host.generation = text(value.generation);
+  if (host.state === 'connecting' && ['connecting', 'checking', 'installing', 'updating', 'starting'].includes(String(value.preparationPhase))) {
+    host.preparationPhase = value.preparationPhase as HostPreparationPhase;
+  }
   if (value.instanceId !== undefined) host.instanceId = text(value.instanceId);
   if (value.scopeGeneration !== undefined) host.scopeGeneration = text(value.scopeGeneration);
   if (typeof value.available === 'boolean') host.available = value.available;

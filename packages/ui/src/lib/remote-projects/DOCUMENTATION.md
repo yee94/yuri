@@ -94,6 +94,12 @@ an entry with the same logical scope. A directory picker must not wait for live
 `connected`: before project references exist, its short requests create no status
 stream or persistent connection. No foreground lease or keepalive is added.
 
+Optional `preparationPhase` is a live presentation field, not a new connection
+state or logical scope revision. Parsing admits only known phases on connecting
+Hosts; phase-only events notify that Host's subscribers without replacing its
+entry. Missing fields from older Hosts retain generic connecting presentation.
+`connection-hint` selects shared localized progress/error copy without IO/timers.
+
 Legacy Hosts with no `scopeGeneration` retain conservative state/wire/time fencing.
 Once a scope-aware Host has been observed, an unversioned available status cannot
 downgrade it to legacy semantics. An unavailable row without a token instead

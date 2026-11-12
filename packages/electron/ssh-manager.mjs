@@ -1128,6 +1128,7 @@ export class ElectronSshManager {
     this.emit = options.emit;
     this.logs = new Map();
     this.statuses = new Map();
+    this.statusListeners = new Map();
     this.sessions = new Map();
     this.monitorTimers = new Map();
     this.reconnectAttempts = new Map();
@@ -1209,6 +1210,18 @@ export class ElectronSshManager {
     };
     this.statuses.set(id, status);
     this.emit(SSH_STATUS_EVENT, status);
+    for (const listener of this.statusListeners.get(id) || []) listener(status);
+  }
+
+  subscribeStatus(id, listener) {
+    let listeners = this.statusListeners.get(id);
+    if (!listeners) this.statusListeners.set(id, listeners = new Set());
+    listeners.add(listener);
+    listener(this.statusSnapshotForInstance(id));
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.statusListeners.delete(id);
+    };
   }
 
   clearRetryAttempt(id) {

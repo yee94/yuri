@@ -124,12 +124,14 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     ...(store.instanceFor(host.id) ? { instanceId: store.instanceFor(host.id) } : {}),
     scopeGeneration: scopes.get(host.id)?.generation,
     generation: connections.get(host.id)?.generation,
+    ...(connections.get(host.id)?.preparationPhase ? { preparationPhase: connections.get(host.id).preparationPhase } : {}),
     ...(connections.get(host.id)?.version ? { version: connections.get(host.id).version,
       capabilities: { remoteProjects: true } } : {}) });
-  const setState = (connection, state, error) => {
+  const setState = (connection, state, error, preparationPhase) => {
     if (connections.get(connection.host.id) !== connection || stopped) return;
-    const changed = connection.state !== state;
+    const changed = connection.state !== state || connection.preparationPhase !== preparationPhase;
     connection.state = state;
+    connection.preparationPhase = preparationPhase;
     if (error) store.saveReceipt(connection.host.id, { lastError: publicError(error) });
     if (changed || error) broadcast({ type: 'yuri:host-status', properties: {
       hubId: store.hubId, hostId: connection.host.id, host: hostView(connection.host) } });
@@ -184,8 +186,14 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       setState(connection, 'connecting');
       connection.ready = (async () => {
         if (connection.host.source === 'ssh' && adapter.prepareHost) {
-          connection.preparing = true;
-          const prepared = await adapter.prepareHost(id);
+          const preparation = {};
+          connection.preparing = preparation;
+          const prepared = await adapter.prepareHost(id, { onProgress: (phase) => {
+            if (current(connection) && connection.preparing === preparation
+              && ['connecting', 'checking', 'installing', 'updating', 'starting'].includes(phase)) {
+              setState(connection, 'connecting', undefined, phase);
+            }
+          } });
           const latest = await resolveHost(id);
           if (!current(connection) || fingerprint(prepared) !== fingerprint(latest)) throw remoteFailure('stale_host', 409);
           connection.host = prepared;
@@ -193,6 +201,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
           connection.scopeGeneration = scopes.get(id)?.generation;
           store.saveHost(prepared);
           connection.preparing = false;
+          setState(connection, 'connecting');
         }
         const transport = await transportFactory(connection.host, { signal: connection.controller.signal });
         if (!current(connection)) { transport.close(); throw remoteFailure('stale_host', 409); }

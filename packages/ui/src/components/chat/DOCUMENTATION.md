@@ -64,6 +64,12 @@ the machine name on hover; existing sessions do not add a Project row above the
 composer. Local and remote conversations share `ComposerFoot`, `StatusRow` and
 the queue card layout, including the mobile overlap and desktop edge fade.
 Remote status inputs come from the bound Host snapshot, never Hub activity.
+On desktop, `RemoteComposerConnectionStatus` observes only the bound Host in a
+memoized leaf above the input column. Its absolute status slot does not change
+composer/transcript geometry, enumerate catalogs or subscribe to draft text.
+Live SSH preparation phases supersede generic connecting; terminal connection
+states remove the spinner and connected clears the hint. Sending remains gated
+by the existing Host readiness check, and draft editing is preserved.
 Ordinary remote sends add an optimistic user row through the shared transcript
 repository. Its optimistic parts survive stale history reads until authority
 replaces them; failed admission removes only that row. Explicit queue delivery

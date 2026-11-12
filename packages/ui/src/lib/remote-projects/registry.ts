@@ -240,6 +240,7 @@ export class HostRuntimeRegistry {
     if (!host.scopeGeneration && this.scopeAwareHosts.has(host.id) && host.available !== false) return false;
     if (host.generation && this.retiredWireGenerations.get(host.id)?.has(host.generation)) return false;
     if (previous && previous.name === host.name && previous.source === host.source && previous.state === host.state
+      && previous.preparationPhase === host.preparationPhase
       && previous.lastConnectedAt === host.lastConnectedAt && previous.lastSyncedAt === host.lastSyncedAt
       && previous.version === host.version && previous.instanceId === host.instanceId && previous.available === host.available && previous.generation === host.generation && previous.scopeGeneration === host.scopeGeneration && previous.lastError?.code === host.lastError?.code
       && previous.lastError?.message === host.lastError?.message

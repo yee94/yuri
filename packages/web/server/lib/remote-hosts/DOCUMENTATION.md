@@ -100,6 +100,12 @@ short reads in `finally` and retain background watch demand until settlement.
 - `GET /api/hosts`: `{supported, hubId, hosts, projects, reason?}`; local SQLite /
   saved descriptors only, no probe. Public hosts contain id/name/source/state,
   available, generation, safe error/timestamps/version, never URLs/credentials.
+  Optional `preparationPhase` is live-only, allowlisted SSH bootstrap progress
+  while `state` is `connecting`: connecting/checking/installing/updating/starting.
+  Phase-only changes use the existing `yuri:host-status` channel; they do not alter
+  scope/wire identity or start a new stream. Late callbacks after admission,
+  cancellation or failure are ignored; admission/failure clears the phase. Hosts
+  without native SSH preparation omit it, retaining generic connection status.
   `scopeGeneration` is an opaque in-process authorization/configuration epoch,
   independent of `generation`, which identifies the physical event connection.
   Releasing an unreferenced short HTTP transport leaves its scope epoch intact;

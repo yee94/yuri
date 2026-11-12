@@ -142,6 +142,15 @@ it('mounts all-project same-ID/path local and two Host rows without merging remo
   expect(f.refreshLocal.mock.calls.every(([dirs]) => (dirs as string[]).every((path) => path === '/repo'))).toBe(true);
 });
 
+it('uses shared machine identities in the project filter and selected project header', async () => {
+  await mount();
+  expect(node.querySelectorAll('[data-remote-host]')).toHaveLength(2);
+  await act(async () => projectChip('a').click());
+  const header = node.querySelector('[data-mobile-long-press-trigger="project:a"]')!;
+  expect(header.querySelector('[data-remote-host="a"]')?.textContent).toBe('Machine a');
+  expect(header.querySelector('[data-remote-host="b"]')).toBeNull();
+});
+
 it('opens the selected Host session in its authoritative external raw worktree cwd, not the Hub', async () => {
   await mount(); await act(async () => row('a').click());
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ projectId: 'a', sessionId: 'same', location: { hostId: 'a', directory: rawWorktree } });
@@ -174,6 +183,7 @@ it('local-only repeated mounted renders perform zero Host discovery/summary/reso
 });
 
 const button = (label: string) => [...node.querySelectorAll<HTMLButtonElement>('button')].find((element) => element.textContent === label)!;
+const projectChip = (hostId: string) => node.querySelector(`[data-remote-host="${hostId}"]`)!.closest('button')!;
 const projectMenu = async (key: string) => {
   const target = [...node.querySelectorAll<HTMLElement>('[data-mobile-long-press-trigger]')].find((element) => element.dataset.mobileLongPressTrigger === key)!;
   await act(async () => target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
@@ -181,7 +191,7 @@ const projectMenu = async (key: string) => {
 
 it('New in a selected remote project preserves its Host while All uses the latest raw worktree', async () => {
   await mount();
-  await act(async () => button('B · Machine b').click());
+  await act(async () => projectChip('b').click());
   await act(async () => node.querySelector<HTMLButtonElement>('[aria-label="mobile.sessions.newChat"]')!.click());
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ projectId: 'b', sessionId: null, location: { hostId: 'b', directory: '/repo' } });
   await act(async () => useUIStore.setState({ mobileSessionPanelOpen: true, mobileSessionFilterProjectId: null }));
@@ -226,7 +236,7 @@ it('mark read carries the Host revision, and failed read preserves both Host row
 });
 
 it('worktree New uses authoritative external raw cwd rather than its project root or Hub', async () => {
-  await mount(); await act(async () => button('A · Machine a').click());
+  await mount(); await act(async () => projectChip('a').click());
   await projectMenu(`worktree:a:${rawWorktree}`);
   await act(async () => button('sessions.sidebar.project.actions.newSession').click());
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ projectId: 'a', sessionId: null, location: { hostId: 'a', directory: rawWorktree } });
@@ -237,7 +247,7 @@ it('paging preserves successful pages on error and retries the same cursor witho
   const summary = f.summaries.b as ReturnType<typeof snapshot>;
   summary.directories[0].hasMore = true;
   f.list.mockResolvedValueOnce({ data: [{ id: 'older', title: 'Older page', time: { created: 1, updated: 1 }, location: { directory: '/repo' } }], cursor: { next: 'cursor-2' } });
-  await mount(); await act(async () => button('B · Machine b').click());
+  await mount(); await act(async () => projectChip('b').click());
   await act(async () => button('sessions.sidebar.group.showMore').click());
   await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 20)); });
   expect(node.textContent).toContain('Older page');
@@ -255,7 +265,7 @@ it('paging preserves successful pages on error and retries the same cursor witho
 });
 
 it('retains worktree branch metadata, scopes original dialog boundaries, and keeps remote callbacks out of Hub stores', async () => {
-  await mount(); await act(async () => button('A · Machine a').click());
+  await mount(); await act(async () => projectChip('a').click());
   expect(node.textContent).toContain('feature/remote');
   await projectMenu(`worktree:a:${rawWorktree}`);
   await act(async () => button('mobile.projectEdit.deleteWorktreeConfirmButton').click());
@@ -316,7 +326,7 @@ it('same raw ID and same raw cwd on two Hosts stay separate during pin, read and
 it('remote worktree pagination sends the raw Windows cwd, including on retry', async () => {
   (f.summaries.a as ReturnType<typeof snapshot>).directories[0].hasMore = true;
   f.list.mockRejectedValueOnce(new Error('offline'));
-  await mount(); await act(async () => button('A · Machine a').click());
+  await mount(); await act(async () => projectChip('a').click());
   const worktree = [...node.querySelectorAll<HTMLButtonElement>('[data-mobile-long-press-trigger]')].find((element) => element.dataset.mobileLongPressTrigger === `worktree:a:${rawWorktree}`)!;
   await act(async () => worktree.click());
   await act(async () => button('sessions.sidebar.group.showMore').click());
@@ -344,7 +354,7 @@ it('reconnected Host rejects an old archive completion instead of hiding a new-g
 });
 
 it('a remote worktree helper completion preserves its existing draft/bootstrap metadata without reopening navigation', async () => {
-  await mount(); await act(async () => button('A · Machine a').click());
+  await mount(); await act(async () => projectChip('a').click());
   await act(async () => node.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.project.actions.newWorktree"]')!.click());
   f.remoteCompletion = true;
   await act(async () => useSessionNavigationStore.getState().openRemoteSession(projects[1], { hubId: 'hub', hostId: 'a', directory: 'C:\\new\\worktree\\src' }, null, {

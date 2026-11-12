@@ -14,6 +14,26 @@ const makeRegistry = () => {
 };
 
 describe('Host Runtime Registry production boundary', () => {
+  it('admits safe preparation phases without replacing scope and only notifies the matching Host', () => {
+    const { registry } = makeRegistry();
+    const row = { ...host('a', 'connecting'), scopeGeneration: 'scope-a', generation: 'wire-a' };
+    registry.applyCatalog({ hubId: 'hub-a', supported: true, projects: [], hosts: [row, host('b')] });
+    const entry = registry.resolve({ hubId: 'hub-a', hostId: 'a', directory: '/' });
+    const changed = vi.fn(); const unrelated = vi.fn();
+    registry.subscribeHost('a', changed); registry.subscribeHost('b', unrelated);
+    for (const preparationPhase of ['checking', 'installing', 'updating', 'starting']) {
+      const envelope = { type: 'yuri:host-status', properties: { hubId: 'hub-a', hostId: 'a', host: { ...row, preparationPhase } } };
+      registry.ingest(envelope); registry.ingest(envelope);
+      expect(registry.getHost('a')?.preparationPhase).toBe(preparationPhase);
+      expect(registry.resolve(entry.location)).toBe(entry);
+    }
+    expect(changed).toHaveBeenCalledTimes(4); expect(unrelated).not.toHaveBeenCalled();
+    expect(parseRemoteHost({ ...row, preparationPhase: 'private native log' }).preparationPhase).toBeUndefined();
+    expect(parseRemoteHost({ ...row, state: 'offline', preparationPhase: 'updating' }).preparationPhase).toBeUndefined();
+    registry.ingest({ type: 'yuri:host-status', properties: { hubId: 'hub-a', hostId: 'a', host: { ...row, state: 'connected' } } });
+    expect(registry.getHost('a')?.preparationPhase).toBeUndefined();
+  });
+
   it('captures authenticated authority without changing durable keys and rejects a foreign reference', async () => {
     const { registry, fetch } = makeRegistry();
     registry.applyCatalog({ hubId: 'hub-a', supported: true, projects: [], hosts: [{ ...host('a'), instanceId: 'instance-a' }] });

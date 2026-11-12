@@ -73,6 +73,7 @@ import { cn, formatDirectoryName } from '@/lib/utils';
 import { ModelControls } from './ModelControls';
 import { LeaderKeyHint } from './LeaderKeyHint';
 import { StatusRow } from './StatusRow';
+import { RemoteComposerConnectionStatus } from './RemoteComposerConnectionStatus';
 import ScrollToBottomButton from './components/ScrollToBottomButton';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { getSessionSurfaceActionAvailability, useSessionSurface } from './SessionSurfaceContext';
@@ -7392,6 +7393,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 onHintChange={setDictationHint}
             />}
             <div className={cn('chat-input-column relative overflow-visible', isComposerExpanded && 'flex flex-1 min-h-0 flex-col')}>
+                {!isMobile && hostRuntime?.entry.location.hostId ? <RemoteComposerConnectionStatus registry={hostRuntime.registry} hostId={hostRuntime.entry.location.hostId} /> : null}
                 {nativeIosComposerActive ? null : (
                     <AttachedFilesList attachments={attachedFiles} onShowPopup={handleShowAttachmentPopup} onRemoveAttachedFile={handleAttachedFileRemove} />
                 )}

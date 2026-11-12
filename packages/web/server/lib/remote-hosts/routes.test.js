@@ -1044,7 +1044,8 @@ describe('Remote Host production HTTP contract', () => {
     let serviceReady;
     const sshGate = new Promise((resolve) => { sshReady = resolve; });
     remote.setCapabilityGate(new Promise((resolve) => { serviceReady = resolve; }));
-    const prepareHost = vi.fn(async () => { await sshGate; return descriptor; });
+    let progress;
+    const prepareHost = vi.fn(async (_id, { onProgress }) => { progress = onProgress; await sshGate; return descriptor; });
     const hub = await host({ adapter: { listHosts: async () => [descriptor], prepareHost }, requestTimeoutMs: 5000 });
     let completed = false;
     const connection = hub.call('/api/hosts/ssh-cold/connect', 'POST').then((response) => { completed = true; return response; });
@@ -1052,8 +1053,17 @@ describe('Remote Host production HTTP contract', () => {
       await wait(() => expect(prepareHost).toHaveBeenCalledOnce());
       expect(completed).toBe(false);
       expect(remote.requests).toBe(0);
+      for (const phase of ['checking', 'installing', 'updating', 'starting']) {
+        progress(phase);
+        const catalog = await (await hub.call('/api/hosts')).json();
+        expect(catalog.hosts[0]).toMatchObject({ state: 'connecting', preparationPhase: phase });
+      }
+      progress('private native detail');
+      expect((await (await hub.call('/api/hosts')).json()).hosts[0].preparationPhase).toBe('starting');
       sshReady();
       await wait(() => expect(remote.capabilityRequests).toBe(1));
+      progress('updating');
+      expect((await (await hub.call('/api/hosts')).json()).hosts[0].preparationPhase).toBeUndefined();
       expect(completed).toBe(false);
       serviceReady();
       const response = await connection;
@@ -1065,6 +1075,46 @@ describe('Remote Host production HTTP contract', () => {
     } finally {
       sshReady(); serviceReady();
       await connection;
+    }
+  });
+
+  it('broadcasts safe SSH progress on the existing client stream and clears failed/late preparation before retry', async () => {
+    const remote = await host();
+    const descriptor = { id: 'ssh-cold', source: 'ssh', apiUrl: remote.url, clientToken: remote.issued.token };
+    let progress;
+    let rejectPreparation;
+    const gate = new Promise((_resolve, reject) => { rejectPreparation = reject; });
+    const prepareHost = vi.fn(async (_id, { onProgress }) => { progress = onProgress; await gate; return descriptor; });
+    const hub = await host({ adapter: { listHosts: async () => [descriptor], prepareHost } });
+    const abort = new AbortController();
+    const stream = await fetch(`${hub.url}/api/global/event`, { headers: hub.headers, signal: abort.signal });
+    const reader = stream.body.getReader();
+    const events = [];
+    const read = (async () => { try {
+      for (;;) { const value = await reader.read(); if (value.done) break; events.push(new TextDecoder().decode(value.value)); }
+    } catch { /* abort closes the stream */ } })();
+    const connection = hub.call('/api/hosts/ssh-cold/connect', 'POST');
+    try {
+      await wait(() => expect(prepareHost).toHaveBeenCalledOnce());
+      progress('updating');
+      await wait(() => expect(events.join('')).toContain('"preparationPhase":"updating"'));
+      rejectPreparation(Object.assign(new Error('private native details'), { code: 'remote_ssh_unavailable' }));
+      expect((await connection).status).toBe(503);
+      await wait(() => expect(events.join('')).toContain('"state":"offline"'));
+      expect(events.join('')).not.toContain('private native details');
+      progress('installing');
+      expect((await (await hub.call('/api/hosts')).json()).hosts[0].preparationPhase).toBeUndefined();
+      expect(events.join('')).not.toContain('"preparationPhase":"installing"');
+      prepareHost.mockImplementation(async (_id, { onProgress }) => {
+        onProgress('checking');
+        progress('installing');
+        expect((await (await hub.call('/api/hosts')).json()).hosts[0].preparationPhase).toBe('checking');
+        return descriptor;
+      });
+      expect((await hub.call('/api/hosts/ssh-cold/connect', 'POST')).status).toBe(200);
+    } finally {
+      rejectPreparation(new Error('test cleanup')); await connection;
+      abort.abort(); await read;
     }
   });
 

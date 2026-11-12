@@ -184,10 +184,10 @@ export function MobileProjectCard({
 
           <span className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="flex min-w-0 items-center gap-2">
-               <span className="yuri-mobile-project-title yuri-mobile-entity-title truncate font-semibold text-foreground">
+               <span className={cn('yuri-mobile-project-title yuri-mobile-entity-title truncate font-semibold text-foreground', project.hostId && hostRegistry && 'max-w-[60%] shrink-0')}>
                  {highlightQuery ? renderHighlightedText(project.name, highlightQuery) : project.name}
                </span>
-              {project.hostId && hostRegistry ? <RemoteHostIndicator registry={hostRegistry} hostId={project.hostId} remoteState={project.remoteState} /> : null}
+              {project.hostId && hostRegistry ? <RemoteHostIndicator registry={hostRegistry} hostId={project.hostId} remoteState={project.remoteState} compactName isolateLongPress /> : null}
               {project.active ? (
                 <span
                   className="size-2 shrink-0 rounded-full bg-[var(--status-success)] shadow-[0_0_0_3px_color-mix(in_srgb,var(--status-success)_12%,transparent)]"

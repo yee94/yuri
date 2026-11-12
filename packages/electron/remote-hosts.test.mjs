@@ -1,7 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDesktopRemoteHostsAdapter } from './remote-hosts.mjs';
+import { ElectronSshManager } from './ssh-manager.mjs';
 
 describe('native Hub host adapter', () => {
+  it.each([false, true])('projects only live safe preparation phases and cleans up on failure=%s', async (fail) => {
+    const manager = new ElectronSshManager({ emit: () => {} });
+    manager.readInstances = () => ({ instances: [{ id: 'ssh' }] });
+    manager.ensureConnected = async () => {
+      for (const phase of ['remote_probe', 'installing', 'updating', 'server_starting', 'forwarding']) {
+        manager.setStatus('other', 'updating', 'private other-host detail');
+        manager.setStatus('ssh', phase, 'private path and credentials');
+      }
+      if (fail) throw new Error('Permission denied (publickey): private detail');
+    };
+    const adapter = createDesktopRemoteHostsAdapter({ sshManager: manager,
+      readHosts: () => ({ hosts: [{ id: 'ssh', apiUrl: 'http://forward.invalid' }] }) });
+    const onProgress = vi.fn();
+    const result = adapter.prepareHost('ssh', { onProgress });
+    if (fail) await expect(result).rejects.toMatchObject({ code: 'remote_ssh_authentication_failed' });
+    else await result;
+    expect(onProgress.mock.calls).toEqual(['checking', 'installing', 'updating', 'starting', 'connecting'].map((phase) => [phase]));
+    manager.setStatus('ssh', 'updating');
+    expect(onProgress).toHaveBeenCalledTimes(5);
+  });
+
   it('reuses a live ready SSH forward for directory requests instead of restarting initialization', async () => {
     const connect = vi.fn(async () => { throw new Error('Ready SSH must not be disconnected'); });
     const adapter = createDesktopRemoteHostsAdapter({

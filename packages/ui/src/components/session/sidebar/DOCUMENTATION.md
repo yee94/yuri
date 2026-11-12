@@ -58,6 +58,9 @@ actions; the sidebar's original glass/background stays continuous. The clip is
 derived from the rendered action count (24px buttons, 4px gaps and overlay insets).
 Invisible actions do not reserve their full width or shrink labels. Host tooltips show the
 full name above separate bulleted status, last-sync and optional error rows.
+Mobile project cards and recent-session project chips/root headers reuse this
+compact identity. Touch long-press on the identity opens only its tooltip, not
+the enclosing project's action menu; project labels have priority within the row.
 The indicator does not discover hosts or enumerate project/session catalogs. The mobile
 and desktop project bodies never add a connection/status/last-sync text row;
 those details live in the machine icon tooltip and accessible label. The mobile

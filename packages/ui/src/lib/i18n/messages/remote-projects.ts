@@ -1,5 +1,7 @@
 export const remoteProjectMessages = {
   en: {
+    'remoteProjects.preparation.checking': 'Checking remote environment…', 'remoteProjects.preparation.installing': 'Installing remote Yuri…',
+    'remoteProjects.preparation.updating': 'Updating remote Yuri…', 'remoteProjects.preparation.starting': 'Starting remote service…',
     'remoteProjects.folderMissing': 'The remote folder no longer exists. Refresh and try again.', 'remoteProjects.invalidFolders': 'The remote folder snapshot is invalid.',
     'remoteProjects.rollbackFailed': 'Restoring the previous folder state also failed', 'remoteProjects.invalidFolderMove': 'A folder cannot be moved into itself or its descendants.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat cannot carry a Host scope. Open a new conversation in the current window instead.',
@@ -22,6 +24,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'Offline', 'remoteProjects.state.unauthorized': 'Authorization required', 'remoteProjects.state.incompatible': 'Incompatible version',
   },
   'zh-CN': {
+    'remoteProjects.preparation.checking': '正在检查远端环境…', 'remoteProjects.preparation.installing': '正在安装远端 Yuri…',
+    'remoteProjects.preparation.updating': '正在更新远端 Yuri…', 'remoteProjects.preparation.starting': '正在启动远端服务…',
     'remoteProjects.folderMissing': '远端文件夹已不存在，请刷新后重试。', 'remoteProjects.invalidFolders': '远端文件夹快照无效。',
     'remoteProjects.rollbackFailed': '恢复原文件夹状态也失败了', 'remoteProjects.invalidFolderMove': '不能将文件夹移到自身或其子文件夹中。',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat 无法携带目标机器身份。请在当前窗口新建对话。',
@@ -44,6 +48,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': '离线', 'remoteProjects.state.unauthorized': '需要授权', 'remoteProjects.state.incompatible': '版本不兼容',
   },
   'zh-TW': {
+    'remoteProjects.preparation.checking': '正在檢查遠端環境…', 'remoteProjects.preparation.installing': '正在安裝遠端 Yuri…',
+    'remoteProjects.preparation.updating': '正在更新遠端 Yuri…', 'remoteProjects.preparation.starting': '正在啟動遠端服務…',
     'remoteProjects.folderMissing': '遠端資料夾已不存在，請重新整理後重試。', 'remoteProjects.invalidFolders': '遠端資料夾快照無效。',
     'remoteProjects.rollbackFailed': '還原原資料夾狀態也失敗了', 'remoteProjects.invalidFolderMove': '無法將資料夾移至自身或其子資料夾內。',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat 無法攜帶目標機器身分。請在目前視窗新增對話。',
@@ -66,6 +72,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': '離線', 'remoteProjects.state.unauthorized': '需要授權', 'remoteProjects.state.incompatible': '版本不相容',
   },
   ja: {
+    'remoteProjects.preparation.checking': 'リモート環境を確認中…', 'remoteProjects.preparation.installing': 'リモートに Yuri をインストール中…',
+    'remoteProjects.preparation.updating': 'リモートの Yuri を更新中…', 'remoteProjects.preparation.starting': 'リモートサービスを起動中…',
     'remoteProjects.folderMissing': 'リモートフォルダーは存在しません。更新して再試行してください。', 'remoteProjects.invalidFolders': 'リモートフォルダーのスナップショットが無効です。',
     'remoteProjects.rollbackFailed': '元のフォルダー状態の復元にも失敗しました', 'remoteProjects.invalidFolderMove': 'フォルダーを自身または配下のフォルダーに移動することはできません。',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat は対象マシンのスコープを保持できません。現在のウィンドウで新しい会話を開いてください。',
@@ -88,6 +96,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'オフライン', 'remoteProjects.state.unauthorized': '認証が必要', 'remoteProjects.state.incompatible': '非互換バージョン',
   },
   ko: {
+    'remoteProjects.preparation.checking': '원격 환경 확인 중…', 'remoteProjects.preparation.installing': '원격 Yuri 설치 중…',
+    'remoteProjects.preparation.updating': '원격 Yuri 업데이트 중…', 'remoteProjects.preparation.starting': '원격 서비스 시작 중…',
     'remoteProjects.folderMissing': '원격 폴더가 더 이상 존재하지 않습니다. 새로 고친 후 다시 시도하세요.', 'remoteProjects.invalidFolders': '원격 폴더 스냅샷이 잘못되었습니다.',
     'remoteProjects.rollbackFailed': '이전 폴더 상태 복원도 실패했습니다', 'remoteProjects.invalidFolderMove': '폴더를 자신이나 하위 폴더로 이동할 수 없습니다.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat은 대상 컴퓨터 범위를 유지할 수 없습니다. 현재 창에서 새 대화를 여세요.',
@@ -110,6 +120,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': '오프라인', 'remoteProjects.state.unauthorized': '인증 필요', 'remoteProjects.state.incompatible': '호환되지 않는 버전',
   },
   es: {
+    'remoteProjects.preparation.checking': 'Comprobando el entorno remoto…', 'remoteProjects.preparation.installing': 'Instalando Yuri remoto…',
+    'remoteProjects.preparation.updating': 'Actualizando Yuri remoto…', 'remoteProjects.preparation.starting': 'Iniciando el servicio remoto…',
     'remoteProjects.folderMissing': 'La carpeta remota ya no existe. Actualiza y vuelve a intentarlo.', 'remoteProjects.invalidFolders': 'La instantánea de carpetas remotas no es válida.',
     'remoteProjects.rollbackFailed': 'También falló la restauración del estado anterior de las carpetas', 'remoteProjects.invalidFolderMove': 'No se puede mover una carpeta dentro de sí misma ni de sus descendientes.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat no puede mantener el ámbito del equipo de destino. Abre una conversación nueva en la ventana actual.',
@@ -132,6 +144,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'Desconectado', 'remoteProjects.state.unauthorized': 'Se requiere autorización', 'remoteProjects.state.incompatible': 'Versión incompatible',
   },
   fr: {
+    'remoteProjects.preparation.checking': 'Vérification de l’environnement distant…', 'remoteProjects.preparation.installing': 'Installation de Yuri distant…',
+    'remoteProjects.preparation.updating': 'Mise à jour de Yuri distant…', 'remoteProjects.preparation.starting': 'Démarrage du service distant…',
     'remoteProjects.folderMissing': 'Le dossier distant n’existe plus. Actualisez puis réessayez.', 'remoteProjects.invalidFolders': 'L’instantané des dossiers distants est invalide.',
     'remoteProjects.rollbackFailed': 'La restauration de l’état précédent des dossiers a également échoué', 'remoteProjects.invalidFolderMove': 'Un dossier ne peut pas être déplacé dans lui-même ou dans ses descendants.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat ne peut pas conserver le périmètre de la machine cible. Ouvrez une nouvelle conversation dans la fenêtre actuelle.',
@@ -154,6 +168,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'Hors ligne', 'remoteProjects.state.unauthorized': 'Autorisation requise', 'remoteProjects.state.incompatible': 'Version incompatible',
   },
   pl: {
+    'remoteProjects.preparation.checking': 'Sprawdzanie środowiska zdalnego…', 'remoteProjects.preparation.installing': 'Instalowanie zdalnego Yuri…',
+    'remoteProjects.preparation.updating': 'Aktualizowanie zdalnego Yuri…', 'remoteProjects.preparation.starting': 'Uruchamianie usługi zdalnej…',
     'remoteProjects.folderMissing': 'Folder zdalny już nie istnieje. Odśwież i spróbuj ponownie.', 'remoteProjects.invalidFolders': 'Migawka folderów zdalnych jest nieprawidłowa.',
     'remoteProjects.rollbackFailed': 'Przywrócenie poprzedniego stanu folderów również się nie powiodło', 'remoteProjects.invalidFolderMove': 'Nie można przenieść folderu do niego samego ani do jego podfolderów.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat nie zachowuje zakresu komputera docelowego. Otwórz nową rozmowę w bieżącym oknie.',
@@ -176,6 +192,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'Niedostępny', 'remoteProjects.state.unauthorized': 'Wymagana autoryzacja', 'remoteProjects.state.incompatible': 'Niezgodna wersja',
   },
   'pt-BR': {
+    'remoteProjects.preparation.checking': 'Verificando o ambiente remoto…', 'remoteProjects.preparation.installing': 'Instalando o Yuri remoto…',
+    'remoteProjects.preparation.updating': 'Atualizando o Yuri remoto…', 'remoteProjects.preparation.starting': 'Iniciando o serviço remoto…',
     'remoteProjects.folderMissing': 'A pasta remota não existe mais. Atualize e tente novamente.', 'remoteProjects.invalidFolders': 'O instantâneo das pastas remotas é inválido.',
     'remoteProjects.rollbackFailed': 'A restauração do estado anterior das pastas também falhou', 'remoteProjects.invalidFolderMove': 'Não é possível mover uma pasta para dentro dela mesma ou de suas subpastas.',
     'remoteProjects.miniChatUnsupportedReason': 'O MiniChat não mantém o escopo do computador de destino. Abra uma nova conversa na janela atual.',
@@ -198,6 +216,8 @@ export const remoteProjectMessages = {
     'remoteProjects.state.offline': 'Desconectado', 'remoteProjects.state.unauthorized': 'Autorização necessária', 'remoteProjects.state.incompatible': 'Versão incompatível',
   },
   uk: {
+    'remoteProjects.preparation.checking': 'Перевірка віддаленого середовища…', 'remoteProjects.preparation.installing': 'Встановлення віддаленого Yuri…',
+    'remoteProjects.preparation.updating': 'Оновлення віддаленого Yuri…', 'remoteProjects.preparation.starting': 'Запуск віддаленої служби…',
     'remoteProjects.folderMissing': 'Віддалена тека більше не існує. Оновіть і повторіть спробу.', 'remoteProjects.invalidFolders': 'Знімок віддалених тек недійсний.',
     'remoteProjects.rollbackFailed': 'Відновити попередній стан тек також не вдалося', 'remoteProjects.invalidFolderMove': 'Не можна перемістити теку в неї саму або в її підтеки.',
     'remoteProjects.miniChatUnsupportedReason': 'MiniChat не зберігає область цільового комп’ютера. Відкрийте нову розмову в поточному вікні.',

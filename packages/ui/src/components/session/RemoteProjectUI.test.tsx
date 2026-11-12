@@ -130,3 +130,22 @@ test('remote icon hover shows the machine name in a real tooltip', async () => {
   await flush(); await flush();
   expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent).toBe('Machine A');
 });
+
+test('mobile identity long press opens its tooltip without invoking the enclosing project gestures', async () => {
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch: vi.fn(), sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  registry.applyCatalog(catalog);
+  const press = vi.fn(); const context = vi.fn(); const click = vi.fn();
+  await act(async () => root.render(<div onPointerDown={press} onContextMenu={context} onClick={click}>
+    <RemoteHostIndicator registry={registry} hostId="a" compactName isolateLongPress />
+  </div>));
+  const identity = container.querySelector('[data-remote-host]')!;
+  await act(async () => identity.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', button: 0, bubbles: true })));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+  expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain('Machine A');
+  await act(async () => {
+    identity.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    identity.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'touch', bubbles: true }));
+    identity.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  });
+  expect(press).not.toHaveBeenCalled(); expect(context).not.toHaveBeenCalled(); expect(click).not.toHaveBeenCalled();
+});

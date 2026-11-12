@@ -83,6 +83,7 @@ import { saveSessionUnread } from '@/queries/sessionUnreadQueries';
 import { readRemoteResponse, refreshRemoteHostSummaries } from '@/queries/remoteProjectQueries';
 import { deleteRemoteMobileSessions } from '@/apps/remoteMobileStatusUndo';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import { RemoteHostIndicator } from '@/components/session/RemoteHostIndicator';
 
 interface MobileSessionStatusBarProps {
   onSessionSwitch?: (sessionId: string) => void;
@@ -590,6 +591,7 @@ function RemoteSessionItem(props: SessionItemProps) {
 // the session list; it does NOT switch the active project.
 interface ProjectFilterChipProps {
   label: string;
+  identity?: React.ReactNode;
   leadingIcon?: React.ReactNode;
   icon?: string | null;
   project?: Pick<ProjectEntry, 'id' | 'iconImage'> | null;
@@ -603,6 +605,7 @@ interface ProjectFilterChipProps {
 
 function ProjectFilterChip({
   label,
+  identity,
   leadingIcon,
   icon,
   project,
@@ -624,6 +627,7 @@ function ProjectFilterChip({
       onClick={onClick}
       className={cn(
         "flex min-h-[40px] shrink-0 select-none items-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none whitespace-nowrap transition-colors",
+        identity && 'max-w-[min(280px,calc(100vw-3rem))]',
         isActive
           ? "border-transparent bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)] text-[var(--surface-foreground)] font-medium"
           : "border-[var(--interactive-border)] bg-transparent text-[var(--surface-foreground)] active:bg-[color-mix(in_srgb,var(--interactive-selection)_40%,transparent)]"
@@ -650,7 +654,8 @@ function ProjectFilterChip({
         </span>
       ) : fallbackIcon}
 
-      <span className="max-w-[140px] truncate">{label}</span>
+      <span className={cn('max-w-[140px] truncate', identity && 'max-w-[50%] shrink-0')}>{label}</span>
+      {identity}
     </button>
   );
 }
@@ -1502,7 +1507,12 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
           >
             <Icon name="folder-open" className="size-4 shrink-0 text-[var(--surface-mutedForeground)]" />
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[14px] font-semibold text-[var(--surface-foreground)]">{groupLabel}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className={cn('truncate text-[14px] font-semibold text-[var(--surface-foreground)]', selectedProject?.hostId && remoteCatalog.registry && 'max-w-[60%] shrink-0')}>
+                  {selectedProject?.hostId ? selectedProject.label || formatDirectoryName(selectedProject.path) || selectedProject.path : groupLabel}
+                </span>
+                {selectedProject?.hostId && remoteCatalog.registry ? <RemoteHostIndicator registry={remoteCatalog.registry} hostId={selectedProject.hostId} remoteState={selectedProject.remoteState} compactName isolateLongPress /> : null}
+              </span>
               {branch ? (
                 <span className="flex min-w-0 items-center gap-1 text-[12px] text-[var(--surface-mutedForeground)]">
                   <Icon name="git-branch" className="size-3 shrink-0" />
@@ -1669,7 +1679,8 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
           {projects.map((project) => (
             <ProjectFilterChip
               key={project.id}
-              label={formatProjectLabel(project)}
+              label={project.hostId ? project.label || formatDirectoryName(project.path) || project.path : formatProjectLabel(project)}
+              identity={project.hostId && remoteCatalog.registry ? <RemoteHostIndicator registry={remoteCatalog.registry} hostId={project.hostId} remoteState={project.remoteState} compactName isolateLongPress /> : undefined}
               icon={project.icon}
               project={{ id: project.id, iconImage: project.iconImage ?? null }}
               iconOptions={{
@@ -1686,7 +1697,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         </div>
       )}
     </div>
-  ), [t, totalRunning, totalUnread, projects, hasPinnedSessions, filterProjectId, setFilterProjectId, formatProjectLabel, currentTheme, getProjectStatus, handleNewChat, handleNewWorktree, closeSessionPanel, worktreeTargetIsGitRepository, worktreeTargetProject, sessionSheetSnap]);
+  ), [t, totalRunning, totalUnread, projects, hasPinnedSessions, filterProjectId, setFilterProjectId, formatProjectLabel, currentTheme, getProjectStatus, handleNewChat, handleNewWorktree, closeSessionPanel, worktreeTargetIsGitRepository, worktreeTargetProject, sessionSheetSnap, remoteCatalog.registry]);
 
   const actionTargetTitle = actionTarget?.kind === 'project'
     ? formatProjectLabel(actionTarget.project)

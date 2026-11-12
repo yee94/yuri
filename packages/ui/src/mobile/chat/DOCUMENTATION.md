@@ -16,6 +16,12 @@ the selected session appears in summaries.
 Machine identity occupies the existing subtitle slot, not the session title.
 The transcript sync whisper takes precedence; when it clears, the remote machine
 indicator returns in that same slot. Local conversations have no machine subtitle.
+Remote connection/preparation status has higher priority than transcript sync,
+including warm cached transcripts and new drafts. Live checking/installing/
+updating/starting phases use that same subtitle slot; offline/authorization/
+incompatibility replaces loading instead of spinning indefinitely. Once connected,
+the existing message-materialization/refresh hint and its hysteresis resume. Older
+Hosts without phase projection retain a generic connection hint.
 `MobileContextProgressButton` mounts separate local and remote consumers. The
 remote leaf observes the already-bound Location transcript repository and scoped
 model selection; it creates no content request or second lease. Closed metadata

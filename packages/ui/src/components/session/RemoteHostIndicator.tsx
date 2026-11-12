@@ -8,7 +8,7 @@ import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 
 /** A leaf subscription: a host change never enumerates projects or input catalogs. */
-export const RemoteHostIndicator = React.memo(function RemoteHostIndicator({ registry, hostId, remoteState, composer = false, unsupported = false, showName = false, nameOnlyTip = false, compactName = false }: {
+export const RemoteHostIndicator = React.memo(function RemoteHostIndicator({ registry, hostId, remoteState, composer = false, unsupported = false, showName = false, nameOnlyTip = false, compactName = false, isolateLongPress = false }: {
   registry: HostRuntimeRegistry;
   hostId: string;
   remoteState?: RemoteProject['remoteState'];
@@ -17,6 +17,7 @@ export const RemoteHostIndicator = React.memo(function RemoteHostIndicator({ reg
   showName?: boolean;
   nameOnlyTip?: boolean;
   compactName?: boolean;
+  isolateLongPress?: boolean;
 }) {
   const { t } = useI18n();
   const host = useRemoteHost(registry, hostId);
@@ -32,7 +33,9 @@ export const RemoteHostIndicator = React.memo(function RemoteHostIndicator({ reg
   const tip = nameOnlyTip ? host?.name ?? hostId : details;
   const name = host?.name ?? hostId;
   const compactLabel = host?.source === 'ssh' && /^[^\s@]+@[^\s@]+$/.test(name) ? name.slice(name.indexOf('@') + 1) : name;
-  return <Tooltip><TooltipTrigger asChild><span aria-label={tip} data-remote-host={hostId} className={cn('inline-flex items-center gap-1 align-middle', compactName ? 'h-5 min-w-0 max-w-48 text-[11px] leading-5 text-foreground/70' : ['h-4 justify-center text-xs leading-none text-muted-foreground', composer || showName ? 'min-w-0' : 'w-4 shrink-0'])}>
+  return <Tooltip><TooltipTrigger asChild onPointerDown={(event) => {
+    if (isolateLongPress && (event.pointerType === 'touch' || event.pointerType === 'pen')) event.stopPropagation();
+  }}><span aria-label={tip} data-remote-host={hostId} onContextMenuCapture={isolateLongPress ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined} className={cn('inline-flex items-center gap-1 align-middle', compactName ? 'h-5 min-w-0 max-w-48 text-[11px] leading-5 text-foreground/70' : ['h-4 justify-center text-xs leading-none text-muted-foreground', composer || showName ? 'min-w-0' : 'w-4 shrink-0'])}>
     <Icon name="computer" className="block size-3 shrink-0" />
     {composer ? <span className="truncate">{name} · {status}{!available ? ` · ${t('remoteProjects.sendBlocked')}` : ''}</span> : compactName || showName ? <span className="truncate">{compactName ? compactLabel : name}</span> : null}
   </span></TooltipTrigger><TooltipContent side="top" sideOffset={6} className="max-w-[min(22rem,calc(100vw-2rem))] text-left [overflow-wrap:anywhere]">

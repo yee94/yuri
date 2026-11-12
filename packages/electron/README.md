@@ -26,6 +26,11 @@ SSH configuration still matches (accounting for the persisted chosen forward
 port), and otherwise initializes normally. Thus directory reads after verified
 admission do not disconnect and bootstrap that same ready tunnel again. Explicit
 instance switches still use the normal `connect` pipeline described below.
+During aggregate SSH preparation, the adapter temporarily observes the native
+manager's per-instance status and projects only allowlisted checking/installing/
+updating/starting/connecting phases. It unsubscribes on success or failure; raw
+SSH details, paths and credentials never enter aggregate Host status. This phase
+projection requires an updated desktop installer.
 The backend owns credentials, remote references, partitioned summaries and real
 HTTP/terminal/preview forwarding; renderers receive only public host descriptors.
 See `../web/server/lib/remote-hosts/DOCUMENTATION.md`. The adapter and host-aware

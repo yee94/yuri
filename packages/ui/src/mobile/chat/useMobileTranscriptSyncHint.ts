@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useRemoteHost } from '@/contexts/HostRuntimeProvider';
 import type { HostRuntimeContextValue } from '@/contexts/hostRuntimeContext';
 import { locationKey } from '@/lib/remote-projects/location';
+import { remoteConnectionHint } from '@/lib/remote-projects/connection-hint';
 import { getTranscriptRepository, transcriptScope, getTranscriptRepositoryBindingRevision, subscribeTranscriptRepositoryBinding } from '@/sync/transcript-repository-runtime';
 
 import { useI18n } from '@/lib/i18n';
@@ -171,5 +172,7 @@ export function useRemoteMobileTranscriptSyncHint(host: HostRuntimeContextValue,
     loadStatus: transcriptState === 'error' ? 'error' : transcriptState === 'ready' ? 'ready' : 'loading', userRefreshInFlight, backgroundResyncInFlight,
     isConnected: status?.state === 'connected', connectionPhase: status?.state === 'connected' ? 'connected' : status?.state === 'connecting' ? 'connecting' : 'reconnecting' });
   const visible = useSmoothedSyncHintActive(kind === 'syncing', JSON.stringify([directoryKey, sessionId]));
+  const connectionHint = remoteConnectionHint(status);
+  if (connectionHint) return t(connectionHint.key);
   return visible ? t('mobile.chat.syncingMessages') : null;
 }
