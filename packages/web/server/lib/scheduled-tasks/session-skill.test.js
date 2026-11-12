@@ -16,7 +16,7 @@ import { registerRemoteConnectionsSkill, REMOTE_CONNECTIONS_SKILL_PATH } from '.
 import { registerProjectsSkill, PROJECTS_SKILL_PATH } from '../gui-customization/projects.js';
 
 describe('built-in session skill with authenticated Host', () => {
-  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup, connections, registerProject;
+  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup, connections, registerProject, remoteGateway;
   const upstreamOrigin = 'http://127.0.0.1:4096';
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-skill-'));
@@ -68,8 +68,9 @@ describe('built-in session skill with authenticated Host', () => {
     };
     const router = express.Router();
     registerProject = vi.fn(async (input) => ({ project: { id: 'registered', ...input }, created: true, settings: { password } }));
+    remoteGateway = { supported: false, acquireTask: vi.fn(), registerProject: vi.fn(), list: vi.fn() };
     registerProjectsSkill(app, { express, getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth, createClient: () => sdk,
-      registerProject, readSettingsFromDiskStrict: common.readSettingsFromDiskMigrated, sanitizeProjects: common.sanitizeProjects });
+      registerProject, readSettingsFromDiskStrict: common.readSettingsFromDiskMigrated, sanitizeProjects: common.sanitizeProjects, remoteHostGateway: remoteGateway });
     connections = { list: vi.fn(async () => ({ instances: [] })), setup: vi.fn(async () => ({ id: 'ssh_one', running: true })),
       pair: vi.fn(async () => ({ url: 'yuri://connect?v=2&p=fixture', expiresAt: '2099-01-01' })) };
     registerRemoteConnectionsSkill(app, { express, adapter: connections, getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth, createClient: () => sdk });
@@ -222,6 +223,36 @@ describe('built-in session skill with authenticated Host', () => {
     expect(stale.value.terminal).toBe(true);
     expect(stale.stdout + stale.stderr).not.toContain(password);
     expect(registerProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs remote discovery and project registration through the exact staged commands and real auth gate', async () => {
+    const target = { hubId: 'hub', hostId: 'host', instanceId: 'instance' };
+    const release = vi.fn();
+    remoteGateway.supported = true;
+    remoteGateway.list.mockResolvedValue({ supported: true, hubId: target.hubId, hosts: [{ id: target.hostId, name: 'Build machine', source: 'ssh' }], projects: [] });
+    remoteGateway.acquireTask.mockResolvedValue({ target, release });
+    remoteGateway.registerProject.mockResolvedValue({ project: { id: 'remote-ref', hostId: target.hostId, path: '/remote/repo' }, created: true });
+    const session = await create();
+    const pointer = entries.get(`${session.id}:customization`);
+    const command = pointer.split('Bound project helper: ')[1].split('\n')[0];
+    const described = await run(command);
+    expect(described.code).toBe(0);
+    expect(described.value.remoteSupported).toBe(true);
+    const cmd = described.value.commands;
+    expect(cmd['remote-hosts']).toBeTypeOf('string');
+    expect(cmd['add-remote']).toBeTypeOf('string');
+    const discovered = await run(cmd['remote-hosts']);
+    expect(discovered).toMatchObject({ code: 0, value: { hosts: [{ name: 'Build machine', target }], complete: true } });
+    expect(release).toHaveBeenCalledOnce();
+    const input = { target: discovered.value.hosts[0].target, path: '/remote/repo' };
+    const added = await run(cmd['add-remote'], input);
+    expect(added).toMatchObject({ code: 0, value: { project: { id: 'remote-ref', path: input.path }, created: true, target } });
+    expect(remoteGateway.registerProject).toHaveBeenCalledExactlyOnceWith('host', { path: input.path }, { instanceId: 'instance', signal: expect.any(AbortSignal) });
+    expect(registerProject).not.toHaveBeenCalled();
+    expect(pointer + discovered.stdout + added.stdout + added.stderr).not.toContain(password);
+    sessions.get(session.id).metadata.yuri.scheduledTaskSkill.hostOrigin = 'http://127.0.0.1:1';
+    expect((await run(cmd['add-remote'], input)).value).toMatchObject({ status: 403, terminal: true });
+    expect(remoteGateway.registerProject).toHaveBeenCalledOnce();
   });
 
   it('rejects unbounded connection input and sanitizes remote errors', async () => {

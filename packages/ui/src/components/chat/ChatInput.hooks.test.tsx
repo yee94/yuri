@@ -118,9 +118,13 @@ it.each([
     const consumeSynthetic = vi.fn();
     const removeInline = vi.fn();
     const synthetic = { partID: 'part-1', text: 'Synthetic context', synthetic: true, attachments: [] };
+    let releaseCatalog!: () => void;
+    const catalogWait = new Promise<void>((resolve) => { releaseCatalog = resolve; });
     const scope = {
         ...goalAdmissionScope('remote text'),
-        hostRuntime: { entry: { location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' } } },
+        hostRuntime: { entry: { sdk: vi.fn(), location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' } } },
+        remoteQueryClient: { ensureQueryData: async () => { await catalogWait; return []; } }, installedSkillsQueryOptions: () => ({}),
+        rawAgentsQueryOptions: () => ({}), ensureRemoteComposerSessions: async () => [],
         surface: { active: true, kind: 'secondary', surfaceID: 'remote-surface', sessionID: 'remote-session',
             transportIdentity: 'transport', runtimeGeneration: 1, deliveryTarget: { kind: 'primary' },
             commands: { hasNewDraft }, selection: { value: { providerID: 'remote-provider', modelID: 'model' }, flush }, backend: { send } },
@@ -137,8 +141,11 @@ it.each([
         scrollToBottom: vi.fn(),
     };
     const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
-    await submit();
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ sessionID: hasNewDraft ? null : 'remote-session', directory: 'C:\\repo', text: 'remote text\nInline comment', parts: [synthetic], options: { delivery: 'queue', messageID: 'pending-message' } }));
+    const pending = submit();
+    scope.surface.selection.value = { providerID: 'changed-during-wait', modelID: 'new-model' };
+    releaseCatalog();
+    await pending;
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ providerID: 'remote-provider', modelID: 'model', sessionID: hasNewDraft ? null : 'remote-session', directory: 'C:\\repo', text: 'remote text\nInline comment', parts: [synthetic], options: { delivery: 'queue', messageID: 'pending-message' } }));
     expect(scope.queueMessageFromEvent).not.toHaveBeenCalled();
     expect(end).toHaveBeenCalledOnce();
     if (fails) {
@@ -509,6 +516,7 @@ it.each([
     `, {
         isMobile: mobile, isCapacitorApp: () => capacitor, isMobileSurfaceRuntime: () => hosted,
         pendingSessionReferenceRef: { current: false },
+        hostRuntime: null, draftKey: null, isCurrentMentionOwner: () => true,
         useSessionUIStore: { getState: () => ({ getAuthoritativeDirectoryForSession: () => '/repo' }) },
         ensureSessionRenderable: ensure, resolveMaterializedSessionDirectory: () => '/repo',
         ensureSessionMentionTranscripts: prefetch, getDocument: () => ({ text: '@' }),

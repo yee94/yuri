@@ -10,7 +10,8 @@ import { ensureRemoteHostCatalog, getHostRuntimeRegistry } from '@/queries/remot
 export function openRemoteProjectSession(project: RemoteProject, registry: HostRuntimeRegistry, sessionId: string | null, directory = project.path, mobile = false, draft?: RemoteSessionDraftOptions) {
   registry.assertCurrent();
   useProjectsStore.getState().setActiveProjectIdOnly(project.id);
-  useSessionNavigationStore.getState().openRemoteSession(project, { hubId: registry.hubId, hostId: project.hostId, directory }, sessionId, draft);
+  useSessionNavigationStore.getState().openRemoteSession(project, { hubId: registry.hubId, hostId: project.hostId, directory,
+    ...(project.instanceId ? { instanceId: project.instanceId } : {}) }, sessionId, draft);
   useUIStore.getState().setActiveMainTab('chat');
   if (mobile) useMobileNavigationStore.getState().openRemoteProject();
 }

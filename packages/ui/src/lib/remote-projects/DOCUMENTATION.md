@@ -2,6 +2,12 @@
 
 `HostLocation` carries the current Hub identity, optional Remote Host identity and
 the **raw filesystem directory**. A `locationKey` is an identity, not a path.
+It additionally carries the authenticated `instanceId` when known. The registry
+resolves it from the Host catalog and rejects references to another instance;
+SDK and Yuri fetches carry that identity to the Hub's admission check. Saved
+connection identities remain independent authorization routes. Existing durable
+keys stay compatible because the Hub persistently pins each connection to its
+resource authority and refuses silent retargeting.
 Only identity-indexed state may use it; Files/Git/SDK/terminal operations receive
 `location.directory`. Local location/session keys retain their previous bytes.
 Remote location/session keys include Hub, host, directory and session as applicable.

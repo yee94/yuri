@@ -304,7 +304,7 @@ const withSessionMessageCompat = (client: RawOpenCodeClient): OpenCodeClient => 
   };
 };
 
-const createRuntimeOpencodeClient = (config: { baseUrl: string; headers?: HeadersInit; hostId?: string; isCurrentHost?: () => boolean }): OpenCodeClient => {
+const createRuntimeOpencodeClient = (config: { baseUrl: string; headers?: HeadersInit; hostId?: string; instanceId?: string; isCurrentHost?: () => boolean }): OpenCodeClient => {
   const runtimeKey = config.hostId ? getRuntimeKey() : undefined;
   const generation = config.hostId ? getRuntimeGeneration() : undefined;
   return withSessionMessageCompat(OpenCode.make({
@@ -319,6 +319,11 @@ const createRuntimeOpencodeClient = (config: { baseUrl: string; headers?: Header
       // Resolve at dispatch so these calls cannot bypass the active relay.
       const url = new URL(input instanceof Request ? input.url : input.toString());
       const path = hostApiPath(config.hostId, `${url.pathname}${url.search}`);
+      if (config.hostId && config.instanceId) {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        headers.set('x-yuri-target-instance', config.instanceId);
+        init = { ...init, headers };
+      }
       let pending: Promise<Response>;
       if (input instanceof Request) {
         const target = ensureAbsoluteBaseUrl(getRuntimeUrlResolver().api(path));
@@ -550,7 +555,7 @@ class OpencodeService {
     this.isCurrentHost = isCurrentHost;
     this.hostEntry = hostEntry;
     this.currentDirectory = location?.directory;
-    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, isCurrentHost });
+    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost });
     if (this.hostScope && !this.hostEntry) {
       const scope = this.hostScope;
       const key = locationKey(scope);
@@ -583,7 +588,9 @@ class OpencodeService {
       const url = new URL(path);
       path = `${url.pathname}${url.search}`;
     }
-    const response = await runtimeFetch(hostApiPath(this.hostScope?.hostId, path), init);
+    const headers = new Headers(init?.headers);
+    if (this.hostScope?.instanceId) headers.set('x-yuri-target-instance', this.hostScope.instanceId);
+    const response = await runtimeFetch(hostApiPath(this.hostScope?.hostId, path), this.hostScope?.instanceId ? { ...init, headers } : init);
     this.assertHostScopeCurrent();
     return response;
   }
@@ -600,7 +607,7 @@ class OpencodeService {
       return;
     }
     this.baseUrl = nextBaseUrl;
-    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, isCurrentHost: this.isCurrentHost });
+    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost: this.isCurrentHost });
     this.scopedClients.clear();
     this.listDirectoryInFlight.clear();
     this.configProvidersInFlight.clear();
@@ -624,12 +631,13 @@ class OpencodeService {
   /** Explicit remote scope: never infer the target machine from a filesystem path. */
   getLocationSdkClient(location: HostLocation): OpenCodeClient {
     if (!location.hostId) return this.getScopedSdkClient(location.directory);
-    const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location)]);
+    const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location), location.instanceId ?? null]);
     const existing = this.scopedClients.get(key);
     if (existing) return existing;
     const client = createRuntimeOpencodeClient({
       baseUrl: resolveV2ClientBaseUrl(this.baseUrl),
       hostId: location.hostId,
+      instanceId: location.instanceId,
     });
     this.scopedClients.set(key, client);
     return client;
@@ -707,7 +715,7 @@ class OpencodeService {
     if (existing) {
       return existing;
     }
-    const scoped = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, isCurrentHost: this.isCurrentHost });
+    const scoped = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost: this.isCurrentHost });
     this.scopedClients.set(key, scoped);
     return scoped;
   }
@@ -2870,7 +2878,7 @@ const locationServices = new Map<string, OpencodeService>();
 /** One service/cache/serial-send boundary per Hub + host + Location, never global switching. */
 export const getLocationOpencodeClient = (location: HostLocation, fence?: { generation: number; isCurrent(): boolean }, scope?: HostRuntimeEntry): LocationOpencodeService => {
   if (!location.hostId) return opencodeClient;
-  const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location), fence?.generation ?? null, Boolean(scope)]);
+  const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location), location.instanceId ?? null, fence?.generation ?? null, Boolean(scope)]);
   const existing = locationServices.get(key);
   if (existing) {
     locationServices.delete(key);

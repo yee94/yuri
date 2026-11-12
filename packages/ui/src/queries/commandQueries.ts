@@ -82,17 +82,23 @@ export const useCommandsQuery = (options: { enabled?: boolean; directory?: strin
 export const readCommandsSnapshot = (
   directory: string | null = resolveConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
-): Command[] => queryClient.getQueryData<Command[]>(commandQueryKey(normalizeDirectory(directory), transport)) ?? [];
+  entry?: HostRuntimeEntry,
+): Command[] => {
+  captureProjectScope(entry).assertCurrent();
+  return queryClient.getQueryData<Command[]>(commandQueryOptions(directory, transport, entry).queryKey) ?? [];
+};
 
 export const refreshCommandsQuery = async (
   client: Pick<QueryClient, 'fetchQuery' | 'getQueryData'>,
   directory: string | null,
   transport: string,
+  entry?: HostRuntimeEntry,
 ): Promise<Command[]> => {
+  if (entry) captureProjectScope(entry).assertCurrent();
   const normalizedDirectory = normalizeDirectory(directory);
   if (getRuntimeTransportIdentity() !== transport) {
-    return client.getQueryData<Command[]>(commandQueryKey(normalizedDirectory, transport)) ?? [];
+    return client.getQueryData<Command[]>(commandQueryOptions(normalizedDirectory, transport, entry).queryKey) ?? [];
   }
-  const options = commandQueryOptions(normalizedDirectory, transport);
+  const options = commandQueryOptions(normalizedDirectory, transport, entry);
   return client.fetchQuery({ ...options, staleTime: 0 });
 };

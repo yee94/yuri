@@ -953,8 +953,23 @@ const readWindowStates = () => {
 const desktopWindowRoute = (value) => {
   if (typeof value !== 'string') return '/index.html';
   try {
-    const route = new URL(value, 'https://window.invalid').pathname;
-    return /^\/(session|new|assistant|schedule|settings|plugins)(\/|$)/.test(route) ? route : '/index.html';
+    const url = new URL(value, 'https://window.invalid');
+    const route = url.pathname;
+    if (!/^\/(session|new|assistant|schedule|settings|plugins)(\/|$)/.test(route)) return '/index.html';
+    const remote = ['hubId', 'hostId', 'instanceId'].some((key) => url.searchParams.has(key));
+    if (!remote || !/^\/(session|new)(\/|$)/.test(route)) return route;
+    const query = url.searchParams;
+    const fields = ['hubId', 'hostId', 'directory', 'instanceId', 'projectId'];
+    for (const key of [...query.keys()]) if (!fields.includes(key)) query.delete(key);
+    for (const key of fields) {
+      const field = url.searchParams.get(key);
+      if (['hubId', 'hostId', 'directory'].includes(key) && !field) return '/index.html';
+      if (field !== null) {
+        if (!field.trim() || /[\x00-\x1f]/.test(field) || field.length > 16_384) return '/index.html';
+        query.set(key, field);
+      }
+    }
+    return `${route}?${query}`;
   } catch {
     return '/index.html';
   }
@@ -1943,9 +1958,8 @@ const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => 
   return { target: 'remote', status, hostId: host.id, url: host.apiUrl || host.url };
 };
 
-const buildStartupSplashHtml = () => {
+const buildStartupSplashHtml = (hostId = readWindowStates()[0]?.hostId || readDesktopHostsConfig().defaultHostId) => {
   const settings = readSettingsRoot();
-  const hostId = readWindowStates()[0]?.hostId || readDesktopHostsConfig().defaultHostId;
   const connectingRemote = Boolean(process.env.YURI_SERVER_URL || (hostId && hostId !== LOCAL_HOST_ID));
   const status = connectingRemote ? getMenuLabels(normalizeMenuLocale(app.getLocale())).startupConnectingRemote : '';
   const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#FFFCF0';
@@ -3095,7 +3109,7 @@ const createBrowserWindow = ({ label, restoreGeometry, savedState, url, runtimeC
   } else {
     void navigateWindow(
       browserWindow,
-      `data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`,
+      `data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml(windowHostId || undefined))}`,
       { allowAbort: true },
     );
   }
@@ -3369,6 +3383,13 @@ const focusAssistantMiniChatTarget = async (browserWindow, args) => {
   const taskID = typeof args.taskID === 'string' ? args.taskID.trim() : '';
   const projectID = typeof args.projectID === 'string' ? args.projectID.trim() : '';
   const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
+  const remoteTarget = args.target;
+  if (remoteTarget !== undefined && (!remoteTarget || typeof remoteTarget !== 'object' || Array.isArray(remoteTarget) || !sessionId || !directory
+    || ['hubId', 'hostId', 'instanceId'].some((key) => typeof remoteTarget[key] !== 'string'
+      || !remoteTarget[key].trim() || remoteTarget[key] !== remoteTarget[key].trim()
+      || remoteTarget[key].length > 512 || /[\x00-\x1f]/.test(remoteTarget[key])))) {
+    throw new Error('Invalid remote session target');
+  }
   const route = taskID && projectID ? `/schedule/tasks/${encodeURIComponent(projectID)}/${encodeURIComponent(taskID)}`
     : sessionId ? `/session/${encodeURIComponent(sessionId)}`
     : `/assistant/${encodeURIComponent(assistantID || browserWindow.__yuriMiniChatAssistantID || '')}`;
@@ -3381,16 +3402,19 @@ const focusAssistantMiniChatTarget = async (browserWindow, args) => {
   if (!target) {
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
     if (directory) url.searchParams.set('directory', directory);
+    if (remoteTarget) for (const key of ['hubId', 'hostId', 'instanceId']) url.searchParams.set(key, remoteTarget[key]);
     target = await createAdditionalWindow(url.toString(), runtimeConfig);
     if (!target) throw new Error('Main window is not available');
   } else if (target.webContents.isLoading()) {
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
     if (directory) url.searchParams.set('directory', directory);
+    if (remoteTarget) for (const key of ['hubId', 'hostId', 'instanceId']) url.searchParams.set(key, remoteTarget[key]);
     await navigateWindow(target, url.toString());
   } else if (taskID && projectID) {
     emitToWindow(target, 'yuri:open-scheduled-task', { projectID, taskID });
   } else if (sessionId) {
-    emitToWindow(target, 'yuri:open-session', { sessionId, directory });
+    emitToWindow(target, 'yuri:open-session', { sessionId, directory,
+      ...(remoteTarget ? { hubId: remoteTarget.hubId, hostId: remoteTarget.hostId, instanceId: remoteTarget.instanceId } : {}) });
   } else {
     emitToWindow(target, 'yuri:open-assistant', { assistantID: assistantID || browserWindow.__yuriMiniChatAssistantID });
   }
@@ -3469,15 +3493,23 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
   };
 };
 
-const restoreAdditionalDesktopWindows = async (entries, local) => {
-  for (const entry of entries) {
+const restoreAdditionalDesktopWindows = async (entries, local, windows) => {
+  await Promise.all(entries.map(async (entry, index) => {
+    const browserWindow = windows[index];
+    if (browserWindow.isDestroyed() || state.quitRequested) return;
     const target = await resolveDesktopStartupTarget(entry.hostId, { ...local, restoreSession: true });
+    if (browserWindow.isDestroyed() || state.quitRequested) return;
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(entry.route) : entry.route, target.initialUrl).toString();
-    createBrowserWindow({ label: nextWindowLabel(), savedState: entry, url, runtimeConfig: target });
-  }
+    const runtime = buildRendererRuntimeConfig(url, target);
+    browserWindow.__yuriRuntimeConfig = runtime;
+    browserWindow.__yuriHostId = target.hostId;
+    browserWindow.__yuriBootOutcome = target.bootOutcome;
+    browserWindow.__yuriInitScript = buildInitScript(local.localOrigin, target.bootOutcome, runtime.apiBaseUrl, runtime.clientToken, runtime.requestHeaders);
+    await navigateWindow(browserWindow, url, { allowAbort: true });
+  }));
 };
 
-const resolveInitialUrl = async () => {
+const resolveInitialUrl = async ({ deferWindowRestore = false } = {}) => {
   const hmrApiPort = process.env.YURI_HMR_API_PORT || '3901';
   const hmrUiPort = process.env.YURI_HMR_UI_PORT || '5173';
   const hmrApiUrl = `http://127.0.0.1:${hmrApiPort}`;
@@ -3511,6 +3543,9 @@ const resolveInitialUrl = async () => {
   const config = readDesktopHostsConfig();
   if (!envTarget) {
     const savedWindow = readWindowStates()[0];
+    if (savedWindow && deferWindowRestore) {
+      return { initialUrl, localOrigin, localUiUrl, apiBaseUrl, clientToken, requestHeaders };
+    }
     const hostId = savedWindow?.hostId || config.defaultHostId;
     return resolveDesktopStartupTarget(hostId, { localUrl, localUiUrl, localOrigin, restoreSession: Boolean(savedWindow) });
   }
@@ -6342,17 +6377,21 @@ app.whenReady().then(async () => {
 
   const savedWindows = process.env.YURI_SERVER_URL ? [] : readWindowStates();
   restoringWindowSession = true;
-  state.mainWindow = createBrowserWindow({
-    label: 'main',
-    restoreGeometry: true,
+  const startupWindows = (savedWindows.length > 0 ? savedWindows : [null]).map((entry, index) => createBrowserWindow({
+    label: nextWindowLabel(),
+    restoreGeometry: index === 0,
+    savedState: entry,
     url: null,
-  });
+    runtimeConfig: { hostId: entry?.hostId },
+  }));
+  state.mainWindow = startupWindows[0];
 
   const initial = extractInitialDeepLinks();
   if (initial.length > 0) handleDeepLinks(initial);
 
-  const initialTarget = await resolveInitialUrl();
-  const { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId } = initialTarget;
+  const initialTarget = await resolveInitialUrl({ deferWindowRestore: true });
+  const { localOrigin, localUiUrl } = initialTarget;
+  state.localOrigin = localOrigin;
   if (desktopOta?.state.trial) {
     desktopOtaReadyTimer = setTimeout(() => {
       if (!desktopOta.state.trial || state.quitRequested) return;
@@ -6365,12 +6404,22 @@ app.whenReady().then(async () => {
     }, 60_000);
     desktopOtaReadyTimer.unref();
   }
-  const mainRoute = savedWindows[0]?.route;
-  const mainUrl = mainRoute ? new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(mainRoute) : mainRoute, initialUrl).toString() : initialUrl;
-  await activateMainWindow(mainUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId });
-  if (!process.env.YURI_SERVER_URL) {
-    await restoreAdditionalDesktopWindows(savedWindows.slice(1), { localUrl: state.sidecarUrl, localUiUrl, localOrigin });
-  }
+  const local = { localUrl: state.sidecarUrl, localUiUrl, localOrigin };
+  const activateFirstWindow = async () => {
+    const first = startupWindows[0];
+    if (first.isDestroyed() || state.quitRequested) return;
+    const target = savedWindows[0]
+      ? await resolveDesktopStartupTarget(savedWindows[0].hostId, { ...local, restoreSession: true })
+      : initialTarget;
+    if (first.isDestroyed() || state.quitRequested || state.mainWindow !== first) return;
+    const mainRoute = savedWindows[0]?.route;
+    const mainUrl = mainRoute ? new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(mainRoute) : mainRoute, target.initialUrl).toString() : target.initialUrl;
+    await activateMainWindow(mainUrl, localOrigin, target.bootOutcome, target);
+  };
+  await Promise.all([
+    activateFirstWindow(),
+    restoreAdditionalDesktopWindows(savedWindows.slice(1), local, startupWindows.slice(1)),
+  ]);
   restoringWindowSession = false;
   await writeWindowState(state.mainWindow);
   initialStartupComplete = true;

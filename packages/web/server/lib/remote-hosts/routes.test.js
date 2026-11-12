@@ -25,6 +25,7 @@ import { registerFsRoutes } from '../fs/routes.js';
 import { createTerminalRuntime } from '../terminal/runtime.js';
 import { readTerminalWsControlFrame, createTerminalWsControlFrame } from '../terminal/terminal-ws-protocol.js';
 import { createTranscriptCacheService } from '../transcript-cache/service.js';
+import { runRemoteProjectOperation } from '../gui-customization/projects-remote.js';
 
 const require = createRequire(import.meta.url);
 const disposers = [];
@@ -182,6 +183,186 @@ async function aggregate(options = {}) {
 }
 
 describe('Remote Host production HTTP contract', () => {
+  it('forwards metadata writes with their directory and patch, but rejects other methods and stale targets', async () => {
+    const { hub, remote } = await aggregate();
+    const writes = [];
+    remote.app.put('/api/yuri/sessions/:id/metadata', express.json(), (req, res) => {
+      writes.push({ id: req.params.id, body: req.body });
+      res.json({ metadata: req.body.patch });
+    });
+    const route = '/api/hosts/remote-1/api/yuri/sessions/same-id/metadata';
+    const body = { directory: '/same/path', patch: { yuri: { label: 'metadata' } } };
+    const response = await hub.call(route, 'PUT', body);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ metadata: body.patch });
+    expect(writes).toEqual([{ id: 'same-id', body }]);
+    expect((await hub.call(route, 'POST', body)).status).toBe(403);
+    expect((await fetch(`${hub.url}${route}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(401);
+    const rejected = await fetch(`${hub.url}${route}`, { method: 'PUT', headers: { ...hub.headers, 'x-yuri-target-instance': 'other-instance' }, body: JSON.stringify(body) });
+    expect(rejected.status).toBe(409);
+    expect(writes).toHaveLength(1);
+  });
+
+  it('routes deletion to the target Host without deleting the same-ID Hub session', async () => {
+    const { hub, remote } = await aggregate();
+    const remoteDelete = vi.fn((req, res) => res.json({ deleted: req.params.id }));
+    const localDelete = vi.fn((_req, res) => res.status(500).json({ error: 'Must not delete locally' }));
+    remote.app.delete('/api/session/:id', remoteDelete);
+    hub.app.delete('/api/session/:id', localDelete);
+    const response = await hub.call('/api/hosts/remote-1/api/session/same-id', 'DELETE');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ deleted: 'same-id' });
+    expect(remoteDelete).toHaveBeenCalledOnce();
+    expect(localDelete).not.toHaveBeenCalled();
+  });
+
+  it('forwards archive and unarchive only to the authenticated target Host', async () => {
+    const { hub, remote } = await aggregate();
+    const received = [];
+    remote.app.put('/api/yuri/sessions/:id/archive', express.json(), (req, res) => {
+      received.push({ id: req.params.id, body: req.body });
+      res.json({ session: { id: req.params.id, time: { archived: req.body.archivedAt } } });
+    });
+    for (const archivedAt of [123, 0]) {
+      const response = await hub.call('/api/hosts/remote-1/api/yuri/sessions/session-1/archive', 'PUT', { directory: '/same/path', archivedAt });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ session: { id: 'session-1', time: { archived: archivedAt } } });
+    }
+    expect(received).toEqual([123, 0].map((archivedAt) => ({ id: 'session-1', body: { directory: '/same/path', archivedAt } })));
+    for (const [route, method] of [['sessions/session-1/archive', 'POST'], ['sessions/session-1/unknown', 'PUT']]) {
+      expect((await hub.call(`/api/hosts/remote-1/api/yuri/${route}`, method, {})).status).toBe(403);
+    }
+    expect(received).toHaveLength(2);
+  });
+
+  it('rejects a connection retarget before reading or mutating the replacement authority', async () => {
+    const { hub, remote, setHosts } = await aggregate();
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
+    expect(hub.store.projects()[0].instanceId).toBe(remote.store.hubId);
+    const replacement = await host();
+    setHosts([{ id: 'remote-1', source: 'direct', apiUrl: replacement.url, clientToken: replacement.issued.token }]);
+    const response = await hub.call('/api/hosts/remote-1/api/session/same-id/message', 'POST', { text: 'do not send' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'remote_instance_mismatch' });
+    expect(replacement.messageHeaders).toBeUndefined();
+    expect(hub.store.projects()[0].instanceId).toBe(remote.store.hubId);
+  });
+
+  it('checks an explicit target authority without forwarding the Hub-only marker', async () => {
+    const { hub, remote } = await aggregate();
+    const route = `${hub.url}/api/hosts/remote-1/api/session/same-id/message`;
+    const send = (instanceId) => fetch(route, { method: 'POST', headers: { ...hub.headers, 'x-yuri-target-instance': instanceId }, body: '{}' });
+    expect((await send('other-instance')).status).toBe(409);
+    expect(remote.messageHeaders).toBeUndefined();
+    expect((await send(remote.store.hubId)).status).toBe(200);
+    expect(remote.messageHeaders['x-yuri-target-instance']).toBeUndefined();
+  });
+
+  it('retains only the task host status stream without a UI and releases it on completion', async () => {
+    const { hub, remote, setHosts } = await aggregate();
+    const other = await host();
+    setHosts([
+      { id: 'remote-1', source: 'direct', apiUrl: remote.url, clientToken: remote.issued.token },
+      { id: 'remote-2', source: 'direct', apiUrl: other.url, clientToken: other.issued.token },
+    ]);
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
+    await hub.call('/api/hosts/remote-2/projects', 'POST', { path: '/same/path' });
+    const onEvent = vi.fn();
+    const lease = await hub.gateway.acquireTask('remote-1', { instanceId: remote.store.hubId, onEvent });
+    expect(lease.target).toEqual({ hubId: hub.store.hubId, hostId: 'remote-1', instanceId: remote.store.hubId });
+    await wait(() => expect(remote.statusStreams).toBe(1));
+    expect(hub.liveClients).toBe(0);
+    expect(other.statusStreams).toBe(0);
+    expect(other.indexRequests).toBe(0);
+    const uiAbort = new AbortController();
+    const stream = await fetch(`${hub.url}/api/global/event`, { headers: hub.headers, signal: uiAbort.signal });
+    await wait(() => expect(other.statusStreams).toBe(1));
+    uiAbort.abort(); await stream.body.cancel().catch(() => {});
+    await wait(() => expect(other.statusStreams).toBe(0));
+    expect(remote.statusStreams).toBe(1);
+    remote.emit({ type: 'session.execution.succeeded', data: { sessionID: 'same-id', directory: '/same/path' } });
+    await wait(() => expect(onEvent.mock.calls.some(([event]) => event.payload.type === 'session.execution.succeeded')).toBe(true));
+    remote.emit({ type: 'session.execution.interrupted', data: { sessionID: 'same-id', directory: '/same/path', reason: 'user',
+      error: { name: 'MessageAbortedError', message: 'private error body', stack: 'private stack' } } });
+    await wait(() => expect(onEvent.mock.calls.some(([event]) => event.payload.type === 'session.execution.interrupted')).toBe(true));
+    const interrupted = onEvent.mock.calls.find(([event]) => event.payload.type === 'session.execution.interrupted')[0];
+    expect(interrupted.payload.data).toEqual({ sessionID: 'same-id', directory: '/same/path', reason: 'user', error: { name: 'MessageAbortedError' } });
+    expect(JSON.stringify(interrupted)).not.toContain('private');
+    const sibling = await hub.gateway.acquireTask('remote-1', { onEvent: vi.fn() });
+    lease.release(); lease.release();
+    expect(remote.statusStreams).toBe(1);
+    sibling.release();
+    await wait(() => expect(remote.statusStreams).toBe(0));
+    await expect(lease.json('/api/projects')).rejects.toThrow();
+  });
+
+  it('cancels task reads and rejects stale leases after descriptor revocation', async () => {
+    const { hub, remote, setHosts } = await aggregate();
+    const abort = new AbortController();
+    const lease = await hub.gateway.acquireTask('remote-1', { signal: abort.signal });
+    expect(remote.statusStreams).toBe(0);
+    expect(await lease.json('/api/projects')).toEqual({ projects: [] });
+    let entered;
+    const receiving = new Promise((resolve) => { entered = resolve; });
+    remote.app.get('/api/session/slow-task', (_req, res) => {
+      res.type('application/json').write('{"unfinished":');
+      entered();
+    });
+    const pending = expect(lease.json('/api/session/slow-task')).rejects.toThrow();
+    await receiving;
+    abort.abort();
+    await pending;
+    await expect(lease.json('/api/projects')).rejects.toThrow();
+    const active = await hub.gateway.acquireTask('remote-1');
+    setHosts([]);
+    await expect(active.json('/api/projects')).rejects.toMatchObject({ code: 'host_unavailable' });
+    active.release();
+  });
+
+  it('closes server task demand before its database on shutdown and tolerates late release', async () => {
+    const { hub, remote } = await aggregate();
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
+    const task = await hub.gateway.acquireTask('remote-1', { onEvent: vi.fn() });
+    await wait(() => expect(remote.statusStreams).toBe(1));
+    hub.gateway.stop();
+    task.release();
+    hub.gateway.stop();
+    await wait(() => expect(remote.statusStreams).toBe(0));
+    await expect(task.json('/api/projects')).rejects.toThrow();
+    await expect(hub.gateway.list()).rejects.toMatchObject({ code: 'host_unavailable' });
+  });
+
+  it('delivers task status for authorized sessions without adding Hub project references or indexing them', async () => {
+    const { hub, remote } = await aggregate();
+    const onEvent = vi.fn();
+    const task = await hub.gateway.acquireTask('remote-1', { instanceId: remote.store.hubId, onEvent });
+    await wait(() => expect(remote.statusStreams).toBe(1));
+    expect(hub.store.projects()).toEqual([]);
+    remote.emit({ type: 'session.execution.interrupted', data: { sessionID: 'not-in-hub', reason: 'user',
+      error: { name: 'MessageAbortedError', message: 'private body' } } });
+    await wait(() => expect(onEvent.mock.calls.some(([event]) => event.payload.type === 'session.execution.interrupted')).toBe(true));
+    expect(onEvent.mock.calls.find(([event]) => event.payload.type === 'session.execution.interrupted')[0].payload.data)
+      .toEqual({ sessionID: 'not-in-hub', reason: 'user', error: { name: 'MessageAbortedError' } });
+    expect(hub.store.projects()).toEqual([]);
+    expect((await hub.call('/api/hosts/remote-1/summaries')).status).toBe(404);
+    expect(remote.indexRequests).toBe(0);
+    task.release();
+    await wait(() => expect(remote.statusStreams).toBe(0));
+  });
+
+  it('shares admission and one HTTP status stream across 50 background task leases', async () => {
+    const { hub, remote } = await aggregate();
+    const tasks = await Promise.all(Array.from({ length: 50 }, () => hub.gateway.acquireTask('remote-1', { onEvent: vi.fn() })));
+    await wait(() => expect(remote.statusStreams).toBe(1));
+    expect(remote.capabilityRequests).toBe(1);
+    expect(remote.indexRequests).toBe(0);
+    expect(hub.liveClients).toBe(0);
+    for (const task of tasks.slice(0, -1)) task.release();
+    expect(remote.statusStreams).toBe(1);
+    tasks.at(-1).release();
+    await wait(() => expect(remote.statusStreams).toBe(0));
+  });
+
   it('forwards worktree dialog GitHub reads and prompt templates without allowing machine mutations', async () => {
     const { hub, remote } = await aggregate();
     const reads = ['/api/github/auth/status', '/api/github/issues/list', '/api/github/pulls/list',
@@ -685,6 +866,58 @@ describe('Remote Host production HTTP contract', () => {
     expect(remote.indexRequests).toBe(0);
   });
 
+  it('allows an Agent to discover an unassociated machine and add its first project through the same persisted UI authority', async () => {
+    const { hub, remote } = await aggregate();
+    const discovery = await runRemoteProjectOperation(hub.gateway, 'remote-hosts', {});
+    expect(discovery).toMatchObject({ hosts: [{ name: 'Remote', target: { hubId: hub.store.hubId, hostId: 'remote-1', instanceId: remote.store.hubId } }], complete: true });
+    expect(hub.store.projects()).toEqual([]);
+    const target = discovery.hosts[0].target;
+    const tip = vi.fn(); const unsubscribe = hub.broadcast.subscribe(tip);
+    try {
+      const added = await runRemoteProjectOperation(hub.gateway, 'add-remote', { target, path: '/remote-only/项目 & # 100%', label: 'Remote project' });
+      expect(added).toMatchObject({ created: true, target, project: { hostId: 'remote-1', instanceId: target.instanceId, path: '/remote-only/项目 & # 100%', label: 'Remote project' } });
+      expect(remote.projects).toHaveLength(1);
+      expect(hub.projects).toEqual([]);
+      expect((await (await hub.call('/api/hosts/projects')).json()).projects).toEqual([added.project]);
+      expect(tip.mock.calls.filter(([event]) => event.type === 'yuri:project-order-changed')).toHaveLength(1);
+      const repeated = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { path: added.project.path, label: 'Do not rename' })).json();
+      expect(repeated).toEqual({ project: added.project, created: false });
+      expect(tip.mock.calls.filter(([event]) => event.type === 'yuri:project-order-changed')).toHaveLength(1);
+      expect(hub.gateway.assertProjectDirectory(target.hostId, added.project.path)).toBe(added.project.path);
+      const remoteCreate = vi.fn((req, res) => res.json({ data: { ...req.body, time: { created: 1, updated: 1 } } }));
+      const localCreate = vi.fn((_req, res) => res.status(500).end());
+      remote.app.post('/api/session', express.json(), remoteCreate);
+      hub.app.post('/api/session', express.json(), localCreate);
+      const created = await runRemoteProjectOperation(hub.gateway, 'create-session', {
+        target, directory: added.project.path, sessionID: 'ses_remote_new', title: 'Remote worker',
+      });
+      expect(created).toMatchObject({ created: true, session: { sessionID: 'ses_remote_new', directory: added.project.path, target } });
+      expect(remoteCreate).toHaveBeenCalledOnce();
+      expect(localCreate).not.toHaveBeenCalled();
+      expect(remote.statusStreams).toBe(0);
+      expect(remote.indexRequests).toBe(0);
+      expect(remote.content.size).toBe(0);
+      await expect(runRemoteProjectOperation(hub.gateway, 'add-remote', { target: { ...target, instanceId: 'replacement' }, path: '/wrong-target' })).rejects.toMatchObject({ code: 'remote_instance_mismatch' });
+      expect(remote.projects).toHaveLength(1);
+    } finally { unsubscribe(); }
+  });
+
+  it('retains remote registration after an Agent Hub write failure and safely completes the same association on retry', async () => {
+    const { hub, remote } = await aggregate({ failHubWrite: true });
+    const { hosts } = await runRemoteProjectOperation(hub.gateway, 'remote-hosts', {});
+    const input = { target: hosts[0].target, path: '/remote-only' };
+    await expect(runRemoteProjectOperation(hub.gateway, 'add-remote', input)).rejects.toThrow('injected disk failure');
+    expect(remote.projects).toHaveLength(1);
+    expect(hub.store.projects()).toEqual([]);
+    const saved = await runRemoteProjectOperation(hub.gateway, 'add-remote', input);
+    expect(saved.created).toBe(true);
+    expect((await runRemoteProjectOperation(hub.gateway, 'add-remote', input)).created).toBe(false);
+    expect(remote.projects).toHaveLength(1);
+    expect(hub.store.projects()).toHaveLength(1);
+    expect(hub.projects).toEqual([]);
+    expect(remote.statusStreams).toBe(0);
+  });
+
   it('multiplexes one lightweight status stream, retains SQLite summaries offline and releases all streams on revoke', async () => {
     const { hub, remote } = await aggregate();
     await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
@@ -1153,6 +1386,15 @@ describe('Remote Host production HTTP contract', () => {
     const created = await hub.call('/api/hosts/relay-only/projects', 'POST', { path: '/same/path' });
     expect({ status: created.status, body: await created.json() }).toMatchObject({ status: 200,
       body: { project: { hostId: 'relay-only', path: '/same/path' } } });
+    const { hosts: authenticatedHosts } = await runRemoteProjectOperation(hub.gateway, 'remote-hosts', {});
+    const target = authenticatedHosts[0].target;
+    const registered = await runRemoteProjectOperation(hub.gateway, 'add-remote', { target, path: '/agent-relay-project' });
+    expect(registered).toMatchObject({ created: true, target, project: { path: '/agent-relay-project', hostId: 'relay-only' } });
+    const createSession = vi.fn((req, res) => res.json({ data: { ...req.body, time: { created: 1, updated: 1 } } }));
+    remote.app.post('/api/session', express.json(), createSession);
+    expect(await runRemoteProjectOperation(hub.gateway, 'create-session', { target, directory: registered.project.path, sessionID: 'ses_relay_new' }))
+      .toMatchObject({ created: true, session: { sessionID: 'ses_relay_new', directory: registered.project.path, target } });
+    expect(createSession).toHaveBeenCalledOnce();
     await wait(() => expect(remote.statusStreams).toBe(1));
     const socket = new WebSocket(`${hub.url.replace('http:', 'ws:')}/api/hosts/relay-only/api/terminal/ws`, { headers: hub.headers });
     disposers.push(() => socket.terminate());
@@ -1171,6 +1413,15 @@ describe('Remote Host production HTTP contract', () => {
     }
     socket.close(); await once(socket, 'close');
     abort.abort(); await stream.body.cancel().catch(() => {});
+    await wait(() => expect(remote.statusStreams).toBe(0));
+    const onEvent = vi.fn();
+    const task = await hub.gateway.acquireTask('relay-only', { instanceId: remote.store.hubId, onEvent });
+    expect(hub.liveClients).toBe(0);
+    await wait(() => expect(remote.statusStreams).toBe(1));
+    expect((await task.json('/api/projects')).projects[0].path).toBe('/same/path');
+    remote.emit({ type: 'session.execution.succeeded', data: { sessionID: 'remote-worker', directory: '/same/path' } });
+    await wait(() => expect(onEvent.mock.calls.some(([event]) => event.payload.type === 'session.execution.succeeded')).toBe(true));
+    task.release();
     await wait(() => expect(remote.statusStreams).toBe(0));
   }, 20000);
 });

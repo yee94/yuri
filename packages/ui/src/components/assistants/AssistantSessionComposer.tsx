@@ -53,9 +53,10 @@ const SessionMentionPicker = React.forwardRef<PickerHandle, {
   const { t } = useI18n();
   const transport = useRuntimeTransportIdentity();
   const result = useQuery({ ...sessionIndexSnapshotQueryOptions(transport), select: selectSessions });
+  const pending = result.isPending;
+  const failed = result.isError;
   const sessions = React.useMemo(() => getVisibleSessionMentionCandidates({
-    sessions: result.data ?? [], currentSessionId: null, searchQuery: query,
-    limit: query.trim() ? 10 : 3,
+    sessions: result.data ?? [], currentSessionId: null, searchQuery: query, limit: query.trim() ? 10 : 3,
   }), [result.data, query]);
   const [highlight, setHighlight] = React.useState({ query, index: 0 });
   const index = Math.min(highlight.query === query ? highlight.index : 0, Math.max(0, sessions.length - 1));
@@ -82,18 +83,18 @@ const SessionMentionPicker = React.forwardRef<PickerHandle, {
       <span className="min-w-0 flex-1 text-[length:calc(var(--text-meta)*0.875)] leading-4 text-muted-foreground">{t('assistants.contact.sessionMention.scope')}</span>
       <Button type="button" size="xs" variant="ghost" aria-label={t('dialog.common.actions.close')} onClick={onClose}><Icon name="close" className="size-4" /></Button>
     </div>
-    {result.isPending ? <p role="status" className="px-3 py-2 typography-meta text-muted-foreground">{t('common.loading')}</p> : null}
-    {result.isError ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">
+    {pending ? <p role="status" className="px-3 py-2 typography-meta text-muted-foreground">{t('common.loading')}</p> : null}
+    {failed ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">
       {t('assistants.contact.sessionMention.loadFailed')}
-      <Button type="button" variant="ghost" size="sm" onClick={() => void result.refetch()}>{t('chat.history.retry')}</Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => { void result.refetch(); }}>{t('chat.history.retry')}</Button>
     </div> : null}
-    {result.isSuccess && !sessions.length ? <p role="status" className="px-3 py-2 typography-meta text-muted-foreground">
+    {result.isSuccess && !pending && !failed && !sessions.length ? <p role="status" className="px-3 py-2 typography-meta text-muted-foreground">
       {t(result.data === null ? 'common.unavailable' : 'sessions.sidebar.empty.noMatches.title')}
     </p> : null}
     <ScrollableOverlay preventOverscroll outerClassName="flex-1 min-h-0" className="px-0">
       <div id={listId} role="listbox" aria-label={t('chat.fileMentionAutocomplete.groups.sessions')} className="p-1.5">
         {sessions.map((session, rowIndex) => <div
-          key={`${session.directory}:${session.id}`} id={`${listId}-${rowIndex}`} role="option" aria-selected={rowIndex === index}
+          key={JSON.stringify([session.directory, session.id])} id={`${listId}-${rowIndex}`} role="option" aria-selected={rowIndex === index}
           ref={(node) => { rowRefs.current[rowIndex] = node; }}
           className={cn('flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 typography-ui-label', composerAutocompleteRowClassName(isMobile, rowIndex === index))}
           onMouseDown={(event) => event.preventDefault()}
@@ -176,6 +177,7 @@ export const AssistantSessionComposer = ({ active, onChange, onVoiceSend, ...pro
     const title = session.title || t('chat.fileMentionAutocomplete.untitledSession');
     const inserted = insertComposerReference(document, mention.tokenStart, mention.tokenEnd, {
       id: `session:${session.id}:${crypto.randomUUID()}`, kind: 'session', sessionId: session.id,
+      directory: session.directory,
       display: composerTriggerIconDisplay({ trigger: '@', icon: 'chat-thread', label: title }),
     }, { inlineBoundaries: true, padDocumentEdges: true });
     const caret = inserted.caret + (inserted.document.text[inserted.caret] === ' ' ? 1 : 0);

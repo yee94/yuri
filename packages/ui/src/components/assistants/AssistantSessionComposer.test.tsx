@@ -6,6 +6,17 @@ import type { SessionIndexSession, SessionIndexSnapshot } from '@/lib/session-in
 
 const runtime = vi.hoisted(() => ({ transport: 'runtime-a', load: vi.fn(), dictationEnabled: true }));
 const speech = vi.hoisted(() => ({ renders: vi.fn(), deliver: (_text: string) => {}, start: vi.fn(), confirm: vi.fn(), cancel: vi.fn() }));
+const remote = vi.hoisted(() => ({ enabled: false, catalogReads: vi.fn(), summaryReads: vi.fn() }));
+vi.mock('@/queries/remoteProjectQueries', () => ({
+  supportsRemoteProjects: () => remote.enabled,
+  ensureRemoteHostCatalog: vi.fn(),
+  useRemoteProjectRuntime: () => {
+    remote.catalogReads();
+    return remote.enabled ? { catalog: { hubId: 'hub', hosts: ['a', 'b'].map((id) => ({ id, name: `Host ${id}`, instanceId: `instance-${id}` })), projects: ['a', 'b'].map((hostId) => ({ hostId })) }, registry: {} } : {};
+  },
+  remoteHostSummariesQueryOptions: (_registry: unknown, hostId: string) => ({ queryKey: ['remote-summary', hostId], staleTime: Infinity,
+    queryFn: () => { remote.summaryReads(hostId); return { directories: [{ directory: '/repo', sessions: [{ id: 'same', title: `Remote ${hostId}`, time: { created: 1, updated: 30 } }] }] }; } }),
+}));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (select: (state: { dictationEnabled: boolean }) => unknown) => select(runtime) }));
 vi.mock('@/lib/dictation/use-dictation-audio-source', () => ({ isDictationCaptureSupported: () => true }));
 vi.mock('@/hooks/useDictation', () => ({ useDictation: (options: { onTranscript: (text: string) => void }) => {
@@ -31,6 +42,8 @@ vi.mock('@/components/ui/textarea', () => ({
 }));
 
 import { AssistantSessionComposer } from './AssistantSessionComposer';
+import { materializeSessionMentionTokens, serializeComposerDocument } from '@/composer/document';
+import { parseDraftComposerDocument } from '@/sync/input-draft-types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const session = (id: string, title: string, updated: number): SessionIndexSession => ({
@@ -73,6 +86,7 @@ const key = async (value: string, options: KeyboardEventInit = {}) => {
 const rows = () => Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
 
 beforeEach(async () => {
+  remote.enabled = false; remote.catalogReads.mockClear(); remote.summaryReads.mockClear();
   runtime.transport = 'runtime-a'; runtime.dictationEnabled = true; runtime.load.mockReset().mockResolvedValue(snapshot()); submit.mockReset();
   draft = ''; mobile = false; active = true; pending = false;
   voiceSend.mockReset(); speech.renders.mockClear(); speech.start.mockClear(); speech.confirm.mockClear(); speech.cancel.mockClear();
@@ -81,6 +95,57 @@ beforeEach(async () => {
   await act(async () => render());
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
+
+test('session mentions stay on the contact machine and never request remote catalogs, even with connected Hosts', async () => {
+  remote.enabled = true;
+  for (let index = 0; index < 50; index++) await act(async () => { draft = `typed ${index}`; render(); });
+  expect(remote.catalogReads).not.toHaveBeenCalled();
+  expect(remote.summaryReads).not.toHaveBeenCalled();
+  await type('@Remote');
+  expect(rows()).toHaveLength(0);
+  await type('@Shared');
+  expect(rows()).toHaveLength(2);
+  expect(rows().every((row) => !row.textContent?.includes('Host '))).toBe(true);
+  await key('Escape');
+  const reads = remote.catalogReads.mock.calls.length;
+  for (let index = 0; index < 50; index++) await act(async () => { draft = `after close ${index}`; render(); });
+  expect(remote.catalogReads).toHaveBeenCalledTimes(reads);
+  expect(reads).toBe(0);
+  expect(remote.summaryReads).not.toHaveBeenCalled();
+});
+
+test('same-machine select → durable draft → canonical → Assistant send retains the owning directory', async () => {
+  remote.enabled = true;
+  await type('@Shared');
+  const row = rows().find((candidate) => candidate.textContent?.includes('/repo/two'))!;
+  expect(row).toBeDefined();
+  await act(async () => row.click());
+  const document = materializeSessionMentionTokens(draft, new Map());
+  expect(document.references[0]).toMatchObject({ kind: 'session', sessionId: 'ses_1', directory: '/repo/two' });
+  expect(document.references[0]).not.toHaveProperty('target');
+  const durable = parseDraftComposerDocument(document.text, JSON.parse(JSON.stringify(document.references)))!;
+  expect(durable).toBeDefined();
+  const canonical = serializeComposerDocument(durable);
+  expect(canonical).toMatchObject({ ok: true, text: draft });
+  const { sendAssistantContactMessage } = await import('@/queries/assistantQueries');
+  const sent: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: Request | string, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    expect(new URL(request.url).pathname).toBe('/api/yuri/assistants/contact/messages');
+    sent.push(await request.json());
+    return Response.json({ admitted: true, messageID: 'message', binding: { sessionID: 'hub-contact', directory: '/hub', sessionGeneration: 1 } }, { status: 202 });
+  }));
+  try {
+    submit.mockImplementation(() => sendAssistantContactMessage('contact', 'message', draft));
+    await key('Enter');
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ messageID: 'message', parts: [{ type: 'text', text: draft }] });
+    const delivered = (sent[0].parts as Array<{ text: string }>)[0].text;
+    expect(materializeSessionMentionTokens(delivered, new Map()).references[0]).toMatchObject({ sessionId: 'ses_1', directory: '/repo/two' });
+    expect(remote.catalogReads).not.toHaveBeenCalled();
+    expect(remote.summaryReads).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
 
 test.each([false, true])('sending keeps the input focused and editable without duplicate admission (mobile=%s)', async (isMobile) => {
   mobile = isMobile;
@@ -315,7 +380,7 @@ test('keyboard selection uses the shared chip display and canonical session code
   await key('ArrowDown');
   expect(input().getAttribute('aria-activedescendant')).toBe(rows()[1].id);
   await key('Enter');
-  expect(draft).toBe('Watch @session:ses_1 please');
+  expect(draft).toBe('Watch @session:{"sessionID":"ses_1","directory":"/repo/two"} please');
   expect(input().value).toContain('Shared "title"');
   expect(input().value).not.toContain('session:');
   expect(host.querySelector('[data-composer-highlight]')?.textContent).toContain('Shared "title"');
@@ -341,7 +406,7 @@ test('compact picker insets its options and preserves close and selection focus 
   expect(rows()[1].getAttribute('aria-selected')).toBe('true');
   await key('Enter');
   expect(document.activeElement).toBe(input());
-  expect(draft).toBe(' @session:ses_1 ');
+  expect(draft).toBe(' @session:{"sessionID":"ses_1","directory":"/repo/two"} ');
 });
 
 test('Tab accepts, Escape and outside press cancel while retaining the draft', async () => {
@@ -351,7 +416,7 @@ test('Tab accepts, Escape and outside press cancel while retaining the draft', a
   await act(async () => { document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); });
   expect(rows()).toHaveLength(0); expect(draft).toBe('@Share');
   await type('@Shared'); await key('Tab');
-  expect(draft).toContain('@session:ses_0'); expect(submit).not.toHaveBeenCalled();
+  expect(materializeSessionMentionTokens(draft, new Map()).references[0]).toMatchObject({ sessionId: 'ses_0', directory: '/repo/one' }); expect(submit).not.toHaveBeenCalled();
 });
 
 test('email, pasted references, and IME confirmation preserve ordinary text ownership', async () => {
@@ -487,8 +552,8 @@ test('copy and cut serialize the shared canonical identity instead of a display 
   const copy = new Event('copy', { bubbles: true, cancelable: true });
   Object.defineProperty(copy, 'clipboardData', { value: { setData } });
   await act(async () => input().dispatchEvent(copy));
-  expect(setData).toHaveBeenLastCalledWith('text/plain', '@session:ses_0');
-  expect(draft).toContain('@session:ses_0');
+  expect(setData).toHaveBeenLastCalledWith('text/plain', '@session:{"sessionID":"ses_0","directory":"/repo/one"}');
+  expect(materializeSessionMentionTokens(draft, new Map()).references[0]).toMatchObject({ sessionId: 'ses_0', directory: '/repo/one' });
   input().setSelectionRange(start + 1, start + 4);
   const cut = new Event('cut', { bubbles: true, cancelable: true });
   Object.defineProperty(cut, 'clipboardData', { value: { setData } });

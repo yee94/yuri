@@ -53,3 +53,38 @@ it('credential ABA after body headers still rejects a late parsed value and clea
   await bodyStarted; host.clientToken = 'fixture-b'; await gateway.list(); host.clientToken = 'fixture-a'; await gateway.list();
   finish({ value: 'stale' }); await assertion; expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each(['abort', 'retarget'])('remote registration never persists a late project after %s', async (mode) => {
+  let finish; let started;
+  const bodyStarted = new Promise(resolve => { started = resolve; });
+  const host = await setup(async () => ({ ok: true, json: () => { started(); return new Promise(resolve => { finish = resolve; }); } }));
+  const controller = new AbortController();
+  const pending = gateway.registerProject('host', { path: '/repo' }, { instanceId: 'fixture', signal: controller.signal });
+  const assertion = expect(pending).rejects.toThrow();
+  await bodyStarted;
+  if (mode === 'abort') controller.abort();
+  else { host.clientToken = 'replacement'; await gateway.list(); }
+  finish({ project: { id: 'remote', path: '/repo' } });
+  await assertion;
+  expect(gateway.store.projects()).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([{}, { project: { id: 'remote', path: '/repo', hostId: 'nested-host' } }, { project: { id: 'remote', path: {} } }])('rejects malformed remote registration responses without saving a reference: %j', async (response) => {
+  await setup(async () => Response.json(response));
+  await expect(gateway.registerProject('host', { path: '/repo' }, { instanceId: 'fixture' })).rejects.toMatchObject({ code: 'remote_invalid_project' });
+  expect(gateway.store.projects()).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('uses only the remote canonical path when deduplicating registrations from different aliases', async () => {
+  const fetch = vi.fn(async () => Response.json({ project: { id: 'remote', path: '/remote-canonical', label: 'Preserved' } }));
+  await setup(fetch);
+  const first = await gateway.registerProject('host', { path: '/remote-alias' }, { instanceId: 'fixture' });
+  const second = await gateway.registerProject('host', { path: '/another-remote-alias' }, { instanceId: 'fixture' });
+  expect(first).toMatchObject({ created: true, project: { path: '/remote-canonical' } });
+  expect(second).toEqual({ project: first.project, created: false });
+  expect(gateway.store.projects()).toEqual([first.project]);
+  expect(fetch.mock.calls.map(([, init]) => JSON.parse(init.body).path)).toEqual(['/remote-alias', '/another-remote-alias']);
+  expect(vi.getTimerCount()).toBe(0);
+});

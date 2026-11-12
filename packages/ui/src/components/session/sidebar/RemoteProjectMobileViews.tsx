@@ -28,7 +28,7 @@ export function MobileRemoteProjectShell({ project, registry, label, collapsed, 
   </MobileProjectSurface>;
 }
 
-export function MobileRemoteSummaryRow({ session, active, search, pending, pinned, unread, status, dragItem, onSelect, onRename, onPin, onUnread, onArchive, folders, onFolder }: RemoteSummaryRowProps) {
+export function MobileRemoteSummaryRow({ session, active, search, pending, pinned, unread, status, dragItem, onSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const title = session.title ?? t('mobile.sessions.untitled');
@@ -45,6 +45,7 @@ export function MobileRemoteSummaryRow({ session, active, search, pending, pinne
       { id: 'archive', icon: 'archive', label: t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive'), onClick: onArchive, disabled: pending },
       { id: 'unfolder', icon: 'folder-open', label: t('remoteProjects.removeFolder'), onClick: () => onFolder(null), disabled: pending },
       ...folders.map((folder) => ({ id: `folder:${folder.id}`, icon: 'folder-open' as const, label: folder.name, onClick: () => onFolder(folder.id), disabled: pending })),
+      { id: 'delete', icon: 'delete-bin', label: t('sessions.sidebar.dialogs.deleteSession.titleAction'), onClick: onDelete, disabled: pending, destructive: true, separated: true },
     ]} /> : null}
   </>;
 }

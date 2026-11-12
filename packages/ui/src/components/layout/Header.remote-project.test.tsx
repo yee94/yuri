@@ -7,6 +7,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { locationKey } from '@/lib/remote-projects/location';
 import { queryClient } from '@/lib/queryRuntime';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
+import { toast } from '@/components/ui';
 
 const fixture = vi.hoisted(() => ({
   project: { id: 'remote-project', hostId: 'remote-host', hubId: 'https://hub.example', path: '/workspace', label: 'Project', remoteProjectId: 'host-project', remoteState: 'ok' },
@@ -20,6 +21,7 @@ const fixture = vi.hoisted(() => ({
   localNew: vi.fn(), localSelect: vi.fn(), localItems: [] as unknown[],
   branchRead: vi.fn(),
   online: true, summaryError: null as Error | null,
+  catalogError: null as Error | null, catalogRefresh: vi.fn(), summaryRefresh: vi.fn(),
   catalogHub: 'https://hub.example',
   catalogAvailable: true, summaryEmpty: false, boundHost: null as null | { registry: unknown },
   extraProjects: [] as unknown[], extraDirectories: [] as unknown[],
@@ -37,8 +39,9 @@ vi.mock('@/sync/sync-context', () => ({
 }));
 vi.mock('@/sync/notification-store', () => ({ useSessionUnseenCount: () => 0 }));
 vi.mock('@/queries/remoteProjectQueries', () => ({
-  useRemoteProjectRuntime: () => { fixture.discovery(); return { registry: fixture.registry, catalog: fixture.catalogAvailable ? { hubId: fixture.catalogHub, projects: [fixture.project, ...fixture.extraProjects], hosts: [{ id: fixture.project.hostId, name: 'Build machine' }] } : undefined }; },
-  useRemoteHostSummaries: () => ({ error: fixture.summaryError, refetch: fixture.noop, data: { hubId: fixture.catalogHub, hostId: fixture.project.hostId, stale: !fixture.online, worktrees: fixture.topology, pinnedSessionIds: [], unread: { sessions: { 'same-session': { unreadCount: 2 } } }, directories: fixture.summaryEmpty ? [] : [{ directory: '/workspace', sessions: [{ id: 'same-session', directory: '/workspace', title: 'REMOTE TITLE', hasChildren: true, time: { created: 1, updated: 2 }, metadata: { yuri: { sessionStatus: { type: 'busy' } } } }, { id: 'other', directory: '/workspace', title: 'OTHER REMOTE', time: { created: 1, updated: 1 } }] }, ...fixture.extraDirectories] } }),
+  useRemoteProjectRuntime: () => { fixture.discovery(); return { registry: fixture.registry, error: fixture.catalogError, catalog: fixture.catalogAvailable ? { hubId: fixture.catalogHub, projects: [fixture.project, ...fixture.extraProjects], hosts: [{ id: fixture.project.hostId, name: 'Build machine' }] } : undefined }; },
+  ensureRemoteHostCatalog: fixture.catalogRefresh,
+  useRemoteHostSummaries: () => ({ error: fixture.summaryError, refetch: fixture.summaryRefresh, data: { hubId: fixture.catalogHub, hostId: fixture.project.hostId, stale: !fixture.online, worktrees: fixture.topology, pinnedSessionIds: [], unread: { sessions: { 'same-session': { unreadCount: 2 } } }, directories: fixture.summaryEmpty ? [] : [{ directory: '/workspace', sessions: [{ id: 'same-session', directory: '/workspace', title: 'REMOTE TITLE', hasChildren: true, time: { created: 1, updated: 2 }, metadata: { yuri: { sessionStatus: { type: 'busy' } } } }, { id: 'other', directory: '/workspace', title: 'OTHER REMOTE', time: { created: 1, updated: 1 } }] }, ...fixture.extraDirectories] } }),
 }));
 vi.mock('@/contexts/HostRuntimeProvider', () => ({ useHostRuntime: () => fixture.boundHost, useRemoteHost: () => ({ state: fixture.online ? 'connected' : 'offline' }) }));
 vi.mock('@/components/session/sidebar/hooks/useSwitcherItems', () => ({ useSwitcherItems: () => { fixture.localSwitcher(); return fixture.localItems; } }));
@@ -81,9 +84,11 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
   vi.clearAllMocks();
+  vi.spyOn(toast, 'error').mockImplementation(() => 'switcher-error');
   fixture.isRemote = true; fixture.mobile = false;
   fixture.registry = undefined; fixture.transcript = null;
   fixture.online = true; fixture.summaryError = null;
+  fixture.catalogError = null;
   fixture.localItems = [];
   fixture.remote.location.directory = '/workspace';
   fixture.remote.location.hostId = 'remote-host';
@@ -261,11 +266,33 @@ it('retains cached remote rows and unread state on failed offline refresh withou
   await act(async () => root.render(<Header />));
   await act(async () => useUIStore.getState().setSessionDropdownOpen(true));
   expect(document.body.textContent).toContain('OTHER REMOTE');
-  expect(document.body.textContent).toContain('Host refresh failed');
+  expect(document.body.textContent).not.toContain('Host refresh failed');
+  expect(toast.error).toHaveBeenCalledWith('Host refresh failed', expect.objectContaining({ action: expect.objectContaining({ label: 'remoteProjects.retry' }) }));
+  expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.querySelector('[aria-label="sessions.sidebar.session.status.unread"]')).not.toBeNull();
   expect(document.querySelector('[aria-label="sessions.sidebar.session.status.active"]')).toBeNull();
   expect(entry.sdk).not.toHaveBeenCalled();
   expect(fixture.localSwitcher).not.toHaveBeenCalled();
+});
+
+it('catalog and navigation failures never insert error rows into the real switcher', async () => {
+  fixture.catalogAvailable = false; fixture.catalogError = new Error('Catalog failed');
+  await act(async () => root.render(<SessionSwitcherDropdown><button>Remote</button></SessionSwitcherDropdown>));
+  await act(async () => useUIStore.getState().setSessionDropdownOpen(true));
+  expect(toast.error).toHaveBeenCalledWith('Catalog failed', expect.anything());
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.body.textContent).not.toContain('Catalog failed');
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent === 'remoteProjects.retry')!.click());
+  expect(fixture.catalogRefresh).toHaveBeenCalledOnce();
+  fixture.catalogAvailable = true; fixture.catalogError = null;
+  fixture.registry = { hubId: fixture.project.hubId, resolve: () => ({ location: fixture.remote.location, key: locationKey(fixture.remote.location), queryScope: ['navigate'], sdk: vi.fn() }), assertCurrent: fixture.noop };
+  fixture.remoteNavigate.mockImplementationOnce(() => { throw new Error('Navigation failed'); });
+  await act(async () => root.render(<SessionSwitcherDropdown><button>Remote</button></SessionSwitcherDropdown>));
+  await act(async () => document.querySelector<HTMLElement>('[data-slot="session-switcher-item"]')!.click());
+  expect(toast.error).toHaveBeenCalledWith('Navigation failed');
+  expect(document.body.textContent).not.toContain('Navigation failed');
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(fixture.localSelect).not.toHaveBeenCalled();
 });
 
 it('passes explicit Hub/Host project identity to the mobile Run button without hiding it', async () => {
@@ -292,7 +319,8 @@ it('rejects a cached project from a different Hub rather than routing its same r
   fixture.registry = { hubId: fixture.catalogHub, resolve: vi.fn(), assertCurrent: fixture.noop };
   await act(async () => root.render(<SessionSwitcherDropdown scopeProjectId={fixture.project.id}><button>Remote</button></SessionSwitcherDropdown>));
   await act(async () => useUIStore.getState().setSessionDropdownOpen(true));
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('remoteProjects.host-unavailable');
+  expect(toast.error).toHaveBeenCalledWith('remoteProjects.host-unavailable', expect.anything());
+  expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.querySelector('[data-slot="session-switcher-item"]')).toBeNull();
   expect(fixture.localSwitcher).not.toHaveBeenCalled();
   expect(fixture.localNew).not.toHaveBeenCalled();
@@ -311,9 +339,12 @@ it('retains cached children through a failed Host read and offers retry without 
   await act(async () => document.querySelector<HTMLElement>('[data-switcher-expand]')!.click());
   expect(document.body.textContent).toContain('CACHED CHILD');
   await act(async () => { await queryClient.invalidateQueries({ queryKey: key, exact: true }); });
-  await act(async () => { await vi.waitFor(() => expect(document.body.textContent).toContain('Child refresh failed')); });
+  await act(async () => { await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('Child refresh failed', expect.anything())); });
   expect(document.body.textContent).toContain('CACHED CHILD');
-  expect(document.querySelector('[role="alert"] button')?.textContent).toBe('remoteProjects.retry');
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.body.textContent).not.toContain('Child refresh failed');
+  const action = vi.mocked(toast.error).mock.lastCall?.[1]?.action;
+  expect(action).toMatchObject({ label: 'remoteProjects.retry' });
   expect(fixture.localSelect).not.toHaveBeenCalled();
   expect(fixture.localNew).not.toHaveBeenCalled();
 });
@@ -406,7 +437,7 @@ it('does not infer a nested project checkout from the parent repository topology
   expect(fixture.remoteNavigate).not.toHaveBeenCalled();
   expect(fixture.localNew).not.toHaveBeenCalled();
 });
-afterEach(async () => { await act(async () => root.unmount()); node.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); node.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('renders the real Header and titlebar with remote session identity, not the same-ID local session', async () => {
   await act(async () => root.render(<><Header /><TitlebarLeftControls /></>));

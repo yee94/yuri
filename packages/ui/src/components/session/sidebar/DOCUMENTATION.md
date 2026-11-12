@@ -1,5 +1,36 @@
 # Session Sidebar Documentation
 
+## Error presentation
+
+Remote project mutation failures use the shared toast once and retain confirmed
+rows/selection for retry through the original action. Summary/search/pagination
+load failures use a project-keyed toast and retain cached rows. Errors never
+insert banners, text or Retry rows between project headers and sessions on either
+desktop or mobile. Project Sync remains the explicit data-refresh action; it
+must not be presented as a retry for a failed archive or other mutation.
+`RemoteChildSessions` and `SessionSwitcherDropdown` follow the same no-error-row
+rule. Child/summary read failures retain cached rows and expose retry on the toast;
+navigation failures notify without inserting content. The unavailable switcher
+keeps its existing refresh action rather than adding error text to the menu.
+
+## Remote session deletion
+
+Desktop row menus and mobile action sheets expose Delete; the shared selection
+toolbar also exposes bulk Delete. Both use the section model's confirmation,
+capturing immutable Host entries and raw directories before confirmation. Unlike
+the local delayed-undo flow, remote deletion is confirmed before dispatch and
+does not optimistically remove rows. The target Host owns cascading subsession
+deletion; the warning says so without inventing a count from a partial index.
+Submissions share the per-Host serializer and same-tick pending gate. Failed
+targets remain in the dialog and selection; successful targets are removed from
+selection and never retried as part of a partial failure. An authoritative
+`SessionNotFoundError` for that exact ID counts as already deleted, while generic
+HTTP/transport failures do not. Summary and child Queries refresh after writes.
+Only an unchanged navigation reference for the deleted session on that same
+Hub/Host/project is replaced with a remote draft; later selections and local
+state remain untouched. Authorization changes invalidate the captured entry;
+confirmation never re-resolves a replacement Host behind the user's back.
+
 ## Fixed desktop navigation
 
 `SessionSidebar` keeps the configured Electron brand/search row and desktop

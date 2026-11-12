@@ -46,6 +46,9 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
     const source = fs.readFileSync(${JSON.stringify(path.join(electronDir, 'main.mjs'))}, 'utf8');
     const slice = (a, b) => source.slice(source.indexOf(a), source.indexOf(b));
     let label = 1;
+    let releaseLocal, releaseRemote;
+    const localReady = new Promise(resolve => { releaseLocal = resolve; });
+    const remoteReady = new Promise(resolve => { releaseRemote = resolve; });
     const noop = () => {};
     const context = {
       state, URL, Number, process, fs, path, os, app, BrowserWindow, screen, setTimeout, clearTimeout, ipcMain, isGuiPluginUiUrl,
@@ -57,6 +60,7 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
       sameOrigin: (a, b) => Boolean(a && b && new URL(a).origin === new URL(b).origin),
       sanitizeRuntimeRequestHeaders: headers => headers,
       shouldUsePackagedUi: () => mode === 'bundled', isDev: true,
+      buildPackagedUiUrl: route => 'yuri-ui://app' + route,
       __dirname: ${JSON.stringify(electronDir)}, LOCAL_HOST_ID: 'local', UI_PROTOCOL: 'yuri-ui',
       MIN_WINDOW_WIDTH: 350, MIN_WINDOW_HEIGHT: 400, MIN_RESTORE_WINDOW_WIDTH: 350, MIN_RESTORE_WINDOW_HEIGHT: 400,
       APP_USER_MODEL_ID: 'dev.yuri.window-fixture', getWindowIconPath: noop, macosMajorVersion: () => 0,
@@ -75,7 +79,13 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
       isGuiPluginWindow: event => event.senderFrame === event.sender.mainFrame
         && Boolean(BrowserWindow.fromWebContents(event.sender)) && isGuiPluginUiUrl(event.sender.getURL(), [localUrl]),
       sshManager: { readInstances: () => ({ instances: [] }) },
-      probeHostWithTimeout: async () => ({ status: 'ok' }),
+      probeHostWithTimeout: async () => { await remoteReady; return { status: 'ok' }; },
+      resolveInitialUrl: async options => {
+        if (!options.deferWindowRestore) throw new Error('Startup did not defer remote resolution');
+        await localReady;
+        return { initialUrl: localUiUrl, localUiUrl, localOrigin: localUrl };
+      },
+      extractInitialDeepLinks: () => [], handleDeepLinks: noop, desktopOta: null,
     };
     const setup = new Function(...Object.keys(context), [
       slice('const readWindowState =', 'const buildHealthUrl ='),
@@ -85,9 +95,10 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
       slice('const createBrowserWindow =', 'const activateMainWindow ='),
       slice('const activateMainWindow =', 'const openMainWindow ='),
       slice('const getWindowRuntimeConfig =', 'const createMiniChatWindow ='),
-      slice('const resolveDesktopStartupTarget =', 'const restoreAdditionalDesktopWindows ='),
+      slice('const resolveDesktopStartupTarget =', 'const resolveInitialUrl ='),
       slice("ipcMain.on('yuri:window-runtime'", "ipcMain.handle('yuri:invoke'"),
       'return { create: createBrowserWindow, activate: activateMainWindow, save: writeWindowState, read: readWindowStates, resolve: resolveDesktopStartupTarget,',
+      'start: async () => { let initialStartupComplete = false; ' + slice('  const savedWindows = process.env.YURI_SERVER_URL', '  // Notify renderer on OS wake-from-sleep') + ' },',
       'setRestoring: value => { restoringWindowSession = value; }, freeze: () => { windowSessionFrozen = true; },',
       'invoke: async (browserWindow, command, args) => { switch(command) {' + slice("    case 'desktop_window_runtime_set':", "    case 'desktop_hosts_get':") + '} } };',
     ].join('\\n'));
@@ -118,21 +129,25 @@ test.runIf(process.env.YURI_WINDOW_RESTORE_EVIDENCE === '1').each(
         fs.writeFileSync(path.join(root, 'before.json'), JSON.stringify(context.read()));
       } else {
         const entries = context.read();
-        const windows = [];
-        for (const [index, entry] of entries.entries()) {
-          if (index === 0) {
-            state.mainWindow = context.create({ label: 'main', restoreGeometry: true, url: null });
-            await loaded(state.mainWindow);
-            const status = await state.mainWindow.webContents.executeJavaScript('document.querySelector(".startup-status").textContent');
-            expectStatus(status);
-          }
-          const target = await context.resolve(entry.hostId, { localUrl, localUiUrl, localOrigin: localUrl, restoreSession: true });
-          const url = new URL(entry.route, mode === 'bundled' ? localUiUrl : target.initialUrl).href;
-          const win = index === 0 ? await context.activate(url, localUrl, target.bootOutcome, target)
-            : context.create({ label: 'main-' + (index + 1), savedState: entry, url, runtimeConfig: target });
-          windows.push(win);
-          if (index === 0) state.mainWindow = win;
+        const startup = context.start();
+        const windows = [state.mainWindow, ...BrowserWindow.getAllWindows().filter(win => win !== state.mainWindow)];
+        if (windows.length !== entries.length) throw new Error('Saved windows waited for local startup');
+        await Promise.all(windows.map(loaded));
+        await Promise.all(windows.map(win => win.isVisible() ? null : new Promise(resolve => win.once('show', resolve))));
+        for (const [index, win] of windows.entries()) {
+          const status = await win.webContents.executeJavaScript('document.querySelector(".startup-status")?.textContent || ""');
+          if (entries[index].hostId !== 'local') expectStatus(status);
+          else if (status) throw new Error('Local splash inherited remote connecting status');
         }
+        const localWindow = windows.find(win => win.__yuriHostId === 'local');
+        const localLoaded = new Promise(resolve => localWindow.webContents.once('did-finish-load', resolve));
+        releaseLocal();
+        await localLoaded;
+        if (!${JSON.stringify(relay)} && !windows.find(win => win.__yuriHostId !== 'local').webContents.getURL().startsWith('data:')) {
+          throw new Error('Remote probe did not remain pending');
+        }
+        releaseRemote();
+        await startup;
         await Promise.all(windows.map(loaded));
         fs.writeFileSync(path.join(root, 'after.json'), JSON.stringify(await Promise.all(windows.map(async win => ({
           hostId: win.__yuriHostId, route: new URL(win.webContents.getURL()).pathname, ...win.getNormalBounds(),

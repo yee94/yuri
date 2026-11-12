@@ -46,10 +46,6 @@
 }
 
 .yuri-contact-conversation[data-composer-overlay] [data-assistant-contact-avatar-rail] {
-  bottom: calc(var(--contact-composer-height, 0px) + 0.5rem);
-}
-
-.yuri-contact-conversation[data-composer-overlay][data-contact-layout="mobile"] [data-assistant-contact-avatar-rail] {
   bottom: 0.5rem;
 }
 

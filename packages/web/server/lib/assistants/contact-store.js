@@ -2,6 +2,14 @@ import crypto from 'node:crypto';
 import { decodeDataUrlStrict } from '../fs/prompt-attachment-store.js';
 import { parseContactCard, parseContactPart, serializeContactPart } from './cards.js';
 import { isMessageChannelTurn } from './message-channel-origin.js';
+import { executionSessionKey, executionTargetKey, parseExecutionTarget } from './execution-target.js';
+
+const decodeWatchSession = (key) => {
+  if (!key.startsWith('remote:')) return { sessionID: key };
+  const boundary = key.lastIndexOf('}:');
+  if (boundary < 7) throw new Error('Invalid remote watch identity');
+  return { sessionID: key.slice(boundary + 2), target: parseExecutionTarget(JSON.parse(key.slice(7, boundary + 1))) };
+};
 
 /** Keep in sync with CONTACT_ATTACHMENT_HISTORICAL_MAX_BYTES in contact-attachments.js */
 const FINGERPRINT_DATA_URL_MAX_BYTES = 56 * 1024 * 1024;
@@ -125,6 +133,7 @@ export function ensureContactSchema(db) {
   // Delivery watermark: assign prompt message ID so reused-session settle
   // only counts assistant tails that belong to this delivery.
   if (!watchColumns.has('message_id')) db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN message_id TEXT');
+  if (!watchColumns.has('remote_resume_pending')) db.exec('ALTER TABLE assistant_contact_watch ADD COLUMN remote_resume_pending INTEGER NOT NULL DEFAULT 0');
   // Attachment table ownership lives in contact-attachments.ensureContactAttachmentSchema.
   // Recover the latest error, but remove legacy errors superseded by newer contact updates.
   db.transaction(() => {
@@ -1299,7 +1308,9 @@ export function upsertContactWatch(db, {
   resumeAllowed = true,
   active = true,
   messageID = undefined,
+  target = undefined,
 }) {
+  sessionID = executionSessionKey(sessionID, target);
   const nextMessageID = typeof messageID === 'string' && messageID.trim()
     ? messageID.trim()
     : (messageID === null ? null : undefined);
@@ -1316,15 +1327,21 @@ export function upsertContactWatch(db, {
 
 const mapWatchRow = (row) => ({
   assistantID: row.assistant_id,
-  sessionID: row.session_id,
+  ...decodeWatchSession(row.session_id),
   directory: row.directory,
   status: row.status,
   resumeAllowed: row.resume_allowed !== 0,
   active: row.active !== 0,
   messageID: typeof row.message_id === 'string' && row.message_id.trim() ? row.message_id : null,
+  ...(row.updated_at !== undefined ? { updatedAt: row.updated_at } : {}),
 });
 
-export function listWatchesBySession(db, sessionID) {
+export function listPendingRemoteWatchResumes(db) {
+  return db.prepare('SELECT * FROM assistant_contact_watch WHERE remote_resume_pending=1 AND resume_allowed=1 AND active=0').all().map(mapWatchRow).filter((watch) => watch.target);
+}
+
+export function listWatchesBySession(db, sessionID, target = undefined) {
+  sessionID = executionSessionKey(sessionID, target);
   return db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE session_id=?').all(sessionID)
     .map(mapWatchRow);
 }
@@ -1334,18 +1351,18 @@ export function listInFlightWatches(db, assistantID) {
     ? db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE assistant_id=? AND active=1').all(assistantID)
     : db.prepare('SELECT assistant_id, session_id, directory, status, resume_allowed, active, message_id FROM assistant_contact_watch WHERE active=1').all();
   return rows
-    .filter((row) => IN_FLIGHT_WATCH.has(row.status))
+    .filter((row) => IN_FLIGHT_WATCH.has(row.status) || row.session_id.startsWith('remote:'))
     .map(mapWatchRow);
 }
 
-export function updateSessionCardStatus(db, { assistantID, sessionID, status }) {
+export function updateSessionCardStatus(db, { assistantID, sessionID, status, target }) {
   const rows = db.prepare(
     'SELECT p.message_id, p.part_id, p.ordinal, p.part_json FROM assistant_contact_part p JOIN assistant_contact_message m ON m.message_id=p.message_id WHERE m.assistant_id=?',
   ).all(assistantID);
   let updated = 0;
   for (const row of rows) {
     const part = parseContactPart(parse(row.part_json));
-    if (!part || part.type !== 'card' || part.cardType !== 'session' || part.sessionID !== sessionID) continue;
+    if (!part || part.type !== 'card' || part.cardType !== 'session' || part.sessionID !== sessionID || executionTargetKey(part.target) !== executionTargetKey(target)) continue;
     const next = { ...part, status };
     db.prepare('UPDATE assistant_contact_part SET part_json=? WHERE message_id=? AND part_id=?').run(json(serializeContactPart(next, row.ordinal - 1)), row.message_id, row.part_id);
     updated += 1;

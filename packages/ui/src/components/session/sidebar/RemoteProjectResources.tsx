@@ -15,6 +15,7 @@ import { projectSession } from '@/lib/opencode/v2-types';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP } from '@/lib/projectMeta';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
 import { createSessionNodeComparator } from './sessionSortableOrder';
+import { toast } from '@/components/ui';
 
 /** Optional resources stay on leaf observers, separate from the project summary and command lifetimes. */
 export function RemoteProjectIcon({ project, registry, className }: { project: RemoteProject; registry: HostRuntimeRegistry; className: string }) {
@@ -83,6 +84,10 @@ export function RemoteChildSessions({ registry, hostId, directory, sessionId, di
     const rows = (query.data?.sessions ?? []).map((session) => ({ session, directory: session.directory || directory }));
     return rows.sort(createSessionNodeComparator(rows, undefined, undefined, new Set(pinnedSessionIds)));
   }, [query.data?.sessions, directory, pinnedSessionIds]);
+  const { error, refetch } = query;
+  React.useEffect(() => {
+    if (error) toast.error(error.message, { id: `remote-children:${entry.key}:${sessionId}`, action: { label: t('remoteProjects.retry'), onClick: () => void refetch() } });
+  }, [error, entry.key, sessionId, refetch, t]);
   React.useLayoutEffect(() => { onVisibleTargets(sessionId, expanded ? sortedChildren.map(({ session, directory }) => ({ sessionId: session.id, directory })) : []); }, [onVisibleTargets, sessionId, expanded, sortedChildren]);
   React.useEffect(() => () => onVisibleTargets(sessionId, []), [onVisibleTargets, sessionId]);
   const onEvent = useEvent(({ directory: eventDirectory, payload }: { directory?: string; payload: unknown }) => {
@@ -98,7 +103,6 @@ export function RemoteChildSessions({ registry, hostId, directory, sessionId, di
   return <div className="min-w-0 pl-4">
     <Button size="xs" variant="ghost" disabled={disabled && !query.data} onClick={() => setExpanded((value) => !value)}>{t(expanded ? 'sessions.sidebar.session.subsessions.collapse' : 'sessions.sidebar.session.subsessions.expand')}</Button>
     {expanded ? <>
-      {query.error ? <p role="alert" className="text-xs text-destructive">{query.error.message}<Button size="xs" variant="ghost" onClick={() => void query.refetch()}>{t('remoteProjects.retry')}</Button></p> : null}
       {query.isFetching && !query.data ? <SessionBusyIndicator /> : null}
       {sortedChildren.map(({ session, directory }) => <React.Fragment key={session.id}>{renderRow(session, directory, depth)}</React.Fragment>)}
       {query.data?.hasMore ? <Button size="xs" variant="ghost" disabled={disabled || query.isFetching} onClick={() => setLimit((value) => value + 30)}>{t('remoteProjects.showMore')}</Button> : null}

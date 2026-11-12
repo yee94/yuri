@@ -8,7 +8,7 @@ import { remoteDeadlineSignal } from './deadline.js';
 export const remoteFailure = (code, status = 503) => Object.assign(new Error(code), { code, status });
 const publicError = (error) => {
   const code = error?.status === 401 || error?.status === 403 ? 'remote_authorization_required'
-    : ['remote_incompatible', 'remote_ssh_authentication_failed', 'remote_ssh_unavailable', 'remote_relay_unavailable', 'remote_service_starting'].includes(error?.code) ? error.code
+    : ['remote_incompatible', 'remote_instance_mismatch', 'remote_ssh_authentication_failed', 'remote_ssh_unavailable', 'remote_relay_unavailable', 'remote_service_starting'].includes(error?.code) ? error.code
       : error?.code === 'host_unavailable' ? 'host_unavailable' : 'remote_unavailable';
   return { code, message: code };
 };
@@ -32,7 +32,8 @@ export const projectRemoteStatusEvent = (payload) => {
           Object.fromEntries(['assistantID', 'name', 'from', 'taskID', 'purpose', 'archivedAt', 'activityUpdatedAt', 'type', 'changedAt']
             .filter((field) => ['string', 'number'].includes(typeof yuri[key][field])).map((field) => [field, yuri[key][field]]))])) };
     }
-    if (value.reason === 'shutdown') result.reason = 'shutdown';
+    if (['user', 'shutdown', 'superseded', 'inactivity'].includes(value.reason)) result.reason = value.reason;
+    if (value.error?.name === 'MessageAbortedError') result.error = { name: 'MessageAbortedError' };
     return result;
   };
   return { type: payload.type, ...(payload.created ? { created: payload.created } : {}),
@@ -50,6 +51,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   const leases = new Map();
   const observers = new Map();
   const statusObservers = new Set();
+  const taskObservers = new Map();
   const interactiveHosts = new Map();
   const priorityRequests = new Map();
   const contentChannels = new Map();
@@ -59,6 +61,16 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   let reconcilePending = false;
   let refreshActive = 0;
   const refreshQueue = new Set();
+  const hasTaskStatus = (id) => [...(taskObservers.get(id) || [])].some((task) => task.onEvent);
+  const hasStatusDemand = (id) => hasTaskStatus(id) || (statusObservers.size > 0 && store.projects(id).length > 0);
+  const notifyTasks = (id, event) => {
+    const connection = connections.get(id);
+    for (const task of [...(taskObservers.get(id) || [])]) {
+      if (!task.onEvent || !task.scopeGeneration || task.scopeGeneration !== connection?.scopeGeneration) continue;
+      try { Promise.resolve(task.onEvent(event)).catch(() => {}); }
+      catch { /* A task consumer cannot interrupt another owner's event delivery. */ }
+    }
+  };
   const indexFor = (hostId) => {
     let service = indexes.get(hostId);
     if (!service) {
@@ -109,6 +121,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   };
   const hostView = (host) => ({ id: host.id, name: host.name || host.label || host.id,
     source: host.source, available: true, state: stateFor(host.id), ...store.receipt(host.id),
+    ...(store.instanceFor(host.id) ? { instanceId: store.instanceFor(host.id) } : {}),
     scopeGeneration: scopes.get(host.id)?.generation,
     generation: connections.get(host.id)?.generation,
     ...(connections.get(host.id)?.version ? { version: connections.get(host.id).version,
@@ -120,10 +133,16 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     if (error) store.saveReceipt(connection.host.id, { lastError: publicError(error) });
     if (changed || error) broadcast({ type: 'yuri:host-status', properties: {
       hubId: store.hubId, hostId: connection.host.id, host: hostView(connection.host) } });
+    if (changed || error) notifyTasks(connection.host.id, { payload: { type: 'yuri:host-status', properties: {
+      hubId: store.hubId, hostId: connection.host.id, host: hostView(connection.host) } } });
   };
-  const emit = (hostId, payload, directory) => broadcast({ type: 'yuri:host-event', properties: {
-    hubId: store.hubId, hostId, generation: connections.get(hostId)?.generation,
-    ...(directory ? { directory } : {}), payload } });
+  const emit = (hostId, payload, directory) => {
+    broadcast({ type: 'yuri:host-event', properties: {
+      hubId: store.hubId, hostId, generation: connections.get(hostId)?.generation,
+      ...(directory ? { directory } : {}), payload } });
+    const status = projectRemoteStatusEvent(payload);
+    if (status) notifyTasks(hostId, { ...(directory ? { directory } : {}), payload: status });
+  };
   const closeConnection = (connection) => {
     connection.controller.abort();
     connection.reader?.stop();
@@ -136,7 +155,9 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   const current = (connection) => !stopped && !connection.controller.signal.aborted
     && connections.get(connection.host.id) === connection;
   const resolveHost = async (id) => {
+    if (stopped) throw remoteFailure('host_unavailable', 404);
     const host = (await descriptors()).find((entry) => entry.id === id);
+    if (stopped) throw remoteFailure('host_unavailable', 404);
     if (!host) {
       const old = connections.get(id);
       if (old) closeConnection(old);
@@ -188,9 +209,9 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
           || capability.opencode?.compatible === false) throw remoteFailure('remote_incompatible', 409);
         if (capability.opencode?.ready === false && !capability.opencode?.version) throw remoteFailure('remote_service_starting');
         connection.version = capability.version;
-        connection.instanceId = capability.instanceId;
         await resolveHost(id);
         if (!current(connection)) throw remoteFailure('stale_host', 409);
+        connection.instanceId = store.bindInstance(id, capability.instanceId);
         return connection;
       })().catch((error) => {
         connection.preparing = false;
@@ -204,7 +225,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     }
     return connection.ready;
   };
-  const request = async (id, route, init = {}, { refresh = false, streaming = false, longRunning = false } = {}) => {
+  const request = async (id, route, init = {}, { refresh = false, streaming = false, longRunning = false, instanceId, scopeGeneration } = {}) => {
     init.signal?.throwIfAborted();
     if (!refresh && (/^\/api\/session(?:\/|\?)/.test(route) || (init.method && !['GET', 'HEAD'].includes(init.method)))) {
       for (const connection of connections.values()) {
@@ -212,6 +233,8 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       }
     }
     const connection = await ensure(id);
+    if (instanceId !== undefined && instanceId !== connection.instanceId) throw remoteFailure('remote_instance_mismatch', 409);
+    if (scopeGeneration !== undefined && scopeGeneration !== connection.scopeGeneration) throw remoteFailure('stale_host', 409);
     const generation = connection.fingerprint;
     const deadlineMs = longRunning ? operationTimeoutMs : requestTimeoutMs;
     const headerDeadline = new AbortController();
@@ -294,7 +317,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     return changed;
   };
   const refresh = async (connection) => {
-    if (!current(connection)) return;
+    if (!current(connection) || !store.projects(connection.host.id).length) return;
     const controller = new AbortController();
     connection.refreshController = controller;
     try {
@@ -349,7 +372,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       if (!controller.signal.aborted) setState(connection, 'degraded', error);
     } finally {
       if (connection.refreshController === controller) connection.refreshController = null;
-      if (connection.refreshPreempted && current(connection) && statusObservers.size) {
+      if (connection.refreshPreempted && current(connection) && hasStatusDemand(connection.host.id)) {
         connection.refreshPreempted = false; refreshQueue.add(connection.host.id);
       }
     }
@@ -372,7 +395,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   };
   const enqueueRefresh = (connection) => { refreshQueue.add(connection.host.id); pump(); };
   const startStatus = (connection) => {
-    if (connection.reader || !statusObservers.size || !store.projects(connection.host.id).length) return;
+    if (connection.reader || !hasStatusDemand(connection.host.id)) return;
     const id = connection.host.id;
     connection.reader = createUpstreamSseReader({
       buildUrl: () => 'http://remote.invalid/api/hosts/status-stream',
@@ -403,7 +426,11 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
         const directory = event.directory && event.directory !== 'global' ? event.directory
           : data.location?.directory || data.directory || data.info?.directory
             || (sessionId ? indexFor(id).findBySessionId(sessionId)?.directory : null);
-        if (sessionId && (!directory || !directoryResolver(id)(directory))) return;
+        if (sessionId && (!directory || !directoryResolver(id)(directory))) {
+          const payload = projectRemoteStatusEvent(event.payload);
+          if (payload) notifyTasks(id, { ...(directory ? { directory } : {}), payload });
+          return;
+        }
         if (applySessionIndexEvent(indexFor(id), event, Date.now())) {
           store.saveReceipt(id, { lastSyncedAt: Date.now() });
         }
@@ -443,6 +470,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       const hosts = await descriptors();
       if (stopped) return;
       const needed = new Set(statusObservers.size ? store.projects().map((p) => p.hostId) : []);
+      for (const id of taskObservers.keys()) if (hasTaskStatus(id)) needed.add(id);
       for (const project of store.projects()) if (!hosts.some((host) => host.id === project.hostId)) store.markProject(project.id, 'host-unavailable');
       for (const connection of connections.values()) {
         const host = hosts.find((h) => h.id === connection.host.id);
@@ -495,6 +523,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       if (!statusObservers.size) {
         refreshQueue.clear();
         for (const connection of connections.values()) {
+          if (hasTaskStatus(connection.host.id)) continue;
           connection.reader?.stop(); connection.reader = null;
           connection.refreshController?.abort();
         }
@@ -503,6 +532,28 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
         refreshQueue.clear();
         for (const connection of [...connections.values()]) closeConnection(connection);
       }
+    };
+  };
+  const retainHost = (hostId, resource, priority = false) => {
+    let consumers = interactiveHosts.get(hostId);
+    if (!consumers) { consumers = new Set(); interactiveHosts.set(hostId, consumers); }
+    consumers.add(resource);
+    if (priority) priorityRequests.set(resource, hostId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      consumers.delete(resource);
+      priorityRequests.delete(resource);
+      if (!consumers.size) {
+        interactiveHosts.delete(hostId);
+        if (!stopped && !store.projects(hostId).length) {
+          refreshQueue.delete(hostId);
+          const connection = connections.get(hostId);
+          if (connection) closeConnection(connection);
+        }
+      }
+      pump();
     };
   };
   const unsubscribeAdapter = adapter?.subscribe?.(() => {
@@ -515,44 +566,91 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       if (!stopped && (store.projects().length || connections.size)) void reconcile();
     });
   }) || (() => {});
-  return {
-    store, request, json, reconcile, observe, ensure, releaseOwner, assertProjectDirectory, supported: Boolean(adapter),
-    projectReferencesChanged(id) {
-      const connection = connections.get(id);
-      if (connection && statusObservers.size) { connection.topologyDirty = true; enqueueRefresh(connection); }
-      void reconcile();
-    },
-    retainHost(hostId, resource, priority = false) {
-      let consumers = interactiveHosts.get(hostId);
-      if (!consumers) { consumers = new Set(); interactiveHosts.set(hostId, consumers); }
-      consumers.add(resource);
-      if (priority) priorityRequests.set(resource, hostId);
-      return () => {
-        consumers.delete(resource);
-        priorityRequests.delete(resource);
-        if (!consumers.size) {
-          interactiveHosts.delete(hostId);
-          if (!stopped && !store.projects(hostId).length) {
-            refreshQueue.delete(hostId);
-            const connection = connections.get(hostId);
-            if (connection) closeConnection(connection);
-          }
-        }
-        pump();
+  const acquireTask = async (id, { instanceId, signal, onEvent } = {}) => {
+    signal?.throwIfAborted();
+    if (stopped || !adapter) throw remoteFailure('host_unavailable', 404);
+    const task = { onEvent, scopeGeneration: null, release: null };
+    let tasks = taskObservers.get(id);
+    if (!tasks) { tasks = new Set(); taskObservers.set(id, tasks); }
+    tasks.add(task);
+    const owner = `task:${crypto.randomUUID()}`;
+    const controller = new AbortController();
+    const releaseObserver = observe(task, owner, { status: false });
+    const releaseHost = retainHost(id, task);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      signal?.removeEventListener('abort', release);
+      controller.abort();
+      tasks.delete(task);
+      if (!tasks.size) taskObservers.delete(id);
+      releaseObserver();
+      // Private task owners never acquire client content leases or leave pending lease admissions.
+      ownerGenerations.delete(owner);
+      releaseHost();
+      if (!stopped) void reconcile();
+    };
+    task.release = release;
+    signal?.addEventListener('abort', release, { once: true });
+    try {
+      const connection = await ensure(id);
+      if (released || signal?.aborted) throw remoteFailure('stale_host', 409);
+      if (instanceId !== undefined && instanceId !== connection.instanceId) throw remoteFailure('remote_instance_mismatch', 409);
+      task.scopeGeneration = connection.scopeGeneration;
+      const target = Object.freeze({ hubId: store.hubId, hostId: id, instanceId: connection.instanceId });
+      const capturedOptions = (options) => ({ ...options, instanceId: target.instanceId, scopeGeneration: task.scopeGeneration });
+      const capturedInit = (init) => {
+        controller.signal.throwIfAborted();
+        return { ...init, signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal };
       };
-    },
+      startStatus(connection);
+      return Object.freeze({ target,
+        request: async (route, init, options) => request(id, route, capturedInit(init), capturedOptions(options)),
+        json: async (route, init, options) => json(id, route, capturedInit(init), capturedOptions(options)),
+        release });
+    } catch (error) { release(); throw error; }
+  };
+  const projectReferencesChanged = (id) => {
+    const connection = connections.get(id);
+    if (connection && hasStatusDemand(id)) { connection.topologyDirty = true; enqueueRefresh(connection); }
+    void reconcile();
+  };
+  const registerProject = async (id, input, { instanceId, signal } = {}) => {
+    const lease = await acquireTask(id, { instanceId, signal });
+    try {
+      const remote = await lease.json('/api/projects', { method: 'POST', signal,
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: input?.path, label: input?.label }) });
+      signal?.throwIfAborted();
+      if (typeof remote?.project?.id !== 'string' || !remote.project.id
+        || typeof remote.project.path !== 'string' || !remote.project.path || remote.project.hostId) throw remoteFailure('remote_invalid_project');
+      const existed = store.projects(id).some((project) => project.path === remote.project.path);
+      const project = store.saveProject(id, remote.project);
+      projectReferencesChanged(id);
+      if (!existed) broadcast({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } });
+      return { project, created: !existed };
+    } finally { lease.release(); }
+  };
+  return {
+    store, request, json, reconcile, observe, ensure, releaseOwner, assertProjectDirectory, acquireTask, registerProject,
+    projectReferencesChanged, supported: Boolean(adapter),
+    retainHost,
     async list() {
+      if (stopped) throw remoteFailure('host_unavailable', 404);
       const hosts = await descriptors();
+      if (stopped) throw remoteFailure('host_unavailable', 404);
       for (const host of hosts) store.saveHost(host);
       for (const p of store.projects()) if (!hosts.some((h) => h.id === p.hostId)) store.markProject(p.id, 'host-unavailable');
       const removed = new Set(store.projects().filter((p) => p.remoteState === 'host-unavailable' && !hosts.some((h) => h.id === p.hostId)).map((p) => p.hostId));
       const unavailable = [...removed].map((id) => ({ ...(store.savedHosts().find((host) => host.id === id) || { id, name: id, source: 'direct' }),
+        ...(store.instanceFor(id) ? { instanceId: store.instanceFor(id) } : {}),
         ...store.receipt(id), state: 'offline', available: false }));
       return { supported: Boolean(adapter), hubId: store.hubId, hosts: [...hosts.map(hostView), ...unavailable], projects: store.projects(),
         ...(!adapter ? { reason: 'pc_hub_required' } : {}) };
     },
     async connect(id) { const connection = await ensure(id); startStatus(connection); return hostView(connection.host); },
     summaries(id) {
+      if (stopped) throw remoteFailure('host_unavailable', 404);
       const references = new Set(store.projects(id).map((p) => directoryKey(p.path)));
       if (!references.size) throw remoteFailure('project_not_found', 404);
       const stale = stateFor(id) !== 'connected' || !connections.get(id)?.snapshotReady;
@@ -633,8 +731,10 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       return socket;
     },
     stop() {
+      if (stopped) return;
       unsubscribeAdapter();
       stopped = true; refreshQueue.clear(); observers.clear(); statusObservers.clear();
+      for (const tasks of [...taskObservers.values()]) for (const task of [...tasks]) task.release();
       for (const connection of [...connections.values()]) closeConnection(connection);
       for (const service of indexes.values()) service.close();
       scopes.clear();

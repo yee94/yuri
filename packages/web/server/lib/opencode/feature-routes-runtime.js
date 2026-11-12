@@ -307,6 +307,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     await refreshAssistantAllowedRoots();
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
     registerProjectsSkill(app, {
+      remoteHostGateway: routeDependencies.remoteHostGateway,
       express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
       registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
@@ -340,6 +341,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       onSystemSessionPersisted,
     });
     assistantRoutesRuntime = registerAssistantRoutes(app, {
+      remoteHostGateway: routeDependencies.remoteHostGateway,
       yuriDataDir,
       dbPath: path.join(yuriDataDir, 'assistants.sqlite'),
       buildOpenCodeUrl,

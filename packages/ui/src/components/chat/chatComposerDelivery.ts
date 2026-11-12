@@ -143,7 +143,7 @@ const collectLoadedSessionTitleMentionIds = (text: string, loadedTitles: Readonl
     return ids;
 };
 
-export const compileChatComposerDelivery = ({ plan, agents, installedSkillNames, directory, root, confirmedFilePaths = [], confirmedDirectoryPaths = [], citationAttachments = [] }: {
+export const compileChatComposerDelivery = ({ plan, agents, installedSkillNames, directory, root, confirmedFilePaths = [], confirmedDirectoryPaths = [], citationAttachments = [], sessions }: {
     plan: ComposerSendPlan;
     agents: Parameters<typeof parseAgentMentions>[1];
     installedSkillNames: ReadonlySet<string>;
@@ -152,12 +152,14 @@ export const compileChatComposerDelivery = ({ plan, agents, installedSkillNames,
     confirmedFilePaths?: readonly string[];
     confirmedDirectoryPaths?: readonly string[];
     citationAttachments?: AttachedFile[];
+    /** Explicit Host catalog; an empty remote catalog must never read Hub state. */
+    sessions?: readonly { id: string; title?: string }[];
 }) => {
     const agentNames = new Set(agents.map((agent) => agent.name.toLowerCase()));
-    const labels = new Map(getSyncSessions(directory).map((session) => [session.id, session.title || session.id]));
+    const labels = new Map((sessions ?? getSyncSessions(directory)).map((session) => [session.id, session.title || session.id]));
     // Title-matching source for pasted visible `@<title>` references; same matching the sent-message display fallback uses.
     const loadedTitles: Array<{ id: string; title: string }> = [];
-    for (const session of getAllSyncSessionMap().values()) {
+    for (const session of sessions ?? getAllSyncSessionMap().values()) {
         const title = typeof session.title === 'string' ? session.title.trim() : '';
         if (title) loadedTitles.push({ id: session.id, title });
     }

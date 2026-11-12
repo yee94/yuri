@@ -4,6 +4,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRemoteHostStore } from './store.js';
 
+it('pins authenticated instance identity across reopen and preserves legacy project references', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-store-authority-'));
+  const dbPath = path.join(root, 'remote.sqlite');
+  let store = createRemoteHostStore(dbPath);
+  try {
+    const reference = store.saveProject('ssh', { id: 'project', path: '/same/path' });
+    expect(reference.instanceId).toBeUndefined();
+    store.bindInstance('ssh', 'machine-a');
+    store.bindInstance('relay', 'machine-a');
+    expect(store.projects('ssh')[0]).toMatchObject({ id: reference.id, instanceId: 'machine-a' });
+    store.close(); store = createRemoteHostStore(dbPath);
+    expect(store.bindInstance('ssh', 'machine-a')).toBe('machine-a');
+    expect(() => store.bindInstance('ssh', 'machine-b')).toThrow('remote_instance_mismatch');
+    expect(store.projects('ssh')[0]).toMatchObject({ id: reference.id, instanceId: 'machine-a' });
+    for (const malformed of ['', ' bad', 'bad\nvalue', null]) expect(() => store.bindInstance('invalid', malformed)).toThrow('remote_incompatible');
+    expect(store.instanceFor('invalid')).toBeUndefined();
+  } finally { store.close(); await fs.rm(root, { recursive: true, force: true }); }
+});
+
 it('projects the SQLite hint and never revives a removed or replaced reference during metadata refresh', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-store-refresh-'));
   const dbPath = path.join(root, 'remote.sqlite');

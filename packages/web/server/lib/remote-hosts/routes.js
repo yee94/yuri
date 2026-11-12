@@ -24,6 +24,7 @@ const safeRoute = (route, method) => {
   if (/^\/api\/(hosts|client-auth|system|gui-network|remote-desktop|assistants|scheduled-tasks)(\/|$)/.test(pathname)
     || /^\/api\/yuri\/(transcript-cache|config-sync|relay|realtime-proxy)(\/|$)/.test(pathname)) return false;
   if (method !== 'GET' && method !== 'HEAD' && /^\/api\/(config|provider|plugin|mcp|global|agent|command|skill|settings|opencode|push)(\/|$)/.test(pathname)) return false;
+  if (/^\/api\/yuri\/sessions\/[^/]+\/(archive|metadata)$/.test(pathname)) return method === 'PUT';
   return /^\/api\/(info|fs|git|terminal|preview|session|sessions|session-folders|session-order|permission|permission-auto-accept|question|question-auto-delegate|form|command|agent|provider|config|plugin|skill|mcp|find|file|vcs|path|project|projects|experimental|location|session-activity)(\/|$)/.test(pathname)
     || /^\/api\/yuri\/(session|session-index|session-unread|session-folders|session-order|message-queue|content-search|events)(\/|$)/.test(pathname);
 };
@@ -32,7 +33,7 @@ const report = (res, error) => {
   const code = error?.code || 'remote_unavailable';
   // Transport failures may contain URL credentials or content. Never serialize
   // arbitrary upstream Error.message or log the request/response body.
-  const allowed = new Set(['remote_incompatible', 'remote_authorization_required', 'host_unavailable',
+  const allowed = new Set(['remote_incompatible', 'remote_instance_mismatch', 'remote_authorization_required', 'host_unavailable',
     'project_not_found', 'validation_error', 'stale_host', 'subscription_not_found', 'content_capacity', 'remote_request_failed',
     'remote_ssh_authentication_failed', 'remote_ssh_unavailable', 'remote_relay_unavailable', 'remote_service_starting']);
   const publicCode = allowed.has(code) ? code : 'remote_unavailable';
@@ -71,6 +72,9 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
     }, Math.min(delay, 2147483647));
     timer.unref?.(); expiryTimers.set(owner, timer);
   };
+  const unsubscribeProjectChanges = broadcaster.subscribe((payload) => {
+    if (payload.type === 'yuri:project-order-changed') for (const owner of resources.keys()) armExpiry(owner);
+  });
   const authorize = async (req, res, { aggregate = true } = {}) => {
     const clientRequest = Object.create(req);
     clientRequest.headers = { ...req.headers };
@@ -225,17 +229,9 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
   });
   app.post('/api/hosts/:hostId/projects', parseMutation, async (req, res) => {
     try {
-      const remote = await gateway.json(req.params.hostId, '/api/projects', { method: 'POST',
-        signal: req.remoteHostSignal,
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: req.body?.path, label: req.body?.label }) });
-      if (req.remoteHostSignal.aborted) throw remoteFailure('remote_authorization_required', 401);
-      if (!remote.project?.id || !remote.project?.path || remote.project.hostId) throw remoteFailure('remote_invalid_project');
-      const existed = store.projects(req.params.hostId).some((p) => p.path === remote.project.path);
-      const project = store.saveProject(req.params.hostId, remote.project);
-      for (const owner of resources.keys()) armExpiry(owner);
-      gateway.projectReferencesChanged(req.params.hostId);
-      if (!existed) broadcaster({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } });
-      res.json({ project, created: !existed });
+      res.json(await gateway.registerProject(req.params.hostId, req.body, {
+        signal: req.remoteHostSignal, instanceId: req.get('x-yuri-target-instance') || undefined,
+      }));
     } catch (error) { report(res, error); }
   });
   app.patch('/api/hosts/:hostId/projects/:projectId', parseMutation, async (req, res) => {
@@ -317,6 +313,7 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
         || url.pathname === '/api/yuri/events';
       const response = await gateway.request(req.params.hostId, `${url.pathname}${url.search}`, init, {
         streaming, longRunning: streaming || !['GET', 'HEAD'].includes(req.method),
+        ...(req.headers['x-yuri-target-instance'] !== undefined ? { instanceId: req.headers['x-yuri-target-instance'] } : {}),
       });
       res.status(response.status);
       const location = response.headers.get('location');
@@ -423,7 +420,7 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
       return Boolean(owner && (!expirations.has(owner) || expirations.get(owner) > Date.now()));
     },
     stop() {
-    revoke(); server.off('upgrade', onUpgrade);
+    revoke(); unsubscribeProjectChanges(); server.off('upgrade', onUpgrade);
     for (const timer of expiryTimers.values()) clearTimeout(timer);
     authorizedResources.clear();
     for (const entries of resources.values()) for (const close of [...entries]) close();

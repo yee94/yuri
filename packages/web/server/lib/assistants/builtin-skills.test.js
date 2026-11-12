@@ -24,7 +24,7 @@ describe('assistant built-in skill pointers', () => {
     const source = fs.readFileSync(file, 'utf8');
     expect(prompt).not.toContain('## Workflow');
     for (const [, reference] of source.matchAll(/\]\((references\/[^)]+)\)/g)) {
-      expect(fs.existsSync(path.join(path.dirname(file), reference))).toBe(true);
+      expect(fs.existsSync(path.join(path.dirname(file), reference.split('#')[0]))).toBe(true);
     }
   });
 

@@ -19,6 +19,7 @@ import { getHostRuntimeServices } from '@/lib/remote-projects/runtime';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 import type { SessionFolder } from '@/stores/useSessionFoldersStore';
+import { toast } from '@/components/ui';
 
 const mocks = vi.hoisted(() => ({ localDirectory: vi.fn(), localSelection: vi.fn(), events: new Set<(event: unknown) => void>(), dragContexts: new Map<string, (event: DragEndEvent) => void>() }));
 vi.mock('@dnd-kit/core', async (importOriginal) => {
@@ -45,7 +46,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>, DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>, DialogTitle: ({ children }: { children: React.ReactNode }) => <h3>{children}</h3>, DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>, DialogTitle: ({ children }: { children: React.ReactNode }) => <h3>{children}</h3>, DialogDescription: ({ children }: { children: React.ReactNode }) => <p>{children}</p>, DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 let root: Root;
@@ -57,6 +58,7 @@ const flush = async () => { await act(async () => { await new Promise((resolve) 
 const click = async (label: string, scope: Element = container) => { const button = [...scope.querySelectorAll('button')].find((candidate) => candidate.textContent === label); expect(button, label).toBeTruthy(); await act(async () => button!.click()); await flush(); };
 
 beforeEach(() => {
+  vi.spyOn(toast, 'error').mockImplementation(() => 'remote-error');
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
   useProjectsStore.setState({ projects: [project('a'), project('b')], activeProjectId: null, manualProjectOrder: [] });
@@ -243,7 +245,8 @@ test('failed shared same-folder reorder leaves membership, confirmed order and s
   expect(data.folders.foldersMap).toEqual(original.foldersMap);
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey)).toBe(before);
   expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session', 'parent-session']);
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('order write failed');
+  expect(toast.error).toHaveBeenCalledWith('order write failed');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelector('[data-remote-session="child-session"]')?.getAttribute('data-session-selected')).toBe('true');
   const writes = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(writes.map(([path]) => path)).toEqual(['/api/hosts/a/api/session-folders/order']);
@@ -282,7 +285,8 @@ test('a Host generation change during folder body decoding cannot write a stale 
   await drag({ kind: 'session', directory, id: 'other-session' }, { kind: 'folder', directory, id: 'child' });
   expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/hosts/a/api/session-folders']);
   expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session']);
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('remoteProjects.host-unavailable');
+  expect(toast.error).toHaveBeenCalledWith('remoteProjects.host-unavailable');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });
 
 test('shared folder actions preserve failed mutations and deletion releases descendant sessions', async () => {
@@ -306,7 +310,8 @@ test('shared folder actions preserve failed mutations and deletion releases desc
   await drag({ kind: 'session', directory, id: 'other-session' }, { kind: 'folder', directory, id: 'child' });
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey)).toBe(before);
   expect(renderedIds(container.querySelector('[data-session-folder="child"]')!)).toEqual(['child-session']);
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('folder write rejected');
+  expect(toast.error).toHaveBeenCalledWith('folder write rejected');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   rejectFolderWrite = false;
   const parent = container.querySelector('[data-session-folder="parent"]')!;
   await act(async () => parent.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.folderItem.deleteFolderAria"]')!.click());
@@ -333,7 +338,8 @@ test('new sub-folder action on the shared folder UI writes its actual parentId a
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Grandchild folder'); input.dispatchEvent(new Event('input', { bubbles: true })); });
   await click('sessions.sidebar.session.rename.save');
   expect(container.querySelector('form input')).not.toBeNull();
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('create failed');
+  expect(toast.error).toHaveBeenCalledWith('create failed');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   reject = false;
   await click('sessions.sidebar.session.rename.save');
   const created = data.folders.foldersMap[directory].find((folder) => folder.name === 'Grandchild folder');
@@ -377,7 +383,8 @@ test('pin writes go only to the selected Host; failed write preserves prior summ
   await click('remoteProjects.pin');
   expect(fetch).toHaveBeenCalledWith('/api/hosts/a/api/yuri/session-index/session/same-id/pin', expect.objectContaining({ method: 'POST' }));
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'a').queryKey)).toBe(before);
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('denied by remote');
+  expect(toast.error).toHaveBeenCalledWith('denied by remote');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   fail = false;
   await click('remoteProjects.pin');
   expect(container.querySelector('[role="alert"]')).toBeNull();
@@ -413,6 +420,126 @@ test('remote rename uses the captured Host service and raw directory, without a 
   await click('sessions.sidebar.session.rename.save');
   expect(resolveService).toHaveBeenCalledWith(expect.objectContaining({ hubId: 'hub', hostId: 'a', directory: 'C:\\Raw Path\\' }), expect.anything(), expect.anything());
   expect(updateSession).toHaveBeenCalledWith('same-id', { title: 'Title a' }, 'C:\\Raw Path\\');
+});
+
+test('remote delete requires confirmation, keeps failures retryable, deduplicates submissions and clears only the matching selection', async () => {
+  let deleted = false;
+  let fail = true;
+  let finish!: () => void;
+  const deleteSession = vi.fn(async () => {
+    if (fail) throw new Error('Delete denied');
+    await new Promise<void>((resolve) => { finish = resolve; });
+    deleted = true;
+    return true;
+  });
+  const resolveService = vi.fn(() => ({ deleteSession }) as unknown as LocationOpencodeService);
+  const fetch = vi.fn(async () => { const value = snapshot('a'); if (deleted) value.directories[0].sessions = []; return json(value); });
+  const entry = registry(fetch, () => ({} as OpenCodeClient), resolveService);
+  useSessionNavigationStore.getState().openRemoteSession(project('a'), { hubId: 'hub', hostId: 'a', directory: project('a').path }, 'same-id');
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush();
+  await click('sessions.sidebar.dialogs.deleteSession.titleAction');
+  expect(deleteSession).not.toHaveBeenCalled();
+  await click('sessions.sidebar.dialogs.cancel');
+  expect(deleteSession).not.toHaveBeenCalled();
+  await click('sessions.sidebar.dialogs.deleteSession.titleAction');
+  await click('sessions.sidebar.bulkActions.delete');
+  expect(toast.error).toHaveBeenCalledWith('Delete denied');
+  expect(renderedIds()).toEqual(['same-id']);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.textContent).not.toContain('Delete denied');
+  expect(container.textContent).toContain('sessions.sidebar.dialogs.deleteSession.title');
+  expect(useSessionNavigationStore.getState().remoteSession?.sessionId).toBe('same-id');
+  fail = false;
+  await click('sessions.sidebar.bulkActions.delete');
+  await click('sessions.sidebar.bulkActions.delete');
+  expect(deleteSession).toHaveBeenCalledTimes(2);
+  await act(async () => finish()); await flush();
+  expect(deleteSession).toHaveBeenLastCalledWith('same-id', project('a').path);
+  expect(resolveService).toHaveBeenLastCalledWith(expect.objectContaining({ hubId: 'hub', hostId: 'a', directory: project('a').path }), expect.anything(), expect.anything());
+  expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ sessionId: null, location: { hostId: 'a', directory: project('a').path } });
+  expect(renderedIds()).toEqual([]);
+});
+
+test('remote delete never clears a later selection on another Host with the same session ID', async () => {
+  let finish!: (value: boolean) => void;
+  const deleteSession = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+  const entry = registry(async () => json(snapshot('a')), () => ({} as OpenCodeClient), () => ({ deleteSession }) as unknown as LocationOpencodeService);
+  useSessionNavigationStore.getState().openRemoteSession(project('a'), { hubId: 'hub', hostId: 'a', directory: project('a').path }, 'same-id');
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush();
+  await click('sessions.sidebar.dialogs.deleteSession.titleAction');
+  await click('sessions.sidebar.bulkActions.delete');
+  useSessionNavigationStore.getState().openRemoteSession(project('b'), { hubId: 'hub', hostId: 'b', directory: project('b').path }, 'same-id');
+  const later = useSessionNavigationStore.getState().remoteSession;
+  await act(async () => finish(true)); await flush();
+  expect(useSessionNavigationStore.getState().remoteSession).toBe(later);
+});
+
+test('delete confirmation retains the captured Host entry and refuses a changed authorization scope', async () => {
+  const deleteSession = vi.fn(async () => true);
+  const entry = registry(async () => json(snapshot('a')), () => ({} as OpenCodeClient), () => ({ deleteSession }) as unknown as LocationOpencodeService);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush();
+  await click('sessions.sidebar.dialogs.deleteSession.titleAction');
+  await act(async () => { entry.applyCatalog({ supported: true, hubId: 'hub', hosts: [{ id: 'a', name: 'replacement', source: 'direct', state: 'connected', scopeGeneration: 'new-authorization' }], projects: [project('a')] }); });
+  await click('sessions.sidebar.bulkActions.delete');
+  expect(deleteSession).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalled();
+  expect(renderedIds()).toEqual(['same-id']);
+});
+
+test('bulk remote delete retains only failed targets and retries them without deleting successful sessions twice', async () => {
+  let fail = true;
+  const removed = new Set<string>();
+  const deleteSession = vi.fn(async (id: string) => {
+    if (id === 'failed' && fail) throw new Error('Partial delete failed');
+    removed.add(id); return true;
+  });
+  const value = snapshot('a');
+  const sessions = ['ok', 'failed'].map((id) => ({ ...value.directories[0].sessions[0], id, title: id }));
+  const entry = registry(async () => json({ ...value, directories: [{ ...value.directories[0], sessions: sessions.filter((session) => !removed.has(session.id)) }] }), () => ({} as OpenCodeClient), () => ({ deleteSession }) as unknown as LocationOpencodeService);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush();
+  await act(async () => { for (const row of container.querySelectorAll<HTMLElement>('[data-session-title]')) row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); });
+  await click('sessions.sidebar.bulkActions.delete');
+  const confirms = [...container.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent === 'sessions.sidebar.bulkActions.delete');
+  await act(async () => confirms.at(-1)!.click()); await flush();
+  expect(deleteSession.mock.calls.map(([id]) => id).sort()).toEqual(['failed', 'ok']);
+  expect(renderedIds()).toEqual(['failed']);
+  expect(toast.error).toHaveBeenCalledWith('Partial delete failed');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  fail = false;
+  const retry = [...container.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent === 'sessions.sidebar.bulkActions.delete').at(-1)!;
+  await act(async () => retry.click()); await flush();
+  expect(deleteSession.mock.calls.filter(([id]) => id === 'ok')).toHaveLength(1);
+  expect(deleteSession.mock.calls.filter(([id]) => id === 'failed')).toHaveLength(2);
+  expect(renderedIds()).toEqual([]);
+});
+
+test('failed remote child loading reports outside the tree, retains cached children and retries through the toast action', async () => {
+  let fail = false;
+  const list = vi.fn(async () => {
+    if (fail) throw new Error('Child read failed');
+    return { data: [{ id: 'child', title: 'Child cached', parentID: 'same-id', time: { created: 1, updated: 1 }, location: { directory: project('a').path } }], cursor: {} };
+  });
+  const value = snapshot('a');
+  const entry = registry(async () => json({ ...value, directories: [{ ...value.directories[0], sessions: [{ ...value.directories[0].sessions[0], hasChildren: true }] }] }), () => ({ session: { list } }) as unknown as OpenCodeClient);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush(); await click('sessions.sidebar.session.subsessions.expand');
+  expect(container.textContent).toContain('Child cached');
+  fail = true;
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: [...entry.resolve({ hubId: 'hub', hostId: 'a', directory: project('a').path }).queryScope, 'navigation-children'] }); });
+  await flush();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.textContent).not.toContain('Child read failed');
+  expect(container.textContent).toContain('Child cached');
+  expect(toast.error).toHaveBeenCalledWith('Child read failed', expect.objectContaining({ action: expect.objectContaining({ label: 'remoteProjects.retry' }) }));
+  const action = vi.mocked(toast.error).mock.lastCall?.[1]?.action;
+  fail = false;
+  await act(async () => { if (action && typeof action === 'object' && 'onClick' in action) action.onClick({} as React.MouseEvent<HTMLButtonElement>); });
+  await flush();
+  expect(list).toHaveBeenCalledTimes(3);
 });
 
 test('children are loaded only on expansion through the same Host SDK, then navigate with raw child identity', async () => {
@@ -496,8 +623,15 @@ test('the real mobile chat header reads the remote summary title and machine, ne
   await flush(); await flush();
   expect(container.textContent).toContain('Title a');
   expect(container.textContent).not.toContain('Wrong Hub title');
+  expect(container.querySelector('.yuri-mobile-detail-title')?.textContent).toBe('Title a');
+  expect(container.querySelector('.yuri-mobile-detail-subtitle [data-remote-host="a"]')).not.toBeNull();
   expect(container.querySelector('[data-remote-host="a"]')?.textContent).toContain('a');
   expect(fetch.mock.calls).toHaveLength(1);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><HostRuntimeContext.Provider value={value}><MobileChatHeader title="Wrong Hub title" subtitle="mobile.chat.syncingMessages" onBack={() => {}} onOpenMenu={() => {}} /></HostRuntimeContext.Provider></QueryClientProvider>));
+  expect(container.querySelector('.yuri-mobile-detail-subtitle')?.textContent).toBe('mobile.chat.syncingMessages');
+  expect(container.querySelector('[data-remote-host]')).toBeNull();
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><HostRuntimeContext.Provider value={value}><MobileChatHeader title="Wrong Hub title" onBack={() => {}} onOpenMenu={() => {}} /></HostRuntimeContext.Provider></QueryClientProvider>));
+  expect(container.querySelector('.yuri-mobile-detail-subtitle [data-remote-host="a"]')).not.toBeNull();
   await act(async () => root.render(<MobileChatHeader title="Hub title" onBack={() => {}} onOpenMenu={() => {}} />));
   expect(container.textContent).toContain('Hub title');
   expect(container.querySelector('[data-remote-host]')).toBeNull();

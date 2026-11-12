@@ -14,6 +14,11 @@ export async function createRemoteTransport(host, { fetchImpl = fetch, signal } 
   const token = host.clientToken;
   if (!token) throw failure('remote_authorization_required', 401);
   const headers = { ...host.requestHeaders, Authorization: `Bearer ${token}` };
+  const requestHeaders = (input) => {
+    const merged = new Headers(input);
+    for (const [name, value] of Object.entries(headers)) merged.set(name, value);
+    return Object.fromEntries(merged);
+  };
   let base = directUrl(host.apiUrl || host.url);
   let capabilities;
   const readAdmission = async (response) => {
@@ -58,7 +63,7 @@ export async function createRemoteTransport(host, { fetchImpl = fetch, signal } 
       if (closed) throw failure('stale_host', 409);
       return fetchImpl(new URL(route, base), { ...init,
         signal: AbortSignal.any([...(signal ? [signal] : []), ...(init.signal ? [init.signal] : [])]),
-        redirect: 'manual', headers: { ...init.headers, ...headers } });
+        redirect: 'manual', headers: requestHeaders(init.headers) });
     },
     openWebSocket(route, protocols = [], { onMessage } = {}) {
       if (closed) throw failure('stale_host', 409);
@@ -90,7 +95,7 @@ export async function createRemoteTransport(host, { fetchImpl = fetch, signal } 
   if (signal?.aborted) close();
   const relayFetch = (route, init = {}) => tunnel.fetch(`http://remote.invalid${route}`, {
     ...init, signal: AbortSignal.any([...(signal ? [signal] : []), ...(init.signal ? [init.signal] : [])]),
-    headers: { ...init.headers, ...headers },
+    headers: requestHeaders(init.headers),
   });
   try {
     capabilities = await readAdmission(await relayFetch('/api/hosts/capabilities', { signal: boundedSignal(10000) }));

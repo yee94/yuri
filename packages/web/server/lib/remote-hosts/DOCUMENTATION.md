@@ -9,6 +9,34 @@ SSH-managed PC instances expose the local-project authority protocol.
 
 ## Ownership and persistence
 
+Resource authority is distinct from a connection: `remote_host_authority` pins a
+saved `hostId` to the first authenticated capabilities `instanceId`. Reopening,
+credential rotation and transport reconnection preserve the pin. A different
+instance returns `remote_instance_mismatch` before resource reads or mutations;
+old project references and snapshots remain available. Existing databases acquire
+this pin on their first successful admission. Separate SSH/Relay connection records
+and credentials remain separate, even when their `instanceId` matches. Public Hosts
+and project references expose the pinned identity. The optional Hub-only
+`X-Yuri-Target-Instance` request header checks an explicit resource reference and
+is stripped before forwarding upstream.
+
+Server-owned work uses `acquireTask(hostId, { instanceId, signal, onEvent })`.
+The returned immutable lease owns its authenticated target, fenced request/JSON
+methods and idempotent release. Plain reads retain a short HTTP demand; `onEvent`
+retains only that Host's existing shared status reader independently of UI windows.
+Task callbacks receive metadata/status events, never a second transcript mirror.
+Tasks release on completion/cancellation; persistent watches own their lease until
+settlement and re-acquire from their explicit target during recovery. No UI and no
+task demand still means zero remote readers/transports. Revocation/retargeting
+rejects stale leases; it never dispatches against the Hub's local OpenCode service.
+Official SDK task mutations use the existing long-running operation budget; reads
+retain the short budget. Status projection retains only allowlisted interruption
+reasons and a `MessageAbortedError` name marker, never raw error messages/stacks.
+Task status also covers authorized remote sessions whose project has not been
+associated with the Hub sidebar. Those events go only to the task consumer and do
+not create project references or index rows. Content-channel messages never reach
+task status callbacks.
+
 - `store.js` owns `remote-hosts.sqlite`: stable Hub identity, remote-project
   references, safe presentation fields, connection receipts and bounded-shape
   unread/folder/order snapshots. `(hostId, path)` is unique. Missing hosts retain
@@ -35,6 +63,9 @@ SSH-managed PC instances expose the local-project authority protocol.
   normative E2EE Relay client. `build:remote-host-relay` compiles that client once;
   normal web build/prepack and `build:llm-bridge` include the build. The generated
   bundle ships inside the web server resources, not as a new dependency.
+  Both direct and Relay normalize Fetch `HeadersInit` (Headers/record/pairs)
+  before merging target authentication case-insensitively; SDK content-type and
+  directory headers survive without forwarding the caller's authorization.
 - `routes.js` owns external authorization, host-scoped HTTP/WS routing and demand
   tracking on the existing global client stream. `preview-scope.js` carries only
   a relative host prefix and a nonsecret marker across the remote preview pipe;
@@ -49,6 +80,22 @@ read-only projected views; raw settings/config files and machine mutations are
 not proxy capabilities.
 
 ## HTTP protocol
+
+The client proxy permits `PUT /api/yuri/sessions/:id/archive` for Host-owned
+archive/unarchive writes and `PUT /api/yuri/sessions/:id/metadata` for metadata
+patches. These are exact method/path capabilities, not a blanket
+allowance for `/api/yuri/sessions/*`; normal client/Host authorization and target
+authority fences still apply.
+
+`task-client.js` exports `makeRemoteTaskOpenCodeClient(lease)` for trusted
+in-process Assistant and bound-project consumers. It preserves official SDK
+Request method, headers, JSON body, query and abort signal through `lease.request`.
+The synthetic SDK base origin is never fetched; every route terminates at the
+lease's authenticated target Yuri proxy. That proxy's current runtime gate owns
+write admission (`executionAdmission: 'target-yuri-proxy'`), not the Hub's unrelated
+OpenCode availability. Target rejection propagates without fallback/retry. This
+factory owns neither the lease lifetime nor body persistence; consumers release
+short reads in `finally` and retain background watch demand until settlement.
 
 - `GET /api/hosts`: `{supported, hubId, hosts, projects, reason?}`; local SQLite /
   saved descriptors only, no probe. Public hosts contain id/name/source/state,
@@ -66,6 +113,11 @@ not proxy capabilities.
 - `POST /api/hosts/:hostId/projects {path,label?}`: remote register first, then
   upsert the Hub reference. A Hub disk failure leaves the remote project intact;
   retry associates the same canonical remote path and deterministic Hub ID.
+  The UI route and bound session `add-remote` share `gateway.registerProject`.
+  It captures an authenticated task lease (and checks an explicit instance ID),
+  validates the remote response, persists the reference and emits the same
+  project-order tip. Every outcome releases the lease. Route resource-expiry
+  tracking listens to this tip, including when an Agent creates the first reference.
 - `PATCH /api/hosts/:hostId/projects/:projectId`: remote metadata write-through;
   cache updates only on successful authority response.
 - `DELETE` on that path removes only the reference.

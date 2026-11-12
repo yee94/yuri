@@ -29,16 +29,22 @@ their immutable staged references until a new session is admitted. Contacts use
 their own granted `yuri.projects` tools, not this session binding.
 
 `projects.js` owns `POST /api/yuri/session-skills/projects` (`describe`, `list`,
-`add`). The global gate and route require the existing loopback service credential,
+`add`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,
 no browser Origin, shared-service ownership and the session's admitted Host origin.
 The bridge reuses `projects/registry.js`, just like the UI directory API and contact
 tools: strict reads, canonical path deduplication, serialized persistence and
 existing project-order SSE notifications remain with their owners. Registration
 preserves an existing active selection and returns only `{project, created}` after
 persistence, never settings/credentials. List errors remain errors. There is no
-cloning, directory creation, conversation creation or desktop window navigation.
+cloning, directory creation or desktop window navigation. Remote conversation creation is explicit and separate from local registration.
 Web/Electron/connected-mobile shared-service sessions operate on their bound Host;
 private/external OpenCode and standalone VS Code have no session helper admission.
+Remote SDK calls share `remote-hosts/task-client.js`, so the target proxy owns
+execution admission even when the Hub's own OpenCode is unavailable. Reads use a
+25-second operation budget; explicit create/prompt use 300 seconds (the bound
+client waits five seconds longer for the result). Caller disconnect cancels and
+releases the task lease; uncertain writes are inspected by their stable IDs before
+any retry.
 
 `references/plugin-styles.md` inventories existing host CSS variables for plugin-owned
 Solid/DOM content, including colors, typography, geometry, controls and optional

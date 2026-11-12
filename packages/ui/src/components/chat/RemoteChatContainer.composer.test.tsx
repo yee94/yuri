@@ -25,6 +25,7 @@ import { sessionDraftKey } from '@/sync/input-draft-types';
 import { announceSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import './message/TextSelectionMenu';
 import { nativeIosComposerSession } from '@/lib/native-ios-composer-session';
+import * as autocomplete from '@/lib/composer-autocomplete';
 
 const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, wire: false, providerReads: 0, agentReads: 0, modelEnumerations: 0, native: false,
   nativePresent: vi.fn(async (_state: Record<string, unknown>) => {}), nativeUpdate: vi.fn(async (_state: Record<string, unknown>) => {}), nativeHide: vi.fn(async () => {}), nativeDismiss: vi.fn(async () => {}),
@@ -44,7 +45,7 @@ vi.mock('@/lib/native-ios-composer', async (original) => ({
     },
   }),
 }));
-vi.mock('@/queries/remoteProjectQueries', () => ({ useRemoteHostCatalog: () => ({ data: { supported: true, hubId: 'hub' } }), getHostRuntimeRegistry: () => fixture.registry, supportsRemoteProjects: () => true }));
+vi.mock('@/queries/remoteProjectQueries', async (original) => ({ ...await original<typeof import('@/queries/remoteProjectQueries')>(), useRemoteHostCatalog: () => ({ data: { supported: true, hubId: 'hub' } }), getHostRuntimeRegistry: () => fixture.registry, supportsRemoteProjects: () => true }));
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: () => () => {} }));
 vi.mock('@/sync/use-sync', () => ({ useSync: () => ({ ensureSessionRenderable: async () => undefined }) }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => 'remote-location' }));
@@ -75,14 +76,15 @@ vi.mock('./MessageList', () => ({ default: React.forwardRef(function List() { re
 vi.mock('./hooks/useChatTimelineController', () => ({ useChatTimelineController: ({ messages }: { messages: unknown[] }) => ({ renderedMessages: messages, historySignals: {} }) }));
 vi.mock('@/hooks/useChatAutoFollow', () => ({ useChatAutoFollow: () => ({ scrollRef: { current: null }, getAnimationHandlers: () => ({}) }) }));
 
-function wireHarness(createdID = 'created') {
+function wireHarness(createdID = 'created', mentions = false, permissionEffect?: 'allow' | 'ask' | 'deny') {
   const previous = getRuntimeUrlResolver();
   configureRuntimeUrlResolver({ apiBaseUrl: 'https://hub.example' });
   const location = { hubId: 'hub', hostId: 'host', directory: '/repo' };
   const requests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
   let model: { providerID: string; id: string } | undefined;
   let failModel = false;
-  const session = (id: string) => ({ id, projectID: 'remote-project', title: 'Wire title', location: { directory: location.directory }, model, cost: 0, tokens: {}, time: { created: 1, updated: 2 } });
+  const permissionSessions: Record<string, boolean> = {};
+  const session = (id: string) => ({ id, projectID: 'remote-project', title: 'Wire title', location: { directory: location.directory }, ...(permissionEffect ? { agent: 'build' } : {}), model, cost: 0, tokens: {}, time: { created: 1, updated: 2 } });
   vi.stubGlobal('fetch', vi.fn(async (input: Request | URL | string, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const path = new URL(request.url).pathname;
@@ -94,6 +96,13 @@ function wireHarness(createdID = 'created') {
       { id: 'openai', name: 'OpenAI', models: { 'gpt-4.1': { id: 'gpt-4.1', name: 'GPT-4.1' }, 'gpt-4.1-mini': { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' } } },
     ] });
     if (path.endsWith('/session/active')) return Response.json({ data: {} });
+    const host = path.includes('/hostB/') ? 'B' : 'A';
+    if (path.endsWith('/config/skills')) return Response.json({ skills: mentions ? Array.from({ length: 300 }, (_, i) => ({ name: `skill-${host}-${i}`, path: `/skills/skill-${host}-${i}`, description: host })) : [] });
+    if (path.endsWith('/summaries')) return Response.json({ hubId: 'hub', hostId: host === 'B' ? 'hostB' : 'host', stale: false,
+      directories: [{ directory: '/repo', sessions: Array.from({ length: 300 }, (_, i) => ({ id: `reference-${i}`, title: `Session ${host} ${i}`, time: { created: 1, updated: i + 1 } })) }] });
+    if (path.includes('/session/reference-')) return Response.json({ data: { ...session(path.split('/').at(-1)!), title: `Session ${host} ${path.split('-').at(-1)}`, location: { directory: '/other-remote-cwd' } } });
+    if (path.endsWith('/fs/find')) return Response.json({ data: [{ path: `src/${host}.ts`, type: 'file' }] });
+    if (path.endsWith('/command') && request.method === 'POST') return new Response(null, { status: 204 });
     if (path.endsWith('/session') && request.method === 'POST') return Response.json({ data: session(createdID) });
     if (path.endsWith(`/session/${createdID}`) || path.endsWith('/session/same')) return Response.json({ data: session(path.endsWith('/same') ? 'same' : createdID) });
     if (path.endsWith('/model') && request.method === 'POST') {
@@ -101,12 +110,16 @@ function wireHarness(createdID = 'created') {
       model = body.model;
       return new Response(null, { status: 204 });
     }
+    if (path.endsWith('/agent') && request.method === 'POST') return new Response(null, { status: 204 });
     if (path.endsWith('/prompt')) return Response.json({ data: { id: body.id, sessionID: createdID, type: 'user', delivery: body.delivery, timeCreated: 1, payload: { text: body.text } } });
     if (path.endsWith('/subscriptions')) return Response.json({ id: 'lease' });
     if (request.method === 'DELETE') return new Response(null, { status: 204 });
     if (path.includes('session-unread')) return Response.json({ revision: 0, sessions: {} });
-    if (path.includes('permission-auto-accept')) return Response.json({ sessions: {} });
-    if (path.endsWith('/agent')) return Response.json({ data: [] });
+    if (path.includes('permission-auto-accept')) {
+      if (request.method === 'PUT') permissionSessions[path.split('/').at(-1)!] = body.enabled === true;
+      return Response.json({ sessions: permissionSessions });
+    }
+    if (path.endsWith('/agent')) return Response.json({ data: permissionEffect ? [{ id: 'build', name: 'Build', mode: 'primary', permissions: [{ action: '*', resource: '*', effect: host === 'B' ? 'ask' : permissionEffect }], request: { settings: {}, headers: {}, body: {} } }] : mentions ? Array.from({ length: 300 }, (_, i) => ({ id: `agent-${host}-${i}`, name: `agent-${host}-${i}`, mode: 'subagent', permissions: [], request: { settings: {}, headers: {}, body: {} } })) : [] });
     return Response.json({ data: [] });
   }));
   const registry = new HostRuntimeRegistry('hub', { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true,
@@ -315,10 +328,43 @@ test.each([
   }
 }, 20_000);
 
+test.each([false, true].flatMap((mobile) => (['allow', 'ask', 'deny'] as const).map((effect) => ({ mobile, effect }))))('remote permission shield uses Host agent authority before opening pickers ($mobile/$effect)', async ({ mobile, effect }) => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  fixture.wire = true;
+  const wire = wireHarness('created', false, effect);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const runtime = { runtime: { isWeb: !mobile, isDesktop: false, isVSCode: false, isMobile: mobile, platform: mobile ? 'ios' : 'web' } } as unknown as RuntimeAPIs;
+  useUIStore.setState({ isMobile: mobile, isModelSelectorOpen: false, isAgentSelectorOpen: false });
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}><RemoteChatContainer location={wire.location} sessionId="same" /></RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(wire.requests.filter((request) => request.path.endsWith('/agent') && request.method === 'GET')).toHaveLength(1));
+    const shield = () => node.querySelector('button use[href="#yuri-shield"]')?.closest('button');
+    if (effect === 'ask') {
+      await vi.waitFor(() => expect(shield()).toBeDefined());
+      await act(async () => shield()!.click());
+      await vi.waitFor(() => expect(node.querySelector('button use[href="#yuri-shield-check"]')).not.toBeNull());
+      expect(wire.requests.find((request) => request.method === 'PUT' && request.path.includes('permission-auto-accept'))).toMatchObject({
+        path: '/api/hosts/host/api/permission-auto-accept/sessions/same', body: { enabled: true, directory: '/repo' },
+      });
+    } else {
+      await vi.waitFor(() => expect(shield()).toBeUndefined());
+      expect(node.querySelector('button use[href="#yuri-shield-check"]')).toBeNull();
+    }
+    expect(wire.requests.filter((request) => request.path.endsWith('/config/catalog/providers'))).toHaveLength(0);
+    if (effect === 'allow') {
+      await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}><RemoteChatContainer location={{ ...wire.location, hostId: 'hostB' }} sessionId="same" /></RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
+      await vi.waitFor(() => expect(shield()).toBeDefined());
+      expect(wire.requests.filter((request) => request.path.startsWith('/api/hosts/hostB/') && request.path.endsWith('/agent') && request.method === 'GET')).toHaveLength(1);
+    }
+  } finally { await act(async () => root.unmount()); useUIStore.setState({ isMobile: false }); client.clear(); wire.close(); node.remove(); }
+}, 20_000);
+
 test('real remote pane and ChatInput keep catalogs lazy through typing and picker open/close', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fixture.providerReads = 0; fixture.agentReads = 0; fixture.modelEnumerations = 0;
   fixture.wire = false;
+  useUIStore.setState({ isMobile: false, isModelSelectorOpen: false, isAgentSelectorOpen: false });
   useProjectsStore.setState({ projects: Array.from({ length: 300 }, (_, index) => ({ id: `project-${index}`, path: `/projects/${index}` })), activeProjectId: null });
   const wire = wireHarness();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -328,11 +374,12 @@ test('real remote pane and ChatInput keep catalogs lazy through typing and picke
     await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}><RemoteChatContainer location={{ hubId: 'hub', hostId: 'host', directory: '/repo' }} sessionId="same" /></RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
     const textarea = node.querySelector('textarea')!;
     expect(textarea).not.toBeNull();
-    expect(fixture.providerReads).toBe(0); expect(fixture.agentReads).toBe(0);
+    await vi.waitFor(() => expect(fixture.agentReads).toBe(1));
+    expect(fixture.providerReads).toBe(0);
     expect(fixture.modelEnumerations).toBe(0);
     const setText = (text: string) => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, text); textarea.dispatchEvent(new Event('input', { bubbles: true })); };
     for (let index = 0; index < 50; index++) await act(async () => setText(`draft ${index}`));
-    expect(fixture.providerReads).toBe(0); expect(fixture.agentReads).toBe(0);
+    expect(fixture.providerReads).toBe(0); expect(fixture.agentReads).toBe(1);
     await act(async () => useUIStore.getState().setModelSelectorOpen(true));
     await vi.waitFor(() => expect(fixture.providerReads).toBe(1));
     await act(async () => useUIStore.getState().setModelSelectorOpen(false));
@@ -424,3 +471,73 @@ test.each([false, true])('raw catalog default → real picker (%s) → create �
     await act(async () => root.unmount()); client.clear(); wire.close(); node.remove(); useSessionNavigationStore.getState().clearRemoteSession();
   }
 });
+
+test('real remote @ picker isolates 300-entry Host catalogs, stays idle when closed, and delivers references on that Host', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  fixture.wire = true;
+  const sessionID = 'mention-session';
+  const wire = wireHarness(sessionID, true);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const runtime = { runtime: { isWeb: true, isDesktop: false, isVSCode: false, isMobile: false, platform: 'web' } } as unknown as RuntimeAPIs;
+  const rows = vi.spyOn(autocomplete, 'buildMentionRows');
+  const failures = vi.spyOn(toast, 'error'); failures.mockClear();
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  const render = async (hostId: string) => act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}>
+    <RemoteChatContainer location={{ ...wire.location, hostId }} sessionId={sessionID} />
+  </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
+  const type = async (value: string) => act(async () => {
+    const textarea = node.querySelector('textarea')!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, value);
+    textarea.selectionStart = textarea.selectionEnd = value.length;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const close = async () => act(async () => node.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  try {
+    for (const hostId of ['host', 'hostB']) {
+      const location = { ...wire.location, hostId };
+      await getRemoteInputStore(location).getState().replaceDraftRootAttachments(remoteSessionDraftKey(location, sessionID), []);
+    }
+    getRemoteInputStore(wire.location).getState().setDraftText(remoteSessionDraftKey(wire.location, sessionID), '');
+    await render('host');
+    rows.mockClear();
+    for (let i = 0; i < 50; i++) await type(`plain ${i}`);
+    expect(rows).not.toHaveBeenCalled();
+    expect(wire.requests.filter((request) => request.path.endsWith('/summaries'))).toHaveLength(0);
+    await type('@agent-A-2');
+    await vi.waitFor(() => expect(document.body.textContent).toContain('agent-A-2'));
+    expect(document.body.textContent).not.toContain('agent-B-2');
+    await close(); await type('closed');
+    const reads = wire.requests.length; rows.mockClear();
+    for (let i = 0; i < 50; i++) await type(`closed ${i}`);
+    expect(rows).not.toHaveBeenCalled(); expect(wire.requests).toHaveLength(reads);
+    await render('hostB');
+    await type('@Session');
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Session B 2'));
+    expect(document.body.textContent).not.toContain('Session A 2');
+    const sessionRow = document.body.querySelector<HTMLElement>('[data-mention-id="session:reference-2"]');
+    expect(sessionRow).not.toBeNull();
+    await act(async () => sessionRow!.click());
+    await vi.waitFor(() => expect(node.querySelector('textarea')!.value).toContain('Session B 2'));
+    expect(wire.requests.some((request) => request.path === '/api/hosts/hostB/api/session/reference-2')).toBe(true);
+    await type(`${node.querySelector('textarea')!.value} @src`);
+    await vi.waitFor(() => expect(document.body.querySelector('[data-mention-id="file:/repo/src/B.ts"]')).not.toBeNull());
+    expect(document.body.textContent).not.toContain('src/A.ts');
+    await act(async () => document.body.querySelector<HTMLElement>('[data-mention-id="file:/repo/src/B.ts"]')!.click());
+    await type(`${node.querySelector('textarea')!.value} @skill-B-2`);
+    await vi.waitFor(() => expect(document.body.querySelector('[data-mention-id="skill:skill-B-2-user"]')).not.toBeNull());
+    await act(async () => document.body.querySelector<HTMLElement>('[data-mention-id="skill:skill-B-2-user"]')!.click());
+    await type(`${node.querySelector('textarea')!.value} @agent-B-2 `);
+    await act(async () => node.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    expect(failures.mock.calls, JSON.stringify(wire.requests.slice(-8))).toEqual([]);
+    await vi.waitFor(() => expect({ sent: wire.requests.some((request) => request.path === `/api/hosts/hostB/api/session/${sessionID}/prompt`), failures: failures.mock.calls }).toMatchObject({ sent: true }));
+    const prompt = wire.requests.filter((request) => request.path.endsWith('/prompt')).at(-1)!;
+    expect(prompt.body?.text).toContain('/other-remote-cwd');
+    expect(prompt.body?.text).toContain('Session B 2');
+    expect(prompt.body?.text).not.toContain('Session A');
+    expect(prompt.body).toMatchObject({ agents: [{ name: 'agent-B-2' }], skills: [{ id: 'skill-B-2' }], files: [{ uri: 'file:///repo/src/B.ts', name: 'B.ts' }] });
+    await type('/\u2003review args');
+    await act(async () => node.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(wire.requests.some((request) => request.path === `/api/hosts/hostB/api/session/${sessionID}/command`)).toBe(true));
+    expect(wire.requests.filter((request) => request.path.endsWith('/command')).at(-1)?.body).toMatchObject({ name: 'review', text: 'args' });
+  } finally { rows.mockRestore(); failures.mockRestore(); await act(async () => root.unmount()); client.clear(); wire.close(); node.remove(); }
+}, 20_000);

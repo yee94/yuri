@@ -36,6 +36,7 @@ export const registerAssistantRoutes = (app, dependencies) => {
     getServerId: dependencies.getServerId,
     getAllowedRoots: dependencies.getAllowedRoots,
     listProjects: dependencies.listProjects,
+    remoteHostGateway: dependencies.remoteHostGateway,
     registerProject: dependencies.registerProject,
     readModelPreferences: dependencies.readModelPreferences,
     listScheduledTasks: dependencies.listScheduledTasks,

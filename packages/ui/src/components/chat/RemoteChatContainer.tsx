@@ -52,6 +52,8 @@ import ToolOutputDialog from './message/ToolOutputDialog';
 import { StatusRow } from './StatusRow';
 import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
 import type { ToolPopupContent } from './message/types';
+import { parseSlashCommandInvocation } from '@/composer/inline-visual';
+import { skillAttachmentsFromText } from '@/composer/skill-attachments';
 
 type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
 const EMPTY_INBOX: never[] = [];
@@ -156,7 +158,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     if (!payload.sessions || typeof payload.sessions !== 'object') throw new Error('Invalid remote permission policy');
     client.setQueryData(policyKey, payload.sessions);
   } });
-  const agentsQuery = useQuery({ ...rawAgentsQueryOptions(location.directory, transportIdentity, entry), enabled: active && (catalogDemand || modelPickerOpen), staleTime: Infinity, gcTime: Infinity });
+  const agentsQuery = useQuery({ ...rawAgentsQueryOptions(location.directory, transportIdentity, entry), enabled: active && (Boolean(sessionId) || catalogDemand || modelPickerOpen), staleTime: Infinity, gcTime: Infinity });
   const providers = React.useMemo(() => providersQuery.data?.providers.map((provider) => ({ ...provider, models: Object.values(provider.models) })) ?? [], [providersQuery.data]);
   const [picks, setPicks] = React.useState<Record<string, ChatInputSurface['selection']['value']>>({});
   const selectionKey = state.sessionKey(sessionId ?? 'new');
@@ -220,14 +222,20 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   });
   const send = useEvent(async (request: ChatInputDeliveryRequest) => {
     assertWritable();
+    const references = request.references ?? [];
+    for (const reference of references) {
+      if (reference.type === 'session' && reference.target && (reference.target.hubId !== location.hubId
+        || reference.target.hostId !== location.hostId || reference.target.instanceId !== entry.location.instanceId)) {
+        throw new Error('Session reference belongs to another Host authority');
+      }
+    }
     if (request.inputMode !== 'shell' && /^\/timeline\s*$/i.test(request.text ?? '')) {
       useUIStore.getState().setTimelineDialogOpen(true);
       return;
     }
     // Cold drafts do no background model enumeration. The explicit send action
     // ensures the authoritative default only when no user/session choice exists.
-    let sendSelection = request.providerID && request.modelID ? { providerID: request.providerID, modelID: request.modelID, agent: request.agent, variant: request.variant }
-      : selection.providerID && selection.modelID ? { ...selection, providerID: selection.providerID, modelID: selection.modelID } : undefined;
+    let sendSelection = request.providerID && request.modelID ? { providerID: request.providerID, modelID: request.modelID, agent: request.agent, variant: request.variant } : undefined;
     if (!sendSelection && (request.options?.delivery !== 'queue' || !request.sessionID)) {
       const catalog = await client.fetchQuery(providerCatalogQueryOptions(location.directory, transportIdentity, entry));
       assertWritable();
@@ -295,13 +303,18 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
       return { uri, name: file.filename };
     }));
     assertWritable();
-    const references = request.references ?? [];
-    const sessionContext = buildSessionMentionInstruction(references.flatMap((reference) => reference.type === 'session'
-      ? [{ id: reference.sessionId, title: reference.sessionId, directory: location.directory, messages: [] }] : []));
+    const sessionIDs = [...new Set(references.flatMap((reference) => reference.type === 'session' ? [reference.sessionId] : []))];
+    const sessionContext = buildSessionMentionInstruction(await Promise.all(sessionIDs.map(async (sessionID) => {
+      const referenced = await entry.service().getSession(sessionID);
+      assertWritable();
+      return { id: sessionID, title: referenced.title || sessionID, directory: referenced.directory, messages: [] };
+    })));
     const text = [request.text ?? '', ...[...(request.parts ?? []), ...creationParts].map((part) => part.text), ...(request.systemContext ?? []).map((part) => part.text), sessionContext].filter(Boolean).join('\n\n');
-    const skills = references.flatMap((reference) => reference.type === 'skill' ? [{ id: reference.skillName }] : []);
+    const skills = [...new Set([...skillAttachmentsFromText(request.text ?? '').map((skill) => skill.id),
+      ...references.flatMap((reference) => reference.type === 'skill' ? [reference.skillName] : [])])].map((id) => ({ id }));
     const agents = request.agentMention ? [{ name: request.agentMention }] : undefined;
-    const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
+    const invocation = parseSlashCommandInvocation(text);
+    const command = invocation ? [text, invocation.commandName, invocation.argumentsText] : null;
     // A new session must establish its initial user choice even if its first
     // input is queued. Existing-session enqueue never changes runner selection.
     if (initialSelections.current.has(id) && request.options?.delivery === 'queue' && sendSelection) {

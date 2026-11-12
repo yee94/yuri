@@ -106,6 +106,7 @@ export type AssistantContactSessionCardPart = {
   title: string | null;
   status: string | null;
   branch: string | null;
+  target?: { hubId: string; hostId: string; instanceId: string };
 };
 export type AssistantContactAssistantCardPart = {
   type: 'card';
@@ -364,6 +365,16 @@ const parseContactPart = (value: unknown): AssistantContactPart => {
   if (part.type === 'card') {
     const cardType = enumValue(part.cardType, ['session', 'assistant', 'schedule'] as const, 'assistant_contact_part');
     if (cardType === 'session') {
+      let target: AssistantContactSessionCardPart['target'];
+      if (part.target !== undefined) {
+        const value = record(part.target, 'assistant_contact_part');
+        const identity = (key: string) => {
+          const result = string(value[key], 'assistant_contact_part');
+          if (!result || result !== result.trim() || result.length > 512 || Array.from(result).some((character) => character.charCodeAt(0) < 32)) return invalid('assistant_contact_part');
+          return result;
+        };
+        target = { hubId: identity('hubId'), hostId: identity('hostId'), instanceId: identity('instanceId') };
+      }
       return {
         type: 'card',
         cardType: 'session',
@@ -372,6 +383,7 @@ const parseContactPart = (value: unknown): AssistantContactPart => {
         title: nullableString(part.title ?? null, 'assistant_contact_part'),
         status: nullableString(part.status ?? null, 'assistant_contact_part'),
         branch: nullableString(part.branch ?? null, 'assistant_contact_part'),
+        ...(target ? { target } : {}),
       };
     }
     if (cardType === 'assistant') {

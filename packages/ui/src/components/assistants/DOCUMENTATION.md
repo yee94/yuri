@@ -37,7 +37,7 @@ The scrollport reserves that height as bottom padding, preserving a fully visibl
 latest message and the existing 48px status slot. Composer resizing uses the same
 follow/reading-anchor owner, never a second scroll writer. Sticky avatar rails
 clear the overlay as well. Mini Chat retains the flow footer.
-On phone the sticky avatar rail uses an 0.5rem bottom inset: the scrollport's
+On desktop and phone the sticky avatar rail uses a 0.5rem bottom inset: the scrollport's
 composer-height bottom padding already lifts its sticky boundary above the input.
 Adding composer height again would leave a full extra footer-height gap.
 Phone uses the same measured inset and existing keyboard viewport owner. Its
@@ -120,7 +120,7 @@ without changing primary Chat's typography.
 Consecutive incoming rows from the same sender and turn share one
 `data-assistant-contact-group`, including all card, file and text rows. One avatar
 occupies a bottom-sticky sibling rail spanning the entire group, 8px above the
-transcript viewport bottom. Its containing block is the group, never just its last
+transcript's composer-reserved bottom edge. Its containing block is the group, never just its last
 message: the avatar stays above the composer while any of that group remains in
 view and leaves when the group leaves. Prepends adopt a surviving member's group
 key so adding the earlier card does not remount its existing reply/reading anchor.
@@ -415,6 +415,10 @@ Mobile contact composers reuse the memoized `HoldToTalkComposer` shared with pri
 
 ## Contact session references
 
+Remote session-card DTOs retain `target:{hubId,hostId,instanceId}` plus raw directory/session ID; malformed present targets reject parsing. Local cards retain their old branch/status readers. Remote cards lazily load their own catalog/summary and registry-fenced Git Query, never the Hub's bare-ID status/session lookup. Unavailable targets retain the receipt without a local fallback; persisted busy/retry is unknown without live authority. Render keys include authority, directory and ID. Clicking validates the same authority before and after ownership resolution and uses `openRemoteProjectSession`. Mini Chat passes the complete target through native handoff into a same-Hub main window. Cold routes, warm events and saved window routes preserve the coordinate, and malformed targets fail before navigation.
+
+The Assistant session-only picker lists only the contact runtime's own session index. It does not enumerate connected Hosts or fetch their summaries, even while open: `@` selection stays on the same execution machine. Selection preserves the owning directory in the shared composer codec. Ordinary remote Chat likewise lists only its own Host and rejects references carrying another Host target before sending. Explicit Assistant remote project operations and their returned resource cards retain their target contract independently of autocomplete. Browser timing and native/Relay navigation require separate acceptance evidence.
+
 Contact submission keeps the textarea mounted, enabled and focused during admission. Inline send pointer presses preserve input focus; pending admission still blocks duplicate sends and attachment changes, while the next text draft remains editable. Mobile transcript bottom padding reserves an additional 2.75rem outside the content/status slot to clear the composer fade, including with a reduced keyboard viewport. The existing auto-follow hook remains the sole scroll writer.
 
 The Assistant workspace and conversation pane are `overflow-clip` frames, never
@@ -432,7 +436,7 @@ Assistant Settings resolves model choices through the directory-scoped `provider
 
 `AssistantSessionComposer` composes the existing inline `ChatPromptComposer` with a session-only `@` picker. It uses `resolveComposerAutocompleteTrigger`, `getVisibleSessionMentionCandidates`, `ComposerAutocompleteLayer`, and the shared touch-selection controller. Keyboard arrows navigate; Enter/Tab insert; Escape, outside press, and the close button dismiss. IME confirmation retains input ownership. Mobile uses the shared keyboard-aware body portal, scroll bounds, and touch-pan guard. The textarea remains focused after selection.
 
-The mounted picker observes the existing transport-scoped `sessionIndexSnapshotQueryOptions` through TanStack Query. Its select projection takes each row's directory from the authoritative snapshot directory bucket, excludes archived rows, and shares Chat's title-relevance ranking, literal ID fallback and updated-time tie-breaker. This recent-session-only surface explicitly requests its own presentation bounds: empty search shows up to 3 rows; title/ID search shows up to 10. Unlike the primary mixed picker, it does not remove those bounds. The source is the server's bounded per-directory recent summary (currently newest 20), so older catalog entries beyond that window require a future bounded server search capability. The header explicitly describes recent indexed sessions. Opening revalidates the existing Query; query text changes and ordinary parent renders issue zero additional requests. Closing or deactivating unmounts the observer. Query retains cached rows on failure and exposes Retry; loading, unsupported, and successful empty states remain distinct. This surface performs zero full-catalog, file-search, or agent-catalog requests.
+The mounted picker observes the existing transport-scoped `sessionIndexSnapshotQueryOptions` through TanStack Query, and supported aggregate clients also observe the existing remote catalog and bounded Host summary Queries. Its select projection takes each row's directory from the authoritative snapshot directory bucket, excludes archived rows, and shares Chat's title-relevance ranking, literal ID fallback and updated-time tie-breaker. This recent-session-only surface explicitly requests its own presentation bounds: empty search shows up to 3 rows; title/ID search shows up to 10. Unlike the primary mixed picker, it does not remove those bounds. The source is the server's bounded per-directory recent summary (currently newest 20), so older catalog entries beyond that window require a future bounded server search capability. The header explicitly describes recent indexed sessions. Opening revalidates the existing Query; query text changes and ordinary parent renders issue zero additional requests. Closing or deactivating unmounts the observer. Query retains cached rows on failure and exposes Retry; loading, unsupported, and successful empty states remain distinct. This surface performs zero full-session-catalog, file-search, or agent-catalog requests.
 
 Selection inserts ordinary editable message text in this format:
 

@@ -115,7 +115,10 @@ import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/pro
 import { useGitBranchLabel, useGitBranches, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { queryClient } from '@/lib/queryRuntime';
-import { readInstalledSkillsSnapshot, useInstalledSkillsQuery } from '@/queries/installedSkillsQueries';
+import { installedSkillsQueryOptions, readInstalledSkillsSnapshot, useInstalledSkillsQuery } from '@/queries/installedSkillsQueries';
+import { rawAgentsQueryOptions } from '@/queries/configCatalogQueries';
+import { ensureRemoteComposerSessions, readRemoteComposerSessionTitle } from '@/queries/remoteComposerQueries';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCommandsQuery } from '@/queries/commandQueries';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -1215,6 +1218,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 }) => {
     const { t, locale } = useI18n();
     const hostRuntime = useHostRuntime();
+    const remoteQueryClient = useQueryClient();
     const iosNativeUiEnabled = useIosNativeUiEnabled();
     const [attachmentPopup, setAttachmentPopup] = React.useState<ToolPopupContent>({
         open: false,
@@ -1762,11 +1766,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const currentAgentName = surface.kind === 'secondary'
         ? surface.selection.value.agent
         : primaryAgentName;
-    const configuredAgents = surface.kind === 'secondary'
+    const configuredAgents = React.useMemo(() => surface.kind === 'secondary'
         ? resolveComposerVisibleAgents(surface.selection.catalog?.agents)
-        : primaryConfiguredAgents;
-    const showPermissionAutoAcceptControl = (!hostRuntime?.entry.location.hostId || Boolean(surface.permissionPolicy)) && (isVSCodeRuntime()
-        || shouldShowPermissionAutoAcceptControl(configuredAgents, currentAgentName));
+        : primaryConfiguredAgents, [surface.kind, surface.selection.catalog?.agents, primaryConfiguredAgents]);
+    const showPermissionAutoAcceptControl = React.useMemo(() => (!hostRuntime?.entry.location.hostId || Boolean(surface.permissionPolicy)) && (isVSCodeRuntime()
+        || shouldShowPermissionAutoAcceptControl(configuredAgents, currentAgentName)), [hostRuntime, surface.permissionPolicy, configuredAgents, currentAgentName]);
     const handlePermissionAutoAcceptToggleFailed = useEvent(() => {
         toast.error(t('chat.chatInput.toast.togglePermissionAutoAcceptFailed'));
     });
@@ -1954,7 +1958,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const isExpandedInput = useUIStore((state) => state.isExpandedInput);
     const setExpandedInput = useUIStore((state) => state.setExpandedInput);
     const setTimelineDialogOpen = useUIStore((state) => state.setTimelineDialogOpen);
-    const composer = useComposerController({ draftKey, sessionTitles, persistenceEnabled: persistChatDraft, store: surface.resources?.inputStore });
+    const scopedSessionTitles = React.useMemo(() => hostRuntime?.entry.location.hostId ? {
+        get: (id: string) => readRemoteComposerSessionTitle(remoteQueryClient, hostRuntime.registry, hostRuntime.entry, id),
+    } : sessionTitles, [hostRuntime, remoteQueryClient]);
+    const composer = useComposerController({ draftKey, sessionTitles: scopedSessionTitles, persistenceEnabled: persistChatDraft, store: surface.resources?.inputStore });
     const composerDocument = composer.document;
     const message = composerDocument.text;
     const { replacePlainDocument, replaceProgrammaticText, applyBrowserEdit, insertReference, deleteReference, enterHistoryPreview, exitHistoryPreview, captureSubmission, recoverSubmission, confirmedFileMentions, mentions: composerMentions } = composer;
@@ -3125,18 +3132,27 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             if (!inputSnapshot.hasContent || !draftKey || submissionBlocked || queuedOnly) return;
             if (!beginSubmissionFlight('send')) return;
             try {
-            const compiled = compileChatComposerDelivery({ plan: directPlan, agents, installedSkillNames: new Set(availableSkills.map((skill) => skill.name)),
+            const entry = hostRuntime.entry;
+            const sendSelection = { ...surface.selection.value };
+            const quotes = composerQuoteScope ? (useComposerQuoteStore.getState().quotesByKey[composerQuoteScope] ?? []) : [];
+            const remoteInlineDrafts = [...surfaceResources.inlineDrafts].sort((a, b) => a.createdAt - b.createdAt);
+            const syntheticAtSubmit = surfaceResources.getDraft(draftKey)?.syntheticParts ?? [];
+            const syntheticIDs = new Set(syntheticAtSubmit.map((part) => part.partID));
+            const syntheticViews = (surfaceResources.inputStore ?? useInputStore).getState().getDraftAttachmentViews(draftKey);
+            entry.sdk();
+            const [sendAgents, sendSkills, sendSessions] = await Promise.all([
+                logicalInputMessage.includes('@') ? remoteQueryClient.ensureQueryData(rawAgentsQueryOptions(entry.location.directory, undefined, entry)) : Promise.resolve([]),
+                remoteQueryClient.ensureQueryData(installedSkillsQueryOptions(entry.location.directory, undefined, entry)),
+                logicalInputMessage.includes('@') ? ensureRemoteComposerSessions(remoteQueryClient, hostRuntime.registry, entry) : Promise.resolve([]),
+            ]);
+            entry.sdk();
+            const compiled = compileChatComposerDelivery({ plan: directPlan, agents: sendAgents, installedSkillNames: new Set(sendSkills.map((skill) => skill.name)), sessions: sendSessions,
                 directory: hostRuntime.entry.location.directory, root: hostRuntime.entry.location.directory,
                 confirmedFilePaths: confirmedFileMentions.map((mention) => mention.path),
                 confirmedDirectoryPaths: confirmedFileMentions.filter((mention) => mention.kind === 'directory').map((mention) => mention.path),
                 citationAttachments: sendableAttachedFiles });
             const attachments = dedupeDeliveryAttachments([...sanitizeAttachmentsForSend(sendableAttachedFiles), ...compiled.attachments]);
-            const quotes = composerQuoteScope ? (useComposerQuoteStore.getState().quotesByKey[composerQuoteScope] ?? []) : [];
-            const remoteInlineDrafts = [...surfaceResources.inlineDrafts].sort((a, b) => a.createdAt - b.createdAt);
             const text = appendInlineComments(messageWithComposerQuotes(quotes, compiled.text), remoteInlineDrafts);
-            const syntheticAtSubmit = surfaceResources.getDraft(draftKey)?.syntheticParts ?? [];
-            const syntheticIDs = new Set(syntheticAtSubmit.map((part) => part.partID));
-            const syntheticViews = (surfaceResources.inputStore ?? useInputStore).getState().getDraftAttachmentViews(draftKey);
             const parts = buildSyntheticDeliveryParts(syntheticAtSubmit.map((part) => ({
                 ...part, attachments: part.attachments.flatMap((attachment) => {
                     const view = syntheticViews.find((file) => file.id === attachment.attachmentID);
@@ -3150,7 +3166,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     sessionID: surface.commands?.hasNewDraft ? null : surface.sessionID,
                     directory: hostRuntime.entry.location.directory, draftKey,
                     transportIdentity: surface.transportIdentity, runtimeGeneration: surface.runtimeGeneration,
-                    deliveryTarget: surface.deliveryTarget, ...surface.selection.value,
+                    deliveryTarget: surface.deliveryTarget, ...sendSelection,
                     text, attachments, parts, inputMode, references: compiled.semantics, agentMention: compiled.agent,
                     options: { delivery: options?.delivery ?? (sessionIsRunning ? 'queue' : 'steer'), messageID: ascendingId('msg') },
                 });
@@ -5595,20 +5611,27 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         restoreWebComposerFocus();
     });
 
-    const handleSessionSelect = useEvent((session: { id: string; title?: string }) => {
+    const isCurrentMentionOwner = useEvent((entry: typeof hostRuntime, key: typeof draftKey) => entry === hostRuntime && key === draftKey);
+    const handleSessionSelect = useEvent((session: { id: string; title?: string; directory?: string }) => {
         if (pendingSessionReferenceRef.current) return;
         pendingSessionReferenceRef.current = true;
+        const capturedHost = hostRuntime;
+        const capturedDraft = draftKey;
         void (async () => {
             try {
-                const sessionDirectory = useSessionUIStore.getState().getAuthoritativeDirectoryForSession(session.id);
+                const remoteEntry = capturedHost?.entry.location.hostId ? capturedHost.entry : undefined;
+                const sessionDirectory = remoteEntry ? session.directory : useSessionUIStore.getState().getAuthoritativeDirectoryForSession(session.id);
                 if (!sessionDirectory) {
                     toast.error(t('chat.chatInput.toast.sessionReferenceLoadFailed'));
                     return;
                 }
 
-                await ensureSessionRenderable(session.id, { directory: sessionDirectory });
+                const remoteSession = remoteEntry ? await remoteEntry.service().getSession(session.id, sessionDirectory) : undefined;
+                if (remoteEntry) remoteEntry.sdk();
+                else await ensureSessionRenderable(session.id, { directory: sessionDirectory });
+                if (!isCurrentMentionOwner(capturedHost, capturedDraft)) return;
 
-                if (!resolveMaterializedSessionDirectory(session.id, sessionDirectory)) {
+                if (!remoteEntry && !resolveMaterializedSessionDirectory(session.id, sessionDirectory)) {
                     toast.error(t('chat.chatInput.toast.sessionReferenceLoadFailed'));
                     return;
                 }
@@ -5616,7 +5639,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 // Background prefetch: page the referenced transcript fully into the cache so
                 // send-time inlining usually carries content. Failure is non-fatal — the send
                 // boundary's session-mention instruction embeds a read-only retrieval recipe.
-                if (!isMobile && !isCapacitorApp() && !isMobileSurfaceRuntime()) {
+                if (!remoteEntry && !isMobile && !isCapacitorApp() && !isMobileSurfaceRuntime()) {
                     void ensureSessionMentionTranscripts([{ type: 'session', sessionId: session.id }], sessionDirectory).catch(() => undefined);
                 }
 
@@ -5629,13 +5652,15 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 );
                 const textBeforeCursor = document.text.substring(0, cursorPosition);
                 const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
-                const sessionTitle = getAllSyncSessionMap().get(session.id)?.title || session.title || session.id;
+                const sessionTitle = (remoteEntry ? remoteSession?.title : getAllSyncSessionMap().get(session.id)?.title) || session.title || session.id;
                 const mentionStart = range?.start ?? (lastAtSymbol !== -1 ? lastAtSymbol : cursorPosition);
                 const mentionEnd = range?.end ?? cursorPosition;
                 const sessionReference: Omit<SessionComposerReference, 'start' | 'end'> = {
                     id: `session:${session.id}:${createUuid()}`,
                     kind: 'session',
                     sessionId: session.id,
+                    directory: sessionDirectory,
+                    ...(remoteEntry?.location.instanceId ? { target: { hubId: remoteEntry.location.hubId, hostId: remoteEntry.location.hostId!, instanceId: remoteEntry.location.instanceId } } : {}),
                     display: composerTriggerIconDisplay({ trigger: '@', icon: 'chat-thread', label: sessionTitle }),
                 };
                 const inserted = insertReference(mentionStart, mentionEnd, sessionReference, { inlineBoundaries: true, padDocumentEdges: true });
@@ -7974,6 +7999,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
                         <FileMentionAutocomplete
                             ref={mentionRef}
+                            currentSessionId={surface.sessionID}
                             searchQuery={mentionQuery}
                             onFileSelect={handleFileSelect}
                             onAgentSelect={handleAgentSelect}

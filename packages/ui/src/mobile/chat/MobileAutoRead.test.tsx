@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/sync/sync-context', () => ({ useSessionMessages: () => { mocks.localRead(); return mocks.messages; }, useSessionMessagesResolved: () => { mocks.localRead(); return mocks.resolved; } }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: true, play: mocks.play, stop: mocks.stop, unlock: mocks.unlock }) }));
 vi.mock('@/lib/voice/screen-awake', () => ({ acquireScreenAwake: mocks.acquire }));
-vi.mock('@/lib/runtime-switch', () => ({ subscribeRuntimeEndpointChanged: (callback: () => void) => { mocks.runtimeChanged = callback; return () => {}; } }));
+vi.mock('@/lib/runtime-switch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/lib/runtime-switch')>(),
+    subscribeRuntimeEndpointChanged: (callback: () => void) => { mocks.runtimeChanged = callback; return () => {}; },
+}));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
 const translate = (key: string) => key;

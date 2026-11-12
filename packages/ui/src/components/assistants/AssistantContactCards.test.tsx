@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AssistantAssistantCard } from './AssistantAssistantCard'
-import { AssistantSessionCard } from './AssistantSessionCard'
+import { AssistantSessionCard, SessionCardView } from './AssistantSessionCard'
 import { AssistantScheduleCard } from './AssistantScheduleCard'
 import { AssistantCardNavigation } from './AssistantCardNavigation'
 import type { AssistantContactScheduleCardPart, AssistantContactSessionCardPart } from '@/queries/assistantDTO'
@@ -34,6 +34,23 @@ vi.mock('@/lib/scheduledTaskNavigation', () => ({ openScheduledTask: state.openT
 
 const sessionCard: AssistantContactSessionCardPart = { type: 'card', cardType: 'session', sessionID: 'session-a', directory: '/workspace/project', title: 'Saved title', status: 'busy', branch: 'saved-branch' }
 const scheduleCard: AssistantContactScheduleCardPart = { type: 'card', cardType: 'schedule', taskID: 'task-a', projectID: 'project-a', name: 'Daily review', kind: 'daily', time: '09:00', timezone: 'Asia/Shanghai', prompt: 'Review unfinished work.' }
+
+test('remote receipts hand off their complete target and never infer live activity from persisted busy', async () => {
+  const target = { hubId: 'hub', hostId: 'remote', instanceId: 'instance' };
+  const card = { ...sessionCard, target };
+  const navigate = vi.fn();
+  const host = document.createElement('div'); document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<AssistantCardNavigation.Provider value={navigate}><SessionCardView card={card} branch={null} /></AssistantCardNavigation.Provider>));
+  expect(host.textContent).toContain('Status unknown');
+  await act(async () => host.querySelector<HTMLElement>('[role="button"]')!.click());
+  expect(navigate).toHaveBeenCalledWith({ sessionId: card.sessionID, directory: card.directory, target });
+  expect(state.openSession).not.toHaveBeenCalled();
+  await act(async () => root.render(<SessionCardView card={card} liveType="idle" branch={null} />));
+  expect(host.textContent).not.toContain('Status unknown');
+  expect(host.querySelector('[data-assistant-session-status]')?.textContent).toContain('Complete');
+  await act(async () => root.unmount());
+});
 
 test('Mini Chat contact cards delegate exact targets instead of navigating an absent main layout', async () => {
   const navigate = vi.fn();

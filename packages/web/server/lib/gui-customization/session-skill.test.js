@@ -54,6 +54,10 @@ describe('built-in customization instructions', () => {
     const projectFile = JSON.parse(projectEntry.match(/read (".*?") first/)[1]);
     expect(projectFile).not.toBe(boundFile);
     expect(projectEntry).toContain('Bound project helper:');
+    expect(projectEntry).toContain('local/remote project registration');
+    expect(projectEntry).toContain('discovering authorized remote machines');
+    expect(await fs.readFile(path.join(path.dirname(projectFile), 'references', 'projects.md'), 'utf8')).toContain('commands.add-remote');
+    expect(await fs.readFile(path.join(path.dirname(projectFile), 'projects.mjs'), 'utf8')).toContain("'remote-hosts', 'add-remote'");
     expect(projectEntry).toContain('No bound SSH/Relay command is provided');
     expect(await fs.readFile(path.join(path.dirname(projectFile), 'projects.mjs'), 'utf8')).toContain('/api/yuri/session-skills/projects');
     await expect(fs.stat(path.join(path.dirname(projectFile), 'remote-connections.mjs'))).rejects.toMatchObject({ code: 'ENOENT' });

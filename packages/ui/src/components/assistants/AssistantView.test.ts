@@ -145,6 +145,30 @@ describe('AssistantView contact surface', () => {
     expect(surface).toContain("isMobile && 'bottom-safe-area yuri-mobile-composer'")
   })
 
+  test.each(['desktop', 'mobile'])('sticky avatars count the overlay composer inset only once (%s)', async (layout) => {
+    const style = document.createElement('style')
+    style.textContent = await readFile(join(directory, 'contact-message-bubble.css'), 'utf8')
+    const surface = document.createElement('div')
+    surface.className = 'yuri-contact-conversation'
+    surface.dataset.contactLayout = layout
+    surface.dataset.composerOverlay = ''
+    surface.innerHTML = '<div data-assistant-contact-transcript><div data-assistant-contact-avatar-rail></div></div>'
+    document.head.append(style)
+    document.body.append(surface)
+    try {
+      for (const height of [80, 160]) {
+        surface.style.setProperty('--contact-composer-height', `${height}px`)
+        const transcript = surface.querySelector<HTMLElement>('[data-assistant-contact-transcript]')!
+        const rail = surface.querySelector<HTMLElement>('[data-assistant-contact-avatar-rail]')!
+        expect(getComputedStyle(transcript).paddingBottom).toBe(`${height}px`)
+        expect(getComputedStyle(rail).bottom).toBe('8px')
+      }
+    } finally {
+      surface.remove()
+      style.remove()
+    }
+  })
+
   test('gives message bodies proportional leading without changing composer metrics', async () => {
     const css = await readFile(join(directory, 'contact-message-bubble.css'), 'utf8')
     expect(css.match(/--contact-body-leading:/g)).toHaveLength(1)

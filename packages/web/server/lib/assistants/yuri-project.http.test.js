@@ -143,8 +143,8 @@ describe('HTTP → real contact Agent → project registry → worker admission'
       const admitted = await request(`/api/yuri/assistants/${assistant.id}/messages`, { messageID: 'create-project-chat', text: `Add ${workspace} and open a session saying hello` });
       expect(admitted.admitted).toBe(true);
       expect((await runtime.service.whenContactTurnSettled(admitted.messageID)).status).toBe('complete');
-      expect(creates).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ location: { directory: canonical } }));
-      expect(prompts).toHaveBeenCalledWith(expect.objectContaining({ sessionID: 'ses_hello', text: 'hello' }));
+      expect(creates).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ location: { directory: canonical } }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(prompts).toHaveBeenCalledWith(expect.objectContaining({ sessionID: 'ses_hello', text: 'hello' }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(prompts.mock.calls[0][0]).not.toHaveProperty('skills');
       expect(prompts.mock.calls[0][0]).not.toHaveProperty('tools');
       expect(JSON.stringify(creates.mock.calls[0][0])).not.toContain('load_tools');

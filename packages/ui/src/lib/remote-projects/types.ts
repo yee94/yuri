@@ -4,6 +4,7 @@ export type HostConnectionState = 'idle' | 'connecting' | 'connected' | 'degrade
 
 export interface RemoteHost {
   id: string;
+  instanceId?: string;
   name: string;
   source: 'ssh' | 'relay' | 'direct';
   state: HostConnectionState;
@@ -57,6 +58,7 @@ export const parseRemoteHost = (input: unknown): RemoteHost => {
     source: value.source as RemoteHost['source'], state: value.state as HostConnectionState,
   };
   if (typeof value.generation === 'string') host.generation = text(value.generation);
+  if (value.instanceId !== undefined) host.instanceId = text(value.instanceId);
   if (value.scopeGeneration !== undefined) host.scopeGeneration = text(value.scopeGeneration);
   if (typeof value.available === 'boolean') host.available = value.available;
   if (timestamp(value.lastConnectedAt) !== undefined) host.lastConnectedAt = timestamp(value.lastConnectedAt);
@@ -79,6 +81,7 @@ export const parseRemoteProject = (input: unknown): RemoteProject => {
     id: text(value.id), path: text(value.path), hostId: text(value.hostId),
     remoteProjectId: text(value.remoteProjectId), remoteState: value.remoteState as RemoteProject['remoteState'],
   };
+  if (value.instanceId !== undefined) project.instanceId = text(value.instanceId);
   for (const key of ['label', 'icon', 'iconBackground', 'color'] as const) {
     if (typeof value[key] === 'string') project[key] = value[key] as string;
     else if (key !== 'label' && value[key] === null) project[key] = null;

@@ -7,7 +7,7 @@ import { resolveRemoteProjectOwner } from './summaries';
 import type { HostLocation } from './location';
 
 /** Resolve a remote URL only against the current Hub catalog, never a local ID lookup. */
-export async function applyRemoteProjectRoute(route: Pick<RouteState, 'sessionId' | 'isNewSession' | 'hostId' | 'hubId' | 'directory' | 'projectId'>, isCurrent: () => boolean = () => true): Promise<boolean> {
+export async function applyRemoteProjectRoute(route: Pick<RouteState, 'sessionId' | 'isNewSession' | 'hostId' | 'hubId' | 'instanceId' | 'directory' | 'projectId'>, isCurrent: () => boolean = () => true): Promise<boolean> {
   if (!route.hostId || !route.hubId || !route.directory) throw new Error('Incomplete remote session route');
   const transport = getRuntimeTransportIdentity();
   const generation = getRuntimeGeneration();
@@ -27,10 +27,13 @@ export async function applyRemoteProjectRoute(route: Pick<RouteState, 'sessionId
     throw new Error('Remote route belongs to an inactive Hub');
   }
   if (!project) throw new Error('Remote Project is not referenced by this Hub');
+  const location = { hubId: catalog.hubId, hostId: project.hostId, directory: route.directory,
+    ...(route.instanceId || project.instanceId ? { instanceId: route.instanceId || project.instanceId } : {}) };
+  if (location.instanceId) getHostRuntimeRegistry(catalog).resolve(location).sdk();
   const store = useProjectsStore.getState();
   store.upsertRemoteProject(project, catalog.hubId);
   store.setActiveProjectIdOnly(project.id);
-  useSessionNavigationStore.getState().openRemoteSession(project, { hubId: catalog.hubId, hostId: project.hostId, directory: route.directory }, route.isNewSession ? null : route.sessionId);
+  useSessionNavigationStore.getState().openRemoteSession(project, location, route.isNewSession ? null : route.sessionId);
   return true;
 }
 

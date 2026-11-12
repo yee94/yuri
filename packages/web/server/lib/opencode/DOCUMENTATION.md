@@ -38,6 +38,12 @@ diagnostics use provider/location/session-active V2 routes and location query
 encoding, not removed V1 endpoints.
 
 ## Entrypoints and structure
+- `v2-client.js` retains default Hub-local runtime write admission. Its internal
+  `executionAdmission: 'target-yuri-proxy'` option requires an explicit scoped
+  transport and delegates admission to an authenticated target Yuri proxy, never
+  to a guessed OpenCode endpoint. `../remote-hosts/task-client.js` is the shared
+  official SDK factory for that boundary; Assistant and bound-project helpers use
+  it instead of copying SDK requests or inheriting the Hub's runtime contract.
 - `feature-routes-runtime.js` registers the Host-owned history importer before
   the generic proxy, using the official client, project registry and session
   index. Its domain contract is in `../history-import/DOCUMENTATION.md`.

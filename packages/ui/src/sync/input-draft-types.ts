@@ -137,7 +137,11 @@ type DraftSessionComposerReference = {
   end: number
   display: string
   sessionId: string
+  directory?: string
+  target?: DraftComposerSessionTarget
 }
+
+export type DraftComposerSessionTarget = { hubId: string; hostId: string; instanceId: string }
 
 type DraftPasteComposerReference = {
   id: string
@@ -235,6 +239,16 @@ export const parseDraftMentions = (text: string, value: unknown): DraftMention[]
 }
 
 export const isValidDraftComposerSessionID = (value: unknown): value is string => isBoundedString(value, DRAFT_COMPOSER_REFERENCE_LIMITS.sessionIDLength) && /^[A-Za-z0-9_-]+$/.test(value)
+
+/** Present remote identity is strict: malformed scope never becomes a local reference. */
+export const parseDraftComposerSessionScope = (value: Record<string, unknown>): { directory?: string; target?: DraftComposerSessionTarget } | undefined => {
+  if ('directory' in value && !isBoundedString(value.directory, 16_384)) return undefined
+  if (!('target' in value)) return typeof value.directory === 'string' ? { directory: value.directory } : {}
+  if (!isPlainObject(value.target) || !hasOnlyKeys(value.target, ['hubId', 'hostId', 'instanceId']) || typeof value.directory !== 'string') return undefined
+  const { hubId, hostId, instanceId } = value.target
+  if (!isBoundedString(hubId, 512) || hubId.trim() !== hubId || !isBoundedString(hostId, 512) || hostId.trim() !== hostId || !isBoundedString(instanceId, 512) || instanceId.trim() !== instanceId) return undefined
+  return { directory: value.directory, target: { hubId, hostId, instanceId } }
+}
 /**
  * Skill invocation id is the directory basename OpenCode 2 looks up.
  * Unicode names such as `绘画` are valid ids; spaces and token delimiters are not.
@@ -247,7 +261,10 @@ export const isValidDraftComposerCommandReference = (value: unknown): value is s
 
 const parseComposerReference = (value: unknown): DraftComposerReference | undefined => {
   if (!isPlainObject(value) || !isBoundedString(value.id, DRAFT_COMPOSER_REFERENCE_LIMITS.idLength) || !isBoundedString(value.display, DRAFT_COMPOSER_REFERENCE_LIMITS.displayLength) || !isNonNegativeInteger(value.start) || !isNonNegativeInteger(value.end) || value.end <= value.start) return undefined
-  if (value.kind === "session" && hasOnlyKeys(value, ["id", "kind", "start", "end", "display", "sessionId"]) && isValidDraftComposerSessionID(value.sessionId)) return { id: value.id, kind: "session", start: value.start, end: value.end, display: value.display, sessionId: value.sessionId }
+  if (value.kind === "session" && hasOnlyKeys(value, ["id", "kind", "start", "end", "display", "sessionId", "directory", "target"]) && isValidDraftComposerSessionID(value.sessionId)) {
+    const scope = parseDraftComposerSessionScope(value)
+    return scope ? { id: value.id, kind: "session", start: value.start, end: value.end, display: value.display, sessionId: value.sessionId, ...scope } : undefined
+  }
   if (value.kind === "paste" && hasOnlyKeys(value, ["id", "kind", "start", "end", "display", "text", "characterCount", "index"]) && typeof value.text === "string" && value.text.length <= DRAFT_COMPOSER_REFERENCE_LIMITS.pastePayloadLength && isNonNegativeInteger(value.characterCount) && value.characterCount === countUnicodeCodePoints(value.text) && isNonNegativeInteger(value.index) && value.index >= 1) return { id: value.id, kind: "paste", start: value.start, end: value.end, display: value.display, text: value.text, characterCount: value.characterCount, index: value.index }
   if (value.kind === "skill" && hasOnlyKeys(value, ["id", "kind", "start", "end", "display", "skillName"]) && isValidDraftComposerSkillName(value.skillName) && (value.display === `/${value.skillName}` || value.display === `/${DRAFT_COMPOSER_TRIGGER_ICON_SLOT}${value.skillName}` || value.display === `@${value.skillName}` || value.display === `@${DRAFT_COMPOSER_TRIGGER_ICON_SLOT}${value.skillName}`)) return { id: value.id, kind: "skill", start: value.start, end: value.end, display: value.display, skillName: value.skillName }
   if (value.kind === "command" && hasOnlyKeys(value, ["id", "kind", "start", "end", "display", "commandName", "reference"]) && isValidDraftComposerCommandName(value.commandName) && isValidDraftComposerCommandReference(value.reference) && (value.display === `/${value.commandName}` || value.display === `/${DRAFT_COMPOSER_TRIGGER_ICON_SLOT}${value.commandName}`)) return { id: value.id, kind: "command", start: value.start, end: value.end, display: value.display, commandName: value.commandName, reference: value.reference }

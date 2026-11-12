@@ -173,6 +173,7 @@ function appendLocation(params: URLSearchParams, location?: HostLocation, projec
   if (!location.hubId || !location.directory) throw new Error('Remote navigation requires a Hub and raw directory');
   params.set('hubId', location.hubId);
   params.set('hostId', location.hostId);
+  if (location.instanceId) params.set('instanceId', location.instanceId);
   params.set('directory', location.directory);
   if (projectId) params.set('projectId', projectId);
 }
@@ -315,12 +316,15 @@ function parseSearch(search: string): {
   const file = params.get('file');
   const scope = normalizeDiffScope(params.get('scope'));
   const hostId = params.get('hostId');
+  if (hostId === null && (params.has('hubId') || params.has('instanceId'))) return { file, scope, invalidRemote: true };
   if (hostId !== null) {
     const hubId = params.get('hubId');
     const directory = params.get('directory');
     if (!hostId || !hubId || !directory) return { file, scope, invalidRemote: true };
     const projectId = params.get('projectId');
-    return { file, scope, location: { hubId, hostId, directory }, ...(projectId ? { projectId } : {}) };
+    const instanceId = params.get('instanceId');
+    if (instanceId !== null && !instanceId.trim()) return { file, scope, invalidRemote: true };
+    return { file, scope, location: { hubId, hostId, directory, ...(instanceId ? { instanceId } : {}) }, ...(projectId ? { projectId } : {}) };
   }
   return { file, scope };
 }

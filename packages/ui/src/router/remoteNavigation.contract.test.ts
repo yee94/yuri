@@ -15,7 +15,13 @@ test('remote session and draft paths preserve raw filesystem location and indepe
 test('partial remote location is rejected rather than interpreted as a local session route', () => {
   expect(parseAppPath('/session/same-id?hostId=a')).toEqual({ kind: 'unknown' });
   expect(parseAppPath('/session/new?hostId=a')).toEqual({ kind: 'unknown' });
+  expect(parseAppPath('/session/same-id?instanceId=remote')).toEqual({ kind: 'unknown' });
   expect(() => buildSessionPath({ sessionId: 'same-id', location: { hubId: '', hostId: 'a', directory: '/raw' } })).toThrow();
+});
+
+test('target instance identity survives route serialization', () => {
+  const target = { ...location, instanceId: 'instance-a' };
+  expect(parseAppPath(buildSessionPath({ sessionId: 'same-id', location: target }))).toMatchObject({ location: target });
 });
 
 test('production navigation intents carry Host identity across session tools and new drafts', async () => {

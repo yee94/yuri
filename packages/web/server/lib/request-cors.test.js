@@ -31,6 +31,7 @@ describe('applyRuntimeCorsHeaders', () => {
     expect(headers.get('Access-Control-Allow-Headers')).toContain('X-Yuri-Content-Length');
     expect(headers.get('Access-Control-Allow-Headers')).toContain('X-Yuri-Filename');
     expect(headers.get('Access-Control-Allow-Headers')).toContain('X-Yuri-Gui-Revision');
+    expect(headers.get('Access-Control-Allow-Headers')).toContain('X-Yuri-Target-Instance');
     expect(headers.get('Access-Control-Expose-Headers')).toContain('x-yuri-gui-revision');
     expect(headers.get('Access-Control-Expose-Headers')).toContain('x-yuri-gui-code');
     expect(headers.get('Access-Control-Expose-Headers')).toContain('x-next-cursor');

@@ -630,6 +630,7 @@ export interface ProjectEntry {
   path: string;
   hostId?: string;
   hubId?: string;
+  instanceId?: string;
   remoteProjectId?: string;
   remoteState?: 'ok' | 'remote-removed' | 'host-unavailable';
   label?: string;

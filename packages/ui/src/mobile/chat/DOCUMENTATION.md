@@ -13,6 +13,9 @@ The title observes the existing Host/Location/generation-scoped session metadata
 Query first, using summaries only for continuity. This disabled, memoized observer
 does not fetch metadata or acquire content demand, including deep links before
 the selected session appears in summaries.
+Machine identity occupies the existing subtitle slot, not the session title.
+The transcript sync whisper takes precedence; when it clears, the remote machine
+indicator returns in that same slot. Local conversations have no machine subtitle.
 `MobileContextProgressButton` mounts separate local and remote consumers. The
 remote leaf observes the already-bound Location transcript repository and scoped
 model selection; it creates no content request or second lease. Closed metadata

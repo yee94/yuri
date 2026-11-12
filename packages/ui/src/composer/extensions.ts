@@ -5,6 +5,8 @@ import {
     draftComposerSkillIdTokenPattern,
     isValidDraftComposerSkillName,
     isValidDraftComposerSessionID,
+    parseDraftComposerSessionScope,
+    type DraftComposerSessionTarget,
     type DraftComposerReference,
 } from '@/sync/input-draft-types';
 import { countUnicodeCodePoints } from '@/lib/unicodeMetrics';
@@ -48,7 +50,7 @@ export interface ComposerCanonicalCodec<K extends ComposerReferenceKind = Compos
 }
 
 export type ComposerReferenceSemantic =
-    | { type: 'session'; sessionId: string }
+    | { type: 'session'; sessionId: string; directory?: string; target?: DraftComposerSessionTarget }
     | { type: 'skill'; skillName: string }
     | { type: 'attachment'; attachmentRefID: string };
 export type ComposerReferenceContribution = { text: string; semantic?: ComposerReferenceSemantic };
@@ -80,6 +82,22 @@ export const isValidComposerSessionId = (value: unknown): value is string => typ
 
 const commandNameFromReference = (reference: string): string => reference.replaceAll('\\', '/').split('/').at(-1)?.replace(/\.md$/, '') ?? '';
 const sessionIconSpec = (label: string) => ({ trigger: '@', icon: 'chat-thread', label });
+const sessionSemantic = (reference: Pick<SessionComposerReference, 'sessionId' | 'directory' | 'target'>): ComposerReferenceSemantic => ({ type: 'session', sessionId: reference.sessionId,
+    ...(reference.directory !== undefined ? { directory: reference.directory } : {}), ...(reference.target ? { target: reference.target } : {}) });
+const canonicalSessionText = (reference: Pick<SessionComposerReference, 'sessionId' | 'directory' | 'target'>): string => reference.directory !== undefined || reference.target
+    ? `@session:${JSON.stringify({ sessionID: reference.sessionId, ...parseDraftComposerSessionScope(reference) })}`
+    : `@session:${reference.sessionId}`;
+const jsonStringPattern = '"(?:[^"\\\\\\r\\n]|\\\\.)*"';
+const sessionTokenPattern = new RegExp(`@session:(\\{"sessionID":${jsonStringPattern},"directory":${jsonStringPattern}(?:,"target":\\{"hubId":${jsonStringPattern},"hostId":${jsonStringPattern},"instanceId":${jsonStringPattern}\\})?\\}|[A-Za-z0-9_-]+)`, 'g');
+const parseSessionToken = (token: string): Pick<SessionComposerReference, 'sessionId' | 'directory' | 'target'> | undefined => {
+    if (isValidComposerSessionId(token)) return { sessionId: token };
+    try {
+        const value = JSON.parse(token) as Record<string, unknown>;
+        if (!isValidComposerSessionId(value.sessionID)) return undefined;
+        const scope = parseDraftComposerSessionScope(value);
+        return scope ? { sessionId: value.sessionID, ...scope } : undefined;
+    } catch { return undefined; }
+};
 const slashIconSpec = (label: string, icon: string) => ({ trigger: '/', icon, label });
 const skillIconSpec = (label: string, trigger: '/' | '@') => ({ trigger, icon: 'book-open', label });
 const isSkillTriggerDisplay = (display: string, skillName: string): boolean => (
@@ -94,11 +112,11 @@ const skillSpecForDisplay = (display: string, skillName: string) => (
 const COMPOSER_REFERENCE_EXTENSIONS = {
     session: {
         kind: 'session',
-        validatePayload: (value) => isValidComposerSessionId(value.sessionId),
-        contributeCanonical: (reference) => ({ text: `@session:${reference.sessionId}`, semantic: { type: 'session', sessionId: reference.sessionId } }),
+        validatePayload: (value) => isValidComposerSessionId(value.sessionId) && parseDraftComposerSessionScope(value) !== undefined,
+        contributeCanonical: (reference) => ({ text: canonicalSessionText(reference), semantic: sessionSemantic(reference) }),
         contributeDirectSend: (reference) => {
             const spec = sessionIconSpec(composerTriggerIconLabel(reference.display, '@'));
-            return { text: composerTriggerIconText(spec), semantic: { type: 'session', sessionId: reference.sessionId } };
+            return { text: composerTriggerIconText(spec), semantic: sessionSemantic(reference) };
         },
         decorate: (reference) => {
             const spec = sessionIconSpec(composerTriggerIconLabel(reference.display, '@'));
@@ -106,15 +124,19 @@ const COMPOSER_REFERENCE_EXTENSIONS = {
         },
         payloadBudget: () => undefined,
         canonical: {
-            matcher: /@session:([A-Za-z0-9_-]+)/g,
+            matcher: sessionTokenPattern,
             resolveDisplay: (match, context) => {
                 const preceding = match.index === 0 ? '' : context.text[match.index - 1];
                 const following = context.text[match.index + match[0].length] ?? '';
-                return (preceding === '' || /[\s([{]/.test(preceding)) && (following === '' || /[\s)\]},.!?;:]/.test(following))
-                    ? composerTriggerIconDisplay(sessionIconSpec(context.sessionTitles.get(match[1]) || match[1]))
+                const reference = parseSessionToken(match[1]);
+                return reference && (preceding === '' || /[\s([{]/.test(preceding)) && (following === '' || /[\s)\]},.!?;:]/.test(following))
+                    ? composerTriggerIconDisplay(sessionIconSpec((reference.target ? undefined : context.sessionTitles.get(reference.sessionId)) || reference.sessionId))
                     : null;
             },
-            materialize: (match, display, start) => ({ id: `session:${match[1]}:${match.index}`, kind: 'session', sessionId: match[1], display, start, end: start + display.length }),
+            materialize: (match, display, start) => {
+                const reference = parseSessionToken(match[1])!;
+                return { id: `session:${reference.sessionId}:${match.index}`, kind: 'session', ...reference, display, start, end: start + display.length };
+            },
         },
     },
     paste: {

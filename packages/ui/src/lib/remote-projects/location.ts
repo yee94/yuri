@@ -4,6 +4,8 @@ import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 export interface HostLocation {
   hubId: string;
   hostId?: string;
+  /** Authenticated resource authority; connection credentials remain scoped to hostId. */
+  instanceId?: string;
   directory: string;
 }
 

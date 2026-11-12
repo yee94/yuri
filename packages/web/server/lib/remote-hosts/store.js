@@ -23,17 +23,31 @@ export function createRemoteHostStore(dbPath) {
   db.exec(`CREATE TABLE IF NOT EXISTS remote_organization (
     host_id TEXT NOT NULL, kind TEXT NOT NULL, snapshot TEXT NOT NULL, PRIMARY KEY(host_id, kind));`);
   db.exec('CREATE TABLE IF NOT EXISTS remote_host_display (id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS remote_host_authority (host_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL)');
   db.prepare('INSERT INTO remote_hub_identity(id) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM remote_hub_identity)')
     .run(crypto.randomUUID());
   const hubId = db.prepare('SELECT id FROM remote_hub_identity').get().id;
+  const instanceFor = (hostId) => db.prepare('SELECT instance_id FROM remote_host_authority WHERE host_id = ?').get(hostId)?.instance_id;
   const decode = (row) => row && ({ id: row.id, hostId: row.host_id, path: row.path,
+    ...(row.instance_id ? { instanceId: row.instance_id } : {}),
     remoteProjectId: row.remote_project_id, remoteState: row.state,
     ...JSON.parse(row.metadata), addedAt: row.added_at, lastOpenedAt: row.added_at });
   const projects = (hostId) => (hostId
-    ? db.prepare('SELECT * FROM remote_project WHERE host_id = ? ORDER BY added_at, id').all(hostId)
-    : db.prepare('SELECT * FROM remote_project ORDER BY added_at, id').all()).map(decode);
+    ? db.prepare('SELECT p.*, a.instance_id FROM remote_project p LEFT JOIN remote_host_authority a ON a.host_id = p.host_id WHERE p.host_id = ? ORDER BY p.added_at, p.id').all(hostId)
+    : db.prepare('SELECT p.*, a.instance_id FROM remote_project p LEFT JOIN remote_host_authority a ON a.host_id = p.host_id ORDER BY p.added_at, p.id').all()).map(decode);
   return {
-    hubId, projects,
+    hubId, projects, instanceFor,
+    bindInstance(hostId, instanceId) {
+      if (typeof instanceId !== 'string' || !instanceId.trim() || instanceId !== instanceId.trim()
+        || instanceId.length > 512 || /[\x00-\x1f]/.test(instanceId)) {
+        throw Object.assign(new Error('remote_incompatible'), { code: 'remote_incompatible', status: 409 });
+      }
+      db.prepare('INSERT OR IGNORE INTO remote_host_authority(host_id, instance_id) VALUES (?, ?)').run(hostId, instanceId);
+      if (instanceFor(hostId) !== instanceId) {
+        throw Object.assign(new Error('remote_instance_mismatch'), { code: 'remote_instance_mismatch', status: 409 });
+      }
+      return instanceId;
+    },
     hasProjects() { return Boolean(db.prepare('SELECT 1 FROM remote_project LIMIT 1').get()); },
     saveHost(host) {
       db.prepare(`INSERT INTO remote_host_display VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,

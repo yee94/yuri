@@ -80,16 +80,22 @@ export const readInstalledSkillsSnapshot = (
   client: Pick<QueryClient, 'getQueryData'> = queryClient,
   directory: string | null = resolveInstalledSkillsQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
-): DiscoveredSkill[] => client.getQueryData<DiscoveredSkill[]>(installedSkillsQueryKey(normalizeDirectory(directory), transport)) ?? [];
+  entry?: HostRuntimeEntry,
+): DiscoveredSkill[] => {
+  captureProjectScope(entry).assertCurrent();
+  return client.getQueryData<DiscoveredSkill[]>(installedSkillsQueryOptions(directory, transport, entry).queryKey) ?? [];
+};
 
 export const refreshInstalledSkillsQuery = async (
   client: Pick<QueryClient, 'fetchQuery' | 'getQueryData'>,
   directory: string | null,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ): Promise<DiscoveredSkill[]> => {
+  if (entry) captureProjectScope(entry).assertCurrent();
   const normalizedDirectory = normalizeDirectory(directory);
   if (getRuntimeTransportIdentity() !== transport) {
-    return readInstalledSkillsSnapshot(client, normalizedDirectory, transport);
+    return readInstalledSkillsSnapshot(client, normalizedDirectory, transport, entry);
   }
-  return client.fetchQuery({ ...installedSkillsQueryOptions(normalizedDirectory, transport), staleTime: 0 });
+  return client.fetchQuery({ ...installedSkillsQueryOptions(normalizedDirectory, transport, entry), staleTime: 0 });
 };

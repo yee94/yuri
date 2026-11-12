@@ -65,6 +65,10 @@ consumes the remote bridge even when that container supplies an empty explicit
 session ID. Closing the secondary page clears it. Hub switches also clear the
 transient selection. URL and notification adapters must retain this full location
 and must never resolve a remote raw ID through local session lookup.
+Remote routes also retain `instanceId` when supplied by an authenticated resource
+reference. URL parsing, native notification/Mini Chat handoff and route restoration
+preserve it, and registry admission checks it before changing selection. Legacy
+Host-only routes remain compatible with the Hub's persisted connection-authority pin.
 
 Individual tasks use `/schedule/tasks/$projectId/$taskId`. The scheduled workspace
 restores the composite identity on initial load and browser Back/Forward; list

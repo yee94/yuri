@@ -1,5 +1,92 @@
 # Assistants Module
 
+## Hub-owned remote project execution
+
+The contact and its inference stay on the Hub. `feature-routes-runtime.js` injects
+the existing `remoteHostGateway` through `routes.js`; `execution-target.js` is a
+focused accessor, not another Assistant runtime. Project/session tools, model and
+OpenCode capability/skill readers accept optional
+`target: { hubId, hostId, instanceId }`. Omission retains the legacy local meaning.
+Present null, partial, extra-field or malformed identities reject; foreign Hubs,
+unavailable connections and changed instances never fall back to local execution.
+Every remote result, reference, session card and watch carries the complete target.
+
+Composer references use `@session:{"sessionID":"id","directory":"raw path","target":{"hubId":"hub","hostId":"host","instanceId":"instance"}}`.
+The contact reads these coordinates as data and passes them intact to its session
+tools. Local directory-only references omit `target`; legacy `@session:id` remains
+local. A reference alone is not authorization to watch or mutate the session.
+
+Ordinary prompt construction reads only saved remote project metadata. Explicit
+`list_projects` discovers local project registries on the already authorized saved
+Hosts, returns machine names/targets and reports per-Host discovery failures as
+partial results. It cannot configure SSH, change credentials or create pairings.
+Remote `list_sessions` uses official, bounded `session.list` calls against remote
+registered roots and verified worktrees, not the Hub's session index. `nextPages`
+contains exact target/projectPath/before continuation references. Failed reads are
+unknown, never an authoritative empty catalog. Remote paths remain raw wire paths;
+scope checks are lexical and remote-authoritative, without Hub stat/realpath.
+Nested project worktrees retain the source checkout's relative project suffix.
+
+`remote-hosts/task-client.js` creates the official `makeOpenCodeV2Client` over a
+captured Gateway task lease. SDK method/body/query/headers/abort signals pass through
+unchanged. Its explicit `executionAdmission: 'target-yuri-proxy'` delegates live
+OpenCode admission to the actual target Yuri proxy rather than this Hub's unrelated
+local runtime contract. Target-side execution rejection still propagates; no direct
+OpenCode endpoint, credential fallback or second protocol implementation exists.
+Short reads and mutations release their lease in `finally`. Service shutdown aborts
+all accessor leases, including in-flight reconciliation and discovery.
+
+Remote assignment without model arguments leaves both new-session defaults and
+continued-session model/Agent selection to that machine; it never copies the Hub
+contact's provider/model/Agent/variant or model preferences. Explicit model choices
+are checked against the remote connected catalog. With remote default selection,
+the target owns attachment/model admission; definitive prompt rejection retains
+the existing created-session cleanup and ambiguous-admission recovery semantics.
+Read, new/continue, watch, stop, steer, archive and delete consume this same accessor.
+Archive goes to the target's existing Host archive route; remote delete never invokes
+Hub metadata cleanup. Mutations are not automatically replayed after uncertainty.
+
+Remote watches retain their own Gateway status demand independently of the contact
+turn or any UI client. The persisted watch key incorporates all three target IDs
+and the raw session ID; existing local keys are unchanged. Only target/directory,
+delivery watermark and watch/settlement metadata persist, not remote messages or
+tool results. Existing one-shot semantics and new-user-turn notification
+supersession remain unchanged. Native events and bounded authority reconciliation
+settle the existing watch/card/contact-lane path, including descendant activity;
+same-worker events received during a read request a trailing reconciliation.
+Unrelated session events do not read messages. Offline/failed reads retain the
+watch and retry on the existing timer/reconnect. Completion/cancel, wipe, deletion
+and shutdown release only the appropriate task demand.
+
+`remote-watch-reconciler.js` batches watch reconciliation by complete target and
+deduplicates session IDs across contacts. Each batch reads active membership and
+ancestry once per machine, using the existing family reader's parent lookup sharing;
+only distinct potentially settled workers need message/goal reads. Periodic recovery
+groups leases by target before queuing the batch. Concurrent callers share its
+promise; authority changes received in flight invalidate the affected worker and
+coalesce into a trailing batch, so an older read cannot overwrite a newer running
+event. Different machines have independent flights, and one failed worker does not
+erase siblings. This adds no timer or TTL: results are discarded at batch completion,
+the next reconciliation reads fresh authority, and remote bodies are never cached
+or persisted. Cost is per-machine activity/ancestry plus distinct settled workers,
+not number-of-contacts multiplied by the full active-session graph.
+
+An additive `remote_resume_pending` watch column records a remote terminal review
+until its authored reply, silence or explicit cancellation is acknowledged. Failed
+result reads/model reviews and process restarts retry that review without replaying
+assignment; already-persisted replies reconcile idempotently. Result-phase raw
+worker text and `read_session` tool output remain turn-local memory. Only the
+contact's own public replies/rolling summaries and resource metadata enter Hub
+contact history; no remote transcript or raw tool-result cache is introduced.
+
+`remote-execution.test.js` exercises two synthetic Hosts with identical directory
+and session IDs through the actual SDK fetch boundary, SQLite, the native Agent
+tool loop and the existing service lanes. It covers discovery/read/new/continue,
+cards, controls, no-UI/restart/failure recovery, malformed/retargeted rejection,
+task demand release and raw-result non-persistence. `remote-hosts/task-client.test.js`
+separately verifies Hub-blocked/target-allowed and target-rejected admission. These
+are deterministic backend contracts, not live model, SSH/Relay or device evidence.
+
 ## Contact pins
 
 Schema v15 adds nullable `assistant_v2.pinned_at`; existing contacts start unpinned.

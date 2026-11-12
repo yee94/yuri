@@ -35,6 +35,16 @@ Desktop notifications with a stable instance identity deduplicate across windows
 by instance/session/event. A Remote Project notification retains Hub/Host identity
 when navigating. Different physical runtimes never suppress one another.
 
+Assistant Mini Chat session-card handoff carries the full
+`target: {hubId, hostId, instanceId}` with raw directory/session ID into a main
+window on the same Hub. Cold URLs and warm events preserve that authority;
+incomplete targets fail instead of opening a local same-ID session. Window restore
+retains only the allowlisted remote coordinate query fields and strips credentials
+and arbitrary query/hash data. The explicit
+`YURI_ASSISTANT_MINI_CHAT_EVIDENCE=1` Vitest fixture exercises native HMR/bundled
+handoff; ordinary package tests leave it skipped. This main-process extension
+requires an updated desktop installer.
+
 Desktop starts the Yuri web server in the same Electron main process. There is no separate sidecar subprocess for the Yuri server.
 
 Assistant/Summary inference still uses the external OpenCode service. The web
@@ -81,6 +91,12 @@ and arbitrary query/hash parameters are never copied into window state. The
 explicit default Host preference remains independent of the last window instance.
 
 Normal launches restore these windows instead of selecting the local/default Host.
+All saved windows are created with their own geometry and startup splash before
+local backend startup or remote probes. Each splash uses that window's saved Host,
+so remote windows show their connecting status without briefly loading the local
+runtime. Once the local UI/backend is ready, saved targets resolve concurrently;
+a slow SSH probe or initialization does not delay another window's navigation.
+Closing a pending window or quitting discards its late restoration result.
 Direct-only SSH targets first probe their saved authenticated endpoint and reconnect
 before navigation only if it is unusable. Relay selection remains renderer-owned
 and authenticates the tunnel before committing it, using that window's boot target,

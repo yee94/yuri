@@ -1900,6 +1900,7 @@ async function main(options = {}) {
   relayService.registerRoutes(app);
 
   await featureRoutesRuntime.registerRoutes(app, {
+    remoteHostGateway,
     getRemoteProjectState: () => ({ hubId: remoteHostStore.hubId, hasRemoteProjects: remoteHostStore.hasProjects() }),
     remoteConnectionsAdapter: options.remoteConnectionsAdapter,
     express,

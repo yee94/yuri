@@ -14,6 +14,7 @@ export function formatAssistantBuiltinSkillsPrompt(tools) {
   }
   return skills.length > 0 ? [
     'Built-in skills (progressive instructions): load the matching skill before following its workflow. Reading instructions does not mount tools or grant permissions; use the actual contact tools, or assign substantive implementation to a worker with the relevant context.',
+    'For an already authorized remote project, use list_projects and preserve its complete target on session/catalog operations and resource cards. Read the target machine skill through read_opencode_skill with target and directory; do not read a remote path through this Hub\'s local pi read/bash. Existing remote authorization permits task access, not SSH setup, credential changes, configuration sync or new pairing.',
     ...skills,
   ].join('\n') : '';
 }

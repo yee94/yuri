@@ -69,14 +69,20 @@ export class HostRuntimeRegistry {
   resolve(location: HostLocation): HostRuntimeEntry {
     this.assertCurrent();
     if (location.hubId !== this.hubId) throw new Error('Location belongs to another Hub');
+    if (!location.hostId && location.instanceId && location.instanceId !== this.hubId) throw new Error('Location belongs to another instance');
+    const instanceId = location.hostId ? this.hosts.get(location.hostId)?.instanceId : location.instanceId;
+    if (location.instanceId && instanceId && location.instanceId !== instanceId) throw new Error('Location belongs to another instance');
     const key = locationKey(location);
     const fence = this.captureHostFence(location.hostId);
     const previous = this.entries.get(key);
-    if (previous && previous.connectionGeneration === (fence?.generation ?? 0)) return previous;
-    const captured = Object.freeze({ ...location });
+    if (previous && previous.connectionGeneration === (fence?.generation ?? 0)
+      && previous.location.instanceId === (instanceId ?? location.instanceId)) return previous;
+    const captured = Object.freeze({ ...location, ...(instanceId ? { instanceId } : {}) });
     const assertScope = () => {
       this.assertCurrent();
       if (fence && !fence.isCurrent()) throw new Error('Remote Host connection changed during request');
+      if (captured.hostId && captured.instanceId && this.hosts.get(captured.hostId)?.instanceId
+        && captured.instanceId !== this.hosts.get(captured.hostId)?.instanceId) throw new Error('Location belongs to another instance');
     };
     const entry: HostRuntimeEntry = Object.freeze({
       location: captured,
@@ -97,7 +103,13 @@ export class HostRuntimeRegistry {
       },
       fetch: async (path: string, init?: RuntimeFetchOptions) => {
         assertScope();
-        const response = await this.dependencies.fetch(hostApiPath(captured.hostId, path), init);
+        let options = init;
+        if (captured.hostId && captured.instanceId) {
+          const headers = new Headers(init?.headers);
+          headers.set('x-yuri-target-instance', captured.instanceId);
+          options = { ...init, headers };
+        }
+        const response = await this.dependencies.fetch(hostApiPath(captured.hostId, path), options);
         assertScope();
         return response;
       },
@@ -229,7 +241,7 @@ export class HostRuntimeRegistry {
     if (host.generation && this.retiredWireGenerations.get(host.id)?.has(host.generation)) return false;
     if (previous && previous.name === host.name && previous.source === host.source && previous.state === host.state
       && previous.lastConnectedAt === host.lastConnectedAt && previous.lastSyncedAt === host.lastSyncedAt
-      && previous.version === host.version && previous.available === host.available && previous.generation === host.generation && previous.scopeGeneration === host.scopeGeneration && previous.lastError?.code === host.lastError?.code
+      && previous.version === host.version && previous.instanceId === host.instanceId && previous.available === host.available && previous.generation === host.generation && previous.scopeGeneration === host.scopeGeneration && previous.lastError?.code === host.lastError?.code
       && previous.lastError?.message === host.lastError?.message
       && previous.capabilities?.remoteProjects === host.capabilities?.remoteProjects) return true;
     if (host.scopeGeneration) this.scopeAwareHosts.add(host.id);
@@ -245,7 +257,8 @@ export class HostRuntimeRegistry {
       && (previous.available === false || host.available === false);
     const legacyConnectionChanged = !host.scopeGeneration && previous && (previous.state !== host.state
       || previous.available !== host.available || previous.lastConnectedAt !== host.lastConnectedAt || previous.generation !== host.generation);
-    if (scopeChanged || unavailableChanged || legacyConnectionChanged) {
+    const authorityChanged = previous?.instanceId && host.instanceId !== previous.instanceId;
+    if (scopeChanged || unavailableChanged || legacyConnectionChanged || authorityChanged) {
       this.hostGenerations.set(host.id, (this.hostGenerations.get(host.id) ?? 0) + 1);
     }
     this.hosts.set(host.id, host);

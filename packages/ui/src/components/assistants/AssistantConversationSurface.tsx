@@ -755,7 +755,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                     ) : null}
                     {message.parts.map((part, index) => {
                       if (part.type === 'card' && part.cardType === 'session') {
-                        return <AssistantSessionCard key={`${renderKey}:card:${index}`} card={part} />
+                        return <AssistantSessionCard key={`${renderKey}:card:${index}:${JSON.stringify([part.target ?? null, part.directory, part.sessionID])}`} card={part} />
                       }
                       if (part.type === 'card' && part.cardType === 'assistant') {
                         return <AssistantAssistantCard key={`${renderKey}:card:${index}`} card={part} assistant={snapshotQuery.data?.assistants.find((item) => item.id === part.assistantID)} active={active} />

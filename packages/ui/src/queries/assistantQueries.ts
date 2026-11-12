@@ -792,7 +792,7 @@ export const sendAssistantContactMessage = async (
 };
 export const appendAssistantContactCard = async (
   assistantID: string,
-  card: Pick<AssistantContactSessionCardPart, 'sessionID' | 'directory'> & Partial<Pick<AssistantContactSessionCardPart, 'title' | 'status'>>,
+  card: Pick<AssistantContactSessionCardPart, 'sessionID' | 'directory'> & Partial<Pick<AssistantContactSessionCardPart, 'title' | 'status' | 'target'>>,
 ): Promise<AssistantContactCardPart> => {
   const transport = getRuntimeTransportIdentity();
   const generation = getRuntimeGeneration();

@@ -94,6 +94,14 @@ describe('openSessionFromNotification', () => {
     expect(mocks.setCurrentSession).toEqual([]);
   });
 
+  test('Mini Chat handoff retains instance identity through remote route resolution', async () => {
+    const target = { sessionId: 'same-id', directory: '/repo', hubId: 'hub', hostId: 'host', instanceId: 'instance' };
+    openSessionFromNotification(target);
+    await vi.dynamicImportSettled();
+    expect(mocks.remoteRoute).toHaveBeenCalledWith({ ...target, isNewSession: false }, expect.any(Function));
+    expect(mocks.setCurrentSession).toEqual([]);
+  });
+
   test.each(['host:remote', 'relay:remote'])('notification delivered to %s stays on its originating runtime', async (runtimeKey) => {
     mocks.isLocalRuntimeActive = false;
     mocks.runtimeKey = runtimeKey;

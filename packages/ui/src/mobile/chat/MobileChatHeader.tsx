@@ -44,7 +44,7 @@ export function MobileChatHeader({
   return (
     <MobileDetailNavigation
       title={host?.entry.location.hostId ? <RemoteMobileChatTitle host={host} /> : title}
-      subtitle={subtitle}
+      subtitle={subtitle || (host?.entry.location.hostId ? <RemoteHostIndicator registry={host.registry} hostId={host.entry.location.hostId} showName /> : null)}
       backAriaLabel={t('header.actions.backAria')}
       onBack={handleBack}
       overlay
@@ -68,7 +68,7 @@ function RemoteMobileChatTitle({ host }: { host: NonNullable<ReturnType<typeof u
   const sessionId = selection?.sessionId;
   const summaries = useRemoteHostSummaries(host.registry, location.hostId);
   const session = summaries.data?.directories.find((directory) => directory.directory === location.directory)?.sessions.find((session) => session.id === sessionId);
-  return <span className="inline-flex max-w-full items-center gap-1"><span className="truncate">{sessionId ? <RemoteMobileSessionTitle entry={host.entry} sessionId={sessionId} fallback={session?.title || t('mobile.sessions.untitled')} /> : selection?.draft?.title || t('mobile.menu.newSession')}</span><RemoteHostIndicator registry={host.registry} hostId={location.hostId!} showName /></span>;
+  return <>{sessionId ? <RemoteMobileSessionTitle entry={host.entry} sessionId={sessionId} fallback={session?.title || t('mobile.sessions.untitled')} /> : selection?.draft?.title || t('mobile.menu.newSession')}</>;
 }
 
 const RemoteMobileSessionTitle = memo(function RemoteMobileSessionTitle({ entry, sessionId, fallback }: { entry: HostRuntimeEntry; sessionId: string; fallback: string }) {

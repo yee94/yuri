@@ -31,6 +31,6 @@ export type RemoteProjectShellProps = {
 export type RemoteSummaryRowProps = {
   session: SessionIndexSession; active: boolean; search: string; selected: boolean; pending: boolean; pinned: boolean; unread: number;
   status?: string; reorderable?: boolean; depth?: number; dragItem: { directory: string; id: string };
-  onSelect(): void; onMultiSelect(): void; onRename(): void; onPin(): void; onUnread(): void; onArchive(): void;
+  onSelect(): void; onMultiSelect(): void; onRename(): void; onPin(): void; onUnread(): void; onArchive(): void; onDelete(): void;
   folders: Array<{ id: string; name: string }>; onFolder(id: string | null): void;
 };

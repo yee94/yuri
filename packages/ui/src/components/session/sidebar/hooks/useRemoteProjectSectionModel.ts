@@ -18,6 +18,7 @@ import { useRemoteProjectSectionData } from './useRemoteProjectSectionData';
 import type { Session } from '@/lib/opencode/v2-types';
 import { formatDirectoryName } from '@/lib/utils';
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
+import { isSessionNotFoundError } from '@opencode/client';
 
 const writes = new WeakMap<HostRuntimeRegistry, Map<string, Promise<void>>>();
 function serializeWrite(registry: HostRuntimeRegistry, hostId: string, action: () => Promise<void>) {
@@ -62,7 +63,8 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     return next;
   }));
   const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [deleteTargets, setDeleteTargets] = React.useState<Array<{ id: string; title?: string; entry: HostRuntimeEntry }> | null>(null);
+  const deleteSelectionRef = React.useRef(useSessionNavigationStore.getState().remoteSession);
   const [editor, setEditor] = React.useState<{ kind: 'title' | 'folder' | 'project'; id?: string; directory?: string; folderId?: string; parentId?: string | null; value: string } | null>(null);
   const [projectIcon, setProjectIcon] = React.useState(project.icon ?? '');
   const [projectColor, setProjectColor] = React.useState(project.color ?? '');
@@ -70,11 +72,11 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   const mutate = useEvent(async (action: () => Promise<void>) => {
     if (flightRef.current) return;
     flightRef.current = true;
-    setPending(true); setError(null);
+    setPending(true);
     try {
       await serializeWrite(registry, project.hostId, async () => { registry.assertCurrent(); await action(); registry.assertCurrent(); });
       await refresh();
-    } catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); setError(message); toast.error(message); }
+    } catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); toast.error(message); }
     finally { flightRef.current = false; setPending(false); }
   });
   const entryFor = (directory: string) => registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory: directory.startsWith('__archived__:') ? directory.slice('__archived__:'.length) : directory });
@@ -96,6 +98,49 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     if (failures.length) throw new Error(failures.join('\n'));
     setSelected(new Map()); setEditor(null);
   });
+  const requestDelete = (targets: Array<{ id: string; title?: string; directory: string }>) => {
+    if (!online || flightRef.current) return;
+    try {
+      const captured = targets.map(({ id, title, directory }) => ({ id, title, entry: entryFor(directory) }));
+      deleteSelectionRef.current = useSessionNavigationStore.getState().remoteSession;
+      setDeleteTargets(captured);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const confirmDelete = () => {
+    if (!deleteTargets?.length || !online) return;
+    const targets = deleteTargets;
+    const expectedSelection = deleteSelectionRef.current;
+    void mutate(async () => {
+      const failed: typeof targets = [];
+      const failures: string[] = [];
+      for (const target of targets) {
+        try {
+          let confirmed: boolean;
+          try {
+            confirmed = await target.entry.service().deleteSession(target.id, target.entry.location.directory);
+          } catch (cause) {
+            if (!isSessionNotFoundError(cause) || cause.sessionID !== target.id) throw cause;
+            confirmed = true;
+          }
+          target.entry.sdk();
+          if (!confirmed) throw new Error(t('sessions.sidebar.session.delete.error'));
+          setSelected((previous) => { const next = new Map(previous); next.delete(target.id); return next; });
+          const current = useSessionNavigationStore.getState().remoteSession;
+          if (current === expectedSelection && current?.projectId === project.id && current.sessionId === target.id
+            && current.location.hubId === registry.hubId && current.location.hostId === project.hostId) {
+            useSessionNavigationStore.getState().openRemoteSession(project, target.entry.location, null);
+          }
+        } catch (cause) {
+          failed.push(target);
+          failures.push(cause instanceof Error ? cause.message : String(cause));
+        }
+      }
+      setDeleteTargets(failed.length ? failed : null);
+      await refresh();
+      if (failures.length) throw new Error(failures.join('\n'));
+      toast.success(t('sessions.sidebar.session.delete.success'));
+    });
+  };
   const updateFolder = (directory: string, operation: (snapshot: NonNullable<RemoteSummarySnapshot['folders']>) => void, onConfirmed?: () => void) => online ? mutate(async () => {
     const entry = entryFor(directory);
     const payload = await readRemoteResponse(await entry.fetch('/api/session-folders')) as NonNullable<RemoteSummarySnapshot['folders']>;
@@ -166,6 +211,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     onPin: () => void mutate(async () => { await request(scope, `/api/yuri/session-index/session/${encodeURIComponent(session.id)}/pin`, snapshot?.pinnedSessionIds.includes(session.id) || session.time.pinned ? 'DELETE' : 'POST'); }),
     onUnread: () => void mutate(async () => { const previous = snapshot?.unread?.sessions[session.id]; await request(scope, `/api/yuri/session-unread/${encodeURIComponent(session.id)}`, 'PUT', { unread: !previous?.unreadCount, expectedRevision: previous?.revision ?? 0 }); }),
     onArchive: () => void updateRows([session.id], { time: { archived: session.time.archived ? null : Date.now() } }, scope),
+    onDelete: () => requestDelete([{ id: session.id, title: session.title, directory: scope }]),
     folders: snapshot?.folders?.foldersMap[scope] ?? [],
     onFolder: (folderId) => void updateFolder(scope, (payload) => { payload.foldersMap[scope] = (payload.foldersMap[scope] ?? []).map((candidate) => ({ ...candidate, sessionIds: [...candidate.sessionIds.filter((id) => id !== session.id), ...(candidate.id === folderId ? [session.id] : [])] })); }),
   });
@@ -260,7 +306,8 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
       close: () => { void mutate(async () => { await useProjectsStore.getState().removeProject(project.id); }); },
     },
   };
-  return { data, projectProps, sessionProps, folderProps, reportChildTargets, pending, error: error || data.error,
+  return { data, projectProps, sessionProps, folderProps, reportChildTargets, pending,
+    deleteTargets, confirmDelete, dismissDelete: () => { if (!flightRef.current) setDeleteTargets(null); },
     updateFolder, moveSessions, reportGroupTargets, selectedSession,
     openDraft: (directory: string, targetFolderId?: string) => openRemoteProjectSession(project, registry, null, directory, mobile, { targetFolderId }),
     worktreeOpen, setWorktreeOpen, editor, setEditor, saveEditor, projectIcon, setProjectIcon, projectColor, setProjectColor,
@@ -268,6 +315,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     bulk: {
       count: selected.size,
       archive: () => void updateRows([...selected.keys()], { time: { archived: Date.now() } }),
+      delete: () => requestDelete([...selected].map(([id, directory]) => ({ id, directory, title: rows.find((row) => row.session.id === id)?.session.title }))),
       clear: () => setSelected(new Map()),
       folders: selected.size ? directories.flatMap((directory) => (snapshot?.folders?.foldersMap[directory.directory] ?? []).map((folder) => ({
         id: `${directory.directory}:${folder.id}`, name: folder.name,

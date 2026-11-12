@@ -15,6 +15,7 @@ export interface AppRouteState {
   sessionId: string | null;
   hostId?: string | null;
   hubId?: string | null;
+  instanceId?: string | null;
   directory?: string | null;
   projectId?: string | null;
   /** Welcome / new-session draft surface → `/session/new` */
@@ -80,6 +81,7 @@ export function serializeAppPath(state: AppRouteState): string {
     const url = new URL(path, 'https://router.invalid');
     url.searchParams.set('hostId', state.hostId);
     url.searchParams.set('hubId', state.hubId);
+    if (state.instanceId) url.searchParams.set('instanceId', state.instanceId);
     url.searchParams.set('directory', state.directory);
     if (state.projectId) url.searchParams.set('projectId', state.projectId);
     return `${url.pathname}${url.search}`;

@@ -14,6 +14,23 @@ const makeRegistry = () => {
 };
 
 describe('Host Runtime Registry production boundary', () => {
+  it('captures authenticated authority without changing durable keys and rejects a foreign reference', async () => {
+    const { registry, fetch } = makeRegistry();
+    registry.applyCatalog({ hubId: 'hub-a', supported: true, projects: [], hosts: [{ ...host('a'), instanceId: 'instance-a' }] });
+    const location = { hubId: 'hub-a', hostId: 'a', directory: '/same' };
+    const entry = registry.resolve(location);
+    expect(entry.location.instanceId).toBe('instance-a');
+    expect(entry.key).toBe(locationKey(location));
+    expect(() => registry.resolve({ ...location, instanceId: 'foreign' })).toThrow('another instance');
+    expect(() => registry.resolve({ hubId: 'hub-a', directory: '/same', instanceId: 'instance-a' })).toThrow('another instance');
+    await entry.fetch('/api/config/skills', { headers: { 'x-custom': 'preserved' } });
+    const headers = new Headers(fetch.mock.calls[0][1]?.headers);
+    expect(headers.get('x-yuri-target-instance')).toBe('instance-a');
+    expect(headers.get('x-custom')).toBe('preserved');
+    registry.applyCatalog({ hubId: 'hub-a', supported: true, projects: [], hosts: [{ ...host('a'), instanceId: 'instance-b' }] });
+    await expect(entry.fetch('/api/config/skills')).rejects.toThrow();
+  });
+
   it('keeps a scoped entry and pending filesystem result across its own cold transport admission', async () => {
     const { registry, fetch, sdk, service } = makeRegistry();
     sdk.mockReturnValue({} as ReturnType<HostRuntimeDependencies['sdk']>);

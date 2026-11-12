@@ -21,6 +21,7 @@ export function routeStateFromPath(pathWithSearch: string): RouteState {
   const query = new URL(pathWithSearch, 'https://router.invalid').searchParams;
   const remote = query.has('hostId') ? {
     hostId: query.get('hostId'), hubId: query.get('hubId'), directory: query.get('directory'), projectId: query.get('projectId'),
+    ...(query.has('instanceId') ? { instanceId: query.get('instanceId') } : {}),
   } : {};
 
   switch (parsed.kind) {

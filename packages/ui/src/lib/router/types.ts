@@ -9,6 +9,7 @@ export interface RouteState {
   sessionId: string | null;
   hostId?: string | null;
   hubId?: string | null;
+  instanceId?: string | null;
   directory?: string | null;
   projectId?: string | null;
   /** True for `/session/new` draft surface (mutually exclusive with sessionId). */

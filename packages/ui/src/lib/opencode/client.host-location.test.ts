@@ -56,6 +56,7 @@ test.each(['direct', 'relay'])('scoped SDK mutation preserves body, headers and 
     expect(request.method).toBe('POST');
     expect(request.headers.get('authorization') ?? new Headers(init?.headers).get('authorization')).toBe('Bearer hub-test-token');
     expect(request.headers.get('x-test-scope')).toBe('retained');
+    expect(request.headers.get('x-yuri-target-instance')).toBe('mutation-instance');
     expect(await request.json()).toEqual({ title: 'Scoped create', location: { directory } });
     controller.abort();
     expect((init?.signal ?? request.signal).aborted).toBe(true);
@@ -67,7 +68,7 @@ test.each(['direct', 'relay'])('scoped SDK mutation preserves body, headers and 
     close: () => {}, getStatus: () => ({ state: 'connected' }), subscribeStatus: () => () => {},
     openWebSocket: () => { throw new Error('No per-host socket is allowed'); },
   });
-  const service = getLocationOpencodeClient({ hubId: 'hub-test', hostId: 'mutation-host', directory });
+  const service = getLocationOpencodeClient({ hubId: 'hub-test', hostId: 'mutation-host', instanceId: 'mutation-instance', directory });
   const created = await service.getSdkClient().session.create({ title: 'Scoped create', location: { directory } }, {
     signal: controller.signal, headers: { 'x-test-scope': 'retained' },
   });

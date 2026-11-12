@@ -2,6 +2,16 @@
 
 ## Remote Project primary chat
 
+Remote session autocomplete selects from the **same Host summaries Query** as the
+sidebar and Assistant picker. It does not create a directory/composer cache or call
+the summary query function behind QueryClient. Reopening or using another directory
+on the same Host shares cached data and the in-flight request; existing Host/event
+invalidation remains authoritative. Send-time reads use `fetchQuery` to respect
+invalidation and check the captured entry before and after cache access. Title-only
+hydration reads that same snapshot without fetching. Files retain their 30-second,
+Host/directory/query-scoped cache and in-flight deduplication; model/Agent/Skill and
+command cache policies are unchanged.
+
 `ChatContainer` consumes `useSessionNavigationStore.remoteSession` before mounting
 the local retained-view controller. Explicit mobile pages carry `explicitSession.location`;
 a remote raw session ID alone is not a local session selection. `RemoteChatContainer`
@@ -67,8 +77,13 @@ Desktop new drafts share `DraftComposerFoot` with the local draft view and omit
 the empty transcript viewport, so the welcome heading and composer stay centered.
 New-draft delivery uses a null session ID, not the editor's placeholder.
 Read-only checks guard mutation handlers as well as the visible controls.
-Model/Agent catalogs load on explicit picker demand, not on typing or opening a
-session. A cold send without a captured choice ensures the provider catalog at
+Model catalogs load on explicit picker demand, not on typing or opening a
+session. Existing remote sessions also observe the Host/Location-scoped Agent
+catalog for permission-control visibility, without opening a picker or enumerating
+models. Drafts still load Agents on explicit picker/send demand. Global allow/deny
+rules hide the auto-accept shield; ask and unknown rules keep it available. These
+reads never use the Hub's Agent permissions, and typing does not refetch catalogs.
+A cold send without a captured choice ensures the provider catalog at
 that action and resolves its validated `default` mapping, never the first model.
 Real picker choices override defaults and transfer to the created session before
 navigation so a failed first model switch retries the same choice and session.
@@ -86,6 +101,30 @@ or the production-build input/scroll timing budgets.
 The composer wire regression additionally mounts the real editor with generated
 SDK/scoped service and HTTP-only response replay (catalog default, picker, create,
 model-switch failure/retry and prompt ordering). Replay is not live-device proof.
+
+Remote `@` autocomplete mounts a separate Host data leaf: Agent and Skill catalogs,
+file/directory SDK searches and recent-file tabs use the captured entry/query scope;
+Session candidates use that Host's bounded summaries, never Hub stores. Closing the
+picker unmounts these consumers. A Host/scope change remounts the picker, fences late
+reads and rejects stale selections. Refresh errors retain the previous search
+snapshot with explicit error feedback; they are not successful empty catalogs.
+`remoteComposerQueries` owns the session/file Query options and cancellation.
+
+Remote send captures model/Agent selection and draft resources before catalog waits,
+ensures cold scoped catalogs on the send action, and passes an explicit session
+catalog into `chatComposerDelivery`; even an empty remote catalog cannot consult
+Hub session titles. Session selection verifies metadata on that Host without local
+transcript prefetch. Delivery resolves each referenced Session's own directory and
+title from the same Host before building the retrieval card. Native command-chip
+icon slots use the shared slash parser, retaining command arguments and synthetic
+context. Scoped command/Skill imperative snapshot and refresh helpers accept the
+same entry and reject revoked entries rather than reading bare-directory caches.
+
+`RemoteChatContainer.composer.test.tsx` covers the real 300-row `@` catalogs,
+same-ID/cwd Host handoff, reference sends and closed/open/closed operation counts
+(50 input events per closed phase). `remoteComposerQueries.test.ts` additionally
+covers empty remote catalogs, snapshot partitioning and post-retarget completion
+rejection. These remain deterministic tests, not browser timing acceptance.
 
 `message/TextSelectionMenu` dismisses on session-switch intent, but does not call
 document Selection `removeAllRanges()` when a chat textarea is focused. Chromium

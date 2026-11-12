@@ -1,19 +1,21 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { RemoteProjectSection } from './RemoteProjectSection';
 import { createEventPipeline } from '@/sync/event-pipeline';
-import { opencodeClient } from '@/lib/opencode/client';
+import { getLocationOpencodeClient, opencodeClient } from '@/lib/opencode/client';
 import { remoteHostSummariesQueryOptions } from '@/queries/remoteProjectQueries';
+import { toast } from '@/components/ui';
 
 type Socket = { onmessage: ((event: { data: string }) => void) | null; onopen: (() => void) | null;
   onclose: (() => void) | null; onerror: (() => void) | null; close(): void; send(): void; readyState: number };
 const wire = vi.hoisted(() => ({ sockets: [] as Socket[], ssePaths: [] as string[] }));
+beforeEach(() => { wire.sockets.length = 0; wire.ssePaths.length = 0; });
 vi.mock('@/lib/relay/runtime-socket', () => ({ openRuntimeWebSocket: () => {
   const socket: Socket = { onmessage: null, onopen: null, onclose: null, onerror: null, close: () => {}, send: () => {}, readyState: 1 };
   wire.sockets.push(socket); return socket;
@@ -44,6 +46,77 @@ const project = { id: 'remote-e1e45e51fd10cee3d69a13f4', hubId, hostId, path: '/
 const status = { type: 'yuri:host-status', properties: { hubId, hostId, host } };
 const tip = { type: 'yuri:host-event', properties: { hubId, hostId, generation,
   payload: { type: 'yuri:session-index-changed', properties: { cause: 'change' } } } };
+
+it('mobile Delete opens a destructive confirmation and cancelling sends no mutation', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
+  useProjectsStore.setState({ projects: [project], activeProjectId: null, hubProjectLayout: null });
+  const service = vi.fn(() => { throw new Error('No mutation before confirmation'); });
+  const fetch = vi.fn(async () => Response.json({ hubId, hostId, stale: false, directories: [{ directory: project.path,
+    sessions: [{ id: 'delete-session', title: 'Delete target', time: { created: 1, updated: 2 } }], hasMore: false }] }));
+  const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => { throw new Error('No transcript read'); }, service });
+  registry.applyCatalog({ supported: true, hubId, hosts: [host], projects: [project] });
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} mobile /></QueryClientProvider>));
+    await vi.waitFor(() => expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Delete target'));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.label"]')!.click());
+    const remove = [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === 'sessions.sidebar.dialogs.deleteSession.titleAction')!;
+    await act(async () => remove.click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('sessions.sidebar.dialogs.deleteSession.title');
+    expect(service).not.toHaveBeenCalled();
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === 'sessions.sidebar.dialogs.cancel')!;
+    await act(async () => cancel.click());
+    expect(service).not.toHaveBeenCalled();
+    expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Delete target');
+  } finally { await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); }
+});
+
+it('failed archive reports once through toast without inserting errors or retry rows into the project layout', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
+  useProjectsStore.setState({ projects: [project], activeProjectId: null, hubProjectLayout: null });
+  const message = 'session.archive update failed (403)';
+  const notify = vi.spyOn(toast, 'error').mockImplementation(() => 'archive-error');
+  const archiveFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ code: 'remote_scope_forbidden' }, { status: 403 }));
+  let loadFailure = false;
+  const fetch = vi.fn(async (path: string) => {
+    if (loadFailure) throw new Error('Summary load failed');
+    if (path.endsWith('/summaries')) return Response.json({ hubId, hostId, stale: false, directories: [{ directory: project.path,
+      sessions: [{ id: 'archive-session', title: 'Keep this row', time: { created: 1, updated: 2 } }], hasMore: false }] });
+    if (path.includes('/api/yuri/sessions/archive-session/archive')) return Response.json({ code: 'remote_scope_forbidden' }, { status: 403 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => { throw new Error('Must not read transcripts'); }, service: getLocationOpencodeClient });
+  registry.applyCatalog({ supported: true, hubId, hosts: [host], projects: [project] });
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} mobile /></QueryClientProvider>));
+    await vi.waitFor(() => expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Keep this row'));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.label"]')!.click());
+    const archive = [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === 'sessions.sidebar.bulkActions.archive')!;
+    await act(async () => archive.click());
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledExactlyOnceWith(message));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain(message);
+    expect(container.textContent).not.toContain('remoteProjects.retry');
+    expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Keep this row');
+    notify.mockClear();
+    loadFailure = true;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteHostSummariesQueryOptions(registry, hostId).queryKey }); });
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledExactlyOnceWith('Summary load failed', { id: `remote-project:${project.id}:load` }));
+    expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Keep this row');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain('Summary load failed');
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} /></QueryClientProvider>));
+    expect(container.textContent).not.toContain('Summary load failed');
+    expect(container.textContent).not.toContain('remoteProjects.retry');
+  } finally {
+    await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); notify.mockRestore(); archiveFetch.mockRestore();
+  }
+});
 
 it('mounted production sidebar refreshes the archived global WS index tip without manual Sync or another connection', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

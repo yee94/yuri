@@ -266,7 +266,7 @@ export function useRouter(): void {
       // resetAppForRuntimeEndpointChange so this fallback cannot re-pin a
       // previous-runtime conversation.
       isNewSession,
-      ...(remote ? { hostId: remote.location.hostId, hubId: remote.location.hubId, directory: remote.location.directory, projectId: remote.projectId } : {}),
+      ...(remote ? { hostId: remote.location.hostId, hubId: remote.location.hubId, instanceId: remote.location.instanceId, directory: remote.location.directory, projectId: remote.projectId } : {}),
       guiPageKey: tab === 'plugin' ? uiState.activeGuiPage : null,
       sessionId: isExclusive || isNewSession
         ? null
