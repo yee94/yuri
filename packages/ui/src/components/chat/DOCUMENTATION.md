@@ -54,6 +54,15 @@ the machine name on hover; existing sessions do not add a Project row above the
 composer. Local and remote conversations share `ComposerFoot`, `StatusRow` and
 the queue card layout, including the mobile overlap and desktop edge fade.
 Remote status inputs come from the bound Host snapshot, never Hub activity.
+Ordinary remote sends add an optimistic user row through the shared transcript
+repository. Its optimistic parts survive stale history reads until authority
+replaces them; failed admission removes only that row. Explicit queue delivery
+does not insert a transcript row. Inbox entries already represented in the
+transcript do not also render above the composer.
+The shared status row receives explicit text: sending during direct admission
+and while its inbox entry awaits consumption, then working/retry/permission
+from Host authority. Pending admission overrides a pre-send idle snapshot;
+failure clears the pending-send flag instead of leaving a silent model header.
 Desktop new drafts share `DraftComposerFoot` with the local draft view and omit
 the empty transcript viewport, so the welcome heading and composer stay centered.
 New-draft delivery uses a null session ID, not the editor's placeholder.

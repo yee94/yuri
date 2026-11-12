@@ -6,6 +6,7 @@ import { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { HostCatalog } from '@/lib/remote-projects/types';
 import { RemoteDirectoryExplorerDialog } from './RemoteDirectoryExplorerDialog';
 import { RemoteHostIndicator } from './RemoteHostIndicator';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { remoteProjectMessages } from '@/lib/i18n/messages/remote-projects';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string, args?: Record<string, string>) => args?.time ? `${key}:${args.time}` : key }) }));
@@ -88,7 +89,7 @@ test('host indicators stay mounted offline, expose removed state and do not noti
   expect(container.textContent).toContain('Machine A');
   await act(async () => registry.ingest({ type: 'yuri:host-status', properties: { hubId: 'hub', hostId: 'a', host: { ...catalog.hosts[0], state: 'offline', lastSyncedAt: 1000 } } }));
   expect(container.textContent).toContain('remoteProjects.sendBlocked');
-  expect(container.querySelector('[data-remote-host="a"]')?.getAttribute('title')).toContain('remoteProjects.lastSync');
+  expect(container.querySelector('[data-remote-host="a"]')?.getAttribute('aria-label')).toContain('remoteProjects.lastSync');
   expect(container.querySelector('[data-remote-host="b"]')?.getAttribute('aria-label')).toContain('remoteProjects.remote-removed');
   expect(unrelated).not.toHaveBeenCalled();
 });
@@ -99,4 +100,33 @@ test('all shipped locales have the same remote-project keys and preserve time pl
     expect(Object.keys(messages).sort()).toEqual(keys);
     expect(messages['remoteProjects.lastSync']).toContain('{time}');
   }
+});
+
+test('compact SSH identity prioritizes the host while its tooltip and full-name surface retain the login', async () => {
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch: vi.fn(), sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  const name = 'root@development.devcloud.example.com';
+  registry.applyCatalog({ ...catalog, hosts: [{ ...catalog.hosts[1], name }] });
+  await act(async () => root.render(<RemoteHostIndicator registry={registry} hostId="b" compactName />));
+  expect(container.querySelector('[data-remote-host]')?.textContent).toBe('development.devcloud.example.com');
+  expect(container.querySelector('[data-remote-host]')?.getAttribute('aria-label')).toContain(name);
+  await act(async () => root.render(<RemoteHostIndicator registry={registry} hostId="b" showName />));
+  expect(container.querySelector('[data-remote-host]')?.textContent).toBe(name);
+  await act(async () => registry.applyCatalog({ ...catalog, hosts: [{ ...catalog.hosts[1], name: 'My build machine' }] }));
+  await act(async () => root.render(<RemoteHostIndicator registry={registry} hostId="b" compactName />));
+  expect(container.querySelector('[data-remote-host]')?.textContent).toBe('My build machine');
+});
+
+test('remote icon hover shows the machine name in a real tooltip', async () => {
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch: vi.fn(), sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  registry.applyCatalog(catalog);
+  await act(async () => root.render(<TooltipProvider delay={0}><RemoteHostIndicator registry={registry} hostId="a" nameOnlyTip /></TooltipProvider>));
+  const icon = container.querySelector('[data-remote-host="a"]')!;
+  await act(async () => {
+    icon.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+    icon.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    icon.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    icon.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+  });
+  await flush(); await flush();
+  expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent).toBe('Machine A');
 });

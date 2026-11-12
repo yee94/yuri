@@ -49,7 +49,8 @@ import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
 import { SidebarHeader } from './sidebar/SidebarHeader';
-import { SidebarPinnedSessions } from './sidebar/SidebarPinnedSessions';
+import { SidebarPinnedSessions, type PinnedItem } from './sidebar/SidebarPinnedSessions';
+import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
 import { SidebarDisplayModeMenu } from './sidebar/SidebarDisplayModeMenu';
 import { SidebarFooter } from './sidebar/SidebarFooter';
 import { SidebarProjectsList } from './sidebar/SidebarProjectsList';
@@ -360,6 +361,15 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const allProjects = useProjectsStore((state) => state.projects);
   const projects = React.useMemo(() => allProjects.filter((project) => !project.hostId), [allProjects]);
   const remoteProjects = React.useMemo(() => allProjects.filter((project) => project.hostId).map(parseRemoteProject), [allProjects]);
+  const [remoteActivityItems, setRemoteActivityItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const handleRemoteActivityItems = useEvent((projectId: string, items: PinnedItem[]) => {
+    setRemoteActivityItems((previous) => {
+      if (!items.length && !previous.has(projectId)) return previous;
+      const next = new Map(previous);
+      if (items.length) next.set(projectId, items); else next.delete(projectId);
+      return next;
+    });
+  });
   const remoteNavigation = useRemoteProjectNavigation(isVisible);
   const [remoteNavigationTargets, setRemoteNavigationTargets] = React.useState<Map<string, SessionNavigationTarget[]>>(new Map());
   const handleRemoteNavigationTargets = useEvent((projectId: string, targets: SessionNavigationTarget[]) => {
@@ -1710,6 +1720,11 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     worktreeMetadata,
   ]);
 
+  const displayInProgressItems = React.useMemo(() => [...inProgressItems,
+    ...remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []),
+  ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
+  [inProgressItems, remoteProjects, remoteActivityItems]);
+
   const sectionsForSidebarRender = React.useMemo(() => {
     return sectionsForRender.map((section) => ({
       ...section,
@@ -1785,7 +1800,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     }
     // Pinned rows first, then the unlabeled in-progress rows; both live in the
     // top `pinned` scope (VS Code included — its pinned list is simply empty).
-    return [...pinnedItems, ...inProgressItems].map((item, visibleIndex) => {
+    return [...pinnedItems, ...displayInProgressItems].map((item, visibleIndex) => {
       const session = item.node.session;
       return {
         scope: "pinned",
@@ -1798,7 +1813,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         visibleIndex,
       };
     });
-  }, [hasSessionSearchQuery, inProgressItems, pinnedItems]);
+  }, [hasSessionSearchQuery, displayInProgressItems, pinnedItems]);
 
   const [visiblePinnedShortcutSessionIds, setVisiblePinnedShortcutSessionIds] =
     React.useState<readonly string[] | null>(null);
@@ -1856,7 +1871,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     (target: SessionNavigationTarget) => {
       const remote = remoteProjects.find((project) => project.id === target.projectId);
       if (remote && remoteNavigation.registry) {
-        openRemoteProjectSession(remote, remoteNavigation.registry, target.sessionId, target.directory ?? remote.path, mobileVariant);
+        const activityItem = remoteActivityItems.get(remote.id)?.find((item) => item.identity === target.sessionId);
+        openRemoteProjectSession(remote, remoteNavigation.registry, activityItem?.remoteSessionId ?? target.sessionId, target.directory ?? remote.path, mobileVariant);
         return;
       }
       setActiveMainTab("chat");
@@ -1878,6 +1894,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       setSessionSwitcherOpen,
       remoteProjects,
       remoteNavigation.registry,
+      remoteActivityItems,
       mobileVariant,
     ],
   );
@@ -2368,7 +2385,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
   const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !isDesktopWindowFullscreen && !mobileVariant;
   const showPinnedTopSection =
-    !hasSessionSearchQuery && (pinnedItems.length > 0 || inProgressItems.length > 0);
+    !hasSessionSearchQuery && (pinnedItems.length > 0 || displayInProgressItems.length > 0);
   const sidebarActionButtons = (
     <div className="space-y-0.5 py-1">
       <Button
@@ -2433,7 +2450,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
             items={pinnedItems}
             reorderEnabled
             onSessionsReordered={handlePinnedSessionsReordered}
-            inProgressItems={inProgressItems}
+            inProgressItems={displayInProgressItems}
             renderSessionNode={renderSessionNode}
             currentSessionId={currentSessionId}
             editingId={editingId}
@@ -2503,6 +2520,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}
         projectOrderIds={sortProjectEntries(allProjects, projectSortOrder).map((project) => project.id)}
+        onRemoteActivityItems={handleRemoteActivityItems}
         remoteSearch={sessionSearchQuery}
         remoteError={remoteNavigation.catalog.error?.message}
         onRemoteNavigationTargets={handleRemoteNavigationTargets}

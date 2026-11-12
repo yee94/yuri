@@ -23,6 +23,7 @@ export type PinnedItem = {
   } | null;
   content?: React.ReactNode;
   identity?: string;
+  remoteSessionId?: string;
 };
 
 type Props = {

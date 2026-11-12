@@ -128,7 +128,9 @@ it('mobile remote projects reuse the floating project/session cards and keep man
       registry.applyCatalog({ supported: true, hubId, hosts: [{ ...host, state: 'offline' }], projects: [project] });
       render(true);
     });
-    await vi.waitFor(() => expect(container.textContent).toContain('remoteProjects.unknown'));
+    expect(container.textContent).not.toContain('remoteProjects.unknown');
+    expect(container.textContent).not.toContain('remoteProjects.state.offline');
+    expect(container.querySelector('[data-remote-host]')?.getAttribute('aria-label')).toContain('remoteProjects.state.offline');
     expect(container.querySelector('.yuri-mobile-session-title')?.textContent).toBe('Native isolation A session');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.label"]')!.click());
     const offlineActions = [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')];

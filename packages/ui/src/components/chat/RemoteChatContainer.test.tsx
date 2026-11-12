@@ -26,6 +26,11 @@ vi.mock('@/queries/remoteProjectQueries', () => ({
   supportsRemoteProjects: () => true,
 }));
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: () => () => {} }));
+vi.mock('@/sync/sync-context', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/sync-context')>(),
+  useDirectorySync: (select: (state: { todo: Record<string, never[]> }) => unknown) => select({ todo: {} }),
+  useSessionLatestTodos: () => undefined,
+}));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/sync/transcript-durable-store-runtime', async () => {
   const { createMemoryTranscriptDurableStore } = await import('@/sync/transcript-durable-store');
@@ -220,6 +225,9 @@ test('production remote pane observes, paints and sends to its Host, never the l
     expect(getRemoteInputStore(location).getState().getDraft(remoteSessionDraftKey(location, 'created'))?.text).toBe('');
     await act(async () => root.render(render('created')));
     expect(element.querySelector('[data-transcript]')?.textContent).toContain('First remote send');
+    await act(async () => registry.ingest({ type: 'yuri:host-event', properties: { hubId: 'hub', hostId: 'remote', directory: location.directory,
+      payload: { type: 'session.status', properties: { sessionID: 'created', status: { type: 'busy' } } } } }));
+    expect(element.textContent).toContain('chat.assistantStatus.working');
     expect(requests.some((request) => request.path.includes('message-queue') || request.path.includes('transcript-cache'))).toBe(false);
     expect(requests.every((request) => request.path.startsWith('/api/hosts/remote/'))).toBe(true);
     const beforeTimeline = requests.length;

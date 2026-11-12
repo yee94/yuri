@@ -120,13 +120,15 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const getTranscript = React.useMemo(() => () => sessionId ? state.repository.getTranscript(state.scope(sessionId)) : null, [state, sessionId]);
   const data = React.useSyncExternalStore(subscribe, getTranscript, getTranscript);
   const snapshot = React.useSyncExternalStore(state.subscribeSnapshot, () => state.getSnapshot(sessionId ?? ''), () => state.getSnapshot(sessionId ?? ''));
+  const inbox = useSessionInboxOverlayStore((store) => sessionId ? store.bySession[state.sessionKey(sessionId)] ?? EMPTY_INBOX : EMPTY_INBOX);
+  const sending = Boolean(snapshot.pendingSendMessageID) || inbox.some((item) => item.delivery === 'steer' && Boolean(data?.messagesByID[item.id]));
   const messages = React.useMemo(() => {
     if (!data) return [];
     const boundary = snapshot.session?.revert?.messageID;
     const cut = boundary ? data.messageOrder.indexOf(boundary) : -1;
     return (cut >= 0 ? data.messageOrder.slice(0, cut) : data.messageOrder).map((id) => ({ info: data.messagesByID[id], parts: (data.partsByMessageID[id] ?? []) as import('@/lib/opencode/v2-types').Part[] }));
   }, [data, snapshot.session?.revert?.messageID]);
-  const busy = snapshot.status?.type === 'busy' || snapshot.status?.type === 'retry';
+  const busy = sending || snapshot.status?.type === 'busy' || snapshot.status?.type === 'retry';
   const retryActionCopy = React.useMemo(() => resolveRetryActionCopy(snapshot.status, (key) => t(key as I18nKey)), [snapshot.status, t]);
   const [catalogDemand, setCatalogDemand] = React.useState(false);
   const requestCatalog = useEvent((open: boolean) => setCatalogDemand(open));
@@ -484,7 +486,6 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     goToBottom: follow.goToBottom, releaseAutoFollow: follow.releaseAutoFollow,
     beginHistoryViewportPreservation: follow.beginHistoryViewportPreservation, endHistoryViewportPreservation: follow.endHistoryViewportPreservation,
     isPinned: follow.isPinned, showScrollButton: follow.showScrollButton, isMobile, onWillLoadEarlier: armAnchor });
-  const inbox = useSessionInboxOverlayStore((store) => sessionId ? store.bySession[state.sessionKey(sessionId)] ?? EMPTY_INBOX : EMPTY_INBOX);
   const [inboxPopup, setInboxPopup] = React.useState<ToolPopupContent | null>(null);
   const inboxAction = useEvent(async (action: 'steer' | 'queue' | 'cancel', inboxID: string) => {
     assertWritable();
@@ -503,6 +504,11 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   });
   const nativeInboxAction = useEvent((action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => action === 'edit' ? editInbox(id) : inboxAction(action, id));
   surface.nativeInbox = <NativeSessionInboxChips items={inbox.filter((item) => !data?.messagesByID[item.id])} readOnly={readOnly || !active} onAction={nativeInboxAction} onShowPopup={setInboxPopup} />;
+  const transcriptStatusRow = <StatusRow isWorking={busy} isGenericStatus={!sending} showTodos={false}
+    statusText={busy ? t(sending ? 'chat.assistantStatus.sendingMessage' : 'chat.assistantStatus.working') : null}
+    isWaitingForPermission={snapshot.permissions.length > 0} isTurnSettled={!sending && snapshot.status?.type === 'idle'}
+    retryInfo={snapshot.status?.type === 'retry' ? snapshot.status : null} agentName={selection.agent}
+    showAssistantStatus={busy || snapshot.permissions.length > 0} />;
   return <SessionSurfaceContext.Provider value={sessionSurface}>
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-remote-chat={locationKey(location)}>
       {(catalogDemand || modelPickerOpen) && (providersQuery.error || agentsQuery.error) ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">
@@ -524,10 +530,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
         onSelectTurn={(id) => void timeline.scrollToTurn(id)} showPromptNavigator={!isMobile && promptNavigator}
         canLoadEarlierPrompts={timeline.historySignals.canLoadEarlier} isLoadingOlderPrompts={timeline.isLoadingOlder}
         onLoadEarlierPrompts={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)}
-        transcriptStatusRow={<StatusRow isWorking={busy} isGenericStatus showTodos={false}
-          isWaitingForPermission={snapshot.permissions.length > 0} isTurnSettled={snapshot.status?.type === 'idle'}
-          retryInfo={snapshot.status?.type === 'retry' ? snapshot.status : null} agentName={selection.agent}
-          showAssistantStatus={busy || snapshot.permissions.length > 0} />} /> :
+        transcriptStatusRow={transcriptStatusRow} /> :
       <ScrollShadow ref={follow.scrollRef} className="chat-scroll min-h-0 flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }} onScroll={timeline.handleHistoryScroll}>
         {retryActionCopy ? <div className="chat-column px-3 py-2">
           <div className="typography-ui-label text-foreground">{retryActionCopy.title}</div>
@@ -545,6 +548,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
           {snapshot.questions.map((question) => <QuestionCard key={question.id} question={question} />)}
           {snapshot.forms.map((form) => <FormCard key={form.id} form={form} directory={location.directory} />)}
         </> : null}
+        {transcriptStatusRow}
       </ScrollShadow>}
       </TranscriptSearch> : null}
       {session?.revert && sessionId && !readOnly && active ? <Button size="xs" onClick={() => { assertWritable(); void postSessionRevertClear({ scope: entry, sessionID: sessionId }).then(() => state.refreshMetadata(sessionId)).catch(report); }}>{t('chat.revertIndicator.redo')}</Button> : null}

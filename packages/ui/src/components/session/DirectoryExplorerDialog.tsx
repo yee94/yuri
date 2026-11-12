@@ -178,7 +178,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
       onNext={machine.next} onAddSsh={openSshSettings} />;
     return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} mobile={isMobile} footer={footer} error={catalog.error?.message}>
       <DirectoryMachineList hosts={selectableHosts} selectedId={hostId} onSelect={machine.selectHost} pending={catalog.isPending}
-        error={machine.error} steps={steps} />
+        error={machine.error} steps={steps} canContinue={canContinue} onNext={machine.next} />
     </DirectoryExplorerSurface>;
   }
   const machinePicker = hasMachines ? <div className="flex min-w-0 items-center gap-2 py-1">

@@ -65,16 +65,33 @@ export function DirectoryMachineActions({ pending, failed, canContinue, onNext, 
   </div>;
 }
 
-export function DirectoryMachineList({ hosts, selectedId, onSelect, pending, error, steps }: {
+export function DirectoryMachineList({ hosts, selectedId, onSelect, pending, error, steps, canContinue, onNext }: {
   hosts: RemoteHost[]; selectedId: string; onSelect(id: string): void;
   pending: boolean; error: Error | null; steps: React.ReactNode;
+  canContinue: boolean; onNext(): void;
 }) {
   const { t } = useI18n();
-  return <div className="yuri-directory-content">
+  return <div className="yuri-directory-content" onKeyDown={(event) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!(event.target instanceof HTMLElement) || !event.target.closest('.yuri-directory-entry')) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!event.repeat && canContinue) onNext();
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const entries = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('.yuri-directory-entry:not(:disabled)'));
+    const index = entries.indexOf(event.target.closest<HTMLButtonElement>('.yuri-directory-entry')!);
+    const next = entries[(index + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length];
+    next?.focus({ preventScroll: true });
+    next?.scrollIntoView({ block: 'nearest' });
+  }}>
     <div className="yuri-directory-inputs">{steps}</div>
     <ScrollableOverlay outerClassName="yuri-directory-results" className="yuri-directory-list" disableHorizontal>
       <div className={cn('yuri-directory-row', !selectedId && 'bg-interactive-selection')}>
-        <button type="button" className="yuri-directory-entry" aria-pressed={!selectedId} onClick={() => onSelect('')}>
+        <button type="button" className="yuri-directory-entry" aria-pressed={!selectedId} autoFocus={!selectedId}
+          onFocus={() => { if (selectedId) onSelect(''); }} onClick={() => onSelect('')}>
           <Icon name="computer" className="size-4 shrink-0 text-muted-foreground" />
           <span className="yuri-directory-name flex-1">{t('remoteProjects.local')}</span>
         </button>
@@ -82,6 +99,7 @@ export function DirectoryMachineList({ hosts, selectedId, onSelect, pending, err
       </div>
       {hosts.map((host) => <div key={host.id} className={cn('yuri-directory-row', selectedId === host.id && 'bg-interactive-selection')}>
         <button type="button" className="yuri-directory-entry disabled:cursor-not-allowed disabled:opacity-50"
+          autoFocus={selectedId === host.id} onFocus={() => { if (selectedId !== host.id) onSelect(host.id); }}
           aria-pressed={selectedId === host.id} disabled={host.state === 'unauthorized' || host.state === 'incompatible'} onClick={() => onSelect(host.id)}>
           <Icon name="computer" className="size-4 shrink-0 text-muted-foreground" />
           <span className="yuri-directory-name min-w-0 flex-1 truncate">{host.name}</span>

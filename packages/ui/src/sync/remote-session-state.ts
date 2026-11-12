@@ -3,7 +3,10 @@ import type { HostLocation } from '@/lib/remote-projects/location'
 import { locationCachePartition, locationSessionKey } from '@/lib/remote-projects/location'
 import type { HostRuntimeEntry, HostRuntimeRegistry } from '@/lib/remote-projects/registry'
 import { getHostRuntimeServices } from '@/lib/remote-projects/runtime'
-import { getRuntimeGeneration } from '@/lib/runtime-switch'
+import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch'
+import { useProjectsStore } from '@/stores/useProjectsStore'
+import { isVisibleGlobalSession } from '@/stores/globalSessions'
+import { resolveRemoteProjectOwner, remoteHostSummariesKey, type RemoteHostSummaries } from '@/lib/remote-projects/summaries'
 import { normalizeDirectoryKey } from '@/lib/pathNormalization'
 import { createQueryTranscriptRepository } from './transcript-repository-query-adapter'
 import { fetchProductionTranscriptTransportPage } from './transcript-repository-production'
@@ -29,6 +32,7 @@ import { parseSessionFormInfo, type SessionFormInfo, type SessionFormAnswer } fr
 import { remoteSessionActiveQueryOptions, remoteSessionStatus } from './remote-session-active'
 
 export type RemoteChatSnapshot = {
+  pendingSendMessageID?: string
   session?: Session
   status?: SessionStatus
   permissions: PermissionRequest[]
@@ -100,6 +104,20 @@ export function createRemoteSessionState(
   const snapshotListeners = new Set<() => void>()
   const emptySnapshot: RemoteChatSnapshot = { permissions: [], questions: [], forms: [] }
   let metadataRevision = 0
+  const promoteProject = () => {
+    const store = useProjectsStore.getState()
+    const summaries = (options.client ?? queryClient).getQueryData<RemoteHostSummaries>(remoteHostSummariesKey(
+      getRuntimeTransportIdentity(), entry.location.hubId, entry.location.hostId!,
+    ))
+    const project = resolveRemoteProjectOwner(store.projects, entry.location.hubId, entry.location.hostId!, entry.location.directory, summaries?.worktrees)
+    if (project) store.moveProjectToTop(project.id)
+  }
+  const publishLiveStatus = (sessionID: string, status: SessionStatus) => {
+    const previous = snapshots.get(sessionID)
+    if (previous?.status?.type !== status.type && previous?.session
+      && isVisibleGlobalSession(previous.session) && !previous.session.time?.archived) promoteProject()
+    publish(sessionID, { status })
+  }
   const publish = (sessionID: string, patch: Partial<RemoteChatSnapshot>) => {
     assertCurrent()
     snapshots.set(sessionID, { ...(snapshots.get(sessionID) ?? emptySnapshot), ...patch })
@@ -262,17 +280,17 @@ export function createRemoteSessionState(
         repository.apply(scope(sessionID), { type: 'sse-event', event: scopedEvent })
         if (event.type === 'session.status' && props.status) {
           metadataRevision++
-          publish(sessionID, { status: props.status as SessionStatus })
+          publishLiveStatus(sessionID, props.status as SessionStatus)
         }
         if (event.type === 'session.execution.started' || event.type === 'session.busy') {
           metadataRevision++
-          publish(sessionID, { status: { type: 'busy' } })
+          publishLiveStatus(sessionID, { type: 'busy' })
         }
         const executionTerminal = event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed'
           || event.type === 'session.execution.interrupted' || event.type === 'session.idle'
         if (executionTerminal) {
           metadataRevision++
-          publish(sessionID, { status: props.reason === 'shutdown' ? { type: 'busy' } : { type: 'idle' } })
+          publishLiveStatus(sessionID, props.reason === 'shutdown' ? { type: 'busy' } : { type: 'idle' })
         }
         if (event.type.startsWith('permission.') || event.type.startsWith('question.') || event.type.startsWith('form.') || event.type === 'session.updated') {
           metadataRevision++
@@ -316,27 +334,35 @@ export function createRemoteSessionState(
         }) : null
         if (optimistic) repository.apply(scope(captured.sessionID), { type: 'optimistic-add', message: optimistic.info,
           parts: optimistic.parts.map((part) => ({ ...part, __yuriOptimistic: true })) })
+        if (optimistic) publish(captured.sessionID, { pendingSendMessageID: captured.messageID })
         try {
-        const sdk = entry.sdk()
-        if (captured.delivery !== 'queue' && captured.selection) {
-          const session = await sdk.session.get({ sessionID: captured.sessionID })
-          assertCurrent()
-          const desired = captured.selection
-          const modelChanged = readSessionModelId(session) !== desired.modelID || readSessionModelProviderId(session) !== desired.providerID
-            || readSessionModelVariant(session) !== normalizeSelectionVariant(desired.variant)
-          const agentChanged = desired.agent && session.agent !== desired.agent
-          if (modelChanged || agentChanged) {
-            await entry.service().applySendSelection(captured.sessionID, {
-              ...(modelChanged ? { model: toOfficialModelRef(desired) } : {}),
-              ...(agentChanged ? { agent: desired.agent } : {}),
-            }, entry.location.directory)
+          const sdk = entry.sdk()
+          if (captured.delivery !== 'queue' && captured.selection) {
+            const session = await sdk.session.get({ sessionID: captured.sessionID })
             assertCurrent()
+            const desired = captured.selection
+            const modelChanged = readSessionModelId(session) !== desired.modelID || readSessionModelProviderId(session) !== desired.providerID
+              || readSessionModelVariant(session) !== normalizeSelectionVariant(desired.variant)
+            const agentChanged = desired.agent && session.agent !== desired.agent
+            if (modelChanged || agentChanged) {
+              await entry.service().applySendSelection(captured.sessionID, {
+                ...(modelChanged ? { model: toOfficialModelRef(desired) } : {}),
+                ...(agentChanged ? { agent: desired.agent } : {}),
+              }, entry.location.directory)
+              assertCurrent()
+            }
           }
-        }
-        return await postSessionPrompt({ ...captured, scope: entry, directory: entry.location.directory })
+          const result = await postSessionPrompt({ ...captured, scope: entry, directory: entry.location.directory })
+          assertCurrent()
+          promoteProject()
+          return result
         } catch (error) {
           if (optimistic) repository.apply(scope(captured.sessionID), { type: 'optimistic-remove', messageID: optimistic.info.id })
           throw error
+        } finally {
+          if (currentTransport() === transport && snapshots.get(captured.sessionID)?.pendingSendMessageID === captured.messageID) {
+            publish(captured.sessionID, { pendingSendMessageID: undefined })
+          }
         }
       })
       sends.set(input.sessionID, flight)

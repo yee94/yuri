@@ -223,6 +223,37 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(container.textContent).not.toContain('remoteProjects.machine');
   });
 
+  test('machine keyboard navigation skips disabled rows and Enter continues without repeat or IME submissions', async () => {
+    fixture.remoteSupported = true;
+    fixture.hosts = [
+      { id: 'locked', name: 'Locked machine', state: 'unauthorized' },
+      { id: 'remote', name: 'Remote machine', state: 'connected' },
+    ];
+    await mount();
+    const local = button('remoteProjects.local');
+    const remote = [...container.querySelectorAll<HTMLButtonElement>('.yuri-directory-entry')].find(node => node.textContent?.includes('Remote machine'))!;
+    await act(async () => local.focus());
+    await act(async () => local.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+    expect(document.activeElement).toBe(remote);
+    expect(remote.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => remote.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })));
+    expect(document.activeElement).toBe(local);
+    expect(local.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => local.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+    for (const extra of [{ repeat: true }, { isComposing: true }]) {
+      await act(async () => remote.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...extra })));
+    }
+    expect(fixture.connectHost).not.toHaveBeenCalled();
+    let connected!: () => void;
+    fixture.connectHost.mockImplementation(() => new Promise<void>(resolve => { connected = resolve; }));
+    await act(async () => remote.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    await flushMutation();
+    await act(async () => remote.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    expect(fixture.connectHost).toHaveBeenCalledExactlyOnceWith('remote', { verify: true });
+    await act(async () => connected());
+    expect(container.querySelector('[data-remote-directory]')?.getAttribute('data-remote-directory')).toBe('remote');
+  });
+
   test.each(['idle', 'connecting', 'connected', 'degraded', 'offline'])('waits for the complete remote connection before entering directory selection (cached state=%s)', async (state) => {
     fixture.remoteSupported = true;
     fixture.hosts = [{ id: 'remote', name: 'Remote machine', state }];

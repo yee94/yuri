@@ -13,6 +13,7 @@ import { getRemoteChatOwner } from './remote-chat-context'
 import { createMemoryTranscriptDurableStore } from './transcript-durable-store'
 import { draftAttachmentRefID, draftKeyString, parseDraftRecord, sessionDraftKey, newSessionDraftKey, surfaceDraftKey } from './input-draft-types'
 import { useSelectionStore } from './selection-store'
+import { useProjectsStore } from '@/stores/useProjectsStore'
 import { applySessionInboxEvent, cancelUnpromotedInboxItem, capturePromptCommitScope, postSessionPrompt } from './session-prompt-api'
 import { selectInboxOverlayChips, useSessionInboxOverlayStore } from './session-inbox-overlay'
 import { createRuntimeTranscriptDurableStore, resolveTranscriptDurableRuntimeKind } from './transcript-durable-store-runtime'
@@ -70,6 +71,61 @@ afterEach(() => {
 })
 
 describe('explicit remote session state', () => {
+  it('promotes the owning remote project on send and live transitions, but not duplicate status events', async () => {
+    const f = fixture();
+    const previous = useProjectsStore.getState();
+    useProjectsStore.setState({ projects: [
+      { id: 'local', path: remote('a').directory },
+      { id: 'other-host', path: remote('b').directory, hubId: 'hub', hostId: 'b' },
+      { id: 'remote-project', path: remote('a').directory, hubId: 'hub', hostId: 'a' },
+    ] });
+    const promote = vi.spyOn(useProjectsStore.getState(), 'moveProjectToTop').mockImplementation(() => {});
+    const a = f.state(remote('a'));
+    const release = a.observe('same', () => {});
+    try {
+      await a.refreshMetadata('same');
+      await a.send({ sessionID: 'same', messageID: 'msg_promote', text: 'Send', delivery: 'steer' });
+      expect(promote).toHaveBeenLastCalledWith('remote-project');
+      promote.mockClear();
+      const event = (type: 'busy' | 'idle') => f.registry.ingest({ type: 'yuri:host-event', properties: {
+        hubId: 'hub', hostId: 'a', directory: remote('a').directory,
+        payload: { type: 'session.status', properties: { sessionID: 'same', status: { type } } },
+      } });
+      event('busy');
+      expect(promote).toHaveBeenCalledTimes(1);
+      for (let index = 0; index < 50; index++) event('busy');
+      expect(promote).toHaveBeenCalledTimes(1);
+      event('idle');
+      expect(promote).toHaveBeenCalledTimes(2);
+      expect(promote.mock.calls.every(([id]) => id === 'remote-project')).toBe(true);
+    } finally { release(); promote.mockRestore(); useProjectsStore.setState(previous); }
+  });
+  it('publishes sending while admission is pending and clears it after failure', async () => {
+    const f = fixture();
+    const a = f.state(remote('a'));
+    let fail!: (error: Error) => void;
+    f.fetch.mockImplementationOnce(() => new Promise<Response>((_, reject) => { fail = reject; }));
+    const send = a.send({ sessionID: 'same', messageID: 'msg_pending', text: 'Pending', delivery: 'steer' });
+    const rejected = expect(send).rejects.toThrow('Offline');
+    await vi.waitFor(() => expect(a.getSnapshot('same').pendingSendMessageID).toBe('msg_pending'));
+    fail(new Error('Offline'));
+    await rejected;
+    expect(a.getSnapshot('same').pendingSendMessageID).toBeUndefined();
+  });
+  it('ordinary sends paint immediately, survive an older GET and roll back failures; queued sends stay outside the transcript', async () => {
+    const f = fixture();
+    const a = f.state(remote('a'));
+    await a.send({ sessionID: 'same', messageID: 'msg_direct', text: 'Visible immediately', delivery: 'steer' });
+    expect(a.repository.getParts(a.scope('same'), 'msg_direct')[0]).toMatchObject({ text: 'Visible immediately', __yuriOptimistic: true });
+    await a.repository.refreshFromAuthority(a.scope('same'));
+    expect(a.repository.getParts(a.scope('same'), 'msg_direct')[0]).toMatchObject({ text: 'Visible immediately' });
+    await a.send({ sessionID: 'same', messageID: 'msg_queued', text: 'Wait', delivery: 'queue' });
+    expect(a.repository.getTranscript(a.scope('same')).messagesByID.msg_queued).toBeUndefined();
+    f.fetch.mockRejectedValueOnce(new Error('Send failed'));
+    await expect(a.send({ sessionID: 'same', messageID: 'msg_failed', text: 'Retry me', delivery: 'steer' })).rejects.toThrow('Send failed');
+    expect(a.repository.getTranscript(a.scope('same')).messagesByID.msg_failed).toBeUndefined();
+    expect(a.repository.getTranscript(a.scope('same')).messagesByID.msg_direct).toBeDefined();
+  });
   it('shares the production primary/panel state and fences it only after the last owner leaves', async () => {
     const f = fixture()
     const entry = f.registry.resolve(remote('a'))

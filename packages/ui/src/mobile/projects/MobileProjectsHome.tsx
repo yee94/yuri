@@ -61,6 +61,7 @@ type ActiveGesture = {
 };
 
 export type MobileSessionTreeNode = MobileSessionRowModel & {
+  content?: React.ReactNode;
   directory?: string;
   /**
    * Nested subagents may exist for archive/cascade helpers, but the mobile home
@@ -182,6 +183,7 @@ function SessionListImpl({
   const rows = (
     <>
       {sessions.map((session, index) => {
+        if (session.content) return <React.Fragment key={session.id}>{session.content}</React.Fragment>;
         const isFollowedByPagination = session.kind === 'pagination'
           && sessions[index + 1]?.kind === 'pagination';
         const Row = session.kind === 'pagination' ? MobileSessionRow : MobileLiveSessionRow;

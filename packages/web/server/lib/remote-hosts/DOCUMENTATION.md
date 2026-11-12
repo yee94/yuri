@@ -92,6 +92,11 @@ not proxy capabilities.
   than repeatedly restarting SSH initialization.
 - `POST /api/hosts/:hostId/subscriptions {directory,sessionId?}`: content lease;
   `DELETE /.../subscriptions/:id` releases only the authenticated owner's lease.
+- The shared worktree dialog forwards read-only (`GET`/`HEAD`)
+   `/api/github/auth/status`, `/api/github/issues/{list,get,comments}`,
+   `/api/github/pulls/{list,context}`, and `/api/magic-prompts`. These exact
+   routes supply Host GitHub availability, linked context and prompt templates;
+   GitHub authentication mutations and prompt-template writes remain forbidden.
 - `/api/hosts/:hostId/api/*`: supported project/session APIs preserve method,
   body, query, directory headers, cancellation and streaming. Client credentials,
   cookies, arbitrary destinations, recursive host APIs and machine-level writes

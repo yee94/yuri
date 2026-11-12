@@ -6,7 +6,20 @@
 `hostId` and `remoteState`. `SortableProjectItem` mounts `RemoteHostIndicator` only
 for remote rows with that registry. The indicator subscribes to its own host,
 exposes machine/status/last-sync/error details through hover and accessibility,
-and does not discover hosts or enumerate project/session catalogs. The mobile
+with a vertically centered computer icon and machine name that uses
+remaining header space (up to 12rem) with ellipsis. Compact SSH labels omit the login
+prefix from user@host names; hover/accessibility retain the original full name.
+Project names take width priority over machine labels. Remote project labels keep
+the same width and position on hover, focus and menu-open: the absolute action
+buttons share a transparent overlay with 12px left padding. The title button is
+clipped and faded before that overlay, so its text and hit area cannot enter the
+actions; the sidebar's original glass/background stays continuous. The clip is
+derived from the rendered action count (24px buttons, 4px gaps and overlay insets).
+Invisible actions do not reserve their full width or shrink labels. Host tooltips show the
+full name above separate bulleted status, last-sync and optional error rows.
+The indicator does not discover hosts or enumerate project/session catalogs. The mobile
+and desktop project bodies never add a connection/status/last-sync text row;
+those details live in the machine icon tooltip and accessible label. The mobile
 `MobileProjectsHome` / `MobileProjectCard` boundary accepts the same registry and
 identity fields. `SessionSidebar` and `MobileProjectsHomeContainer` now consume
 the Hub catalog and preserve the Hub reference ID, host and raw path. Their
@@ -35,6 +48,14 @@ host's leaf subscription, and token events do not invalidate structural lists.
    Archived sessions and the archive header are omitted on both platforms. Active
    sessions placed in the grouping fallback bucket flow into the main group;
    their original Host directories remain intact for navigation and commands.
+   The section publishes its busy/retry and unread roots through the shared
+   `listInProgressHomeSessions` projection. Desktop and mobile merge these with
+   local attention rows by activity time in the existing leading list. Host row
+   actions remain bound to the section model; clearing unread removes settled
+   rows from the leading list. Accepted remote sends and real busy/idle
+   transitions also call the shared `moveProjectToTop`, promoting the entire
+   owning Host project in the persisted Hub order. Duplicate status events do
+   not undo a later manual drag. Same-path local/other-Host projects are excluded.
 - `SessionRowLayout`, `SessionRowContent`, `SessionRowTitle` and `SessionRowActions`
   own the desktop row geometry shared by local `SessionNodeItem` and the remote
   command adapter. Remote data never mounts the local session subscriptions.
@@ -87,6 +108,10 @@ remote metadata. Missing Hosts and removed projects retain their rows; Sync can 
 the registration for an explicitly retained `remote-removed` reference.
 
 `DirectoryExplorerDialog` discovers the Hub catalog only while open. Remote
+machine selection supports Up/Down (skipping disabled hosts) and Enter to
+continue; repeated/composing Enter never submits. The selected machine receives
+initial focus, and connection readiness still owns admission to directory browsing.
+Directory input underlines remain visible without focus. Remote
 selection mounts `RemoteDirectoryExplorerDialog` instead of the local browser,
 using registry HTTP for raw filesystem paths and the Hub's dual-write project
 registration endpoint. A successful registration upserts the confirmed reference

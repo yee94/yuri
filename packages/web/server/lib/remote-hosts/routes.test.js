@@ -182,6 +182,30 @@ async function aggregate(options = {}) {
 }
 
 describe('Remote Host production HTTP contract', () => {
+  it('forwards worktree dialog GitHub reads and prompt templates without allowing machine mutations', async () => {
+    const { hub, remote } = await aggregate();
+    const reads = ['/api/github/auth/status', '/api/github/issues/list', '/api/github/pulls/list',
+      '/api/github/issues/get', '/api/github/issues/comments', '/api/github/pulls/context', '/api/magic-prompts'];
+    for (const route of reads) {
+      remote.app.get(route, (req, res) => res.json({ source: 'remote', route, directory: req.query.directory }));
+      const response = await hub.call(`/api/hosts/remote-1${route}?directory=%2Fremote%2Frepo`);
+      expect(response.status, route).toBe(200);
+      expect(await response.json()).toEqual({ source: 'remote', route, directory: '/remote/repo' });
+    }
+    const before = remote.requests;
+    for (const [route, method] of [
+      ['/api/github/auth/start', 'POST'], ['/api/github/auth/logout', 'POST'],
+      ['/api/github/auth/status', 'POST'], ['/api/github/issues/list', 'POST'],
+      ['/api/github/auth/unknown', 'GET'], ['/api/magic-prompts', 'PUT'],
+      ['/api/magic-prompts', 'POST'], ['/api/magic-prompts', 'DELETE'],
+    ]) {
+      const response = await hub.call(`/api/hosts/remote-1${route}`, method);
+      expect(response.status, `${method} ${route}`).toBe(403);
+      expect(await response.json()).toMatchObject({ code: 'remote_scope_forbidden' });
+    }
+    expect(remote.requests).toBe(before);
+  });
+
   it('preserves the production terminal greeting while downstream authorization is completing', async () => {
     const { hub, remote } = await aggregate({ requireClientAuth: true, productionTerminal: true });
     const directFrames = [];

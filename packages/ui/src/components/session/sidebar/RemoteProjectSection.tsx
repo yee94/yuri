@@ -12,6 +12,7 @@ import { RemoteProjectShell, RemoteSummaryRow } from './RemoteProjectRows';
 import { listInProgressHomeSessions } from './pinnedSessions';
 import { locationSessionKey } from '@/lib/remote-projects/location';
 import type { PinnedItem } from './SidebarPinnedSessions';
+import { MobileRemoteSummaryRow } from './RemoteProjectMobileViews';
 import { RemoteProjectIcon } from './RemoteProjectResources';
 import { RemoteSessionGroups } from './RemoteSessionGroups';
 import { RemoteMobileSessionGroups } from './RemoteMobileSessionGroups';
@@ -23,33 +24,35 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   const { t } = useI18n();
   const model = useRemoteProjectSectionModel(props);
   const { data, pending, editor } = model;
-  const { online, snapshot, host } = data;
+  const { online, snapshot } = data;
   const publishActivity = useEvent(() => {
     if (!props.onActivityItems) return;
     const sessions = data.rows.map(({ session }) => session);
+    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
     const running = new Set(sessions.filter((session) => {
-      const status = model.sessionProps(session, session.directory || project.path).status;
+      const status = (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type;
       return online && (status === 'busy' || status === 'retry');
     }).map((session) => session.id));
     const unseen = Object.fromEntries(Object.entries(snapshot?.unread?.sessions ?? {}).map(([id, value]) => [id, value.unreadCount]));
     const attention = listInProgressHomeSessions(sessions, data.pinnedIds, running, unseen);
     props.onActivityItems(project.id, attention.map((session) => {
-      const original = sessions.find((candidate) => candidate.id === session.id)!;
+      const original = sessionsById.get(session.id)!;
       const directory = session.directory || project.path;
-      return { node: { session, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
-        identity: locationSessionKey({ hubId: registry.hubId, hostId: project.hostId, directory }, session.id),
+      const identity = locationSessionKey({ hubId: registry.hubId, hostId: project.hostId, directory }, session.id);
+      return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
+        identity, remoteSessionId: session.id,
         secondaryMeta: { projectLabel: model.projectProps.label },
-        content: <RemoteSummaryRow {...model.sessionProps(original, directory)} depth={0} /> };
+        content: mobile ? <MobileRemoteSummaryRow {...model.sessionProps(original, directory)} />
+          : <RemoteSummaryRow {...model.sessionProps(original, directory)} depth={0} /> };
     }));
   });
-  React.useLayoutEffect(() => { publishActivity(); }, [publishActivity, data.rows, data.pinnedIds, snapshot, online, pending, model.selectedSession, project, registry, props.onActivityItems]);
+  React.useLayoutEffect(() => { publishActivity(); }, [publishActivity, data.rows, data.pinnedIds, snapshot, online, pending, model.selectedSession, project, registry, props.onActivityItems, mobile]);
   const { onActivityItems } = props;
   React.useEffect(() => () => onActivityItems?.(project.id, []), [project.id, onActivityItems]);
   if (data.hidden) return null;
   return <RemoteProjectShell {...model.projectProps} mobile={mobile}
     iconSlot={project.iconImage ? <RemoteProjectIcon project={project} registry={registry} className={mobile ? 'size-6' : 'size-4'} /> : undefined}>
     <div className="min-w-0" data-remote-project={project.id} hidden={model.projectProps.collapsed}>
-      {!online ? <p className="text-xs text-muted-foreground">{t(`remoteProjects.state.${host?.state ?? 'offline'}`)} · {t('remoteProjects.unknown')}{snapshot?.lastSyncedAt ? ` · ${t('remoteProjects.lastSync', { time: new Date(snapshot.lastSyncedAt).toLocaleString() })}` : ''}</p> : null}
       {model.error ? <p role="alert" className="break-words text-xs text-destructive">{model.error}<Button size="xs" variant="ghost" onClick={() => void data.refresh()}>{t('remoteProjects.retry')}</Button></p> : null}
       {model.bulk.count ? <div className="flex flex-wrap items-center gap-1">
         <Button size="xs" disabled={!online || pending} onClick={model.bulk.archive}>{t('sessions.sidebar.bulkActions.archive')}</Button>

@@ -94,6 +94,23 @@ test.each([false, true])('remote project omits archives without dropping active 
   expect(container.textContent).not.toContain('sessions.sidebar.grouping.archived');
 });
 
+test('remote running and unread sessions join the shared leading list and disappear after read acknowledgement', async () => {
+  const data = snapshot('a');
+  const entry = registry(async () => json(data));
+  const activity = vi.fn();
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onActivityItems={activity} /></QueryClientProvider>));
+  await flush(); await flush();
+  expect(activity.mock.lastCall?.[1].map((item: { remoteSessionId: string }) => item.remoteSessionId)).toEqual(['same-id']);
+  const idle = { ...data, pinnedSessionIds: [], directories: data.directories.map((directory) => ({ ...directory, sessions: directory.sessions.map((session) => ({ ...session, directory: directory.directory, metadata: { yuri: { sessionStatus: { type: 'idle' } } } })) })),
+    unread: { revision: 2, sessions: { 'same-id': { unreadCount: 1, revision: 2 } } } };
+  await act(async () => { queryClient.setQueryData(remoteSummaryOptions(entry, 'a').queryKey, idle); });
+  await flush();
+  expect(activity.mock.lastCall?.[1]).toHaveLength(1);
+  await act(async () => { queryClient.setQueryData(remoteSummaryOptions(entry, 'a').queryKey, { ...idle, unread: { revision: 3, sessions: {} } }); });
+  await flush();
+  expect(activity.mock.lastCall?.[1]).toEqual([]);
+});
+
 function folderFixture() {
   const value = snapshot('a');
   const session = (id: string, created: number, updated: number) => ({ ...value.directories[0].sessions[0], id, title: id, time: { created, updated } });
@@ -366,7 +383,7 @@ test('pin writes go only to the selected Host; failed write preserves prior summ
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
 
-test('token events create zero summary requests; host A offline leaves host B intact and shows unknown status', async () => {
+test('token events create zero summary requests; offline hosts preserve rows without adding a status banner', async () => {
   const fetch = vi.fn(async (path: string) => json(snapshot(path.includes('/a/') ? 'a' : 'b')));
   const entry = registry(fetch);
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /><RemoteProjectSection project={project('b')} registry={entry} /></QueryClientProvider>));
@@ -379,7 +396,8 @@ test('token events create zero summary requests; host A offline leaves host B in
   await flush(); expect(fetch).not.toHaveBeenCalled();
   await act(async () => { for (const listener of mocks.events) listener({ type: 'remote-host-status', envelope: { type: 'yuri:host-status', properties: { hubId: 'hub', hostId: 'a', host: { id: 'a', name: 'a', source: 'direct', state: 'offline' } } } }); });
   await flush();
-  expect(container.textContent).toContain('remoteProjects.unknown');
+  expect(container.textContent).not.toContain('remoteProjects.unknown');
+  expect(container.textContent).not.toContain('remoteProjects.state.offline');
   expect(container.textContent).toContain('Title a'); expect(container.textContent).toContain('Title b');
   expect(queryClient.getQueryData(remoteSummaryOptions(entry, 'b').queryKey)).toBe(beforeB);
   expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/hosts/a/summaries']);

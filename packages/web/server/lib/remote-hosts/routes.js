@@ -14,6 +14,10 @@ const websocketPath = (path) => path === '/api/terminal/ws' || path.startsWith('
 const safeRoute = (route, method) => {
   if (!route.startsWith('/api/') || /[\\\r\n]/.test(route)) return false;
   const pathname = new URL(route, 'http://remote.invalid').pathname;
+  if (pathname === '/api/magic-prompts'
+    || /^\/api\/github\/(?:auth\/status|issues\/(?:list|get|comments)|pulls\/(?:list|context))$/.test(pathname)) {
+    return method === 'GET' || method === 'HEAD';
+  }
   if (pathname.startsWith('/api/yuri/content-search') && method !== 'GET') return false;
   if (/^\/api\/config\/(?:settings|global|.*\/file)(\/|$)/.test(pathname)
     || (/^\/api\/experimental(?:\/|$)/.test(pathname) && !/^\/api\/experimental\/worktree(?:\/|$)/.test(pathname))) return false;
