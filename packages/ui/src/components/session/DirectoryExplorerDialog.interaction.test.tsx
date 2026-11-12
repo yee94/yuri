@@ -197,6 +197,7 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(pathInput()).toBeNull();
     expect(fixture.list).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.textContent).toContain('remoteProjects.local');
+    expect(container.querySelector('.yuri-directory-results .yuri-directory-status-slot')).toBeNull();
     const remote = [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.includes('Remote machine'))!;
     const locked = [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.includes('Locked machine'))!;
     expect(locked.disabled).toBe(true);
@@ -293,7 +294,7 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(indicator.closest('.yuri-directory-row')?.textContent).toContain('Remote machine');
     expect(indicator.querySelector('[data-icon="error-warning"]')).not.toBeNull();
     expect(container.querySelectorAll('.yuri-directory-footer button')).toHaveLength(2);
-    expect(container.querySelectorAll('.yuri-directory-status-slot')).toHaveLength(slots);
+    expect(container.querySelectorAll('.yuri-directory-status-slot')).toHaveLength(slots + 1);
     expect(fixture.list).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
     await act(async () => indicator.focus());

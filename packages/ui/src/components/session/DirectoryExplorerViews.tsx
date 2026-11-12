@@ -95,7 +95,6 @@ export function DirectoryMachineList({ hosts, selectedId, onSelect, pending, err
           <Icon name="computer" className="size-4 shrink-0 text-muted-foreground" />
           <span className="yuri-directory-name flex-1">{t('remoteProjects.local')}</span>
         </button>
-        <DirectoryErrorIndicator>{!selectedId ? <Icon name="check" className="size-3.5" /> : null}</DirectoryErrorIndicator>
       </div>
       {hosts.map((host) => <div key={host.id} className={cn('yuri-directory-row', selectedId === host.id && 'bg-interactive-selection')}>
         <button type="button" className="yuri-directory-entry disabled:cursor-not-allowed disabled:opacity-50"
@@ -105,9 +104,7 @@ export function DirectoryMachineList({ hosts, selectedId, onSelect, pending, err
           <span className="yuri-directory-name min-w-0 flex-1 truncate">{host.name}</span>
           <span className="yuri-directory-name shrink-0 text-muted-foreground">{t(`remoteProjects.state.${host.state}`)}</span>
         </button>
-        <DirectoryErrorIndicator message={selectedId === host.id ? error?.message : undefined}>
-          {selectedId === host.id ? <Icon name="check" className="size-3.5" /> : null}
-        </DirectoryErrorIndicator>
+        {selectedId === host.id && error?.message ? <DirectoryErrorIndicator message={error.message} /> : null}
       </div>)}
       {pending ? <p role="status" className="yuri-directory-empty text-muted-foreground">{t('common.loading')}</p> : null}
     </ScrollableOverlay>

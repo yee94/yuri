@@ -59,7 +59,6 @@ import { parseRemoteProject } from '@/lib/remote-projects/types';
 import { openRemoteProjectDraft, openRemoteProjectSession } from '@/router/openRemoteProjectSession';
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { SidebarBrandMark } from '@/components/layout/SidebarBrandMark';
-import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { GlobalSearchButton } from '@/components/layout/GlobalSearchButton';
 import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { SessionNodeItem } from './sidebar/SessionNodeItem';
@@ -646,7 +645,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, []);
 
   const isDesktopShellRuntime = React.useMemo(() => isDesktopShell(), []);
-  const isDesktopWindowFullscreen = useDesktopWindowFullscreen();
   // Empty brand config hides the mark entirely. Desktop then keeps global search
   // next to the titlebar collapse control (web parity) and reserves no empty row.
   const hasSidebarBrand = useSidebarBrandStore(
@@ -2369,7 +2367,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // Desktop brand+search sit above the scroll region so the logo never scrolls.
   // Mobile still keeps the mark inside the scrollable leading content.
   const desktopBrandHeader =
-    isDesktopShellRuntime && !isDesktopWindowFullscreen && hasSidebarBrand && !isVSCode && !hasSessionSearchQuery ? (
+    isDesktopShellRuntime && hasSidebarBrand && !isVSCode && !hasSessionSearchQuery ? (
       <div className="shrink-0 px-3">
         <div className="flex items-center justify-between">
           <SidebarBrandMark className="min-w-0 flex-1" />
@@ -2383,7 +2381,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // Web desktop layout counts too — Electron shell is not required. The logo stays
   // shell-only because the web titlebar already owns that slot.
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
-  const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !isDesktopWindowFullscreen && !mobileVariant;
+  const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !mobileVariant;
   const showPinnedTopSection =
     !hasSessionSearchQuery && (pinnedItems.length > 0 || displayInProgressItems.length > 0);
   const sidebarActionButtons = (

@@ -1,5 +1,15 @@
 # Session Sidebar Documentation
 
+## Fixed desktop navigation
+
+`SessionSidebar` keeps the configured Electron brand/search row and desktop
+navigation actions outside `SidebarProjectsList`'s scroll region in both windowed
+and native fullscreen modes. Fullscreen does not move these actions into the
+scroll body or move the brand/search into `TitlebarLeftControls`. Electron's
+titlebar retains the search fallback when the sidebar is collapsed or no brand
+is configured. Web retains its titlebar brand/search placement; mobile retains
+its scroll-body navigation, and session search retains its existing filtering.
+
 ## Explicit Remote Project presentation
 
 `SidebarProjectsList` accepts an optional `hostRegistry`; project sections retain
