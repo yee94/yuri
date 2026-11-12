@@ -205,13 +205,14 @@ describe('Btw side conversation panel', () => {
     const output = ts.transpileModule(`return (${expression!.getText(source)});`, {
       compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
     }).outputText;
-    const renderTabs = new Function('React', 'BtwPanel', 'tabs', 'activeTab', 'previewVisible', 'directoryKey', 'btwSessionId', 't', output) as (
+    const renderTabs = new Function('React', 'BtwPanel', 'tabs', 'activeTab', 'previewVisible', 'directoryKey', 'btwSessionId', 'effectiveDirectory', 'remote', 'host', 't', output) as (
       react: typeof React, panel: typeof BtwPanel, tabs: { id: string; mode: string }[],
-      activeTab: { id: string }, visible: boolean, directory: string, sessionId: string, t: (key: string) => string,
+      activeTab: { id: string }, visible: boolean, directory: string, sessionId: string, effectiveDirectory: string,
+      remote: boolean, host: undefined, t: (key: string) => string,
     ) => React.ReactNode;
     const tabs = [{ id: 'btw-tab', mode: 'btw' }, { id: 'file-tab', mode: 'file' }];
     const render = async (tab: string, visible = true, sessionId = scope.sessionId, mountedTabs = tabs) => {
-      await act(async () => root.render(<>{renderTabs(React, BtwPanel, mountedTabs, { id: tab }, visible, '/repo', sessionId, (key) => key)}</>));
+      await act(async () => root.render(<>{renderTabs(React, BtwPanel, mountedTabs, { id: tab }, visible, '/repo', sessionId, '/repo', false, undefined, (key) => key)}</>));
     };
     useSessionBtwStore.setState({ entries: {
       [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Settled code', error: null, pending: false }] },

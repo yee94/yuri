@@ -1,5 +1,36 @@
 # UI Stores
 
+## Remote project location ownership
+
+`useProjectsStore` projects the Query-owned `settings.hubProjectLayout` onto the
+same project array consumed by desktop and mobile. IDs are local project IDs or
+Hub remote-reference IDs, never raw directories or upstream remote project IDs.
+It retains the layout while the catalog loads, then applies mixed ordering and
+explicit true/false collapse values when references arrive. Drag, collapse and
+activity promotion persist only the dedicated layout field; remote references
+never enter local `settings.projects`. Failed writes restore confirmed layout
+without dropping projects or unrelated metadata. Instance storage remains an
+offline startup cache, not cross-client authority.
+
+`useSessionNavigationStore.remoteSession` owns the aggregate selection separately
+from the Hub's local `session-ui-store`. It carries the project reference, explicit
+Hub/Host/raw directory and raw session ID; a null ID denotes a remote draft. Remote
+selection never changes the global runtime endpoint or the retained local session.
+
+Context-panel, file-tab and terminal buckets accept serialized Location identities.
+Local Location keys retain their existing directory bytes. Remote keys preserve the
+Hub and Host; containment checks decode only the physical directory instead of
+normalizing the serialized key. `useEffectiveDirectory` returns a physical cwd,
+while `useEffectiveLocationKey` returns the UI bucket identity. A selected remote
+worktree uses its session location, not the parent project's root, for both APIs and
+state. Native HTML preview targets also carry the captured location.
+
+`useTerminalStore.closeTab` requires a scoped closer for a remote live terminal.
+An absent closer or failed remote close preserves the tab and reports failure;
+it never falls back to the Hub's terminal endpoint. Local close behavior remains
+unchanged. Remote filesystem/native IDE actions likewise cannot fall back to the
+Hub filesystem merely because their selected paths look local.
+
 `openSettingsAtItem` atomically selects a Settings page, opens its surface and
 queues a transient `settingsFocusItemId`. The sidebar logo targets
 `appearance.sidebar-brand`; the mounted Appearance input consumes the request

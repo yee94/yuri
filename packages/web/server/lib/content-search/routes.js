@@ -20,6 +20,10 @@ export function registerContentSearchRoutes(app, { contentSearch, uiAuthControll
   });
   app.get('/api/yuri/content-search', (req, res) => {
     if (hasPreviewProxyCredential(req)) return res.status(403).json({ error: 'Forbidden' });
+    if (req.query.hostId || req.headers['x-yuri-remote-host']
+      || (typeof req.query.directory === 'string' && req.query.directory.startsWith('yuri-remote-location:'))) {
+      return res.status(403).json({ code: 'remote_scope_forbidden', error: 'Use the Host-scoped content search API' });
+    }
     if (!contentSearch) return res.status(503).json({ error: 'Global content index unavailable' });
     const query = req.query.q ?? '';
     const limit = req.query.limit === undefined ? 30 : Number(req.query.limit);

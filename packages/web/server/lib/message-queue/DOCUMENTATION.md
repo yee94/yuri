@@ -8,6 +8,10 @@ Assistant text delivery parts may carry the optional boolean `synthetic` marker.
 
 ## Authority modes: shadow / active / cutover
 
+Remote Project queue calls execute on the target through the Host-prefixed
+Gateway. This local service rejects serialized remote Location/session identities
+before admission, so their content cannot accidentally enter the Hub queue DB.
+
 Runtime authority is durable per runtime through `getQueueAuthority`/`setQueueAuthority` (`shadow`, `active`, `paused`) with generation CAS, activation epoch, timestamp, manifest hash, and protocol 4.
 
 | Authority | Role |

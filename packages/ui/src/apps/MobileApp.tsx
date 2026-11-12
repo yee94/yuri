@@ -4,6 +4,7 @@ import { ContentIndexOnboarding } from '@/components/onboarding/ContentIndexOnbo
 import { MobileAutoReadProvider, MobileAutoReadMenuItem } from '@/mobile/chat/MobileAutoRead';
 import { SetupTourHost } from '@/components/onboarding/SetupTourHost';
 import { useEvent } from '@reactuses/core';
+import { useQuery } from '@tanstack/react-query';
 import { useStartupCatalogRecovery } from '@/hooks/useStartupCatalogRecovery';
 import { toast } from 'sonner';
 
@@ -23,12 +24,16 @@ import { YuriLogo } from '@/components/ui/YuriLogo';
 import { MobileConnectionWelcome } from './MobileConnectionWelcome';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { MobileGlobalSearchHost } from '@/mobile/MobileGlobalSearchHost';
-import { MobileHtmlPreviewSheet } from '@/mobile/MobileHtmlPreviewSheet';
-import { ChatView } from '@/components/views/ChatView';
+import { MobileHtmlPreviewSheet as UnscopedMobileHtmlPreviewSheet } from '@/mobile/MobileHtmlPreviewSheet';
+import { SelectedProjectHostBoundary } from '@/contexts/SelectedProjectHostBoundary';
+import { RemoteProjectsBootstrap } from '@/contexts/RemoteProjectsBootstrap';
+import { useRemoteMobileSession } from './remoteMobileSession';
+import { RemoteMobileHeader } from './remoteMobileHeader';
+import { ChatView as UnscopedChatView } from '@/components/views/ChatView';
 import { AssistantView } from '@/components/assistants/AssistantView';
 import { AssistantShareWelcome } from '@/components/assistants/AssistantShareWelcome';
 import { useAssistantCapabilityQuery } from '@/queries/assistantQueries';
-import { DiffView } from '@/components/views/DiffView';
+import { DiffView as UnscopedDiffView } from '@/components/views/DiffView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { MobileSurfaceHeader } from '@/components/ui/MobileSurfaceHeader';
@@ -53,7 +58,6 @@ import { useOrientation } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { getCapgoUpdater } from '@/lib/mobile-updates/capgoAdapter';
 import { MOBILE_SETTINGS_PAGE_SLUGS } from '@/lib/settings/metadata';
-import { getNativeIosComposerPlugin } from '@/lib/native-ios-composer';
 import { isIPadApp } from '@/lib/platform';
 import { resolveProjectForDirectory, resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { formatQuotaResetLabel, formatQuotaValueLabel, formatWindowLabel, quotaProviders } from '@/lib/quota';
@@ -67,7 +71,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
 import { useGitStatus, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useMcpConfigStore, type McpDraft } from '@/stores/useMcpConfigStore';
-import { useMcpConfigsQuery, useMcpStatusQuery } from '@/queries/mcpQueries';
+import { mcpConfigsQueryOptions, mcpStatusQueryOptions } from '@/queries/mcpQueries';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
@@ -91,8 +95,8 @@ import {
   isComposerKeyboardTarget,
   shouldDeferWebKeyboardToNativeComposer,
 } from './composerKeyboardLift';
-import { MobileChangesSurface } from './MobileChangesSurface';
-import { MobileFilesSurface } from './MobileFilesSurface';
+import { MobileChangesSurface as UnscopedMobileChangesSurface } from './MobileChangesSurface';
+import { MobileFilesSurface as UnscopedMobileFilesSurface } from './MobileFilesSurface';
 import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
@@ -104,7 +108,7 @@ import {
   ContextProgressIcon,
   getLatestUserMessageModel,
   getNumericLimit,
-  MobileChatScreen,
+  MobileChatScreen as UnscopedMobileChatScreen,
   useMobileTranscriptSyncHint,
   type MobileContextDisplay,
 } from '@/mobile/chat';
@@ -126,6 +130,25 @@ import { useNativeLiveActivity } from './useNativeLiveActivity';
 import { useAndroidNotifications } from './useAndroidNotifications';
 import { MobileShareBridge } from './MobileShareBridge';
 import { handlePendingNativeAssistantOpen } from './nativeAssistantShortcut';
+
+function MobileChatScreen(props: React.ComponentProps<typeof UnscopedMobileChatScreen>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileChatScreen {...props} /></SelectedProjectHostBoundary>;
+}
+function ChatView(props: React.ComponentProps<typeof UnscopedChatView>) {
+  return <SelectedProjectHostBoundary><UnscopedChatView {...props} /></SelectedProjectHostBoundary>;
+}
+function DiffView(props: React.ComponentProps<typeof UnscopedDiffView>) {
+  return <SelectedProjectHostBoundary><UnscopedDiffView {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileFilesSurface(props: React.ComponentProps<typeof UnscopedMobileFilesSurface>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileFilesSurface {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileChangesSurface(props: React.ComponentProps<typeof UnscopedMobileChangesSurface>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileChangesSurface {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileHtmlPreviewSheet() {
+  return <SelectedProjectHostBoundary><UnscopedMobileHtmlPreviewSheet /></SelectedProjectHostBoundary>;
+}
 
 const MOBILE_DIRECT_DIFF_WINDOW_ID = 'mobile-direct-diff';
 const MOBILE_TURN_DIFF_WINDOW_ID = 'mobile-turn-diff';
@@ -323,6 +346,10 @@ export const useNativeMobileChrome = (): void => {
       const { App } = await import('@capacitor/app');
       const stateHandle = await App.addListener('appStateChange', ({ isActive }) => {
         if (isActive) void applyStatusBar();
+        if (!isActive && platform === 'ios') {
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && isComposerKeyboardTarget(active)) active.blur();
+        }
       });
       if (disposed) {
         void stateHandle.remove();
@@ -465,13 +492,14 @@ export const useNativeMobileChrome = (): void => {
             });
             return;
           }
-          // Dismiss only the composer after the native close really settles.
-          // A cancelled predictive-back reports open:true and retains its IME;
-          // late close events must never steal a picker's new search focus.
-          if (!detail.open && isTextFieldLike(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
+          // Android Back ends editing at settled close. iOS close also occurs
+          // during reloadInputViews / hardware keyboard minimization: it owns
+          // presentation only, not the focused field's editing lifetime.
+          const composerFocused = isComposerKeyboardTarget(document.activeElement);
+          if (isAndroid && !detail.open && isTextFieldLike(document.activeElement) && composerFocused) {
             (document.activeElement as HTMLElement).blur();
           }
-          if (!detail.open) dispatchKb('yuri:keyboard-intent', { open: false });
+          if (!detail.open && (isAndroid || !composerFocused)) dispatchKb('yuri:keyboard-intent', { open: false });
           dispatchKb('yuri:keyboard-settled', { open: detail.open, nativeResize: true });
         };
 
@@ -609,16 +637,6 @@ export const useNativeMobileChrome = (): void => {
         dispatchKb('yuri:keyboard-anim', { phase: 'show', slide, durationMs: 0, easing: KB_ANIM_EASING });
       });
 
-      const blurActiveTextField = () => {
-        const active = document.activeElement;
-        if (!(active instanceof HTMLElement)) return;
-        // keyboardWillHide must not steal overlay/settings search focus. A
-        // model-picker tap can race the previous field's hide, and WKWebView
-        // also emits hide when the keyboard-inset overlay resizes under IME.
-        if (!isComposerKeyboardTarget(active)) return;
-        active.blur();
-      };
-
       const snapWindowScroll = () => {
         if (keyboardOpen) return;
         window.scrollTo(0, 0);
@@ -646,31 +664,22 @@ export const useNativeMobileChrome = (): void => {
 
       const runHide = () => {
         if (!webKeyboardActive()) {
-          // Native owns layout; only release a still-focused composer.
-          blurActiveTextField();
+          // Native owns layout. A keyboard hide is not an editing-end request.
           return;
         }
         if (root.classList.contains('yuri-native-ios-composer')) {
           unwindKeyboardShell();
-          void getNativeIosComposerPlugin().blur();
           dispatchKb('yuri:keyboard-settled', { open: false });
           return;
         }
         if (!keyboardOpen) return;
         keyboardOpen = false;
         clearSettle();
-        // Collapse chrome first (ChatInput flushSync), then blur. Intent-before-blur
-        // lets focusout run after collapse so interactive IME dismiss is less likely
-        // to see a still-focused composer and bail. One short confirm retries if
-        // WKWebView restored focus onto the textarea without reopening the keyboard.
-        dispatchKb('yuri:keyboard-intent', { open: false });
-        blurActiveTextField();
-        window.setTimeout(() => {
-          if (keyboardOpen) return;
-          if (!isComposerKeyboardTarget(document.activeElement)) return;
-          blurActiveTextField();
+        // Unwind presentation without revoking hardware input. Actual blur,
+        // navigation and explicit composer actions own editing termination.
+        if (!isComposerKeyboardTarget(document.activeElement)) {
           dispatchKb('yuri:keyboard-intent', { open: false });
-        }, 80);
+        }
         if (caretTimer !== null) {
           window.clearTimeout(caretTimer);
           caretTimer = null;
@@ -1928,7 +1937,7 @@ type MobileHeaderSurfaceShortcuts = {
   onToggleChanges: () => void;
 };
 
-const MobileHeader: React.FC<{
+const LocalMobileHeader: React.FC<{
   onOpenSessions: () => void;
   menuOpen: boolean;
   onToggleMenu: () => void;
@@ -2067,6 +2076,12 @@ const MobileHeader: React.FC<{
   );
 };
 
+const MobileHeader: React.FC<React.ComponentProps<typeof LocalMobileHeader>> = (props) => {
+  const scope = useRemoteMobileSession();
+  if (!scope.enabled) return <LocalMobileHeader {...props} />;
+  return <RemoteMobileHeader {...props} scope={scope} />;
+};
+
 type PendingMobileChangesDiff = {
   path: string;
   staged: boolean;
@@ -2104,7 +2119,7 @@ const MobileShell: React.FC<{
   /** Optional file to expand/scroll when the turn-diff sheet opens (from Changes preview row). */
   const [turnDiffTargetFilePath, setTurnDiffTargetFilePath] = React.useState<string | null>(null);
   const [turnDiffNavigationKey, setTurnDiffNavigationKey] = React.useState(0);
-  const [mcpOpen, setMcpOpen] = React.useState(false);
+  const [mcpRequested, setMcpOpen] = React.useState(false);
   const [isMcpRefreshing, setIsMcpRefreshing] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [updateOpen, setUpdateOpen] = React.useState(false);
@@ -2117,23 +2132,34 @@ const MobileShell: React.FC<{
     setOverflowOpen(false);
     setRemoteDesktopOpen(true);
   });
+  const openProjectRemoteDesktop = useEvent(() => {
+    setOverflowOpen(false);
+    if (remoteScope.enabled) {
+      toast.info(t('remoteProjects.nativeCapabilityUnavailable', { capability: t('remoteDesktop.title') }));
+      return;
+    }
+    openRemoteDesktop();
+  });
   const closeRemoteDesktop = useEvent(() => setRemoteDesktopOpen(false));
   const [isTranscriptRefreshing, setIsTranscriptRefreshing] = React.useState(false);
   const toggleOverflowMenu = useEvent(() => setOverflowOpen((open) => !open));
   const closeOverflowMenu = useEvent(() => setOverflowOpen(false));
   // When set, the Changes surface opens directly into the per-file diff for this path.
   const [pendingChangesDiff, setPendingChangesDiff] = React.useState<PendingMobileChangesDiff | null>(null);
+  const remoteScope = useRemoteMobileSession();
+  const mcpOpen = mcpRequested && !remoteScope.enabled;
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
   const updateAvailable = useUpdateStore((state) => state.available);
   const updateRuntimeType = useUpdateStore((state) => state.runtimeType);
   const showCapacitorOnlyFeatures = React.useMemo(() => isCapacitorMobileApp(), []);
   const qrScanSupported = React.useMemo(() => isQrScanSupported(), []);
-  const { data: mcpServers = [], refetch: refetchMcpConfigs } = useMcpConfigsQuery(currentDirectory ?? null, { enabled: mcpOpen });
-  const { refetch: refetchMcpStatus } = useMcpStatusQuery(currentDirectory ?? null, { enabled: mcpOpen });
+  const mcpDirectory = currentDirectory ?? null;
+  const { data: mcpServers = [], refetch: refetchMcpConfigs } = useQuery({ ...mcpConfigsQueryOptions(mcpDirectory), enabled: mcpOpen });
+  const { refetch: refetchMcpStatus } = useQuery({ ...mcpStatusQueryOptions(mcpDirectory), enabled: mcpOpen });
   const setMcpDraft = useMcpConfigStore((state) => state.setMcpDraft);
   const setSelectedMcp = useMcpConfigStore((state) => state.setSelectedMcp);
-  const gitStatus = useGitStatus(normalizePath(currentDirectory) || null);
+  const gitStatus = useGitStatus(remoteScope.enabled ? remoteScope.entry?.key ?? null : normalizePath(currentDirectory) || null);
   const dirtyChangeCount = gitStatus?.files?.length ?? 0;
 
   React.useEffect(() => sessionEvents.onDirectoryRequest(() => setDirectoryDialogOpen(true)), []);
@@ -2141,6 +2167,18 @@ const MobileShell: React.FC<{
   // iPad (Capacitor): sessions live in a persistent full-height left sidebar
   // and Changes/Files in a right sidebar, instead of phone sheets/surfaces.
   const isIPad = React.useMemo(() => isIPadApp(), []);
+  const phoneSecondaryKind = useMobileNavigationStore((state) => state.secondary?.kind ?? null);
+  const localSessionId = useSessionUIStore((state) => remoteScope.enabled ? null : state.currentSessionId);
+  const currentSessionId = remoteScope.enabled ? remoteScope.sessionId : localSessionId;
+  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
+  const currentSessionDirectorySelector = React.useMemo(
+    () => (state: ReturnType<typeof useSessionUIStore.getState>) => (
+      !remoteScope.enabled && currentSessionId ? state.getDirectoryForSession(currentSessionId) : null
+    ),
+    [currentSessionId, remoteScope.enabled],
+  );
+  const localSessionDirectory = useSessionUIStore(currentSessionDirectorySelector);
+  const currentSessionDirectory = remoteScope.enabled ? remoteScope.entry?.location.directory : localSessionDirectory;
   const orientation = useOrientation();
   const isPortrait = orientation === 'portrait';
   const [ipadSidebarOpen, setIpadSidebarOpen] = React.useState(isIPad && !isPortrait);
@@ -2459,38 +2497,45 @@ const MobileShell: React.FC<{
 
   const phoneSecondaryBackRef = React.useRef<(() => boolean) | null>(null);
   const chatMainRef = React.useRef<HTMLElement>(null);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
-  const currentSessionDirectorySelector = React.useMemo(
-    () => (state: ReturnType<typeof useSessionUIStore.getState>) => (
-      currentSessionId ? state.getDirectoryForSession(currentSessionId) : null
-    ),
-    [currentSessionId],
-  );
-  const currentSessionDirectory = useSessionUIStore(currentSessionDirectorySelector);
-  const parentSessionTarget = useParentSessionTarget(currentSessionId, currentSessionDirectory || currentDirectory || undefined);
+  const localParentSessionTarget = useParentSessionTarget(remoteScope.enabled ? null : currentSessionId, remoteScope.enabled ? undefined : currentSessionDirectory || currentDirectory || undefined);
+  const remoteParentId = remoteScope.session?.parentID;
+  const parentSessionTarget = remoteScope.enabled
+    ? remoteParentId ? { id: remoteParentId, directory: currentSessionDirectory } : null
+    : localParentSessionTarget;
+  const returnToParent = useEvent(() => {
+    if (!parentSessionTarget) return;
+    if (remoteScope.enabled) remoteScope.openSession(parentSessionTarget.id);
+    else setCurrentSession(parentSessionTarget.id, parentSessionTarget.directory);
+  });
   useNativeLiveActivity();
+  const transcriptRefreshFlight = React.useRef(0);
+  React.useEffect(() => {
+    transcriptRefreshFlight.current += 1;
+    setIsTranscriptRefreshing(false);
+    return () => { transcriptRefreshFlight.current += 1; };
+  }, [currentSessionId, remoteScope.key, remoteScope.entry]);
   const refreshCurrentTranscript = useEvent(() => {
     const sessionID = currentSessionId;
     if (!sessionID || isTranscriptRefreshing) return;
     const directory = currentSessionDirectory || currentDirectory || undefined;
+    const flight = ++transcriptRefreshFlight.current;
 
     setIsTranscriptRefreshing(true);
     void (async () => {
       try {
-        await sync.refreshSessionTranscript(sessionID, { directory });
-        toast.success(t('sessions.sidebar.session.menu.refreshTranscriptSuccess'));
+        if (remoteScope.enabled) await remoteScope.refresh();
+        else await sync.refreshSessionTranscript(sessionID, { directory });
+        if (flight === transcriptRefreshFlight.current) toast.success(t('sessions.sidebar.session.menu.refreshTranscriptSuccess'));
       } catch {
-        toast.error(t('sessions.sidebar.session.menu.refreshTranscriptFailed'));
+        if (flight === transcriptRefreshFlight.current) toast.error(t('sessions.sidebar.session.menu.refreshTranscriptFailed'));
       } finally {
-        setIsTranscriptRefreshing(false);
+        if (flight === transcriptRefreshFlight.current) setIsTranscriptRefreshing(false);
       }
     })();
   });
 
   // Re-bind when the chat subtree mounts: on phone it only exists while the
   // secondary page is open; on iPad it is always mounted.
-  const phoneSecondaryKind = useMobileNavigationStore((state) => state.secondary?.kind ?? null);
   const phoneChatMounted = !isIPad && (phoneSecondaryKind === 'chat' || phoneSecondaryKind === 'draft');
   // Overflow menu is anchored to the chat/detail header. Leaving that page or
   // switching sessions must dismiss it so it cannot float over another surface.
@@ -2501,7 +2546,7 @@ const MobileShell: React.FC<{
   }, [isIPad, phoneChatMounted]);
   React.useEffect(() => {
     setOverflowOpen(false);
-  }, [currentSessionId]);
+  }, [currentSessionId, remoteScope.key]);
 
   // A right-to-left swipe across the chat body opens the Session List
   // half-sheet. The opposite direction remains unclaimed for page-back.
@@ -2614,7 +2659,7 @@ const MobileShell: React.FC<{
       return true;
     }
     if (parentSessionTarget) {
-      setCurrentSession(parentSessionTarget.id, parentSessionTarget.directory);
+      returnToParent();
       return true;
     }
     return false;
@@ -2625,6 +2670,10 @@ const MobileShell: React.FC<{
   const showUpdateItem = updateAvailable && (updateRuntimeType === 'desktop' || updateRuntimeType === 'web');
 
   const openMcpCreateSettings = useEvent(() => {
+    if (remoteScope.enabled) {
+      toast.info(t('remoteProjects.configurationReadOnly'));
+      return;
+    }
     const baseName = 'new-mcp-server';
     let newName = baseName;
     let counter = 1;
@@ -2658,6 +2707,10 @@ const MobileShell: React.FC<{
 
   const refreshMcpOverlay = useEvent(() => {
     if (isMcpRefreshing) return;
+    if (remoteScope.enabled && !remoteScope.entry) {
+      toast.error(t('remoteProjects.host-unavailable'));
+      return;
+    }
     setIsMcpRefreshing(true);
     const minSpinPromise = new Promise((resolve) => window.setTimeout(resolve, 500));
     void Promise.all([
@@ -2678,6 +2731,16 @@ const MobileShell: React.FC<{
           icon: 'chat-new',
           label: t('mobile.menu.newSession'),
           onSelect: () => {
+            if (remoteScope.enabled) {
+              if (!remoteScope.entry) {
+                toast.error(t('remoteProjects.host-unavailable'));
+                return;
+              }
+              remoteScope.openSession(null);
+              if (isIPad) setActiveMainTab('chat');
+              else useMobileNavigationStore.getState().openRemoteProject();
+              return;
+            }
             if (isIPad) {
               setActiveMainTab('chat');
               openNewSessionDraft();
@@ -2705,12 +2768,14 @@ const MobileShell: React.FC<{
           },
         );
       }
-      items.push({
-        key: 'mcp',
-        iconNode: <McpIcon className="size-5 shrink-0 text-muted-foreground" />,
-        label: t('mobile.menu.mcp'),
-        onSelect: () => setMcpOpen(true),
-      });
+      if (!remoteScope.enabled) {
+        items.push({
+          key: 'mcp',
+          iconNode: <McpIcon className="size-5 shrink-0 text-muted-foreground" />,
+          label: t('mobile.menu.mcp'),
+          onSelect: () => setMcpOpen(true),
+        });
+      }
       if (showUpdateItem) {
         items.push({
           key: 'update',
@@ -2742,16 +2807,16 @@ const MobileShell: React.FC<{
       items.push({
         key: 'remote-desktop',
         icon: 'computer',
-        label: t('remoteDesktop.title'),
-        onSelect: openRemoteDesktop,
+          label: t('remoteDesktop.title'),
+          onSelect: openProjectRemoteDesktop,
       });
       return items;
     },
-    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openRemoteDesktop, openSettingsSurface, refreshCurrentTranscript, setActiveMainTab, showUpdateItem, t],
+    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openProjectRemoteDesktop, openSettingsSurface, refreshCurrentTranscript, remoteScope, setActiveMainTab, showUpdateItem, t],
   );
 
   return (
-    <MobileAutoReadProvider sessionId={currentSessionId ?? ''} directory={currentSessionDirectory || currentDirectory || undefined} active={isIPad ? activeMainTab !== 'assistant' : phoneSecondaryKind === 'chat'}>
+    <MobileAutoReadProvider remote={remoteScope.enabled} remoteState={remoteScope.owner?.state} sessionId={currentSessionId ?? ''} directory={currentSessionDirectory || currentDirectory || undefined} active={isIPad ? activeMainTab !== 'assistant' : phoneSecondaryKind === 'chat' || (remoteScope.enabled && phoneSecondaryKind === 'draft')}>
     <DedicatedMobileAppProvider actions={mobileActions}>
       <MobileGlobalSearchHost>
       <div
@@ -2882,7 +2947,7 @@ const MobileShell: React.FC<{
               ) : undefined}
               parentSessionTarget={
                 parentSessionTarget
-                  ? { id: parentSessionTarget.id, directory: parentSessionTarget.directory }
+                  ? { id: parentSessionTarget.id, directory: parentSessionTarget.directory ?? null, ...(remoteScope.enabled ? { onSelect: returnToParent } : {}) }
                   : null
               }
               registerSecondaryBackHandler={registerPhoneSecondaryBack}
@@ -2895,8 +2960,9 @@ const MobileShell: React.FC<{
               )}
               renderChat={(target) => (
                 <MobileChatScreen
-                  sessionId={target.sessionId}
-                  directory={target.directory}
+                  sessionId={remoteScope.enabled ? remoteScope.sessionId ?? '' : target.sessionId}
+                  directory={remoteScope.enabled ? remoteScope.entry?.location.directory : target.directory}
+                  title={remoteScope.enabled ? remoteScope.session?.title : undefined}
                   onBack={() => {
                     closeOverflowMenu();
                     mobileBackNavigationCoordinator.requestAnimatedBack('root');
@@ -2912,9 +2978,9 @@ const MobileShell: React.FC<{
                           readOnly={!target.active}
                           active={target.active}
                           selectionOverride={{
-                            sessionId: target.sessionId || null,
-                            directory: target.directory,
-                            viewKey: target.viewKey,
+                            sessionId: remoteScope.enabled ? remoteScope.sessionId : target.sessionId || null,
+                            directory: remoteScope.enabled ? remoteScope.entry?.location.directory ?? null : target.directory,
+                            viewKey: remoteScope.enabled ? `${remoteScope.key}:${remoteScope.sessionId ?? 'draft'}` : target.viewKey,
                           }}
                         />
                       </ErrorBoundary>
@@ -3671,6 +3737,8 @@ export function MobileApp({ apis }: MobileAppProps) {
     const run = async () => {
       await Promise.all(
         projects.map(async (project) => {
+          // Remote catalogs are demand-driven and must never probe the Hub filesystem.
+          if (project.hostId) return;
           const projectPath = normalizePath(project.path);
           if (!projectPath) return;
           try {
@@ -3828,6 +3896,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     <ErrorBoundary>
       <SyncProvider key={runtimeEndpointEpoch} sdk={opencodeClient.getSdkClient()} directory={currentDirectory || ''} bootstrapDirectory={!(newSessionDraftOpen && currentSessionId === null)}>
         <RuntimeAPIProvider apis={apis}>
+          <RemoteProjectsBootstrap />
           <GuiPluginsProvider ready={isInitialized}>
           <TooltipProvider delayDuration={300} skipDelayDuration={150}>
             <div className="h-full bg-background text-foreground">

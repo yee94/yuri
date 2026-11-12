@@ -153,7 +153,7 @@ const getStableWorkingPhrase = (key: string, t: (key: I18nKey, params?: I18nPara
 };
 
 const createParsedStatus = (
-    parts: Part[],
+    parts: readonly Part[],
     genericKey: string,
     t: (key: I18nKey, params?: I18nParams) => string,
 ): ParsedStatusResult => {

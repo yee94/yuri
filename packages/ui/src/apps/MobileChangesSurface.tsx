@@ -14,11 +14,11 @@ import { isDeferredGitChangesStatus } from '@/components/views/git/deferredChang
 import { CommitSection } from '@/components/views/git/CommitSection';
 import { SyncActions } from '@/components/views/git/SyncActions';
 import { PierreDiffViewer } from '@/components/views/PierreDiffViewer';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
 import type { GitStatus } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
-import { generateCommitMessage, stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 import type { GitRemote } from '@/lib/gitApi';
 import { getLanguageFromExtension, isImageFile } from '@/lib/toolHelpers';
 import {
@@ -26,7 +26,8 @@ import {
   useGitStatus,
   useIsGitRepo,
   useGitLoadingStatus,
-} from '@/stores/useGitStore';
+  type ProjectGitState,
+} from '@/lib/api/useProjectGitStore';
 import { useMobileBackRoute } from '@/mobile/mobileBackNavigation';
 
 type SyncAction = 'fetch' | 'pull' | 'push' | 'sync' | null;
@@ -70,8 +71,10 @@ type MobileChangesSurfaceProps = {
 
 export const MobileChangesSurface: React.FC<MobileChangesSurfaceProps> = ({ onClose, initialDiffPath, initialDiffStaged = false, initialDiffTargetLine = null, hideDiffHeader = false }) => {
   const { t } = useI18n();
-  const { git } = useRuntimeAPIs();
-  const currentDirectory = normalizePath(useEffectiveDirectory() ?? null);
+  const { git, projectScope } = useRuntimeAPIs();
+  const { generateCommitMessage, stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } = useProjectGitActions();
+  const effectiveDirectory = useEffectiveDirectory();
+  const currentDirectory = projectScope ? effectiveDirectory ?? null : normalizePath(effectiveDirectory ?? null);
   const status = useGitStatus(currentDirectory || null);
   const isGitRepo = useIsGitRepo(currentDirectory || null);
   const isLoadingStatus = useGitLoadingStatus(currentDirectory || null);
@@ -163,7 +166,7 @@ export const MobileChangesSurface: React.FC<MobileChangesSurfaceProps> = ({ onCl
     return [];
   }, [remoteUrl, remotes, status?.tracking]);
 
-  const selectedDiffSelector = React.useMemo(() => (state: ReturnType<typeof useGitStore.getState>) => {
+  const selectedDiffSelector = React.useMemo(() => (state: ProjectGitState) => {
     if (!currentDirectory || route.type !== 'diff') return null;
     return state.directories.get(currentDirectory)?.diffCache.get(diffCacheKey(route.path, route.staged)) ?? null;
   }, [currentDirectory, route]);

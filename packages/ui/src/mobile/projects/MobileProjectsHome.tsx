@@ -20,6 +20,9 @@ import { DraggableSessionRow, SessionFolderDndScope } from '@/components/session
 import { PINNED_SESSION_ORDER_SCOPE } from '@/components/session/sidebar/pinnedSessions';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
+import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import {
   useSessionActivity,
   useSessionPermissions,
@@ -91,6 +94,10 @@ export type MobileProjectHomeItem = MobileProjectCardModel & {
 };
 
 export type MobileProjectsHomeProps = {
+  remoteProjects?: import('@/lib/remote-projects/types').RemoteProject[];
+  projectOrderIds?: string[];
+  remoteError?: string;
+  hostRegistry?: HostRuntimeRegistry;
   projects: MobileProjectHomeItem[];
   pinnedSessions: MobileSessionTreeNode[];
   inProgressSessions?: MobileSessionTreeNode[];
@@ -515,6 +522,10 @@ function MobileWorktreeGroupLabel({
 }
 
 export function MobileProjectsHome({
+  remoteProjects,
+  projectOrderIds,
+  remoteError,
+  hostRegistry,
   projects,
   pinnedSessions,
   inProgressSessions = [],
@@ -665,7 +676,7 @@ export function MobileProjectsHome({
         </MobileFloatingSurface>
       ) : null}
 
-      {projects.length === 0 ? (
+      {projects.length === 0 && !remoteProjects?.length ? (
         <section className="flex min-h-[52dvh] flex-col items-center justify-center px-6 text-center">
           <span className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-[var(--surface-muted)] text-muted-foreground">
             <Icon name="folder-add" className="size-6" />
@@ -678,7 +689,11 @@ export function MobileProjectsHome({
           </Button>
         </section>
       ) : (
-        projects.map((project) => {
+        [...projects.map((project) => ({ kind: 'local' as const, project })), ...(remoteProjects ?? []).map((project) => ({ kind: 'remote' as const, project }))]
+          .sort((a, b) => projectOrderIds ? projectOrderIds.indexOf(a.project.id) - projectOrderIds.indexOf(b.project.id) : 0)
+          .map((entry) => {
+          if (entry.kind === 'remote') return hostRegistry ? <RemoteProjectSection key={entry.project.id} project={entry.project} registry={hostRegistry} mobile reorderEnabled={false} /> : <div key={entry.project.id} className="text-xs text-muted-foreground"><span>{entry.project.label || entry.project.path} · {entry.project.hostId}</span><p role={remoteError ? 'alert' : 'status'}>{remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
+          const project = entry.project;
           const projectExpanded = project.expanded;
           const mainWorkspace = project.worktrees.find((entry) => entry.kind === 'main')
             ?? (project.worktrees.length === 1 && !project.worktrees[0]?.kind ? project.worktrees[0] : undefined);
@@ -692,6 +707,7 @@ export function MobileProjectsHome({
               {/* Project header and every workspace/session group share one parent surface. */}
               <MobileProjectCard
                 project={project}
+                hostRegistry={hostRegistry}
                 expanded={projectExpanded}
                 embedded
                  onToggle={() => onToggleProject(project)}

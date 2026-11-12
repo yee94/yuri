@@ -276,6 +276,7 @@ const formatDate = (value?: string) => {
 export type ModelControlsSelection = ControlledModelSelection & { variant?: string };
 
 export type ModelControlsSelectionAdapter = {
+    requestCatalog?: (open: boolean) => void;
     selection: ModelControlsSelection;
     onChange: (selection: ModelControlsSelection) => Promise<void>;
     disabled?: boolean;
@@ -312,8 +313,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         modelsReady: !isProviderConfigLoading,
         agentsReady: !isAgentConfigLoading,
     });
-    const isModelControlReady = isReady && catalogReadiness.modelsReady && !selectionAdapter?.disabled;
-    const isAgentControlReady = isReady && catalogReadiness.agentsReady && !selectionAdapter?.disabled;
+    const isModelControlReady = (Boolean(selectionAdapter?.requestCatalog) || isReady && catalogReadiness.modelsReady) && !selectionAdapter?.disabled;
+    const isAgentControlReady = (Boolean(selectionAdapter?.requestCatalog) || isReady && catalogReadiness.agentsReady) && !selectionAdapter?.disabled;
     const areModelControlsReady = isModelControlReady && isAgentControlReady;
     const storedProviders = useConfigStore((state) => state.providers);
     const providers = selectionCatalog?.providers ?? storedProviders;
@@ -437,10 +438,15 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const [localMobilePanel, setLocalMobilePanel] = React.useState<MobileControlsPanel>(null);
     const usingExternalMobilePanel = mobilePanel !== undefined && typeof onMobilePanelChange === 'function';
     const activeMobilePanel = usingExternalMobilePanel ? mobilePanel : localMobilePanel;
+    const requestSelectionCatalog = selectionAdapter?.requestCatalog;
+    React.useEffect(() => {
+        requestSelectionCatalog?.(Boolean(activeMobilePanel) || isModelSelectorOpen || isAgentSelectorOpen);
+    }, [activeMobilePanel, isModelSelectorOpen, isAgentSelectorOpen, requestSelectionCatalog]);
     const setActiveMobilePanel = usingExternalMobilePanel ? onMobilePanelChange : setLocalMobilePanel;
     const openLocalMobilePanel = useEvent((panel: MobileControlsPanel) => {
         setActiveMobilePanel(panel);
-        void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:mobilePanel' });
+        if (selectionAdapter?.requestCatalog) selectionAdapter.requestCatalog(Boolean(panel));
+        else void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:mobilePanel' });
     });
     const handleAgentMenuOpenChange = useEvent((
         open: boolean,
@@ -451,7 +457,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             return;
         }
         setAgentSelectorOpen(open);
-        if (open) {
+        selectionAdapter?.requestCatalog?.(open);
+        if (open && !selectionAdapter?.requestCatalog) {
             void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:desktopAgentMenu' });
         }
     });
@@ -489,7 +496,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             setDesktopModelQuery('');
         }
         setAgentMenuOpen(nextOpen);
-        if (nextOpen) {
+        selectionAdapter?.requestCatalog?.(nextOpen);
+        if (nextOpen && !selectionAdapter?.requestCatalog) {
             void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:desktopModelMenu' });
         }
     });

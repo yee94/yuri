@@ -86,6 +86,7 @@ function goalAdmissionScope(text: string, options: { armed?: boolean; running?: 
     const snapshot = { message: text, document: { text, references: [] }, hasContent: true };
     return {
         surface: { active: true, kind: 'primary', deliveryTarget: { kind: 'primary' } },
+        hostRuntime: null,
         submissionBlocked: false, inputMode: 'normal', currentSessionId: 'session', currentDirectory: '/repo',
         getCurrentInputSnapshot: () => snapshot, submitBtwCommand: () => false, composerMentions: [],
         useSessionBtwStore: { getState: () => ({ ask: vi.fn() }) },
@@ -105,6 +106,74 @@ function goalAdmissionScope(text: string, options: { armed?: boolean; running?: 
         toast: { error: vi.fn() }, t: (key: string) => key,
     };
 }
+
+it.each([
+    { hasNewDraft: false, fails: false }, { hasNewDraft: true, fails: false },
+    { hasNewDraft: false, fails: true }, { hasNewDraft: true, fails: true },
+])('remote production submit owns new-session identity and resource consumption: %j', async ({ hasNewDraft, fails }) => {
+    const send = vi.fn(async () => { if (fails) throw new Error('Remote offline'); });
+    const flush = vi.fn(async () => undefined);
+    const end = vi.fn();
+    const clear = vi.fn();
+    const consumeSynthetic = vi.fn();
+    const removeInline = vi.fn();
+    const synthetic = { partID: 'part-1', text: 'Synthetic context', synthetic: true, attachments: [] };
+    const scope = {
+        ...goalAdmissionScope('remote text'),
+        hostRuntime: { entry: { location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' } } },
+        surface: { active: true, kind: 'secondary', surfaceID: 'remote-surface', sessionID: 'remote-session',
+            transportIdentity: 'transport', runtimeGeneration: 1, deliveryTarget: { kind: 'primary' },
+            commands: { hasNewDraft }, selection: { value: { providerID: 'remote-provider', modelID: 'model' }, flush }, backend: { send } },
+        draftKey: { transportIdentity: 'transport', owner: { kind: 'session', ownerID: 'remote-owner' } },
+        availableSkills: [], agents: [], confirmedFileMentions: [], composerQuoteScope: null,
+        compileChatComposerDelivery: ({ plan }: { plan: { chunks: Array<{ text: string }> } }) => ({ text: plan.chunks.map((chunk) => chunk.text).join(''), attachments: [], semantics: [] }),
+        dedupeDeliveryAttachments: (files: unknown[]) => files, sanitizeAttachmentsForSend: (files: unknown[]) => files,
+        messageWithComposerQuotes: (_quotes: unknown, text: string) => text,
+        appendInlineComments: (text: string) => `${text}\nInline comment`,
+        buildSyntheticDeliveryParts: (parts: unknown[]) => parts,
+        useInputStore: { getState: () => ({ getDraftAttachmentViews: () => [], consumeDraftSyntheticParts: consumeSynthetic }) },
+        surfaceResources: { inlineDrafts: [{ id: 'comment-1', createdAt: 1 }], removeInlineDraft: removeInline, getDraft: () => ({ syntheticParts: [synthetic] }) },
+        endSubmissionFlight: end, replacePlainDocument: clear,
+        scrollToBottom: vi.fn(),
+    };
+    const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+    await submit();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ sessionID: hasNewDraft ? null : 'remote-session', directory: 'C:\\repo', text: 'remote text\nInline comment', parts: [synthetic], options: { delivery: 'queue', messageID: 'pending-message' } }));
+    expect(scope.queueMessageFromEvent).not.toHaveBeenCalled();
+    expect(end).toHaveBeenCalledOnce();
+    if (fails) {
+        expect(clear).not.toHaveBeenCalled();
+        expect(removeInline).not.toHaveBeenCalled();
+        expect(consumeSynthetic).not.toHaveBeenCalled();
+        expect(scope.toast.error).toHaveBeenCalled();
+        return;
+    }
+    expect(clear).toHaveBeenCalledWith('');
+    expect(removeInline).toHaveBeenCalledWith('comment-1');
+    expect(consumeSynthetic).toHaveBeenCalledOnce();
+    const retain = consumeSynthetic.mock.calls[0][1];
+    expect(retain(synthetic)).toBe(false);
+    expect(retain({ partID: 'concurrently-added' })).toBe(true);
+});
+
+it('remote production /timeline opens the local dialog before admission or resource consumption', async () => {
+    const open = vi.fn();
+    const send = vi.fn();
+    const clear = vi.fn();
+    const scope = {
+        ...goalAdmissionScope('/timeline'),
+        hostRuntime: { entry: { location: { hubId: 'hub', hostId: 'host', directory: '/repo' } } },
+        useUIStore: { getState: () => ({ setTimelineDialogOpen: open }) },
+        surface: { active: true, kind: 'secondary', deliveryTarget: { kind: 'primary' }, backend: { send } },
+        replacePlainDocument: clear,
+    };
+    const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+    await submit();
+    expect(open).toHaveBeenCalledWith(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(scope.beginSubmissionFlight).not.toHaveBeenCalled();
+    expect(clear).toHaveBeenCalledWith('');
+});
 
 it.each(['/goal ship the fix', '/goal pause', '/GOAL resume', '/\u2003goal clear', 'Implement plan'])('Goal submit bypasses ordinary queue admission: %s', async (text) => {
     for (const queued of [false, true]) {
@@ -413,14 +482,14 @@ it.each([
 ])('native input takes precedence over hold-to-talk (%s/%s/%s)', (enabled, supported, kind, native, holdToTalk) => {
     const dictation = [...declarations].find(([name]) => name.includes('globallyEnabled: dictationEnabled'))?.[1];
     expect(dictation).toBeDefined();
-    const evaluate = new Function('iosNativeUiEnabled', 'canUseNativeIosComposer', 'surface', 'isMobile', 'useHoldToTalkInput', `
+    const evaluate = new Function('iosNativeUiEnabled', 'canUseNativeIosComposer', 'surface', 'isMobile', 'useHoldToTalkInput', 'foregroundActive', `
         ${declarations.get('nativeComposerOwnedInput')}
         ${dictation}
         return { native: nativeComposerOwnedInput, holdToTalk: holdToTalkEnabled };
     `);
-    expect(evaluate(enabled, () => supported, { kind }, true, ({ available }: { available: boolean }) => ({
+    expect(evaluate(enabled, () => supported, { kind, active: true }, true, ({ available }: { available: boolean }) => ({
         globallyEnabled: true, enabled: available, hint: null, onHintChange: () => undefined,
-    }))).toEqual({ native, holdToTalk });
+    }), true)).toEqual({ native, holdToTalk });
 });
 
 it.each([
@@ -630,6 +699,7 @@ it('measures once per browser edit through the production commit callback and au
     Object.defineProperty(textarea, 'scrollHeight', { get: () => { heights.push(textarea.style.height); return 48; } });
     const textareaRef = { current: textarea };
     const frames: FrameRequestCallback[] = [];
+    const supersedeSelectionRestore = vi.fn();
     let commit!: (text: string, start: number, end: number) => void;
     const Surface = surface(`
         const [message, setMessage] = React.useState('');
@@ -645,7 +715,7 @@ it('measures once per browser edit through the production commit callback and au
         capture(commitBrowserTextChange);
         return null;
     `, {
-        textareaRef, useComposerTextareaAutosize, inputMode: 'normal', knownSlashNames: new Set(),
+        textareaRef, useComposerTextareaAutosize, supersedeSelectionRestore, inputMode: 'normal', knownSlashNames: new Set(),
         nativeCompositionActiveRef: { current: false }, updateAutocompleteState: vi.fn(),
         requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
         shouldApplyComposerDomCorrection: (correct: boolean) => correct,
@@ -662,6 +732,7 @@ it('measures once per browser edit through the production commit callback and au
     heights.length = 0;
     await act(async () => commit('x', 1, 1));
     expect(heights).toEqual(['auto']);
+    expect(supersedeSelectionRestore).toHaveBeenCalledTimes(51);
 });
 
 it('does not flash an inbox chip for a direct send already painted in the transcript', async () => {

@@ -16,6 +16,8 @@ import {
   getRuntimeTransportIdentity,
 } from "@/lib/runtime-switch"
 import { opencodeClient } from "@/lib/opencode/client"
+import type { HostRuntimeEntry } from "@/lib/remote-projects/registry"
+import { locationSessionKey } from "@/lib/remote-projects/location"
 
 import {
   createTranscriptActiveScopeRegistry,
@@ -74,7 +76,7 @@ export const INITIAL_ANCHOR_SCAN_EXTRA_PAGES = 4
  */
 export async function extendInitialPageToAuthoredUserTurn(
   page: TranscriptTransportPage,
-  input: { sessionID: string; directory: string; signal: AbortSignal },
+  input: { sessionID: string; directory: string; signal: AbortSignal; scope?: HostRuntimeEntry },
 ): Promise<TranscriptTransportPage> {
   let current = page
   for (
@@ -83,6 +85,7 @@ export async function extendInitialPageToAuthoredUserTurn(
     scanned += 1
   ) {
     const older = await fetchSessionProjectionPage({
+      scope: input.scope,
       sessionID: input.sessionID,
       directory: input.directory,
       cursor: current.cursor,
@@ -113,6 +116,7 @@ export async function extendInitialPageToAuthoredUserTurn(
  * Uses Host turn-page + assistant parent recovery; strips message diffs.
  */
 export async function fetchProductionTranscriptTransportPage(input: {
+  scope?: HostRuntimeEntry
   directory: string
   sessionID: string
   limit: number
@@ -154,6 +158,7 @@ async function fetchProductionTranscriptPageInternal(
   // Ticket 09 batch 2: no nested retry() — Query classifier owns retries;
   // pass abort signal through to Host for cancellation fidelity.
   const projection = await fetchSessionProjectionPage({
+    scope: input.scope,
     sessionID: input.sessionID,
     directory: input.directory,
     limit: input.pageSize,
@@ -174,13 +179,13 @@ async function fetchProductionTranscriptPageInternal(
   if (!input.before && !page.complete) {
     const missing = findMissingAssistantParentUserIDs(records)
     if (missing.length > 0) {
-      const scopedClient = opencodeClient.getScopedSdkClient(input.directory)
+      const scopedClient = input.scope?.sdk() ?? opencodeClient.getScopedSdkClient(input.directory)
       const recovered = await recoverAssistantTailBoundary({
         records,
         complete: page.complete,
         requestMessage: async (messageID) => {
           const record = await fetchExactSessionMessageRecord({
-            transport: getRuntimeTransportIdentity(),
+            transport: input.scope ? JSON.stringify(input.scope.queryScope) : getRuntimeTransportIdentity(),
             generation: getRuntimeGeneration(),
             directory: input.directory,
             sessionID: input.sessionID,
@@ -215,7 +220,7 @@ async function fetchProductionTranscriptPageInternal(
   if (!input.before
     && getRuntimeGeneration() === runtimeGeneration
     && useSessionCompactionBarrierStore.getState() === barrierSnapshot) {
-    rememberCompactionBarrierFromRecords(input.sessionID, records)
+    rememberCompactionBarrierFromRecords(input.scope ? locationSessionKey(input.scope.location, input.sessionID) : input.sessionID, records)
   }
 
   return {

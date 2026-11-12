@@ -1,5 +1,6 @@
 import '@/lib/brand-storage-bootstrap';
 import type { DesktopSettings } from '@/lib/desktop';
+import { parseHubProjectLayout } from '@/queries/hubProjectLayout';
 import { createProjectIdFromPath } from '@/lib/projectId';
 import { useUIStore } from '@/stores/useUIStore';
 import { isMonoFontOption, isUiFontOption } from '@/lib/fontOptions';
@@ -713,6 +714,8 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
 
   const candidate = payload as Record<string, unknown>;
   const result: DesktopSettings = {};
+  if (typeof candidate.hasRemoteProjects === 'boolean') result.hasRemoteProjects = candidate.hasRemoteProjects;
+  if (candidate.hubProjectLayout !== undefined) result.hubProjectLayout = parseHubProjectLayout(candidate.hubProjectLayout);
 
   if (typeof candidate.themeId === 'string' && candidate.themeId.length > 0) {
     result.themeId = candidate.themeId;

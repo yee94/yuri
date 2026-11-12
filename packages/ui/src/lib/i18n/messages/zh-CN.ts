@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
+import { remoteProjectMessages } from './remote-projects';
 import { settingsDict } from './zh-CN.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...remoteProjectMessages['zh-CN'],
   'chat.find.label': '搜索已加载的对话',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': '上一个结果（Shift+Enter）',

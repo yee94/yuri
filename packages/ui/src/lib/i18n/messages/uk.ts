@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
+import { remoteProjectMessages } from './remote-projects';
 import { settingsDict } from './uk.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...remoteProjectMessages.uk,
   'sessions.sidebar.session.menu.markUnread': 'Позначити як непрочитане',
   'sessions.sidebar.session.menu.markRead': 'Позначити як прочитане',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Не вдалося позначити як непрочитане. Спробуйте ще раз.',

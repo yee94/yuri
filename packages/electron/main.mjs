@@ -13,6 +13,8 @@ import { DesktopOta } from './desktop-ota.mjs';
 import { DEEP_LINK_PROTOCOLS, isAppDeepLink } from './deep-link-protocol.mjs';
 import { LEGACY_UI_PROTOCOL, prepareDesktopMigration, migrateDesktopOrigin } from './brand-migration.mjs';
 import { loadDesktopBackend } from './desktop-backend.mjs';
+import { createDesktopRemoteHostsAdapter } from './remote-hosts.mjs';
+import { nativeNotificationIdentity } from './notification-identity.mjs';
 import { importHostBrandData } from '@yuriai/web/server/lib/brand-migration.js';
 import { isBinaryFile } from '@yuriai/web/server/lib/fs/binary-file.js';
 import { DesktopInstaller } from './desktop-installer.mjs';
@@ -1459,19 +1461,9 @@ const activeNotifications = new Set();
 const nativeNotificationClaims = new Map();
 const NATIVE_NOTIFICATION_DEDUPE_TTL_MS = 5000;
 
-const getNativeNotificationClaimKey = (payload) => {
-  const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
-  if (tag) return tag;
-  return [payload?.sessionId, payload?.kind, payload?.title, payload?.body]
-    .filter((value) => typeof value === 'string' && value.trim())
-    .map((value) => value.trim())
-    .join('|');
-};
-
 const claimNativeNotification = (payload, owner) => {
-  const payloadKey = getNativeNotificationClaimKey(payload);
-  if (!payloadKey) return true;
-  const key = `${owner?.id ?? 'local'}:${payloadKey}`;
+  const key = nativeNotificationIdentity(payload, owner?.id ?? 'local');
+  if (!key) return true;
 
   const now = Date.now();
   for (const [claimKey, claimedAt] of nativeNotificationClaims) {
@@ -1545,7 +1537,8 @@ const maybeShowNativeNotification = (rawInput, sourceWindow) => {
     if (assistantID) {
       emitToWindow(owner, 'yuri:open-assistant', { assistantID });
     } else if (sessionId) {
-      emitToWindow(owner, 'yuri:open-session', { sessionId, directory });
+      emitToWindow(owner, 'yuri:open-session', { sessionId, directory,
+        ...(payload.hostId ? { hostId: payload.hostId, hubId: payload.hubId } : {}) });
     }
     release();
   });
@@ -1740,6 +1733,8 @@ const spawnLocalServer = async () => {
   const { startWebUiServer } = backend;
 
   const handle = await startWebUiServer({
+    remoteHostsAdapter: createDesktopRemoteHostsAdapter({ readHosts: readDesktopHostsConfig, sshManager,
+      subscribe: settingsStore.subscribe }),
     remoteConnectionsAdapter: createSessionConnections({ sshManager, getLocalExecutor: getLocalSyncExecutor,
       getLocalHost: () => ({ apiUrl: state.sidecarUrl || state.localOrigin, clientToken: readDesktopLocalClientToken() }) }),
     remoteDesktopAdapter,

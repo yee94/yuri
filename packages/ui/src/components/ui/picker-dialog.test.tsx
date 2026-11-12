@@ -167,7 +167,7 @@ describe('desktop picker presentation', () => {
 describe('desktop picker audit coverage', () => {
   const here = dirname(fileURLToPath(import.meta.url));
   test.each([
-    '../session/DirectoryExplorerDialog.tsx', '../chat/TimelineDialog.tsx',
+    '../session/DirectoryExplorerViews.tsx', '../chat/TimelineDialog.tsx',
     '../session/GitHubIssuePickerDialog.tsx', '../session/GitHubPrPickerDialog.tsx',
     '../session/GitHubIntegrationDialog.tsx', '../views/git/StashesDialog.tsx',
     '../sections/yuri/ArchivedSessionsDialog.tsx', './HelpDialog.tsx',

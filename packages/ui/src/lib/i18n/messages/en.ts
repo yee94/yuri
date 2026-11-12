@@ -1,7 +1,9 @@
 import { settingsDict } from './en.settings';
+import { remoteProjectMessages } from './remote-projects';
 import { tourMessages } from './tour';
 
 export const dict = {
+  ...remoteProjectMessages.en,
   'chat.find.label': 'Search loaded conversation',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': 'Previous match (Shift+Enter)',

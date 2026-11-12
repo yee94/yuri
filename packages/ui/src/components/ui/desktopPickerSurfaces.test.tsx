@@ -27,7 +27,7 @@ vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (state: {
   isMobile: boolean; isArchivedSessionsDialogOpen: boolean; setArchivedSessionsDialogOpen: typeof f.setArchiveOpen;
   setSettingsDialogOpen: typeof f.setSettingsOpen; setSettingsPage: typeof f.setSettingsPage;
 }) => unknown) => select({ isMobile: false, isArchivedSessionsDialogOpen: true, setArchivedSessionsDialogOpen: f.setArchiveOpen, setSettingsDialogOpen: f.setSettingsOpen, setSettingsPage: f.setSettingsPage }) }));
-vi.mock('@/stores/useProjectsStore', () => ({ useProjectsStore: (select: (state: { projects: typeof f.projects; getActiveProject: () => typeof f.project }) => unknown) => select({ projects: f.projects, getActiveProject: () => f.project }) }));
+vi.mock('@/stores/useProjectsStore', () => ({ useProjectsStore: (select: (state: { projects: typeof f.projects; activeProjectId: string; getActiveProject: () => typeof f.project }) => unknown) => select({ projects: f.projects, activeProjectId: f.project.id, getActiveProject: () => f.project }) }));
 vi.mock('@/stores/useGlobalSessionsStore', () => ({
   ensureFullGlobalSessionsLoaded: async () => {},
   resolveGlobalSessionDirectory: (session: { directory: string }) => session.directory,
@@ -38,7 +38,10 @@ vi.mock('@/sync/session-actions', () => ({ unarchiveSession: f.unarchive }));
 vi.mock('@/lib/desktop', () => ({ isVSCodeRuntime: () => false }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false, isTablet: false, hasTouchInput: false }) }));
 vi.mock('@/components/ui', () => ({ toast: f.toast }));
-vi.mock('@/queries/githubAuthQueries', () => ({ useGitHubAuthQuery: () => f.auth }));
+vi.mock('@/queries/githubAuthQueries', () => ({
+  useGitHubAuthQuery: () => f.auth,
+  githubAuthQueryOptions: () => ({ queryKey: ['desktop-picker-github-auth'], queryFn: async () => f.auth.data, staleTime: 0, gcTime: Infinity, retry: false }),
+}));
 vi.mock('@/hooks/useRuntimeAPIs', () => {
   const runtime = { github: { issuesList: f.issues, prsList: f.prs } };
   return { useRuntimeAPIs: () => runtime };
@@ -84,6 +87,7 @@ test('GitHub association preserves issue selection and explicit confirmation in 
   const onOpenChange = vi.fn();
   await act(async () => root.render(<GitHubIntegrationDialog open onOpenChange={onOpenChange} onSelect={onSelect} />));
   expect(document.querySelector('[data-slot="dialog-content"]')?.getAttribute('data-presentation')).toBe('picker');
+  await vi.waitFor(() => expect(document.querySelector('.yuri-picker-row')).not.toBeNull());
   await act(async () => document.querySelector<HTMLButtonElement>('.yuri-picker-row')!.click());
   expect(onSelect).not.toHaveBeenCalled();
   evidence('picker-github.html');
@@ -96,7 +100,8 @@ test('GitHub PR tab keeps branch validation and include-diff selection', async (
   const onSelect = vi.fn();
   await act(async () => root.render(<GitHubIntegrationDialog open onOpenChange={() => {}} onSelect={onSelect} />));
   await act(async () => document.querySelector<HTMLButtonElement>('[data-tab="prs"]')!.click());
-  expect(f.validate).toHaveBeenCalled();
+  await vi.waitFor(() => expect(f.validate).toHaveBeenCalled());
+  await vi.waitFor(() => expect(document.querySelector('.yuri-picker-row')).not.toBeNull());
   await act(async () => document.querySelector<HTMLButtonElement>('.yuri-picker-row')!.click());
   await act(async () => textButton('Select').click());
   expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ type: 'pr', includeDiff: false }));

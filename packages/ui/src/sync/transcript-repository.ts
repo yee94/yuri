@@ -21,6 +21,7 @@
  */
 
 import type { Message, Part } from '@/lib/opencode/v2-types'
+import type { HostLocation } from '@/lib/remote-projects/location'
 import type { Event } from '@/sync/types'
 import { isMessageSnapshotOpen, isSlimPart } from "./displayParts"
 import type { SessionHistoryBoundary } from "./types"
@@ -42,6 +43,7 @@ import { hasAnyPositiveTokenCount } from "./transcript-event-reducer"
  * dimensions into Query keys; the store adapter scopes child-store reads/writes.
  */
 export type TranscriptScope = {
+  readonly location?: HostLocation
   readonly directory: string
   readonly sessionID: string
   /** Transport identity (runtime transport fingerprint). Optional for store adapter. */

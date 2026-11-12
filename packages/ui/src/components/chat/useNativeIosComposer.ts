@@ -19,7 +19,6 @@ import {
   buildNativeComposerUpdatePayload,
   canUseNativeIosComposer,
   emptyNativeComposerAutocomplete,
-  getNativeIosComposerPlugin,
   nativeComposerAutocompleteEqual,
   buildNativeComposerChipRanges,
   nativeComposerChipSpecsFromHighlights,
@@ -31,7 +30,6 @@ import {
   rasterizeLogoPngBase64,
   resolveCssVarToHex,
   resolveNativeComposerTextWrite,
-  setNativeComposerDocumentClass,
   shouldIgnoreNativeComposerTextEcho,
   type NativeIosComposerAttachmentPreview,
   type NativeIosComposerAutocomplete,
@@ -114,7 +112,7 @@ export type UseNativeIosComposerArgs = {
   attachments: readonly NativeIosComposerAttachmentSource[];
   removeAttachmentNamedAria: (name: string) => string;
   onText: (text: string, composing: boolean, selection: { start: number; end: number } | null) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, isCurrent: () => boolean) => void;
   onAbort: () => void;
   onAttach: () => void;
   onFiles: (files: File[], skipped: string[]) => void;
@@ -148,6 +146,7 @@ const noopAutocompleteDismiss = (): void => undefined;
 function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
   const nativeUiEnabled = useIosNativeUiEnabled();
   const available = nativeUiEnabled && args.enabled && canUseNativeIosComposer(args.isMobile);
+  const owner = useRef(Symbol('native-composer-owner')).current;
   const lastStateRef = useRef<NativeIosComposerState | null>(null);
   const nativeTextRef = useRef(args.text);
   const echoingNativeRef = useRef(false);
@@ -176,8 +175,9 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
     if (typeof document === 'undefined') return;
     applyNativeComposerHeightVar(document.documentElement, height);
   });
-  nativeIosComposerSession.bind({
-    onText: (text, composing, selection) => {
+  const handlers = {
+    onText: (text: string, composing: boolean, selection: { start: number; end: number } | null) => {
+      if (!nativeIosComposerSession.owns(owner)) return;
       if (shouldIgnoreNativeComposerTextEcho({
         incoming: text,
         replacedText: replacedNativeTextRef.current,
@@ -189,9 +189,10 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       echoingNativeRef.current = true;
       onText(text, composing, selection);
     },
-    onSend: (text) => {
+    onSend: (text: string) => {
+      if (!nativeIosComposerSession.owns(owner)) return;
       nativeTextRef.current = text;
-      onSend(text);
+      onSend(text, () => nativeIosComposerSession.owns(owner));
     },
     onAbort,
     onAttach,
@@ -202,14 +203,14 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
     onOpenAgent,
     onHeight,
     onScrollToBottom,
-    onAutocompleteAccept: (index) => {
+    onAutocompleteAccept: (index: number) => {
       // Accept is JS-authored. A leftover keystroke echo must not omit the
       // inserted token from the next native update.
       echoingNativeRef.current = false;
       onAutocompleteAccept(index);
     },
     onAutocompleteDismiss,
-  });
+  };
 
   const readState = (): NativeIosComposerState => ({
     text: args.text,
@@ -252,31 +253,27 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
     autocomplete: autocompleteRef.current,
   });
 
-  useLayoutEffect(() => {
-    if (!available || typeof document === 'undefined') return;
-    const root = document.documentElement;
-    setNativeComposerDocumentClass(root, true);
-    return () => {
-      setNativeComposerDocumentClass(root, false);
-    };
-  }, [available]);
-
-  useEffect(() => {
-    if (!available || typeof document === 'undefined') return;
-    const root = document.documentElement;
+  const claimForeground = useEvent((root: HTMLElement) => {
     const state = readState();
     lastStateRef.current = state;
     nativeTextRef.current = state.text;
-    nativeIosComposerSession.rememberText(state.text);
-    void nativeIosComposerSession.retain(root, state);
-    const detachLeave = attachNativeIosComposerLeaveConceal();
+    void nativeIosComposerSession.claim(owner, root, state, handlers);
+  });
+  useLayoutEffect(() => {
+    if (!available || typeof document === 'undefined') return;
+    const root = document.documentElement;
+    claimForeground(root);
+    const detachLeave = attachNativeIosComposerLeaveConceal({
+      conceal: () => { if (nativeIosComposerSession.owns(owner)) nativeIosComposerSession.conceal(); },
+      reveal: () => { if (nativeIosComposerSession.owns(owner)) nativeIosComposerSession.reveal(); },
+    });
     return () => {
       lastStateRef.current = null;
       detachLeave();
-      nativeIosComposerSession.release(root);
+      nativeIosComposerSession.releaseOwner(owner, root);
     };
     // retain/release is tied to availability. Page remounts share one overlay.
-  }, [available]);
+  }, [available, owner, claimForeground]);
 
   useEffect(() => {
     if (!available) return;
@@ -284,14 +281,14 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
     const publish = (agentIcon: string) => {
       agentIconRef.current = agentIcon;
       if (lastStateRef.current) lastStateRef.current = { ...lastStateRef.current, agentIcon };
-      void getNativeIosComposerPlugin().update({ agentIcon });
+      nativeIosComposerSession.updateOwner(owner, { agentIcon });
     };
     publish('');
     void rasterizeLogoPngBase64(generatedAvatarDataUri('agent', args.agentName || undefined, false, agentPalette)).then((base64) => {
       if (!cancelled) publish(base64 ?? '');
     });
     return () => { cancelled = true; };
-  }, [available, args.agentName, agentPalette]);
+  }, [available, owner, args.agentName, agentPalette]);
 
   useEffect(() => {
     if (!available) return;
@@ -306,7 +303,7 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
     };
     modelIconRef.current = '';
     if (lastStateRef.current) lastStateRef.current = { ...lastStateRef.current, ...chrome };
-    void getNativeIosComposerPlugin().update(chrome);
+    nativeIosComposerSession.updateOwner(owner, chrome);
     if (!src) {
       return;
     }
@@ -320,10 +317,10 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
         modelVariantLabel: args.modelVariantLabel,
       };
       if (lastStateRef.current) lastStateRef.current = { ...lastStateRef.current, ...painted };
-      void getNativeIosComposerPlugin().update(painted);
+      nativeIosComposerSession.updateOwner(owner, painted);
     });
     return () => { cancelled = true; };
-  }, [available, args.modelId, args.providerId, args.modelLabel, args.modelVariantLabel]);
+  }, [available, owner, args.modelId, args.providerId, args.modelLabel, args.modelVariantLabel]);
 
   const attachmentSignature = attachmentPreviewSourceSignature(args.attachments);
   useEffect(() => {
@@ -334,9 +331,8 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       previewRef.current = [];
       if (lastStateRef.current) {
         lastStateRef.current = { ...lastStateRef.current, attachmentPreviews: [] };
-        nativeIosComposerSession.rememberState(lastStateRef.current);
       }
-      void getNativeIosComposerPlugin().update({ attachmentPreviews: [] });
+      nativeIosComposerSession.updateOwner(owner, { attachmentPreviews: [] });
       return;
     }
     void Promise.all(sources.map(async (file) => {
@@ -355,12 +351,11 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       previewRef.current = previews;
       if (lastStateRef.current) {
         lastStateRef.current = { ...lastStateRef.current, attachmentPreviews: previews };
-        nativeIosComposerSession.rememberState(lastStateRef.current);
       }
-      void getNativeIosComposerPlugin().update({ attachmentPreviews: previews });
+      nativeIosComposerSession.updateOwner(owner, { attachmentPreviews: previews });
     });
     return () => { cancelled = true; };
-  }, [available, attachmentSignature]);
+  }, [available, owner, attachmentSignature]);
 
   const autocompleteRows = args.autocompleteRows ?? EMPTY_AUTOCOMPLETE_ROWS;
   const autocompleteOpen = args.autocompleteOpen === true;
@@ -381,9 +376,8 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
         autocompleteRef.current = next;
         if (lastStateRef.current) {
           lastStateRef.current = { ...lastStateRef.current, autocomplete: next };
-          nativeIosComposerSession.rememberState(lastStateRef.current);
         }
-        void getNativeIosComposerPlugin().update({ autocomplete: next });
+        nativeIosComposerSession.updateOwner(owner, { autocomplete: next });
       }
       return;
     }
@@ -400,12 +394,11 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       autocompleteRef.current = next;
       if (lastStateRef.current) {
         lastStateRef.current = { ...lastStateRef.current, autocomplete: next };
-        nativeIosComposerSession.rememberState(lastStateRef.current);
       }
-      void getNativeIosComposerPlugin().update({ autocomplete: next });
+      nativeIosComposerSession.updateOwner(owner, { autocomplete: next });
     });
     return () => { cancelled = true; };
-  }, [available, suggestionSignature, suggestionTheme]);
+  }, [available, owner, suggestionSignature, suggestionTheme]);
 
   const chipRangeSignature = available
     ? nativeComposerChipSpecsFromHighlights(args.text, args.chipHighlights).map((spec) => (
@@ -423,7 +416,6 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       return;
     }
     lastStateRef.current = next;
-    nativeIosComposerSession.rememberState(next);
     const preset = args.textPresetEpoch !== lastTextPresetEpochRef.current;
     lastTextPresetEpochRef.current = args.textPresetEpoch;
     const write = resolveNativeComposerTextWrite({
@@ -443,10 +435,11 @@ function useNativeIosComposer(args: UseNativeIosComposerArgs): boolean {
       caret: args.caret,
     });
     if (!payload) return;
-    void getNativeIosComposerPlugin().update(payload);
+    nativeIosComposerSession.updateOwner(owner, payload);
     // readState closes over the latest ChatInput props; listing them is the contract.
   }, [
     available,
+    owner,
     args.text,
     args.textPresetEpoch,
     args.placeholder,

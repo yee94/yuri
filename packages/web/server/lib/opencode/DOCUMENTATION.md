@@ -3,6 +3,34 @@
 ## Purpose
 This module provides OpenCode server integration utilities for the web server runtime, including configuration management and provider authentication.
 
+## Hub-only project layout and discovery
+
+Production settings routes receive a synchronous SQLite projection from the
+current Remote Host store. Full settings and both bootstrap variants expose
+read-only `hasRemoteProjects:boolean`; clients cannot persist or override it.
+Bootstrap excludes layout and project/Host contents. The projection creates no
+upstream IO, timer or subscription. Reference changes invalidate through the
+existing safe `yuri:project-order-changed` global event.
+
+Full GET/PUT `/api/config/settings` exposes `hubProjectLayout`:
+`{hubId:string, order:string[], collapsed:Record<string,boolean>}`. IDs identify
+local projects or current-Hub remote references, never remote paths or remote
+project IDs. Missing layout reads as current Hub + empty order/map. A foreign
+Hub layout is not projected; writes with the wrong Hub ID return 409. Malformed
+shape/capacity returns 400 before commit. Each list/map is bounded to 10,000
+entries and each ID to 512 characters.
+
+The existing settings write lock reads strict disk state and merges incoming
+order first, then omitted previous order entries; collapse merges by key (false
+explicitly expands). This is layout only, not collection replacement: omitted
+projects/references are never removed. Local filesystem validation is not run
+on layout IDs and no layout is written upstream. Concurrent saves serialize;
+failed or unchanged saves emit no order tip, and failed writes preserve the
+previous atomic settings file. Existing local `projects` update validation is
+unchanged. After a changed commit, existing `yuri:project-order-changed` prompts
+other clients to fetch current settings. A write may contain only layout; do not
+serialize remote paths into `projects`.
+
 OpenCode upstream calls are V2-only: startup/readiness probes use `/api/info`
 without a legacy health fallback. Both Host SSE entrypoints forward upstream
 to `/api/event`; the Host-owned global WebSocket route is unchanged. Status

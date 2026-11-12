@@ -43,6 +43,18 @@ const requiredInteger = (value, label) => {
   fail(`Invalid transcript cache ${label}`);
 };
 
+const rejectRemoteScope = (value) => {
+  let partition;
+  try { partition = JSON.parse(value?.transport || 'null'); } catch { /* Ordinary runtime identities are not JSON. */ }
+  const remotePartition = Array.isArray(partition) && partition.length === 2 && partition.every((part) => typeof part === 'string');
+  if (remotePartition || value?.hostId || value?.remoteHostId
+    || /(?:\/api\/hosts\/|remote-host:|^remote:|^host:|^remote@)/.test(value?.transport || '')
+    || (typeof value?.directory === 'string' && value.directory.startsWith('yuri-remote-location:'))
+    || (typeof value?.sessionID === 'string' && value.sessionID.startsWith('yuri-remote-session:'))) {
+    fail('Remote transcripts must remain on the remote Host or in client IndexedDB');
+  }
+};
+
 /**
  * Scope is the full runtime identity. Transport/generation/directory/sessionID
  * are all required — directory+session alone would leak rows across runtimes.
@@ -50,6 +62,7 @@ const requiredInteger = (value, label) => {
 /** Directory-wide content search. Session id is a hit, not a filter. */
 export const parseContentSearchScope = (value) => {
   if (!isPlainObject(value)) fail('Invalid transcript cache scope');
+  rejectRemoteScope(value);
   const limit = value.limit === undefined || value.limit === ''
     ? undefined
     : requiredInteger(value.limit, 'limit');
@@ -66,6 +79,7 @@ export const parseContentSearchScope = (value) => {
 
 export const parseTranscriptCacheScope = (value) => {
   if (!isPlainObject(value)) fail('Invalid transcript cache scope');
+  rejectRemoteScope(value);
   return {
     transport: requiredString(value.transport, 'scope'),
     generation: requiredInteger(value.generation, 'scope'),
@@ -76,6 +90,7 @@ export const parseTranscriptCacheScope = (value) => {
 
 export const parseTranscriptCacheGeneration = (value) => {
   if (!isPlainObject(value)) fail('Invalid transcript cache generation');
+  rejectRemoteScope(value);
   return {
     transport: requiredString(value.transport, 'generation'),
     generation: requiredInteger(value.generation, 'generation'),

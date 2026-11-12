@@ -17,6 +17,7 @@ import { QUESTION_CUSTOM_TEXTAREA_MIN_HEIGHT, clampQuestionCustomTextareaHeight 
 import { QuestionAutoDelegateStatus, useQuestionDelegation } from './QuestionAutoDelegateStatus';
 import { QuestionCardFrame } from './QuestionCardFrame';
 import { discardQuestionDraft, getQuestionDraft, selectQuestionDraft, updateQuestionDraft, useQuestionDraftStore } from './questionDraftStore';
+import { useRemoteChat } from '@/sync/remote-chat-context';
 
 interface QuestionCardProps {
   question: QuestionRequest;
@@ -150,9 +151,19 @@ export const CustomAnswerTextarea = React.memo(function CustomAnswerTextarea({
   );
 });
 
-export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
-  const { t } = useI18n();
+const LocalQuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
   const delegation = useQuestionDelegation(question);
+  return <QuestionCardBody question={question} delegation={delegation} />;
+};
+
+export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
+  const remote = useRemoteChat();
+  return remote ? <QuestionCardBody question={question} delegation={null} /> : <LocalQuestionCard question={question} />;
+};
+
+const QuestionCardBody: React.FC<QuestionCardProps & { delegation: ReturnType<typeof useQuestionDelegation> | null }> = ({ question, delegation }) => {
+  const { t } = useI18n();
+  const remote = useRemoteChat();
   const respondToQuestion = sessionActions.respondToQuestion;
   const dismissQuestion = sessionActions.dismissQuestion;
   const isMobile = useUIStore((state) => state.isMobile);
@@ -163,12 +174,12 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
     const sourceSession = sessions.find((session) => session.id === question.sessionID);
     return Boolean(sourceSession?.parentID && sourceSession.parentID === currentSessionId);
   }, [question.sessionID, currentSessionId, sessions]);
-  const scope = delegation.scope;
+  const scope = delegation?.scope ?? `${remote!.sessionKey(question.sessionID)}:${question.id}`;
   const activeTab = useQuestionDraftStore((state) => state.drafts[scope]?.activeTab ?? '0');
   const setActiveTab = (activeTab: TabKey) => updateQuestionDraft(scope, () => ({ activeTab }));
   const [manualResponding, setIsResponding] = React.useState(false);
-  const isResponding = manualResponding || delegation.claimed ||
-    delegation.request?.state === 'submitting' || delegation.request?.state === 'uncertain' || delegation.request?.state === 'settled';
+  const isResponding = manualResponding || delegation?.claimed ||
+    delegation?.request?.state === 'submitting' || delegation?.request?.state === 'uncertain' || delegation?.request?.state === 'settled';
   const [hasResponded, setHasResponded] = React.useState(false);
 
   const selectedOptions = useQuestionDraftStore((state) => selectQuestionDraft(state, scope).selectedOptions);
@@ -307,16 +318,17 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
   const handleConfirm = useEvent(async () => {
     if (!requiredSatisfied || isResponding) return;
 
-    const submittedScope = delegation.scope;
+    const submittedScope = scope;
     setIsResponding(true);
     try {
       const answers = buildAnswersPayload();
-      await respondToQuestion(question.sessionID, question.id, answers, delegation.request?.directory);
+      if (remote) await remote.respondQuestion(question.sessionID, question.id, answers);
+      else await respondToQuestion(question.sessionID, question.id, answers, delegation?.request?.directory);
       discardQuestionDraft(submittedScope);
       setHasResponded(true);
     } catch (error) {
       if (sessionActions.isQuestionSubmissionClaimedError(error)) {
-        await delegation.submissionClaimed(submittedScope);
+        await delegation?.submissionClaimed(submittedScope);
       } else if (sessionActions.isQuestionRequestNotFoundError(error)) {
         discardQuestionDraft(submittedScope);
         toast.info(t('chat.questionCard.noLongerPending'));
@@ -348,15 +360,16 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
 
   const handleDismiss = useEvent(async () => {
     if (isResponding) return;
-    const submittedScope = delegation.scope;
+    const submittedScope = scope;
     setIsResponding(true);
     try {
-      await dismissQuestion(question.sessionID, question.id, delegation.request?.directory);
+      if (remote) await remote.dismissQuestion(question.sessionID, question.id);
+      else await dismissQuestion(question.sessionID, question.id, delegation?.request?.directory);
       discardQuestionDraft(submittedScope);
       setHasResponded(true);
     } catch (error) {
       if (sessionActions.isQuestionSubmissionClaimedError(error)) {
-        await delegation.submissionClaimed(submittedScope);
+        await delegation?.submissionClaimed(submittedScope);
       } else if (sessionActions.isQuestionRequestNotFoundError(error)) {
         discardQuestionDraft(submittedScope);
         toast.info(t('chat.questionCard.noLongerPending'));
@@ -435,8 +448,8 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
           </div>
         </div>
       )}
-      onInteraction={delegation.interaction}
-      afterBody={<QuestionAutoDelegateStatus delegation={delegation} />}
+      onInteraction={delegation?.interaction}
+      afterBody={delegation ? <QuestionAutoDelegateStatus delegation={delegation} /> : null}
       footer={(
         <>
           <button

@@ -9,6 +9,18 @@
 
 const ABSOLUTE_URL_PATTERN = /^[a-z][a-z\d+.-]*:\/\//i;
 const PREVIEW_PROXY_PATH_PREFIX = '/api/preview/proxy/';
+const HOST_PREVIEW_PROXY_PATH = /^\/api\/hosts\/([^/]+)\/api\/preview\/proxy\//;
+
+const isPreviewProxyPath = (pathname: string): boolean => {
+  if (pathname.startsWith(PREVIEW_PROXY_PATH_PREFIX)) return true;
+  const match = HOST_PREVIEW_PROXY_PATH.exec(pathname);
+  if (!match) return false;
+  try {
+    const hostId = decodeURIComponent(match[1]);
+    return Boolean(hostId) && !/[\\/?#]/.test(hostId) && !Array.from(hostId).some((character) => character.charCodeAt(0) < 32)
+      && hostId !== '.' && hostId !== '..';
+  } catch { return false; }
+};
 
 /**
  * WHATWG-normalize a request path and require it stay under the preview proxy
@@ -21,7 +33,7 @@ export const isNormalizedPreviewProxyPath = (pathWithOptionalQuery: string): boo
   try {
     const parsed = new URL(pathOnly, 'http://127.0.0.1');
     if (parsed.hostname !== '127.0.0.1') return false;
-    return parsed.pathname.startsWith(PREVIEW_PROXY_PATH_PREFIX);
+    return isPreviewProxyPath(parsed.pathname);
   } catch {
     return false;
   }
@@ -73,7 +85,7 @@ export const resolveRelayPreviewFrameSrc = (
       ? new URL(authenticatedAssetUrl)
       : new URL(authenticatedAssetUrl, 'http://yuri.local');
 
-    if (!asset.pathname.startsWith(PREVIEW_PROXY_PATH_PREFIX)) {
+    if (!isNormalizedPreviewProxyPath(asset.pathname)) {
       return authenticatedAssetUrl;
     }
 

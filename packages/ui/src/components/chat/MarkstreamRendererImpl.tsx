@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useUIStore } from '@/stores/useUIStore';
 import { getClientPlatform } from '@/lib/platform';
 import { useStreamingTextThrottle } from './hooks/useStreamingTextThrottle';
@@ -85,6 +86,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
   const themeSystem = useOptionalThemeSystem();
   const isDark = themeSystem?.currentTheme.metadata.variant === 'dark';
   const { editor, runtime } = useRuntimeAPIs();
+  const hostRuntime = useHostRuntime();
   const effectiveDirectory = useEffectiveDirectory() ?? '';
   const containerRef = React.useRef<HTMLDivElement>(null);
   const customId = part?.id ? `yuri-ms-${part.id}` : `yuri-ms-${messageId}`;
@@ -95,6 +97,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
   const fileReferenceOptions = fileReferencesEnabled
     ? {
       effectiveDirectory,
+      scope: hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined,
       editor,
       preferRuntimeEditor: runtime.isVSCode,
       onShowPopup,

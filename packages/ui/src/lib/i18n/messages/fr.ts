@@ -1,7 +1,9 @@
 import { settingsDict } from './fr.settings';
+import { remoteProjectMessages } from './remote-projects';
 import { tourMessages } from './tour';
 
 export const dict = {
+  ...remoteProjectMessages.fr,
   'chat.find.label': 'Rechercher dans la conversation chargée',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': 'Occurrence précédente (Maj+Entrée)',

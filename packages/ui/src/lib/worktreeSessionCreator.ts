@@ -25,8 +25,18 @@ import {
   resolvePendingDraftWorktreeRequest,
 } from '@/lib/worktrees/pendingDraftWorktree';
 import { waitForWorktreeBootstrap } from '@/lib/worktrees/worktreeBootstrap';
+import { createRemoteWorktreeDraft } from '@/lib/remote-projects/worktree-draft';
+import type { ProjectEntry } from '@/lib/api/types';
 
 const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '') || value;
+
+const captureRemoteWorktreeSelection = (project: ProjectEntry): (() => boolean) => {
+  return () => {
+    const current = useProjectsStore.getState().getActiveProject();
+    return current?.id === project.id && current?.hostId === project.hostId && current?.hubId === project.hubId
+      && current?.path === project.path;
+  };
+};
 
 /** Snapshot of live config selection after Project defaults are applied. */
 export type WorktreeSessionSelectionSnapshot = {
@@ -94,6 +104,7 @@ const resolveProjectRef = (directory: string): ProjectRef | null => {
   }
 
   const matches = projects.filter((project) => {
+    if (project.hostId) return false;
     const projectPath = normalizePath(project.path);
     return normalized === projectPath || normalized.startsWith(`${projectPath}/`);
   });
@@ -188,6 +199,24 @@ const createInstantWorktreeDraft = async (options?: InstantWorktreeDraftOptions)
   }
 
   const activeProject = useProjectsStore.getState().getActiveProject();
+  if (activeProject?.hostId) {
+    isCreatingWorktreeSession = true;
+    const isSelected = captureRemoteWorktreeSelection(activeProject);
+    try {
+      const existingBranch = options?.existingBranch?.trim().replace(/^remotes\//, '');
+      const name = existingBranch ? slugifyWorktreeName(existingBranch) : generateBranchName();
+      const result = await createRemoteWorktreeDraft(activeProject, {
+        mode: existingBranch ? 'existing' : 'new', worktreeName: name,
+        ...(existingBranch ? { existingBranch } : { branchName: name }),
+      }, { ...options, isSelected });
+      return result.path;
+    } catch (error) {
+      toast.error('Failed to create worktree', { description: error instanceof Error ? error.message : String(error) });
+      return null;
+    } finally {
+      isCreatingWorktreeSession = false;
+    }
+  }
   const projectDirectory = options?.projectDirectory?.trim() || activeProject?.path;
   if (!projectDirectory) {
     toast.error('No active project', {
@@ -382,6 +411,24 @@ export async function createWorktreeSessionForNewBranch(
   isCreatingWorktreeSession = true;
 
   try {
+    const activeProject = useProjectsStore.getState().getActiveProject();
+    if (activeProject?.hostId) {
+      const isSelected = captureRemoteWorktreeSelection(activeProject);
+      try {
+        if (!preferredBranchName.trim()) throw new Error('Branch name is required');
+        const result = await createRemoteWorktreeDraft(activeProject, {
+          mode: 'new', branchName: preferredBranchName.trim(), worktreeName: options?.worktreeName || preferredBranchName.trim(),
+          startRef: startPoint?.trim() || 'HEAD',
+          setUpstream: options?.setUpstream, upstreamRemote: options?.upstreamRemote, upstreamBranch: options?.upstreamBranch,
+          ensureRemoteName: options?.ensureRemoteName, ensureRemoteUrl: options?.ensureRemoteUrl,
+        }, { createSession: true, isSelected, kind: options?.kind, createdFromBranch: options?.createdFromBranch });
+        if (!result.id) throw new Error('Could not create a remote session for the worktree');
+        return { id: result.id, branch: result.branch, path: result.path };
+      } catch (error) {
+        toast.error('Failed to create worktree', { description: error instanceof Error ? error.message : String(error) });
+        return null;
+      }
+    }
     const start = startPoint?.trim() || 'HEAD';
     const base = preferredBranchName?.trim();
     if (!base) {

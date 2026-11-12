@@ -4,9 +4,18 @@ import { refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
 import { isLoopbackHttpUrl } from '@/lib/url';
 import { isNormalizedPreviewProxyPath } from './relay-preview-frame-src';
 import { getRuntimeGeneration } from '@/lib/runtime-switch';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { resolveProjectPreviewUrl } from './project-preview';
 
 /** Keep Host-local URLs behind its existing preview proxy, including IP literals. */
-export async function resolveMobileHtmlUrl(rawUrl: string, hostOrigin: string | undefined, signal: AbortSignal): Promise<{ src: string; expiresAt?: number }> {
+export async function resolveMobileHtmlUrl(rawUrl: string, hostOrigin: string | undefined, signal: AbortSignal, scope?: HostRuntimeEntry): Promise<{ src: string; expiresAt?: number }> {
+  if (scope) {
+    const result = await resolveProjectPreviewUrl(scope, rawUrl, signal);
+    if (!isLoopbackHttpUrl(rawUrl)) return result;
+    if (!hostOrigin) throw new Error('unsupported_host');
+    const authenticated = new URL(result.src, 'http://runtime.invalid');
+    return { ...result, src: `${hostOrigin}${authenticated.pathname}${authenticated.search}${authenticated.hash}` };
+  }
   const generation = getRuntimeGeneration();
   const assertCurrent = () => {
     if (signal.aborted || generation !== getRuntimeGeneration()) throw new DOMException('Preview ended', 'AbortError');

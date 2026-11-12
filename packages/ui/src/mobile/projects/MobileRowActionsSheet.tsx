@@ -6,7 +6,7 @@ import type { IconName } from '@/components/icon/icons';
 import { Button } from '@/components/ui/button';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
 import { triggerMobileHaptic } from '@/hooks/streamingHaptics';
-import { useI18n, type I18nKey } from '@/lib/i18n';
+import { useI18n } from '@/lib/i18n';
 import {
   buildProjectMenuItems,
   buildSessionMenuItems,
@@ -89,13 +89,14 @@ function ActionRow({
   );
 }
 
+export type MobileActionSheetItem = Omit<MobileMenuItem, 'labelKey'> & { label: string };
+
 function renderMenuItems(
-  items: MobileMenuItem[],
-  t: (key: I18nKey) => string,
+  items: MobileActionSheetItem[],
   run: (action?: () => void) => () => void,
   projectMenu = false,
 ) {
-  const groups = items.reduce<Array<{ separated: boolean; items: MobileMenuItem[] }>>(
+  const groups = items.reduce<Array<{ separated: boolean; items: MobileActionSheetItem[] }>>(
     (result, item) => {
       const separated = !projectMenu && Boolean(item.separated);
       const currentGroup = result.at(-1);
@@ -119,7 +120,7 @@ function renderMenuItems(
         <ActionRow
           key={item.id}
           icon={item.icon}
-          label={resolveMobileMenuItemLabel(item, t)}
+          label={item.label}
           onClick={run(item.onClick)}
           destructive={item.destructive}
           disabled={item.disabled}
@@ -140,11 +141,6 @@ export function MobileRowActionsSheet({
   refreshTranscriptSpinning = false,
 }: MobileRowActionsSheetProps) {
   const { t } = useI18n();
-  const run = (action?: () => void) => () => {
-    onOpenChange(false);
-    action?.();
-  };
-
   const menuItems = React.useMemo(() => {
     if (!target) return [] as MobileMenuItem[];
     if (target.kind === 'session') {
@@ -183,13 +179,31 @@ export function MobileRowActionsSheet({
 
   if (!target) return null;
 
+  return <MobileActionSheet open={open} onOpenChange={onOpenChange} title={target.title}
+    projectMenu={target.kind === 'project'} items={menuItems.map((item) => ({ ...item, label: resolveMobileMenuItemLabel(item, t) }))} />;
+}
+
+/** Shared presentation for local and remote row commands; callers own command availability and writes. */
+export function MobileActionSheet({ id = 'mobile-row-actions-sheet', open, onOpenChange, title, items, projectMenu = false }: {
+  id?: string;
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  title: string;
+  items: MobileActionSheetItem[];
+  projectMenu?: boolean;
+}) {
+  const { t } = useI18n();
+  const run = (action?: () => void) => () => {
+    onOpenChange(false);
+    action?.();
+  };
   return (
     <MobileResizableSheet
-      id="mobile-row-actions-sheet"
+      id={id}
       open={open}
       onOpenChange={onOpenChange}
-      title={<h2 className="truncate typography-ui-label font-semibold">{target.title}</h2>}
-      ariaLabel={target.title}
+      title={<h2 className="truncate typography-ui-label font-semibold">{title}</h2>}
+      ariaLabel={title}
       closeAriaLabel={t('mobile.surface.closeAria')}
       resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
       fitContent
@@ -199,7 +213,7 @@ export function MobileRowActionsSheet({
           className="flex flex-col gap-5"
           data-page-scroll-lock="true"
         >
-          {renderMenuItems(menuItems, t, run, target.kind === 'project')}
+          {renderMenuItems(items, run, projectMenu)}
         </div>
       </div>
     </MobileResizableSheet>

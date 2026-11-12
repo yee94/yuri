@@ -37,6 +37,28 @@ const createDependencies = ({ formatSettingsResponse }) => ({
 });
 
 describe('settings route', () => {
+  it('projects SQLite discovery and current-Hub layout without reformatting persisted public settings', async () => {
+    let hasRemoteProjects = false;
+    const dependencies = createDependencies({ formatSettingsResponse: vi.fn(() => ({ hasRemoteProjects: true,
+      hubProjectLayout: { hubId: 'foreign', order: ['other'], collapsed: {} } })) });
+    dependencies.getRemoteProjectState = () => ({ hubId: 'hub', hasRemoteProjects });
+    dependencies.persistSettings.mockResolvedValue({ hasSummaryCustomAPIToken: true,
+      hubProjectLayout: { hubId: 'hub', order: ['local'], collapsed: {} } });
+    const app = express(); app.use(express.json()); registerOpenCodeRoutes(app, dependencies);
+    const cold = await request(app).get('/api/config/settings/bootstrap').expect(200);
+    expect(cold.body).toEqual({ schemaVersion: 1, hasRemoteProjects: false });
+    hasRemoteProjects = true;
+    expect((await request(app).get('/api/config/settings?bootstrap=true').expect(200)).body.hasRemoteProjects).toBe(true);
+    expect((await request(app).get('/api/config/settings').expect(200)).body.hubProjectLayout)
+      .toEqual({ hubId: 'hub', order: [], collapsed: {} });
+    const layout = { hubId: 'hub', order: ['local'], collapsed: {} };
+    const written = await request(app).put('/api/config/settings').send({ hubProjectLayout: layout }).expect(200);
+    expect(written.body).toMatchObject({ hasSummaryCustomAPIToken: true, hasRemoteProjects: true, hubProjectLayout: layout });
+    expect(dependencies.formatSettingsResponse).toHaveBeenCalledTimes(3);
+    dependencies.persistSettings.mockClear();
+    await request(app).put('/api/config/settings').send({ hubProjectLayout: { ...layout, hubId: 'foreign' } }).expect(409);
+    expect(dependencies.persistSettings).not.toHaveBeenCalled();
+  });
   it('returns the full formatted response without the bootstrap query', async () => {
     const formatted = { themeId: 'default', summaryCustomAPIToken: 'response-secret-sentinel' };
     const formatSettingsResponse = vi.fn(() => formatted);

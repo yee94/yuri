@@ -1,8 +1,9 @@
 import React from 'react';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import type { ToolPart } from '@/lib/opencode/v2-types';
 import { Popover } from '@base-ui/react/popover';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
-import { useIsGitRepo } from '@/stores/useGitStore';
+import { useIsGitRepo } from '@/lib/api/useProjectGitStore';
 import { useUIStore } from '@/stores/useUIStore';
 import {
     type ChangedFile,
@@ -27,6 +28,7 @@ export const TurnChangedFilesDropdown: React.FC<TurnChangedFilesDropdownProps> =
     const [portalContainer, setPortalContainer] = React.useState<HTMLElement | null>(null);
     const triggerButtonRef = React.useRef<HTMLButtonElement | null>(null);
     const sessionSurface = useSessionSurface();
+    const hostRuntime = useHostRuntime();
     const globalDirectory = useDirectoryStore((s) => s.currentDirectory);
     const currentDirectory = sessionSurface.directory || globalDirectory;
     const isGitRepo = useIsGitRepo(currentDirectory);
@@ -58,6 +60,7 @@ export const TurnChangedFilesDropdown: React.FC<TurnChangedFilesDropdownProps> =
 
         const store = useUIStore.getState();
         openTurnChangedFilePreview({
+            scope: hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined,
             directory: currentDirectory,
             filePath: file.path,
             sessionId: sessionSurface.sessionId,

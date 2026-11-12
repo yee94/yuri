@@ -18,6 +18,7 @@ import {
 } from '@/stores/useGlobalSessionsStore';
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { sortProjectEntries } from '@/lib/projectOrder';
 import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
@@ -212,10 +213,12 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
   const activePaginationByDirectory = useGlobalSessionsStore((state) => state.activePaginationByDirectory);
   const registryProjects = useProjectsStore((state) => state.projects);
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
-  const projects = React.useMemo(() => sortProjectEntries(registryProjects, projectSortOrder), [registryProjects, projectSortOrder]);
+  const projects = React.useMemo(() => sortProjectEntries(registryProjects.filter((project) => !project.hostId), projectSortOrder), [registryProjects, projectSortOrder]);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const hasRemoteSession = useSessionNavigationStore((state) => state.remoteSession !== null);
+  const currentSessionId = hasRemoteSession ? null : localSessionId;
   // Authoritative worktree catalog is owned by MobileApp (connect-time enumeration into
   // session-ui-store). Do not re-probe git/worktrees here — that was an unbounded cold-start cost.
   const worktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);

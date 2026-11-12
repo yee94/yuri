@@ -1,4 +1,5 @@
 import { countUnicodeCodePoints } from "@/lib/unicodeMetrics"
+import { locationSessionKey, type HostLocation } from "@/lib/remote-projects/location"
 
 export type DraftOwner =
   | { kind: "session"; ownerID: string }
@@ -20,15 +21,15 @@ const requiredIdentity = (value: string, name: string): string => {
 }
 
 /** Stable durable keys intentionally exclude runtime generation. */
-export const sessionDraftKey = ({ transportIdentity }: Pick<DraftKey, "transportIdentity">, sessionID: string): DraftKey => ({
+export const sessionDraftKey = ({ transportIdentity, location }: Pick<DraftKey, "transportIdentity"> & { location?: HostLocation }, sessionID: string): DraftKey => ({
   transportIdentity: requiredIdentity(transportIdentity, "transportIdentity"),
-  owner: { kind: "session", ownerID: requiredIdentity(sessionID, "sessionID") },
+  owner: { kind: "session", ownerID: location ? locationSessionKey(location, sessionID) : requiredIdentity(sessionID, "sessionID") },
 })
 
 /** Stable durable keys intentionally exclude runtime generation. */
-export const newSessionDraftKey = ({ transportIdentity }: Pick<DraftKey, "transportIdentity">, draftID: string): DraftKey => ({
+export const newSessionDraftKey = ({ transportIdentity, location }: Pick<DraftKey, "transportIdentity"> & { location?: HostLocation }, draftID: string): DraftKey => ({
   transportIdentity: requiredIdentity(transportIdentity, "transportIdentity"),
-  owner: { kind: "draft", ownerID: requiredIdentity(draftID, "draftID") },
+  owner: { kind: "draft", ownerID: location ? locationSessionKey(location, draftID) : requiredIdentity(draftID, "draftID") },
 })
 
 /**
@@ -49,9 +50,9 @@ export const deriveNewSessionDraftID = (input: {
 }
 
 /** A non-primary chat surface owns a stable, transport-scoped draft partition. */
-export const surfaceDraftKey = ({ transportIdentity }: Pick<DraftKey, "transportIdentity">, surfaceID: string): DraftKey => ({
+export const surfaceDraftKey = ({ transportIdentity, location }: Pick<DraftKey, "transportIdentity"> & { location?: HostLocation }, surfaceID: string): DraftKey => ({
   transportIdentity: requiredIdentity(transportIdentity, "transportIdentity"),
-  owner: { kind: "surface", ownerID: requiredIdentity(surfaceID, "surfaceID") },
+  owner: { kind: "surface", ownerID: location ? locationSessionKey(location, surfaceID) : requiredIdentity(surfaceID, "surfaceID") },
 })
 
 export type DraftAttachmentReference = {

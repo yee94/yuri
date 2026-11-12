@@ -38,7 +38,8 @@ export type NativeIosComposerSessionHandlers = {
  * chat is show/apply, not UIGlassEffect init. Leaving chat calls `conceal`
  * (`hide`) first so the pill is gone before the Projects underlay is fully on
  * screen. `dismiss` waits one macrotask for a same-flush remount; listeners
- * stay attached like the native tab bar so the next enter does not re-bridge.
+ * survive idle teardown; a new foreground claim replaces their owner generation
+ * without rebuilding the installed glass view.
  */
 export const createNativeIosComposerSession = (
   getPlugin: () => NativeIosComposerPlugin = getNativeIosComposerPlugin,
@@ -50,6 +51,9 @@ export const createNativeIosComposerSession = (
   let lastText = '';
   let concealed = false;
   let warmed = false;
+  let foregroundOwner: symbol | null = null;
+  let foregroundState: NativeIosComposerState | null = null;
+  let foregroundReady = false;
 
   const cancelHide = (): void => {
     if (hideTimer === null) return;
@@ -66,47 +70,54 @@ export const createNativeIosComposerSession = (
     (current[name] as (...values: typeof args) => void)(...args);
   };
 
-  const attachListeners = async (): Promise<void> => {
+  const attachListeners = async (owner?: symbol): Promise<void> => {
     if (listeners.length > 0) return;
     const plugin = getPlugin();
+    const deliver: typeof dispatch = (name, ...args) => {
+      if (owner && (foregroundOwner !== owner || !foregroundReady)) return;
+      dispatch(name, ...args);
+    };
     const next = await Promise.all([
       plugin.addListener('textChanged', (payload: NativeIosComposerEventPayload) => {
         const text = typeof payload.text === 'string' ? payload.text : '';
+        if (owner && (foregroundOwner !== owner || !foregroundReady)) return;
         lastText = text;
-        dispatch('onText', text, payload.composing === true, parseNativeComposerSelection(payload));
+        deliver('onText', text, payload.composing === true, parseNativeComposerSelection(payload));
       }),
       plugin.addListener('send', (payload: NativeIosComposerEventPayload) => {
         const text = typeof payload.text === 'string' ? payload.text : lastText;
+        if (owner && (foregroundOwner !== owner || !foregroundReady)) return;
         lastText = text;
-        dispatch('onSend', text);
+        deliver('onSend', text);
       }),
-      plugin.addListener('abort', () => { dispatch('onAbort'); }),
-      plugin.addListener('attach', () => { dispatch('onAttach'); }),
+      plugin.addListener('abort', () => { deliver('onAbort'); }),
+      plugin.addListener('attach', () => { deliver('onAttach'); }),
       plugin.addListener('filesPicked', (payload: NativeIosComposerEventPayload) => {
-        dispatch(
+        if (owner && (foregroundOwner !== owner || !foregroundReady)) return;
+        deliver(
           'onFiles',
           filesFromNativeComposerPayload(payload),
           skippedNamesFromNativeComposerPayload(payload),
         );
-        void getPlugin().focus();
+        if (!owner || foregroundOwner === owner) void getPlugin().focus();
       }),
       plugin.addListener('removeAttachment', (payload: NativeIosComposerEventPayload) => {
         const id = parseNativeComposerRemoveAttachmentId(payload);
-        if (id) dispatch('onRemoveAttachment', id);
+        if (id) deliver('onRemoveAttachment', id);
       }),
-      plugin.addListener('openModel', () => { dispatch('onOpenModel'); }),
-      plugin.addListener('cycleAgent', () => { dispatch('onCycleAgent'); }),
-      plugin.addListener('openAgent', () => { dispatch('onOpenAgent'); }),
+      plugin.addListener('openModel', () => { deliver('onOpenModel'); }),
+      plugin.addListener('cycleAgent', () => { deliver('onCycleAgent'); }),
+      plugin.addListener('openAgent', () => { deliver('onOpenAgent'); }),
       plugin.addListener('heightChanged', (payload: NativeIosComposerEventPayload) => {
-        dispatch('onHeight', parseNativeComposerHeight(payload));
+        deliver('onHeight', parseNativeComposerHeight(payload));
       }),
-      plugin.addListener('scrollToBottom', () => { dispatch('onScrollToBottom'); }),
+      plugin.addListener('scrollToBottom', () => { deliver('onScrollToBottom'); }),
       plugin.addListener('autocompleteAccept', (payload: NativeIosComposerEventPayload) => {
-        dispatch('onAutocompleteAccept', parseNativeComposerAcceptIndex(payload));
+        deliver('onAutocompleteAccept', parseNativeComposerAcceptIndex(payload));
       }),
-      plugin.addListener('autocompleteDismiss', () => { dispatch('onAutocompleteDismiss'); }),
+      plugin.addListener('autocompleteDismiss', () => { deliver('onAutocompleteDismiss'); }),
     ]);
-    if (listeners.length > 0) {
+    if (listeners.length > 0 || owner && foregroundOwner !== owner) {
       for (const handle of next) void handle.remove();
       return;
     }
@@ -122,6 +133,44 @@ export const createNativeIosComposerSession = (
   };
 
   return {
+    owns(owner: symbol): boolean {
+      return foregroundOwner === owner;
+    },
+    async claim(owner: symbol, root: HTMLElement, state: NativeIosComposerState, next: NativeIosComposerSessionHandlers): Promise<void> {
+      cancelHide();
+      for (const listener of listeners) void listener.remove();
+      listeners = [];
+      foregroundOwner = owner;
+      foregroundState = state;
+      foregroundReady = false;
+      handlers = next;
+      retainCount = 1;
+      concealed = false;
+      warmed = true;
+      lastText = state.text;
+      setNativeComposerDocumentClass(root, true);
+      await attachListeners(owner);
+      if (foregroundOwner !== owner) return;
+      foregroundReady = true;
+      await getPlugin().present(foregroundState ?? state);
+    },
+    updateOwner(owner: symbol, state: Partial<NativeIosComposerState> & { forceText?: boolean; caret?: number }): void {
+      if (foregroundOwner !== owner) return;
+      if (foregroundState) foregroundState = { ...foregroundState, ...state };
+      if (typeof state.text === 'string') lastText = state.text;
+      void getPlugin().update(state);
+    },
+    releaseOwner(owner: symbol, root: HTMLElement): void {
+      if (foregroundOwner !== owner) return;
+      foregroundOwner = null;
+      foregroundState = null;
+      foregroundReady = false;
+      handlers = null;
+      if (!concealed) void getPlugin().hide();
+      concealed = true;
+      setNativeComposerDocumentClass(root, false);
+      this.release(root);
+    },
     bind(next: NativeIosComposerSessionHandlers): void {
       handlers = next;
     },
@@ -186,6 +235,9 @@ export const createNativeIosComposerSession = (
       warmed = false;
       concealed = false;
       handlers = null;
+      foregroundOwner = null;
+      foregroundState = null;
+      foregroundReady = false;
       setNativeComposerDocumentClass(root, false);
       if (hadNativeOverlay) void getPlugin().dismiss();
     },

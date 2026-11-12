@@ -18,7 +18,10 @@ const harness = vi.hoisted(() => ({
   t: (key: string) => key,
   resizeObservers: new Map<Element, ResizeObserverCallback>(),
   explorerRenders: 0,
+  filePreview: vi.fn(),
 }));
+
+vi.mock('@/lib/preview/project-file-preview', () => ({ resolveProjectFilePreview: (...args: unknown[]) => harness.filePreview(...args) }));
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: harness.t }) }));
 vi.mock('@/lib/desktop', async (importOriginal) => ({
@@ -48,7 +51,7 @@ vi.mock('@/stores/useOpenInAppsStore', () => ({
   useOpenInAppsStore: (selector: (state: unknown) => unknown) => selector({ availableApps: harness.empty, initialize: harness.noop }),
 }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => harness }));
-vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo' }));
+vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => '/repo' }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false, isTablet: false, screenWidth: 1400 }) }));
 vi.mock('@/contexts/useThemeSystem', async () => {
   const { getDefaultTheme } = await import('@/lib/theme/themes');
@@ -60,7 +63,7 @@ vi.mock('@/contexts/useThemeSystem', async () => {
 vi.mock('@/lib/shiki/appThemeRegistry', () => ({ ensurePierreThemeRegistered: harness.noop, getResolvedShikiTheme: () => 'light' }));
 vi.mock('@/lib/codemirror/shikiHighlight', () => ({ shikiHighlightExtension: () => [] }));
 vi.mock('@/lib/codemirror/languageByExtension', () => ({ languageByExtension: () => [], loadLanguageByExtension: async () => [] }));
-vi.mock('@/stores/useGitStore', () => ({ useGitStatus: () => null, useGitStore: (selector: (state: unknown) => unknown) => selector({ ensureStatus: harness.noop }) }));
+vi.mock('@/stores/useGitStore', () => ({ useGitStatus: () => null, useGitStore: (selector: (state: unknown) => unknown) => selector({ directories: new Map(), ensureStatus: harness.noop }) }));
 vi.mock('@/components/views/GitView', () => ({ GitView: ({ isActive }: { isActive: boolean }) => <div data-testid="git-view" data-active={isActive} /> }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: harness.noop, stop: harness.noop }) }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({
@@ -161,6 +164,7 @@ beforeEach(() => {
     }
   });
   harness.files.readFile.mockReset();
+  harness.filePreview.mockReset().mockImplementation(async () => ({ src: `about:blank#file-target-${harness.filePreview.mock.calls.length}`, expiresAt: Date.now() + 30 * 60_000, release: vi.fn(async () => {}) }));
   harness.runtime.isDesktop = false;
   harness.runtime.isVSCode = false;
   harness.local = false;
@@ -368,7 +372,7 @@ describe('background file preview refresh', () => {
     expect(harness.files.readFile).toHaveBeenCalledTimes(4);
   });
 
-  test.each([false, true])('HTML preview keeps its iframe for metadata-only updates (inline %s)', async (inline) => {
+  test.each([false, true])('HTML preview keeps its iframe for metadata-only updates (VS Code %s)', async (inline) => {
     const path = '/repo/report.html';
     const content = '<!doctype html><html><body>Document</body></html>';
     harness.runtime.isVSCode = inline;
@@ -403,7 +407,7 @@ describe('background file preview refresh', () => {
     expect(input.value).toBe('reader choice');
   });
 
-  test.each([false, true])('HTML still loads genuinely changed source after the background read (inline %s)', async (inline) => {
+  test.each([false, true])('HTML still loads genuinely changed source after the background read (VS Code %s)', async (inline) => {
     const path = '/repo/report.html';
     harness.runtime.isVSCode = inline;
     harness.files.readFile.mockResolvedValue({ content: '<html><body>Original</body></html>' });
@@ -414,13 +418,12 @@ describe('background file preview refresh', () => {
     const updated = '<html><body>Changed document</body></html>';
     await act(async () => read.resolve({ content: updated }));
     const refreshed = host.querySelector<HTMLIFrameElement>('iframe[title="filesView.editor.htmlPreviewTitle"]')!;
-    if (inline) {
-      expect(refreshed).toBe(iframe);
-      expect(refreshed.getAttribute('srcdoc')).toContain('Changed document');
-    } else {
-      expect(refreshed).not.toBe(iframe);
-      expect(refreshed.getAttribute('src')).toBe(iframe.getAttribute('src'));
-    }
+    expect(refreshed).not.toBe(iframe);
+    expect(refreshed.getAttribute('src')).not.toBe(iframe.getAttribute('src'));
+    expect(refreshed.getAttribute('srcdoc')).toBeNull();
+    expect(harness.filePreview).toHaveBeenCalledTimes(2);
+    const original = await harness.filePreview.mock.results[0].value;
+    expect(original.release).toHaveBeenCalled();
   });
 
   test('a failed background read keeps the last successful preview instead of clearing it', async () => {

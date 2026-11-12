@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 
 import { createDeferredSafeJSONStorage } from './utils/safeStorage';
+import { normalizeLocationStateKey as normalizeRemoteLocationKey, parseLocationKey } from '@/lib/remote-projects/location';
 
 type RootTabsState = {
   openPaths: string[];
@@ -55,14 +56,18 @@ const toComparablePath = (value: string): string => {
   return value;
 };
 
+const normalizeLocationStateKey = (value: string): string => value.startsWith('yuri-remote-location:')
+  ? normalizeRemoteLocationKey(value)
+  : normalizePath(value);
+
 const isPathWithinRoot = (path: string, root: string): boolean => {
-  const normalizedRoot = normalizePath(root);
+  const normalizedRoot = normalizePath(parseLocationKey(root, 'local').directory);
   const normalizedPath = normalizePath(path);
   if (!normalizedRoot || !normalizedPath) return false;
 
   const comparableRoot = toComparablePath(normalizedRoot);
   const comparablePath = toComparablePath(normalizedPath);
-  return comparablePath === comparableRoot || comparablePath.startsWith(`${comparableRoot}/`);
+  return comparablePath === comparableRoot || comparablePath.startsWith(comparableRoot.endsWith('/') ? comparableRoot : `${comparableRoot}/`);
 };
 
 const sanitizeByRoot = (input: unknown): Record<string, RootTabsState> => {
@@ -74,7 +79,8 @@ const sanitizeByRoot = (input: unknown): Record<string, RootTabsState> => {
   const next: Record<string, RootTabsState> = {};
 
   for (const [rawRoot, rawState] of Object.entries(source)) {
-    const root = normalizePath(rawRoot);
+    let root: string;
+    try { root = normalizeLocationStateKey(rawRoot); } catch { continue; }
     if (!root || !rawState || typeof rawState !== 'object') {
       continue;
     }
@@ -165,7 +171,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         byRoot: {},
 
         addOpenPath: (root, path, options) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPath = normalizePath((path || '').trim());
           if (!normalizedRoot || !normalizedPath || (!options?.allowOutsideRoot && !isPathWithinRoot(normalizedPath, normalizedRoot))) {
             return;
@@ -194,7 +200,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         removeOpenPath: (root, path) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPath = normalizePath((path || '').trim());
           if (!normalizedRoot || !normalizedPath) {
             return;
@@ -230,7 +236,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         removeOpenPathsByPrefix: (root, prefixPath) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPrefix = normalizePath((prefixPath || '').trim());
           if (!normalizedRoot || !normalizedPrefix) {
             return;
@@ -272,7 +278,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         removeExpandedPathsByPrefix: (root, prefixPath) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPrefix = normalizePath((prefixPath || '').trim());
           if (!normalizedRoot || !normalizedPrefix) {
             return;
@@ -309,7 +315,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         setSelectedPath: (root, path, options) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPath = path ? normalizePath(path.trim()) : null;
           if (!normalizedRoot || (normalizedPath && !options?.allowOutsideRoot && !isPathWithinRoot(normalizedPath, normalizedRoot))) {
             return;
@@ -339,7 +345,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         ensureSelectedPath: (root) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           if (!normalizedRoot) {
             return;
           }
@@ -358,7 +364,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         toggleExpandedPath: (root, path) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPath = normalizePath((path || '').trim());
           if (!normalizedRoot || !normalizedPath || !isPathWithinRoot(normalizedPath, normalizedRoot)) {
             return;
@@ -388,7 +394,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         expandPath: (root, path) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           const normalizedPath = normalizePath((path || '').trim());
           if (!normalizedRoot || !normalizedPath || !isPathWithinRoot(normalizedPath, normalizedRoot)) {
             return;
@@ -415,7 +421,7 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
         },
 
         expandPaths: (root, paths) => {
-          const normalizedRoot = normalizePath((root || '').trim());
+          const normalizedRoot = normalizeLocationStateKey((root || '').trim());
           if (!normalizedRoot || !paths || paths.length === 0) {
             return;
           }
@@ -462,6 +468,10 @@ export const useFilesViewTabsStore = create<FilesViewTabsStore>()(
             byRoot: sanitizeByRoot(rawByRoot),
           };
         },
+        merge: (persistedState, currentState) => ({
+          ...currentState,
+          byRoot: sanitizeByRoot(persistedState && typeof persistedState === 'object' ? (persistedState as { byRoot?: unknown }).byRoot : undefined),
+        }),
         partialize: (state) => ({ byRoot: sanitizeByRoot(state.byRoot) }),
       }
     ),

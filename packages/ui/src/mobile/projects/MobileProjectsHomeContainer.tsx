@@ -19,6 +19,9 @@ import { useI18n } from '@/lib/i18n';
 import { deleteSessionsWithUndo, showArchivedSessionsUndoToast } from '@/lib/sessionMutationUndo';
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useRemoteProjectNavigation } from '@/components/session/sidebar/hooks/useRemoteProjectNavigation';
+import { parseRemoteProject } from '@/lib/remote-projects/types';
+import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -114,6 +117,8 @@ export function MobileProjectsHomeContainer({
   const openDraft = useMobileNavigationStore((state) => state.openDraft);
   const openSession = useMobileNavigationStore((state) => state.openSession);
   const projects = useProjectsStore((state) => state.projects);
+  const remoteNavigation = useRemoteProjectNavigation();
+  const remoteProjects = React.useMemo(() => projects.filter((project) => project.hostId).map(parseRemoteProject), [projects]);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const sync = useSync();
@@ -266,6 +271,11 @@ export function MobileProjectsHomeContainer({
   });
 
   const handleNewSession = useEvent(() => {
+    const project = useProjectsStore.getState().getActiveProject();
+    if (project?.hostId) {
+      void openRemoteProjectDraft(parseRemoteProject(project), true).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     if (onNewSession) {
       onNewSession();
       return;
@@ -591,6 +601,10 @@ export function MobileProjectsHomeContainer({
   return (
     <>
       <MobileProjectsHome
+        remoteProjects={remoteProjects}
+        hostRegistry={remoteNavigation.registry}
+        projectOrderIds={projects.map((project) => project.id)}
+        remoteError={remoteNavigation.catalog.error?.message}
         className={className}
         projects={model.projects}
         pinnedSessions={model.pinnedSessions}

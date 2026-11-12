@@ -201,10 +201,11 @@ test('native composer autocomplete sits above the card and accepts Return or tap
 
 test('native composer typing path dedupes identical textChanged payloads and skips unchanged height reports', async () => {
   const view = await source('ios/App/App/YuriComposerView.swift');
-  assert.match(view, /private var lastEmittedTextChange: \(text: String, start: Int, end: Int\)\?/);
+  assert.match(view, /private var lastEmittedTextChange: \(text: String, start: Int, end: Int, composing: Bool\)\?/);
   const emitTextChange = view.match(/private func emitTextChange\(\) \{[\s\S]*?\n    \}/)?.[0] ?? '';
   assert.match(emitTextChange, /if let last = lastEmittedTextChange, last == next \{ return \}/);
   assert.match(emitTextChange, /lastEmittedTextChange = next/);
+  assert.match(emitTextChange, /composing: isComposing/);
   const emitHeightChange = view.match(/private func emitHeightChange\(force: Bool\) \{[\s\S]*?\n    \}/)?.[0] ?? '';
   assert.match(emitHeightChange, /if !force, let last = lastEmittedRestTop, abs\(nextRestTop - last\) <= 0\.5/);
   const didChange = view.match(/func textViewDidChange\(_ textView: UITextView\) \{[\s\S]*?\n    \}/)?.[0] ?? '';

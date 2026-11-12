@@ -1,15 +1,15 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { isDesktopLocalOriginActive, openDesktopPath } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 
 export function BinaryFileFallback({ path }: { path: string }) {
-  const { files, runtime } = useRuntimeAPIs();
+  const { files, runtime, projectScope } = useRuntimeAPIs();
   const { t } = useI18n();
   const [pending, setPending] = React.useState(false);
-  const canOpenLocally = runtime.isDesktop && isDesktopLocalOriginActive();
+  const canOpenLocally = !projectScope && runtime.isDesktop && isDesktopLocalOriginActive();
 
   const performAction = async (action: () => Promise<void>) => {
     setPending(true);

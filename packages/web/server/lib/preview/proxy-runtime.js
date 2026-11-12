@@ -1,3 +1,8 @@
+import { remotePreviewPrefix, REMOTE_PREVIEW_TOKEN_MARKER } from '../remote-hosts/preview-scope.js';
+import { parseFilePreviewPath, filePreviewResponseBase } from './file-preview-path.js';
+import { createFileTarget, resolveFileTargetResource, readFileTargetText } from './file-target.js';
+import path from 'node:path';
+
 const DEFAULT_TARGET_TTL_MS = 30 * 60 * 1000;
 const TOKEN_COOKIE_NAME = 'yuri_preview_token';
 const TOKEN_QUERY_PARAM = 'yuri_preview_token';
@@ -169,8 +174,8 @@ export const classifyPreviewNavigation = ({ url, currentUrl, targetOrigin }) => 
   }
 
   const path = parsed.pathname || '/';
-  const proxyMatch = current?.pathname?.match(/^(\/api\/preview\/proxy\/[a-f0-9]{16,64})(?:\/|$)/i);
-  if (parsed.origin === current?.origin && path.startsWith('/api/preview/proxy/')) {
+  const proxyMatch = current?.pathname?.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
+  if (parsed.origin === current?.origin && (path.startsWith('/api/preview/proxy/') || (proxyMatch && path.startsWith(`${proxyMatch[1]}/`)))) {
     return { action: 'allow', url: parsed.toString() };
   }
 
@@ -426,11 +431,11 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
       const parsed = new URL(value, window.location.href);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { action: 'allow', url: parsed.toString() };
       const current = new URL(window.location.href);
-      const proxyMatch = current.pathname.match(/^(\/api\/preview\/proxy\/[a-f0-9]{16,64})(?:\/|$)/i);
+      const proxyMatch = current.pathname.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
       if (parsed.origin === current.origin && parsed.pathname === current.pathname && parsed.search === current.search && parsed.hash) {
         return { action: 'allow', url: parsed.toString() };
       }
-      if (parsed.origin === current.origin && parsed.pathname.startsWith('/api/preview/proxy/')) {
+      if (parsed.origin === current.origin && (parsed.pathname.startsWith('/api/preview/proxy/') || (proxyMatch && parsed.pathname.startsWith(proxyMatch[1] + '/')))) {
         return { action: 'allow', url: parsed.toString() };
       }
       if (proxyMatch && parsed.origin === current.origin && parsed.pathname.startsWith('/') && parsed.pathname.indexOf(proxyMatch[1]) !== 0 && TARGET_ORIGIN) {
@@ -477,7 +482,7 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
     if (window.__yuriViteHmrProxyPatched || typeof window.WebSocket !== 'function') return;
     window.__yuriViteHmrProxyPatched = true;
     const NativeWebSocket = window.WebSocket;
-    const proxyMatch = window.location.pathname.match(/^(\/api\/preview\/proxy\/[a-f0-9]{16,64})(?:\/|$)/i);
+    const proxyMatch = window.location.pathname.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
     if (!proxyMatch) return;
     const proxyBase = proxyMatch[1] + '/';
     const currentSearchParams = new URL(window.location.href).searchParams;
@@ -544,7 +549,7 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
   const installAppRequestProxyPatch = () => {
     if (window.__yuriAppRequestProxyPatched) return;
     window.__yuriAppRequestProxyPatched = true;
-    const proxyMatch = window.location.pathname.match(/^(\/api\/preview\/proxy\/[a-f0-9]{16,64})(?:\/|$)/i);
+    const proxyMatch = window.location.pathname.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
     if (!proxyMatch) return;
     const proxyBase = proxyMatch[1];
     const currentSearchParams = new URL(window.location.href).searchParams;
@@ -645,6 +650,7 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
         if (typeof input === 'string') {
           return nativeFetch(proxiedUrl(input), init);
         }
+        if (input instanceof URL) return nativeFetch(proxiedUrl(input.href), init);
         if (input instanceof Request) {
           try {
             const parsed = new URL(input.url);
@@ -1058,7 +1064,7 @@ export const rewritePreviewBody = ({ bodyText, proxyBasePath, targetOrigin, kind
   const rewriteResourceUrl = (value) => {
     if (typeof value !== 'string' || value.length === 0) return value;
     if (value.startsWith('/') && !value.startsWith('//')) {
-      if (value.startsWith('/api/preview/proxy/')) return appendProxyAuthToProxyUrl(value, { previewToken, urlAuthToken });
+      if (value.startsWith('/api/preview/proxy/') || value.startsWith(`${prefix}/`)) return appendProxyAuthToProxyUrl(value, { previewToken, urlAuthToken });
       return appendProxyAuthToProxyUrl(`${prefix}${value}`, { previewToken, urlAuthToken });
     }
     try {
@@ -1194,11 +1200,17 @@ export const createPreviewProxyRuntime = ({
 
   const now = () => Date.now();
 
+  const revokeTarget = (id) => {
+    const entry = targets.get(id);
+    targets.delete(id);
+    for (const cancel of entry?.resources || []) cancel();
+  };
+
   const sweepExpired = () => {
     const t = now();
     for (const [id, entry] of targets.entries()) {
       if (entry.expiresAt <= t) {
-        targets.delete(id);
+        revokeTarget(id);
       }
     }
   };
@@ -1212,7 +1224,7 @@ export const createPreviewProxyRuntime = ({
     sweepTimer.unref?.();
   };
 
-  const createTarget = (origin, ttlMs) => {
+  const createTarget = (origin, ttlMs, fileTarget) => {
     const id = crypto.randomBytes(16).toString('hex');
     const token = crypto.randomBytes(16).toString('hex');
     const createdAt = now();
@@ -1223,6 +1235,8 @@ export const createPreviewProxyRuntime = ({
       token,
       createdAt,
       expiresAt,
+      ...fileTarget,
+      resources: new Set(),
     });
     return { id, token, expiresAt };
   };
@@ -1240,17 +1254,19 @@ export const createPreviewProxyRuntime = ({
 
     const entry = targets.get(id);
     if (!entry || entry.expiresAt <= now()) {
-      targets.delete(id);
+      revokeTarget(id);
       return { ok: false, status: 404, error: 'Preview target expired' };
     }
 
+    const filePath = entry.kind === 'file' ? parseFilePreviewPath(pathname) : null;
+    if (entry.kind === 'file' && !filePath) return { ok: false, status: 403, error: 'Invalid file preview path' };
     const cookies = parseCookieHeader(req.headers?.cookie);
-    const token = parsed.searchParams.get(TOKEN_QUERY_PARAM) || cookies.get(TOKEN_COOKIE_NAME) || '';
+    const token = filePath?.previewToken || parsed.searchParams.get(TOKEN_QUERY_PARAM) || cookies.get(TOKEN_COOKIE_NAME) || '';
     if (!token || token !== entry.token) {
       return { ok: false, status: 403, error: 'Preview token missing' };
     }
 
-    return { ok: true, id, entry, parsed };
+    return { ok: true, id, entry, parsed, filePath };
   };
 
   const stripProxyPrefix = (pathname, id) => {
@@ -1362,6 +1378,16 @@ export const createPreviewProxyRuntime = ({
           }
         }
 
+        if (req.body?.kind === 'file') {
+          const file = await createFileTarget(req.body.directory, req.body.path);
+          if (req.aborted || res.destroyed) return;
+          const target = createTarget(null, req.body.ttlMs, file);
+          res.once('close', () => { if (!res.writableFinished) revokeTarget(target.id); });
+          return res.set('Cache-Control', 'no-store').json({
+            id: target.id, kind: 'file', proxyBasePath: `${remotePreviewPrefix(req)}/api/preview/proxy/${target.id}`,
+            entryPath: file.entryPath, previewToken: target.token, expiresAt: target.expiresAt,
+          });
+        }
         const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
         if (!rawUrl) {
           return res.status(400).json({ error: 'url is required' });
@@ -1389,14 +1415,27 @@ export const createPreviewProxyRuntime = ({
 
         return res.json({
           id: target.id,
-          proxyBasePath: cookiePath,
+          proxyBasePath: `${remotePreviewPrefix(req)}${cookiePath}`,
           previewToken: target.token,
           expiresAt: target.expiresAt,
         });
       } catch (error) {
+        if (req.body?.kind === 'file') return res.status(error?.status || (error?.code === 'ENOENT' ? 404 : 500)).json({ error: 'File preview unavailable' });
         console.error('[preview-proxy] Failed to create target:', error);
         return res.status(500).json({ error: 'Failed to create preview target' });
       }
+    });
+
+    app.delete('/api/preview/targets/:id', express.json(), async (req, res) => {
+      if (uiAuthController?.enabled) {
+        if (!await uiAuthController.ensureSessionToken(req, res)) return res.status(401).json({ error: 'UI authentication required' });
+        if (!await isRequestOriginAllowed(req)) return res.status(403).json({ error: 'Invalid origin' });
+      }
+      const entry = targets.get(req.params.id);
+      if (!entry) return res.status(204).end();
+      if (!req.body?.previewToken || req.body.previewToken !== entry.token) return res.status(403).json({ error: 'Preview token missing' });
+      revokeTarget(req.params.id);
+      return res.status(204).end();
     });
 
     const proxy = createProxyMiddleware({
@@ -1417,7 +1456,10 @@ export const createPreviewProxyRuntime = ({
       //     contains the full path.
       pathFilter: (pathname, req) => {
         const target = req?.originalUrl || pathname || req?.url || '';
-        return target.startsWith('/api/preview/proxy/');
+        if (!target.startsWith('/api/preview/proxy/')) return false;
+        if (/^\/api\/preview\/proxy\/[a-f0-9]{16,64}\/_file(?:\/|$)/i.test(target)) return false;
+        const resolved = resolveTargetFromRequest(req);
+        return !resolved.ok || resolved.entry.kind !== 'file';
       },
       router: (req) => {
         const resolved = resolveTargetFromRequest(req);
@@ -1465,8 +1507,9 @@ export const createPreviewProxyRuntime = ({
             return responseBuffer;
           }
 
-          const proxyBasePath = `/api/preview/proxy/${resolved.id}`;
-          const urlAuthToken = resolved.parsed.searchParams.get(URL_AUTH_TOKEN_QUERY_PARAM) || '';
+          const hubPrefix = remotePreviewPrefix(req);
+          const proxyBasePath = `${hubPrefix}/api/preview/proxy/${resolved.id}`;
+          const urlAuthToken = hubPrefix ? REMOTE_PREVIEW_TOKEN_MARKER : resolved.parsed.searchParams.get(URL_AUTH_TOKEN_QUERY_PARAM) || '';
           if (typeof proxyRes.headers?.location === 'string') {
             proxyRes.headers.location = rewritePreviewRedirectLocation({
               location: proxyRes.headers.location,
@@ -1475,6 +1518,7 @@ export const createPreviewProxyRuntime = ({
               previewToken: resolved.entry.token,
               urlAuthToken,
             });
+            res.setHeader('location', proxyRes.headers.location);
           }
 
           const contentType = String(proxyRes.headers?.['content-type'] || '').toLowerCase();
@@ -1548,17 +1592,66 @@ export const createPreviewProxyRuntime = ({
       },
     });
 
-    app.use('/api/preview/proxy', (req, res, next) => {
+    app.use('/api/preview/proxy', async (req, res, next) => {
       const resolved = resolveTargetFromRequest(req);
       if (!resolved.ok) {
         return res.status(resolved.status).json({ error: resolved.error });
+      }
+      if (resolved.entry.kind === 'file') {
+        // Network previews retain a legacy capability-only access gate. A file
+        // target must still pass ordinary client/session auth, even if a caller
+        // supplies that legacy network query/cookie alongside the file envelope.
+        if (typeof uiAuthController?.requireAuth === 'function') {
+          let authorized = false;
+          await uiAuthController.requireAuth(req, res, () => { authorized = true; });
+          if (!authorized) return;
+        } else if (uiAuthController?.enabled && !await uiAuthController.ensureSessionToken(req, res)) {
+          return res.status(401).json({ error: 'UI authentication required' });
+        }
+        if (req.aborted || res.destroyed) return;
+        if (!['GET', 'HEAD'].includes(req.method)) return res.status(405).set('Allow', 'GET, HEAD').end();
+        const controller = new AbortController();
+        const cancel = () => { controller.abort(); res.destroy(); };
+        const cleanup = () => {
+          controller.abort(); clearTimeout(expiry); resolved.entry.resources.delete(cancel);
+        };
+        const expiry = setTimeout(cancel, Math.min(2147483647, Math.max(0, resolved.entry.expiresAt - now())));
+        expiry.unref?.();
+        resolved.entry.resources.add(cancel);
+        res.once('close', cleanup);
+        res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' });
+        try {
+          const file = await resolveFileTargetResource(resolved.entry.root, resolved.filePath.resourcePath);
+          controller.signal.throwIfAborted();
+          res.type(path.extname(file));
+          const contentType = String(res.getHeader('Content-Type'));
+          const kind = contentType.includes('text/html') ? 'html' : contentType.includes('text/css') ? 'css'
+            : /javascript|ecmascript/.test(contentType) ? 'javascript' : null;
+          if (!kind || req.method === 'HEAD') return res.sendFile(file, { dotfiles: 'allow', cacheControl: false, lastModified: false });
+          const bodyText = await readFileTargetText(file, controller.signal);
+          controller.signal.throwIfAborted();
+          const proxyBasePath = filePreviewResponseBase(resolved.filePath, remotePreviewPrefix(req));
+          const rewritten = rewritePreviewBody({ bodyText, proxyBasePath, kind });
+          return res.send(kind === 'html' ? injectPreviewBridge(rewritten, '', '') : rewritten);
+        } catch (error) {
+          if (controller.signal.aborted || res.destroyed) return;
+          return res.status(error?.status || (error?.code === 'ENOENT' ? 404 : error?.code === 'EACCES' ? 403 : 500)).json({ error: 'File preview unavailable' });
+        }
       }
       next();
     }, proxy);
 
     server.on('upgrade', (req, socket, head) => {
+      if (/^\/api\/preview\/proxy\/[a-f0-9]{16,64}\/_file(?:\/|$)/i.test(req.url || '')) {
+        rejectWebSocketUpgrade(socket, 405, 'File preview is read-only');
+        return;
+      }
       const resolved = resolveTargetFromRequest(req);
       if (!resolved.ok) {
+        return;
+      }
+      if (resolved.entry.kind === 'file') {
+        rejectWebSocketUpgrade(socket, 405, 'File preview is read-only');
         return;
       }
 

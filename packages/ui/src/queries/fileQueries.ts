@@ -5,17 +5,31 @@ import type { DirectoryListResult, FilesAPI } from '@/lib/api/types';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { queryClient, queryKeys, type FileQueryReadOptions } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { createProjectFilesAPI } from '@/lib/api/project-files';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+
+const useProjectFiles = (explicit?: HostRuntimeEntry) => {
+  const runtime = useRuntimeAPIs();
+  const host = useHostRuntime();
+  const scope = explicit ?? host?.entry;
+  const files = React.useMemo(() => scope ? createProjectFilesAPI(scope) : runtime.files, [scope, runtime.files]);
+  return { files, scope };
+};
 
 type FileReadOptions = NonNullable<Parameters<NonNullable<FilesAPI['readFile']>>[1]>;
 type FileStatResult = Awaited<ReturnType<NonNullable<FilesAPI['statFile']>>>;
 
 type FileDirectoryQueryInput = {
+  scope?: HostRuntimeEntry;
   scopeDirectory: string | null;
   directory: string | null;
   respectGitignore?: boolean;
 };
 
 type FileSearchQueryInput = {
+  scope?: HostRuntimeEntry;
   directory: string | null;
   query: string;
   maxResults?: number;
@@ -24,6 +38,7 @@ type FileSearchQueryInput = {
 };
 
 type FileContentQueryInput = {
+  scope?: HostRuntimeEntry;
   scopeDirectory: string | null;
   path: string | null;
   options?: FileReadOptions;
@@ -36,19 +51,20 @@ const readOptionsKey = (options: FileReadOptions | undefined): FileQueryReadOpti
 export const fileContentQueryKey = (
   input: FileContentQueryInput,
   transport = getRuntimeTransportIdentity(),
-) => queryKeys.files.content(input.scopeDirectory, input.path, readOptionsKey(input.options), transport);
+) => captureProjectScope(input.scope).key(queryKeys.files.content(input.scopeDirectory, input.path, readOptionsKey(input.options), transport));
 
 export const fileDirectoryQueryOptions = (
   files: FilesAPI,
   input: FileDirectoryQueryInput,
   transport = getRuntimeTransportIdentity(),
 ) => ({
-  queryKey: queryKeys.files.directory(input.scopeDirectory, input.directory, input.respectGitignore, transport),
+  queryKey: captureProjectScope(input.scope).key(queryKeys.files.directory(input.scopeDirectory, input.directory, input.respectGitignore, transport)),
   queryFn: async (): Promise<DirectoryListResult> => {
     if (!input.directory) throw new Error('A directory is required to list files');
+    const target = input.scope ? createProjectFilesAPI(input.scope) : files;
     return input.respectGitignore === undefined
-      ? files.listDirectory(input.directory)
-      : files.listDirectory(input.directory, { respectGitignore: input.respectGitignore });
+      ? target.listDirectory(input.directory)
+      : target.listDirectory(input.directory, { respectGitignore: input.respectGitignore });
   },
 });
 
@@ -57,15 +73,15 @@ export const fileSearchQueryOptions = (
   input: FileSearchQueryInput,
   transport = getRuntimeTransportIdentity(),
 ) => ({
-  queryKey: queryKeys.files.search(
+  queryKey: captureProjectScope(input.scope).key(queryKeys.files.search(
     input.directory,
     input.query,
     input.maxResults,
     input.includeHidden,
     input.respectGitignore,
     transport,
-  ),
-  queryFn: async () => {
+  )),
+  queryFn: async ({ signal }: { signal?: AbortSignal } = {}) => {
     if (!input.directory) throw new Error('A directory is required to search files');
     const request = {
       directory: input.directory,
@@ -74,7 +90,8 @@ export const fileSearchQueryOptions = (
       ...(input.includeHidden === undefined ? {} : { includeHidden: input.includeHidden }),
       ...(input.respectGitignore === undefined ? {} : { respectGitignore: input.respectGitignore }),
     };
-    return files.search(request);
+    const target = input.scope ? createProjectFilesAPI(input.scope) : files;
+    return target.search(request, { signal });
   },
 });
 
@@ -86,8 +103,9 @@ export const fileContentQueryOptions = (
   queryKey: fileContentQueryKey(input, transport),
   queryFn: async (): Promise<string> => {
     if (!input.path) throw new Error('A file path is required to read file content');
-    if (!files.readFile) throw new Error('File content reads are unavailable in this runtime');
-    return (await (input.options === undefined ? files.readFile(input.path) : files.readFile(input.path, input.options))).content;
+    const target = input.scope ? createProjectFilesAPI(input.scope) : files;
+    if (!target.readFile) throw new Error('File content reads are unavailable in this runtime');
+    return (await (input.options === undefined ? target.readFile(input.path) : target.readFile(input.path, input.options))).content;
   },
 });
 
@@ -97,6 +115,7 @@ export const setFileContentSnapshot = (
   transport: string,
   content: string,
 ): void => {
+  if (input.scope) captureProjectScope(input.scope).assertCurrent();
   client.setQueryData(
     fileContentQueryKey(input, transport),
     content,
@@ -109,12 +128,13 @@ export const fileStatQueryOptions = (
   transport = getRuntimeTransportIdentity(),
 ) => ({
   queryKey: input.options?.fingerprint
-    ? [...queryKeys.files.stat(input.scopeDirectory, input.path, readOptionsKey(input.options), transport), 'sha256']
-    : queryKeys.files.stat(input.scopeDirectory, input.path, readOptionsKey(input.options), transport),
+    ? captureProjectScope(input.scope).key([...queryKeys.files.stat(input.scopeDirectory, input.path, readOptionsKey(input.options), transport), 'sha256'])
+    : captureProjectScope(input.scope).key(queryKeys.files.stat(input.scopeDirectory, input.path, readOptionsKey(input.options), transport)),
   queryFn: async (): Promise<FileStatResult> => {
     if (!input.path) throw new Error('A file path is required to read file status');
-    if (!files.statFile) throw new Error('File status reads are unavailable in this runtime');
-    return input.options === undefined ? files.statFile(input.path) : files.statFile(input.path, input.options);
+    const target = input.scope ? createProjectFilesAPI(input.scope) : files;
+    if (!target.statFile) throw new Error('File status reads are unavailable in this runtime');
+    return input.options === undefined ? target.statFile(input.path) : target.statFile(input.path, input.options);
   },
 });
 
@@ -122,27 +142,27 @@ export const useFileDirectoryQuery = (
   input: FileDirectoryQueryInput,
   options: { enabled?: boolean; refetchOnMount?: 'always' | boolean } = {},
 ) => {
-  const { files } = useRuntimeAPIs();
+  const { files, scope } = useProjectFiles(input.scope);
   const transport = getRuntimeTransportIdentity();
-  return useQuery({ ...fileDirectoryQueryOptions(files, input, transport), ...options });
+  return useQuery({ ...fileDirectoryQueryOptions(files, { ...input, scope }, transport), ...options });
 };
 
 export const useFileSearchQuery = (
   input: FileSearchQueryInput,
   options: { enabled?: boolean } = {},
 ) => {
-  const { files } = useRuntimeAPIs();
+  const { files, scope } = useProjectFiles(input.scope);
   const transport = getRuntimeTransportIdentity();
-  return useQuery({ ...fileSearchQueryOptions(files, input, transport), ...options });
+  return useQuery({ ...fileSearchQueryOptions(files, { ...input, scope }, transport), ...options });
 };
 
 export const useFileContentQuery = (
   input: FileContentQueryInput,
   options: { enabled?: boolean } = {},
 ) => {
-  const { files } = useRuntimeAPIs();
+  const { files, scope } = useProjectFiles(input.scope);
   const transport = getRuntimeTransportIdentity();
-  return useQuery({ ...fileContentQueryOptions(files, input, transport), ...options });
+  return useQuery({ ...fileContentQueryOptions(files, { ...input, scope }, transport), ...options });
 };
 
 const FILE_STAT_WATCH_INTERVAL_MS = 2_000;
@@ -158,19 +178,19 @@ export const useFileStatWatcher = (
   input: FileContentQueryInput,
   options: { enabled?: boolean; intervalMs?: number; client?: Pick<QueryClient, 'invalidateQueries'> } = {},
 ) => {
-  const { files } = useRuntimeAPIs();
+  const { files, scope } = useProjectFiles(input.scope);
   const transport = getRuntimeTransportIdentity();
   const enabled = Boolean(options.enabled && input.path && files.statFile);
 
   const statQuery = useQuery({
-    ...fileStatQueryOptions(files, input, transport),
+    ...fileStatQueryOptions(files, { ...input, scope }, transport),
     enabled,
     refetchInterval: options.intervalMs ?? FILE_STAT_WATCH_INTERVAL_MS,
     refetchIntervalInBackground: false,
     staleTime: 0,
   });
 
-  const watchIdentity = JSON.stringify(fileContentQueryKey(input, transport));
+  const watchIdentity = JSON.stringify(fileContentQueryKey({ ...input, scope }, transport));
   const watchedPathRef = React.useRef<string | null>(null);
   const previousSignatureRef = React.useRef<string | null>(null);
 
@@ -191,7 +211,7 @@ export const useFileStatWatcher = (
       return;
     }
     const client = options.client ?? queryClient;
-    void client.invalidateQueries({ queryKey: fileContentQueryKey(input, transport) });
+    void client.invalidateQueries({ queryKey: fileContentQueryKey({ ...input, scope }, transport) });
   });
   return statQuery;
 };

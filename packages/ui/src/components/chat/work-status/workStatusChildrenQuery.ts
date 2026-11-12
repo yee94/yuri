@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query';
 
 import { opencodeClient } from '@/lib/opencode/client';
 import { queryKeys } from '@/lib/queryRuntime';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 export type WorkStatusChildTitle = {
   id: string;
@@ -37,11 +38,17 @@ const listWorkStatusChildren: ListWorkStatusChildren = async ({ directory, sessi
 export const workStatusChildrenQueryOptions = (
   directory: string,
   sessionID: string,
-  options: { transport?: string; listChildren?: ListWorkStatusChildren } = {},
+  options: { transport?: string; listChildren?: ListWorkStatusChildren; entry?: HostRuntimeEntry } = {},
 ) => {
-  const listChildren = options.listChildren ?? listWorkStatusChildren;
+  const entry = options.entry;
+  const listChildren = options.listChildren ?? (entry ? async ({ directory, sessionID, signal }: Parameters<ListWorkStatusChildren>[0]) => {
+    const response = await entry.sdk().session.list({ directory, parentID: sessionID, limit: 200 }, { signal });
+    entry.sdk();
+    if (!Array.isArray(response?.data)) throw new Error('session.list children returned no data');
+    return response.data.map((info) => ({ id: info.id, title: info.title }));
+  } : listWorkStatusChildren);
   return queryOptions({
-    queryKey: queryKeys.workStatusChildren.list(directory, sessionID, options.transport),
+    queryKey: [...queryKeys.workStatusChildren.list(directory, sessionID, options.transport), ...(entry?.queryScope ?? [])],
     enabled: Boolean(directory && sessionID),
     queryFn: ({ signal }) => listChildren({ directory, sessionID, signal }),
     staleTime: 5_000,

@@ -628,6 +628,10 @@ export interface FilesAPI {
 export interface ProjectEntry {
   id: string;
   path: string;
+  hostId?: string;
+  hubId?: string;
+  remoteProjectId?: string;
+  remoteState?: 'ok' | 'remote-removed' | 'host-unavailable';
   label?: string;
   icon?: string | null;
   iconImage?: {
@@ -746,6 +750,9 @@ export interface NotificationPayload {
   tag?: string;
   kind?: string;
   sessionId?: string;
+  instanceId?: string;
+  hostId?: string;
+  hubId?: string;
   assistantID?: string;
   directory?: string;
   requireHidden?: boolean;

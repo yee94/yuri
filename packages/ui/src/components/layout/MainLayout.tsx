@@ -6,6 +6,7 @@ import { Sidebar } from './Sidebar';
 import { SidebarTopBar } from './SidebarTopBar';
 import { TitlebarLeftControls } from './TitlebarLeftControls';
 import { ChatWorkspace } from './ChatWorkspace';
+import { SelectedProjectHostBoundary } from '@/contexts/SelectedProjectHostBoundary';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { CommandPalette } from '../ui/CommandPalette';
 import { HelpDialog } from '../ui/HelpDialog';
@@ -441,12 +442,12 @@ export const MainLayout: React.FC = () => {
                             )}
                             {mountChatKeepAlive && (
                                 <div className={cn('absolute inset-0', !isChatActive && 'invisible')}>
-                                    <ErrorBoundary><ChatView /></ErrorBoundary>
+                                    <SelectedProjectHostBoundary><ErrorBoundary><ChatView /></ErrorBoundary></SelectedProjectHostBoundary>
                                 </div>
                             )}
                             {mountChatKeepAlive && secondaryView && (
                                 <div className="absolute inset-0">
-                                    <ErrorBoundary>{secondaryView}</ErrorBoundary>
+                                    <SelectedProjectHostBoundary><ErrorBoundary>{secondaryView}</ErrorBoundary></SelectedProjectHostBoundary>
                                 </div>
                             )}
                             {isMultiRunLauncherOpen && (
@@ -492,7 +493,7 @@ export const MainLayout: React.FC = () => {
                             {mobileRightDrawerVisible && (
                                 <motion.div className="absolute inset-0 z-20 bg-sidebar" data-page-scroll-lock="true" style={{ x: rightDrawerX }} aria-hidden={!mobileRightSidebarOpen}>
                                     <ErrorBoundary>
-                                        <React.Suspense fallback={null}><GitView isActive={mobileRightSidebarOpen} /></React.Suspense>
+                                        <SelectedProjectHostBoundary><React.Suspense fallback={null}><GitView isActive={mobileRightSidebarOpen} /></React.Suspense></SelectedProjectHostBoundary>
                                     </ErrorBoundary>
                                 </motion.div>
                             )}
@@ -545,7 +546,7 @@ export const MainLayout: React.FC = () => {
                                     </ErrorBoundary>
                                 </main>
                             ) : (
-                                <ChatWorkspace
+                                <SelectedProjectHostBoundary><ChatWorkspace
                                     header={<Header />}
                                     footer={
                                         <BottomTerminalDock isOpen={isBottomTerminalOpen} isMobile={isMobile}>
@@ -569,7 +570,7 @@ export const MainLayout: React.FC = () => {
                                             <ErrorBoundary>{secondaryView}</ErrorBoundary>
                                         </div>
                                     )}
-                                </ChatWorkspace>
+                                </ChatWorkspace></SelectedProjectHostBoundary>
                             )}
                         </div>
                     </div>

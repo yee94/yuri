@@ -89,6 +89,7 @@ export const parseSettingsBootstrap = (input: unknown): SettingsBootstrap => {
   }
 
   const output: SettingsBootstrap = { schemaVersion: 1 };
+  if (typeof input.hasRemoteProjects === 'boolean') output.hasRemoteProjects = input.hasRemoteProjects;
   for (const field of fieldNames) {
     if (!hasOwn(input, field)) continue;
     const value = readField(input, field);

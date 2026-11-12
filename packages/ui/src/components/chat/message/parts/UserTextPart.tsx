@@ -1,3 +1,4 @@
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { TranscriptSearchContext } from '../../TranscriptSearchContext';
@@ -71,6 +72,8 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
     const [isTruncated, setIsTruncated] = React.useState(false);
     const collapsibleUserMessages = useUIStore((state) => !isPreview && state.collapsibleUserMessages);
     const effectiveDirectory = useEffectiveDirectory();
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const skillsQuery = useInstalledSkillsQuery({
         directory: effectiveDirectory,
         enabled: hasPotentialSkillToken(textContent),
@@ -98,7 +101,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
         }
         // Fallback: match visible @Title tokens against currently loaded sessions
         // when the synthetic sidecar was stripped or never attached.
-        if (textContent.includes('@')) {
+        if (!hostScope && textContent.includes('@')) {
             for (const [sessionId, session] of getAllSyncSessionMap()) {
                 const title = typeof session.title === 'string' ? session.title.trim() : '';
                 if (!title || byId.has(sessionId)) continue;
@@ -111,7 +114,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
             }
         }
         return Array.from(byId.values());
-    }, [messageParts, textContent]);
+    }, [messageParts, textContent, hostScope]);
 
     const openSkill = useEvent((name: string) => {
         const skill = skillByName.get(name);
@@ -128,10 +131,10 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
             : `${normalizedPath}/SKILL.md`;
         const contextDirectory = effectiveDirectory || getDirectoryForFilePath('', skillPath) || '/';
         const open = () => {
-            openContextFile(contextDirectory, skillPath);
+            openContextFile(hostScope?.key ?? contextDirectory, skillPath);
         };
 
-        if (effectiveDirectory && !isFilePathWithinDirectory(skillPath, effectiveDirectory)) {
+        if (!hostScope && effectiveDirectory && !isFilePathWithinDirectory(skillPath, effectiveDirectory)) {
             void ensureOutsideFileGrantForDesktop(skillPath, effectiveDirectory).then(open);
             return;
         }

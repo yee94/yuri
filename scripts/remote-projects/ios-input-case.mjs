@@ -1,0 +1,52 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const evidence = path.resolve(process.env.REMOTE_PROJECTS_IOS_EVIDENCE ?? '.scratch/remote-projects/performance/ios-first-input');
+const label = process.argv[2];
+const targetValue = process.argv[3] ?? '输入消息';
+const text = process.argv[4] ?? 'a';
+const byLabel = process.argv.includes('--label');
+if (!/^[a-zA-Z0-9-]+$/.test(label ?? '') || !/^[a-zA-Z0-9]+$/.test(text)) throw new Error('Safe label and isolated ASCII fixture text required');
+const file = path.join(evidence, `case-${label}.json`);
+if (fs.existsSync(file)) throw new Error('Refusing case overwrite');
+const report = { label, targetValue, fixture: text, steps: [], startedAt: Date.now() };
+const save = () => fs.writeFileSync(file, JSON.stringify(report, null, 2));
+const run = (script, ...args) => {
+  const r = spawnSync(process.execPath, [`scripts/remote-projects/${script}.mjs`, ...args], { encoding: 'utf8', timeout: 130000, maxBuffer: 10000000 });
+  report.steps.push({ script, args: script === 'ios-serve' && args[0] === 'type' ? ['type', '[isolated fixture]'] : args, exitCode: r.status, stdout: r.stdout, stderr: r.stderr }); save();
+  if (r.status !== 0) throw new Error(`${script} failed; see raw observation`);
+  return r.stdout;
+};
+try {
+  const before = JSON.parse(run('ios-serve', 'ax'));
+  const all = [];
+  const visit = n => { all.push(n); for (const child of n.children ?? []) visit(child); };
+  before.body.forEach(visit);
+  const targets = all.filter(n => (byLabel ? n.AXLabel === targetValue : n.AXValue === targetValue) && n.enabled !== false && n.frame?.width > 0);
+  if (targets.length !== 1) throw new Error(`Expected one enabled actual AX value target, got ${targets.length}`);
+  report.target = targets[0];
+  const { frame } = targets[0];
+  report.point = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
+  run('ios-input-probe', label + '-before-tap', JSON.stringify(report.point));
+  run('ios-accessibility', byLabel ? 'tap' : 'tap-value', targetValue);
+  run('ios-accessibility', 'snapshot');
+  run('ios-input-probe', label + '-after-tap', JSON.stringify(report.point));
+  run('ios-device', 'screenshot', label + '-after-tap');
+  run('ios-serve', 'type', text);
+  await delay(350);
+  run('ios-accessibility', 'snapshot');
+  run('ios-input-probe', label + '-after-type');
+  run('ios-device', 'screenshot', label + '-after-type');
+  const observed = JSON.parse(fs.readFileSync(path.join(evidence, `probe-${label}-after-type.json`)));
+  const textarea = observed.web?.inputs.find(n => n.tag === 'TEXTAREA' && n.placeholder === targetValue);
+  report.valueLength = textarea?.valueLength;
+  report.nativeInputLengths = observed.native?.views.filter(n => typeof n.textLength === 'number' && !n.hidden).map(n => ({ class: n.class, textLength: n.textLength, firstResponder: n.firstResponder }));
+  report.active = observed.web?.active;
+  report.keptInput = textarea?.valueLength === text.length || (byLabel && report.nativeInputLengths?.some(n => n.textLength === text.length && n.firstResponder));
+  report.status = report.keptInput ? 'passed-input-retained' : 'failed-input-not-retained';
+  if (!report.keptInput) process.exitCode = 2;
+} catch (error) { report.status = 'blocked'; report.error = error.message; process.exitCode = 2; }
+report.completedAt = Date.now(); save();
+console.log(JSON.stringify({ label, status: report.status, error: report.error, point: report.point, valueLength: report.valueLength, active: report.active }));

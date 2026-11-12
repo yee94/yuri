@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
+import { remoteProjectMessages } from './remote-projects';
 import { settingsDict } from './pl.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...remoteProjectMessages.pl,
   'chat.find.label': 'Szukaj we wczytanej rozmowie',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': 'Poprzednie dopasowanie (Shift+Enter)',

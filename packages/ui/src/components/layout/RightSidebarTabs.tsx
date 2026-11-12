@@ -3,9 +3,10 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { GitView } from '@/components/views/GitView';
 import { Icon } from "@/components/icon/Icon";
-import { useGitStore } from '@/stores/useGitStore';
+import { useGitStore } from '@/lib/api/useProjectGitStore';
 import { useUIStore, type RightSidebarTab } from '@/stores/useUIStore';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -40,7 +41,7 @@ function useRightSidebarGitSync(
   rightTab: RightSidebarTab | undefined,
   mainTab: string | undefined
 ) {
-  const { git } = useRuntimeAPIs();
+  const { git } = useProjectRuntimeAPIs();
   const ensureStatus = useGitStore((state) => state.ensureStatus);
 
   const shouldPoll = Boolean(
@@ -71,8 +72,9 @@ export const RightSidebarToolbar: React.FC<{
   const setOpen = useUIStore((state) => state.setRightSidebarOpen);
   const setTab = useUIStore((state) => state.setRightSidebarTab);
   const mainTab = useUIStore((state) => state.activeMainTab);
-  const browserCatalog = useBrowserProviderCatalogQuery();
-  const tabs = visibleRightSidebarTabs({ hideGit: mainTab === 'git', showBrowser: shouldShowBrowserProviderRail(browserCatalog.data) });
+  const host = useHostRuntime();
+  const browserCatalog = useBrowserProviderCatalogQuery({ enabled: !host?.entry.location.hostId });
+  const tabs = visibleRightSidebarTabs({ hideGit: mainTab === 'git', showBrowser: !host?.entry.location.hostId && shouldShowBrowserProviderRail(browserCatalog.data) });
   const activeTab = tabs.includes(preferredTab) ? preferredTab : tabs[0] ?? 'files';
   return (
     <div role="group" aria-label={t('header.actions.toggleRightSidebarAria')} className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border/40 divide-x divide-border/40">
@@ -94,9 +96,10 @@ export const RightSidebarTabs: React.FC<{ isActive: boolean }> = ({ isActive }) 
   const preferredTab = useUIStore((state) => state.rightSidebarTab);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const directory = useEffectiveDirectory();
-  const browserCatalog = useBrowserProviderCatalogQuery();
+  const host = useHostRuntime();
+  const browserCatalog = useBrowserProviderCatalogQuery({ enabled: !host?.entry.location.hostId });
   const selectedProvider = browserCatalog.data?.providers.find((provider) => provider.id === browserCatalog.data?.selectedId) ?? null;
-  const showBrowser = shouldShowBrowserProviderRail(browserCatalog.data);
+  const showBrowser = !host?.entry.location.hostId && shouldShowBrowserProviderRail(browserCatalog.data);
 
   // When the main view already hosts a right-tab equivalent (e.g. main tab
   // 'git' renders GitView in the secondary slot), the right sidebar's

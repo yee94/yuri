@@ -1,5 +1,16 @@
 # Mobile HTML networking
 
+## Remote project scope
+
+`project-preview.ts` provides `resolveProjectPreviewUrl(entry, url, signal)` for
+an explicit project Host. Loopback target registration goes through that entry;
+the resulting browser URL retains the host prefix before Hub URL authentication.
+External origins receive no Yuri credentials. The Hub preview proxy must preserve
+that prefix across HTML/CSS resource rewrites, redirects and WebSocket upgrades.
+This helper only owns the entry URL, not the entire resource graph. Native HTML
+network leases and UI callers must explicitly integrate the scoped source; the
+existing Hub-only mobile source is not silently rebound to a remote project.
+
 `mobile-html-network.ts` owns reference-counted native network leases shared by
 the GUI host and built-in HTML views. It delegates to `gui-plugins/mobile-network`
 and the existing paired Relay; it does not create another Relay service. Concurrent
@@ -30,18 +41,42 @@ the connected Host, not the phone. IP literal links take the same path. An older
 Host without `httpOrigin` fails explicitly. External website URLs receive no Yuri
 credentials and use the native proxy with their original URL.
 
+For Remote Projects, the registration uses the explicit Host entry and validates
+the returned scoped proxy base. Gateway responses already containing the matching
+Host prefix are not prefixed twice; another Host's prefix is rejected. The native
+network lease still belongs to the current Hub, not a second per-Host Relay.
+Preview and screenshot resource requests capture the Host entry and reject late
+completions after its generation changes.
+
 The URL sheet owns a proactive URL-auth consumer and renews expiring preview
 targets. Credential/target renewal replaces the iframe URL; it can reload page
 state. Registration/network failure removes the document and exposes retry.
 Cancelled/stale registrations cannot mint credentials for the next runtime or
 replace its displayed document. Ordinary rerenders do not reconnect or re-register.
 
-Built-in file HTML in `MobileFilesSurface` and `FilesView` uses the same network
-boundary. Its existing file delivery remains unchanged: Relay reads inline HTML;
-direct connections use the authenticated FS serve URL. Inline file-relative assets
-are not a complete authenticated resource graph; this change does not claim that
-arbitrary relative-resource HTML files now work. Their browser-owned absolute
-requests use the same native gateway and inherit its platform limits.
+`project-file-preview.ts` registers built-in file HTML as an explicit file target,
+not an authenticated FS entry URL or Relay `srcDoc`. The captured project entry,
+physical directory and entry path are sent through the existing Hub transport.
+The returned browser path retains the Host, target token and short URL-auth token
+as an envelope inherited by native browser relative URL resolution. CSS imports
+and images, module imports/dynamic imports, fetch and nested iframes therefore keep
+the same scope without copying credentials onto external websites. The server
+canonicalizes every descendant inside the registered project root and rejects
+symlink escapes. Existing preview rewrites handle root-relative references.
+
+The helper maps that same path to the native lease's validated Host HTTP origin,
+or to the existing Electron Relay preview gateway. Relay without a browser gateway
+fails explicitly instead of silently rendering broken inline HTML. The native
+lease still belongs to the Hub; no per-project network or global runtime is
+created. See the owning server `lib/preview/DOCUMENTATION.md` for the path parser,
+Hub-token stripping, normal auth/revocation checks and read-only route contract.
+
+Callers own iframe loading/error/retry and remove it immediately on path, Host,
+generation or lease failure. Abort/release revokes the target idempotently;
+failed cleanup after the old transport ends is bounded by server expiry and is
+never sent through the new runtime. Callers keep the existing proactive URL-auth
+consumer and renew the source when that short credential changes, as well as
+before the target deadline. A failed registration must not restore stale HTML.
 
 ## Evidence and limits
 

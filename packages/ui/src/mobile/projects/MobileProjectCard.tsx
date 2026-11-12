@@ -13,12 +13,17 @@ import { useI18n } from '@/lib/i18n';
 import type { ProjectEntry } from '@/lib/api/types';
 import { ProjectIconImage } from '@/lib/projectMeta';
 import { cn } from '@/lib/utils';
+import { RemoteHostIndicator } from '@/components/session/RemoteHostIndicator';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import type { RemoteProject } from '@/lib/remote-projects/types';
 
 import { MobileFloatingSurface } from '../MobileSurface';
 
 export type MobileProjectTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
 export type MobileProjectCardModel = {
+  hostId?: string;
+  remoteState?: RemoteProject['remoteState'];
   id: string;
   name: string;
   path: string;
@@ -31,6 +36,7 @@ export type MobileProjectCardModel = {
 };
 
 export type MobileProjectCardProps = {
+  hostRegistry?: HostRuntimeRegistry;
   project: MobileProjectCardModel;
   expanded: boolean;
   embedded?: boolean;
@@ -38,6 +44,7 @@ export type MobileProjectCardProps = {
   onOpenActions?: (project: MobileProjectCardModel) => void;
   className?: string;
   highlightQuery?: string;
+  iconSlot?: React.ReactNode;
 };
 
 const TONE_STYLES: Record<MobileProjectTone, React.CSSProperties | undefined> = {
@@ -63,6 +70,7 @@ const formatProjectPathHint = (path: string): string => {
  * parent of the workspace/session card that follows it in MobileProjectsHome.
  */
 export function MobileProjectCard({
+  hostRegistry,
   project,
   expanded,
   embedded = false,
@@ -70,6 +78,7 @@ export function MobileProjectCard({
   onOpenActions,
   className,
   highlightQuery,
+  iconSlot,
 }: MobileProjectCardProps) {
   const { t } = useI18n();
   const [pressed, setPressed] = React.useState(false);
@@ -157,13 +166,13 @@ export function MobileProjectCard({
             style={TONE_STYLES[project.tone ?? 'neutral']}
             aria-hidden
           >
-            {project.iconImage ? (
+            {iconSlot ?? (project.iconImage ? (
               <ProjectIconImage
                 project={project}
                 className="size-6 object-contain"
                 fallback={<Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />}
               />
-            ) : <Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />}
+            ) : <Icon name={project.icon ?? 'code-box'} className="yuri-mobile-project-icon-glyph" />)}
           </span>
 
           <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -171,6 +180,7 @@ export function MobileProjectCard({
                <span className="yuri-mobile-project-title yuri-mobile-entity-title truncate font-semibold text-foreground">
                  {highlightQuery ? renderHighlightedText(project.name, highlightQuery) : project.name}
                </span>
+              {project.hostId && hostRegistry ? <RemoteHostIndicator registry={hostRegistry} hostId={project.hostId} remoteState={project.remoteState} /> : null}
               {project.active ? (
                 <span
                   className="size-2 shrink-0 rounded-full bg-[var(--status-success)] shadow-[0_0_0_3px_color-mix(in_srgb,var(--status-success)_12%,transparent)]"

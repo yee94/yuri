@@ -1,5 +1,6 @@
 import '@/lib/brand-storage-bootstrap';
 import React from 'react';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { acquireRuntimeImage, type RuntimeImageIntent } from '@/lib/runtime-image-cache';
 import { getRuntimeAuthGeneration, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
 import { getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
@@ -74,8 +75,8 @@ export const fetchRuntimeImageObjectUrl = async (
 ): Promise<string> => retryImageLoad(() => streamRelayImageDisplayUrl(path, signal), signal);
 
 /** Legacy Markdown uses the same byte owner as Hook consumers, with reconnect retries. */
-export const acquireMarkdownImage = (path: string, signal: AbortSignal) => (
-  retryImageLoad(() => acquireRuntimeImage(path, signal), signal)
+export const acquireMarkdownImage = (path: string, signal: AbortSignal, scope?: import('@/lib/remote-projects/registry').HostRuntimeEntry) => (
+  retryImageLoad(() => acquireRuntimeImage(path, signal, undefined, scope), signal)
 );
 
 const retryImageLoad = async <T,>(load: () => Promise<T>, signal: AbortSignal): Promise<T> => {
@@ -183,6 +184,8 @@ const subscribeImageAuth = (onStoreChange: () => void): (() => void) => (
 );
 
 export const useResolvedImageResource = (source: string, effectiveDirectory: string, intent: RuntimeImageIntent = 'inline') => {
+  const runtime = useHostRuntime();
+  const scope = runtime?.entry.location.hostId ? runtime.entry : undefined;
   const authGeneration = React.useSyncExternalStore(subscribeImageAuth, getRuntimeAuthGeneration, getRuntimeAuthGeneration);
   const transportIdentity = React.useSyncExternalStore(
     subscribeTransport,
@@ -194,7 +197,7 @@ export const useResolvedImageResource = (source: string, effectiveDirectory: str
     [effectiveDirectory, source],
   );
   const usesRuntimeFileSource = needsRuntimeImageStream(resolved);
-  const resolutionKey = `${transportIdentity}\n${authGeneration}\n${effectiveDirectory}\n${source}\n${intent}`;
+  const resolutionKey = `${transportIdentity}\n${scope?.key ?? ''}\n${scope?.connectionGeneration ?? ''}\n${authGeneration}\n${effectiveDirectory}\n${source}\n${intent}`;
   const immediateSource = usesRuntimeFileSource ? '' : resolved.source;
   const immediateLoading = usesRuntimeFileSource;
   const [display, setDisplay] = React.useState({
@@ -214,7 +217,7 @@ export const useResolvedImageResource = (source: string, effectiveDirectory: str
 
     const controller = new AbortController();
     let release: (() => void) | undefined;
-    void acquireRuntimeImage(resolved.path, controller.signal, intent)
+    void acquireRuntimeImage(resolved.path, controller.signal, intent, scope)
       .then((lease) => {
         if (controller.signal.aborted || getRuntimeTransportIdentity() !== transportIdentity) {
           lease.release();
@@ -233,7 +236,7 @@ export const useResolvedImageResource = (source: string, effectiveDirectory: str
       controller.abort();
       release?.();
     };
-  }, [resolutionKey, resolved, transportIdentity, usesRuntimeFileSource, intent]);
+  }, [resolutionKey, resolved, transportIdentity, usesRuntimeFileSource, intent, scope]);
 
   return display.key === resolutionKey
     ? display

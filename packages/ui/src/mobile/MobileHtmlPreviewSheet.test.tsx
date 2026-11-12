@@ -4,8 +4,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MobileHtmlPreviewSheet } from './MobileHtmlPreviewSheet';
 import { useMobileHtmlPreviewStore } from './useMobileHtmlPreviewStore';
 import { openExternalUrl } from '@/lib/url';
+import type { HostRuntimeEntry, HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 
-const fixture = vi.hoisted(() => ({ generation: 1, changed: () => {}, renewed: () => {}, resolve: vi.fn(), release: vi.fn(), unsubscribe: vi.fn() }));
+const fixture = vi.hoisted(() => ({ generation: 1, changed: () => {}, renewed: () => {}, resolve: vi.fn(), release: vi.fn(), unsubscribe: vi.fn(), host: undefined as { entry: HostRuntimeEntry } | undefined, registry: undefined as HostRuntimeRegistry | undefined }));
+vi.mock('@/contexts/HostRuntimeProvider', () => ({ useHostRuntime: () => fixture.host }));
+vi.mock('@/queries/remoteProjectQueries', () => ({ useRemoteProjectRuntime: () => ({ registry: fixture.registry, error: null }) }));
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => true }, registerPlugin: () => ({}) }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeGeneration: () => fixture.generation,
@@ -24,6 +27,7 @@ let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   fixture.generation = 1;
+  fixture.host = undefined; fixture.registry = undefined;
   fixture.resolve.mockReset().mockResolvedValue({ src: 'about:blank', expiresAt: Date.now() + 60_000 });
   fixture.release.mockReset(); fixture.unsubscribe.mockReset();
   useMobileHtmlPreviewStore.getState().close();
@@ -34,7 +38,7 @@ const open = async () => { await act(async () => { root.render(<MobileHtmlPrevie
 
 it('routes a native local link into the HTML sheet and renews credentials while mounted', async () => {
   await open();
-  expect(fixture.resolve).toHaveBeenCalledWith('http://localhost:3000/', 'http://localhost:4000', expect.any(AbortSignal));
+  expect(fixture.resolve).toHaveBeenCalledWith('http://localhost:3000/', 'http://localhost:4000', expect.any(AbortSignal), undefined);
   const frame = container.querySelector('iframe'); expect(frame).not.toBeNull();
   for (let i = 0; i < 50; i++) await act(async () => root.render(<MobileHtmlPreviewSheet />));
   expect(fixture.resolve).toHaveBeenCalledOnce(); expect(container.querySelector('iframe')).toBe(frame);
@@ -77,5 +81,22 @@ it('accepts navigation only from the currently mounted Host preview frame', asyn
   await act(async () => window.dispatchEvent(new MessageEvent('message', { origin: 'null', data })));
   expect(fixture.resolve).toHaveBeenCalledOnce();
   await act(async () => window.dispatchEvent(new MessageEvent('message', { source, origin: 'null', data })));
-  expect(fixture.resolve).toHaveBeenLastCalledWith(data.url, 'http://localhost:4000', expect.any(AbortSignal));
+  expect(fixture.resolve).toHaveBeenLastCalledWith(data.url, 'http://localhost:4000', expect.any(AbortSignal), undefined);
+});
+
+it('captures the requested Host location and never substitutes the currently selected different Host', async () => {
+  const location = { hubId: 'hub', hostId: 'a', directory: 'C:\\Raw Path\\' };
+  const entry = { location, queryScope: ['transport', 'hub', 'a', 'a-key', 0] } as unknown as HostRuntimeEntry;
+  fixture.host = { entry };
+  await act(async () => { useMobileHtmlPreviewStore.getState().open('http://localhost:3000/', location); root.render(<MobileHtmlPreviewSheet />); });
+  expect(fixture.resolve).toHaveBeenLastCalledWith('http://localhost:3000/', 'http://localhost:4000', expect.any(AbortSignal), entry);
+  location.hostId = 'mutated-by-caller';
+  expect(useMobileHtmlPreviewStore.getState().target?.location?.hostId).toBe('a');
+  const requested = useMobileHtmlPreviewStore.getState().target!.location!;
+  const resolved = { ...entry, location: requested };
+  fixture.registry = { hubId: 'hub', resolve: vi.fn(() => resolved) } as unknown as HostRuntimeRegistry;
+  fixture.host = { entry: { ...entry, location: { ...requested, hostId: 'b' } } };
+  await act(async () => root.render(<MobileHtmlPreviewSheet />));
+  expect(fixture.registry.resolve).toHaveBeenCalledWith(requested);
+  expect(fixture.resolve).toHaveBeenLastCalledWith('http://localhost:3000/', 'http://localhost:4000', expect.any(AbortSignal), resolved);
 });

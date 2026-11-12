@@ -1,5 +1,7 @@
 import React from 'react';
-import { useGitStore, useIsGitRepo } from '@/stores/useGitStore';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { useGitStore, useIsGitRepo } from '@/lib/api/useProjectGitStore';
+import { createProjectGitAPI } from '@/lib/gitApiProject';
 import { useUIStore } from '@/stores/useUIStore';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
@@ -34,6 +36,9 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     const isMobile = useUIStore((state) => state.isMobile);
     const currentDirectory = useEffectiveDirectory() ?? null;
     const runtime = React.useContext(RuntimeAPIContext);
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
+    const projectGit = React.useMemo(() => hostScope ? createProjectGitAPI(hostScope) : runtime?.git, [hostScope, runtime?.git]);
     const isGitRepo = useIsGitRepo(currentDirectory);
     const gitStatus = useGitStore((s) =>
         currentDirectory ? s.directories.get(currentDirectory)?.status ?? null : null,
@@ -78,7 +83,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         }
 
         const editor = runtime?.editor;
-        if (editor) {
+        if (!hostScope && editor) {
             void editor.openFile(absolutePath);
             return;
         }
@@ -86,7 +91,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         const store = useUIStore.getState();
         const openStagedDiff = file.hasStagedChanges && !file.hasWorkingChanges;
         if (!store.isMobile) {
-            store.openContextDiff(currentDirectory, file.relativePath, openStagedDiff);
+            store.openContextDiff(hostScope?.key ?? currentDirectory, file.relativePath, openStagedDiff);
             return;
         }
         store.navigateToDiff(file.relativePath, openStagedDiff);
@@ -104,8 +109,8 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     const handleToggleExpanded = () => {
         const nextExpanded = !isExpanded;
         onExpandedChange(nextExpanded);
-        if (!nextExpanded || !currentDirectory || !runtime?.git) return;
-        void fetchStatus(currentDirectory, runtime.git, { silent: true });
+        if (!nextExpanded || !currentDirectory || !projectGit) return;
+        void fetchStatus(currentDirectory, projectGit, { silent: true });
     };
 
     return (

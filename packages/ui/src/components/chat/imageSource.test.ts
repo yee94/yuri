@@ -134,7 +134,8 @@ describe('image source contracts', () => {
     expect(helperSource).toContain('needsRuntimeImageStream(resolved)');
     expect(helperSource).toContain('const usesRuntimeFileSource = needsRuntimeImageStream(resolved)');
     expect(helperSource).toContain('controller.abort()');
-    expect(helperSource).toContain('acquireRuntimeImage(resolved.path, controller.signal, intent)');
+    expect(helperSource).toContain('acquireRuntimeImage(resolved.path, controller.signal, intent, scope)');
+    expect(helperSource).toContain('const scope = runtime?.entry.location.hostId ? runtime.entry : undefined');
     expect(helperSource).toContain('lease.release()');
   });
 
@@ -206,7 +207,7 @@ describe('image source contracts', () => {
     expect(rendererSource).toContain('image: { url: selectedSource');
     expect(rendererSource).toContain('state.release?.()');
     expect(rendererSource).toContain('lease.release()');
-    expect(rendererSource).toContain('acquireMarkdownImage(resolved.path, controller.signal)');
+    expect(rendererSource).toContain('acquireMarkdownImage(resolved.path, controller.signal, scope)');
     expect(rendererSource).toContain('latest.release = lease.release');
     expect(rendererSource).toContain('state.controller?.abort()');
   });

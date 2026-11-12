@@ -7,17 +7,23 @@ import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime
 import { fetchExactSessionMessageRecord } from './transcript-parent-recovery';
 import { enqueueExactFill } from './transcript-exact-fill-scheduler';
 import { sessionBelongsToDirectory } from './session-location-authority';
+import { locationSessionKey, type HostLocation } from '@/lib/remote-projects/location';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 /** Commit consumed input before retiring its composer presentation. */
-export function handoffDeliveredInbox(directory: string, event: Event): void {
+export function handoffDeliveredInbox(directory: string | HostLocation, event: Event, hostScope?: HostRuntimeEntry): void {
     if (event.type !== 'session.inbox.delivered') return;
     const props = event.properties as { sessionID?: string; inboxID?: string; eventCreated?: number };
     if (!props.sessionID || !props.inboxID) return;
-    const repository = getTranscriptRepository();
+    const location = typeof directory === 'string' ? hostScope?.location : directory;
+    const rawDirectory = location?.directory ?? (typeof directory === 'string' ? directory : directory.directory);
+    if (location?.hostId && !hostScope) return;
+    const repository = getTranscriptRepository(location);
     if (!repository) return;
-    const scope = transcriptScope(directory, props.sessionID);
+    const scope = transcriptScope(location ?? rawDirectory, props.sessionID);
     if (repository.getParts(scope, props.inboxID).length > 0) return;
-    const item = useSessionInboxOverlayStore.getState().list(props.sessionID).find(item => item.id === props.inboxID);
+    const key = location ? locationSessionKey(location, props.sessionID) : props.sessionID;
+    const item = useSessionInboxOverlayStore.getState().list(key).find(item => item.id === props.inboxID);
     const projected = item ? normalizeSessionProjectionMessage(props.sessionID, {
         id: item.id, type: 'user', text: item.payload.text, metadata: item.payload.metadata,
         time: { created: props.eventCreated ?? item.timeCreated },
@@ -28,14 +34,19 @@ export function handoffDeliveredInbox(directory: string, event: Event): void {
     }) : null;
     if (!projected || projected.parts.length === 0) {
         const { sessionID, inboxID } = props;
-        const transport = getRuntimeTransportIdentity();
+        const rootTransport = getRuntimeTransportIdentity();
+        const transport = scope.transport ?? rootTransport;
         const generation = getRuntimeGeneration();
-        const current = () => transport === getRuntimeTransportIdentity() && generation === getRuntimeGeneration()
-            && repository === getTranscriptRepository() && sessionBelongsToDirectory(sessionID, directory);
-        void enqueueExactFill(`${transport}\n${generation}\n${directory}\n${sessionID}\n${inboxID}`, async () => {
+        const current = () => {
+            try { hostScope?.sdk(); } catch { return false; }
+            return rootTransport === getRuntimeTransportIdentity() && generation === getRuntimeGeneration()
+                && repository === getTranscriptRepository(location)
+                && (location?.hostId ? true : sessionBelongsToDirectory(sessionID, rawDirectory));
+        };
+        void enqueueExactFill(`${transport}\n${generation}\n${rawDirectory}\n${sessionID}\n${inboxID}`, async () => {
             if (!current()) return;
-            const scoped = opencodeClient.getScopedSdkClient(directory);
-            const row = await fetchExactSessionMessageRecord({ transport, generation, directory, sessionID, messageID: inboxID,
+            const scoped = hostScope?.sdk() ?? opencodeClient.getScopedSdkClient(rawDirectory);
+            const row = await fetchExactSessionMessageRecord({ transport, generation, directory: rawDirectory, sessionID, messageID: inboxID,
                 request: async () => {
                     const raw = await scoped.session.message({ sessionID, messageID: inboxID });
                     const data = normalizeSessionProjectionMessage(sessionID, raw);

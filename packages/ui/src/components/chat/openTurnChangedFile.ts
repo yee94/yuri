@@ -1,4 +1,5 @@
 import { ensureOutsideFileGrantForDesktop } from '@/lib/outsideFileGrants';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import {
   getRelativeFilePath,
   isFilePathWithinDirectory,
@@ -36,6 +37,7 @@ export const resolveTurnChangedFileOpenTarget = (
 };
 
 export const openTurnChangedFilePreview = (args: {
+  scope?: HostRuntimeEntry;
   directory: string;
   filePath: string;
   turnMessageId?: string | null;
@@ -43,16 +45,19 @@ export const openTurnChangedFilePreview = (args: {
   mobile?: boolean;
 }): void => {
   const store = useUIStore.getState();
+  args.scope?.sdk();
+  const stateKey = args.scope?.key ?? args.directory;
   const target = resolveTurnChangedFileOpenTarget(args.directory, args.filePath);
 
   if (target.kind === 'file') {
     const open = () => {
-      store.openContextFile(args.directory, target.path, { fileNotice: target.notice });
+      store.openContextFile(stateKey, target.path, { fileNotice: target.notice });
       if (args.mobile) {
         store.setRightSidebarOpen(false);
       }
     };
-    void ensureOutsideFileGrantForDesktop(target.path, args.directory).then(open);
+    if (args.scope) open();
+    else void ensureOutsideFileGrantForDesktop(target.path, args.directory).then(open);
     return;
   }
 
@@ -63,7 +68,7 @@ export const openTurnChangedFilePreview = (args: {
   }
 
   store.openContextDiff(
-    args.directory,
+    stateKey,
     target.path,
     false,
     'turn',

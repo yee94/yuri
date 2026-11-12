@@ -70,7 +70,7 @@ final class YuriComposerView: UIView, UITextViewDelegate {
     private var canAbort = false
     private var attachmentCount = 0
     private var applyingExternalText = false
-    private var lastEmittedTextChange: (text: String, start: Int, end: Int)?
+    private var lastEmittedTextChange: (text: String, start: Int, end: Int, composing: Bool)?
     private var lastEmittedRestTop: CGFloat?
     private var appearanceIsDark = true
     private var agentLongPressFired = false
@@ -405,9 +405,10 @@ final class YuriComposerView: UIView, UITextViewDelegate {
     func handleKeyboardDidHide() {
         dismissAttachMenu()
         if keepExpandedThroughPicker { return }
-        if textView.isFirstResponder {
-            textView.resignFirstResponder()
-        }
+        // A hide can be an input-view reload or hardware keyboard minimization.
+        // Only the responder lifecycle / explicit blur ends editing, including
+        // when an old animation completes after a new field focus.
+        if textView.isFirstResponder { return }
         if isExpanded {
             setExpanded(false, animated: false)
         }
@@ -1166,7 +1167,8 @@ final class YuriComposerView: UIView, UITextViewDelegate {
 
     private func emitTextChange() {
         let range = textView.selectedRange
-        let next = (text: textView.text ?? "", start: range.location, end: range.location + range.length)
+        let next = (text: textView.text ?? "", start: range.location, end: range.location + range.length,
+                    composing: isComposing)
         if let last = lastEmittedTextChange, last == next { return }
         lastEmittedTextChange = next
         delegate?.composerViewDidChangeText(

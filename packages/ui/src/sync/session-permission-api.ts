@@ -14,10 +14,12 @@
  */
 
 import { runtimeFetch } from "../lib/runtime-fetch"
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry'
 
 export type PermissionReply = "once" | "always" | "reject"
 
 export type PostSessionPermissionReplyInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   requestID: string
   reply: PermissionReply
@@ -55,10 +57,10 @@ export function sessionPermissionReplyPath(sessionID: string, requestID: string)
 }
 
 export async function postSessionPermissionReply(input: PostSessionPermissionReplyInput): Promise<void> {
-  const response = await runtimeFetch(sessionPermissionReplyPath(input.sessionID, input.requestID), {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(sessionPermissionReplyPath(input.sessionID, input.requestID), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     body: JSON.stringify({
       decision: input.reply,
       ...(input.message ? { message: input.message } : {}),
@@ -74,4 +76,5 @@ export async function postSessionPermissionReply(input: PostSessionPermissionRep
       throw new Error("session permission reply: unexpected HTML response")
     }
   }
+  input.scope?.sdk()
 }

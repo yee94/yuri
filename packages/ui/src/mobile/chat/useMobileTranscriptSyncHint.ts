@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useRemoteHost } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeContextValue } from '@/contexts/hostRuntimeContext';
+import { locationKey } from '@/lib/remote-projects/location';
+import { getTranscriptRepository, transcriptScope, getTranscriptRepositoryBindingRevision, subscribeTranscriptRepositoryBinding } from '@/sync/transcript-repository-runtime';
 
 import { useI18n } from '@/lib/i18n';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -142,5 +146,30 @@ export function useMobileTranscriptSyncHint(
     connectionPhase,
   });
   const visible = useSmoothedSyncHintActive(kind === 'syncing', JSON.stringify([directory, sessionId]));
+  return visible ? t('mobile.chat.syncingMessages') : null;
+}
+
+/** Same whisper policy, but only Host repository/status/flights participate. No local SyncProvider reader is mounted. */
+export function useRemoteMobileTranscriptSyncHint(host: HostRuntimeContextValue, sessionId: string): string | null {
+  const { t } = useI18n();
+  const status = useRemoteHost(host.registry, host.entry.location.hostId!);
+  const revision = useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
+  const repository = getTranscriptRepository(host.entry.location);
+  const binding = useMemo(() => ({ revision, scope: repository && sessionId ? transcriptScope(host.entry.location, sessionId) : null }), [repository, host.entry, sessionId, revision]);
+  const scope = binding.scope;
+  const subscribe = useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
+  const read = () => {
+    if (!repository || !scope) return sessionId ? 'loading' : 'idle';
+    if (repository.getHydrationState?.(scope).p0Satisfied) return 'renderable';
+    return repository.getRequestState?.(scope).status ?? 'loading';
+  };
+  const transcriptState = useSyncExternalStore(subscribe, read, read);
+  const directoryKey = locationKey(host.entry.location);
+  const userRefreshInFlight = useSyncExternalStore(subscribeTranscriptAuthorityRefresh, () => isTranscriptAuthorityRefreshInFlight(sessionId, directoryKey), () => false);
+  const backgroundResyncInFlight = useSyncExternalStore(subscribeTranscriptResync, () => isTranscriptResyncInFlight(sessionId, directoryKey), () => false);
+  const kind = resolveMobileTranscriptSyncHint({ sessionId, hasRenderableTranscript: transcriptState === 'renderable',
+    loadStatus: transcriptState === 'error' ? 'error' : transcriptState === 'ready' ? 'ready' : 'loading', userRefreshInFlight, backgroundResyncInFlight,
+    isConnected: status?.state === 'connected', connectionPhase: status?.state === 'connected' ? 'connected' : status?.state === 'connecting' ? 'connecting' : 'reconnecting' });
+  const visible = useSmoothedSyncHintActive(kind === 'syncing', JSON.stringify([directoryKey, sessionId]));
   return visible ? t('mobile.chat.syncingMessages') : null;
 }

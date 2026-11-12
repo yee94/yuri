@@ -18,12 +18,14 @@ import { eventMatchesShortcut, eventMatchesZoomShortcut, getEffectiveShortcutCom
 import { readEmbeddedThemeSearchParams } from '@/contexts/theme-embedded-bootstrap';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { getActiveChatInputSurface, isChatComposerMainTab } from '@/components/chat/activeChatInputSurface';
 import { createChatInputControllerWiring } from '@/components/chat/chatInputSurfaceWiring';
 import { getCycledPrimaryAgentName } from '@/components/chat/mobileControlsUtils';
 import { navigateAdjacentSession } from '@/sync/session-navigation';
 import { resetWebviewZoom, zoomWebviewIn, zoomWebviewOut } from '@/lib/webviewZoom';
 import { resolveEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { locationKey } from '@/lib/remote-projects/location';
 import { opencodeClient } from '@/lib/opencode/client';
 import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
@@ -62,7 +64,7 @@ const handleCloseContextPanelTabOrWindow = (): boolean => {
     return false;
   }
 
-  const directory = resolveEffectiveDirectory();
+  const directory = resolveShortcutLocationKey();
   if (directory && closeActiveContextPanelTab(directory)) {
     return true;
   }
@@ -92,6 +94,14 @@ type LeaderCompactDependencies = {
     directory?: string | null,
   ) => Promise<unknown>;
   onCompactFailed: (error?: unknown) => void;
+};
+
+const resolveShortcutLocationKey = (): string | undefined => {
+  const directory = resolveEffectiveDirectory();
+  const project = useProjectsStore.getState().getActiveProject();
+  if (!project?.hostId) return directory;
+  if (!project.hubId || !directory) return undefined;
+  return locationKey({ hubId: project.hubId, hostId: project.hostId, directory });
 };
 
 export const canAbortActiveComposerShortcut = ({
@@ -228,6 +238,22 @@ export const useKeyboardShortcuts = () => {
   React.useEffect(() => {
     const combo = (actionId: string) => getEffectiveShortcutCombo(actionId, shortcutOverrides);
     const combos = (actionId: string) => getEffectiveShortcutCombos(actionId, shortcutOverrides);
+    const openRemoteDraft = (): boolean => {
+      const project = useProjectsStore.getState().getActiveProject();
+      if (!project?.hostId) return false;
+      setActiveMainTab('chat');
+      setSessionSwitcherOpen(false);
+      if (!project.hubId) {
+        toast.error(t('remoteProjects.host-unavailable'));
+        return true;
+      }
+      const selected = useSessionNavigationStore.getState().remoteSession;
+      const location = selected?.projectId === project.id && selected.location.hubId === project.hubId
+        && selected.location.hostId === project.hostId ? selected.location
+        : { hubId: project.hubId, hostId: project.hostId, directory: project.path };
+      useSessionNavigationStore.getState().openRemoteSession(project, location, null);
+      return true;
+    };
     const isTerminalEventTarget = (target: EventTarget | null) => {
       if (!(target instanceof Element)) {
         return false;
@@ -419,6 +445,7 @@ export const useKeyboardShortcuts = () => {
           e.stopImmediatePropagation();
           consumeLeaderTextInput();
           clearLeaderKey();
+          if (openRemoteDraft()) return;
           const surface = getActiveChatInputSurface();
           const wiring = surface ? createChatInputControllerWiring(surface) : null;
           if (wiring) {
@@ -497,7 +524,7 @@ export const useKeyboardShortcuts = () => {
 
       // VS Code-style terminal tab ops only apply outside the VS Code host runtime.
       if (!isVSCodeRuntime() && eventMatchesShortcut(e, combo('new_terminal_tab'))) {
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (!directory || !createAndActivateTerminalTab(directory)) {
           return;
         }
@@ -508,7 +535,7 @@ export const useKeyboardShortcuts = () => {
       }
 
       if (!isVSCodeRuntime() && eventMatchesShortcut(e, combo('previous_terminal_tab'))) {
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (!directory || !switchTerminalTab(directory, -1)) {
           return;
         }
@@ -519,7 +546,7 @@ export const useKeyboardShortcuts = () => {
       }
 
       if (!isVSCodeRuntime() && eventMatchesShortcut(e, combo('next_terminal_tab'))) {
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (!directory || !switchTerminalTab(directory, 1)) {
           return;
         }
@@ -530,7 +557,7 @@ export const useKeyboardShortcuts = () => {
       }
 
       if (eventMatchesShortcut(e, combo('close_context_panel_tab'))) {
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (!directory) {
           return;
         }
@@ -748,6 +775,12 @@ export const useKeyboardShortcuts = () => {
 
       if (canUseElectronDesktopIPC() && eventMatchesShortcut(e, combo('new_mini_chat'))) {
         e.preventDefault();
+        if (useProjectsStore.getState().getActiveProject()?.hostId) {
+          toast.error(t('miniChat.unavailable.title'), {
+            description: t('remoteProjects.miniChatUnsupportedReason'),
+          });
+          return;
+        }
         void invokeDesktop('desktop_open_draft_mini_chat_window', {
           directory: currentDirectory || activeProject?.path || '',
           projectId: activeProject?.id ?? null,
@@ -771,7 +804,7 @@ export const useKeyboardShortcuts = () => {
           return;
         }
 
-        openNewSessionDraft();
+        if (!openRemoteDraft()) openNewSessionDraft();
         return;
       }
 
@@ -907,7 +940,7 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (directory) toggleContextPanel(directory);
         return;
       }
@@ -918,7 +951,7 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab('git');
@@ -931,7 +964,7 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab('files');
@@ -952,7 +985,7 @@ export const useKeyboardShortcuts = () => {
         const nextTab = tabs[(currentIndex + 1) % tabs.length];
 
         e.preventDefault();
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (directory) useUIStore.getState().openContextPanel(directory);
         setRightSidebarOpen(true);
         setRightSidebarTab(nextTab);
@@ -1011,7 +1044,7 @@ export const useKeyboardShortcuts = () => {
         if (isMobile || isVSCodeRuntime()) {
           return;
         }
-        const directory = resolveEffectiveDirectory();
+        const directory = resolveShortcutLocationKey();
         if (!directory || !openAndCreateTerminalTab(directory)) {
           return;
         }

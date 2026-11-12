@@ -9,6 +9,10 @@ const componentSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'DirectoryExplorerDialog.tsx'),
   'utf8',
 );
+const surfaceSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'DirectoryExplorerViews.tsx'),
+  'utf8',
+);
 
 describe('DirectoryExplorerDialog mobile layout', () => {
   test('uses device detection when forceMobile is undefined', () => {
@@ -26,9 +30,11 @@ describe('DirectoryExplorerDialog mobile layout', () => {
   // attribute stays true through the post-dismiss reconcile frame and makes
   // the sheet flash back up after a gesture dismiss.
   test('mobile sheet stays controlled through the real open prop', () => {
-    expect(componentSource).toContain('<MobileResizableSheet');
+    expect(componentSource).toContain('<DirectoryExplorerSurface');
     expect(componentSource).toContain('open={open}');
-    expect(componentSource).not.toMatch(/<MobileResizableSheet[^>]*\bopen\s*\n/);
+    expect(surfaceSource).toContain('<MobileResizableSheet');
+    expect(surfaceSource).toContain('open={open}');
+    expect(surfaceSource).not.toMatch(/<MobileResizableSheet[^>]*\bopen\s*\n/);
   });
 
   test('keeps the show-hidden action in the mobile sheet header', () => {
@@ -40,7 +46,7 @@ describe('DirectoryExplorerDialog mobile layout', () => {
 
 describe('DirectoryExplorerDialog surface', () => {
   test('shares the search glass surface without nesting a directory card', () => {
-    expect(componentSource).toContain('presentation="picker"');
+    expect(surfaceSource).toContain('presentation="picker"');
     expect(componentSource).toContain('outerClassName="yuri-directory-results overflow-clip"');
     expect(componentSource).not.toContain('shadow-sm');
     expect(componentSource).not.toContain('DialogDescription');

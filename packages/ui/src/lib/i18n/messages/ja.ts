@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
+import { remoteProjectMessages } from './remote-projects';
 import { settingsDict } from './ja.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...remoteProjectMessages.ja,
   'chat.find.label': '読み込み済みの会話を検索',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': '前の一致（Shift+Enter）',

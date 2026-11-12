@@ -170,6 +170,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
     return withStoreMutation(async () => {
       const store = await readStore();
       const normalizedDedupeKey = normalizeOptionalString(dedupeKey);
+      const previousIds = normalizedDedupeKey ? store.clients.map((entry) => entry.id) : [];
       const token = generateToken();
       const client = {
         id: generateId(),
@@ -204,6 +205,11 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       }
       store.clients.push(client);
       await writeStore(store);
+      for (const id of previousIds) if (!store.clients.some((entry) => entry.id === id)) {
+        for (const listener of revocationListeners) {
+          try { listener(id); } catch { /* Replacement credentials revoke old active resources independently. */ }
+        }
+      }
       return { client: publicClient(client), token };
     });
   };
@@ -222,6 +228,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
     });
   };
 
+  const revocationListeners = new Set();
   const revokeClient = async (id) => {
     if (typeof id !== 'string' || id.trim().length === 0) {
       return { revoked: false };
@@ -232,6 +239,9 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       if (!client) return { revoked: false };
       if (!client.revokedAt) client.revokedAt = nowIso();
       await writeStore(store);
+      for (const listener of revocationListeners) {
+        try { listener(id); } catch { /* Revocation must remain durable even if a consumer has already stopped. */ }
+      }
       return { revoked: true, client: publicClient(client) };
     });
   };
@@ -278,6 +288,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
   };
 
   return {
+    subscribeRevocation(listener) { revocationListeners.add(listener); return () => revocationListeners.delete(listener); },
     authenticateBearerToken,
     createClient,
     listClients,

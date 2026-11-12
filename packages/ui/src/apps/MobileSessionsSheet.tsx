@@ -64,6 +64,8 @@ import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavig
 
 import { MobileProjectEditSurface } from './MobileProjectEditSurface';
 import { MobileDeleteWorktreeDialog } from './MobileDeleteWorktreeDialog';
+import { useRemoteProjectRuntime } from '@/queries/remoteProjectQueries';
+import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
 import {
   getMobileSessionDefaultVisibleCount,
   getMobileSessionShowMoreIncrement,
@@ -511,7 +513,11 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const liveSessions = useAllLiveSessions();
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const activePaginationByDirectory = useGlobalSessionsStore((state) => state.activePaginationByDirectory);
-  const projects = useProjectsStore((state) => state.projects);
+  const allProjects = useProjectsStore((state) => state.projects);
+  const projects = React.useMemo(() => allProjects.filter((project) => !project.hostId), [allProjects]);
+  const hasRemoteProjects = allProjects.some((project) => Boolean(project.hostId));
+  const remoteRuntime = useRemoteProjectRuntime(open && hasRemoteProjects);
+  const remoteProjects = remoteRuntime.catalog?.projects ?? [];
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
@@ -1507,7 +1513,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         </div>
 
         <ScrollShadow className="overlay-scrollbar-container min-h-0 flex-1 overflow-y-auto pb-4">
-          {projectsMeta.length === 0 ? (
+          {hasRemoteProjects && remoteRuntime.registry && remoteProjects.map((project) => <RemoteProjectSection
+            key={project.id} project={project} registry={remoteRuntime.registry!} search={query} mobile reorderEnabled={false}
+          />)}
+          {projectsMeta.length === 0 && !hasRemoteProjects ? (
             <MobileSessionsEmpty
               title={t('mobile.sessions.empty.noProjectsTitle')}
               description={t('mobile.sessions.empty.noProjectsDescription')}
@@ -1522,7 +1531,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                 </Button>
               }
             />
-          ) : hasNoMatches ? (
+          ) : hasNoMatches && !hasRemoteProjects ? (
             <MobileSessionsEmpty
               title={t('mobile.sessions.empty.searchTitle')}
               description={t('mobile.sessions.empty.searchDescription')}

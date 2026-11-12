@@ -17,6 +17,10 @@ import {
   resolveSessionForRoute,
 } from '@/router/sessionLookup';
 import { notifySessionOpenFailed } from '@/sync/openSessionWithFeedback';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { applyRemoteProjectRoute } from '@/lib/remote-projects/navigation';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 
 const SESSION_ROUTE_TIMEOUT_MS = 30_000;
 
@@ -168,6 +172,19 @@ export function useRouter(): void {
           return;
         }
 
+        if (route.hostId) {
+          try {
+            const applied = await applyRemoteProjectRoute(route, () => isSameRouteState(parseRoute(), route));
+            if (applied === false) return;
+            setActiveMainTab(route.tab ?? 'chat');
+            if (route.diffFile && route.tab === 'diff') navigateToDiff(route.diffFile);
+          } catch {
+            if (route.sessionId) notifySessionOpenFailed(route.sessionId, 'missing-directory');
+          }
+          return;
+        }
+        useSessionNavigationStore.getState().clearRemoteSession();
+
         // 2b. New-session draft surface (`/session/new`)
         if (route.isNewSession) {
           setActiveMainTab('chat');
@@ -192,6 +209,11 @@ export function useRouter(): void {
 
           const currentSession = useSessionUIStore.getState();
           if (directoryHint) {
+            const directory = normalizeDirectoryKey(directoryHint);
+            const localProject = useProjectsStore.getState().projects.filter((project) => !project.hostId && (
+              directory === normalizeDirectoryKey(project.path) || directory.startsWith(`${normalizeDirectoryKey(project.path)}/`)
+            )).sort((a, b) => b.path.length - a.path.length)[0];
+            if (localProject) useProjectsStore.getState().setActiveProjectIdOnly(localProject.id);
             if (
               sessionId !== currentSession.currentSessionId
               || directoryHint !== currentSession.currentSessionDirectory
@@ -231,8 +253,9 @@ export function useRouter(): void {
     const tab = uiState.activeMainTab;
     // Retained chat drafts must not override the active exclusive primary.
     const isExclusive = tab === 'schedule' || tab === 'assistant' || tab === 'plugin';
-    const isNewSession = !isExclusive && Boolean(sessionState.newSessionDraft?.open)
-      && !sessionState.currentSessionId;
+    const remote = !isExclusive ? useSessionNavigationStore.getState().remoteSession : null;
+    const isNewSession = !isExclusive && (remote ? !remote.sessionId : Boolean(sessionState.newSessionDraft?.open)
+      && !sessionState.currentSessionId);
     const assistantId = isExclusive && tab === 'assistant' ? getSelectedAssistantID() : null;
 
     return {
@@ -243,10 +266,11 @@ export function useRouter(): void {
       // resetAppForRuntimeEndpointChange so this fallback cannot re-pin a
       // previous-runtime conversation.
       isNewSession,
+      ...(remote ? { hostId: remote.location.hostId, hubId: remote.location.hubId, directory: remote.location.directory, projectId: remote.projectId } : {}),
       guiPageKey: tab === 'plugin' ? uiState.activeGuiPage : null,
       sessionId: isExclusive || isNewSession
         ? null
-        : (sessionState.currentSessionId ?? pathState.sessionId),
+        : (remote?.sessionId ?? sessionState.currentSessionId ?? (pathState.hostId ? null : pathState.sessionId)),
       tab: isNewSession
         ? 'chat'
         : isExclusive
@@ -315,6 +339,7 @@ export function useRouter(): void {
         // New-session path must not reintroduce a previous session id.
         updateBrowserURL({
           ...getCurrentAppState(),
+          ...(route.hostId ? { hostId: route.hostId, hubId: route.hubId, directory: route.directory, projectId: route.projectId } : {}),
           isNewSession: route.isNewSession || getCurrentAppState().isNewSession,
           sessionId: route.isNewSession
             ? null
@@ -337,7 +362,7 @@ export function useRouter(): void {
   // Never wipe the URL into a new-session welcome when lookup fails.
   // Skip entirely while on `/session/new` draft or exclusive primaries.
   React.useEffect(() => {
-    if (!route.sessionId || route.isNewSession) {
+    if (!route.sessionId || route.isNewSession || route.hostId) {
       return;
     }
 
@@ -405,13 +430,14 @@ export function useRouter(): void {
     failDeepLinkSession,
     hasLoadedGlobalSessions,
     route.isNewSession,
+    route.hostId,
     route.sessionId,
     setCurrentSession,
   ]);
 
   React.useEffect(() => {
     const isResolved = currentSessionId === route.sessionId && Boolean(currentSessionDirectory);
-    if (!route.sessionId || route.isNewSession || isVSCode || isResolved) {
+    if (!route.sessionId || route.isNewSession || route.hostId || isVSCode || isResolved) {
       return;
     }
 
@@ -426,7 +452,14 @@ export function useRouter(): void {
     }, SESSION_ROUTE_TIMEOUT_MS);
 
     return () => clearTimeout(timeout);
-  }, [currentSessionDirectory, currentSessionId, failDeepLinkSession, isVSCode, route.sessionId]);
+  }, [currentSessionDirectory, currentSessionId, failDeepLinkSession, isVSCode, route.sessionId, route.isNewSession, route.hostId]);
+
+  React.useEffect(() => {
+    if (isVSCode || isEmbeddedChat) return;
+    return useSessionNavigationStore.subscribe((state, previous) => {
+      if (state.remoteSession !== previous.remoteSession && !isApplyingRouteRef.current) syncURLFromState();
+    });
+  }, [isVSCode, isEmbeddedChat, syncURLFromState]);
 
   // Subscribe to session + new-session draft changes (URL authority)
   React.useEffect(() => {

@@ -13,7 +13,8 @@ test('home and chat overflow converge on one shell-owned remote desktop panel', 
   expect(source.match(/<RemoteDesktopPanel\b/g)).toHaveLength(1);
   expect(source).toMatch(/const openRemoteDesktop = useEvent\(\(\) => \{\s*setOverflowOpen\(false\);\s*setRemoteDesktopOpen\(true\);/);
   expect(source).not.toContain('requestDesktopOrientationPermission');
-  expect(source).toMatch(/key: 'remote-desktop',\s*icon: 'computer',\s*label: t\('remoteDesktop.title'\),\s*onSelect: openRemoteDesktop,/);
+  expect(source).toMatch(/key: 'remote-desktop',\s*icon: 'computer',\s*label: t\('remoteDesktop.title'\),\s*onSelect: openProjectRemoteDesktop,/);
+  expect(source).toContain("toast.info(t('remoteProjects.nativeCapabilityUnavailable', { capability: t('remoteDesktop.title') }))");
   expect(source).toContain('onRemoteDesktop={openRemoteDesktop}');
   expect(source).toContain('onClose={closeRemoteDesktop}');
   expect(source).toContain('instanceName={connection.connections.find(isActiveRuntimeConnection)?.label}');

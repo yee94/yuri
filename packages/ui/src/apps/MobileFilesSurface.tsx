@@ -1,6 +1,6 @@
 import React from 'react';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
-import { MobileHtmlNetworkBoundary } from '@/components/preview/MobileHtmlNetworkBoundary';
+import { ProjectFilePreview } from '@/components/preview/ProjectFilePreview';
 import { GuiFileLinkBridge } from '@/components/gui-plugins/GuiFileLinkBridge';
 import { LoadingImage } from '@/components/ui/LoadingImage';
 import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder';
@@ -22,8 +22,8 @@ import { TextSelectionMenu } from '@/components/chat/message/TextSelectionMenu';
 import { PIERRE_RUNTIME_BASE_CSS } from '@/components/views/PierreDiffViewer';
 import { BinaryFileFallback } from '@/components/views/BinaryFileFallback';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -32,14 +32,9 @@ import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import { getImageMimeType, getLanguageFromExtension, isHtmlFile, isImageFile } from '@/lib/toolHelpers';
 import type { FileSearchResult } from '@/lib/api/types';
-import { acquireRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
-import { directFileResource, readRuntimeFile } from '@/lib/runtime-file-resource';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
-import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { useFileContentQuery, useFileDirectoryQuery, useFileSearchQuery, useFileStatWatcher } from '@/queries/fileQueries';
 import { cn } from '@/lib/utils';
 import { useMobileBackRoute } from '@/mobile/mobileBackNavigation';
-import { attachIframeSheetOverscroll } from '@/components/ui/iframeSheetOverscroll';
 import { useUIStore } from '@/stores/useUIStore';
 
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('@/components/chat/message/ToolOutputDialog'));
@@ -90,14 +85,6 @@ const formatFileSize = (size?: number): string => {
 
 const isMarkdownFile = (path: string): boolean => /\.(md|mdx|markdown)$/i.test(path);
 
-const toFsServeRoutePath = (filePath: string): string => {
-  const encoded = filePath.split('/').map((segment) => encodeURIComponent(segment)).join('/');
-  return `/api/fs/serve${encoded.startsWith('/') ? encoded : `/${encoded}`}`;
-};
-
-const buildFsServeAssetUrl = (filePath: string): string => {
-  return directFileResource(toFsServeRoutePath(filePath)).url;
-};
 type MobileFilesSurfaceProps = {
   /** When provided, header gets a close X that calls this; used when the surface is hosted in MobileResizableSheet / iPad right panel. */
   onClose?: () => void;
@@ -760,104 +747,13 @@ const MobileFileDetail: React.FC<{
   );
 };
 
-const MobileHtmlPreview: React.FC<{ path: string }> = ({ path }) => (
-  <MobileHtmlNetworkBoundary>{() => <MobileHtmlDocument path={path} />}</MobileHtmlNetworkBoundary>
-);
-
-const MobileHtmlDocument: React.FC<{ path: string }> = ({ path }) => {
-  const { t } = useI18n();
-  const relay = isRelayModeActive();
-  const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
-  const [readyKey, setReadyKey] = React.useState('');
-  const [nonce, setNonce] = React.useState(0);
-  const [error, setError] = React.useState<string | null>(null);
-  const [relaySrcDoc, setRelaySrcDoc] = React.useState('');
-
-  React.useEffect(() => {
-    let cancelled = false;
-    setReadyKey('');
-    setError(null);
-    setRelaySrcDoc('');
-
-    // Iframe `src` is browser navigation and cannot cross the relay tunnel.
-    // Fetch the document through runtimeFetch and inline it, same as VS Code.
-    if (relay) {
-      void readRuntimeFile({ path })
-        .then(async (response) => {
-          if (!response.ok) {
-            throw new Error(t('filesView.error.readFileFailed'));
-          }
-          return response.text();
-        })
-        .then((html) => {
-          if (cancelled) return;
-          setRelaySrcDoc(html);
-          setReadyKey(path);
-        })
-        .catch((fetchError: unknown) => {
-          if (cancelled) return;
-          setError(fetchError instanceof Error ? fetchError.message : t('filesView.error.readFileFailed'));
-          setReadyKey(path);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const apiBaseUrl = getRuntimeApiBaseUrl();
-    const release = acquireRuntimeUrlAuthToken(apiBaseUrl);
-    void refreshRuntimeUrlAuthToken(apiBaseUrl)
-      .then((token) => {
-        if (cancelled || !token) return;
-        setReadyKey(path);
-        setError(null);
-      })
-      .catch((authError: unknown) => {
-        if (cancelled) return;
-        setError(authError instanceof Error ? authError.message : t('filesView.error.readFileFailed'));
-        setReadyKey(path);
-      });
-    const unsubscribe = subscribeRuntimeUrlAuthToken(() => {
-      if (cancelled) return;
-      setReadyKey(path);
-      setNonce((value) => value + 1);
-      setError(null);
-    });
-    return () => {
-      cancelled = true;
-      release();
-      unsubscribe();
-    };
-  }, [path, relay, t]);
-
-  React.useEffect(() => {
-    if (readyKey !== path) return;
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    return attachIframeSheetOverscroll(iframe);
-  }, [nonce, path, readyKey, relaySrcDoc]);
-
-  if (error) {
-    return <FilePreviewError message={error} />;
-  }
-  if (readyKey !== path) {
-    return <MobileFilesState loading message={t('filesView.state.loading')} />;
-  }
-
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <iframe
-        ref={iframeRef}
-        key={nonce}
-        src={relay ? undefined : buildFsServeAssetUrl(path)}
-        srcDoc={relay ? relaySrcDoc : undefined}
-        className="h-full min-h-0 w-full flex-1 border-none bg-background"
-        style={{ backgroundColor: 'var(--surface-background)' }}
-        sandbox="allow-scripts allow-same-origin allow-forms"
-        title={t('filesView.editor.htmlPreviewTitle')}
-      />
-    </div>
-  );
+const MobileHtmlPreview: React.FC<{ path: string }> = ({ path }) => {
+  const { projectScope } = useRuntimeAPIs();
+  const directory = useEffectiveDirectory();
+  return <ProjectFilePreview path={path} directory={projectScope?.location.directory ?? directory ?? ''} entry={projectScope}
+    className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+    iframeClassName="h-full min-h-0 w-full flex-1 border-none bg-background"
+    iframeStyle={{ backgroundColor: 'var(--surface-background)' }} />;
 };
 
 const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, content }) => {

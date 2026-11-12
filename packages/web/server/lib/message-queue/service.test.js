@@ -46,6 +46,17 @@ const createV1Fixture = (pathname, version = '1') => {
 };
 
 describe('message queue service', () => {
+  it('rejects remote location/session identities without retaining queue content', () => {
+    const service = createService(dbPath());
+    try {
+      for (const scope of [
+        { directory: 'yuri-remote-location:["hub","host","/repo"]', sessionID: 's' },
+        { directory: '/repo', sessionID: 'yuri-remote-session:["hub","host","s"]' },
+      ]) expect(() => service.admit({ ...admission(), scope })).toThrow(expect.objectContaining({ code: 'validation_error' }));
+      expect(service.snapshot().revision).toBe(0);
+    } finally { service.close(); }
+  });
+
   it('persists message attempts and replays identical receipts after restart', () => {
     const pathname = dbPath();
     const first = createService(pathname);

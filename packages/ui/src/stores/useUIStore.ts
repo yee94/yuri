@@ -19,6 +19,7 @@ import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
 import { isCapacitorApp } from '@/lib/platform';
 import { useMobileHtmlPreviewStore } from '@/mobile/useMobileHtmlPreviewStore';
+import { normalizeLocationStateKey, parseLocationKey } from '@/lib/remote-projects/location';
 
 /** Main column tab. Product exclusive primaries: chat(session) | schedule | assistant. */
 export type MainTab = 'chat' | 'git' | 'diff' | 'terminal' | 'files' | 'diagram' | 'schedule' | 'assistant' | 'plugin';
@@ -208,6 +209,7 @@ const runtimeMemoryKey = (value?: string | null): string => {
 };
 
 export const normalizeContextPanelDirectoryKey = (value: string): string => {
+  if (value.startsWith('yuri-remote-location:')) return normalizeLocationStateKey(value);
   if (!value) return '';
 
   const raw = value.replace(/\\/g, '/');
@@ -605,7 +607,8 @@ const sanitizeContextPanelByDirectory = (
   const next: Record<string, ContextPanelDirectoryState> = {};
 
   for (const [rawDirectory, rawState] of Object.entries(source)) {
-    const directory = normalizeContextPanelDirectoryKey(rawDirectory);
+    let directory: string;
+    try { directory = normalizeContextPanelDirectoryKey(rawDirectory); } catch { continue; }
     if (!directory || !rawState || typeof rawState !== 'object') {
       continue;
     }
@@ -1617,7 +1620,7 @@ export const useUIStore = create<UIStore>()(
 
         openContextPreview: (directory, url) => {
           if (isCapacitorApp()) {
-            useMobileHtmlPreviewStore.getState().open(url);
+            useMobileHtmlPreviewStore.getState().open(url, directory.startsWith('yuri-remote-location:') ? parseLocationKey(directory, 'local') : undefined);
             return;
           }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
@@ -1645,7 +1648,7 @@ export const useUIStore = create<UIStore>()(
         },
         openContextBrowser: (directory, url = '') => {
           if (isCapacitorApp()) {
-            useMobileHtmlPreviewStore.getState().open(url);
+            useMobileHtmlPreviewStore.getState().open(url, directory.startsWith('yuri-remote-location:') ? parseLocationKey(directory, 'local') : undefined);
             return;
           }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());

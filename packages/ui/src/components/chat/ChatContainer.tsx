@@ -12,6 +12,9 @@ import type { PermissionRequest } from '@/types/permission';
 import type { QuestionRequest } from '@/types/question';
 
 import { ChatInput } from './ChatInput';
+import { RemoteChatContainer } from './RemoteChatContainer';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import type { HostLocation } from '@/lib/remote-projects/location';
 import type { ChatInputSurface } from './chatInputSurface';
 import {
     resolveChatContainerHostFeatures,
@@ -315,7 +318,7 @@ type ChatViewportProps = {
     transcriptStatusRow?: React.ReactNode;
 };
 
-const ChatViewport = React.memo(({
+export const ChatViewport = React.memo(({
     currentSessionId,
     virtualizerKey,
     isDesktopExpandedInput,
@@ -716,6 +719,7 @@ type ChatContainerProps = {
     host?: ChatContainerHost;
     /** Binds one phone navigation page to an explicit route and skips the primary retained-view cache. */
     explicitSession?: {
+        location?: HostLocation;
         sessionId: string | null;
         directory: string | null;
         viewKey: string;
@@ -1574,6 +1578,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
             : (
                 <ChatInput
                     key="composer-input"
+                    foregroundActive={active}
                     surface={composerSurface}
                     scrollToBottom={scrollViewportOnSend}
                     submissionBlocked={promptAvailability.blockSubmission}
@@ -2591,6 +2596,7 @@ const ExplicitChatContainer: React.FC<Omit<ChatContainerProps, 'host'> & {
 };
 
 export const ChatContainer: React.FC<ChatContainerProps> = (props) => {
+    const remoteSession = useSessionNavigationStore((store) => store.remoteSession);
     const runtimeKey = React.useSyncExternalStore(
         subscribeRuntimeKey,
         getRuntimeKey,
@@ -2599,6 +2605,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = (props) => {
 
     if (props.host) {
         return <HostedChatContainer key={`${runtimeKey}:${props.host.sessionSurface.surfaceId}`} {...props} host={props.host} runtimeKey={runtimeKey} />;
+    }
+
+    const remoteLocation = props.explicitSession?.location ?? (!props.explicitSession?.sessionId ? remoteSession?.location : undefined);
+    if (remoteLocation?.hostId) {
+        const sessionId = props.explicitSession?.location ? props.explicitSession.sessionId : remoteSession?.sessionId ?? null;
+        return <RemoteChatContainer key={`${runtimeKey}:${remoteLocation.hubId}:${remoteLocation.hostId}:${remoteLocation.directory}`}
+            location={remoteLocation} sessionId={sessionId} active={props.explicitSession?.active ?? props.active} readOnly={props.readOnly} composerPresentation="primary" viewport={ChatViewport} />;
     }
 
     if (props.explicitSession) {

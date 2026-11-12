@@ -27,3 +27,9 @@ database, settings file, HTTP mutation surface or client sync protocol is added.
 writes, persistence, offline-project retention, corrupt
 reads and failed-write preservation. Assistant HTTP integration is covered in
 `../assistants/yuri-project.http.test.js`.
+
+The Remote Host Gateway mounts authenticated `POST /api/projects` and `PATCH
+/api/projects/:id` local-authority operations using the same registry/settings
+lock. `GET /api/projects` excludes remote references. Remote-first registration,
+metadata write-through and Hub-only reference removal belong to
+`../remote-hosts/`, not this local filesystem registry.

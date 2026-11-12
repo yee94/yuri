@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { emptyNativeComposerAutocomplete, getNativeIosComposerPlugin, NATIVE_IOS_COMPOSER_CLASS } from './native-ios-composer';
-import { createNativeIosComposerSession } from './native-ios-composer-session';
+import { createNativeIosComposerSession, type NativeIosComposerSessionHandlers } from './native-ios-composer-session';
 import type { NativeIosComposerPlugin, NativeIosComposerState } from './native-ios-composer';
 
 const state = (overrides: Partial<NativeIosComposerState> = {}): NativeIosComposerState => ({
@@ -55,6 +55,60 @@ const createPlugin = () => {
   };
   return { plugin, listeners };
 };
+
+const ownerHandlers = (): NativeIosComposerSessionHandlers => ({
+  onText: vi.fn(), onSend: vi.fn(), onAbort: vi.fn(), onAttach: vi.fn(), onFiles: vi.fn(),
+  onRemoveAttachment: vi.fn(), onOpenModel: vi.fn(), onCycleAgent: vi.fn(), onOpenAgent: vi.fn(),
+  onHeight: vi.fn(), onScrollToBottom: vi.fn(), onAutocompleteAccept: vi.fn(), onAutocompleteDismiss: vi.fn(),
+});
+
+test('foreground CAS fences old props, late listener callbacks, cleanup and absent-owner events', async () => {
+  const { plugin, listeners } = createPlugin();
+  const session = createNativeIosComposerSession(() => plugin);
+  const root = document.createElement('html');
+  const a = Symbol('hostA'); const b = Symbol('hostB');
+  const first = ownerHandlers(); const second = ownerHandlers();
+  await session.claim(a, root, state({ text: 'host A' }), first);
+  const lateText = listeners.get('textChanged')!;
+  const lateFiles = listeners.get('filesPicked')!;
+  await session.claim(b, root, state({ text: 'host B' }), second);
+  vi.mocked(plugin.update).mockClear(); vi.mocked(plugin.hide).mockClear();
+  lateText({ text: 'late A' }); lateFiles({});
+  session.updateOwner(a, { text: 'late props' }); session.releaseOwner(a, root);
+  expect(first.onText).not.toHaveBeenCalled(); expect(second.onText).not.toHaveBeenCalled();
+  expect(plugin.focus).not.toHaveBeenCalled(); expect(plugin.update).not.toHaveBeenCalled(); expect(plugin.hide).not.toHaveBeenCalled();
+  expect(root.classList.contains(NATIVE_IOS_COMPOSER_CLASS)).toBe(true);
+  listeners.get('textChanged')?.({ text: 'B edit' });
+  expect(second.onText).toHaveBeenCalledWith('B edit', false, null);
+  session.releaseOwner(b, root);
+  listeners.get('textChanged')?.({ text: 'after release' });
+  expect(second.onText).toHaveBeenCalledOnce();
+  expect(root.classList.contains(NATIVE_IOS_COMPOSER_CLASS)).toBe(false);
+  session.shutdown(root);
+});
+
+test('late listener installation cannot present the departed owner or dismiss its successor', async () => {
+  const { plugin } = createPlugin();
+  let resolveListeners!: () => void;
+  const pending = new Promise<void>((resolve) => { resolveListeners = resolve; });
+  const add = plugin.addListener;
+  let calls = 0;
+  plugin.addListener = vi.fn(async (...args: Parameters<typeof add>) => {
+    if (++calls <= 13) await pending;
+    return add(...args);
+  });
+  const session = createNativeIosComposerSession(() => plugin);
+  const root = document.createElement('html');
+  const a = Symbol('A'); const b = Symbol('B');
+  const first = session.claim(a, root, state({ text: 'departed' }), ownerHandlers());
+  session.releaseOwner(a, root);
+  await session.claim(b, root, state({ text: 'foreground' }), ownerHandlers());
+  resolveListeners(); await first;
+  expect(plugin.present).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: 'foreground' }));
+  session.releaseOwner(a, root);
+  expect(session.owns(b)).toBe(true);
+  session.shutdown(root);
+});
 
 describe('native iOS composer session', () => {
   beforeEach(() => {

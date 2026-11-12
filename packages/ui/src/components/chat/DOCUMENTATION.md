@@ -1,5 +1,83 @@
 # Chat components
 
+## Remote Project primary chat
+
+`ChatContainer` consumes `useSessionNavigationStore.remoteSession` before mounting
+the local retained-view controller. Explicit mobile pages carry `explicitSession.location`;
+a remote raw session ID alone is not a local session selection. `RemoteChatContainer`
+resolves that Location's registry entry and mounts `HostRuntimeProvider` plus a shared
+`RemoteChatContext`. Primary chat passes the existing `ChatViewport` (message list,
+prompt rail, request cards and scrolling), and uses the existing `ChatInput`, timeline
+controller, search and timeline dialog. Context-panel callers may supply their own
+navigation callback without changing the main selection.
+
+`ChatContainer` explicitly supplies `composerPresentation="primary"` to its remote
+branch. Direct `RemoteChatContainer` consumers default to `panel`; active panel
+and inactive/read-only/background views cannot claim native input. This role is
+separate from `ChatInputSurface.kind`: remote remains `secondary` for its explicit
+Host backend, catalog, draft store, attachment resources and raw directory. Changing
+the presentation must never redirect it to the Hub's primary singleton resources.
+Local `ChatContainer` also passes its foreground `active` signal to `ChatInput`,
+so a retained inactive local page cannot reclaim the process overlay.
+
+The native bridge is keyed by the complete DraftKey, not raw session/directory.
+It claims the process session only in layout commit, with an instance token.
+Native listeners, async props, delayed Web send and leave-conceal callbacks are
+fenced by that token. Departing-owner cleanup cannot hide or dismiss a successor.
+Foreground release clears handlers and hides immediately; the installed glass
+view keeps its existing delayed teardown/remount continuity. See the composer
+module's foreground ownership contract for test and platform boundaries.
+
+One registry entry owns one remote state/repository; concurrent primary/panel views
+share it and reference-count content demand. Host reconnection replaces the fenced
+entry; late operations cannot commit into its successor. Remote draft keys contain
+Hub/Host/directory identity, while all upstream session IDs and directories remain raw.
+New-session admission moves the local draft to the created remote session before
+navigation; a failed first prompt remains recoverable on that session.
+
+Remote editor dispatch exits before primary local commands, question recovery and
+Hub queue staging. Ordinary sends and native queue/steer use the remote state;
+command, shell, attachment upload, permission/form replies, fork, revert/redo and
+permission policy use the same entry. Inbox edit restores the complete payload by
+DraftKey CAS before cancelling the remote item. Remote bodies never use Hub queue
+or transcript-cache endpoints. The remote image Hook supplies its entry to the
+shared file-resource owner; local image behavior is unchanged. Legacy Markdown
+images and Markdown/Markstream file links also carry the entry. File probes cache
+by entry query scope, while file/diff/preview UI actions use its Location key;
+physical paths remain raw. Remote file gestures never open local OS/editor APIs
+or mint desktop-local outside-file grants.
+
+Remote submission captures inline comments and synthetic context with their
+attachments, consumes only captured resources after success, and retains them on
+failure. New-draft delivery uses a null session ID, not the editor's placeholder.
+Read-only checks guard mutation handlers as well as the visible controls.
+Model/Agent catalogs load on explicit picker demand, not on typing or opening a
+session. A cold send without a captured choice ensures the provider catalog at
+that action and resolves its validated `default` mapping, never the first model.
+Real picker choices override defaults and transfer to the created session before
+navigation so a failed first model switch retries the same choice and session.
+Direct sends apply selection before prompt; native queued inputs still inherit
+selection at consumption. The native inbox reuses shared queue rows and preserves
+attachment previews; requeue requires an actual callback and no conflicting flight.
+`useRemoteSessionViewed` reads Host unread revisions before acknowledgement;
+manual reminders added while viewing survive until explicit reopen/refocus.
+Notifications with Host identity resolve through the current Hub catalog and
+never fall back to local bare-ID lookup.
+
+Focused tests exercise the mounted remote pane's repository/editor backend boundary
+and remote state authority; they do not establish live Electron/iOS/Relay acceptance
+or the production-build input/scroll timing budgets.
+The composer wire regression additionally mounts the real editor with generated
+SDK/scoped service and HTTP-only response replay (catalog default, picker, create,
+model-switch failure/retry and prompt ordering). Replay is not live-device proof.
+
+`message/TextSelectionMenu` dismisses on session-switch intent, but does not call
+document Selection `removeAllRanges()` when a chat textarea is focused. Chromium
+otherwise temporarily reports that textarea's range as 0–0, which can be captured
+by a second composer remount after returning from remote. Transcript selection
+cleanup remains unchanged outside a focused composer. See the composer module's
+web-selection continuity contract and `RemoteChatContainer.composer.test.tsx`.
+
 ## Android native IME viewport experiment
 
 The A experiment APK translates the native WebView while a local header snapshot
@@ -830,7 +908,7 @@ controller boundary test verifies one request through the hold, current-user
 anchor recapture and post-adoption cleanup; `desktop-short` exercises real
 normal-flow → virtualized geometry.
 
-The left-side prompt navigation rail is enabled by default; saved enable/disable preferences remain authoritative. It appears for supported desktop chat surfaces with at least two turns, without automatically opening the hover/keyboard preview. Mobile and VS Code retain their existing exclusion.
+The left-side prompt navigation rail is enabled by default; saved enable/disable preferences remain authoritative. It appears for supported desktop chat surfaces with at least two turns, without automatically opening the hover/keyboard preview. Mobile and VS Code retain their existing exclusion. Remote chat also excludes mobile before passing the preference to the shared viewport; enabling the desktop preference must not mount a rail in a phone conversation.
 
 Shared `MessageReferenceChip` text and icon slots inherit the surrounding font size and line height. Image/attachment references do not have their own chip height or line-height reset; the same rule applies in transcript messages, queued previews and navigator previews. The painted icon remains 1em and does not define the text line box.
 
@@ -1372,3 +1450,16 @@ On mobile, history availability is owned by QueryCache / TranscriptRepository pa
 ### Mobile chat header collapse
 
 The phone chat header (`MobileDetailNavigation collapsible`, found through `.mobile-chat-screen > [data-yuri-collapsible-header]`) owns no state. `useMobileComposerSwap` mirrors the single composer swap state onto it on every publish (`mobileHeaderCollapse.ts`: same progress, phase and rest; compact = collapsed), so header and composer cannot disagree. Readers move top to bottom, so toward-bottom travel ignores the collapse until the viewport is within `COMPOSER_SWAP_RETURN_ZONE_PX` of the live edge; inside it the return is progressive and lands expanded exactly at the edge. A release that was reading downward outside the zone never commits an expand. Away-from-bottom travel is unchanged. Motion is paint-only (`--yuri-mobile-header-collapse`); the transform exists only off the expanded rest so menus inside the header keep their containing block.
+# Explicit Remote Project composer boundary
+
+When mounted under `HostRuntimeProvider` with a remote Location, `ChatInput` adds
+the host indicator and feeds unsupported/offline/connecting/degraded states into
+its existing `submissionBlocked` admission gate. The composer body remains
+mounted so connectivity changes do not erase input. The outer remote boundary
+owns the one-host subscription; local text edits do not read host status or
+enumerate catalogs. Local composers retain their existing presentation. Compact
+uses the provider's scoped service rather than the singleton client.
+
+This boundary is not a substitute for location-scoped drafts, delivery, queues,
+catalogs and transcripts. The integrating view must supply the correct provider
+and scoped state; an unscoped global-store fallback is not a remote implementation.

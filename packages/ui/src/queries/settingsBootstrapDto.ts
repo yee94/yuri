@@ -1,5 +1,7 @@
 export type SettingsBootstrap = {
   schemaVersion: 1;
+  /** Read-only Hub discovery hint; delivered with the existing bootstrap request. */
+  hasRemoteProjects?: boolean;
   defaultModel?: string;
   defaultVariant?: string;
   defaultAgent?: string;
@@ -28,4 +30,4 @@ export type ResponseStylePreset =
   | 'warmPeer'
   | 'custom';
 
-export type SettingsBootstrapPatch = Omit<Partial<SettingsBootstrap>, 'schemaVersion'>;
+export type SettingsBootstrapPatch = Omit<Partial<SettingsBootstrap>, 'schemaVersion' | 'hasRemoteProjects'>;

@@ -1,5 +1,117 @@
 # Session Sidebar Documentation
 
+## Explicit Remote Project presentation
+
+`SidebarProjectsList` accepts an optional `hostRegistry`; project sections retain
+`hostId` and `remoteState`. `SortableProjectItem` mounts `RemoteHostIndicator` only
+for remote rows with that registry. The indicator subscribes to its own host,
+exposes machine/status/last-sync/error details through hover and accessibility,
+and does not discover hosts or enumerate project/session catalogs. The mobile
+`MobileProjectsHome` / `MobileProjectCard` boundary accepts the same registry and
+identity fields. `SessionSidebar` and `MobileProjectsHomeContainer` now consume
+the Hub catalog and preserve the Hub reference ID, host and raw path. Their
+local ownership/worktree projections exclude remote projects; `RemoteProjectSection`
+consumes the shared per-Host summaries Query instead of a Hub local child store.
+Desktop sections mix both kinds in Hub project order; mobile uses the same remote
+model with mobile presentation adapters and keeps instance switching intact. Remote host status stays on that
+host's leaf subscription, and token events do not invalidate structural lists.
+
+### Remote section module ownership
+
+- `RemoteProjectSection` composes the list, drag scope and editors. It does not
+  fetch summaries or implement remote writes in JSX callbacks.
+- `hooks/useRemoteProjectSectionData` owns summary/search/page Queries, ownership
+  projection, pin/manual ordering and refresh. It does not render either platform.
+- `hooks/useRemoteProjectSectionModel` owns selection/editor state and commands:
+  captured Host writes, per-Host serialization, confirmation, compensation and
+  navigation targets. Both presentations invoke these same commands.
+- `remoteProjectPresentation` defines the data/intent contract. Mobile does not
+  inherit `SortableProjectItem` props; desktop-only menu state stays in its adapter.
+- `RemoteProjectRows` owns shared scoped sortable bindings and desktop adapters.
+  `RemoteProjectMobileViews` adapts the same contract to `MobileProjectCard`,
+  `MobileSessionRow`, `MobileFloatingSurface` and `MobileLabeledSurfaceGroup`.
+  Nested folders retain their inset; collapsed projects have no empty group padding.
+  Desktop checkboxes/handles and inline new-folder actions do not render on mobile.
+- `RemoteProjectResources` keeps optional icon and expanded-child Query lifetimes
+  on their existing leaf observers, separate from summary/model lifetimes.
+
+Mobile project/session/folder menus provide action descriptors to the shared
+`MobileActionSheet` in `mobile/projects/MobileRowActionsSheet.tsx`. That renderer
+owns icons, haptics, grouping, dividers, disabled rows and the resizable sheet;
+local `MobileRowActionsSheet` is its existing local-menu adapter. Remote commands
+never use local session callbacks. Action sheets mount on demand, not per idle row.
+
+The model opens raw session IDs through `useSessionNavigationStore`.
+Title, archive, pin, unread, folder and order writes use the captured registry
+entry; failed writes leave the confirmed snapshot intact and display the error.
+Folder writes serialize per Host and read the full remote folder snapshot before
+changing a scope. Desktop sections reuse `SessionFolderItem`; both presentations recursively render
+the `parentId` tree (subfolders before their sessions, then ungrouped sessions).
+The same projection owns visible keyboard targets and drag order. Pinned sessions
+use `compareSessionsByPinnedAndTime` before manual order; a manual order cannot
+place an unpinned session ahead of a pinned one. Expanded children join the same
+keyboard target tree and use the same pin/time comparator.
+
+Folder headers accept scoped session/folder drops; folder-position gaps reorder
+siblings, header drops nest, and the root area unnests. Move menus remain available
+for non-drag interaction. Cycles and cross-directory drags are rejected. Multi-
+selected sessions move together within their directory. Cross-folder session
+drops confirm membership before writing order; if the latter fails, compensation
+restores the previous folder snapshot. Failed compensation refreshes authority and
+reports both failures rather than claiming rollback succeeded. Without optimistic
+tree changes, a failed folder/nesting write preserves the last confirmed tree.
+Deleting a folder removes its descendant folders, not their sessions.
+
+Host summaries' authoritative worktree topology supplies outside-root directory
+ownership. Explicit/most-specific project references still win; raw cwd stays
+unchanged when opening that worktree. User-driven older pages and child expansion use the Host SDK
+with bounded cursor pages and cancellation; title search also uses that SDK.
+Neither path writes remote messages or session IDs into Hub local stores.
+Project metadata waits for the remote confirmation, while close removes only the
+Hub reference. Only local projects enter `settings.projects`; remote ordering and
+collapse currently remain in the instance-scoped client cache, pending a Hub layout
+API (cross-client Hub layout persistence is not implemented). They never mutate
+remote metadata. Missing Hosts and removed projects retain their rows; Sync can recreate
+the registration for an explicitly retained `remote-removed` reference.
+
+`DirectoryExplorerDialog` discovers the Hub catalog only while open. Remote
+selection mounts `RemoteDirectoryExplorerDialog` instead of the local browser,
+using registry HTTP for raw filesystem paths and the Hub's dual-write project
+registration endpoint. A successful registration upserts the confirmed reference
+into the project store and opens its scoped draft before the optional caller
+callback. Remote registration refreshes the catalog; it must not
+be inserted through the local-only `addProject` fallback. Browser/VS Code clients
+show an explicit unsupported explanation and retain local project selection.
+
+The remote navigation bridge can carry draft title, parent, folder, permission,
+pending-worktree/bootstrap and worktree metadata separately from the Hub draft.
+`updateRemoteDraft` uses the captured navigation object as a CAS token, rejects
+Host changes, and cannot overwrite a later selection or an existing session.
+Worktree and chat owners consume that metadata at their production boundaries;
+ordinary session navigation without draft options clears it.
+
+Remote headers expose the shared worktree dialog without enumerating Git on every
+project row. Worktree action availability is independent from verified checkout
+topology: a nested source-directory project may legitimately have no checkout
+alias. Git repository eligibility is checked by the captured Host creator, not
+guessed from topology. `NewWorktreeDialog` and its linked `GitHubIntegrationDialog`
+bind the explicitly requested project (not a retained background workspace), and
+local dialogs clear inherited Host context. Both preserve their mature forms.
+Remote branches, worktree conflicts, validation, GitHub auth/list/context and
+prompt templates use Host scope; no remote path reaches local worktree/session
+actions. The dialog-owned GitHub adapter intentionally exposes only six read
+capabilities, with no machine-auth mutation surface. Remote GitHub configuration
+stays read-only and explains the instance-switch requirement.
+
+Creation delegates to `createRemoteWorktreeDraft`, retaining Host setup/bootstrap,
+relative source cwd and draft CAS ownership. Completion callbacks receive
+`remote: true`: the helper already owns navigation and callers must not reopen
+the bridge (which would erase worktree draft metadata), nor select a local raw
+session ID. A superseded selection does not invoke UI-navigation completion.
+Linked issue/PR context sends through the captured worktree Host prompt endpoint;
+context failure reports separately from successful worktree creation. Failed
+creation leaves form values available for retry.
+
 Project dropdown and right-click menus have one shared popup hairline immediately
 before destructive Close; ordinary actions have no separators. Action icons inherit
 their label color, including Close. Mobile project action sheets use the same

@@ -1,4 +1,9 @@
 import React from 'react';
+import { useHostRuntime, useRemoteHost } from '@/contexts/HostRuntimeProvider';
+import { locationSessionKey } from '@/lib/remote-projects/location';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import { RemoteHostIndicator } from '@/components/session/RemoteHostIndicator';
+import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import { isCapacitorApp } from '@/lib/platform';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
@@ -7,6 +12,7 @@ import { isMobileOverlayFocusRestoreSuppressed } from '@/lib/mobileOverlayFocusR
 import { canUseNativeMediaPick, pickNativeMediaFiles, NATIVE_MEDIA_PICK_LIMIT, usesAndroidAttachPickSheet } from '@/lib/native-media-pick';
 import { MobileAttachPickSheet } from './MobileAttachPickSheet';
 import { NativeIosComposerBridge } from './useNativeIosComposer';
+import { useComposerSelection } from '@/composer/use-composer-selection';
 import { useIosNativeUiEnabled } from '@/lib/iosNativeUi';
 import { applyNativeComposerAccessoryVar, canUseNativeIosComposer, getNativeIosComposerPlugin, handoffNativeComposerSendToWeb, resolveComposerInsertCaret } from '@/lib/native-ios-composer';
 import { ComposerDictation } from '@/components/dictation/ComposerDictation';
@@ -1177,6 +1183,7 @@ interface ChatInputProps {
     onScrollToBottom?: () => void;
     submissionBlocked?: boolean;
     surface?: ChatInputSurface;
+    foregroundActive?: boolean;
 }
 
 type AutocompleteOverlayPosition = {
@@ -1204,8 +1211,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     onScrollToBottom,
     submissionBlocked = false,
     surface: surfaceProp,
+    foregroundActive,
 }) => {
     const { t, locale } = useI18n();
+    const hostRuntime = useHostRuntime();
     const iosNativeUiEnabled = useIosNativeUiEnabled();
     const [attachmentPopup, setAttachmentPopup] = React.useState<ToolPopupContent>({
         open: false,
@@ -1661,7 +1670,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             },
             sendQueued: (request) => dispatchQueuedMessage(request.sessionID ?? '', { delivery: request.options?.delivery === 'steer' ? 'steer' : undefined, queueItemID: request.queueItemID, manual: request.manual, scope: request.queueScope ? { state: 'bound', ...request.queueScope } : undefined }),
             create: async () => openNewSessionDraftForActiveLayout(),
-            compact: async (request) => opencodeClient.summarizeSession(request.sessionID ?? '', request.providerID ?? '', request.modelID ?? '', request.directory),
+            compact: async (request) => (hostRuntime?.entry.service() ?? opencodeClient).summarizeSession(request.sessionID ?? '', request.providerID ?? '', request.modelID ?? '', request.directory),
             abort: (request) => {
                 if (request.sessionID) promoteQueueHeadOnAbort(request.sessionID);
                 return sessionActions.abortCurrentOperation(request.sessionID ?? '');
@@ -1733,6 +1742,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const activeProjectId = useProjectsStore((state) => state.activeProjectId);
     const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
     const permissionAutoAcceptEnabled = React.useMemo(() => {
+        if (surface.permissionPolicy) return surface.permissionPolicy.enabled;
+        if (hostRuntime?.entry.location.hostId) return false;
         if (!currentSessionId) {
             return newSessionDraft.permissionAutoAcceptEnabled === true;
         }
@@ -1742,7 +1753,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             sessionById: getAllSyncSessionMap(),
             sessionID: currentSessionId,
         } as never);
-    }, [currentSessionId, newSessionDraft.permissionAutoAcceptEnabled, permissionAutoAccept]);
+    }, [currentSessionId, newSessionDraft.permissionAutoAcceptEnabled, permissionAutoAccept, surface.permissionPolicy, hostRuntime]);
     // Secondary/assistant composers already carry their scoped agent catalog and
     // selection. Reusing EMPTY_AGENTS + undefined here forced the permission
     // auto-accept control to stay visible even when the selected agent has a
@@ -1754,11 +1765,13 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const configuredAgents = surface.kind === 'secondary'
         ? resolveComposerVisibleAgents(surface.selection.catalog?.agents)
         : primaryConfiguredAgents;
-    const showPermissionAutoAcceptControl = isVSCodeRuntime()
-        || shouldShowPermissionAutoAcceptControl(configuredAgents, currentAgentName);
+    const showPermissionAutoAcceptControl = (!hostRuntime?.entry.location.hostId || Boolean(surface.permissionPolicy)) && (isVSCodeRuntime()
+        || shouldShowPermissionAutoAcceptControl(configuredAgents, currentAgentName));
     const handlePermissionAutoAcceptToggleFailed = useEvent(() => {
         toast.error(t('chat.chatInput.toast.togglePermissionAutoAcceptFailed'));
     });
+    const changePermissionPolicy = useEvent((id: string, enabled: boolean) => surface.permissionPolicy
+        ? surface.permissionPolicy.change(enabled) : setSessionAutoAccept(id, enabled));
 
     const selectionValue = surface.selection.value;
     const selectionChange = surface.selection.change;
@@ -1775,9 +1788,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             variant: selectionValue.variant,
         },
         onChange: handleModelControlsSelectionChange,
+        requestCatalog: surface.selection?.requestCatalog,
         disabled: !surface.active,
         catalog: selectionCatalog,
-    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active]);
+    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active, surface.selection?.requestCatalog]);
 
     // Session switch drops a previous conversation's user-pick hold and restore key.
     React.useEffect(() => {
@@ -1940,7 +1954,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const isExpandedInput = useUIStore((state) => state.isExpandedInput);
     const setExpandedInput = useUIStore((state) => state.setExpandedInput);
     const setTimelineDialogOpen = useUIStore((state) => state.setTimelineDialogOpen);
-    const composer = useComposerController({ draftKey, sessionTitles, persistenceEnabled: persistChatDraft });
+    const composer = useComposerController({ draftKey, sessionTitles, persistenceEnabled: persistChatDraft, store: surface.resources?.inputStore });
     const composerDocument = composer.document;
     const message = composerDocument.text;
     const { replacePlainDocument, replaceProgrammaticText, applyBrowserEdit, insertReference, deleteReference, enterHistoryPreview, exitHistoryPreview, captureSubmission, recoverSubmission, confirmedFileMentions, mentions: composerMentions } = composer;
@@ -2150,7 +2164,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         });
     }, [inputMode, message, sendableAttachedFiles]);
 
-    const nativeComposerOwnedInput = iosNativeUiEnabled && canUseNativeIosComposer(isMobile) && surface.kind === 'primary';
+    const nativeComposerOwnedInput = iosNativeUiEnabled && canUseNativeIosComposer(isMobile)
+        && surface.active && foregroundActive !== false
+        && (surface.composerPresentation ?? surface.kind) === 'primary';
+    const supersedeSelectionRestore = useComposerSelection({ draftKey, text: message, textareaRef,
+        enabled: !nativeComposerOwnedInput, store: surface.resources?.inputStore });
     const { globallyEnabled: dictationEnabled, enabled: holdToTalkEnabled, hint: dictationHint,
         onHintChange: setDictationHint } = useHoldToTalkInput({ available: isMobile && !nativeComposerOwnedInput });
     const speechPlaceholder = t(dictationHint === 'recording' ? 'chat.dictation.releaseSend' : dictationHint === 'cancelling' ? 'chat.dictation.releaseCancel' : dictationHint === 'editing' ? 'chat.dictation.releaseEdit' : dictationHint === 'processing' ? 'chat.dictation.processing' : 'chat.dictation.inputPlaceholder');
@@ -2222,11 +2240,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         } : null;
     }, [controllerWiring]);
     const serverQueue = useMessageQueueServerScope({
-        transportIdentity: currentQueueScope?.transportIdentity ?? '',
-        directory: currentQueueScope?.directory ?? '',
-        sessionID: currentQueueScope?.sessionID ?? '',
+        transportIdentity: hostRuntime?.entry.location.hostId ? '' : currentQueueScope?.transportIdentity ?? '',
+        directory: hostRuntime?.entry.location.hostId ? '' : currentQueueScope?.directory ?? '',
+        sessionID: hostRuntime?.entry.location.hostId ? '' : currentQueueScope?.sessionID ?? '',
     });
-    const legacyQueue = React.useMemo(() => currentSessionId ? legacyQueueScope(currentSessionId) : null, [currentSessionId]);
+    const legacyQueue = React.useMemo(() => currentSessionId && !hostRuntime?.entry.location.hostId ? legacyQueueScope(currentSessionId) : null, [currentSessionId, hostRuntime]);
     const boundQueuedMessages = useMessageQueueStore(
         React.useMemo(
             () => (state: ReturnType<typeof useMessageQueueStore.getState>) => {
@@ -2345,7 +2363,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         markComposerActionGesture();
         setMobileControlsPanel(panel);
         textareaRef.current?.blur();
-        void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'chatInput:mobilePanel' });
+        if (surface.selection.requestCatalog) surface.selection.requestCatalog(Boolean(panel));
+        else void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'chatInput:mobilePanel' });
     });
 
     // Consume pending input text (e.g., from revert action)
@@ -2373,14 +2392,14 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         }, 0);
     }, [pendingInput, consumePendingInput, replacePlainDocument, applyProgrammaticEdit]);
 
-    const composerQuoteScope = composerQuoteKey(currentSessionId, newSessionDraft.draftID);
+    const composerQuoteScope = composerQuoteKey(hostRuntime?.entry.location.hostId && currentSessionId ? locationSessionKey(hostRuntime.entry.location, currentSessionId) : currentSessionId, newSessionDraft.draftID);
     const composerQuotes = useComposerQuoteStore(selectComposerQuotes(composerQuoteScope));
     const hasContent = message.trim().length > 0 || sendableAttachedFiles.length > 0 || hasDrafts || composerQuotes.length > 0;
     const isBtwCommand = surface.kind === 'primary' && getLocalChatCommand(message, inputMode) === 'btw';
     const hasQueuedMessages = serverQueue.mode === 'server'
         ? serverQueue.items.length > 0
         : queuedMessages.length > 0 || legacyPendingAdmissions.length > 0;
-    const queueFrozen = !isBtwCommand && !queueModeAllowsMutations(serverQueue.mode);
+    const queueFrozen = !hostRuntime?.entry.location.hostId && !isBtwCommand && !queueModeAllowsMutations(serverQueue.mode);
     const canSend = hasContent || hasQueuedMessages;
 
     const stagedEditMessageId = useSessionUIStore(
@@ -2592,6 +2611,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     // Flush/runtime/scope/config/compile/admit failures unstage and restore via
     // submission capture; committed admits keep the empty composer.
     const handleQueueMessage = useEvent(async () => {
+        if (hostRuntime?.entry.location.hostId) { await handleSubmit({ delivery: 'queue' }); return; }
         if (!surface.active) return;
         if (isSubmissionInFlight()) return;
         // Sent-message replacement owns a direct submit, never queue admission.
@@ -3023,7 +3043,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const handleSubmit = useEvent(async (options?: SubmitOptions) => {
         if (!surface.active) return;
         if (submissionBlocked) return;
-        if (!options?.queuedOnly) {
+        if (!options?.queuedOnly && !hostRuntime?.entry.location.hostId) {
             const snapshot = options?.presetText == null ? getCurrentInputSnapshot() : null;
             if (submitBtwCommand({
                 text: options?.presetText ?? snapshot?.message ?? '',
@@ -3081,6 +3101,72 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         const delivery = requestedDelivery === 'queue' && sessionIsRunning
             ? 'queue'
             : requestedDelivery === 'steer' && sessionIsRunning ? 'steer' : undefined;
+
+        // Remote primary chat uses the shared editor but owns admission end to end.
+        // Never enter primary question recovery, local commands or Hub queue staging.
+        if (hostRuntime?.entry.location.hostId) {
+            if (requestedCommandName === 'timeline' && inputMode !== 'shell') {
+                useUIStore.getState().setTimelineDialogOpen(true);
+                replacePlainDocument('');
+                return;
+            }
+            if (isModelCommand) {
+                if (isMobile) handleOpenMobilePanel('model');
+                else useUIStore.getState().setModelSelectorOpen(true);
+                return;
+            }
+            if (submitBtwCommand({ text: logicalInputMessage, inputMode,
+                scope: currentSessionId && !surface.commands?.hasNewDraft ? { sessionId: currentSessionId, directory: hostRuntime.entry.location.directory, host: hostRuntime.entry } : null,
+                hasReferences: Boolean(inputSnapshot.document.references.length || composerMentions.length), allowed: !surface.commands?.hasNewDraft,
+                ask: useSessionBtwStore.getState().ask, clearText: () => replacePlainDocument(''),
+                open: () => { if (currentSessionId) openSessionBtw({ sessionId: currentSessionId, directory: hostRuntime.entry.location.directory, host: hostRuntime.entry }); },
+                notify: (reason) => toast.error(t(`chat.btw.${reason}`)),
+            })) return;
+            if (!inputSnapshot.hasContent || !draftKey || submissionBlocked || queuedOnly) return;
+            if (!beginSubmissionFlight('send')) return;
+            try {
+            const compiled = compileChatComposerDelivery({ plan: directPlan, agents, installedSkillNames: new Set(availableSkills.map((skill) => skill.name)),
+                directory: hostRuntime.entry.location.directory, root: hostRuntime.entry.location.directory,
+                confirmedFilePaths: confirmedFileMentions.map((mention) => mention.path),
+                confirmedDirectoryPaths: confirmedFileMentions.filter((mention) => mention.kind === 'directory').map((mention) => mention.path),
+                citationAttachments: sendableAttachedFiles });
+            const attachments = dedupeDeliveryAttachments([...sanitizeAttachmentsForSend(sendableAttachedFiles), ...compiled.attachments]);
+            const quotes = composerQuoteScope ? (useComposerQuoteStore.getState().quotesByKey[composerQuoteScope] ?? []) : [];
+            const remoteInlineDrafts = [...surfaceResources.inlineDrafts].sort((a, b) => a.createdAt - b.createdAt);
+            const text = appendInlineComments(messageWithComposerQuotes(quotes, compiled.text), remoteInlineDrafts);
+            const syntheticAtSubmit = surfaceResources.getDraft(draftKey)?.syntheticParts ?? [];
+            const syntheticIDs = new Set(syntheticAtSubmit.map((part) => part.partID));
+            const syntheticViews = (surfaceResources.inputStore ?? useInputStore).getState().getDraftAttachmentViews(draftKey);
+            const parts = buildSyntheticDeliveryParts(syntheticAtSubmit.map((part) => ({
+                ...part, attachments: part.attachments.flatMap((attachment) => {
+                    const view = syntheticViews.find((file) => file.id === attachment.attachmentID);
+                    if (!view) throw new Error('Remote synthetic attachment bytes unavailable');
+                    return [view];
+                }),
+            })));
+                await surface.selection.flush();
+                await surface.backend.send({
+                    operation: 'send', surfaceID: surface.surfaceID,
+                    sessionID: surface.commands?.hasNewDraft ? null : surface.sessionID,
+                    directory: hostRuntime.entry.location.directory, draftKey,
+                    transportIdentity: surface.transportIdentity, runtimeGeneration: surface.runtimeGeneration,
+                    deliveryTarget: surface.deliveryTarget, ...surface.selection.value,
+                    text, attachments, parts, inputMode, references: compiled.semantics, agentMention: compiled.agent,
+                    options: { delivery: options?.delivery ?? (sessionIsRunning ? 'queue' : 'steer'), messageID: ascendingId('msg') },
+                });
+                if (getCurrentInputSnapshot().message === inputSnapshot.message) replacePlainDocument('');
+                for (const attachment of attachments) await surfaceResources.removeAttachment(attachment.id);
+                for (const draft of remoteInlineDrafts) surfaceResources.removeInlineDraft(draft.id);
+                (surfaceResources.inputStore ?? useInputStore).getState().consumeDraftSyntheticParts(draftKey, (part) => !syntheticIDs.has(part.partID));
+                if (composerQuoteScope) useComposerQuoteStore.getState().clear(composerQuoteScope);
+                scrollToBottom?.();
+            } catch (error) {
+                toast.error(t('chat.chatInput.toast.messageSendFailed'), { description: error instanceof Error ? error.message : String(error) });
+            } finally {
+                endSubmissionFlight();
+            }
+            return;
+        }
 
         // Policy is resolved before model routing, queue admission, and every
         // resource-consuming local command. Rejection retains the full draft.
@@ -4208,6 +4294,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     // Send matches Enter. Default follow-up is queue; Cmd/Ctrl+Enter is the steer shortcut.
     const handlePrimaryAction = useEvent(() => {
+        if (hostRuntime?.entry.location.hostId) { void handleSubmit(); return; }
         if (getLocalChatCommand(getCurrentInputSnapshot().message, inputMode) === 'btw') {
             void handleSubmit();
             return;
@@ -4948,6 +5035,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     });
 
     const commitBrowserTextChange = useEvent((nextText: string, selectionStart: number, selectionEnd: number, inputSource: FileMentionAutocompleteInputSource = 'manual', insertedText?: string) => {
+        supersedeSelectionRestore();
         // Hand-typed complete slash commands paint as chips. Promote compact
         // `/undo` source text to the reserved-slot form (`/\u2003undo`) so icon
         // spacing matches autocomplete selection. Skip during IME composition
@@ -6416,6 +6504,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     });
     const nativeIosComposerActive = nativeComposerOwnedInput;
     const nativeIosComposerBridge = nativeIosComposerActive ? React.createElement(NativeIosComposerBridge, {
+        key: draftKey ? draftKeyString(draftKey) : surface.surfaceID,
         enabled: nativeComposerOwnedInput,
         isMobile,
         text: message,
@@ -6481,12 +6570,12 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 }
             }
         },
-        onSend: (text) => {
+        onSend: (text, isCurrent) => {
             if (textareaRef.current) textareaRef.current.value = text;
             handoffNativeComposerSendToWeb({
                 text,
                 applyDocument: applyProgrammaticEdit,
-                submit: handlePrimaryAction,
+                submit: () => { if (isCurrent()) handlePrimaryAction(); },
             });
         },
         onAbort: handleAbort,
@@ -6967,11 +7056,11 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                             draftOpen={newSessionDraftOpen}
                             draftEnabled={newSessionDraft.permissionAutoAcceptEnabled === true}
                             enabled={permissionAutoAcceptEnabled}
-                            saving={currentSessionId ? permissionAutoAcceptSaving : false}
+                            saving={surface.permissionPolicy?.saving ?? (currentSessionId ? permissionAutoAcceptSaving : false)}
                             footerIconButtonClass={footerIconButtonClass}
                             iconSizeClass={iconSizeClass}
                             onSetDraftEnabled={setDraftPermissionAutoAcceptEnabled}
-                            onSetSessionEnabled={setSessionAutoAccept}
+                            onSetSessionEnabled={changePermissionPolicy}
                             onOpenSessionFirst={openNewSessionDraftForActiveLayout}
                             onToggleFailed={handlePermissionAutoAcceptToggleFailed}
                         />
@@ -7044,7 +7133,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                         footerIconButtonClass={footerIconButtonClass}
                         iconSizeClass={iconSizeClass}
                         onSetDraftEnabled={setDraftPermissionAutoAcceptEnabled}
-                        onSetSessionEnabled={setSessionAutoAccept}
+                        onSetSessionEnabled={changePermissionPolicy}
                         onOpenSessionFirst={openNewSessionDraftForActiveLayout}
                         onToggleFailed={handlePermissionAutoAcceptToggleFailed}
                     />
@@ -7145,7 +7234,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             />
         )
         : null;
-    const queuedMessageSurface = (
+    const queuedMessageSurface = hostRuntime?.entry.location.hostId ? surface.nativeInbox ?? null : (
         <QueuedMessageChips
             onEditMessage={handleQueuedMessageEdit}
             onSendMessage={handleQueuedMessageSend}
@@ -7729,6 +7818,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                             }
                         },
                         onSelect: (event) => {
+                            supersedeSelectionRestore();
                             const textarea = event.currentTarget;
                             const selectionStart = textarea.selectionStart ?? 0;
                             const selectionEnd = textarea.selectionEnd ?? selectionStart;
@@ -7757,6 +7847,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                             updateAutocompleteOverlayPosition();
                         },
                         onFocus: () => {
+                            supersedeSelectionRestore();
                             if (!isMobile) return;
                             // Footer action just ran (attach / agent / model / …):
                             // drop accidental focus so we never open the IME as
@@ -8160,10 +8251,22 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     );
 };
 
+const RemoteChatInput: React.FC<ChatInputProps & { registry: HostRuntimeRegistry; hostId: string }> = ({ registry, hostId, ...props }) => {
+    const host = useRemoteHost(registry, hostId);
+    const supported = supportsRemoteProjects();
+    const blocked = !supported || host?.state !== 'connected';
+    return <>
+        <RemoteHostIndicator registry={registry} hostId={hostId} composer unsupported={!supported} />
+        <ChatInputRuntime {...props} submissionBlocked={props.submissionBlocked || blocked} />
+    </>;
+};
+
 const ChatInputComponent: React.FC<ChatInputProps> = (props) => {
     const contextSurface = useChatInputSurfaceContext();
+    const hostRuntime = useHostRuntime();
     const surface = props.surface ?? contextSurface;
     if (surface && !surface.active) return null;
+    if (hostRuntime?.entry.location.hostId) return <RemoteChatInput {...props} surface={surface ?? undefined} registry={hostRuntime.registry} hostId={hostRuntime.entry.location.hostId} />;
     return <ChatInputRuntime {...props} surface={surface ?? undefined} />;
 };
 

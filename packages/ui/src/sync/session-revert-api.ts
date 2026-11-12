@@ -12,6 +12,7 @@
  */
 
 import { runtimeFetch } from "../lib/runtime-fetch"
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry'
 import type { Session } from "../lib/opencode/v2-types"
 
 export const SESSION_REVERT_BUSY_CODE = "session-revert-busy"
@@ -20,6 +21,7 @@ export type SessionRevert = NonNullable<Session["revert"]>
 export type SessionRevertFile = NonNullable<SessionRevert["files"]>[number]
 
 export type SessionRevertInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory?: string | null
   signal?: AbortSignal
@@ -159,10 +161,10 @@ export function revertFilePaths(revert: { files?: readonly { file?: string; path
 export async function postSessionRevertStage(
   input: PostSessionRevertStageInput,
 ): Promise<SessionRevert> {
-  const response = await runtimeFetch(revertPath(input.sessionID, "stage"), {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(revertPath(input.sessionID, "stage"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     body: JSON.stringify({
       messageID: input.messageID,
       files: input.files !== false,
@@ -172,27 +174,31 @@ export async function postSessionRevertStage(
   if (!response.ok) {
     throwHttp("session revert stage", response.status, await readFailedDetail(response))
   }
-  return parseSessionRevert(await parseJsonBody(response, "session revert stage"))
+  const revert = parseSessionRevert(await parseJsonBody(response, "session revert stage"))
+  input.scope?.sdk()
+  return revert
 }
 
 export async function postSessionRevertClear(input: SessionRevertInput): Promise<void> {
-  const response = await runtimeFetch(`/api/session/${encodeURIComponent(input.sessionID)}/revert`, {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(`/api/session/${encodeURIComponent(input.sessionID)}/revert`, {
     method: "DELETE",
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     signal: input.signal,
   })
   if (!response.ok) {
     throwHttp("session revert clear", response.status, await readFailedDetail(response))
   }
+  input.scope?.sdk()
 }
 
 export async function postSessionRevertCommit(input: SessionRevertInput): Promise<void> {
-  const response = await runtimeFetch(revertPath(input.sessionID, "commit"), {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(revertPath(input.sessionID, "commit"), {
     method: "POST",
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     signal: input.signal,
   })
   if (!response.ok) {
     throwHttp("session revert commit", response.status, await readFailedDetail(response))
   }
+  input.scope?.sdk()
 }

@@ -39,6 +39,26 @@ const createTestHelpersWithRealSanitizers = () => {
 };
 
 describe('settings helpers', () => {
+  it('merges Hub-only layout without replacing projects, references or omitted collapse entries', () => {
+    const helpers = createTestHelpers();
+    const current = { projects: [{ id: 'local', path: '/local' }],
+      hubProjectLayout: { hubId: 'hub-a', order: ['local', 'remote-a', 'remote-b'], collapsed: { 'remote-a': true, 'remote-b': true } } };
+    const changes = helpers.sanitizeSettingsUpdate({ hasRemoteProjects: true,
+      hubProjectLayout: { hubId: 'hub-a', order: ['remote-b', 'remote-b'], collapsed: { 'remote-a': false } } });
+    expect(changes).not.toHaveProperty('hasRemoteProjects');
+    const merged = helpers.mergePersistedSettings(current, changes);
+    expect(merged.projects).toEqual(current.projects);
+    expect(merged.hubProjectLayout).toEqual({ hubId: 'hub-a', order: ['remote-b', 'local', 'remote-a'],
+      collapsed: { 'remote-a': false, 'remote-b': true } });
+    expect(helpers.mergePersistedSettings(current, { hubProjectLayout: { hubId: 'hub-b', order: [], collapsed: {} } }).hubProjectLayout)
+      .toEqual({ hubId: 'hub-b', order: [], collapsed: {} });
+    for (const layout of [null, [], {}, { hubId: 'a', order: [], collapsed: [] },
+      { hubId: 'a', order: [null], collapsed: {} }, { hubId: 'a', order: [], collapsed: { x: 'true' } }]) {
+      expect(() => helpers.sanitizeSettingsUpdate({ hubProjectLayout: layout })).toThrow('Invalid Hub project layout');
+    }
+    expect(helpers.projectBootstrapSettingsResponse({ hasRemoteProjects: false, hubProjectLayout: current.hubProjectLayout }))
+      .toEqual({ schemaVersion: 1, hasRemoteProjects: false });
+  });
   it('ignores retired editor toolbar preferences in updates and stored settings', () => {
     const helpers = createTestHelpers();
     for (const expandedEditorToolbar of [true, false, null, {}, 'invalid']) {

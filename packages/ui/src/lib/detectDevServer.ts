@@ -1,6 +1,8 @@
 import type { YuriProjectAction } from './yuriConfig';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import type { HostRuntimeEntry } from './remote-projects/registry';
+import { captureProjectScope } from './api/project-scope';
 
 type DevServerInfo = {
   command: string;
@@ -33,6 +35,7 @@ export async function detectDevServerCommand(
   directory: string,
   projectActions: YuriProjectAction[],
   packageJsonScripts: Record<string, string> | null,
+  scope?: HostRuntimeEntry,
 ): Promise<DevServerInfo | null> {
   if (!directory) return null;
 
@@ -51,7 +54,7 @@ export async function detectDevServerCommand(
     const devScript = findDevScript(packageJsonScripts);
     if (devScript) {
       // Determine the package manager command
-      const pm = await detectPackageManager(directory);
+      const pm = await detectPackageManager(directory, scope);
       const pmCommand = pm === 'npm' ? 'npm run' : pm === 'yarn' ? 'yarn' : pm === 'pnpm' ? 'pnpm' : pm === 'bun' ? 'bun run --shell=bun' : 'npm run';
       return {
         command: `${pmCommand} ${devScript}`,
@@ -62,8 +65,8 @@ export async function detectDevServerCommand(
 
   // Fallback: static sites (no package.json) can be previewed via a simple file server.
   // This keeps Start Preview usable for non-Node projects.
-  if (await hasStaticIndexHtml(directory)) {
-    const port = await allocatePreviewPort();
+  if (await hasStaticIndexHtml(directory, scope)) {
+    const port = await allocatePreviewPort(scope);
     const resolvedPort = typeof port === 'number' && Number.isFinite(port) && port > 0 ? port : 8000;
     return {
       command: `python3 -m http.server ${resolvedPort}`,
@@ -75,13 +78,18 @@ export async function detectDevServerCommand(
   return null;
 }
 
-async function hasStaticIndexHtml(directory: string): Promise<boolean> {
+async function hasStaticIndexHtml(directory: string, scope?: HostRuntimeEntry): Promise<boolean> {
   const target = `${directory}/index.html`;
-  const content = await readOptionalTextFile(target, directory);
+  const content = await readOptionalTextFile(target, directory, scope);
   return typeof content === 'string' && content.trim().length > 0;
 }
 
-async function allocatePreviewPort(): Promise<number | null> {
+async function allocatePreviewPort(scope?: HostRuntimeEntry): Promise<number | null> {
+  if (scope) {
+    const body = await captureProjectScope(scope).json<{ port: number }>('/api/system/free-port', { cache: 'no-store' });
+    if (!Number.isInteger(body.port) || body.port < 1 || body.port > 65535) throw new Error('Invalid Host preview port');
+    return body.port;
+  }
   try {
     const response = await runtimeFetch('/api/system/free-port', { cache: 'no-store' });
     if (!response.ok) return null;
@@ -133,8 +141,8 @@ function findDevScript(scripts: Record<string, string>): string | null {
  * Note: This is intentionally a simple client-side check.
  * For server-side operations, the server's package-manager.js is used.
  */
-async function detectPackageManager(directory: string): Promise<PackageManager> {
-  const packageJsonContent = await readOptionalTextFile(`${directory}/package.json`, directory);
+async function detectPackageManager(directory: string, scope?: HostRuntimeEntry): Promise<PackageManager> {
+  const packageJsonContent = await readOptionalTextFile(`${directory}/package.json`, directory, scope);
   if (packageJsonContent) {
     try {
       const pkg = JSON.parse(packageJsonContent) as { packageManager?: unknown };
@@ -157,7 +165,7 @@ async function detectPackageManager(directory: string): Promise<PackageManager> 
   ];
 
   for (const [fileName, packageManager] of lockfiles) {
-    const content = await readOptionalTextFile(`${directory}/${fileName}`, directory);
+    const content = await readOptionalTextFile(`${directory}/${fileName}`, directory, scope);
     if (typeof content === 'string' && content.trim().length > 0) {
       return packageManager;
     }
@@ -166,7 +174,16 @@ async function detectPackageManager(directory: string): Promise<PackageManager> 
   return 'npm';
 }
 
-async function readOptionalTextFile(path: string, directory?: string): Promise<string | null> {
+async function readOptionalTextFile(path: string, directory?: string, entry?: HostRuntimeEntry): Promise<string | null> {
+  if (entry) {
+    const scope = captureProjectScope(entry);
+    const response = await scope.fetch('/api/fs/read', { query: { path, directory, optional: 'true' }, cache: 'no-store' });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Failed to read Host preview file (${response.status})`);
+    const text = await response.text();
+    scope.assertCurrent();
+    return response.headers.get('x-yuri-file-exists') === 'false' ? null : text;
+  }
   if (directory?.trim()) {
     try {
       const params = new URLSearchParams({ path, directory, optional: 'true' });
@@ -205,9 +222,9 @@ async function readOptionalTextFile(path: string, directory?: string): Promise<s
 /**
  * Read package.json scripts from a directory
  */
-export async function readPackageJsonScripts(directory: string): Promise<Record<string, string> | null> {
+export async function readPackageJsonScripts(directory: string, scope?: HostRuntimeEntry): Promise<Record<string, string> | null> {
   try {
-    const content = await readOptionalTextFile(`${directory}/package.json`, directory);
+    const content = await readOptionalTextFile(`${directory}/package.json`, directory, scope);
 
     if (content == null) return null;
     const pkg = JSON.parse(content);
@@ -215,7 +232,8 @@ export async function readPackageJsonScripts(directory: string): Promise<Record<
     return scripts && typeof scripts === 'object' && !Array.isArray(scripts)
       ? scripts as Record<string, string>
       : null;
-  } catch {
+  } catch (error) {
+    if (scope) throw error;
     return null;
   }
 }

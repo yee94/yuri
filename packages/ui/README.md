@@ -3,7 +3,78 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+## iOS keyboard and editing lifetimes
+
+`apps/MobileApp.tsx` treats Capacitor keyboard hide and iOS native IME
+settled-close as presentation events only. They unwind keyboard lift/insets,
+but never blur a still-focused composer or request native composer blur. iOS
+can emit them during focus/input-view reload and hardware keyboard minimization.
+An unfocused editor can still collapse; explicit composer actions, focus transfer
+and navigation retain their existing ownership. iOS app background explicitly
+blurs a focused Web composer; foreground does not restore focus. Native composer
+background termination is owned by UIKit in the mobile package.
+
+Android settled Back-close still ends composer editing. Search/question inputs
+never gain whole-page chat lift. The production-hook replay and ownership tests
+live in `src/components/ui/MobileWindowMotion.android-focus.test.tsx`; they are
+happy-dom lifecycle guards, not iOS device/HID or input-latency acceptance.
+
+## Remote project client boundaries
+
+Electron and Capacitor support a Hub's aggregate projects; browser and VS Code
+surfaces explicitly remain unsupported. Aggregation never switches the window's
+runtime endpoint. `HostRuntimeRegistry` captures a Hub/Host/directory scope for
+official SDK calls and Yuri HTTP capabilities. Filesystem calls keep the physical
+directory; serialized Location/session keys are only cache and UI identities.
+
+`SelectedProjectHostBoundary` wraps project workspaces, not machine settings or
+the Hub's local sidebar consumers. A matching remote worktree selection supplies
+its own cwd. Remote selection uses `useSessionNavigationStore`, separate from the
+retained Hub session. URLs carry Hub, Host, raw cwd and optionally the Hub project
+reference so sibling worktrees restore without a local session-ID lookup.
+
+`RemoteProjectsBootstrap` observes the existing settings bootstrap's read-only
+`hasRemoteProjects` hint. Only that hint or cached references enable catalog
+discovery. An explicit project picker may refresh the catalog independently.
+Catalog and summaries use invalidation rather than background polling; the shared
+registry event consumer only invalidates affected Host summaries, never on token
+deltas. The existing project-order settings GET also projects the bootstrap hint
+on reference tips, including the first reference created by another client and
+the last removal. `settings.hubProjectLayout` owns Hub-local mixed project order
+and collapse state. Layout writes contain Hub reference/local project IDs, never
+remote paths in `settings.projects`. Query-owned serialized writes and confirmed
+server merge snapshots restore the layout on desktop and mobile, with rollback
+on failure. Local cache is only startup continuity.
+
+Remote transcript content uses the client's IndexedDB, not the Hub transcript
+cache. Live content leases share the existing Hub event stream and refresh after
+each new ready generation. Offline cached content is continuity data, never proof
+that the remote runner is still active. See `src/sync/DOCUMENTATION.md`,
+`src/stores/DOCUMENTATION.md` and `src/lib/preview/DOCUMENTATION.md` for ownership.
+
 ## Tests
+
+Remote project preview, file tabs, terminal tabs, and context-panel persistence
+use the explicit Hub/Host/Location identity; filesystem APIs keep raw directory
+paths. Remote browser panes always use the Host preview proxy, never the client's
+Electron webview or a direct localhost fallback after proxy failure. Header usage
+and context overview observe the already-bound remote transcript and scoped model
+catalogs, preserving the existing statistics and raw-message tools without reading
+the same-ID Hub session. Context overview retains the shared content demand while
+visible. Local-only surfaces do not mount remote discovery or summary Queries.
+The Header session switcher uses separate local/remote data leaves and the same
+row presentation. Remote roots come from Host summaries, child expansion reads
+bounded Host SDK pages, and New/Select use the explicit remote navigation bridge.
+Header summary fallbacks, switcher roots, children and navigation validate project ownership
+with `resolveRemoteProjectOwner` and the Host's verified worktree topology. Explicit
+project roots take precedence; nested projects never infer aliases from a parent
+repository catalog. Each child retains its own raw directory for SDK and navigation.
+For the selected Header title, the existing Host/Location/generation-scoped session
+metadata Query is authoritative; summaries provide continuity before metadata is
+available. A disabled, memoized observer reads that Query without fetching metadata
+or acquiring content demand, including deep links whose summaries are still empty.
+Offline summaries remain visible without presenting cached busy status as live.
+Header Run actions carry the complete project Hub/Host reference and raw cwd.
 
 Runtime API authorization failures recheck the current UI session and show the
 existing unlock or pairing screen only when session status confirms rejection.

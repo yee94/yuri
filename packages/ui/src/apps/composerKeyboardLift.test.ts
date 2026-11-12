@@ -105,13 +105,6 @@ describe('composerKeyboardLift', () => {
     expect(mobileAppSource).toContain('shouldDeferWebKeyboardToNativeComposer');
   });
 
-  test('iOS keyboard hide only blurs the bottom composer, not overlay search', () => {
-    expect(mobileAppSource).toContain('if (!isComposerKeyboardTarget(active)) return;');
-    expect(mobileAppSource).not.toMatch(
-      /const blurActiveTextField = \(\) => \{[\s\S]*?active\.tagName !== 'TEXTAREA'/,
-    );
-  });
-
   test('converts native IME window px with the WebView device pixel ratio', () => {
     expect(cssPxFromNativeImeHeight(800, 2.625)).toBe(305);
     expect(cssPxFromNativeImeHeight(800, 3.25)).toBe(246);

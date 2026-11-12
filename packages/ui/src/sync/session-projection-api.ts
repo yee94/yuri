@@ -11,6 +11,7 @@
 import type { FilePart, Message, Part, ToolPart } from '@/lib/opencode/v2-types'
 
 import { runtimeFetch } from "../lib/runtime-fetch"
+import type { HostRuntimeEntry } from "@/lib/remote-projects/registry"
 import type { TranscriptTransportPage } from "./transcript-repository"
 import { mergeTranscriptOrder } from "./transcript-order"
 
@@ -50,6 +51,7 @@ export function getSessionCompactionCard(
 }
 
 export type FetchSessionProjectionPageInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory: string
   cursor?: string
@@ -561,7 +563,7 @@ export async function fetchSessionProjectionPage(
   const order = input.order ?? SESSION_PROJECTION_PAGE_ORDER
   const path = `/api/session/${encodeURIComponent(input.sessionID)}/message`
   const query: Record<string, string> = {
-    directory: input.directory,
+    directory: input.scope?.location.directory ?? input.directory,
     limit: String(limit),
   }
   if (input.cursor) {
@@ -575,7 +577,7 @@ export async function fetchSessionProjectionPage(
     query.order = order
   }
 
-  const response = await runtimeFetch(path, {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(path, {
     method: "GET",
     query,
     signal: input.signal,

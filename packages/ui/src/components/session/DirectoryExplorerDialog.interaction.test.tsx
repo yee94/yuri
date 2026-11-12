@@ -5,9 +5,19 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { DirectoryExplorerDialog } from './DirectoryExplorerDialog';
+vi.mock('@/queries/remoteProjectQueries', () => ({
+  useRemoteHostCatalog: () => ({ data: fixture.remoteSupported ? { supported: true, hubId: 'hub', hosts: fixture.hosts } : undefined, error: null }),
+  supportsRemoteProjects: () => fixture.remoteSupported,
+  getHostRuntimeRegistry: () => ({ hubId: 'hub' }),
+}));
+vi.mock('./RemoteDirectoryExplorerDialog', () => ({
+  RemoteDirectoryExplorerDialog: ({ hostId, machinePicker }: { hostId: string; machinePicker: React.ReactNode }) => <section data-remote-directory={hostId}>{machinePicker}</section>,
+}));
 
 const fixture = vi.hoisted(() => ({
   mobile: false,
+  remoteSupported: false,
+  hosts: [] as Array<{ id: string; name: string; state: string; available?: boolean }>,
   home: '/workspace',
   projects: [{ id: 'existing', path: '/workspace/Existing' }],
   identity: { id: 'default-identity', name: 'Default identity', authType: 'ssh', sshKey: 'fixture-key' },
@@ -104,6 +114,8 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     vi.stubGlobal('requestAnimationFrame', () => 0);
     vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
     fixture.mobile = mobile;
+    fixture.remoteSupported = false;
+    fixture.hosts = [];
     fixture.list.mockImplementation(async (path: string) => path === '/workspace/' ? [
       { name: 'Code', path: '/workspace/Code', isDirectory: true },
       { name: 'Existing', path: '/workspace/Existing', isDirectory: true },
@@ -142,6 +154,40 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
       mkdirSync(process.env.YURI_TEST_EVIDENCE_DIR, { recursive: true });
       writeFileSync(join(process.env.YURI_TEST_EVIDENCE_DIR, `directory-${mobile ? 'mobile' : 'desktop'}.html`), container.innerHTML);
     }
+  });
+
+  test('uses the design machine step before directory IO and reuses local browsing when returning', async () => {
+    fixture.remoteSupported = true;
+    fixture.hosts = [
+      { id: 'remote', name: 'Remote machine', state: 'idle' },
+      { id: 'locked', name: 'Locked machine', state: 'unauthorized' },
+    ];
+    await mount();
+    expect(pathInput()).toBeNull();
+    expect(fixture.list).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.textContent).toContain('remoteProjects.local');
+    const remote = [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.includes('Remote machine'))!;
+    const locked = [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.includes('Locked machine'))!;
+    expect(locked.disabled).toBe(true);
+    await act(async () => remote.click());
+    await act(async () => button('remoteProjects.next').click());
+    expect(container.querySelector('[data-remote-directory]')?.getAttribute('data-remote-directory')).toBe('remote');
+    expect(fixture.list).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="header.actions.backAria"]')!.click());
+    await act(async () => button('remoteProjects.local').click());
+    await act(async () => button('remoteProjects.next').click());
+    expect(pathInput()).not.toBeNull();
+    expect(fixture.list).toHaveBeenCalledWith('/workspace/');
+    expect(container.querySelector('[data-remote-directory]')).toBeNull();
+  });
+
+  test('without remote hosts keeps the existing local directory entry without extra steps or unsupported copy', async () => {
+    fixture.remoteSupported = true;
+    await mount();
+    expect(pathInput()).not.toBeNull();
+    expect(button('remoteProjects.next')).toBeUndefined();
+    expect(container.textContent).not.toContain('remoteProjects.unsupported');
+    expect(fixture.list).toHaveBeenCalledWith('/workspace/');
   });
 
   test('show-hidden is a pressed toggle and only exposes directories', async () => {

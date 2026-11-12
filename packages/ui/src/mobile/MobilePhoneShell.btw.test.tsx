@@ -43,6 +43,8 @@ import { MobilePhoneShell } from './MobilePhoneShell';
 import { isPhoneBtwScopeOpen, pushPhoneBtw, useMobileNavigationStore } from './useMobileNavigationStore';
 import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 import { resetSessionBtwStoreForRuntimeSwitch, useSessionBtwStore } from '@/stores/useSessionBtwStore';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,6 +67,7 @@ describe('phone /btw page', () => {
     api.generateSessionAside.mockImplementation(() => new Promise(() => {}));
     resetSessionBtwStoreForRuntimeSwitch();
     useMobileNavigationStore.getState().reset();
+    useSessionUIStore.setState({ currentSessionId: null });
     host = document.createElement('div');
     document.body.append(host);
     root = createRoot(host);
@@ -83,6 +86,42 @@ describe('phone /btw page', () => {
     useMobileNavigationStore.getState().closeSecondary();
     await act(async () => renderShell());
     expect(pushPhoneBtw(target)).toBe(false);
+  });
+
+  test('remote chat secondary never materializes the retained Hub session, and Back only clears the remote bridge', async () => {
+    useSessionUIStore.setState({ currentSessionId: 'hub-session' });
+    const localSelect = vi.spyOn(useSessionUIStore.getState(), 'setCurrentSession');
+    useSessionNavigationStore.getState().openRemoteSession({ id: 'remote-project', hostId: 'remote-host', path: '/remote' }, { hubId: 'hub', hostId: 'remote-host', directory: '/remote' }, 'same-id');
+    useMobileNavigationStore.getState().openRemoteProject();
+    await act(async () => renderShell());
+    expect(useMobileNavigationStore.getState().secondary).toEqual({ kind: 'draft' });
+    expect(useSessionNavigationStore.getState().remoteSession?.sessionId).toBe('same-id');
+    expect(localSelect).not.toHaveBeenCalled();
+    await act(async () => { expect(systemBack?.()).toBe(true); });
+    expect(useSessionNavigationStore.getState().remoteSession).toBeNull();
+    expect(useSessionUIStore.getState().currentSessionId).toBe('hub-session');
+    expect(localSelect).not.toHaveBeenCalled();
+    localSelect.mockRestore();
+  });
+
+  test('remote parent Back invokes the Host callback without inserting the parent into the local navigation mirror', async () => {
+    useSessionUIStore.setState({ currentSessionId: 'hub-session' });
+    const localSelect = vi.spyOn(useSessionUIStore.getState(), 'setCurrentSession');
+    const location = { hubId: 'hub', hostId: 'remote-host', directory: '/remote' };
+    const project = { id: 'remote-project', hostId: 'remote-host', path: '/remote' };
+    useSessionNavigationStore.getState().openRemoteSession(project, location, 'remote-child');
+    useMobileNavigationStore.getState().openRemoteProject();
+    const onSelect = vi.fn(() => useSessionNavigationStore.getState().openRemoteSession(project, location, 'remote-parent'));
+    await act(async () => root.render(<MobilePhoneShell onAddProject={() => {}} onEnableAssistants={() => {}}
+      parentSessionTarget={{ id: 'remote-parent', directory: '/remote', onSelect }} registerSecondaryBackHandler={registerBack}
+      renderChat={() => <div data-remote-chat />} />));
+    await act(async () => { expect(systemBack?.()).toBe(true); });
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(useSessionNavigationStore.getState().remoteSession?.sessionId).toBe('remote-parent');
+    expect(useMobileNavigationStore.getState().secondary).toEqual({ kind: 'draft' });
+    expect(useSessionUIStore.getState().currentSessionId).toBe('hub-session');
+    expect(localSelect).not.toHaveBeenCalled();
+    localSelect.mockRestore();
   });
 
   test.each(['header', 'system', 'gesture'] as const)('pushes above the chat page; %s Back returns and clears the side conversation', async (backKind) => {

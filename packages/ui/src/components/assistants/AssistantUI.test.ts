@@ -747,7 +747,9 @@ describe('Assistant UI product contract', () => {
     expect(chatMessage).toContain('sessionSurface.onRevertMessage');
     expect(chatMessage).toContain('directory: sessionSurface.directory ?? undefined');
     expect(timeline).toContain('sessionID?: string;');
-    expect(timeline).toContain('useSessionMessageRecords(currentSessionId ?? \'\', directory)');
+    expect(timeline).toContain("useSessionMessageRecords(remote ? '' : currentSessionId ?? '', remote ? localDirectory : directory)");
+    expect(timeline).toContain('const currentSessionId = sessionID;');
+    expect(timeline).toContain('const messages = remoteMessages ?? localMessages;');
     expect(timeline).toContain('if (onRevertMessage) await onRevertMessage(messageId)');
     expect(timeline).toContain('revertToMessage(currentSessionId, messageId, { directory })');
     expect(timeline).toContain('getTimelineActionAvailability(sessionSurface.capabilities)');

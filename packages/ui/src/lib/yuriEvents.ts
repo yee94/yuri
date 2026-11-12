@@ -70,6 +70,9 @@ export type ContactTurnEndEvent = {
   occurredAt: number;
 };
 export type YuriEvent =
+  | { type: 'global-event-stream-ready' }
+  | { type: 'remote-host-status'; envelope: { type: 'yuri:host-status'; properties: unknown } }
+  | { type: 'remote-host-event'; envelope: { type: 'yuri:host-event'; properties: unknown } }
   | { type: 'session-unread-changed'; revision: number; occurredAt: number }
   | { type: 'session-order-changed'; occurredAt: number }
   | { type: 'project-order-changed'; occurredAt: number }
@@ -186,6 +189,11 @@ const parseEnvelope = (raw: string): { type: string; properties: unknown } | nul
 };
 
 export const parseYuriEventEnvelope = (envelope: { type: string; properties: unknown }): YuriEvent | null => {
+  if (envelope.type === 'yuri:global-event-stream-ready') {
+    return envelope.properties === undefined || envelope.properties === null || (typeof envelope.properties === 'object' && !Array.isArray(envelope.properties))
+      ? { type: 'global-event-stream-ready' }
+      : null;
+  }
   if (envelope.type === 'yuri:event-stream-ready') {
     return envelope.properties === undefined || envelope.properties === null || (typeof envelope.properties === 'object' && !Array.isArray(envelope.properties))
       ? { type: 'event-stream-ready' }
@@ -199,6 +207,13 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
   const parsed = envelope.properties && typeof envelope.properties === 'object' && !Array.isArray(envelope.properties)
     ? envelope.properties as Record<string, unknown>
     : null;
+
+  if (envelope.type === 'yuri:host-status' || envelope.type === 'yuri:host-event') {
+    if (typeof parsed?.hubId !== 'string' || !parsed.hubId || typeof parsed.hostId !== 'string' || !parsed.hostId) return null;
+    return envelope.type === 'yuri:host-status'
+      ? { type: 'remote-host-status', envelope: { type: envelope.type, properties: parsed } }
+      : { type: 'remote-host-event', envelope: { type: envelope.type, properties: parsed } };
+  }
 
   if (envelope.type === 'yuri:worktree-topology-changed') {
     const projectDirectory = typeof parsed?.projectDirectory === 'string' ? parsed.projectDirectory.trim() : '';
@@ -344,7 +359,7 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
   return nextEvent;
 };
 
-const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) => {
+export const dispatchYuriEventEnvelope = (envelope: { type: string; properties: unknown }) => {
   const nextEvent = parseYuriEventEnvelope(envelope);
   if (!nextEvent) return;
   if (nextEvent.type === 'event-stream-ready') reconnectAttempt = 0;
@@ -383,7 +398,7 @@ const connect = () => {
     onMessage: (data) => {
       if (attempt !== nextAttempt) return;
       const envelope = parseEnvelope(data);
-      if (envelope) dispatchFromEnvelope(envelope);
+      if (envelope) dispatchYuriEventEnvelope(envelope);
     },
   }).then(
     () => {

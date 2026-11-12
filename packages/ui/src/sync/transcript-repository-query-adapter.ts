@@ -106,6 +106,7 @@ import { enqueueExactFill } from "./transcript-exact-fill-scheduler"
 // ---------------------------------------------------------------------------
 
 export type TranscriptQueryAdapterDeps = {
+  inboxSessionKey?: (scope: TranscriptScope) => string
   client?: QueryClient
   /** HTTP page fetcher (Host turn-page). Required for ensureInitial / fetchPreviousPage. */
   fetcher?: SessionTranscriptFetcher
@@ -2097,7 +2098,7 @@ export function createQueryTranscriptRepository(
         transport: identity.transport, generation: identity.generation,
       })
       cacheBudget.noteScopeObserved(toCacheScope(scope))
-      forgetPromotedInbox(identity.sessionID, next.messageOrder)
+      forgetPromotedInbox(deps.inboxSessionKey?.(identity) ?? identity.sessionID, next.messageOrder)
       try {
         const refreshDiffAfter = tryCaptureTranscriptCanonicalSnapshot(() => next)
         if (refreshDiffBefore && refreshDiffAfter) {

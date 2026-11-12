@@ -35,7 +35,25 @@ independently requires its short-lived target token and strips Yuri credentials
 before forwarding. Target registration and arbitrary Yuri write routes still
 reject URL tokens; filesystem URL access remains GET-only.
 
+File-preview resources have a narrowly parsed pathname envelope beneath the
+preview proxy: `/_file/<target-token>/<short-url-token>/<relative-resource>`.
+Only GET/HEAD may use its short URL token; file previews never authenticate a
+WebSocket this way. The same expiry store is used, and client-bound file tokens
+reload the current client record on every request, failing closed on revocation,
+expiry or an unavailable client catalog. Explicit bearer authentication takes
+precedence. A `-` path placeholder is not an authentication grant. The Remote Host
+Gateway validates the browser's Hub token, replaces it with that placeholder,
+and uses its own remote bearer for the upstream request; Hub URL credentials are
+not forwarded to the remote machine. Regular network-preview form/WS behavior
+is unchanged.
+
 - `isUrlAuthWebSocketPath(pathname)`: true when a WebSocket upgrade may authenticate with `yuri_url_token` (exact terminal/dictation/event/realtime-proxy paths, plus prefix `/api/preview/proxy/` for Preview HMR). Keep in sync with tunnel-host `isTunnelWsPathAllowed`.
+- Host-prefixed terminal/Preview sockets and raw/serve/icon/Preview assets use
+  the corresponding narrow URL-token allowlist. Host-prefixed Preview forms keep
+  the existing target-token gate. `issueClientUrlToken(req)` is a process-local
+  helper for the authenticated Gateway response pipe; it never sends a Hub token
+  upstream. Gateway authorization independently reloads the URL token's issuing
+  client, including current pairing scope, expiry and revocation.
 - `createUiAuth({ password, cookieName, sessionTtlMs, readSettingsFromDiskMigrated })`: creates UI auth controller with methods:
   - `authorizeRelayRequest(req)`
   - `enabled`

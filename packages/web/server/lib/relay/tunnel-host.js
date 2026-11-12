@@ -49,6 +49,7 @@ const PREVIEW_PROXY_WS_PATH_PREFIX = '/api/preview/proxy/';
  */
 export const isTunnelWsPathAllowed = (path) => {
   if (typeof path !== 'string' || !path) return false;
+  if (/^\/api\/hosts\/[^/]+\/api\/(?:terminal\/ws(?:\?|$)|preview\/proxy\/)/.test(path)) return true;
   // Path only (no query) — tunnel open payload already splits query.
   if (ALLOWED_WS_PATHS.has(path)) return true;
   try {

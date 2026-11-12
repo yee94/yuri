@@ -15,6 +15,8 @@ vi.mock('@/lib/runtime-fetch', () => ({
 
 const keyboard = vi.hoisted(() => ({
   listeners: new Map<string, (info: { keyboardHeight: number }) => void>(),
+  appListeners: new Map<string, (info: { isActive: boolean }) => void>(),
+  nativeBlur: vi.fn(async () => undefined),
   setImeSync: vi.fn(async (_options: { enabled: boolean }) => undefined),
 }));
 vi.mock('@/mobile/nativeImeHeader', () => ({
@@ -32,7 +34,16 @@ vi.mock('@capacitor/status-bar', () => ({ StatusBar: {
   setOverlaysWebView: async () => undefined, setBackgroundColor: async () => undefined,
   setStyle: async () => undefined, show: async () => undefined,
 }, Style: { Dark: 'DARK', Light: 'LIGHT' } }));
-vi.mock('@capacitor/app', () => ({ App: { addListener: async () => ({ remove: async () => undefined }) } }));
+vi.mock('@capacitor/app', () => ({ App: {
+  addListener: async (event: string, handler: (info: { isActive: boolean }) => void) => {
+    keyboard.appListeners.set(event, handler);
+    return { remove: async () => { keyboard.appListeners.delete(event); } };
+  },
+} }));
+vi.mock('@/lib/native-ios-composer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/native-ios-composer')>(),
+  getNativeIosComposerPlugin: () => ({ blur: keyboard.nativeBlur }),
+}));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -40,6 +51,8 @@ let container: HTMLDivElement;
 beforeEach(() => {
   vi.useFakeTimers();
   keyboard.listeners.clear();
+  keyboard.appListeners.clear();
+  keyboard.nativeBlur.mockClear();
   keyboard.setImeSync.mockClear();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal('Capacitor', { isNativePlatform: () => true, getPlatform: () => 'android' });
@@ -183,6 +196,71 @@ async function ime(open: boolean, payload: 'native' | 'detail', phase: 'start' |
       : new CustomEvent('yuri:ime-state', { detail: data }));
   });
 }
+
+describe('iOS keyboard presentation is not an editing-end signal', () => {
+  beforeEach(() => {
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true, getPlatform: () => 'ios' });
+  });
+
+  test('replays focus → reloadInputViews willHide without revoking the Web responder', async () => {
+    // ios-first-input/web-ime-timeline.json: focus at 1229, willHide at 1270,
+    // followed by the application's blur at 1288; no user dismissal in between.
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const blur = vi.spyOn(composer, 'blur');
+    await act(async () => vi.advanceTimersByTimeAsync(41));
+    await act(async () => keyboard.listeners.get('keyboardWillHide')?.({ keyboardHeight: 311 }));
+    await act(async () => vi.advanceTimersByTimeAsync(350));
+    expect(document.activeElement).toBe(composer);
+    expect(blur).not.toHaveBeenCalled();
+  });
+
+  test('software → hardware/minimized close removes lift, not the editing owner', async () => {
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    await ime(true, 'native');
+    const blur = vi.spyOn(composer, 'blur');
+    const intent = vi.fn();
+    window.addEventListener('yuri:keyboard-intent', intent);
+    try {
+      await ime(false, 'native', 'start');
+      await ime(false, 'native');
+      expect(document.activeElement).toBe(composer);
+      expect(blur).not.toHaveBeenCalled();
+      expect(intent).not.toHaveBeenCalled();
+      expect(document.documentElement.classList.contains('yuri-keyboard-open')).toBe(false);
+      // The explicit editing-end path remains available; no auto-refocus.
+      await act(async () => composer.blur());
+      await ime(false, 'native');
+      expect(document.activeElement).toBe(document.body);
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(intent).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('yuri:keyboard-intent', intent);
+    }
+  });
+
+  test('native overlay hide clears residual shell layout without requesting native blur', async () => {
+    document.documentElement.classList.add('yuri-native-ios-composer');
+    await act(async () => root.render(<Host />));
+    document.documentElement.style.setProperty('--yuri-kb-layout', '300px');
+    await act(async () => keyboard.listeners.get('keyboardWillHide')?.({ keyboardHeight: 311 }));
+    expect(keyboard.nativeBlur).not.toHaveBeenCalled();
+    expect(document.documentElement.style.getPropertyValue('--yuri-kb-layout')).toBe('0px');
+  });
+
+  test('background is an explicit lifecycle end; foreground never forces focus', async () => {
+    await act(async () => root.render(<Host initialFocus="composer" />));
+    const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+    const blur = vi.spyOn(composer, 'blur');
+    await act(async () => keyboard.appListeners.get('appStateChange')?.({ isActive: false }));
+    expect(document.activeElement === document.body).toBe(true);
+    expect(blur).toHaveBeenCalledTimes(1);
+    await act(async () => keyboard.appListeners.get('appStateChange')?.({ isActive: true }));
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(document.activeElement === document.body).toBe(true);
+  });
+});
 
 describe('Android native IME close during Settings picker focus transfer', () => {
   async function openPicker() {

@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, mock } from 'bun:test';
-import { test } from 'vitest';
+import { test, vi, expect as viExpect } from 'vitest';
+
+const remoteRouteBridge = vi.hoisted(() => ({ apply: vi.fn(async () => {}) }));
+vi.mock('@/lib/remote-projects/navigation', () => ({ applyRemoteProjectRoute: remoteRouteBridge.apply }));
+vi.mock('@/stores/useProjectsStore', () => ({ useProjectsStore: { getState: () => ({ projects: [], setActiveProjectIdOnly: () => {} }) } }));
+vi.mock('@/stores/useSessionNavigationStore', () => ({ useSessionNavigationStore: {
+  getState: () => ({ remoteSession: null, clearRemoteSession: () => {} }),
+  subscribe: () => () => {},
+} }));
 
 type EffectSlot = {
   cleanup?: () => void;
@@ -146,7 +154,7 @@ let globalSessionsState = {
   archivedSessions: [] as Array<{ id: string }>,
 };
 let resolvedSessionDirectory = '/repo';
-let urlRoute = {
+let urlRoute: import('@/lib/router').RouteState = {
   sessionId: 'session-1' as string | null,
   isNewSession: false,
   tab: null as 'chat' | 'assistant' | 'schedule' | null,
@@ -211,9 +219,13 @@ mock.module('@/lib/router', () => ({
     tab?: typeof uiState.activeMainTab;
     assistantId?: string | null;
     focusSessionId?: string | null;
+    hostId?: string | null;
+    hubId?: string | null;
+    directory?: string | null;
   }) => {
     urlRoute = {
       sessionId: state.sessionId,
+      ...(state.hostId ? { hostId: state.hostId, hubId: state.hubId, directory: state.directory } : {}),
       isNewSession: Boolean((state as { isNewSession?: boolean }).isNewSession),
       tab: state.tab ?? null,
       settingsPath: state.isSettingsOpen ? state.settingsPath : null,
@@ -301,7 +313,18 @@ mock.module('@/router/sessionLookup', () => ({
 const { useRouter } = await import('./useRouter');
 
 describe('useRouter', () => {
+  test('remote same-id deep links bypass all local selection and retain their Host scope', async () => {
+    urlRoute = { ...urlRoute, sessionId: 'session-1', hostId: 'remote-host', hubId: 'hub', directory: '/remote/raw', isNewSession: false };
+    harness.render(useRouter);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    viExpect(remoteRouteBridge.apply).toHaveBeenCalledWith(viExpect.objectContaining({ hostId: 'remote-host', hubId: 'hub', directory: '/remote/raw', sessionId: 'session-1' }), viExpect.any(Function));
+    expect(setCurrentSessionCalls).toEqual([]);
+    expect(notifySessionOpenFailedCalls).toEqual([]);
+    expect(urlRoute.hostId).toBe('remote-host');
+  });
+
   beforeEach(() => {
+    remoteRouteBridge.apply.mockClear();
     harness.reset();
     sessionSubscribers.clear();
     uiSubscribers.clear();

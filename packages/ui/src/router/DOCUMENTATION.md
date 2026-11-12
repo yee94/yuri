@@ -53,6 +53,19 @@ buildSessionPath({ sessionId, tab: 'git' })  // → /session/$id/git
 
 `createAppNavigation`: `goSchedule()` / `goAssistant()` / `goSession()`.
 
+Remote project/session selection uses `stores/useSessionNavigationStore`, not the
+Hub's local `setCurrentSession`. Its `remoteSession` contains `projectId`, explicit
+`location: {hubId, hostId, directory}` and a raw `sessionId` (`null` for a draft).
+`openRemoteProjectSession` is the synchronous registry-fenced selection action;
+`openRemoteProjectDraft` validates a header/global New target against the current
+Hub catalog first. Neither changes the singleton endpoint or directory. Local
+selection clears the remote bridge. The phone opens a stable draft secondary
+container without invoking the local draft/session mirror; the chat entrypoint
+consumes the remote bridge even when that container supplies an empty explicit
+session ID. Closing the secondary page clears it. Hub switches also clear the
+transient selection. URL and notification adapters must retain this full location
+and must never resolve a remote raw ID through local session lookup.
+
 Individual tasks use `/schedule/tasks/$projectId/$taskId`. The scheduled workspace
 restores the composite identity on initial load and browser Back/Forward; list
 selection, save, and editor dismissal write the matching task/list path.

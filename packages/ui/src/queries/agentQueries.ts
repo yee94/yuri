@@ -8,6 +8,9 @@ import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { resolveConfigQueryDirectory as resolveDirectory } from './commandQueries';
 import { providerCatalogQueryOptions, rawAgentsQueryOptions } from './configCatalogQueries';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 
 export { resolveConfigQueryDirectory } from './commandQueries';
 
@@ -49,13 +52,16 @@ function parseAgentGroup(path: string | null | undefined): string | undefined {
 export const agentQueryOptions = (
   directory: string | null = resolveDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: agentQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(agentQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Agent[]> => {
-      const agents = await queryClient.fetchQuery(rawAgentsQueryOptions(normalizedDirectory, transport));
-      const response = await runtimeFetch('/api/config/agents/metadata', {
+      const raw = rawAgentsQueryOptions(normalizedDirectory, transport, entry);
+      const agents = entry ? await raw.queryFn({ signal }) : await queryClient.fetchQuery(raw);
+      const response = await (entry ? scope.fetch : runtimeFetch)('/api/config/agents/metadata', {
         method: 'POST',
         headers: {
           'Cache-Control': 'no-cache',
@@ -77,6 +83,7 @@ export const agentQueryOptions = (
         }>;
         disabled?: Array<{ name?: unknown; scope?: unknown; description?: unknown; mode?: unknown }>;
       };
+      scope.assertCurrent(signal);
       const listed = agents.map((agent) => {
         const metadata = data.agents?.[agent.name] ?? {};
         const scope = metadata.scope
@@ -120,12 +127,14 @@ export const agentQueryOptions = (
 export const providerQueryOptions = (
   directory: string | null,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: providerQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(providerQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ProviderWithModelList[]> => {
-      const result = await providerCatalogQueryOptions(normalizedDirectory, transport).queryFn({ signal });
+      const result = await providerCatalogQueryOptions(normalizedDirectory, transport, entry).queryFn({ signal });
       return result.providers.map((provider) => ({
         ...provider,
         models: Object.values(provider.models ?? {}),
@@ -136,22 +145,23 @@ export const providerQueryOptions = (
 };
 
 export const useAgentsQuery = (options: { enabled?: boolean } = {}) => {
+  const host = useHostRuntime();
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   return useQuery({
-    ...agentQueryOptions(normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory())),
+    ...agentQueryOptions(normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory()), undefined, host?.entry),
     enabled: options.enabled,
   });
 };
 
-export const useScopedAgentsQuery = (directory: string | null, options: { enabled?: boolean } = {}) => useQuery({
-  ...agentQueryOptions(directory),
-  enabled: options.enabled,
-});
+export const useScopedAgentsQuery = (directory: string | null, options: { enabled?: boolean; scope?: HostRuntimeEntry } = {}) => {
+  const host = useHostRuntime();
+  return useQuery({ ...agentQueryOptions(directory, undefined, options.scope ?? host?.entry), enabled: options.enabled });
+};
 
-export const useScopedProvidersQuery = (directory: string | null, options: { enabled?: boolean } = {}) => useQuery({
-  ...providerQueryOptions(directory),
-  enabled: options.enabled,
-});
+export const useScopedProvidersQuery = (directory: string | null, options: { enabled?: boolean; scope?: HostRuntimeEntry } = {}) => {
+  const host = useHostRuntime();
+  return useQuery({ ...providerQueryOptions(directory, undefined, options.scope ?? host?.entry), enabled: options.enabled });
+};
 
 export const readAgentsSnapshot = (
   directory: string | null = resolveDirectory(),

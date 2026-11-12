@@ -748,6 +748,7 @@ export const registerOpenCodeProxy = (app, deps) => {
 
       if (subscribeGlobalUiEvent) {
         unsubscribeHostEvents = subscribeGlobalUiEvent((payload, options = {}) => {
+          if (options.targetFilter && !options.targetFilter(res)) return;
           const envelope = { directory: options.directory || 'global', payload };
           const block = `data: ${JSON.stringify(envelope)}\n\n`;
           const filtered = outboundSseFilter ? filterSseBlock(block, outboundSseFilter) : block;

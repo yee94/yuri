@@ -6,6 +6,7 @@ import path from 'path';
 import { createProjectIdFromPath } from '../projects/project-id.js';
 import { createSettingsRuntime } from './settings-runtime.js';
 import { createSettingsNormalizationRuntime } from './settings-normalization-runtime.js';
+import { createSettingsHelpers } from './settings-helpers.js';
 
 const createRuntime = async (overrides = {}) => {
   const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'yuri-settings-runtime-'));
@@ -36,6 +37,40 @@ const createRuntime = async (overrides = {}) => {
 };
 
 describe('settings runtime', () => {
+  it('serializes real Hub layout merge and emits tips only after changed commits; failure retains disk', async () => {
+    const helpers = createSettingsHelpers({ normalizePathForPersistence: value => value,
+      normalizeDirectoryPath: value => value, sanitizeTypographySizesPartial: () => undefined,
+      normalizeStringArray: value => value, sanitizeModelRefs: () => undefined,
+      sanitizeSkillCatalogs: () => undefined, sanitizeProjects: value => value });
+    let tips = 0; let fail = false;
+    const { runtime, settingsFilePath, cleanup } = await createRuntime({
+      sanitizeSettingsUpdate: helpers.sanitizeSettingsUpdate, mergePersistedSettings: helpers.mergePersistedSettings,
+      onProjectOrderChanged: () => { tips++; },
+      fsPromises: { ...fsPromises, rename: async (...args) => { if (fail) throw new Error('layout write failed'); return fsPromises.rename(...args); } },
+    });
+    try {
+      const first = { hubId: 'hub', order: ['local', 'remote-a'], collapsed: { local: true } };
+      await runtime.persistSettings({ hubProjectLayout: first });
+      expect(tips).toBe(1);
+      await runtime.persistSettings({ hubProjectLayout: first });
+      expect(tips).toBe(1);
+      await Promise.all([
+        runtime.persistSettings({ hubProjectLayout: { hubId: 'hub', order: ['remote-b'], collapsed: { 'remote-b': true } } }),
+        runtime.persistSettings({ hubProjectLayout: { hubId: 'hub', order: ['remote-a'], collapsed: { local: false } } }),
+      ]);
+      const expected = { hubId: 'hub', order: ['remote-a', 'remote-b', 'local'], collapsed: { local: false, 'remote-b': true } };
+      expect((await runtime.readSettingsFromDisk()).hubProjectLayout).toEqual(expected);
+      expect(tips).toBe(3);
+      fail = true;
+      await expect(runtime.persistSettings({ hubProjectLayout: first })).rejects.toThrow('layout write failed');
+      expect(tips).toBe(3);
+      expect((await runtime.readSettingsFromDisk()).hubProjectLayout).toEqual(expected);
+      await fsPromises.writeFile(settingsFilePath, '{malformed');
+      await expect(runtime.persistSettings({ hubProjectLayout: first })).rejects.toThrow();
+      expect(await fsPromises.readFile(settingsFilePath, 'utf8')).toBe('{malformed');
+      expect(tips).toBe(3);
+    } finally { await cleanup(); }
+  });
   it.each(['read-first', 'write-first', 'functional-write-first'])(
     'keeps a fresh home-directory bootstrap out of the project registry (%s)', async (order) => {
       const { runtime, tempRoot, cleanup } = await createRuntime({

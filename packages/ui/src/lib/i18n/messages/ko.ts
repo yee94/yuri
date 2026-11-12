@@ -1,8 +1,10 @@
 import type { I18nKey } from './en';
+import { remoteProjectMessages } from './remote-projects';
 import { settingsDict } from './ko.settings';
 import { tourMessages } from './tour';
 
 export const dict: Record<I18nKey, string> = {
+  ...remoteProjectMessages.ko,
   'chat.find.label': '불러온 대화 검색',
   'chat.find.count': '{current} / {total}',
   'chat.find.previous': '이전 결과 (Shift+Enter)',

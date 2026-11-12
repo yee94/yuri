@@ -3,6 +3,18 @@ import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_PATH } from '.
 import { REMOTE_CONNECTIONS_SKILL_PATH } from '../gui-customization/remote-connections.js';
 import { MESSAGE_QUEUE_ADMISSION_HTTP_MAX_BYTES } from '../message-queue/service.js';
 
+const decodeRequestPathForClassification = (pathname) => typeof pathname === 'string'
+  ? pathname.replace(/%([a-f0-9]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16))) : '';
+const isFilePreviewRequestPath = (pathname) => /^\/api\/(?:hosts\/[^/]+\/api\/)?preview\/proxy\/[^/]+\/_file(?:\/|$)/i
+  .test(decodeRequestPathForClassification(pathname));
+
+export const redactRequestPathForLog = (pathname) => {
+  if (isFilePreviewRequestPath(pathname)) return '/api/preview/proxy/_file/[preview]/[url-auth]/[resource]';
+  // Invalid envelopes can still contain credentials; never log a preview tail.
+  if (/\/api\/preview\/proxy(?:\/|$)/i.test(decodeRequestPathForClassification(pathname))) return '/api/preview/proxy/[redacted]';
+  return typeof pathname === 'string' ? pathname : '';
+};
+
 const parseLoopbackUrl = (rawUrl) => {
   if (typeof rawUrl !== 'string') {
     return null;
@@ -668,7 +680,7 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
     // preview proxy validates against the registered target id/TTL. Let those
     // requests reach that stricter check instead of failing the global UI auth
     // gate when the short-lived browser URL auth token expires.
-    if (getRequestPathname(req).startsWith('/api/preview/proxy/') && hasPreviewProxyCredential(req)) {
+    if (requestPathname.startsWith('/api/preview/proxy/') && !isFilePreviewRequestPath(requestPathname) && hasPreviewProxyCredential(req)) {
       return next();
     }
 
@@ -1249,7 +1261,7 @@ export const registerCommonRequestMiddleware = (app, dependencies) => {
 
   app.use((req, _res, next) => {
     if (verboseRequestLogs) {
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+      console.log(`${new Date().toISOString()} - ${req.method} ${redactRequestPathForLog(req.path)}`);
     }
     next();
   });

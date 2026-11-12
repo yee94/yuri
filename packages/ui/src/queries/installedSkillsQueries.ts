@@ -5,6 +5,9 @@ import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { opencodeClient } from '@/lib/opencode/client';
 import type { DiscoveredSkill, SkillScope, SkillSource } from '@/stores/useSkillsStore';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 
 type RawSkillResponse = {
   name: string;
@@ -35,17 +38,21 @@ const installedSkillsQueryKey = (directory: string | null, transport = getRuntim
 export const installedSkillsQueryOptions = (
   directory: string | null = resolveInstalledSkillsQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: installedSkillsQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(installedSkillsQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<DiscoveredSkill[]> => {
-      const response = await runtimeFetch('/api/config/skills', {
+      const response = await (entry ? scope.fetch : runtimeFetch)('/api/config/skills', {
         query: { summary: 'true', ...(normalizedDirectory ? { directory: normalizedDirectory } : {}) },
         signal,
       });
       if (!response.ok) throw new Error(`Failed to list skills: ${response.status}`);
       const data = await response.json() as { skills?: RawSkillResponse[] };
+      scope.assertCurrent(signal);
+      if (entry && !Array.isArray(data.skills)) throw new Error('Invalid skill catalog');
       return (data.skills ?? []).map((skill) => ({
         name: skill.name,
         path: skill.path,
@@ -60,10 +67,11 @@ export const installedSkillsQueryOptions = (
 };
 
 export const useInstalledSkillsQuery = (options: { enabled?: boolean; directory?: string | null } = {}) => {
+  const host = useHostRuntime();
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   const directory = normalizeDirectory(options.directory) ?? normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory());
   return useQuery({
-    ...installedSkillsQueryOptions(directory),
+    ...installedSkillsQueryOptions(directory, undefined, host?.entry),
     enabled: options.enabled,
   });
 };

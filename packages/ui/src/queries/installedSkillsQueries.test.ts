@@ -5,7 +5,7 @@ let runtimeFetchCalls = 0;
 let responseImpl: () => Promise<Response> = async () => new Response(JSON.stringify({ skills: [] }), { headers: { 'Content-Type': 'application/json' } });
 const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
 
-mock.module('@/lib/runtime-switch', () => ({ getRuntimeTransportIdentity: () => 'runtime-a' }));
+mock.module('@/lib/runtime-switch', () => ({ getRuntimeTransportIdentity: () => 'runtime-a', getRuntimeGeneration: () => 0 }));
 mock.module('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => {
   runtimeFetchCalls += 1;
   return responseImpl();

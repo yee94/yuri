@@ -1,5 +1,119 @@
 # Sync architecture, event handling & store update rules
 
+## Explicit Remote Project state
+
+`createRemoteSessionState(registry, location)` owns a remote Location's Query
+transcript, native prompt/inbox and visible content demand. It never switches the
+global runtime or replaces the local SyncProvider binding. Create it once per
+registry/Location/logical scope revision and dispose it when that owner changes;
+the Host's `scopeGeneration` authorization/descriptor identity fences old HTTP, SDK
+and durable commits. Physical wire `generation`, connection state and
+`lastConnectedAt` are live transport metadata, not the logical request scope:
+opening/closing a zero-reference short HTTP connection must not cancel its own
+bootstrap or rebuild Model/files/git consumers. Actual scope revocation still
+replaces their captured entry; wire generations independently reject stale events.
+Creating state performs no network/subscription/timer work. `observe(sessionID,
+onError)` seeds the transcript and retains the shared content lease; multiple
+views of the same session share one listener and lease until the last leaves.
+It consumes events from the existing Hub channel, not another socket.
+Global transport ingress bridges Host aggregate envelopes into the existing Yuri
+event bus before local normalization; they never enter local transcript reducers.
+Global stream ready/reconnect uses the remote runtime's distinct
+`global-event-stream-ready` notification to recover leases without refetching local
+product state. The native-capture regression exercises this production ingress,
+not a mocked event-bus emit, and preserves logical scope revocation and physical
+wire event fences independently. Hosts missing the new field conservatively retain
+legacy fencing; missing-token unavailable rows revoke an already-known scope, and
+late snapshots cannot resurrect a retired authorization token.
+The optional third `onRecovered` observer callback runs only after the full
+content/inbox/metadata refresh succeeds. Views clear observation errors there,
+not unrelated failed-mutation errors.
+
+Remote repositories register under the full `locationKey` separately from the
+local binding. `getTranscriptRepository(location)` and `transcriptScope(location,
+sessionID)` resolve them explicitly. Initial/older/refresh/retry/materialization
+and purge runtime entrypoints accept `string | HostLocation`; strings retain
+their existing local meaning. Unbound remote Locations never fall back to the
+local repository. Imperative `getSyncMessages` and materialization readers accept
+the Location; remote `getSyncParts` additionally requires the owning session ID.
+Remote rendering must pass the repository and its scope explicitly rather than
+call an old local-only observer with just the physical directory.
+
+The repository Query transport includes Hub/Host/Location/logical scope revision;
+durable partition uses stable Hub+Host identity. Physical directory remains raw
+at every HTTP/SDK boundary. The runtime durable selector accepts `location` and
+always chooses client IndexedDB for a Remote Host, even in local Electron; remote
+generation cleanup also skips HTTP/SQLite. Authority inbox retirement uses the
+same remote session key, so it cannot clear a local session's queue chips.
+
+`session-prompt-api` and `session-inbox-query` accept an optional resolved
+`HostRuntimeEntry` as `scope`. Prompt, reconcile, interrupt, inbox GET/PATCH/DELETE
+use its fenced transport and raw directory. Overlay, terminal receipts and
+compaction barriers use `locationSessionKey`; received inbox items retain their
+Location while wire session IDs stay raw. `applySessionInboxEvent(event, scope)`
+is the remote event seam. Native queued inputs do not change the session's
+model/agent on enqueue; direct sends use the captured selection and authoritative
+remote session record. `createRemoteSessionState.send` rejects disconnected
+Hosts. Remote bodies never enter Yuri's Hub-owned queue: that queue's admission
+boundary rejects explicit remote `scope.location` or `scope.hostId` before staging,
+upload or POST. Do not erase that identity and then invoke a local queue fallback.
+
+Draft key factories accept an optional `location` alongside transport identity.
+Their existing owner field carries the remote session key through metadata and
+IndexedDB blob references, with no schema migration and identical local keys.
+Selection-store model/agent/variant reads and writes accept an optional final
+Location argument; remote choices never fall back to a bare session ID or update
+the local `lastUsedProvider` preference.
+
+`remote-input-store.getRemoteInputStore(location)` owns the production remote
+composer's separate, per-Hub draft store. Its namespaced metadata sink and default
+IndexedDB attachment driver use a stable Hub durable transport; Host/directory
+and raw session remain in the draft owner. LAN/Relay endpoint identity still
+fences HTTP/SDK work but does not move or delete these client draft partitions.
+Native/menu/worktree initial text uses `seedRemoteDraft`; programmatic input and
+preset submission use the explicit Location pending-composer bridge, never the
+retained Hub's singleton draft or pending fields. Real Chromium document reload
+evidence covers the current factory and attachment bytes, not packaged mobile
+or network lifecycle acceptance.
+
+`remote-input-store` partitions durable metadata and blob databases per Hub,
+with stable `remote-hub:` transport keys independent of LAN/Relay fingerprints.
+Location and draft/session identities remain part of every draft key. Its
+explicit store is injected into the real composer and inbox edit CAS; native
+seed/pending-input/preset entrypoints must use this owner, never the Hub singleton.
+Each blob coordinator reconciles only its Hub database, not local or other-Hub
+references. Network operations retain the current logical authorization scope fence.
+
+Production primary chat now mounts this entry through `RemoteChatContainer` and
+`RemoteChatContext`; concurrent primary/context-panel views share one state per
+registry entry. Its metadata Query reads session identity, live status, permissions
+and forms separately, preserving each successful snapshot through unrelated read
+failures. Native execution and status events update live activity; terminal events
+and content-demand reconnect refresh authority. Permission/question/form responses
+use the same captured Host. Recovery reads native `/session/active` through
+`getSessionActive` and the per-Host connection-scoped active Query; a validated
+empty membership is inactive, while unknown/unsupported/failed reads preserve the
+previous snapshot. Never call the disabled legacy directory-status wrapper here:
+current OpenCode treats `/session/status` as an invalid session ID. Cached
+SessionInfo metadata also supplies remote Header titles independently of whether
+the Hub's summary index has caught up, without another content lease.
+Permission/question/form responses
+never call the local session-actions or local form store. `session-inbox-edit`
+accepts an explicit entry and retires only that Location's inbox identity.
+`useRemoteSessionViewed` owns visible remote read acknowledgement through scoped
+unread Query/API calls. Reads capture the observed row revision and fence late
+focus completions by entry/session; later manual reminders stay unread until
+refocus. The local viewed predicate ignores the retained primary session while
+remote navigation is active. Native notification details carrying Hub/Host
+identity resolve the catalog-backed remote route rather than the local store.
+
+This remains an explicit scoped integration seam, not a migration of all old global
+session APIs. `session-ui-store`, local child-store status and global catalog
+ownership still require dedicated remote-aware callers; passing remote rows to
+their bare-ID/local-only APIs is unsupported. Regression coverage is in
+`remote-session-state.test.ts` and `RemoteChatContainer.test.tsx`; no Electron/iOS timing or live Relay acceptance
+is established by these tests.
+
 ## Prompt client provenance
 
 `postSessionPrompt` declares `metadata.client.id: "yuri"` on each actual user
@@ -190,12 +304,23 @@ manual drags. Settings sync adopts the Host registry order on every client.
 
 `project-order-sync.ts` owns project ordering catch-up for shared Host clients.
 It subscribes before the initial GET, coalesces `project-order-changed` tips and
-stream-ready reconnects, and waits for pending local settings writes before
+stream-ready reconnects, and waits for pending local settings and Hub layout writes before
 reading. Queries use current runtime transport identity; generation checks
 reject late results after switching away and back. A local edit during a read
 forces another read after the write settles. Failures preserve cached ordering;
 successful empty lists clear it. Remote order changes do not change the selected
 project. VS Code keeps its workspace registry.
+
+The same GET consumes the read-only SQLite-backed `hasRemoteProjects` hint into
+the existing bootstrap Query. Thus a safe project-order tip can discover another
+client's first reference without unconditional Host discovery, a second event
+subscription or polling. A last-reference removal refreshes the already-observed
+catalog and clears its projections. `hubProjectLayout` is a separate Hub-owned
+ID-only layout, not remote `settings.projects`; its order and explicit collapse
+booleans apply even when the Host catalog arrives after settings. Layout writes
+serialize with runtime/generation fences, wait for existing local settings writes,
+and expose failed saves while restoring the last confirmed layout. A stale Hub
+completion cannot alter another Hub's selection or layout.
 
 Live session list equality includes the title-refresh presentation fields
 `isGenerating`, `generationExpiresAt`, `lastError`, and `failedAt`. Metadata-only completion must release

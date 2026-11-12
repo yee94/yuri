@@ -14,6 +14,7 @@
       "entry": [
         "src/**/*.{test,spec}.{js,cjs,mjs,jsx,ts,tsx}",
         "src/lib/gui-plugins/native.electron.fixture.ts",
+        "src/sync/fixtures/remote-projects-indexeddb-renderer.ts",
         "src/**/__tests__/**/*.{js,cjs,mjs,jsx,ts,tsx}"
       ],
       "project": [

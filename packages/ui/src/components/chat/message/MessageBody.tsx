@@ -1,4 +1,5 @@
 import React from 'react';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { messageHoverHandlers } from '../lib/messageHover';
 import { useEvent } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
@@ -177,6 +178,8 @@ const TurnChangesPreview = React.memo(({
 }) => {
     const { t } = useI18n();
     const effectiveDirectory = useEffectiveDirectory();
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const sessionSurface = useSessionSurface();
     // Nested/subagent surfaces own their directory + session; primary falls back to global.
     const diffDirectory = sessionSurface.directory || effectiveDirectory;
@@ -220,6 +223,7 @@ const TurnChangesPreview = React.memo(({
 
         if (!isMobile && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: file,
                 turnMessageId: turnId,
@@ -230,6 +234,7 @@ const TurnChangesPreview = React.memo(({
 
         if (isMobile && isLatestTurn && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: file,
                 turnMessageId: turnId,
@@ -246,7 +251,7 @@ const TurnChangesPreview = React.memo(({
         }
 
         if (!isMobile && diffDirectory) {
-            openContextPanelTab(diffDirectory, {
+            openContextPanelTab(hostScope?.key ?? diffDirectory, {
                 mode: 'diff',
                 dedupeKey: `turn-diff:${diffSessionId || 'session'}:${turnId}`,
                 targetPath: null,
@@ -260,6 +265,7 @@ const TurnChangesPreview = React.memo(({
         const firstFile = visibleFiles[0]?.file;
         if (firstFile && isMobile && isLatestTurn && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: firstFile,
                 turnMessageId: turnId,
@@ -1164,6 +1170,7 @@ const AssistantMessageBody = React.memo(({
     const assistantPlanText = React.useMemo(() => flattenAssistantTextParts(assistantTextParts), [assistantTextParts]);
 
     const openContextPreview = useUIStore((state) => state.openContextPreview);
+    const hostRuntime = useHostRuntime();
     const isVSCode = isVSCodeRuntime();
     const isMiniChatSurface = chatSurfaceMode === 'mini-chat';
 
@@ -1365,7 +1372,8 @@ const AssistantMessageBody = React.memo(({
             }
             setIsForkPending(true);
             try {
-                await forkFromMessage(sessionId, messageId);
+                if (sessionSurface.onForkMessage) await sessionSurface.onForkMessage(messageId);
+                else await forkFromMessage(sessionId, messageId);
             } finally {
                 setIsForkPending(false);
             }
@@ -1989,7 +1997,7 @@ const AssistantMessageBody = React.memo(({
                                 if (!directory) {
                                     return;
                                 }
-                                openContextPreview(directory, messagePreviewUrl);
+                                openContextPreview(hostRuntime?.entry.location.hostId ? hostRuntime.entry.key : directory, messagePreviewUrl);
                             }}
                         >
                             <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="global" className={MESSAGE_ACTION_ICON_CLASS} />

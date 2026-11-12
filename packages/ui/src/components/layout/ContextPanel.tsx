@@ -12,6 +12,15 @@ import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { SelectedProjectHostBoundary } from '@/contexts/SelectedProjectHostBoundary';
+import { hostApiPath, locationKey, locationSessionKey, parseLocationKey } from '@/lib/remote-projects/location';
+import { sessionDraftKey, newSessionDraftKey } from '@/sync/input-draft-types';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { RemoteChatContainer } from '@/components/chat/RemoteChatContainer';
+import { useRemoteHostSummaries } from '@/queries/remoteProjectQueries';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { cn } from '@/lib/utils';
@@ -88,6 +97,7 @@ const CONTEXT_TAB_LABEL_MAX_CHARS = 24;
 const PREVIEW_SPLIT_MIN_WIDTH = 400;
 type TranslateFn = ReturnType<typeof useI18n>['t'];
 const EMPTY_SESSION_TITLE_MAP = new Map<string, string>();
+const subscribeToNoSessionTitles = () => () => {};
 
 type PreviewConsoleEvent = {
   id: number;
@@ -334,25 +344,31 @@ const buildSessionTitleMap = (sessions: Array<{ id: string; title?: string | nul
   return next.size === 0 ? EMPTY_SESSION_TITLE_MAP : next;
 };
 
-const useSessionTitleMap = (directory: string | undefined, sessionIDs: readonly string[]): ReadonlyMap<string, string> => {
-  const store = useDirectoryStore(directory);
+const useSessionTitleMap = (directory: string | undefined, sessionIDs: readonly string[], remoteSessions?: Array<{ id: string; title?: string | null }>): ReadonlyMap<string, string> => {
+  const host = useHostRuntime();
+  const remote = !!host?.entry.location.hostId;
+  const store = useDirectoryStore(host?.entry.location.hostId ? undefined : directory, { bootstrap: !host?.entry.location.hostId });
   const snapshotRef = React.useRef<ReadonlyMap<string, string>>(EMPTY_SESSION_TITLE_MAP);
   const sessionIDsRef = React.useRef<readonly string[]>(sessionIDs);
 
   sessionIDsRef.current = sessionIDs;
 
-  return React.useSyncExternalStore(
-    store.subscribe,
-    React.useCallback(() => {
+  const local = React.useSyncExternalStore(
+    remote ? subscribeToNoSessionTitles : store.subscribe,
+    React.useMemo(() => () => {
+      if (remote) return EMPTY_SESSION_TITLE_MAP;
       const next = buildSessionTitleMap(store.getState().session, sessionIDsRef.current);
       if (areTitleMapsEqual(snapshotRef.current, next)) {
         return snapshotRef.current;
       }
       snapshotRef.current = next;
       return next;
-    }, [store]),
+    }, [remote, store]),
     () => EMPTY_SESSION_TITLE_MAP,
   );
+  return React.useMemo(() => host?.entry.location.hostId
+    ? buildSessionTitleMap(remoteSessions ?? [], sessionIDs)
+    : local, [host?.entry.location.hostId, local, remoteSessions, sessionIDs]);
 };
 
 const DESKTOP_BROWSER_INSPECT_SCRIPT = `new Promise((resolve) => {
@@ -515,6 +531,18 @@ type PreviewProxyState =
   | { status: 'ready'; proxyBasePath: string; previewToken?: string; expiresAt: number }
   | { status: 'error'; message: string };
 
+const scopedPreviewPath = (entry: HostRuntimeEntry | undefined, path: string): string => {
+  const prefix = hostApiPath(entry?.location.hostId, '/api/preview/proxy/');
+  if (path.startsWith(prefix)) return path;
+  return hostApiPath(entry?.location.hostId, path);
+};
+
+const validPreviewBasePath = (entry: HostRuntimeEntry | undefined, path: string): boolean => {
+  const prefix = hostApiPath(entry?.location.hostId, '/api/preview/proxy/');
+  const id = path.startsWith(prefix) ? path.slice(prefix.length) : path.startsWith('/api/preview/proxy/') ? path.slice('/api/preview/proxy/'.length) : '';
+  return /^[a-f0-9]{16,64}$/i.test(id);
+};
+
 const getPreviewProxyOrigin = (proxySrc: string): string => {
   if (typeof window === 'undefined') return '';
   try {
@@ -557,6 +585,9 @@ const stripPreviewQueryParams = (value: string): string => {
 };
 
 const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
+  const host = useHostRuntime();
+  const entry = host?.entry;
+  const fetchPreview = entry?.fetch ?? runtimeFetch;
   const { t } = useI18n();
   const { currentTheme } = useThemeSystem();
   const [reloadNonce, bumpReload] = React.useReducer((x: number) => x + 1, 0);
@@ -571,10 +602,21 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   const [consoleEvents, setConsoleEvents] = React.useState<PreviewConsoleEvent[]>([]);
   const [inspectMode, setInspectMode] = React.useState(false);
   const [hoverTarget, setHoverTarget] = React.useState<PreviewElementMetadata | null>(null);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const newSessionDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const localDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const selectedRemote = entry && remoteSelection && locationKey(remoteSelection.location) === entry.key ? remoteSelection : null;
+  const currentSessionId = entry?.location.hostId ? selectedRemote?.sessionId ?? null : localSessionId;
+  const newSessionDraftOpen = entry?.location.hostId ? !selectedRemote?.sessionId : localDraftOpen;
   const addInlineCommentDraft = useInlineCommentDraftStore((state) => state.addDraft);
-  const addAttachedFile = useInputStore((state) => state.addAttachedFile);
+  const addLocalAttachedFile = useInputStore((state) => state.addAttachedFile);
+  const addAttachedFile = useEvent(async (file: File) => {
+    if (!entry?.location.hostId) return addLocalAttachedFile(file);
+    const owner = { transportIdentity: getRuntimeTransportIdentity(), location: entry.location };
+    const draft = currentSessionId ? sessionDraftKey(owner, currentSessionId) : newSessionDraftKey(owner, 'remote-new-session');
+    await useInputStore.getState().addDraftLocalAttachment(draft, file);
+  });
+  const annotationSessionKey = entry?.location.hostId ? locationSessionKey(entry.location, currentSessionId ?? 'draft') : currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
 
   let parsedUrl: URL | null = null;
   try {
@@ -590,6 +632,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
         || parsedUrl.hostname === '[::1]'
         || parsedUrl.hostname === '0.0.0.0')
     : false;
+  const needsProxy = isLoopback || !!entry?.location.hostId;
 
   const normalizedUrl = parsedUrl
     ? (parsedUrl.hostname === '0.0.0.0'
@@ -598,11 +641,13 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     : null;
 
   const targetKey = normalizedUrl ? normalizedUrl.toString() : '';
-  const proxyCacheKey = targetKey ? `${getRuntimeApiBaseUrl() || 'same-origin'}|${targetKey}` : '';
+  const proxyCacheKey = targetKey ? entry?.location.hostId
+    ? `${getRuntimeApiBaseUrl() || 'same-origin'}|${entry.key}|${entry.connectionGeneration}|${targetKey}`
+    : `${getRuntimeApiBaseUrl() || 'same-origin'}|${targetKey}` : '';
   const previewColorScheme = currentTheme.metadata.variant;
 
   React.useEffect(() => {
-    if (!targetKey || !isLoopback) {
+    if (!targetKey || !needsProxy) {
       setProxyState({ status: 'idle' });
       return;
     }
@@ -610,7 +655,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     const cached = getCachedProxyTarget(proxyCacheKey);
     if (cached?.previewToken) {
       setProxyState({ status: 'ready', proxyBasePath: cached.proxyBasePath, previewToken: cached.previewToken, expiresAt: cached.expiresAt });
-      return;
+      return () => { if (entry?.location.hostId) previewProxyTargetCache.delete(proxyCacheKey); };
     }
     if (cached) {
       previewProxyTargetCache.delete(proxyCacheKey);
@@ -621,11 +666,11 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
 
     void (async () => {
       try {
-        const response = await runtimeFetch('/api/preview/targets', {
+        const response = await fetchPreview('/api/preview/targets', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+           headers: { 'Content-Type': 'application/json', ...(entry?.location.hostId ? { 'x-opencode-directory': entry.location.directory } : {}) },
           credentials: 'include',
-          body: JSON.stringify({ url: targetKey }),
+           body: JSON.stringify({ url: targetKey, ...(entry?.location.hostId && !isLoopback ? { allowExternal: true } : {}) }),
         });
 
         if (!response.ok) {
@@ -641,10 +686,10 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
         }
 
         const body = await response.json() as { proxyBasePath?: unknown; previewToken?: unknown; expiresAt?: unknown };
-        const proxyBasePath = typeof body.proxyBasePath === 'string' ? body.proxyBasePath : '';
+        const proxyBasePath = typeof body.proxyBasePath === 'string' && validPreviewBasePath(entry, body.proxyBasePath) ? scopedPreviewPath(entry, body.proxyBasePath) : '';
         const previewToken = typeof body.previewToken === 'string' ? body.previewToken : '';
         const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : 0;
-        if (!proxyBasePath || !previewToken) {
+        if (!validPreviewBasePath(entry, proxyBasePath) || !previewToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
           previewProxyTargetCache.delete(proxyCacheKey);
           if (!cancelled) {
             setProxyState({ status: 'error', message: t('contextPanel.preview.proxyError') });
@@ -652,6 +697,8 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
           return;
         }
 
+        if (cancelled) return;
+        entry?.sdk();
         previewProxyTargetCache.set(proxyCacheKey, { proxyBasePath, previewToken, expiresAt });
         if (!cancelled) {
           setProxyState({ status: 'ready', proxyBasePath, previewToken, expiresAt });
@@ -667,15 +714,16 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
 
     return () => {
       cancelled = true;
+      if (entry?.location.hostId) previewProxyTargetCache.delete(proxyCacheKey);
     };
-  }, [isLoopback, proxyCacheKey, proxyRegistrationNonce, t, targetKey]);
+  }, [entry, fetchPreview, isLoopback, needsProxy, proxyCacheKey, proxyRegistrationNonce, t, targetKey]);
 
   const directSrc = normalizedUrl
     && (normalizedUrl.protocol === 'http:' || normalizedUrl.protocol === 'https:')
     ? normalizedUrl.toString()
     : '';
 
-  const proxyUrlAuthKey = isLoopback && proxyState.status === 'ready'
+  const proxyUrlAuthKey = needsProxy && proxyState.status === 'ready'
     ? `${proxyState.proxyBasePath}|${proxyState.previewToken || ''}|${reloadNonce}`
     : '';
 
@@ -698,7 +746,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     };
   }, [proxyUrlAuthKey]);
 
-  const proxySrc = isLoopback && proxyState.status === 'ready' && normalizedUrl && urlAuthReadyKey === proxyUrlAuthKey
+  const proxySrc = needsProxy && proxyState.status === 'ready' && normalizedUrl && urlAuthReadyKey === proxyUrlAuthKey
     ? (() => {
       const path = normalizedUrl.pathname || '/';
       const searchParams = new URLSearchParams(normalizedUrl.search);
@@ -708,13 +756,13 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       searchParams.set('yuri_preview_token', proxyState.previewToken || '');
       const search = searchParams.toString();
       const hash = normalizedUrl.hash || '';
-      return getRuntimeUrlResolver().authenticatedAsset(`${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${hash}`);
+       return getRuntimeUrlResolver().authenticatedAsset(scopedPreviewPath(entry, `${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${hash}`));
     })()
     : '';
 
   // Electron + Relay: iframe must load http://127.0.0.1:<ephemeral> (loopback
   // gateway). LAN/direct keep authenticatedAsset as-is — do not start gateway.
-  const relayPreviewActive = isLoopback && isRelayModeActive() && hasDesktopPreviewGateway();
+  const relayPreviewActive = needsProxy && isRelayModeActive() && hasDesktopPreviewGateway();
   const [previewGatewayOrigin, setPreviewGatewayOrigin] = React.useState('');
   React.useEffect(() => {
     if (!relayPreviewActive) {
@@ -735,7 +783,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     };
   }, [relayPreviewActive, proxyUrlAuthKey]);
 
-  const frameSrc = isLoopback
+  const frameSrc = needsProxy
     ? resolveRelayPreviewFrameSrc({
       relayActive: relayPreviewActive,
       gatewayOrigin: previewGatewayOrigin || null,
@@ -744,22 +792,22 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     : '';
   // Under relay+electron wait for gateway origin before treating the frame as ready.
   const relayGatewayPending = relayPreviewActive && Boolean(proxySrc) && !previewGatewayOrigin;
-  const effectiveSrc = isLoopback
+  const effectiveSrc = needsProxy
     ? (relayGatewayPending ? '' : frameSrc)
     : directSrc;
-  const headerSrc = isLoopback
+  const headerSrc = needsProxy
     ? stripPreviewTokenFromUrl(frameSrc || proxySrc)
     : directSrc;
-  const showLoading = isLoopback && (
+  const showLoading = needsProxy && (
     proxyState.status === 'loading'
     || proxyState.status === 'idle'
     || urlAuthReadyKey !== proxyUrlAuthKey
     || relayGatewayPending
   );
-  const showError = isLoopback && proxyState.status === 'error';
+  const showError = needsProxy && proxyState.status === 'error';
 
   const attachPreviewAnnotation = React.useCallback((target: PreviewElementMetadata) => {
-    const sessionKey = currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
+    const sessionKey = annotationSessionKey;
     if (!sessionKey) {
       toast.error(t('contextPanel.preview.inspect.attachNoSession'));
       return;
@@ -775,7 +823,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       let attachedScreenshot = false;
       try {
         const iframe = iframeRef.current;
-        const screenshot = iframe ? await renderPreviewScreenshot(iframe, target) : null;
+         const screenshot = iframe ? await renderPreviewScreenshot(iframe, target, entry) : null;
         if (screenshot) {
           await addAttachedFile(screenshot);
           attachedScreenshot = true;
@@ -803,7 +851,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       });
       toast.success(t('contextPanel.preview.inspect.attached'));
     })();
-  }, [addAttachedFile, addInlineCommentDraft, currentSessionId, effectiveSrc, newSessionDraftOpen, rawUrl, t]);
+  }, [entry, addAttachedFile, addInlineCommentDraft, annotationSessionKey, effectiveSrc, rawUrl, t]);
 
   React.useEffect(() => {
     setBridgeReady(false);
@@ -857,7 +905,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   }, [inspectMode]);
 
   React.useEffect(() => {
-    if (!isLoopback || typeof window === 'undefined') {
+    if (!needsProxy || typeof window === 'undefined') {
       return;
     }
 
@@ -953,7 +1001,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       if (data.type === 'navigate-preview') {
         const nextUrl = typeof data.url === 'string' ? data.url : '';
         const navigation = data.navigation === 'external' ? 'external' : 'proxy';
-        if (nextUrl && navigation === 'external') {
+        if (nextUrl && navigation === 'external' && !entry?.location.hostId) {
           void openExternalUrl(nextUrl);
           return;
         }
@@ -967,7 +1015,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     return () => {
       window.removeEventListener('message', handler);
     };
-  }, [attachPreviewAnnotation, isLoopback, onNavigate, t]);
+  }, [entry, attachPreviewAnnotation, needsProxy, onNavigate, t]);
 
   const consoleErrorCount = consoleEvents.filter((event) => event.level === 'error' || event.level === 'runtime' || event.level === 'resource').length;
   const filteredConsoleEvents = consoleEvents.filter((event) => getPreviewConsoleFilterMatch(event, consoleFilter));
@@ -994,7 +1042,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   }, [consoleEvents, effectiveSrc, rawUrl, t]);
 
   const attachConsoleEvents = React.useCallback(() => {
-    const sessionKey = currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
+    const sessionKey = annotationSessionKey;
     if (!sessionKey) {
       toast.error(t('contextPanel.preview.console.attachNoSession'));
       return;
@@ -1022,7 +1070,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       text: t('contextPanel.preview.console.attachAnnotation'),
     });
     toast.success(t('contextPanel.preview.console.attached'));
-  }, [addInlineCommentDraft, consoleEvents, currentSessionId, effectiveSrc, newSessionDraftOpen, rawUrl, t]);
+  }, [addInlineCommentDraft, consoleEvents, annotationSessionKey, effectiveSrc, rawUrl, t]);
 
   // Out-of-band upstream probe: iframes don't expose HTTP status to the parent,
   // so when the proxy returns a 502 (upstream dev server is offline) the iframe
@@ -1052,7 +1100,10 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     void (async () => {
       const probe = async (): Promise<Response | null> => {
         try {
-          return await runtimeFetch(proxySrc, {
+           const target = new URL(proxySrc, window.location.href);
+           const hostPrefix = entry?.location.hostId ? hostApiPath(entry.location.hostId, '/api').slice(0, -4) : '';
+           const probePath = `${hostPrefix && target.pathname.startsWith(hostPrefix + '/') ? target.pathname.slice(hostPrefix.length) : target.pathname}${target.search}`;
+           return await fetchPreview(probePath, {
             method: 'GET',
             credentials: 'include',
             cache: 'no-store',
@@ -1110,18 +1161,18 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     return () => {
       cancelled = true;
     };
-  }, [proxyCacheKey, proxySrc, reloadNonce]);
+  }, [entry, fetchPreview, proxyCacheKey, proxySrc, reloadNonce]);
 
-  const showUpstreamStarting = isLoopback
+  const showUpstreamStarting = needsProxy
     && proxyState.status === 'ready'
     && (upstreamState === 'unknown' || upstreamState === 'starting');
 
-  const showUpstreamUnreachable = isLoopback
+  const showUpstreamUnreachable = needsProxy
     && proxyState.status === 'ready'
     && upstreamState === 'unreachable';
 
   const handlePreviewFrameLoad = React.useCallback((event: React.SyntheticEvent<HTMLIFrameElement>) => {
-    if (!isLoopback || proxyState.status !== 'ready') {
+    if (!needsProxy || proxyState.status !== 'ready') {
       return;
     }
     if (typeof window === 'undefined') {
@@ -1148,7 +1199,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
     } catch {
       // Cross-origin frames are expected for non-loopback/direct previews.
     }
-  }, [effectiveSrc, isLoopback, proxySrc, proxyState]);
+  }, [effectiveSrc, needsProxy, proxySrc, proxyState]);
 
   return (
     <div className="absolute inset-0 flex flex-col">
@@ -1175,15 +1226,15 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
           className="h-7 w-7 p-0"
           onClick={() => {
             if (!directSrc) return;
-            void openExternalUrl(directSrc);
+             void openExternalUrl(entry?.location.hostId ? effectiveSrc : directSrc);
           }}
           title={t('contextPanel.preview.actions.openExternal')}
           aria-label={t('contextPanel.preview.actions.openExternal')}
-          disabled={!directSrc}
+          disabled={entry?.location.hostId ? !effectiveSrc : !directSrc}
         >
           <Icon name="external-link" className="h-3.5 w-3.5" />
         </Button>
-        {isLoopback ? (
+        {needsProxy ? (
           <Button
             type="button"
             size="sm"
@@ -1197,7 +1248,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
             <Icon name="cursor" className="h-3.5 w-3.5" />
           </Button>
         ) : null}
-        {isLoopback ? (
+        {needsProxy ? (
           <Button
             type="button"
             size="sm"
@@ -1234,7 +1285,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
               {t('contextPanel.preview.actions.retry')}
             </Button>
           </div>
-        ) : effectiveSrc && (!isLoopback || upstreamState === 'reachable') ? (
+        ) : effectiveSrc && (!needsProxy || upstreamState === 'reachable') ? (
           <div className="relative h-full w-full">
             <iframe
               ref={iframeRef}
@@ -1244,7 +1295,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
               className="h-full w-full border-0"
               style={{ colorScheme: previewColorScheme }}
               onLoad={handlePreviewFrameLoad}
-              sandbox={isLoopback
+              sandbox={needsProxy
                 ? 'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads'
                 : 'allow-scripts allow-forms'}
             />
@@ -1271,9 +1322,10 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
         ) : showError ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-sm text-muted-foreground">
             <div>{t('contextPanel.preview.proxyError')}</div>
-            {proxyState.status === 'error' ? (
-              <div className="text-center text-xs opacity-70">{proxyState.message}</div>
-            ) : null}
+             {proxyState.status === 'error' ? (
+               <div className="text-center text-xs opacity-70">{proxyState.message}</div>
+             ) : null}
+             <Button type="button" size="sm" onClick={() => bumpProxyRegistration()}>{t('contextPanel.preview.actions.retry')}</Button>
           </div>
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
@@ -1374,6 +1426,9 @@ const isElectronBrowserRuntime = (): boolean => {
 };
 
 const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID }) => {
+  const host = useHostRuntime();
+  const entry = host?.entry;
+  const fetchPreview = entry?.fetch ?? runtimeFetch;
   const { t } = useI18n();
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
@@ -1390,10 +1445,21 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
   const [hoverTarget, setHoverTarget] = React.useState<PreviewElementMetadata | null>(null);
   const [proxyState, setProxyState] = React.useState<PreviewProxyState>({ status: 'idle' });
   const [urlAuthReadyKey, setUrlAuthReadyKey] = React.useState('');
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const newSessionDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const localDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const selectedRemote = entry && remoteSelection && locationKey(remoteSelection.location) === entry.key ? remoteSelection : null;
+  const currentSessionId = entry?.location.hostId ? selectedRemote?.sessionId ?? null : localSessionId;
+  const newSessionDraftOpen = entry?.location.hostId ? !selectedRemote?.sessionId : localDraftOpen;
   const addInlineCommentDraft = useInlineCommentDraftStore((state) => state.addDraft);
-  const addAttachedFile = useInputStore((state) => state.addAttachedFile);
+  const addLocalAttachedFile = useInputStore((state) => state.addAttachedFile);
+  const addAttachedFile = useEvent(async (file: File) => {
+    if (!entry?.location.hostId) return addLocalAttachedFile(file);
+    const owner = { transportIdentity: getRuntimeTransportIdentity(), location: entry.location };
+    const draft = currentSessionId ? sessionDraftKey(owner, currentSessionId) : newSessionDraftKey(owner, 'remote-new-session');
+    await useInputStore.getState().addDraftLocalAttachment(draft, file);
+  });
+  const annotationSessionKey = entry?.location.hostId ? locationSessionKey(entry.location, currentSessionId ?? 'draft') : currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
 
   const persistUrl = React.useCallback((url: string) => {
     if (!url || url === 'about:blank' || !directory || !tabID) return;
@@ -1472,11 +1538,13 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
       return;
     }
 
-    const proxyTargetKey = getBrowserProxyTargetKey(loadedUrl);
+    const proxyTargetKey = entry?.location.hostId
+      ? `${entry.key}|${entry.connectionGeneration}|${getBrowserProxyTargetKey(loadedUrl)}`
+      : getBrowserProxyTargetKey(loadedUrl);
     const cached = getCachedProxyTarget(proxyTargetKey);
     if (cached?.previewToken) {
       setProxyState({ status: 'ready', proxyBasePath: cached.proxyBasePath, previewToken: cached.previewToken, expiresAt: cached.expiresAt });
-      return;
+      return () => { if (entry?.location.hostId) previewProxyTargetCache.delete(proxyTargetKey); };
     }
     if (cached) {
       previewProxyTargetCache.delete(proxyTargetKey);
@@ -1488,9 +1556,9 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
 
     void (async () => {
       try {
-        const response = await runtimeFetch('/api/preview/targets', {
+        const response = await fetchPreview('/api/preview/targets', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(entry?.location.hostId ? { 'x-opencode-directory': entry.location.directory } : {}) },
           credentials: 'include',
           body: JSON.stringify({ url: loadedUrl, allowExternal: true }),
         });
@@ -1500,39 +1568,45 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
           const message = typeof errorBody?.error === 'string'
             ? errorBody.error
             : `HTTP ${response.status}`;
-          if (!cancelled) {
-            setProxyState({ status: 'error', message });
+           if (!cancelled) {
+             setProxyState({ status: 'error', message });
+             setIsLoading(false);
           }
           return;
         }
 
         const body = await response.json() as { proxyBasePath?: unknown; previewToken?: unknown; expiresAt?: unknown };
-        const proxyBasePath = typeof body.proxyBasePath === 'string' ? body.proxyBasePath : '';
+        const proxyBasePath = typeof body.proxyBasePath === 'string' && validPreviewBasePath(entry, body.proxyBasePath) ? scopedPreviewPath(entry, body.proxyBasePath) : '';
         const previewToken = typeof body.previewToken === 'string' ? body.previewToken : '';
         const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : 0;
-        if (!proxyBasePath || !previewToken) {
-          if (!cancelled) {
-            setProxyState({ status: 'error', message: t('contextPanel.preview.proxyError') });
+        if (!validPreviewBasePath(entry, proxyBasePath) || !previewToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+           if (!cancelled) {
+             setProxyState({ status: 'error', message: t('contextPanel.preview.proxyError') });
+             setIsLoading(false);
           }
           return;
         }
 
+        if (cancelled) return;
+        entry?.sdk();
         previewProxyTargetCache.set(proxyTargetKey, { proxyBasePath, previewToken, expiresAt });
         if (!cancelled) {
           setProxyState({ status: 'ready', proxyBasePath, previewToken, expiresAt });
         }
       } catch (error) {
-        if (!cancelled) {
-          const message = error instanceof Error ? error.message : String(error);
-          setProxyState({ status: 'error', message });
+         if (!cancelled) {
+           const message = error instanceof Error ? error.message : String(error);
+           setProxyState({ status: 'error', message });
+           setIsLoading(false);
         }
       }
     })();
 
     return () => {
       cancelled = true;
+      if (entry?.location.hostId) previewProxyTargetCache.delete(proxyTargetKey);
     };
-  }, [loadedUrl, t]);
+  }, [entry, fetchPreview, loadedUrl, reloadNonce, t]);
 
   const proxyUrlAuthKey = loadedUrl && proxyState.status === 'ready'
     ? `${proxyState.proxyBasePath}|${proxyState.previewToken || ''}|${reloadNonce}`
@@ -1569,11 +1643,11 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
       searchParams.set('yuriPreview', String(reloadNonce));
       searchParams.set('yuri_preview_token', proxyState.previewToken || '');
       const search = searchParams.toString();
-      return getRuntimeUrlResolver().authenticatedAsset(`${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${parsed.hash}`);
+      return getRuntimeUrlResolver().authenticatedAsset(scopedPreviewPath(entry, `${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${parsed.hash}`));
     } catch {
       return '';
     }
-  }, [loadedUrl, proxyState, proxyUrlAuthKey, reloadNonce, urlAuthReadyKey]);
+  }, [entry, loadedUrl, proxyState, proxyUrlAuthKey, reloadNonce, urlAuthReadyKey]);
 
   // Electron + Relay: iframe must load http://127.0.0.1:<ephemeral> (loopback
   // gateway). LAN/direct keep authenticatedAsset as-is — do not start gateway.
@@ -1609,7 +1683,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
   const relayGatewayPending = relayBrowserActive && Boolean(proxySrc) && !previewGatewayOrigin;
   const iframeSrc = relayGatewayPending
     ? ''
-    : (frameSrc || (proxyState.status === 'error' && !relayBrowserActive ? loadedUrl : ''));
+    : (frameSrc || (proxyState.status === 'error' && !relayBrowserActive && !entry?.location.hostId ? loadedUrl : ''));
 
   const getCurrentUrlFromFrameUrl = React.useCallback((frameUrl: string): string => {
     if (!frameUrl || !loadedUrl || proxyState.status !== 'ready') return '';
@@ -1672,7 +1746,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
   }, [iframeSrc, proxySrc]);
 
   const attachBrowserAnnotation = React.useCallback(async (target: PreviewElementMetadata) => {
-    const sessionKey = currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
+    const sessionKey = annotationSessionKey;
     if (!sessionKey) {
       toast.error(t('contextPanel.preview.inspect.attachNoSession'));
       return;
@@ -1686,7 +1760,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
       height: Number.isFinite(frameWindow?.innerHeight) ? frameWindow?.innerHeight ?? rect?.height ?? 0 : rect?.height ?? 0,
     };
 
-    const file = iframe ? await renderPreviewScreenshot(iframe, target) : null;
+    const file = iframe ? await renderPreviewScreenshot(iframe, target, entry) : null;
     const screenshotAttached = Boolean(file);
     if (file) {
       await addAttachedFile(file);
@@ -1712,7 +1786,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
       text: '',
     });
     toast.success(t('contextPanel.preview.inspect.attached'));
-  }, [addAttachedFile, addInlineCommentDraft, currentSessionId, currentUrl, newSessionDraftOpen, t]);
+  }, [entry, addAttachedFile, addInlineCommentDraft, annotationSessionKey, currentUrl, t]);
 
   const cancelInspect = React.useCallback(() => {
     const iframe = iframeRef.current;
@@ -1863,7 +1937,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
         >
           <Icon name="cursor" className="h-3.5 w-3.5" />
         </Button>
-        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={!currentUrl} onClick={() => void openExternalUrl(currentUrl)}>
+        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={entry?.location.hostId ? !iframeSrc : !currentUrl} onClick={() => void openExternalUrl(entry?.location.hostId ? iframeSrc : currentUrl)}>
           <Icon name="external-link" className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -1895,6 +1969,12 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
                 </div>
               </div>
             ) : null}
+          </div>
+        ) : proxyState.status === 'error' && entry?.location.hostId ? (
+          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center typography-meta text-muted-foreground">
+            <span>{t('contextPanel.preview.proxyError')}</span>
+            <span>{proxyState.message}</span>
+            <Button type="button" size="sm" onClick={() => bumpReload()}>{t('contextPanel.preview.actions.retry')}</Button>
           </div>
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background p-6 text-center">
@@ -2193,17 +2273,42 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
   );
 };
 
-export const ContextPanel: React.FC<{
+type ContextPanelProps = {
   directory?: string | null;
   onReservedWidthChange?: (width: number) => void;
   fillAvailableSpace?: boolean;
   getMaxSplitWidth?: () => number;
-}> = ({ directory: directoryOverride, onReservedWidthChange, fillAvailableSpace = false, getMaxSplitWidth }) => {
+};
+
+export const ContextPanel: React.FC<ContextPanelProps> = (props) => {
+  const host = useHostRuntime();
+  return host ? <ScopedContextPanel key={host.entry.key} {...props} /> : <SelectedProjectHostBoundary><ScopedContextPanel {...props} /></SelectedProjectHostBoundary>;
+};
+
+const ScopedContextPanel: React.FC<ContextPanelProps> = (props) => {
+  const host = useHostRuntime();
+  return host?.entry.location.hostId ? <RemoteContextPanel {...props} /> : <ContextPanelContentView {...props} />;
+};
+
+const RemoteContextPanel: React.FC<ContextPanelProps> = (props) => {
+  const host = useHostRuntime()!;
+  const summaries = useRemoteHostSummaries(host.registry, host.entry.location.hostId);
+  const sessions = React.useMemo(() => summaries.data?.directories.flatMap((item) => item.sessions) ?? [], [summaries.data]);
+  return <ContextPanelContentView {...props} remoteSessions={sessions} />;
+};
+
+const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: Array<{ id: string; title?: string | null }> }> = ({ directory: directoryOverride, onReservedWidthChange, fillAvailableSpace = false, getMaxSplitWidth, remoteSessions }) => {
   const { t } = useI18n();
-  const btwSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const host = useHostRuntime();
+  const remote = !!host?.entry.location.hostId;
+  const localBtwSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const btwSessionId = remote ? remoteSelection && locationKey(remoteSelection.location) === host.entry.key ? remoteSelection.sessionId : null : localBtwSessionId;
   const fallbackDirectory = useEffectiveDirectory() ?? '';
-  const effectiveDirectory = directoryOverride?.trim() || fallbackDirectory;
-  const directoryKey = React.useMemo(() => normalizeDirectoryKey(effectiveDirectory), [effectiveDirectory]);
+  const effectiveDirectory = directoryOverride ? parseLocationKey(directoryOverride, host?.entry.location.hubId ?? 'local').directory : fallbackDirectory;
+  const directoryKey = remote
+    ? locationKey({ ...host.entry.location, directory: effectiveDirectory })
+    : normalizeDirectoryKey(effectiveDirectory);
 
   const panelState = useUIStore((state) => getContextPanelState(state, directoryKey));
   const contextToolDiff = useUIStore((state) => (directoryKey ? state.contextToolDiffByDirectory[directoryKey] : undefined));
@@ -2249,7 +2354,7 @@ export const ContextPanel: React.FC<{
     }
     return ids;
   }, [tabs]);
-  const sessionTitleById = useSessionTitleMap(directoryKey || undefined, chatSessionIDs);
+  const sessionTitleById = useSessionTitleMap(effectiveDirectory || undefined, chatSessionIDs, remoteSessions);
 
   const [isResizing, setIsResizing] = React.useState(false);
   const [suppressWidthTransition, setSuppressWidthTransition] = React.useState(false);
@@ -2275,7 +2380,7 @@ export const ContextPanel: React.FC<{
   const sessionNavigationRef = React.useRef(sessionNavigationByTabId);
   sessionNavigationRef.current = sessionNavigationByTabId;
   const [sessionCache, dispatchSessionCache] = React.useReducer(reduceContextPanelSessionCache, { activeViewKey: null, tabs: {}, mountedViews: {} } satisfies ContextPanelSessionCacheState);
-  const chatRenderMode = resolveContextPanelChatRenderMode();
+  const chatRenderMode = remote ? 'react-surface' : resolveContextPanelChatRenderMode();
   const runtimeKey = getRuntimeKey();
 
   const commitSessionNavigation = React.useCallback((update: (current: Record<string, ContextPanelNavigationState>) => Record<string, ContextPanelNavigationState>) => {
@@ -2290,8 +2395,8 @@ export const ContextPanel: React.FC<{
   const closePanelTab = React.useCallback((tabId: string) => {
     if (!directoryKey) return;
     if (useUIStore.getState().contextPanelByDirectory[directoryKey]?.tabs.find((tab) => tab.id === tabId)?.mode === 'btw') {
-      const sessionId = useSessionUIStore.getState().currentSessionId;
-      if (sessionId) useSessionBtwStore.getState().clear({ sessionId, directory: directoryKey });
+      const sessionId = btwSessionId;
+      if (sessionId) useSessionBtwStore.getState().clear({ sessionId, directory: effectiveDirectory, host: remote ? host.entry : undefined });
     }
     dispatchSessionCache({ type: 'close-tab', tabId });
     const surfaceId = createContextPanelSessionSurfaceId(directoryKey, tabId);
@@ -2302,7 +2407,7 @@ export const ContextPanel: React.FC<{
       return next;
     });
     closeContextPanelTab(directoryKey, tabId);
-  }, [closeContextPanelTab, commitSessionNavigation, directoryKey]);
+  }, [btwSessionId, effectiveDirectory, host, remote, closeContextPanelTab, commitSessionNavigation, directoryKey]);
 
   const suppressWidthTransitionForFrame = React.useCallback(() => {
     setSuppressWidthTransition(true);
@@ -2432,10 +2537,10 @@ export const ContextPanel: React.FC<{
     if (!directoryKey) {
       return;
     }
-    const sessionId = useSessionUIStore.getState().currentSessionId;
-    if (sessionId) useSessionBtwStore.getState().cancel({ sessionId, directory: directoryKey });
+    const sessionId = btwSessionId;
+    if (sessionId) useSessionBtwStore.getState().cancel({ sessionId, directory: effectiveDirectory, host: remote ? host.entry : undefined });
     closeContextPanel(directoryKey);
-  }, [closeContextPanel, directoryKey]);
+  }, [btwSessionId, effectiveDirectory, host, remote, closeContextPanel, directoryKey]);
 
   const handleToggleExpanded = useEvent(() => {
     if (!directoryKey) {
@@ -2486,7 +2591,7 @@ export const ContextPanel: React.FC<{
   );
 
   React.useEffect(() => {
-    if (!previewVisible || !directoryKey || !activeChatSessionID) {
+    if (remote || !previewVisible || !directoryKey || !activeChatSessionID) {
       setContextPanelViewedSession('', null);
       return;
     }
@@ -2494,10 +2599,10 @@ export const ContextPanel: React.FC<{
     return () => {
       setContextPanelViewedSession('', null);
     };
-  }, [activeChatSessionID, directoryKey, previewVisible]);
+  }, [activeChatSessionID, directoryKey, previewVisible, remote]);
 
   React.useEffect(() => {
-    if (!previewVisible || !directoryKey || !activeChatSessionID || typeof window === 'undefined') {
+    if (remote || !previewVisible || !directoryKey || !activeChatSessionID || typeof window === 'undefined') {
       return;
     }
 
@@ -2524,7 +2629,7 @@ export const ContextPanel: React.FC<{
       document.removeEventListener('visibilitychange', markActiveChatViewed);
       setExternallyViewedSession(directoryKey, activeChatSessionID, false);
     };
-  }, [activeChatSessionID, directoryKey, previewVisible]);
+  }, [activeChatSessionID, directoryKey, previewVisible, remote]);
 
   const getEmbeddedChatSrc = React.useCallback((tabID: string, sessionID: string, readOnly: boolean): string => {
     return getOrCreateEmbeddedSessionChatURL(chatFrameSrcByTabIDRef.current, tabID, sessionID, directoryKey || null, readOnly, {
@@ -2732,9 +2837,9 @@ export const ContextPanel: React.FC<{
   }), [effectiveDirectory, sessionTitleById, t, tabs]);
 
   const activeNonChatContent = activeTab?.mode === 'context'
-        ? <ContextPanelContent />
+        ? <ContextPanelContent active={previewVisible} />
         : activeTab?.mode === 'preview'
-                ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
+                ? <PreviewPane key={`${directoryKey}:${host?.entry.connectionGeneration ?? ''}:${activeTab.id}`} rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(directoryKey, url)} />
                 : (
                   <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
                     <div aria-hidden="true" className="flex h-18 w-24 flex-col overflow-hidden rounded-lg border border-current/35 text-muted-foreground/45">
@@ -2770,7 +2875,7 @@ export const ContextPanel: React.FC<{
   );
   // Electron LAN/direct: native webview. Electron + Relay: Host preview proxy iframe.
   const BrowserPane = shouldUseDesktopWebviewBrowser({
-    isElectron: isElectronBrowserRuntime(),
+    isElectron: !remote && isElectronBrowserRuntime(),
     relayActive: isRelayModeActive(),
   })
     ? DesktopBrowserPane
@@ -2855,12 +2960,13 @@ export const ContextPanel: React.FC<{
     const surfaceId = createContextPanelSessionSurfaceId(directoryKey, tabId);
     let accepted = false;
     commitSessionNavigation((current) => {
-      const result = updateContextPanelNavigation(current, surfaceId, { sessionId, directory });
+      const targetDirectory = remote && host ? locationKey({ ...host.entry.location, directory: parseLocationKey(directory, host.entry.location.hubId).directory }) : directory;
+      const result = updateContextPanelNavigation(current, surfaceId, { sessionId, directory: targetDirectory });
       accepted = result.accepted;
       return result.navigationBySurfaceId;
     });
     return accepted;
-  }, [commitSessionNavigation, directoryKey]);
+  }, [commitSessionNavigation, directoryKey, remote, host]);
 
   const handleSessionNavigateBack = React.useCallback((tabId: string) => {
     const surfaceId = createContextPanelSessionSurfaceId(directoryKey, tabId);
@@ -3058,7 +3164,15 @@ export const ContextPanel: React.FC<{
             const visible = previewVisible && activeChatTabID === view.tabId && activeChatViewKey === view.viewKey;
           return (
             <React.Activity key={view.viewKey} name={`context-panel-session-${view.sessionId}`} mode={visible ? 'visible' : 'hidden'}>
-              <ContextPanelSessionTranscript
+              {remote && host ? <div className="relative h-full min-h-0">
+                {visible && navigation?.stack.length ? <Button type="button" variant="outline" size="xs" onClick={() => handleSessionNavigateBack(view.tabId)} className="absolute left-3 top-3 z-20 !font-normal bg-[var(--surface-background)]/95" aria-label={t('chat.container.returnToParent.aria')} title={t('chat.container.returnToParent.title')}><Icon name="arrow-left" className="h-4 w-4" />{t('chat.container.returnToParent.label')}</Button> : null}
+                <RemoteChatContainer
+                location={{ ...host.entry.location, directory: parseLocationKey(view.directory, host.entry.location.hubId).directory }}
+                sessionId={view.sessionId}
+                active={visible}
+                readOnly={tabs.find((tab) => tab.id === view.tabId)?.readOnly ?? true}
+                onNavigateSession={(sessionId, directory) => { handleSessionNavigate(view.tabId, sessionId, directory); }}
+              /></div> : <ContextPanelSessionTranscript
                 surfaceId={view.surfaceId}
                 sessionId={view.sessionId}
                 directory={view.directory}
@@ -3067,7 +3181,7 @@ export const ContextPanel: React.FC<{
                 onNavigateSession={(sessionId, directory) => handleSessionNavigate(view.tabId, sessionId, directory)}
                 onNavigateBack={() => handleSessionNavigateBack(view.tabId)}
                 onEstimateBytes={(viewKey, estimatedBytes) => dispatchSessionCache({ type: 'estimate', viewKey, estimatedBytes })}
-              />
+              />}
             </React.Activity>
           );
         }) : null}
@@ -3075,13 +3189,13 @@ export const ContextPanel: React.FC<{
           const visible = previewVisible && activeTab?.id === tab.id;
           return <React.Activity key={`btw:${directoryKey}:${btwSessionId}:${tab.id}`} name="context-panel-btw" mode={visible ? 'visible' : 'hidden'}>
             {btwSessionId
-              ? <BtwPanel scope={{ sessionId: btwSessionId, directory: directoryKey }} active={visible} />
+              ? <BtwPanel scope={{ sessionId: btwSessionId, directory: effectiveDirectory, host: remote ? host.entry : undefined }} active={visible} />
               : <p className="p-4 text-muted-foreground">{t('chat.btw.sessionRequired')}</p>}
           </React.Activity>;
         })}
         {browserTabs.map((tab) => (
           <div
-            key={tab.id}
+            key={`${directoryKey}:${host?.entry.connectionGeneration ?? ''}:${tab.id}`}
             className={cn(
               'absolute inset-0',
               activeTab?.id !== tab.id && 'hidden'
@@ -3113,7 +3227,7 @@ export const ContextPanel: React.FC<{
                 diffScope={tab.diffScope ?? (tab.stagedDiff ? 'staged' : 'working')}
                 turnMessageId={tab.diffTurnMessageId}
                 sessionId={tab.diffSessionId}
-                directory={directoryKey}
+                directory={effectiveDirectory}
                 onDiffScopeChange={handleDiffScopeChange}
                 targetFilePath={tab.targetPath}
                 targetLine={tab.diffTargetLine ?? null}

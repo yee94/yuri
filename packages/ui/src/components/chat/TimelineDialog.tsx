@@ -9,7 +9,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionMessageRecords } from '@/sync/sync-context';
+import { useSessionMessageRecords, useSyncDirectory } from '@/sync/sync-context';
+import { useRemoteChat, useRemoteChatRecords } from '@/sync/remote-chat-context';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
@@ -190,7 +191,11 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
     const { t } = useI18n();
     const sessionSurface = useSessionSurface();
     const currentSessionId = sessionID;
-    const messages = useSessionMessageRecords(currentSessionId ?? '', directory);
+    const remote = useRemoteChat();
+    const remoteMessages = useRemoteChatRecords(currentSessionId ?? '');
+    const localDirectory = useSyncDirectory();
+    const localMessages = useSessionMessageRecords(remote ? '' : currentSessionId ?? '', remote ? localDirectory : directory);
+    const messages = remoteMessages ?? localMessages;
     const revertToMessage = useSessionUIStore((state) => state.revertToMessage);
     const forkFromMessage = useSessionUIStore((state) => state.forkFromMessage);
     const actionAvailability = getTimelineActionAvailability(sessionSurface.capabilities);
@@ -356,7 +361,8 @@ const TimelineDialogBody: React.FC<TimelineDialogBodyProps> = ({
                 if (onRevertMessage) await onRevertMessage(messageId);
                 else await revertToMessage(currentSessionId, messageId, { directory });
             } else {
-                await forkFromMessage(currentSessionId, messageId, { directory });
+                if (sessionSurface.onForkMessage) await sessionSurface.onForkMessage(messageId);
+                else await forkFromMessage(currentSessionId, messageId, { directory });
             }
         });
     });

@@ -8,6 +8,36 @@ manual history loading and send admission reconciliation remain available.
 
 ## Native composer cleanup
 
+### Foreground native ownership
+
+Native eligibility requires an active, foreground primary **presentation**, not a
+local-resource `kind`. Remote main chat has that presentation while preserving its
+explicit secondary resource/backend contract; panel and background chat never do.
+The local retained page receives its foreground activity from `ChatContainer`.
+Web, Electron, VS Code, hosted mobile, Android and unsupported iOS continue on the
+existing web editor path; native preference/plugin/platform checks still apply.
+
+`NativeIosComposerBridge` is keyed by the complete DraftKey (including remote
+Hub/Host identity). Its layout claim installs one current instance token in
+`native-ios-composer-session`; no render-phase handler mutation is allowed.
+Native listener registrations belong to that claim, and superseded listeners or
+pending installations cannot deliver, present, update, focus or release the new
+owner. Prop publication and leave-conceal closures check the same token; delayed
+Web submission checks it again before dispatch. Release clears handlers, hides
+and clears the native document class immediately; only the current token may do
+so. The glass view itself is reused, not rebuilt on Host/draft handoff.
+
+The mounted production composer test covers local → remote A → same-ID/directory
+Host B → local, concurrent panel/background views, raw store text and attachment
+isolation, stale events, external preset/CAS and 50 unrelated parent updates plus
+50 native text events without listener rebind or text/thumbnail/model-icon echo.
+Bridge/session tests cover inactive and superseded mounted owners, late listener
+installation, delayed send and cleanup CAS. These are React/bridge operation and
+correctness tests, not actual UIKit/IME/Relay or input-to-paint acceptance. Native
+payloads have no Host/draft token; platform validation must independently verify
+the native-to-Capacitor event ordering at a real handoff, rather than treating a
+synthetic stale-listener replay as proof of every native queue ordering.
+
 `native-ios-composer-session.shutdown()` always clears DOM presentation state,
 but only calls native `dismiss()` after a warm/retain lifecycle. Repeated shutdown
 is idempotent. Mobile web startup can disable native UI without invoking the
@@ -79,6 +109,46 @@ correction. `ChatInput.hooks.test.tsx` counts 50 edits at these call sites;
 `NativeIosComposerBridge.test.tsx` covers layout, callback freshness and teardown.
 
 ## Document and delivery ownership
+
+### Web selection across owner unmounts
+
+`use-composer-selection.ts` retains textarea start/end/direction at the departing
+ChatInput's layout cleanup and restores them only after the same draft record's
+controlled text is committed. This covers local → remote → local, where the local
+production composer is actually unmounted, not merely hidden. Selection is
+process-local continuity, not durable draft metadata: weak store/record keys keep
+Hub and remote stores isolated and release replaced/deleted records naturally.
+An external CAS (even replacing identical text) invalidates the old selection;
+cleanup must still match the live record, DOM text and latest mounted owner.
+An older concurrent owner's cleanup cannot overwrite a newer owner's snapshot.
+
+Session-switch transcript selection cleanup must not clear the document Selection
+while `textarea[data-chat-input="true"]` is focused. Chromium's `removeAllRanges()`
+then exposes the textarea range as 0–0 until blur, even though its text and draft
+record are unchanged. A restored local composer can mount before a later switch
+intent and second remount; capturing that temporary 0–0 loses continuity. The
+transcript menu still dismisses on every intent and clears non-composer selection.
+The selection owner must not compensate by replaying an older user range or
+weakening its current-record/latest-owner fences.
+
+Restore never focuses, schedules a retry, or writes a draft revision. Explicit
+input/focus/selection cancels any pending text-materialization restore, so later
+user intent wins. Native-owned iOS document sinks are excluded; ordinary input
+fields do not mount this owner. Existing session-entry and action focus policies
+remain separate and unchanged. Per-edit work is a constant-size current-record
+lookup, with no subscriptions, catalog scans or persistence writes added.
+
+`RemoteChatContainer.composer.test.tsx` replays the sanitized real candidate-final
+selection fixture through mounted production ChatInput/RemoteChatContainer and
+their actual draft stores. `use-composer-selection.test.tsx` mounts the production
+controller against `createInputStore` to cover owner switches, backward selection,
+external CAS, stale cleanup, focus preservation, and 50 unrelated-draft/typing
+updates. The production composer test also covers restore → session-switch intent
+→ second remount, a newer user range, and focused/unfocused/no-intent controls.
+Its explicit Chromium Selection double is backed by an isolated browser API
+control; happy-dom itself does not implement that interaction. These are
+correctness/operation-count guards, not Electron,
+iOS, IME or browser timing acceptance.
 
 `components/dictation/useHoldToTalkInput` shares only hold-to-talk state between Chat and Assistant inputs: the global dictation setting, runtime/capture availability, current hint and stable `onHintChange` callback. Callers supply surface availability and mount `HoldToTalkComposer` only while enabled, releasing capture when the global setting turns off. Disabled surfaces receive a null hint. Each input independently chooses its placeholder and localized copy; Assistant idle/disabled copy retains its contextual Assistant name. Gesture/audio behavior stays in the shared component; drafts and sends stay with each input owner.
 

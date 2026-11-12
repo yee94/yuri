@@ -23,6 +23,9 @@ const forbiddenPreviewProxy = (res) => res.status(403).json({ error: 'Forbidden'
 
 const rejectPreviewProxyCredential = (handler) => (req, res) => {
   if (hasPreviewProxyCredential(req)) return forbiddenPreviewProxy(res);
+  if (req.query?.hostId || req.body?.hostId || req.body?.scope?.hostId || req.get?.('x-yuri-remote-host')) {
+    return res.status(403).json({ code: 'remote_content_not_persistable', error: 'Remote content cannot be cached on the Hub' });
+  }
   return handler(req, res);
 };
 

@@ -1,6 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react"
 import { mountProjectOrderSync } from './project-order-sync'
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
+import { useRemoteChat, useRemoteMessageParts } from './remote-chat-context'
 import type { Message, Part, Todo } from '@/lib/opencode/v2-types'
 import type { Event } from '@/sync/types'
 
@@ -742,6 +744,9 @@ const getQuestionToastKey = (sessionID?: string, requestID?: string) => {
 }
 
 type UiNotificationPayload = {
+  instanceId?: unknown
+  hostId?: unknown
+  hubId?: unknown
   title?: unknown
   body?: unknown
   tag?: unknown
@@ -781,6 +786,9 @@ const handleUiNotificationEvent = (payload: Event, fallbackDirectory: string): b
   }
 
   void notifications.notifyAgentCompletion({
+    instanceId: asOptionalString(notification.instanceId),
+    hostId: asOptionalString(notification.hostId),
+    hubId: asOptionalString(notification.hubId),
     title: asOptionalString(notification.title),
     body: asOptionalString(notification.body),
     tag: asOptionalString(notification.tag),
@@ -874,7 +882,7 @@ function isWindowFocused(): boolean {
 function isViewedInCurrentSession(directory: string, sessionId?: string): boolean {
   if (!sessionId) return false
   if (
-    _activeDirectory && _activeSession
+    !useSessionNavigationStore.getState().remoteSession && _activeDirectory && _activeSession
     && directory === _activeDirectory && sessionId === _activeSession
     && isWindowFocused()
   ) return true
@@ -3686,10 +3694,13 @@ export function useSessionMessageLoadState(sessionID: string, directory?: string
  * falls back to the directory store while reads still go through getParts.
  */
 export function useSessionParts(messageID: string, directory?: string, sessionID?: string) {
+  const remote = useRemoteChat()
+  const remoteParts = useRemoteMessageParts(remote, sessionID ?? '', messageID)
   const system = useSyncSystem()
   const targetDirectory = directory ?? system.directory
-  const store = useDirectoryStore(targetDirectory)
-  return useTranscriptParts(messageID, targetDirectory, store, sessionID) as Part[]
+  const store = useDirectoryStore(remote ? system.directory : targetDirectory, { bootstrap: !remote })
+  const localParts = useTranscriptParts(remote ? '' : messageID, targetDirectory, store, remote ? '' : sessionID) as Part[]
+  return remote ? remoteParts : localParts
 }
 
 /**

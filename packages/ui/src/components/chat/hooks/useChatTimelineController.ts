@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useEvent, useEventListener, useInterval, useIsomorphicLayoutEffect, useUnmount } from '@reactuses/core';
 
 import type { ChatMessageEntry } from '../lib/turns/types';
+import { useRemoteChat } from '@/sync/remote-chat-context';
 import type { MessageListHandle } from '../MessageList';
 import {
     buildTurnWindowModel,
@@ -544,6 +545,7 @@ export const useChatTimelineController = ({
     isMobile,
     onWillLoadEarlier,
 }: UseChatTimelineControllerOptions): UseChatTimelineControllerResult => {
+    const remote = useRemoteChat();
     const isMobileRef = React.useRef(isMobile);
     isMobileRef.current = isMobile;
 
@@ -1140,8 +1142,8 @@ export const useChatTimelineController = ({
         const deadline = waitStartedAt + HISTORY_LOADING_WAIT_MS;
         const directoryForLog = directoryRef.current;
         const requestAtStart = directoryForLog
-            ? getTranscriptRepository()?.getRequestState?.(
-                transcriptScope(directoryForLog, targetSessionId),
+            ? getTranscriptRepository(remote?.entry.location)?.getRequestState?.(
+                transcriptScope(remote?.entry.location ?? directoryForLog, targetSessionId),
             )
             : undefined;
         console.info('[chat-history] waiting for sync pagination to clear', {
@@ -1164,8 +1166,8 @@ export const useChatTimelineController = ({
             }
             if (Date.now() >= deadline) {
                 const requestAtTimeout = directoryForLog
-                    ? getTranscriptRepository()?.getRequestState?.(
-                        transcriptScope(directoryForLog, targetSessionId),
+                    ? getTranscriptRepository(remote?.entry.location)?.getRequestState?.(
+                        transcriptScope(remote?.entry.location ?? directoryForLog, targetSessionId),
                     )
                     : undefined;
                 console.error(
@@ -1201,8 +1203,8 @@ export const useChatTimelineController = ({
             sessionId: targetSessionId,
             elapsedMs: Date.now() - waitStartedAt,
             requestStatus: directoryForLog
-                ? (getTranscriptRepository()?.getRequestState?.(
-                    transcriptScope(directoryForLog, targetSessionId),
+                ? (getTranscriptRepository(remote?.entry.location)?.getRequestState?.(
+                    transcriptScope(remote?.entry.location ?? directoryForLog, targetSessionId),
                 )?.status ?? null)
                 : null,
         });
@@ -1233,7 +1235,7 @@ export const useChatTimelineController = ({
         const isCurrent = () => scope === historyScopeRef.current
             && scope?.runtimeKey === getRuntimeKey() && scope?.runtimeGeneration === getRuntimeGeneration();
         const readCursor = () => scope?.directory
-            ? getTranscriptRepository()?.getPagination(transcriptScope(scope.directory, targetSessionId)).cursor ?? null
+            ? getTranscriptRepository(remote?.entry.location)?.getPagination(transcriptScope(remote?.entry.location ?? scope.directory, targetSessionId)).cursor ?? null
             : null;
         const errorToastId = historyErrorToastId;
         const finishLoading = () => {

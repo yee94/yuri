@@ -13,8 +13,11 @@ import {
 } from './pathContract';
 import type { NavigationIntent } from './navigationIntent';
 import { SCHEDULE_TAB_ID } from './primarySurface';
+import type { HostLocation } from '@/lib/remote-projects/location';
 
 export type GoSessionOptions = {
+  location?: HostLocation;
+  projectId?: string;
   tab?: WorkspaceTab | string | null;
   file?: string | null;
   scope?: DiffScope | null;
@@ -44,7 +47,7 @@ export type AppNavigation = {
   goSession: (sessionId: string, opts?: GoSessionOptions) => Promise<void>;
   goSchedule: (opts?: GoScheduleOptions) => Promise<void>;
   goAssistant: (opts?: GoAssistantOptions) => Promise<void>;
-  goNewSession: (opts?: { replace?: boolean }) => Promise<void>;
+  goNewSession: (opts?: { replace?: boolean; location?: HostLocation; projectId?: string }) => Promise<void>;
   openSettings: (slug?: string, opts?: OpenSettingsOptions) => Promise<void>;
   closeSettings: (opts?: { replace?: boolean }) => Promise<void>;
   goConnect: (opts?: { replace?: boolean }) => Promise<void>;
@@ -107,12 +110,14 @@ export function createAppNavigation(router: AppRouter): AppNavigation {
       tab: opts.tab,
       file: opts.file,
       scope: opts.scope,
+      location: opts.location,
+      projectId: opts.projectId,
     });
     await navigateHref(router, { to: path, replace: opts.replace });
   };
 
-  const goNewSession = async (opts: { replace?: boolean } = {}) => {
-    await navigateHref(router, { to: buildNewSessionPath(), replace: opts.replace });
+  const goNewSession = async (opts: { replace?: boolean; location?: HostLocation; projectId?: string } = {}) => {
+    await navigateHref(router, { to: buildNewSessionPath(opts), replace: opts.replace });
   };
 
   const openSettings = async (slug = 'home', opts: OpenSettingsOptions = {}) => {
@@ -146,6 +151,8 @@ export function createAppNavigation(router: AppRouter): AppNavigation {
           tab: intent.tab,
           file: intent.file,
           scope: intent.scope,
+          location: intent.location,
+          projectId: intent.projectId,
           replace: intent.replace,
         });
         return;
@@ -166,7 +173,7 @@ export function createAppNavigation(router: AppRouter): AppNavigation {
         });
         return;
       case 'new-session':
-        await goNewSession({ replace: intent.replace });
+        await goNewSession({ replace: intent.replace, location: intent.location, projectId: intent.projectId });
         return;
       case 'settings':
         await openSettings(intent.slug ?? 'home', {

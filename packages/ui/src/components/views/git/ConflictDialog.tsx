@@ -13,7 +13,8 @@ import { useInputStore } from '@/sync/input-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
-import { getConflictDetails, type MergeConflictDetails } from '@/lib/gitApi';
+import type { MergeConflictDetails } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { useI18n } from '@/lib/i18n';
 
@@ -37,6 +38,7 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
   onClearState,
 }) => {
   const { t } = useI18n();
+  const { getConflictDetails } = useProjectGitActions();
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const setPendingInputText = useInputStore((state) => state.setPendingInputText);

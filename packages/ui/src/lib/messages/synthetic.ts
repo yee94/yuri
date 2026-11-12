@@ -14,7 +14,7 @@ export const isSyntheticPart = (part: Part | undefined): boolean => {
  * Checks if a message consists entirely of synthetic parts.
  * Used for status/completion logic (not display filtering).
  */
-export const isFullySyntheticMessage = (parts: Part[] | undefined): boolean => {
+export const isFullySyntheticMessage = (parts: readonly Part[] | undefined): boolean => {
     if (!Array.isArray(parts) || parts.length === 0) {
         return false;
     }

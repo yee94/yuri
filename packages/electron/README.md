@@ -15,6 +15,20 @@ window's splash-to-app transition in HMR and bundled modes.
 
 ## How It Runs
 
+Remote Projects use `remote-hosts.mjs` as a process-local Host adapter injected
+into the in-process backend. Its catalog belongs to this computer and is
+independent of every window's active runtime. SSH initialization reuses the native
+manager; explicit pairing provenance remains required for Relay fallback. Native
+settings changes reconcile the server-owned gateway without a background poll.
+The backend owns credentials, remote references, partitioned summaries and real
+HTTP/terminal/preview forwarding; renderers receive only public host descriptors.
+See `../web/server/lib/remote-hosts/DOCUMENTATION.md`. The adapter and host-aware
+notification routing require an updated installer, not UI OTA alone.
+
+Desktop notifications with a stable instance identity deduplicate across windows
+by instance/session/event. A Remote Project notification retains Hub/Host identity
+when navigating. Different physical runtimes never suppress one another.
+
 Desktop starts the Yuri web server in the same Electron main process. There is no separate sidecar subprocess for the Yuri server.
 
 Assistant/Summary inference still uses the external OpenCode service. The web

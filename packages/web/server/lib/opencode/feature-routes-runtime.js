@@ -65,7 +65,8 @@ import { scanClawdHubPage } from '../skills-catalog/clawdhub/scan.js';
 import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js';
 
 /** Fan-out an Yuri product SSE tip to every /api/yuri/events client. */
-export const createYuriEventBroadcaster = ({ getYuriEventClients, writeSseEvent }) => (event) => {
+export const createYuriEventBroadcaster = ({ getYuriEventClients, writeSseEvent, onEvent }) => (event) => {
+  onEvent?.(event);
   const clients = getYuriEventClients();
   for (const client of clients) {
     try {
@@ -183,6 +184,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     }
 
     registerOpenCodeRoutes(app, {
+      getRemoteProjectState: routeDependencies.getRemoteProjectState,
       crypto,
       clientReloadDelayMs,
       getOpenCodeResolutionSnapshot,
@@ -493,6 +495,9 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     const broadcastYuriEvent = createYuriEventBroadcaster({
       getYuriEventClients,
       writeSseEvent,
+      onEvent: (event) => {
+        if (/^yuri:session-(unread|order|folders)-changed$/.test(event?.type || '')) broadcastGlobalUiEvent?.(event);
+      },
     });
     sessionUnreadRuntime = createSessionUnreadRuntime({
       store: createSessionUnreadStore({

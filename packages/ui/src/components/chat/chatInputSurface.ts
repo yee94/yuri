@@ -10,6 +10,7 @@ import type { Agent } from '@/lib/opencode/v2-types';
 export type ChatInputDeliveryTarget = { kind: 'primary' } | { kind: 'assistant'; assistantID: string };
 
 export type ChatInputSelection = {
+  requestCatalog?: (open: boolean) => void;
   value: { providerID?: string; modelID?: string; agent?: string; variant?: string };
   catalog?: {
     providers: Array<{ id: string; name?: string; models: Array<Record<string, unknown> & { id: string; name?: string }> }>;
@@ -112,6 +113,7 @@ export type ChatInputCommandContext = {
 };
 
 export type ChatInputDeliveryRequest = {
+  references?: readonly import('@/composer/extensions').ComposerReferenceSemantic[];
   operation: 'send' | 'create' | 'compact' | 'abort';
   surfaceID: string;
   transportIdentity: string;
@@ -157,6 +159,8 @@ export type ChatInputBackend = {
  * owns these resources and never needs the primary input-store bucket.
  */
 export type ChatInputSurfaceResources = {
+  /** Explicit durable composer owner; remote surfaces never use the Hub singleton. */
+  inputStore?: typeof import('@/sync/input-store').useInputStore;
   /** Explicit busy state for a secondary surface's send and input controls. */
   busy?: boolean;
   attachments: readonly AttachedFile[];
@@ -202,6 +206,10 @@ export type ChatInputQueueScope = {
 };
 
 type ChatInputSurfaceBase = {
+  /** Presentation role is independent of local vs explicitly scoped resource ownership. */
+  composerPresentation?: 'primary' | 'panel';
+  nativeInbox?: React.ReactNode;
+  permissionPolicy?: { enabled: boolean; saving: boolean; change: (enabled: boolean) => Promise<void> };
   surfaceID: string;
   active: boolean;
   selection: ChatInputSelection;

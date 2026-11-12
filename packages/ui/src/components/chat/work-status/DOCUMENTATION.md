@@ -1,5 +1,30 @@
 # Work-status column
 
+## Remote Projects
+
+The desktop column preserves all built-in rows for Remote Projects. `ChatView`
+selects the explicit remote session and raw cwd, never the retained Hub session.
+Layout, Git-open and child-chat-open state uses the full Location key; filesystem
+and SDK requests retain the raw cwd (including Windows backslashes).
+`useRemoteWorkStatus` shares `getRemoteChatOwner` with the main/panel chat, retaining
+one content lease rather than creating a second repository or reading Hub child
+stores. Todos use the remote transcript and its revert boundary, including empty
+writes; local persisted todos/worktree attachments are not remote fallbacks.
+Project metadata is matched by Hub/Host; worktrees, Git and child titles/status
+come from captured Host APIs. Child live-status events refresh only the scoped
+status snapshot, never child messages. Ready/reconnect demand refreshes the
+visible status resources. Failed queries retain their last successful rows and
+expose a retry action. Only the GUI-plugin slot is excluded for remote projects.
+Status membership shares `remoteSessionActiveQueryOptions` with chat and uses
+the captured Host's real v2 `session.active`, not the disabled legacy status stub.
+Unknown/unsupported responses fail visibly rather than inventing idle children.
+Hidden/inactive columns release their observers; token events do not refetch
+status, worktrees or child catalogs. `WorkStatus.remote.test.tsx` mounts the real
+ChatView/Panel/Compact/Todos under the real Host provider and registry, including
+same-path/ID Host isolation, live child status, empty todos, late responses,
+shared lease counts and 50-parent-update/100-token request guards. This is mounted
+client evidence, not native/Relay network acceptance.
+
 A short column beside the transcript. It is not a card and not a context-panel
 surface. It occupies its final width as soon as a session is selected or the
 first-prompt draft enters its establishing/submitting transcript state. Message

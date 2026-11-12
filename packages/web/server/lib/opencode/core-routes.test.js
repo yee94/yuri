@@ -328,6 +328,30 @@ describe('core-routes', () => {
     expect(dependencies.gracefulShutdown).not.toHaveBeenCalled();
   });
 
+  it('redacts preview path credentials before verbose request logging, including malformed envelopes', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const app = express();
+    registerCommonRequestMiddleware(app, { express, verboseRequestLogs: true });
+    app.use((_req, res) => res.status(204).end());
+    const previewToken = 'c'.repeat(32);
+    const urlToken = `yuri_url_${'d'.repeat(32)}`;
+    const suffix = `${previewToken}/${urlToken}/index.html`;
+    try {
+      for (const route of [
+        `/api/preview/proxy/${'a'.repeat(32)}/_file/${suffix}`,
+        `/api/hosts/remote/api/preview/proxy/bad-id/_file/${suffix}`,
+        `/api/preview/proxy/bad-id/%5Ffile/${suffix}`,
+        `/api/preview/proxy/bad-id/malformed/${suffix}`,
+      ]) await request(app).get(route).expect(204);
+      const output = log.mock.calls.map((args) => args.join(' ')).join('\n');
+      expect(log).toHaveBeenCalledTimes(4);
+      expect(output).not.toContain(previewToken);
+      expect(output).not.toContain(urlToken);
+      expect(output).toContain('[preview]/[url-auth]');
+      expect(output).toContain('[redacted]');
+    } finally { log.mockRestore(); }
+  });
+
   // Global raw config saves send { content: "<jsonc string>" }. Without this
   // prefix in the JSON middleware allowlist, PUT arrives with an empty body and
   // the handler rejects with "Configuration content must be a string".
@@ -1322,6 +1346,10 @@ describe('core-routes', () => {
       .get('/api/yuri/transcript-cache/session?yuri_preview_token=preview-secret')
       .expect(401, 'Authentication required');
     expect(requireAuth).toHaveBeenCalledTimes(2);
+    for (const suffix of ['_file/target-token/-/index.html', '_file', '%5Ffile/bad-target/live-token/file.html']) {
+      await request(app).get(`/api/preview/proxy/abc123/${suffix}?yuri_preview_token=arbitrary`)
+        .set('Cookie', 'yuri_preview_token=arbitrary').expect(401, 'Authentication required');
+    }
   });
 
   it('requires the managed bridge capability independently from UI auth', async () => {

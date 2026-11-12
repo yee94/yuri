@@ -1,4 +1,5 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,7 +32,12 @@ import {
   toProjectActionRunKey,
 } from '@/lib/projectActions';
 import { detectDevServerCommand, readPackageJsonScripts } from '@/lib/detectDevServer';
-import { connectTerminalStream } from '@/lib/terminalApi';
+import { connectTerminalStream, createProjectTerminalAPI } from '@/lib/terminalApi';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { locationKey, normalizeLocationStateKey } from '@/lib/remote-projects/location';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { useRemoteProjectRuntime } from '@/queries/remoteProjectQueries';
+import type { TerminalAPI } from '@/lib/api/types';
 
 type UrlWatchEntry = {
   lastSeenChunkId: number | null;
@@ -52,6 +58,7 @@ interface ProjectActionsButtonProps {
   className?: string;
   compact?: boolean;
   allowMobile?: boolean;
+  scope?: HostRuntimeEntry;
 }
 
 const ANSI_ESCAPE_PREFIX = String.fromCharCode(27);
@@ -146,15 +153,52 @@ const extractBestUrl = (value: string): string | null => {
   return normalized[0] ?? null;
 };
 
-export const ProjectActionsButton = ({
+export const ProjectActionsButton = (props: ProjectActionsButtonProps) => {
+  const remote = !!props.projectRef?.hostId;
+  const { registry } = useRemoteProjectRuntime(remote && !props.scope);
+  const hostId = props.projectRef?.hostId;
+  const hostSubscription = React.useMemo(() => ({
+    subscribe: (listener: () => void) => registry && hostId ? registry.subscribeHost(hostId, listener) : () => {},
+    snapshot: () => registry && hostId ? registry.getHost(hostId) : undefined,
+  }), [registry, hostId]);
+  React.useSyncExternalStore(hostSubscription.subscribe, hostSubscription.snapshot, hostSubscription.snapshot);
+  const directory = props.directory || props.projectRef?.path || '';
+  const entry = props.scope ? (registry?.hubId === props.scope.location.hubId ? registry.resolve(props.scope.location) : props.scope) : (remote && registry && registry.hubId === props.projectRef?.hubId
+    ? registry.resolve({ hubId: registry.hubId, hostId: props.projectRef.hostId, directory }) : undefined);
+  const key = entry ? `${entry.key}:${entry.connectionGeneration}` : (remote ? JSON.stringify([props.projectRef?.hubId, props.projectRef?.hostId, directory]) : directory);
+  return <ProjectActionsButtonContent key={key} {...props} scope={entry} />;
+};
+
+const ProjectActionsButtonContent = ({
   projectRef,
   directory,
   className,
   compact = false,
   allowMobile = false,
+  scope,
 }: ProjectActionsButtonProps) => {
   const { t } = useI18n();
-  const { terminal, runtime } = useRuntimeAPIs();
+  const { terminal: localTerminal, runtime } = useRuntimeAPIs();
+  const scopedTerminal = React.useRef<ReturnType<typeof createProjectTerminalAPI> | null>(null);
+  const activeScope = React.useRef(true);
+  const assertScope = () => {
+    if (!activeScope.current) throw new DOMException('Project action scope superseded', 'AbortError');
+    if (projectRef?.hostId && (!scope || scope.location.hostId !== projectRef.hostId || scope.location.hubId !== projectRef.hubId)) {
+      throw new Error(t('remoteProjects.host-unavailable'));
+    }
+    if (scope && scope.location.directory !== (directory || projectRef?.path || '')) throw new Error(t('remoteProjects.host-unavailable'));
+    if (scope) captureProjectScope(scope).assertCurrent();
+  };
+  const getScopedTerminal = useEvent(() => {
+    assertScope();
+    if (!scope) throw new Error(t('remoteProjects.host-unavailable'));
+    return scopedTerminal.current ??= createProjectTerminalAPI(scope);
+  });
+  const terminal = React.useMemo<Pick<TerminalAPI, 'createSession' | 'sendInput' | 'close' | 'forceKill'>>(() => scope || projectRef?.hostId ? {
+    createSession: (options: { cwd: string }) => getScopedTerminal().createTerminalSession(options),
+    sendInput: (id: string, data: string) => getScopedTerminal().sendTerminalInput(id, data),
+    close: (id: string) => getScopedTerminal().closeTerminal(id),
+  } : localTerminal, [scope, projectRef?.hostId, localTerminal, getScopedTerminal]);
   const { isMobile } = useDeviceInfo();
   const isDesktopShellApp = React.useMemo(() => isDesktopShell(), []);
   const desktopSshInstances = useDesktopSshStore((state) => state.instances);
@@ -188,6 +232,7 @@ export const ProjectActionsButton = ({
   const streamCleanupByRunKeyRef = React.useRef<Record<string, () => void>>({});
   const previewWaitTimeoutByRunKeyRef = React.useRef<Record<string, number>>({});
   const loadRequestIdRef = React.useRef(0);
+  const pendingRunsRef = React.useRef(new Set<string>());
 
   const projectId = projectRef?.id ?? null;
   const projectPath = projectRef?.path ?? '';
@@ -196,21 +241,35 @@ export const ProjectActionsButton = ({
     if (!projectId) {
       return null;
     }
-    return { id: projectId, path: projectPath };
-  }, [projectId, projectPath]);
+    return { id: projectId, path: projectPath, hostId: projectRef?.hostId, hubId: projectRef?.hubId };
+  }, [projectId, projectPath, projectRef?.hostId, projectRef?.hubId]);
 
   React.useEffect(() => {
-    if (!isDesktopShellApp) {
+    activeScope.current = true;
+    const cleanups = streamCleanupByRunKeyRef.current;
+    const timers = previewWaitTimeoutByRunKeyRef.current;
+    return () => {
+      activeScope.current = false;
+      loadRequestIdRef.current += 1;
+      Object.values(cleanups).forEach((cleanup) => cleanup());
+      Object.values(timers).forEach((timer) => window.clearTimeout(timer));
+      scopedTerminal.current?.dispose();
+      scopedTerminal.current = null;
+    };
+  }, [scope]);
+
+  React.useEffect(() => {
+    if (!isDesktopShellApp || scope || projectRef?.hostId) {
       return;
     }
     void loadDesktopSsh().catch(() => undefined);
-  }, [isDesktopShellApp, loadDesktopSsh]);
+  }, [isDesktopShellApp, loadDesktopSsh, scope, projectRef?.hostId]);
 
-  const openExternal = React.useCallback(async (url: string) => {
+  const openExternal = useEvent(async (url: string) => {
     await openExternalUrl(url);
-  }, []);
+  });
 
-  const loadActions = React.useCallback(async () => {
+  const loadActions = useEvent(async () => {
     if (!stableProjectRef) {
       return;
     }
@@ -220,7 +279,8 @@ export const ProjectActionsButton = ({
 
     setIsLoading(true);
     try {
-      const state = await getProjectActionsState(stableProjectRef);
+      assertScope();
+      const state = await getProjectActionsState(stableProjectRef, scope);
       if (loadRequestIdRef.current !== requestId) {
         return;
       }
@@ -245,11 +305,15 @@ export const ProjectActionsButton = ({
         setIsLoading(false);
       }
     }
-  }, [stableProjectRef]);
+  });
 
+  const rawDirectory = directory || stableProjectRef?.path || '';
+  // This variable is a UI identity. Every API below uses rawDirectory instead.
   const normalizedDirectory = React.useMemo(() => {
-    return normalizeProjectActionDirectory(directory || stableProjectRef?.path || '');
-  }, [directory, stableProjectRef?.path]);
+    if (scope) return normalizeLocationStateKey(locationKey({ ...scope.location, directory: rawDirectory }));
+    if (stableProjectRef?.hostId) return stableProjectRef.hubId ? normalizeLocationStateKey(locationKey({ hubId: stableProjectRef.hubId, hostId: stableProjectRef.hostId, directory: rawDirectory })) : '';
+    return normalizeProjectActionDirectory(rawDirectory);
+  }, [rawDirectory, stableProjectRef, scope]);
 
   const selectedAction = React.useMemo(() => {
     if (!selectedActionId) {
@@ -274,7 +338,7 @@ export const ProjectActionsButton = ({
 
   React.useEffect(() => {
     void loadActions();
-  }, [loadActions]);
+  }, [loadActions, stableProjectRef, scope]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -312,16 +376,18 @@ export const ProjectActionsButton = ({
 
   React.useEffect(() => {
     for (const [key, entry] of Object.entries(projectActionRuns)) {
+      if (entry.directory !== normalizedDirectory) continue;
       const directoryState = terminalSessions.get(entry.directory);
       const tab = directoryState?.tabs.find((item) => item.id === entry.tabId);
       if (!tab || tab.terminalSessionId !== entry.sessionId) {
         removeProjectActionRun(key);
       }
     }
-  }, [projectActionRuns, removeProjectActionRun, terminalSessions]);
+  }, [normalizedDirectory, projectActionRuns, removeProjectActionRun, terminalSessions]);
 
   React.useEffect(() => {
     for (const [runKey, entry] of Object.entries(projectActionRuns)) {
+      if (entry.directory !== normalizedDirectory) continue;
       const watch = urlWatchByRunKeyRef.current[runKey] ?? { lastSeenChunkId: null, openedUrl: false, tail: '', openInPreview: false };
       urlWatchByRunKeyRef.current[runKey] = watch;
       const action = displayActions.find((item) => item.id === entry.actionId);
@@ -367,6 +433,9 @@ export const ProjectActionsButton = ({
             delete previewWaitTimeoutByRunKeyRef.current[runKey];
             openContextPreview(run.directory, maybeUrl);
           }
+        } else if (scope || stableProjectRef?.hostId) {
+          setTabPreviewUrl(entry.directory, entry.tabId, maybeUrl, { locked: false, autoOpened: true });
+          openContextPreview(entry.directory, maybeUrl);
         } else {
           void openExternal(maybeUrl);
           toast.success(t('projectActions.toast.openedUrlFromOutput'));
@@ -383,9 +452,9 @@ export const ProjectActionsButton = ({
       }
     }
 
-  }, [displayActions, openContextPreview, openExternal, projectActionRuns, setTabPreviewUrl, t, terminalSessions, updateProjectActionRunStatus]);
+  }, [normalizedDirectory, scope, stableProjectRef?.hostId, displayActions, openContextPreview, openExternal, projectActionRuns, setTabPreviewUrl, t, terminalSessions, updateProjectActionRunStatus]);
 
-  const getOrCreateActionTab = React.useCallback(async (action: YuriProjectAction, options: { revealTerminal?: boolean } = {}) => {
+  const getOrCreateActionTab = useEvent(async (action: YuriProjectAction, options: { revealTerminal?: boolean } = {}) => {
     if (!normalizedDirectory) {
       throw new Error(t('projectActions.error.noActiveDirectory'));
     }
@@ -421,18 +490,9 @@ export const ProjectActionsButton = ({
       tabId,
       sessionId: tab?.terminalSessionId ?? null,
     };
-  }, [
-    ensureDirectory,
-    normalizedDirectory,
-    setActiveMainTab,
-    setActiveTab,
-    setBottomTerminalOpen,
-    setTabIconKey,
-    setTabLabel,
-    t,
-  ]);
+  });
 
-  const runAction = React.useCallback(async (action: YuriProjectAction) => {
+  const runAction = useEvent(async (action: YuriProjectAction) => {
     if (runtime.isVSCode || (!allowMobile && isMobile)) {
       return;
     }
@@ -447,15 +507,18 @@ export const ProjectActionsButton = ({
     if (existingRun && existingRun.status === 'running') {
       return;
     }
+    if (pendingRunsRef.current.has(runKey)) return;
+    pendingRunsRef.current.add(runKey);
 
     try {
+      assertScope();
       const discovered = action.id === AUTO_DISCOVER_ACTION_ID
         ? await (async (): Promise<YuriProjectAction> => {
           const [actionsState, scripts] = await Promise.all([
-            getProjectActionsState({ id: stableProjectRef?.id ?? '', path: normalizedDirectory }),
-            readPackageJsonScripts(normalizedDirectory),
+            getProjectActionsState({ ...stableProjectRef, id: stableProjectRef?.id ?? '', path: rawDirectory }, scope),
+            readPackageJsonScripts(rawDirectory, scope),
           ]);
-          const devServer = await detectDevServerCommand(normalizedDirectory, actionsState.actions, scripts);
+          const devServer = await detectDevServerCommand(rawDirectory, actionsState.actions, scripts, scope);
           if (!devServer) {
             throw new Error(t('contextPanel.preview.noDevServer'));
           }
@@ -471,6 +534,7 @@ export const ProjectActionsButton = ({
         : action;
 
       const hasCustomOpenUrl = discovered.autoOpenUrl === true && (discovered.openUrl || '').trim().length > 0;
+      assertScope();
       const { key, tabId, sessionId } = await getOrCreateActionTab(discovered, { revealTerminal: !hasCustomOpenUrl && action.id !== AUTO_DISCOVER_ACTION_ID });
       let activeSessionId = sessionId;
       let createdSession = false;
@@ -478,7 +542,8 @@ export const ProjectActionsButton = ({
       if (!activeSessionId) {
         setConnecting(normalizedDirectory, tabId, true);
         try {
-          const created = await terminal.createSession({ cwd: normalizedDirectory });
+          const created = await terminal.createSession({ cwd: rawDirectory });
+          assertScope();
           activeSessionId = created.sessionId;
           createdSession = true;
           setTabSessionId(normalizedDirectory, tabId, activeSessionId);
@@ -494,13 +559,16 @@ export const ProjectActionsButton = ({
       if (createdSession) {
         await sleep(350);
       }
+      assertScope();
 
       if (discovered.id === AUTO_DISCOVER_ACTION_ID) {
         streamCleanupByRunKeyRef.current[key]?.();
         setConnecting(normalizedDirectory, tabId, true);
-        streamCleanupByRunKeyRef.current[key] = connectTerminalStream(
+        streamCleanupByRunKeyRef.current[key] = (scope ? getScopedTerminal().connectTerminalStream : connectTerminalStream)(
           activeSessionId,
           (event) => {
+            if (!activeScope.current) return;
+            try { assertScope(); } catch { return; }
             if (event.type === 'data' && typeof event.data === 'string' && event.data.length > 0) {
               useTerminalStore.getState().appendToBuffer(normalizedDirectory, tabId, event.data);
             }
@@ -516,6 +584,7 @@ export const ProjectActionsButton = ({
             }
           },
           () => {
+            if (!activeScope.current) return;
             useTerminalStore.getState().setConnecting(normalizedDirectory, tabId, false);
           },
           { maxRetries: 60, initialRetryDelay: 250, maxRetryDelay: 2000, connectionTimeout: 5000 },
@@ -523,10 +592,11 @@ export const ProjectActionsButton = ({
       }
 
       const hasDesktopForwardSelection = discovered.autoOpenUrl === true
+        && !scope
         && isDesktopShellApp
         && (discovered.desktopOpenSshForward || '').trim().length > 0;
       const manualOpenUrl = discovered.autoOpenUrl ? normalizeManualOpenUrl(discovered.openUrl) : null;
-      const desktopForwardUrl = discovered.autoOpenUrl && isDesktopShellApp
+      const desktopForwardUrl = discovered.autoOpenUrl && isDesktopShellApp && !scope
         ? resolveProjectActionDesktopForwardUrl(discovered.desktopOpenSshForward, desktopSshInstances)
         : null;
 
@@ -573,6 +643,7 @@ export const ProjectActionsButton = ({
       };
 
       const normalizedCommand = stripControlChars(discovered.command.trim().replace(/\r\n|\r/g, '\n'));
+      assertScope();
       await terminal.sendInput(activeSessionId, `${normalizedCommand}\r`);
     } catch (error) {
       removeProjectActionRun(runKey);
@@ -582,29 +653,12 @@ export const ProjectActionsButton = ({
       window.clearTimeout(previewWaitTimeoutByRunKeyRef.current[runKey]);
       delete previewWaitTimeoutByRunKeyRef.current[runKey];
       toast.error(error instanceof Error ? error.message : t('projectActions.error.failedToRunAction'));
+    } finally {
+      pendingRunsRef.current.delete(runKey);
     }
-  }, [
-    desktopSshInstances,
-    getOrCreateActionTab,
-    allowMobile,
-    isMobile,
-    isDesktopShellApp,
-    normalizedDirectory,
-    openExternal,
-    openContextPreview,
-    projectActionRuns,
-    runtime.isVSCode,
-    removeProjectActionRun,
-    setConnecting,
-    setProjectActionRun,
-    setTabPreviewUrl,
-    setTabSessionId,
-    stableProjectRef?.id,
-    t,
-    terminal,
-  ]);
+  });
 
-  const stopAction = React.useCallback(async (action: YuriProjectAction) => {
+  const stopAction = useEvent(async (action: YuriProjectAction) => {
     const runKey = toProjectActionRunKey(normalizedDirectory, action.id);
     const activeRun = projectActionRuns[runKey];
     if (!activeRun) {
@@ -615,7 +669,12 @@ export const ProjectActionsButton = ({
 
     try {
       await terminal.sendInput(activeRun.sessionId, '\x03');
-    } catch {
+    } catch (error) {
+      if (scope || stableProjectRef?.hostId) {
+        updateProjectActionRunStatus(runKey, 'running');
+        toast.error(error instanceof Error ? error.message : t('projectActions.error.failedToRunAction'));
+        return;
+      }
       // noop
     }
 
@@ -629,20 +688,32 @@ export const ProjectActionsButton = ({
     const sessionStillSame = afterTab?.terminalSessionId === activeRun.sessionId;
 
     if (sessionStillSame) {
-      if (typeof terminal.forceKill === 'function') {
+      if (scope || stableProjectRef?.hostId) {
         try {
-          await terminal.forceKill({ sessionId: activeRun.sessionId });
-        } catch {
-          // noop
-        }
-      } else {
-        try {
+          assertScope();
           await terminal.close(activeRun.sessionId);
-        } catch {
-          // noop
+        } catch (error) {
+          updateProjectActionRunStatus(runKey, 'running');
+          toast.error(error instanceof Error ? error.message : t('projectActions.error.failedToRunAction'));
+          return;
         }
+        setTabSessionId(activeRun.directory, activeRun.tabId, null);
+      } else {
+        if (typeof terminal.forceKill === 'function') {
+          try {
+            await terminal.forceKill({ sessionId: activeRun.sessionId });
+          } catch {
+            // noop
+          }
+        } else {
+          try {
+            await terminal.close(activeRun.sessionId);
+          } catch {
+            // noop
+          }
+        }
+        setTabSessionId(activeRun.directory, activeRun.tabId, null);
       }
-      setTabSessionId(activeRun.directory, activeRun.tabId, null);
     }
 
     removeProjectActionRun(runKey);
@@ -651,9 +722,9 @@ export const ProjectActionsButton = ({
     delete streamCleanupByRunKeyRef.current[runKey];
     window.clearTimeout(previewWaitTimeoutByRunKeyRef.current[runKey]);
     delete previewWaitTimeoutByRunKeyRef.current[runKey];
-  }, [normalizedDirectory, projectActionRuns, removeProjectActionRun, setTabSessionId, terminal, updateProjectActionRunStatus]);
+  });
 
-  const handlePrimaryClick = React.useCallback(() => {
+  const handlePrimaryClick = useEvent(() => {
     const action = selectedAction ?? displayActions[0];
     if (!action) {
       return;
@@ -668,9 +739,9 @@ export const ProjectActionsButton = ({
       return;
     }
     void runAction(action);
-  }, [displayActions, normalizedDirectory, runAction, projectActionRuns, selectedAction, stopAction]);
+  });
 
-  const handleSelectAction = React.useCallback((action: YuriProjectAction, toggleStopIfRunning = false) => {
+  const handleSelectAction = useEvent((action: YuriProjectAction, toggleStopIfRunning = false) => {
     setSelectedActionId(action.id);
 
     if (!toggleStopIfRunning) {
@@ -688,16 +759,22 @@ export const ProjectActionsButton = ({
       return;
     }
     void runAction(action);
-  }, [normalizedDirectory, runAction, projectActionRuns, stopAction]);
+  });
 
-  const openProjectActionsSettings = React.useCallback(() => {
+  const openProjectActionsSettings = useEvent(() => {
     if (!stableProjectRef?.id) {
+      return;
+    }
+    if (scope || stableProjectRef.hostId) {
+      toast.info(t('remoteProjects.configurationReadOnly'));
+      setSettingsPage('remoteInstances');
+      setSettingsDialogOpen(true);
       return;
     }
     setSettingsProjectsSelectedId(stableProjectRef.id);
     setSettingsPage('projects');
     setSettingsDialogOpen(true);
-  }, [setSettingsDialogOpen, setSettingsPage, setSettingsProjectsSelectedId, stableProjectRef?.id]);
+  });
 
   if (runtime.isVSCode || (!allowMobile && isMobile) || !stableProjectRef || !normalizedDirectory) {
     return null;

@@ -7,6 +7,9 @@ import { opencodeClient } from '@/lib/opencode/client';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { McpServerConfig, McpScope } from '@/stores/useMcpConfigStore';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 
 export type McpStatusMap = Record<string, McpStatus>;
 export type McpServerWithScope = McpServerConfig & { scope?: McpScope | null };
@@ -41,18 +44,21 @@ const locationOf = (directory: string | null) => (
 export const mcpConfigsQueryOptions = (
   directory: string | null = resolveMcpConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeMcpDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeMcpDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: mcpConfigsQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(mcpConfigsQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<McpServerWithScope[]> => {
       const queryParams = normalizedDirectory ? `?directory=${encodeURIComponent(normalizedDirectory)}` : '';
-      const response = await runtimeFetch(`/api/config/mcp${queryParams}`, {
+      const response = await (entry ? scope.fetch : runtimeFetch)(`/api/config/mcp${queryParams}`, {
         headers: normalizedDirectory ? { 'x-opencode-directory': normalizedDirectory } : undefined,
         signal,
       });
       if (!response.ok) throw new Error('Failed to load MCP configs');
       const payload = await response.json();
+      scope.assertCurrent(signal);
       if (!Array.isArray(payload)) throw new Error('Invalid MCP configs response');
       return payload as McpServerWithScope[];
     },
@@ -64,13 +70,16 @@ export const mcpConfigsQueryOptions = (
 export const mcpStatusQueryOptions = (
   directory: string | null,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeMcpDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeMcpDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: mcpStatusQueryKey(normalizedDirectory, transport),
-    queryFn: async (): Promise<McpStatusMap> => {
+    queryKey: scope.key(mcpStatusQueryKey(normalizedDirectory, transport)),
+    queryFn: async ({ signal }: { signal?: AbortSignal } = {}): Promise<McpStatusMap> => {
       // v2 has mcp.list (with per-server status), not 1.x mcp.status / {data,error}.
-      const listed = await getMcpApiClient(normalizedDirectory).mcp.list(locationOf(normalizedDirectory));
+      const listed = await (entry ? entry.sdk() : getMcpApiClient(normalizedDirectory)).mcp.list(locationOf(normalizedDirectory), { signal });
+      scope.assertCurrent(signal);
       if (!Array.isArray(listed.data)) {
         throw new Error('v2 mcp.list returned no data');
       }
@@ -90,23 +99,25 @@ export const useMcpConfigsQuery = (
   directory?: string | null,
   options: { enabled?: boolean } = {},
 ) => {
+  const host = useHostRuntime();
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   const resolvedDirectory = directory === undefined
     ? normalizeMcpDirectory(activeProjectPath) ?? normalizeMcpDirectory(opencodeClient.getDirectory())
     : normalizeMcpDirectory(directory);
-  return useQuery({ ...mcpConfigsQueryOptions(resolvedDirectory), enabled: options.enabled });
+  return useQuery({ ...mcpConfigsQueryOptions(resolvedDirectory, undefined, host?.entry), enabled: options.enabled });
 };
 
 export const useMcpStatusQuery = (
   directory?: string | null,
   options: { enabled?: boolean } = {},
 ) => {
+  const host = useHostRuntime();
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const resolvedDirectory = directory === undefined ? currentDirectory : directory;
   const normalized = normalizeMcpDirectory(resolvedDirectory);
   const enabled = options.enabled !== false && Boolean(normalized);
   return useQuery({
-    ...mcpStatusQueryOptions(normalized),
+    ...mcpStatusQueryOptions(normalized, undefined, host?.entry),
     enabled,
   });
 };

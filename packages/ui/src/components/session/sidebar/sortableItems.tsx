@@ -15,20 +15,28 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { SIDEBAR_ROW_HOVER_CLASS } from './utils';
+import { RemoteHostIndicator } from '../RemoteHostIndicator';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import type { RemoteProject } from '@/lib/remote-projects/types';
 
 export interface SortableProjectItemProps {
   id: string;
+  hostId?: string;
+  remoteState?: RemoteProject['remoteState'];
+  hostRegistry?: HostRuntimeRegistry;
   disabled?: boolean;
   projectLabel: string;
   projectDescription: string;
   projectIcon?: string;
   projectColor?: string;
   projectIconImage?: { mime: string; updatedAt: number; source: 'custom' | 'auto' };
+  projectIconSlot?: React.ReactNode;
   isCollapsed: boolean;
   isActiveProject: boolean;
   /** True while this project's session directories are still fetching. */
   isSessionsLoading?: boolean;
   isRepo: boolean;
+  worktreeActionAvailable?: boolean;
   hideDirectoryControls: boolean;
   mobileVariant: boolean;
   alwaysShowActions: boolean;
@@ -53,16 +61,21 @@ export type SortableDragHandleProps = {
 
 export const SortableProjectItem = React.memo(function SortableProjectItem({
   id,
+  hostId,
+  remoteState,
+  hostRegistry,
   disabled = false,
   projectLabel,
   projectDescription,
   projectIcon,
   projectColor,
   projectIconImage,
+  projectIconSlot,
   isCollapsed,
   isActiveProject,
   isSessionsLoading = false,
   isRepo,
+  worktreeActionAvailable = isRepo,
   hideDirectoryControls,
   alwaysShowActions,
   onToggle,
@@ -207,13 +220,13 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                             {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
                           </span>
                           <span className={cn('relative top-px', alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
-                            {projectIconImage ? (
+                            {projectIconSlot ?? (projectIconImage ? (
                               <ProjectIconImage
                                 project={{ id, iconImage: projectIconImage }}
                                 className="size-full object-contain"
                                 fallback={projectIconFallback}
                               />
-                            ) : projectIconFallback}
+                            ) : projectIconFallback)}
                           </span>
                         </>
                       )}
@@ -224,6 +237,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                     )}>
                       {projectLabel}
                     </span>
+                    {hostId && hostRegistry ? <RemoteHostIndicator registry={hostRegistry} hostId={hostId} remoteState={remoteState} /> : null}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
@@ -235,7 +249,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                 'absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-1',
                 showCreateButtons ? 'right-7' : 'right-0.5',
               )}>
-                {showCreateButtons && isRepo && !hideDirectoryControls && onNewWorktreeSession ? (
+                {showCreateButtons && worktreeActionAvailable && !hideDirectoryControls && onNewWorktreeSession ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button

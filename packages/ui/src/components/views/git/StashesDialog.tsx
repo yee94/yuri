@@ -9,7 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { useDeviceInfo } from '@/lib/device';
 import { cn } from '@/lib/utils';
 import type { GitStashEntry } from '@/lib/api/types';
-import { applyGitStash, countGitStashFiles, dropGitStash, listGitStashes, popGitStash, stashGitChanges } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 
 interface StashesDialogProps {
   open: boolean;
@@ -33,6 +33,7 @@ export const StashesDialog: React.FC<StashesDialogProps> = ({
   onChanged,
 }) => {
   const { t } = useI18n();
+  const { applyGitStash, countGitStashFiles, dropGitStash, listGitStashes, popGitStash, stashGitChanges } = useProjectGitActions();
   const { isMobile } = useDeviceInfo();
   const [stashes, setStashes] = React.useState<GitStashEntry[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);

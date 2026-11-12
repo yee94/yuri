@@ -143,6 +143,16 @@ tab-strip variants and mobile file navigation remain unchanged.
 
 # Mobile row swipe actions
 
+Row action menus share `MobileActionSheet` from
+`mobile/projects/MobileRowActionsSheet.tsx`. It accepts resolved action descriptors
+(`id`, icon, localized label, callback, disabled/destructive/separated state) and
+owns the `MobileResizableSheet` material, haptic rows and grouping. The local
+`MobileRowActionsSheet` builds descriptors from its existing target/callback model;
+remote project adapters supply Host-scoped commands. Do not recreate the sheet
+rows or bypass their disabled state in feature-local markup. Project menus retain
+one divider before destructive Close; session/folder groups use the normal row
+dividers. Command execution, availability and error state belong to the caller.
+
 `useMobileSwipeActions.ts` and `MobileSwipeActionRail.tsx` own the homepage session and Assistant contact trailing
 two-action rail and gesture controller. Touch/pen intent locks after 10px; vertical
 intent yields to scrolling, horizontal movement clamps to the measured rail width,

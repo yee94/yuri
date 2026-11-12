@@ -77,6 +77,8 @@ export type DesktopSettings = {
   desktopMinimizeToTrayEnabled?: boolean;
   desktopUiPassword?: string;
   projects?: ProjectEntry[];
+  hasRemoteProjects?: boolean;
+  hubProjectLayout?: { hubId: string; order: string[]; collapsed: Record<string, boolean> };
   projectSortOrder?: 'manual' | 'a-z' | 'z-a' | 'date-added' | 'recent';
   activeProjectId?: string;
   securityScopedBookmarks?: string[];

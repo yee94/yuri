@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 type GenerateInput = { sessionId: string; directory?: string | null; prompt: string; signal?: AbortSignal };
 type GenerateResult = { text: string } | Error | (() => Promise<{ text: string }>);
@@ -81,6 +82,27 @@ beforeEach(() => {
 afterEach(() => resetSessionBtwStoreForRuntimeSwitch());
 
 describe('useSessionBtwStore side conversation', () => {
+  test('remote aside scopes same IDs to the Host service, never local defaults, and fences reconnect completions', async () => {
+    let current = true;
+    let finish!: (value: { text: string }) => void;
+    const generate = vi.fn(() => new Promise<{ text: string }>((resolve) => { finish = resolve; }));
+    const host = { location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' },
+      sdk: () => { if (!current) throw new Error('Remote connection changed'); return {}; },
+      service: () => ({ generateSessionAside: generate }),
+    } as unknown as HostRuntimeEntry;
+    const target = { sessionId: 'same', directory: 'C:\\repo', host };
+    expect(getSessionBtwKey(target)).not.toBe(getSessionBtwKey({ sessionId: 'same', directory: target.directory }));
+    const flight = useSessionBtwStore.getState().ask(target, 'Remote question');
+    await flush();
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'same', directory: 'C:\\repo' }));
+    expect(harness.calls).toEqual([]);
+    expect(harness.applySendSelection).not.toHaveBeenCalled();
+    current = false;
+    finish({ text: 'stale answer' });
+    await flight;
+    expect(useSessionBtwStore.getState().entries[getSessionBtwKey(target)]?.turns[0]).toMatchObject({ answer: '', pending: false });
+  });
+
   test('captures only real receipt timing and replaces it on retry, including failure', async () => {
     const target = scope('ses_timing', '/repo');
     let clock = 100;

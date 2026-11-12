@@ -190,6 +190,8 @@ test('collapsing the sidebar retains pinned and in-progress shortcut targets unt
         const pinnedFocusIdentities = isVisible ? [sessionFocus] : [];
         const projectFocusIdentities = [{ ...sessionFocus, scope: 'project' }];
         const sessionSidebarMetaById = new Map();
+        const allProjects = [{ id: 'project' }];
+        const remoteNavigationTargets = new Map();
         ${statements.join('\n')}
         return null;
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;

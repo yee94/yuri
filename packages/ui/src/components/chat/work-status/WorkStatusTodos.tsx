@@ -16,16 +16,7 @@ type Props = {
 
 const EMPTY_TODOS: Todo[] = [];
 
-export const WorkStatusTodos: React.FC<Props> = ({ sessionId, directory }) => {
-  const { t } = useI18n();
-  const listId = React.useId();
-  const [expanded, setExpanded] = React.useState(true);
-  const [settled, setSettled] = React.useState(false);
-
-  React.useEffect(() => {
-    setSettled(true);
-  }, []);
-
+const LocalWorkStatusTodos: React.FC<Props> = ({ sessionId, directory }) => {
   const liveSelector = React.useMemo(() => (
     (state: DirectorySyncState) => (sessionId ? state.todo[sessionId] : undefined) ?? EMPTY_TODOS
   ), [sessionId]);
@@ -49,6 +40,19 @@ export const WorkStatusTodos: React.FC<Props> = ({ sessionId, directory }) => {
     const source = transcriptTodos ?? (liveTodos.length > 0 ? liveTodos : persistedTodos ?? EMPTY_TODOS);
     return source.filter((todo) => todo.content.length > 0);
   }, [transcriptTodos, liveTodos, persistedTodos]);
+  return <WorkStatusTodoList todos={todos} isWorking={isWorking} />;
+};
+
+export const WorkStatusTodos: React.FC<Props & { remote?: { todos: Todo[]; isWorking: boolean } }> = ({ remote, ...props }) => (
+  remote ? <WorkStatusTodoList {...remote} /> : <LocalWorkStatusTodos {...props} />
+);
+
+const WorkStatusTodoList: React.FC<{ todos: Todo[]; isWorking: boolean }> = ({ todos, isWorking }) => {
+  const { t } = useI18n();
+  const listId = React.useId();
+  const [expanded, setExpanded] = React.useState(true);
+  const [settled, setSettled] = React.useState(false);
+  React.useEffect(() => { setSettled(true); }, []);
   const doneCount = React.useMemo(() => todos.filter((todo) => todo.status === 'completed').length, [todos]);
   const finishedCount = React.useMemo(() => todos.filter(isTodoFinished).length, [todos]);
   const listRef = React.useRef<HTMLUListElement>(null);

@@ -1,12 +1,5 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -18,7 +11,7 @@ import { toast } from '@/components/ui';
 import { IdentityDropdown } from '@/components/views/git/GitHeader';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useDeviceInfo } from '@/lib/device';
-import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { DirectoryExplorerSurface, DirectoryMachineList } from './DirectoryExplorerViews';
 import { Icon } from "@/components/icon/Icon";
 import { opencodeClient } from '@/lib/opencode/client';
 import { useI18n } from '@/lib/i18n';
@@ -27,6 +20,10 @@ import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveDirectoryExplorerMobileLayout } from './directoryExplorerLayout';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Kbd } from '@/components/ui/kbd';
+import { getHostRuntimeRegistry, supportsRemoteProjects, useRemoteHostCatalog } from '@/queries/remoteProjectQueries';
+import { RemoteDirectoryExplorerDialog } from './RemoteDirectoryExplorerDialog';
+import type { RemoteProject } from '@/lib/remote-projects/types';
+import type { HostLocation } from '@/lib/remote-projects/location';
 import './directory-explorer-dialog.css';
 
 interface DirectoryExplorerDialogProps {
@@ -34,6 +31,7 @@ interface DirectoryExplorerDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Force mobile layout regardless of device detection */
   forceMobile?: boolean;
+  onRemoteProjectAdded?: (project: RemoteProject, location: HostLocation) => void | Promise<void>;
 }
 
 type BrowseEntry = {
@@ -142,10 +140,58 @@ const resolveFreshFilesystemHome = async (): Promise<string | null> => {
   return opencodeClient.getFilesystemHome().catch(() => null);
 };
 
-export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = ({
+export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => {
+  const { t } = useI18n();
+  const device = useDeviceInfo();
+  const isMobile = resolveDirectoryExplorerMobileLayout(props.forceMobile, device.isMobile);
+  const catalog = useRemoteHostCatalog(props.open, true);
+  const [hostId, setHostId] = React.useState('');
+  const [step, setStep] = React.useState<'machine' | 'directory'>('machine');
+  React.useEffect(() => {
+    if (!props.open) { setHostId(''); setStep('machine'); }
+  }, [props.open]);
+  const registry = React.useMemo(() => catalog.data?.supported ? getHostRuntimeRegistry(catalog.data) : null, [catalog.data]);
+  const selectableHosts = catalog.data?.hosts.filter((host) => host.available !== false) ?? [];
+  const selectedHost = selectableHosts.find((host) => host.id === hostId);
+  const hasMachines = catalog.data?.supported && selectableHosts.length > 0;
+  const showMachines = supportsRemoteProjects() && step === 'machine'
+    && (hasMachines || catalog.isPending || catalog.isError);
+  const steps = <div className="flex shrink-0 items-center gap-2 whitespace-nowrap py-2 typography-micro text-muted-foreground">
+    <span className={showMachines ? 'text-foreground' : undefined}>{t('remoteProjects.machine')}</span>
+    <Icon name="arrow-right-s" className="size-3 shrink-0" />
+    <span className={!showMachines ? 'text-foreground' : undefined}>{t('directoryExplorerDialog.browse.directories')}</span>
+  </div>;
+  if (showMachines) {
+    const canContinue = !hostId || Boolean(registry && selectedHost
+      && selectedHost.state !== 'unauthorized' && selectedHost.state !== 'incompatible');
+    const footer = <div className="yuri-directory-actions"><Button size="sm" disabled={!canContinue} onClick={() => setStep('directory')}>{t('remoteProjects.next')}</Button></div>;
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={props.onOpenChange} mobile={isMobile} footer={footer}>
+      <DirectoryMachineList hosts={selectableHosts} selectedId={hostId} onSelect={setHostId} pending={catalog.isPending}
+        error={catalog.error} onRetry={() => void catalog.refetch()} steps={steps} />
+    </DirectoryExplorerSurface>;
+  }
+  const machinePicker = hasMachines ? <div className="flex min-w-0 items-center gap-2">
+    <Button variant="ghost" size="icon" onClick={() => setStep('machine')} aria-label={t('header.actions.backAria')}>
+      <Icon name="arrow-left-s" className="size-4" />
+    </Button>
+    {steps}
+    {hostId ? <span className="ml-auto truncate typography-micro text-muted-foreground">{selectedHost?.name ?? hostId}</span> : null}
+  </div> : null;
+  if (hostId && registry) return <RemoteDirectoryExplorerDialog key={`${registry.hubId}:${hostId}`} {...props} registry={registry} hostId={hostId} machinePicker={machinePicker} onRegistered={async (project) => {
+    registry.assertCurrent();
+    await props.onRemoteProjectAdded?.(project, { hubId: registry.hubId, hostId, directory: project.path });
+    registry.assertCurrent();
+    await catalog.refetch();
+  }} />;
+  return <LocalDirectoryExplorerDialog {...props} machinePicker={machinePicker} discoveryError={catalog.error?.message} />;
+};
+
+const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { machinePicker: React.ReactNode; discoveryError?: string }> = ({
   open,
   onOpenChange,
   forceMobile,
+  machinePicker,
+  discoveryError,
 }) => {
   const { t } = useI18n();
   const homeDirectory = useDirectoryStore((s) => s.homeDirectory);
@@ -179,6 +225,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
   const addedProjectPaths = React.useMemo(() => new Set(
     projects
+      .filter((project) => !project.hostId)
       .map((project) => normalizeDirectoryPath(project.path))
       .filter((path): path is string => Boolean(path))
   ), [projects]);
@@ -545,6 +592,8 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
   const inputSection = (
     <div className="yuri-directory-inputs">
+      <fieldset disabled={isConfirming} className="min-w-0">{machinePicker}</fieldset>
+      {discoveryError ? <p role="alert" className="text-xs text-destructive">{discoveryError}</p> : null}
       {isCloneMode ? (
         <div className="yuri-directory-field">
           <Input
@@ -715,49 +764,8 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     </div>
   );
 
-  if (isMobile) {
-    return (
-      <MobileResizableSheet
-        id="mobile-directory-explorer-sheet"
-        open={open}
-        onOpenChange={onOpenChange}
-        title={(
-          <h2 className="yuri-directory-title truncate text-foreground">
-            {t('directoryExplorerDialog.title')}
-          </h2>
-        )}
-        trailing={showHiddenToggle}
-        ariaLabel={t('directoryExplorerDialog.title')}
-        closeAriaLabel={t('mobile.surface.closeAria')}
-        resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
-        initiallyExpanded
-        className="yuri-directory-mobile"
-      >
-        {content}
-        <div className="yuri-directory-footer">{renderFooter()}</div>
-      </MobileResizableSheet>
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        presentation="picker"
-        className="yuri-directory-dialog"
-        initialFocus={false}
-      >
-        <DialogHeader className="yuri-directory-header">
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <DialogTitle className="yuri-directory-title truncate">{t('directoryExplorerDialog.title')}</DialogTitle>
-            {showHiddenToggle}
-          </div>
-        </DialogHeader>
-        {content}
-        <DialogFooter className="yuri-directory-footer">
-          {shortcutHints}
-          {renderFooter()}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+  return <DirectoryExplorerSurface open={open} onOpenChange={onOpenChange} mobile={isMobile}
+    trailing={showHiddenToggle} hints={shortcutHints} footer={renderFooter()} initialFocus={false}>
+    {content}
+  </DirectoryExplorerSurface>;
 };

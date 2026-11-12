@@ -1,5 +1,15 @@
 import * as React from 'react';
 import { useEvent } from '@reactuses/core';
+import { useQuery, useQueries } from '@tanstack/react-query';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { providerCatalogQueryOptions } from '@/queries/configCatalogQueries';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { queryClient } from '@/lib/queryRuntime';
+import { getTranscriptRepository, transcriptScope, subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision } from '@/sync/transcript-repository-runtime';
+import { scanContextTokenBaseline, buildSessionContextUsage } from '@/sync/context-token-baseline';
 
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
@@ -25,9 +35,10 @@ import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionContextUsage, useSessionMessages } from '@/sync/sync-context';
-import type { QuotaProviderId, UsageWindow } from '@/types';
+import type { ProviderResult, QuotaProviderId, UsageWindow } from '@/types';
 
 import { ContextProgressIcon } from './ContextProgressIcon';
+import { remoteMobileGitOptions, remoteMobileQuotaOptions, remoteMobileQuotaSettingsOptions, remoteMobileMagpieOptions } from './remoteMobileMetadataQueries';
 import {
   buildMobileContextDisplay,
   getLatestUserMessageModel,
@@ -51,6 +62,33 @@ type MobileUsageProviderGroup = {
   rows: MobileUsageLimitRow[];
   status: string | null;
 };
+
+function useMobileUsageGroups(quotaResults: ProviderResult[], dropdownProviderIds: QuotaProviderId[], selectedQuotaModels: Record<string, string[]>) {
+  const { t } = useI18n();
+  return React.useMemo<MobileUsageProviderGroup[]>(() => {
+    const resultsByProvider = new Map(quotaResults.map((result) => [result?.providerId, result]));
+    return quotaProviders(quotaResults)
+      .filter((providerMeta) => dropdownProviderIds.includes(providerMeta.id))
+      .filter((providerMeta) => resultsByProvider.get(providerMeta.id)?.configured === true)
+      .map((providerMeta) => {
+        const result = resultsByProvider.get(providerMeta.id)!;
+        const rows: MobileUsageLimitRow[] = [];
+        for (const [label, window] of tagWindowsWithAccount(Object.entries(result?.usage?.windows ?? {}), result?.usage?.accounts)) {
+          rows.push({ key: `window-${label}`, label: formatWindowLabel(window.label ?? label), window });
+        }
+        const modelEntries = Object.entries(result?.usage?.models ?? {});
+        const selected = selectedQuotaModels[providerMeta.id] ?? [];
+        for (const [modelName, modelUsage] of selected.length > 0 ? modelEntries.filter(([name]) => selected.includes(name)) : modelEntries) {
+          const entries = Object.entries(modelUsage.windows ?? {});
+          if (entries.length === 0) continue;
+          const [label, window] = entries[0];
+          rows.push({ key: `model-${modelName}-${label}`, label: formatWindowLabel(window.label ?? label), subtitle: getDisplayModelName(modelName), window });
+        }
+        return { providerId: providerMeta.id, providerName: providerMeta.name, rows,
+          status: !result.ok && result.error ? result.error : rows.length === 0 ? t('header.services.noRateLimitsReported') : null };
+      });
+  }, [dropdownProviderIds, quotaResults, selectedQuotaModels, t]);
+}
 
 const getWindowValueClass = (window: UsageWindow): string => {
   const usedPercent = window.usedPercent;
@@ -170,6 +208,8 @@ const SessionMetadataOverlay: React.FC<{
   usageDisplayMode: 'usage' | 'remaining';
   isUsageLoading: boolean;
   timeFormatPreference: TimeFormatPreference;
+  error?: string;
+  onRetry?: () => void;
 }> = ({
   open,
   onClose,
@@ -179,6 +219,8 @@ const SessionMetadataOverlay: React.FC<{
   usageDisplayMode,
   isUsageLoading,
   timeFormatPreference,
+  error,
+  onRetry,
 }) => {
   const { t } = useI18n();
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -264,6 +306,10 @@ const SessionMetadataOverlay: React.FC<{
             isLoading={isUsageLoading}
             timeFormatPreference={timeFormatPreference}
           />
+          {error ? <div role="alert" className="px-2.5 py-2 typography-ui-label text-[var(--status-error)]">
+            {error}
+            <Button variant="ghost" size="sm" onClick={onRetry}>{t('contextPanel.preview.actions.retry')}</Button>
+          </div> : null}
         </div>
       </div>
       <style>{`
@@ -293,6 +339,20 @@ export type MobileContextProgressButtonProps = {
  * session metadata panel (branch / context / provider quotas).
  */
 export function MobileContextProgressButton({
+  ...props
+}: MobileContextProgressButtonProps) {
+  const host = useHostRuntime();
+  const remote = useSessionNavigationStore((state) => state.remoteSession);
+  if (host?.entry.location.hostId) {
+    const selected = remote?.location.hubId === host.entry.location.hubId
+      && remote.location.hostId === host.entry.location.hostId
+      && remote.location.directory === host.entry.location.directory ? remote.sessionId : null;
+    return <RemoteMobileContextProgressButton key={`${host.entry.key}:${selected ?? ''}`} {...props} sessionId={selected ?? ''} entry={host.entry} />;
+  }
+  return <LocalMobileContextProgressButton {...props} />;
+}
+
+function LocalMobileContextProgressButton({
   sessionId,
   open: openProp,
   onOpenChange,
@@ -405,54 +465,7 @@ export function MobileContextProgressButton({
     ? (gitStatus?.current?.trim() || t('gitView.branch.detachedHead'))
     : t('common.unavailable');
 
-  const usageGroups = React.useMemo<MobileUsageProviderGroup[]>(() => {
-    const resultsByProvider = new Map(quotaResults.map((result) => [result?.providerId, result]));
-    return quotaProviders(quotaResults)
-      .filter((providerMeta) => dropdownProviderIds.includes(providerMeta.id))
-      .filter((providerMeta) => resultsByProvider.get(providerMeta.id)?.configured === true)
-      .map((providerMeta) => {
-        const result = resultsByProvider.get(providerMeta.id)!;
-        const rows: MobileUsageLimitRow[] = [];
-
-        for (const [label, window] of tagWindowsWithAccount(Object.entries(result?.usage?.windows ?? {}), result?.usage?.accounts)) {
-          rows.push({
-            key: `window-${label}`,
-            label: formatWindowLabel(window.label ?? label),
-            window,
-          });
-        }
-
-        const modelEntries = Object.entries(result?.usage?.models ?? {});
-        const providerSelectedModels = selectedQuotaModels[providerMeta.id] ?? [];
-        const visibleModelEntries = providerSelectedModels.length > 0
-          ? modelEntries.filter(([modelName]) => providerSelectedModels.includes(modelName))
-          : modelEntries;
-        for (const [modelName, modelUsage] of visibleModelEntries) {
-          const entries = Object.entries(modelUsage.windows ?? {});
-          if (entries.length === 0) continue;
-          const [label, window] = entries[0];
-          rows.push({
-            key: `model-${modelName}-${label}`,
-            label: formatWindowLabel(window.label ?? label),
-            subtitle: getDisplayModelName(modelName),
-            window,
-          });
-        }
-
-        const status = !result.ok && result.error
-          ? result.error
-          : rows.length === 0
-            ? t('header.services.noRateLimitsReported')
-            : null;
-
-        return {
-          providerId: providerMeta.id,
-          providerName: providerMeta.name,
-          rows,
-          status,
-        };
-      });
-  }, [dropdownProviderIds, quotaResults, selectedQuotaModels, t]);
+  const usageGroups = useMobileUsageGroups(quotaResults, dropdownProviderIds, selectedQuotaModels);
 
   React.useEffect(() => {
     if (!open || usageGroups.length === 0) return;
@@ -494,3 +507,71 @@ export function MobileContextProgressButton({
     </>
   );
 }
+
+const EMPTY_QUOTAS: ProviderResult[] = [];
+const EMPTY_MODELS: Record<string, string[]> = {};
+const EMPTY_PROVIDER_IDS: QuotaProviderId[] = [];
+
+/** Reads the existing chat repository; opening metadata never creates a second transcript request. */
+const RemoteMobileContextProgressButton = React.memo(function RemoteMobileContextProgressButton({
+  entry, sessionId, open: controlledOpen, onOpenChange,
+}: MobileContextProgressButtonProps & { entry: HostRuntimeEntry }) {
+  const { t } = useI18n();
+  const [localOpen, setLocalOpen] = React.useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = useEvent((value: boolean) => {
+    if (controlledOpen === undefined) setLocalOpen(value);
+    onOpenChange?.(value);
+  });
+  const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
+  const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
+  const repository = getTranscriptRepository(entry.location);
+  const binding = React.useMemo(() => ({ revision, scope: repository && sessionId ? transcriptScope(entry.location, sessionId) : null }), [repository, entry, sessionId, revision]);
+  const scope = binding.scope;
+  const subscribe = React.useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
+  const read = React.useMemo(() => () => repository && scope ? repository.getTranscript(scope) : null, [repository, scope]);
+  const transcript = React.useSyncExternalStore(subscribe, read, read);
+  const selection = useSelectionStore((state) => state.getSessionModelSelection(sessionId || REMOTE_NEW_SESSION_DRAFT_ID, entry.location));
+  const providers = useQuery({ ...providerCatalogQueryOptions(entry.location.directory, getRuntimeTransportIdentity(), entry), enabled: open, gcTime: Infinity }, queryClient);
+  const git = useQuery({ ...remoteMobileGitOptions(entry), enabled: open }, queryClient);
+  const settings = useQuery({ ...remoteMobileQuotaSettingsOptions(entry), enabled: open }, queryClient);
+  const refreshInterval = open && settings.data?.autoRefresh ? settings.data.refreshIntervalMs : false;
+  const quotaOptions = React.useMemo(() => open ? (settings.data?.providerIds ?? EMPTY_PROVIDER_IDS).filter((id) => !id.startsWith('magpie:')).map((id): ReturnType<typeof remoteMobileQuotaOptions> => ({ ...remoteMobileQuotaOptions(entry, id), refetchInterval: refreshInterval })) : [], [entry, open, settings.data?.providerIds, refreshInterval]);
+  const quotaQueries = useQueries({ queries: quotaOptions }, queryClient);
+  const magpie = useQuery({ ...remoteMobileMagpieOptions(entry), enabled: open && !!settings.data?.providerIds.some((id) => id.startsWith('magpie:')), refetchInterval: refreshInterval }, queryClient);
+  const quotas = React.useMemo(() => open ? [...quotaQueries.flatMap((query) => query.data ? [query.data] : EMPTY_QUOTAS), ...(magpie.data ?? EMPTY_QUOTAS)] : EMPTY_QUOTAS, [open, quotaQueries, magpie.data]);
+  const visibleProviderIds = open ? settings.data?.providerIds ?? EMPTY_PROVIDER_IDS : EMPTY_PROVIDER_IDS;
+  const groups = useMobileUsageGroups(quotas, visibleProviderIds, settings.data?.selectedModels ?? EMPTY_MODELS);
+  const baseline = React.useMemo(() => {
+    if (!transcript) return null;
+    for (let index = transcript.messageOrder.length - 1; index >= 0; index--) {
+      const info = transcript.messagesByID[transcript.messageOrder[index]];
+      if (!info) continue;
+      const result = scanContextTokenBaseline([info], (id) => transcript.partsByMessageID[id]);
+      if (result) return result;
+    }
+    return null;
+  }, [transcript]);
+  const info = baseline && 'messageId' in baseline && transcript ? transcript.messagesByID[baseline.messageId] as { providerID?: string; modelID?: string } : undefined;
+  const model = providers.data?.providers.find((provider) => provider.id === (selection?.providerId ?? info?.providerID))?.models[selection?.modelId ?? info?.modelID ?? ''];
+  const usage = buildSessionContextUsage(baseline, model?.limit?.context ?? 0, model?.limit?.output ?? 0);
+  const display = buildMobileContextDisplay({ totalTokens: !usage || usage.pending ? null : usage.totalTokens, contextLimit: usage?.contextLimit ?? 0, isDraft: !sessionId });
+  const error = git.error ?? settings.error ?? providers.error ?? magpie.error ?? quotaQueries.find((query) => query.error)?.error;
+  const close = useEvent(() => setOpen(false));
+  const toggle = useEvent(() => setOpen(!open));
+  const retry = useEvent(() => {
+    void git.refetch(); void settings.refetch(); void providers.refetch();
+    if (visibleProviderIds.some((id) => id.startsWith('magpie:'))) void magpie.refetch();
+    for (const query of quotaQueries) void query.refetch();
+  });
+  return <>
+    <span className="inline-flex"><Button type="button" variant="mobileGlass" size="mobileIcon" aria-label={t('mobile.header.openMetadataAria')} aria-expanded={open} onClick={toggle}>
+      <ContextProgressIcon percentage={display?.percentage ?? 0} pending={display?.pending} />
+    </Button></span>
+    <SessionMetadataOverlay open={open} onClose={close} contextDisplay={display}
+      branchLabel={git.data?.isGitRepository ? git.data.current?.trim() || t('gitView.branch.detachedHead') : t('common.unavailable')}
+      usageGroups={groups} usageDisplayMode={settings.data?.displayMode ?? 'usage'}
+      isUsageLoading={settings.isFetching || magpie.isFetching || quotaQueries.some((query) => query.isFetching)} timeFormatPreference={timeFormatPreference}
+      error={error?.message} onRetry={retry} />
+  </>;
+});

@@ -33,6 +33,10 @@ import {
 import type { RecoveryVariant } from '@/components/onboarding/DesktopConnectionRecovery';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { openSessionFromNotification } from '@/sync/openSessionFromNotification';
+import { RemoteProjectsBootstrap } from '@/contexts/RemoteProjectsBootstrap';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { applyRemoteProjectRoute, seedRemoteProjectDraft } from '@/lib/remote-projects/navigation';
+import { toast } from '@/components/ui';
 import { markSessionViewed } from '@/sync/notification-store';
 import { openAssistant } from '@/stores/useAssistantUIStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -683,6 +687,7 @@ function App({ apis }: AppProps) {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const onFocus = () => {
+      if (useSessionNavigationStore.getState().remoteSession) return;
       const sessionId = useSessionUIStore.getState().currentSessionId;
       if (sessionId) markSessionViewed(sessionId);
     };
@@ -693,8 +698,10 @@ function App({ apis }: AppProps) {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    let draftIntent = 0;
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ directory?: string; projectId?: string; initialPrompt?: string }>).detail;
+      const intent = ++draftIntent;
+      const detail = (event as CustomEvent<{ directory?: string; projectId?: string; initialPrompt?: string; hostId?: string; hubId?: string }>).detail;
       const directory = typeof detail?.directory === 'string' && detail.directory.trim().length > 0
         ? detail.directory.trim()
         : null;
@@ -706,6 +713,28 @@ function App({ apis }: AppProps) {
         : undefined;
       useUIStore.getState().setActiveMainTab('chat');
       useUIStore.getState().setSessionSwitcherOpen(false);
+      const projects = useProjectsStore.getState();
+      const selected = projects.projects.find((project) => project.id === (projectId ?? (!directory ? projects.activeProjectId : null)));
+      if (detail?.hostId) {
+        const initialSelection = useSessionNavigationStore.getState().remoteSession;
+        const initialProjectId = projects.activeProjectId;
+        void applyRemoteProjectRoute({ sessionId: null, isNewSession: true, hostId: detail.hostId, hubId: detail.hubId, directory, projectId },
+          () => intent === draftIntent && useSessionNavigationStore.getState().remoteSession === initialSelection && useProjectsStore.getState().activeProjectId === initialProjectId)
+          .then(async (applied) => {
+            if (!applied) return;
+            const remote = useSessionNavigationStore.getState().remoteSession;
+            if (initialPrompt && remote) await seedRemoteProjectDraft(remote.location, initialPrompt);
+          }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      if (selected?.hostId && selected.hubId) {
+        const location = { hubId: selected.hubId, hostId: selected.hostId, directory: selected.path };
+        projects.setActiveProjectIdOnly(selected.id);
+        useSessionNavigationStore.getState().openRemoteSession(selected, location, null);
+        if (initialPrompt) void seedRemoteProjectDraft(location, initialPrompt).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      useSessionNavigationStore.getState().clearRemoteSession();
       useSessionUIStore.getState().openNewSessionDraft({
         selectedProjectId: projectId,
         directoryOverride: directory,
@@ -716,7 +745,10 @@ function App({ apis }: AppProps) {
     };
 
     window.addEventListener('yuri:open-draft-session', handler as EventListener);
-    return () => window.removeEventListener('yuri:open-draft-session', handler as EventListener);
+    return () => {
+      draftIntent += 1;
+      window.removeEventListener('yuri:open-draft-session', handler as EventListener);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -727,7 +759,7 @@ function App({ apis }: AppProps) {
       const projectPath = typeof detail?.projectPath === 'string' ? detail.projectPath.trim() : '';
       if (!projectPath) return;
       const projectsStore = useProjectsStore.getState();
-      const existing = projectsStore.projects.find((project) => project.path === projectPath);
+      const existing = projectsStore.projects.find((project) => !project.hostId && project.path === projectPath);
       if (existing) {
         projectsStore.setActiveProject(existing.id);
       } else {
@@ -1069,6 +1101,7 @@ function App({ apis }: AppProps) {
                 <div className={isDesktopRuntime ? 'h-full text-foreground bg-transparent' : 'h-full text-foreground bg-background'}>
                   <SyncAppEffects embeddedBackgroundWorkEnabled={embeddedBackgroundWorkEnabled} />
                   <SessionStartupCoordinator />
+                  <RemoteProjectsBootstrap />
                   <OpenCodeUpdateToast />
                   <MainLayout />
                   {isDesktopRuntime && (

@@ -53,6 +53,10 @@ import { SidebarPinnedSessions } from './sidebar/SidebarPinnedSessions';
 import { SidebarDisplayModeMenu } from './sidebar/SidebarDisplayModeMenu';
 import { SidebarFooter } from './sidebar/SidebarFooter';
 import { SidebarProjectsList } from './sidebar/SidebarProjectsList';
+import { useRemoteProjectNavigation } from './sidebar/hooks/useRemoteProjectNavigation';
+import { parseRemoteProject } from '@/lib/remote-projects/types';
+import { openRemoteProjectDraft, openRemoteProjectSession } from '@/router/openRemoteProjectSession';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { SidebarBrandMark } from '@/components/layout/SidebarBrandMark';
 import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { GlobalSearchButton } from '@/components/layout/GlobalSearchButton';
@@ -353,7 +357,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setDirectory = useDirectoryStore((state) => state.setDirectory);
 
-  const projects = useProjectsStore((state) => state.projects);
+  const allProjects = useProjectsStore((state) => state.projects);
+  const projects = React.useMemo(() => allProjects.filter((project) => !project.hostId), [allProjects]);
+  const remoteProjects = React.useMemo(() => allProjects.filter((project) => project.hostId).map(parseRemoteProject), [allProjects]);
+  const remoteNavigation = useRemoteProjectNavigation(isVisible);
+  const [remoteNavigationTargets, setRemoteNavigationTargets] = React.useState<Map<string, SessionNavigationTarget[]>>(new Map());
+  const handleRemoteNavigationTargets = useEvent((projectId: string, targets: SessionNavigationTarget[]) => {
+    setRemoteNavigationTargets((previous) => JSON.stringify(previous.get(projectId)) === JSON.stringify(targets) ? previous : new Map(previous).set(projectId, targets));
+  });
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
@@ -454,7 +465,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const deferredGlobalActiveSessions =
     React.useDeferredValue(globalActiveSessions);
   const archivedSessions = React.useDeferredValue(archivedSessionsRaw);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const selectedLocalSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const hasRemoteSession = useSessionNavigationStore((state) => state.remoteSession !== null);
+  const currentSessionId = hasRemoteSession ? null : selectedLocalSessionId;
   const sessionFocus = useSessionFocusStore((state) => state.focus);
   const sessionSwitchIntent = React.useSyncExternalStore(
     subscribeSessionSwitchIntent,
@@ -498,6 +511,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     typeof openNewSessionDraft
   >(
     (options) => {
+      const remote = remoteProjects.find((project) => project.id === (options?.selectedProjectId ?? useProjectsStore.getState().activeProjectId));
+      if (remote) {
+        void openRemoteProjectDraft(remote, mobileVariant).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      useSessionNavigationStore.getState().clearRemoteSession();
       openNewSessionDraft(options);
       if (isVSCode) {
         window.dispatchEvent(
@@ -727,11 +746,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, [setNewWorktreeDialogOpen]);
 
   const handleWorktreeCreated = React.useCallback(
-    (worktreePath: string, options?: { sessionId?: string }) => {
+    (worktreePath: string, options?: { sessionId?: string; remote?: boolean }) => {
       setActiveMainTab("chat");
       if (mobileVariant) {
         setSessionSwitcherOpen(false);
       }
+      if (options?.remote) return;
       if (options?.sessionId) {
         setCurrentSession(options.sessionId, worktreePath);
         return;
@@ -780,18 +800,19 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     setSettingsDialogOpen(true);
   }, [mobileVariant, setSessionSwitcherOpen, setSettingsDialogOpen]);
 
-  const handleNewTask = React.useCallback(() => {
+  const handleNewTask = useEvent(() => {
+    const remote = remoteProjects.find((project) => project.id === useProjectsStore.getState().activeProjectId);
+    if (remote) {
+      void openRemoteProjectDraft(remote, mobileVariant).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+      return;
+    }
+    useSessionNavigationStore.getState().clearRemoteSession();
     setActiveMainTab("chat");
     openNewSessionDraft();
     if (mobileVariant) {
       setSessionSwitcherOpen(false);
     }
-  }, [
-    mobileVariant,
-    openNewSessionDraft,
-    setActiveMainTab,
-    setSessionSwitcherOpen,
-  ]);
+  });
 
   const handleOpenScheduledTasks = React.useCallback(() => {
     if (!mobileVariant) {
@@ -867,6 +888,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       projectId?: string | null,
       renderContext: SessionFocusScope = "project",
     ) => {
+      useSessionNavigationStore.getState().clearRemoteSession();
       const focus = {
         sessionId,
         scope: renderContext,
@@ -1820,16 +1842,23 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         ? []
         : buildSidebarNumberedSessionTargets({
             pinnedTargets: sidebarNavigationTargets.pinned,
-            projectTargets: sidebarNavigationTargets.project,
+            projectTargets: allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : sidebarNavigationTargets.project.filter((target) => target.projectId === project.id)),
           }),
     [
       mobileVariant,
       sidebarNavigationTargets,
+      allProjects,
+      remoteNavigationTargets,
     ],
   );
 
   const handleNumberedSidebarSessionActivate = React.useCallback(
     (target: SessionNavigationTarget) => {
+      const remote = remoteProjects.find((project) => project.id === target.projectId);
+      if (remote && remoteNavigation.registry) {
+        openRemoteProjectSession(remote, remoteNavigation.registry, target.sessionId, target.directory ?? remote.path, mobileVariant);
+        return;
+      }
       setActiveMainTab("chat");
       setSessionSwitcherOpen(false);
       if (target.scope === "project" && target.projectId) {
@@ -1847,6 +1876,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       setActiveMainTab,
       setActiveProjectIdOnly,
       setSessionSwitcherOpen,
+      remoteProjects,
+      remoteNavigation.registry,
+      mobileVariant,
     ],
   );
 
@@ -2468,6 +2500,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
 
       {isVisible ? (
       <SidebarProjectsList
+        remoteProjects={remoteProjects}
+        hostRegistry={remoteNavigation.registry}
+        projectOrderIds={allProjects.map((project) => project.id)}
+        remoteSearch={sessionSearchQuery}
+        remoteError={remoteNavigation.catalog.error?.message}
+        onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}
         hasLeadingSection={topContent !== null && (pinnedItems.length > 0 || inProgressItems.length > 0)}
         headerAccessory={projectHeaderActions}

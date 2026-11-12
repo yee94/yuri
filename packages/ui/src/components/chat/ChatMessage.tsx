@@ -808,7 +808,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     });
 
     // NEW: Fork handler
-    const handleFork = React.useCallback(async () => {
+    const handleFork = useEvent(async () => {
         console.info('[session-fork] message action clicked', {
             sessionId,
             messageId: message.info.id,
@@ -824,12 +824,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         pendingMessageActionRef.current = 'fork';
         setPendingMessageAction('fork');
         try {
-            await forkFromMessage(sessionId, message.info.id);
+            if (sessionSurface.onForkMessage) await sessionSurface.onForkMessage(message.info.id);
+            else await forkFromMessage(sessionId, message.info.id);
         } finally {
             pendingMessageActionRef.current = null;
             setPendingMessageAction(null);
         }
-    }, [sessionId, message.info.id, forkFromMessage]);
+    });
 
     const handleToggleTool = useEvent((toolId: string) => {
         const isDefaultOpen = defaultOpenToolIds.has(toolId);

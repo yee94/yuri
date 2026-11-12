@@ -49,6 +49,7 @@ const counters = vi.hoisted(() => ({
 }));
 
 vi.mock('@/sync/sync-context', () => ({
+  useSyncDirectory: () => '/repo',
   useSessionMessageRecords: () => {
     counters.messageRecordsReads += 1;
     return counters.messages;

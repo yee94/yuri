@@ -4,10 +4,10 @@ import { toast } from 'sonner';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { AgentAvatar } from '@/components/chat/AgentAvatar';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo } from '@/stores/useGitStore';
+import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo } from '@/lib/api/useProjectGitStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { normalizePath } from '@/lib/pathNormalization';
@@ -17,6 +17,12 @@ import { useWorkStatusSubagents } from './useWorkStatusSubagents';
 import { WorkStatusTodos } from './WorkStatusTodos';
 import { GuiPluginWorkStatus } from '@/components/gui-plugins/GuiPluginWorkStatus';
 import type { GuiWorkStatusInput } from '@/lib/gui-plugins/work-status';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { WorktreeMetadata } from '@/types/worktree';
+import type { ProjectEntry } from '@/lib/api/types';
+import type { WorkStatusSubagent } from './workStatusSubagents';
+import { useRemoteWorkStatus } from './useRemoteWorkStatus';
+import type { Todo } from '@/lib/opencode/v2-types';
 
 type Props = {
   sessionId: string | null;
@@ -30,13 +36,25 @@ const iconClassName = 'size-3.5 shrink-0';
 const revealCopyClassName = 'yuri-work-status-action pointer-events-none shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/copy:pointer-events-auto group-hover/copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100';
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
-export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, active = true, placement = 'inline' }) => {
+export const WorkStatusCompact: React.FC<Props> = (props) => {
+  const host = useHostRuntime();
+  return host?.entry.location.hostId ? <RemoteWorkStatusCompact key={host.entry.key} {...props} /> : <LocalWorkStatusCompact {...props} />;
+};
+
+const RemoteWorkStatusCompact = React.memo(function RemoteWorkStatusCompact(props: Props) {
   const { t } = useI18n();
-  const { git } = useRuntimeAPIs();
-  const ensureStatus = useGitStore((state) => state.ensureStatus);
-  const gitStatus = useGitStatus(directory);
-  const gitLoading = useGitLoadingStatus(directory);
-  const isGitRepo = useIsGitRepo(directory);
+  const data = useRemoteWorkStatus(props.sessionId);
+  return <>
+    <WorkStatusCompactContent {...props} {...data} />
+    {data.error ? <div role="status" className="px-2 text-xs text-muted-foreground" title={String(data.error)}>
+      {t('common.unavailable')}
+      <Button variant="ghost" size="xs" onClick={() => void data.retry()}>{t('chat.history.retry')}</Button>
+    </div> : null}
+  </>;
+});
+
+const LocalWorkStatusCompact: React.FC<Props> = (props) => {
+  const { sessionId, directory } = props;
   const projects = useProjectsStore((state) => state.projects);
   const availableWorktrees = useSessionUIStore((state) => state.availableWorktreesByProject);
   const sessionWorktree = useSessionUIStore((state) => sessionId ? state.worktreeMetadata.get(sessionId) : undefined);
@@ -47,18 +65,34 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, activ
       return Boolean(path && normalized && (path === normalized || path.startsWith(`${normalized}/`)));
     };
     const attached = sessionWorktree && belongsToDirectory(sessionWorktree.path) ? sessionWorktree : undefined;
-    const project = resolveProjectForSessionDirectory(projects, availableWorktrees, attached?.projectDirectory || directory);
+    const project = resolveProjectForSessionDirectory(projects.filter((entry) => !entry.hostId), availableWorktrees, attached?.projectDirectory || directory);
     const candidates = project ? availableWorktrees.get(project.path) : undefined;
     const worktree = attached ?? candidates?.filter((entry) => belongsToDirectory(entry.path))
       .sort((a, b) => b.path.length - a.path.length)[0];
     return { project, worktree };
   }, [availableWorktrees, directory, projects, sessionWorktree]);
+  const subagents = useWorkStatusSubagents(sessionId, directory);
+  return <WorkStatusCompactContent {...props} project={project ?? undefined} worktree={worktree} subagents={subagents} />;
+};
+
+const WorkStatusCompactContent: React.FC<Props & {
+  project?: ProjectEntry;
+  worktree?: WorktreeMetadata;
+  subagents: WorkStatusSubagent[];
+  remoteTodos?: { todos: Todo[]; isWorking: boolean };
+  stateKey?: string;
+}> = ({ sessionId, directory, active = true, placement = 'inline', project, worktree, subagents, remoteTodos, stateKey }) => {
+  const { t } = useI18n();
+  const { git } = useProjectRuntimeAPIs();
+  const ensureStatus = useGitStore((state) => state.ensureStatus);
+  const gitStatus = useGitStatus(directory);
+  const gitLoading = useGitLoadingStatus(directory);
+  const isGitRepo = useIsGitRepo(directory);
   const projectPath = project?.path || worktree?.projectDirectory || directory;
   const projectLabel = project?.label?.trim() || (projectPath ? basename(projectPath) : null);
   const worktreeLabel = worktree && normalizePath(worktree.path) !== normalizePath(projectPath)
     ? worktree.name?.trim() || basename(worktree.path)
     : null;
-  const subagents = useWorkStatusSubagents(sessionId, directory);
   const subagentGroups = [
     { phase: 'working', labelKey: 'chat.workStatus.subagent.workingCount', items: subagents.filter((agent) => agent.phase === 'working') },
     { phase: 'done', labelKey: 'chat.workStatus.subagent.doneCount', items: subagents.filter((agent) => agent.phase === 'done') },
@@ -137,7 +171,7 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, activ
   });
   const openGit = useEvent(() => {
     if (!directory) return;
-    openContextPanel(directory);
+    openContextPanel(stateKey ?? directory);
     setRightSidebarTab('git');
     setRightSidebarOpen(true);
   });
@@ -204,9 +238,9 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, activ
         </Button>
       ) : null}
 
-      {active ? <GuiPluginWorkStatus input={pluginInput} /> : null}
+      {active && !stateKey ? <GuiPluginWorkStatus input={pluginInput} /> : null}
 
-      <WorkStatusTodos sessionId={sessionId} directory={directory} />
+      <WorkStatusTodos sessionId={sessionId} directory={directory} remote={remoteTodos} />
 
       {subagents.length > 0 ? (
         <div role="group" aria-label={t('chat.workStatus.section.subagents')} className="flex min-w-0 flex-col">
@@ -263,7 +297,7 @@ export const WorkStatusCompact: React.FC<Props> = ({ sessionId, directory, activ
                     className="yuri-work-status-action flex w-full min-w-0 items-center justify-start gap-2 text-left text-[12px] font-normal leading-5 text-muted-foreground"
                     onClick={() => {
                       if (!subagent.sessionID || !directory) return;
-                      openContextPanelTab(directory, {
+                      openContextPanelTab(stateKey ?? directory, {
                         mode: 'chat',
                         dedupeKey: `session:${subagent.sessionID}`,
                         label,

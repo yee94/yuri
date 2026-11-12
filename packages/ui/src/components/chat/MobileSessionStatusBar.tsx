@@ -73,12 +73,23 @@ import {
   MOBILE_SESSIONS_WINDOW_ID,
 } from '@/components/ui/MobileWindowMotionRegistry';
 import { buildMobileSessionStatusList } from './mobileSessionStatusBarList';
+import { useRemoteMobileStatusCatalog, useRemoteMobileWorktreeDetails, type RemoteMobileStatusOwner } from '@/apps/remoteMobileStatusCatalog';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { locationSessionKey } from '@/lib/remote-projects/location';
+import { createProjectGitAPI } from '@/lib/gitApiProject';
+import { HostRuntimeProvider } from '@/contexts/HostRuntimeProvider';
+import { HostRuntimeContext } from '@/contexts/hostRuntimeContext';
+import { saveSessionUnread } from '@/queries/sessionUnreadQueries';
+import { readRemoteResponse, refreshRemoteHostSummaries } from '@/queries/remoteProjectQueries';
+import { deleteRemoteMobileSessions } from '@/apps/remoteMobileStatusUndo';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 
 interface MobileSessionStatusBarProps {
   onSessionSwitch?: (sessionId: string) => void;
 }
 
 interface SessionWithStatus extends Session {
+  _remote?: RemoteMobileStatusOwner;
   _statusType?: 'busy' | 'retry' | 'idle';
   _hasRunningChildren?: boolean;
   _runningChildrenCount?: number;
@@ -256,8 +267,10 @@ function useSessionGrouping(
   sessionStatus: Record<string, { type: string }> | undefined,
   listEnabled: boolean,
   retainLastOpenList: boolean,
+  remoteUnseen: Record<string, number>,
 ) {
-  const unseenCounts = useNotificationStore((s) => s.index.session.unseenCount);
+  const localUnseenCounts = useNotificationStore((s) => s.index.session.unseenCount);
+  const unseenCounts = React.useMemo(() => ({ ...localUnseenCounts, ...remoteUnseen }), [localUnseenCounts, remoteUnseen]);
   const lastOpenSessionsRef = React.useRef<SessionWithStatus[]>([]);
 
   return React.useMemo(() => {
@@ -416,7 +429,7 @@ const MOBILE_LONG_PRESS_STYLE: React.CSSProperties = {
 };
 
 // A single session row sized for comfortable touch.
-export function SessionItem({
+function SessionItemView({
   session,
   isCurrent,
   isPinned,
@@ -432,6 +445,7 @@ export function SessionItem({
   onDelete,
   needsAttention,
   longPressHandlers,
+  readAction,
 }: {
   session: SessionWithStatus;
   isCurrent: boolean;
@@ -448,11 +462,12 @@ export function SessionItem({
   onDelete?: () => void;
   needsAttention: (sessionId: string) => boolean;
   longPressHandlers: LongPressHandlers;
+  readAction: { unread: boolean; onToggleRead?: () => void };
 }) {
   const { t } = useI18n();
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
   const attention = needsAttention(session.id);
-  const { unread, onToggleRead } = useSessionReadMenuAction(session, sessionDirectory(session));
+  const { unread, onToggleRead } = readAction;
   const shareUrl = session.share?.url;
   const menuItems = React.useMemo(
     () => buildSessionMenuItems({
@@ -506,7 +521,7 @@ export function SessionItem({
       >
         <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
           <StatusIndicator
-            isRunning={session._statusType !== 'idle'}
+            isRunning={session._statusType === 'busy' || session._statusType === 'retry'}
             showUnread={attention && !isCurrent}
           />
         </span>
@@ -550,6 +565,25 @@ export function SessionItem({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+type SessionItemProps = Omit<React.ComponentProps<typeof SessionItemView>, 'readAction'>;
+export function SessionItem(props: SessionItemProps) {
+  return props.session._remote ? <RemoteSessionItem {...props} /> : <LocalSessionItem {...props} />;
+}
+function LocalSessionItem(props: SessionItemProps) {
+  const readAction = useSessionReadMenuAction(props.session, sessionDirectory(props.session));
+  return <SessionItemView {...props} readAction={readAction} />;
+}
+function RemoteSessionItem(props: SessionItemProps) {
+  const { t } = useI18n();
+  const remote = props.session._remote!;
+  const unread = remote.snapshot.unread?.sessions[remote.sessionId];
+  const onToggleRead = useEvent(() => {
+    void saveSessionUnread(remote.sessionId, !unread?.unreadCount, unread?.revision ?? 0, remote.entry)
+      .catch(() => toast.error(t('sessions.sidebar.session.menu.markUnreadFailed')));
+  });
+  return <SessionItemView {...props} readAction={{ unread: Boolean(unread?.unreadCount), onToggleRead: props.session.parentID ? undefined : onToggleRead }} />;
 }
 
 // A project filter pill sized for touch. Selecting it filters
@@ -628,12 +662,27 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   const { git } = useRuntimeAPIs();
   const { currentTheme } = useThemeSystem();
   const isMobile = useUIStore((state) => state.isMobile);
-  const sessions = useAllProjectSessions();
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const localSessions = useAllProjectSessions();
+  const projects = useProjectsStore((state) => state.projects);
+  const open = useUIStore((state) => state.mobileSessionPanelOpen);
+  const remoteCatalog = useRemoteMobileStatusCatalog(projects, open);
+  const [remotePatches, setRemotePatches] = React.useState<Record<string, { value: Partial<Session>; revision?: number }>>({});
+  const sessions = React.useMemo<SessionWithStatus[]>(() => [...localSessions, ...remoteCatalog.sessions.map((session) => {
+    const patch = remotePatches[session.id];
+    return { ...session, ...(patch && (patch.revision === undefined || patch.revision >= session._remote.snapshot.revision) ? patch.value : {}) };
+  })].filter((session) => !session.time?.archived), [localSessions, remoteCatalog.sessions, remotePatches]);
+  const localProjects = React.useMemo(() => projects.filter((project) => !project.hostId), [projects]);
+  const remoteSession = useSessionNavigationStore((state) => state.remoteSession);
+  const localCurrentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const currentSessionId = remoteSession ? remoteSession.sessionId ? locationSessionKey(remoteSession.location, remoteSession.sessionId) : null : localCurrentSessionId;
   const activeSessionIds = useActiveSessionTreeIds();
   const sessionStatus = React.useMemo(
-    () => Object.fromEntries([...activeSessionIds].map((id) => [id, { type: 'busy' }])),
-    [activeSessionIds],
+    () => Object.fromEntries([...activeSessionIds].map((id) => [id, { type: 'busy' }]).concat(remoteCatalog.sessions.map((session) => {
+      const remote = session._remote;
+      const status = (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type;
+      return [session.id, { type: !remote.snapshot.stale && remote.registry.getHost(remote.project.hostId!)?.state === 'connected' ? status ?? 'idle' : 'unknown' }];
+    }))),
+    [activeSessionIds, remoteCatalog.sessions],
   );
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
@@ -654,16 +703,31 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   const unshareSession = useSessionUIStore((state) => state.unshareSession);
   const updateSessionTitle = useSessionUIStore((state) => state.updateSessionTitle);
   const requestSessionSmartTitle = useSessionUIStore((state) => state.requestSessionSmartTitle);
-  const open = useUIStore((state) => state.mobileSessionPanelOpen);
   const setOpen = useUIStore((state) => state.setMobileSessionPanelOpen);
   const sessionSheetSnap = useMobileSheetSnap({ onDismiss: () => setOpen(false) });
 
-  const projects = useProjectsStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
   const removeProject = useProjectsStore((state) => state.removeProject);
-  const pinnedSessionIds = usePinnedSessionIds();
-  const togglePinnedSession = useTogglePinnedSession();
+  const localPinnedSessionIds = usePinnedSessionIds();
+  const toggleLocalPinnedSession = useTogglePinnedSession();
+  const pinnedSessionIds = React.useMemo(() => new Set([...localPinnedSessionIds, ...remoteCatalog.sessions.filter((session) => session._remote.snapshot.pinnedSessionIds.includes(session._remote.sessionId)).map((session) => session.id)]), [localPinnedSessionIds, remoteCatalog.sessions]);
+  const remoteUnseen = React.useMemo(() => Object.fromEntries(remoteCatalog.sessions.map((session) => [session.id, session._remote.snapshot.unread?.sessions[session._remote.sessionId]?.unreadCount ?? 0])), [remoteCatalog.sessions]);
+  const refreshRemote = useEvent(async (remote: RemoteMobileStatusOwner) => {
+    remote.entry.sdk();
+    return refreshRemoteHostSummaries(remote.registry, remote.project.hostId!);
+  });
+  const remoteRequest = useEvent(async (remote: RemoteMobileStatusOwner, path: string, method: string, body?: unknown) => {
+    const response = await remote.entry.fetch(path, { method, ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
+    if (!response.ok) await readRemoteResponse(response);
+    remote.entry.sdk();
+  });
+  const togglePinnedSession = useEvent((id: string) => {
+    const remote = sessions.find((session) => session.id === id)?._remote;
+    if (!remote) { toggleLocalPinnedSession(id); return; }
+    void remoteRequest(remote, `/api/yuri/session-index/session/${encodeURIComponent(remote.sessionId)}/pin`, pinnedSessionIds.has(id) ? 'DELETE' : 'POST')
+      .then(() => refreshRemote(remote)).catch((error) => toast.error(error instanceof Error ? error.message : String(error)));
+  });
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
   const worktreeOrderByProject = useWorktreeOrderStore((state) => state.orderByProject);
   const activePaginationByDirectory = useGlobalSessionsStore((state) => state.activePaginationByDirectory);
@@ -692,10 +756,18 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     sessionStatus,
     open || sheetPreview,
     sheetPresent,
+    remoteUnseen,
   );
-  const { getSessionTitle, needsAttention } = useSessionHelpers();
-  const getProjectStatus = useProjectStatus(sessions, sessionStatus, currentSessionId);
-  const resolveProjectRoots = useProjectRootsResolver();
+  const { getSessionTitle, needsAttention: localNeedsAttention } = useSessionHelpers();
+  const needsAttention = useEvent((id: string) => Object.hasOwn(remoteUnseen, id) ? remoteUnseen[id] > 0 : localNeedsAttention(id));
+  const getLocalProjectStatus = useProjectStatus(localSessions, sessionStatus, remoteSession ? null : currentSessionId);
+  const getProjectStatus = React.useMemo(() => (project: ProjectEntry) => {
+    if (!project.hostId) return getLocalProjectStatus(project.path);
+    const rows = remoteCatalog.sessions.filter((session) => session._remote.project.id === project.id);
+    return { hasRunning: rows.some((session) => sessionStatus[session.id]?.type === 'busy' || sessionStatus[session.id]?.type === 'retry'), hasUnread: rows.some((session) => remoteUnseen[session.id] > 0 && session.id !== currentSessionId) };
+  }, [getLocalProjectStatus, remoteCatalog.sessions, sessionStatus, remoteUnseen, currentSessionId]);
+  const resolveLocalProjectRoots = useProjectRootsResolver();
+  const remoteProjectScope = remoteCatalog.forProject;
   const [visibleCountByGroup, setVisibleCountByGroup] = React.useState<Map<string, number>>(new Map());
   const alwaysVisibleSessionIds = useAlwaysVisibleSessionIds();
   const [rootBranchesByProject, setRootBranchesByProject] = React.useState<Map<string, string>>(new Map());
@@ -703,11 +775,21 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   const [worktreeDialogProjectId, setWorktreeDialogProjectId] = React.useState<string | null>(null);
   const [actionTarget, setActionTarget] = React.useState<MobileActionTarget | null>(null);
   const actionSession = actionTarget?.kind === 'session' ? actionTarget.session : null;
-  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
-    actionSession, actionSession ? sessionDirectory(actionSession) : undefined,
+  const localReadAction = useSessionReadMenuAction(
+    actionSession?._remote ? null : actionSession, actionSession && !actionSession._remote ? sessionDirectory(actionSession) : undefined,
   );
+  const actionRemote = actionSession?._remote;
+  const actionUnread = actionRemote?.snapshot.unread?.sessions[actionRemote.sessionId];
+  const actionSessionUnread = actionRemote ? Boolean(actionUnread?.unreadCount) : localReadAction.unread;
+  const toggleRemoteRead = useEvent(() => {
+    if (!actionRemote) return;
+    void saveSessionUnread(actionRemote.sessionId, !actionUnread?.unreadCount, actionUnread?.revision ?? 0, actionRemote.entry)
+      .then(() => refreshRemote(actionRemote)).catch(() => toast.error(t('sessions.sidebar.session.menu.markUnreadFailed')));
+  });
+  const onToggleRead = actionRemote ? actionSession?.parentID ? undefined : toggleRemoteRead : localReadAction.onToggleRead;
   const [pressedActionKey, setPressedActionKey] = React.useState<string | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
+  const isCurrentRename = useEvent((session: Session) => renamingSession === session);
   const [renameDraft, setRenameDraft] = React.useState('');
   const [editingProjectId, setEditingProjectId] = React.useState<string | null>(null);
   const [closingProject, setClosingProject] = React.useState<ProjectEntry | null>(null);
@@ -794,40 +876,57 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     () => selectedProject ?? projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects, selectedProject],
   );
+  const worktreeTargetScope = worktreeTargetProject ? remoteCatalog.forProject(worktreeTargetProject) : undefined;
+  const worktreeTargetEntry = worktreeTargetScope?.entry;
+  const worktreeTargetGit = React.useMemo(() => worktreeTargetEntry ? createProjectGitAPI(worktreeTargetEntry) : git, [worktreeTargetEntry, git]);
+  const remoteWorktrees = useRemoteMobileWorktreeDetails(worktreeTargetEntry, open && worktreeTargetIsGitRepository);
+  const projectWorktrees = React.useMemo(() => (project: ProjectEntry): WorktreeMetadata[] => {
+    if (!project.hostId) return availableWorktreesByProject.get(normalize(project.path)) ?? [];
+    const snapshot = remoteProjectScope(project)?.snapshot;
+    const paths = snapshot?.worktrees?.projectDirectories[project.path] ?? [];
+    return paths.filter((path) => normalize(path) !== normalize(project.path)).map((path) => {
+      const details = worktreeTargetProject?.id === project.id ? remoteWorktrees.data?.find((row) => normalize(row.path) === normalize(path)) : undefined;
+      return { path, projectDirectory: project.path, branch: details?.branch ?? '', label: details?.branch || formatDirectoryName(path),
+        ...(details ? { source: 'sdk' as const, worktreeRoot: details.path, name: details.name } : {}) };
+    });
+  }, [availableWorktreesByProject, remoteProjectScope, worktreeTargetProject?.id, remoteWorktrees.data]);
+  const resolveProjectRoots = React.useMemo(() => (project: ProjectEntry): string[] => project.hostId
+    ? [project.path, ...projectWorktrees(project).map((worktree) => worktree.path)] : resolveLocalProjectRoots(project), [projectWorktrees, resolveLocalProjectRoots]);
+  const remoteRootBranch = worktreeTargetProject?.hostId ? remoteWorktrees.data?.find((row) => normalize(row.path) === normalize(worktreeTargetProject.path))?.branch : undefined;
 
   React.useEffect(() => {
-    const path = normalize(worktreeTargetProject?.path ?? '');
-    if (!open || !path) {
+    const path = worktreeTargetProject?.hostId ? worktreeTargetProject.path : normalize(worktreeTargetProject?.path ?? '');
+    if (!open || !path || (worktreeTargetProject?.hostId && !worktreeTargetEntry)) {
       setWorktreeTargetIsGitRepository(false);
       return;
     }
     const cached = worktreeTargetCacheRef.current;
-    if (cached?.git === git && cached.path === path) {
+    if (cached?.git === worktreeTargetGit && cached.path === path) {
       setWorktreeTargetIsGitRepository(cached.isGitRepository);
       return;
     }
     let cancelled = false;
     setWorktreeTargetIsGitRepository(false);
-    void git.checkIsGitRepository(path)
+    void worktreeTargetGit.checkIsGitRepository(path)
       .then((isGitRepository) => {
         if (cancelled) return;
-        worktreeTargetCacheRef.current = { git, path, isGitRepository };
+        worktreeTargetCacheRef.current = { git: worktreeTargetGit, path, isGitRepository };
         setWorktreeTargetIsGitRepository(isGitRepository);
       })
       .catch(() => {
         if (cancelled) return;
-        worktreeTargetCacheRef.current = { git, path, isGitRepository: false };
+        worktreeTargetCacheRef.current = { git: worktreeTargetGit, path, isGitRepository: false };
         setWorktreeTargetIsGitRepository(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [git, open, worktreeTargetProject]);
+  }, [worktreeTargetGit, worktreeTargetEntry, open, worktreeTargetProject]);
 
   React.useEffect(() => {
-    if (!open || projects.length === 0) return;
+    if (!open || localProjects.length === 0) return;
     let cancelled = false;
-    void Promise.all(projects.map(async (project) => ({
+    void Promise.all(localProjects.map(async (project) => ({
       projectId: project.id,
       branch: await getRootBranch(project.path).catch(() => null),
     }))).then((entries) => {
@@ -845,15 +944,15 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, projects]);
+  }, [open, localProjects]);
 
   const visibleSessionDirectories = React.useMemo(() => {
     if (filterProjectId && filterProjectId !== PINNED_SESSION_FILTER_ID) {
       const project = projects.find((candidate) => candidate.id === filterProjectId);
-      return project ? resolveProjectRoots(project) : [];
+      return project && !project.hostId ? resolveLocalProjectRoots(project) : [];
     }
-    return projects.flatMap(resolveProjectRoots);
-  }, [filterProjectId, projects, resolveProjectRoots]);
+    return localProjects.flatMap(resolveLocalProjectRoots);
+  }, [filterProjectId, projects, localProjects, resolveLocalProjectRoots]);
 
   // The panel requests bounded snapshots for the project roots it renders.
   React.useEffect(() => {
@@ -866,10 +965,10 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   // tree (root + worktrees). Without this the catalog can stay empty after a
   // cold start until another surface (iPad sheet / app bootstrap) fills it.
   React.useEffect(() => {
-    if (!open || projects.length === 0) return;
+    if (!open || localProjects.length === 0) return;
     let cancelled = false;
     void (async () => {
-      const entries = await Promise.all(projects.map(async (project) => {
+      const entries = await Promise.all(localProjects.map(async (project) => {
         const path = normalize(project.path);
         if (!path) return null;
         let isGitRepo = false;
@@ -894,7 +993,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         }
       }));
       if (cancelled) return;
-      const projectPaths = new Set(projects.map((project) => normalize(project.path)).filter(Boolean));
+      const projectPaths = new Set(localProjects.map((project) => normalize(project.path)).filter(Boolean));
       const results = entries.flatMap((entry) => (entry ? [entry] : []));
       useSessionUIStore.setState((state) => {
         const next = mergeMobileWorktreeRefreshResults(
@@ -912,11 +1011,12 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [git, open, projects]);
+  }, [git, open, localProjects]);
 
   const formatProjectLabel = React.useCallback((project: ProjectEntry): string => {
+    if (project.hostId) return `${project.label || formatDirectoryName(project.path) || project.path} · ${remoteCatalog.registry?.getHost(project.hostId)?.name ?? project.hostId}`;
     return formatDirectoryName(project.path) || project.path;
-  }, []);
+  }, [remoteCatalog.registry]);
 
   // Filter sessions by exact project/worktree directory keys so adjacent or
   // nested worktree paths remain separate groups. Use sheetPresent (open + exit)
@@ -929,19 +1029,20 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     }
     const project = projects.find((p) => p.id === filterProjectId);
     if (!project) return sortedSessions;
+    if (project.hostId) return sortedSessions.filter((session) => (session as SessionWithStatus)._remote?.project.id === project.id);
     const roots = resolveProjectRoots(project);
     return sortedSessions.filter((session) => {
       const dir = sessionDirectory(session);
-      return roots.some((root) => normalize(root) === dir);
+      return !(session as SessionWithStatus)._remote && roots.some((root) => normalize(root) === dir);
     });
   }, [sheetPresent, sortedSessions, filterProjectId, pinnedSessionIds, projects, resolveProjectRoots]);
 
   const projectSessionGroups = React.useMemo<ProjectSessionGroup[]>(() => {
     if (!sheetPresent || !selectedProject) return [];
-    const projectRoot = normalize(selectedProject.path);
+    const projectRoot = selectedProject.hostId ? selectedProject.path : normalize(selectedProject.path);
     const worktrees = orderWorktrees(
       worktreeOrderByProject[selectedProject.id],
-      availableWorktreesByProject.get(projectRoot) ?? [],
+      projectWorktrees(selectedProject),
     );
     const groups: ProjectSessionGroup[] = [{
       key: `${selectedProject.id}::${projectRoot}`,
@@ -951,7 +1052,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       sessions: [],
     }];
     for (const worktree of worktrees) {
-      const directory = normalize(worktree.path);
+      const directory = selectedProject.hostId ? worktree.path : normalize(worktree.path);
       if (!directory || directory === projectRoot || groups.some((group) => group.directory === directory)) continue;
       groups.push({
         key: `${selectedProject.id}::${directory}`,
@@ -961,16 +1062,19 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         sessions: [],
       });
     }
-    const groupByDirectory = new Map(groups.map((group) => [group.directory, group]));
+    const groupByDirectory = new Map(groups.map((group) => [normalize(group.directory), group]));
     for (const session of filteredSessions) {
       groupByDirectory.get(sessionDirectory(session))?.sessions.push(session);
     }
     return groups;
-  }, [availableWorktreesByProject, filteredSessions, formatProjectLabel, sheetPresent, selectedProject, worktreeOrderByProject]);
+  }, [projectWorktrees, filteredSessions, formatProjectLabel, sheetPresent, selectedProject, worktreeOrderByProject]);
 
   const sessionContextLabel = React.useCallback((session: Session): string | undefined => {
+    const remote = (session as SessionWithStatus)._remote;
+    if (remote) return `${formatProjectLabel(remote.project)} · ${remote.directory}`;
     const directory = sessionDirectory(session);
     for (const project of projects) {
+      if (project.hostId) continue;
       const projectRoot = normalize(project.path);
       const projectLabel = formatProjectLabel(project);
       if (directory === projectRoot) {
@@ -990,10 +1094,10 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     setOpen(false);
   }, [setOpen]);
 
-  const closeActionMenu = () => {
+  const closeActionMenu = useEvent(() => {
     setActionTarget(null);
     longPressControllerRef.current?.reset();
-  };
+  });
 
   const getLongPressHandlers = (target: MobileActionTarget): LongPressHandlers => ({
     pressed: pressedActionKey === target.key || actionTarget?.key === target.key,
@@ -1037,6 +1141,13 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     // restore that would otherwise raise the old conversation's composer.
     suppressMobileOverlayFocusRestore();
     closeSessionPanel();
+    if (session._remote) {
+      const remote = session._remote;
+      setActiveProjectIdOnly(remote.project.id);
+      useSessionNavigationStore.getState().openRemoteSession(remote.project, remote.entry.location, remote.sessionId);
+      if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+      return;
+    }
     const directory = sessionDirectory(session) || null;
     // Cross-project scopes ("All" / "Pinned") navigate without adopting the
     // session's project; a concrete project filter still lets the active
@@ -1054,9 +1165,13 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       void setCurrentSession(session.id, directory, { preserveActiveProject });
     }
     onSessionSwitch?.(session.id);
-  }, [closeSessionPanel, filterProjectId, onSessionSwitch, setCurrentSession]);
+  }, [closeSessionPanel, filterProjectId, onSessionSwitch, setCurrentSession, setActiveProjectIdOnly]);
 
   const handleShareSession = React.useCallback(async (session: Session) => {
+    if ((session as SessionWithStatus)._remote) {
+      toast.error(t('remoteProjects.nativeCapabilityUnavailable', { capability: t('sessions.sidebar.session.menu.share') }));
+      return;
+    }
     try {
       const shared = await shareSession(session.id);
       if (!shared?.share?.url) {
@@ -1081,6 +1196,10 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
   }, [t]);
 
   const handleUnshareSession = React.useCallback(async (sessionId: string) => {
+    if (sessions.find((session) => session.id === sessionId)?._remote) {
+      toast.error(t('remoteProjects.nativeCapabilityUnavailable', { capability: t('sessions.sidebar.session.menu.share') }));
+      return;
+    }
     try {
       const unshared = await unshareSession(sessionId);
       if (!unshared) {
@@ -1091,9 +1210,27 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     } catch {
       toast.error(t('sessions.sidebar.session.unshare.error'));
     }
-  }, [t, unshareSession]);
+  }, [t, unshareSession, sessions]);
 
   const handleArchiveSession = React.useCallback(async (sessionId: string) => {
+    const session = sessions.find((session) => session.id === sessionId);
+    const remote = session?._remote;
+    if (remote) {
+      try {
+        await remote.entry.service().updateSession(remote.sessionId, { time: { archived: Date.now() } }, remote.directory);
+        remote.entry.sdk();
+        setRemotePatches((previous) => ({ ...previous, [sessionId]: { value: { time: { ...session.time, archived: Date.now() } }, revision: remote.snapshot.revision } }));
+        toast.success(t('sessions.sidebar.session.archive.success'), { action: { label: t('sessions.sidebar.undo'), onClick: () => {
+          void remote.entry.service().updateSession(remote.sessionId, { time: { archived: null } }, remote.directory).then(() => {
+            remote.entry.sdk();
+            setRemotePatches((previous) => { const next = { ...previous }; delete next[sessionId]; return next; });
+            return refreshRemote(remote);
+          }).catch(() => toast.error(t('sessions.sidebar.session.archive.undoFailed')));
+        } } });
+        await refreshRemote(remote);
+      } catch { toast.error(t('sessions.sidebar.session.archive.error')); }
+      return;
+    }
     const archived = await archiveSession(sessionId);
     if (!archived) {
       toast.error(t('sessions.sidebar.session.archive.error'));
@@ -1106,7 +1243,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       settingsLabel: t('settings.yuri.archivedSessions.actions.view'),
       undoFailedMessage: t('sessions.sidebar.session.archive.undoFailed'),
     });
-  }, [archiveSession, t]);
+  }, [archiveSession, t, sessions, refreshRemote]);
 
   const collectSessionTreeIds = useEvent((sessionId: string): string[] => {
     const childrenByParent = new Map<string, string[]>();
@@ -1131,6 +1268,16 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
 
   const handleHardDeleteSession = useEvent((session: Session) => {
     const ids = collectSessionTreeIds(session.id);
+    if ((session as SessionWithStatus)._remote) {
+      const rows = ids.flatMap((id) => { const remote = sessions.find((candidate) => candidate.id === id)?._remote; return remote ? [{ key: id, remote }] : []; });
+      deleteRemoteMobileSessions({ rows,
+        message: ids.length === 1 ? t('sessions.sidebar.session.delete.success') : t('sessions.sidebar.bulkActions.deletedPlural', { count: ids.length }),
+        undoLabel: t('sessions.sidebar.undo'), errorMessage: t('sessions.sidebar.session.delete.error'), refresh: refreshRemote,
+        hide: (keys) => setRemotePatches((previous) => ({ ...previous, ...Object.fromEntries(keys.map((key) => [key, { value: { time: { archived: Date.now() } } }])) })),
+        restore: (keys) => setRemotePatches((previous) => { const next = { ...previous }; for (const key of keys) delete next[key]; return next; }),
+      });
+      return;
+    }
     deleteSessionsWithUndo({
       sessionIds: ids,
       message: ids.length === 1
@@ -1152,31 +1299,36 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     const title = renameDraft.trim();
     if (!title) return;
     try {
-      await updateSessionTitle(renamingSession.id, title);
-      setRenamingSession(null);
-      setRenameDraft('');
+      const remote = (renamingSession as SessionWithStatus)._remote;
+      if (remote) { await remote.entry.service().updateSession(remote.sessionId, { title }, remote.directory); await refreshRemote(remote); }
+      else await updateSessionTitle(renamingSession.id, title);
+      if (isCurrentRename(renamingSession)) { setRenamingSession(null); setRenameDraft(''); }
     } catch {
       toast.error(t('sessions.sidebar.session.menu.rename'), {
         description: t('sessions.sidebar.dialogs.deleteResult.tryAgain'),
       });
     }
-  }, [renameDraft, renamingSession, t, updateSessionTitle]);
+  }, [renameDraft, renamingSession, t, updateSessionTitle, refreshRemote, isCurrentRename]);
 
   // Smart title only queues the server-side refresh (metadata.requestedAt).
   // Close immediately after submit — do not wait for generation to finish.
   const handleRequestSmartTitle = React.useCallback(async () => {
     if (!renamingSession) return;
     const sessionId = renamingSession.id;
-    setRenamingSession(null);
-    setRenameDraft('');
+    const remote = (renamingSession as SessionWithStatus)._remote;
+    if (!remote) { setRenamingSession(null); setRenameDraft(''); }
     try {
-      await requestSessionSmartTitle(sessionId);
+      if (remote) {
+        await remote.entry.service().updateSession(remote.sessionId, { metadata: { yuri: { titleRefresh: { lastAutoTitle: renamingSession.title, requestedAt: Date.now(), isGenerating: null, lastError: null, failedAt: null } } } }, remote.directory);
+        await refreshRemote(remote);
+      } else await requestSessionSmartTitle(sessionId);
+      if (isCurrentRename(renamingSession)) { setRenamingSession(null); setRenameDraft(''); }
     } catch {
       toast.error(t('sessions.sidebar.session.rename.smartTitle'), {
         description: t('sessions.sidebar.dialogs.deleteResult.tryAgain'),
       });
     }
-  }, [renamingSession, requestSessionSmartTitle, t]);
+  }, [renamingSession, requestSessionSmartTitle, t, refreshRemote, isCurrentRename]);
 
   // "+" — start a new session draft. Target the project selected in the filter;
   // for "All", use the most recently active session's directory, falling back to
@@ -1186,6 +1338,14 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     if (filterProjectId) {
       const project = projects.find((p) => p.id === filterProjectId);
       if (project) {
+        if (project.hostId) {
+          const scope = remoteCatalog.forProject(project);
+          if (!scope) { toast.error(t('remoteProjects.host-unavailable')); return; }
+          setActiveProjectIdOnly(project.id);
+          useSessionNavigationStore.getState().openRemoteSession(project, scope.entry.location, null);
+          if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+          return;
+        }
         startNewSessionDraft({ selectedProjectId: project.id, directoryOverride: project.path });
         return;
       }
@@ -1196,8 +1356,15 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       return bTime - aTime;
     })[0];
     const directory = mostRecent ? sessionDirectory(mostRecent) : '';
+    const remote = mostRecent?._remote;
+    if (remote) {
+      setActiveProjectIdOnly(remote.project.id);
+      useSessionNavigationStore.getState().openRemoteSession(remote.project, remote.entry.location, null);
+      if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+      return;
+    }
     startNewSessionDraft(directory ? { directoryOverride: directory } : undefined);
-  }, [closeSessionPanel, filterProjectId, projects, sessions, startNewSessionDraft]);
+  }, [closeSessionPanel, filterProjectId, projects, sessions, startNewSessionDraft, remoteCatalog, setActiveProjectIdOnly, t]);
 
   const handleNewWorktree = React.useCallback(() => {
     if (!worktreeTargetProject || !worktreeTargetIsGitRepository) return;
@@ -1209,7 +1376,15 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     setNewWorktreeDialogOpen(true);
   }, [closeSessionPanel, setActiveProjectIdOnly, worktreeTargetIsGitRepository, worktreeTargetProject]);
 
-  const startSessionDraftForDirectory = (project: ProjectEntry, directory: string) => {
+  const startSessionDraftForDirectory = useEvent((project: ProjectEntry, directory: string) => {
+    if (project.hostId) {
+      const scope = remoteCatalog.forProject(project);
+      if (!scope) { toast.error(t('remoteProjects.host-unavailable')); return; }
+      closeActionMenu(); setOpen(false); setActiveProjectIdOnly(project.id);
+      useSessionNavigationStore.getState().openRemoteSession(project, { ...scope.entry.location, directory }, null);
+      if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+      return;
+    }
     closeActionMenu();
     setOpen(false);
     startNewSessionDraft({
@@ -1217,9 +1392,13 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       directoryOverride: directory,
       preserveDirectoryOverride: true,
     });
-  };
+  });
 
-  const syncProjectSessions = (target: Extract<MobileActionTarget, { kind: 'project' }>) => {
+  const syncProjectSessions = useEvent((target: Extract<MobileActionTarget, { kind: 'project' }>) => {
+    if (target.project.hostId) {
+      void remoteCatalog.refresh(target.project.hostId).then(closeActionMenu).catch((error) => toast.error(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     closeActionMenu();
     void (async () => {
       try {
@@ -1230,10 +1409,10 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       const latest = useSessionUIStore.getState().availableWorktreesByProject.get(target.project.path) ?? target.worktrees;
       await syncGlobalSessionsForDirectories(
         [target.project.path, ...latest.map((worktree) => worktree.path)],
-        sessions,
+        localSessions,
       );
     })();
-  };
+  });
 
   const toggleWorktreeGroup = useEvent((groupKey: string) => {
     setWorktreeGroupExpanded(groupKey, !expandedWorktreeGroups[groupKey]);
@@ -1254,11 +1433,12 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       return next;
     });
     if (nextVisibleCount < group.sessions.length) return;
+    if (selectedProject?.hostId) { remoteCatalog.loadMore(selectedProject, group.directory); return; }
     const pagination = useGlobalSessionsStore.getState().activePaginationByDirectory.get(group.directory);
     if (pagination?.hasMore && !pagination.loadingMore) {
       void loadMoreGlobalSessionsForDirectory(group.directory);
     }
-  }, [visibleCountByGroup]);
+  }, [visibleCountByGroup, selectedProject, remoteCatalog]);
 
   const showFewerGroupSessions = React.useCallback((groupKey: string) => {
     setVisibleCountByGroup((previous) => {
@@ -1278,11 +1458,11 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
       visibleCount,
       alwaysVisibleSessionIds,
     );
-    const pagination = activePaginationByDirectory.get(group.directory);
+    const pagination = selectedProject?.hostId ? remoteCatalog.pagination(selectedProject, group.directory) : activePaginationByDirectory.get(group.directory);
     const showMore = visibleSessions.length < group.sessions.length || pagination?.hasMore === true;
     const showFewer = group.sessions.length > DEFAULT_GROUP_SESSION_COUNT
       && visibleCount > DEFAULT_GROUP_SESSION_COUNT;
-    const branch = isRoot && selectedProject ? rootBranchesByProject.get(selectedProject.id) : null;
+    const branch = isRoot && selectedProject ? selectedProject.hostId ? remoteRootBranch : rootBranchesByProject.get(selectedProject.id) : null;
     const groupLabel = group.label;
     const actionKey = isRoot
       ? `project:${selectedProject?.id ?? group.key}`
@@ -1499,7 +1679,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
               iconBackground={project.iconBackground ?? null}
               colorVar={project.color ? (PROJECT_COLOR_MAP[project.color] ?? null) : null}
               isActive={filterProjectId === project.id}
-              status={getProjectStatus(project.path)}
+              status={getProjectStatus(project)}
               onClick={() => setFilterProjectId(project.id)}
             />
           ))}
@@ -1523,15 +1703,15 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     const projectRoot = normalize(project.path);
     const worktrees = orderWorktrees(
       worktreeOrderByProject[project.id],
-      availableWorktreesByProject.get(projectRoot) ?? [],
+      projectWorktrees(project),
     );
     const isGitRepo = actionTarget?.kind === 'project' && actionTarget.project.id === project.id
       ? actionTarget.isGitRepository
       : worktrees.length > 0 || Boolean(rootBranchesByProject.get(project.id));
     return {
       id: project.id,
-      label: formatProjectLabel(project),
-      path: projectRoot || project.path,
+      label: project.hostId ? project.label || formatDirectoryName(project.path) : formatProjectLabel(project),
+      path: project.hostId ? project.path : projectRoot || project.path,
       icon: project.icon,
       color: project.color,
       iconImage: project.iconImage,
@@ -1541,12 +1721,12 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     };
   }, [
     actionTarget,
-    availableWorktreesByProject,
     editingProjectId,
     formatProjectLabel,
     projects,
     rootBranchesByProject,
     worktreeOrderByProject,
+    projectWorktrees,
   ]);
 
   const actionMenuItems = React.useMemo((): MobileMenuItem[] => {
@@ -1675,6 +1855,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
 
     </div>
   ) : null;
+  const remoteUnavailable = remoteCatalog.unavailable || remoteCatalog.errors.length > 0 || Boolean(remoteCatalog.error) || Boolean(remoteWorktrees.error);
 
   if (!isMobile) {
     return null;
@@ -1706,10 +1887,14 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
             className="px-2 py-2 pwa-overlay-scroll"
           >
             <div className="flex min-h-full flex-col gap-0.5">
+              {remoteUnavailable ? <div role="status" className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+                <span className="flex-1">{t('remoteProjects.host-unavailable')}</span>
+                <Button size="xs" variant="ghost" onClick={() => { void remoteCatalog.refresh().catch((error) => toast.error(error instanceof Error ? error.message : String(error))); }}>{t('remoteProjects.retry')}</Button>
+              </div> : null}
               {selectedProject ? (
                 <>
                   {projectSessionGroups.map(renderProjectGroup)}
-                  {projectSessionGroups.every((group) => group.sessions.length === 0) ? (
+                  {!remoteUnavailable && projectSessionGroups.every((group) => group.sessions.length === 0) ? (
                     <div className="flex flex-1 items-center justify-center py-8 text-[13px] text-[var(--surface-mutedForeground)]">
                       <span>{t('chat.mobileStatus.noSessionsInProject')}</span>
                     </div>
@@ -1717,7 +1902,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
                 </>
               ) : filteredSessions.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center py-10 text-[13px] text-[var(--surface-mutedForeground)]">
-                  <span>{t('chat.mobileStatus.noSessionsInProject')}</span>
+                  {!remoteUnavailable ? <span>{t('chat.mobileStatus.noSessionsInProject')}</span> : null}
                 </div>
               ) : (
                 filteredSessions.map((session) => (
@@ -1832,11 +2017,13 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
               onClick={() => {
                 if (!closingProject) return;
                 const project = closingProject;
-                setClosingProject(null);
-                removeProject(project.id);
-                toast.success(t('mobile.sessions.toast.projectRemoved', {
-                  label: formatProjectLabel(project),
-                }));
+                void (async () => {
+                  try {
+                    await removeProject(project.id);
+                    setClosingProject(null);
+                    toast.success(t('mobile.sessions.toast.projectRemoved', { label: formatProjectLabel(project) }));
+                  } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+                })();
               }}
             >
               {t('mobile.sessions.confirmRemoveProject')}
@@ -1850,6 +2037,7 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
           })}
         </p>
       </MobileOverlayPanel>
+      <MobileStatusProjectBoundary project={projects.find((project) => project.id === worktreeDialogProjectId)} registry={remoteCatalog.registry}>
       <NewWorktreeDialog
         open={newWorktreeDialogOpen}
         projectId={worktreeDialogProjectId}
@@ -1860,6 +2048,20 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
         onWorktreeCreated={(worktreePath, options) => {
           setNewWorktreeDialogOpen(false);
           setOpen(false);
+          const project = projects.find((project) => project.id === worktreeDialogProjectId);
+          if (options?.remote) {
+            if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+            if (project?.hostId) void remoteCatalog.refresh(project.hostId).catch((error) => toast.error(String(error)));
+            return;
+          }
+          if (project?.hostId) {
+            const scope = remoteCatalog.forProject(project);
+            if (!scope) { toast.error(t('remoteProjects.host-unavailable')); return; }
+            useSessionNavigationStore.getState().openRemoteSession(project, { ...scope.entry.location, directory: worktreePath }, options?.sessionId ?? null);
+            if (!isIPadApp()) useMobileNavigationStore.getState().openRemoteProject();
+            void remoteCatalog.refresh(project.hostId).catch((error) => toast.error(String(error)));
+            return;
+          }
           if (options?.sessionId) {
             if (!isIPadApp()) {
               useMobileNavigationStore.getState().openSession({
@@ -1878,13 +2080,20 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
           }
         }}
       />
+      </MobileStatusProjectBoundary>
       {worktreeToDelete ? (
+        <MobileStatusProjectBoundary project={worktreeToDelete.project} registry={remoteCatalog.registry}>
         <MobileDeleteWorktreeDialog
           open
           project={{ id: worktreeToDelete.project.id, path: worktreeToDelete.project.path }}
           worktree={worktreeToDelete.worktree}
           onClose={() => setWorktreeToDelete(null)}
           onDeleted={() => {
+            if (worktreeToDelete.project.hostId) {
+              void remoteCatalog.refresh(worktreeToDelete.project.hostId).catch((error) => toast.error(String(error)));
+              setWorktreeToDelete(null);
+              return;
+            }
             const projectPath = normalize(worktreeToDelete.project.path);
             const worktreePath = normalize(worktreeToDelete.worktree.path);
             useSessionUIStore.setState((state) => {
@@ -1898,12 +2107,22 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
             setWorktreeToDelete(null);
           }}
         />
+        </MobileStatusProjectBoundary>
       ) : null}
+      <MobileStatusProjectBoundary project={projects.find((project) => project.id === editingProjectId)} registry={remoteCatalog.registry}>
       <MobileProjectEditSurface
         open={editingProjectId !== null}
         project={editingProject}
         onClose={() => setEditingProjectId(null)}
       />
+      </MobileStatusProjectBoundary>
     </>
   );
 };
+
+function MobileStatusProjectBoundary({ project, registry, children }: { project?: ProjectEntry; registry?: HostRuntimeRegistry; children: React.ReactNode }) {
+  const { t } = useI18n();
+  if (!project?.hostId) return <HostRuntimeContext.Provider value={null}>{children}</HostRuntimeContext.Provider>;
+  if (!registry || registry.hubId !== project.hubId) return <div role="alert">{t('remoteProjects.host-unavailable')}</div>;
+  return <HostRuntimeProvider registry={registry} location={{ hubId: registry.hubId, hostId: project.hostId, directory: project.path }}>{children}</HostRuntimeProvider>;
+}

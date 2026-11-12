@@ -17,6 +17,7 @@ import { create } from "zustand"
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from "@/lib/runtime-switch"
 import type { QueuePendingAdmissionItem } from "@/stores/messageQueueStore"
 import type { SessionInboxDelivery, SessionInboxUser } from "./session-prompt-api"
+import { locationSessionKey, type HostLocation } from "@/lib/remote-projects/location"
 
 export type SessionInboxOverlayItem = SessionInboxUser & {
   requestID: string
@@ -228,23 +229,24 @@ const writeSession = (
 export const useSessionInboxOverlayStore = create<SessionInboxOverlayState>((set, get) => ({
   bySession: {},
   remember(item) {
-    if (getInboxTerminal(item.sessionID, item.id)) {
+    const sessionKey = item.location ? locationSessionKey(item.location, item.sessionID) : item.sessionID
+    if (getInboxTerminal(sessionKey, item.id)) {
       // Late HTTP after cancelled/consumed must not resurrect a ghost row.
       return false
     }
     set((state) => {
-      const current = state.bySession[item.sessionID] ?? []
+      const current = state.bySession[sessionKey] ?? []
       const index = current.findIndex((entry) => entry.id === item.id)
       const nextItem = { ...item, requestID: item.id }
       if (index >= 0) {
         const next = current.slice()
         next[index] = nextItem
-        return { bySession: { ...state.bySession, [item.sessionID]: next } }
+        return { bySession: { ...state.bySession, [sessionKey]: next } }
       }
       return {
         bySession: {
           ...state.bySession,
-          [item.sessionID]: [...current, nextItem],
+          [sessionKey]: [...current, nextItem],
         },
       }
     })
@@ -344,7 +346,8 @@ export function rememberUnpromotedInboxFromAuthority(
   item: SessionInboxUser,
   options?: InboxAuthorityOptions,
 ): boolean {
-  if (!clearInboxTerminalUnlessNewer(item.sessionID, item.id, options)) {
+  const key = item.location ? locationSessionKey(item.location, item.sessionID) : item.sessionID
+  if (!clearInboxTerminalUnlessNewer(key, item.id, options)) {
     return false
   }
   return useSessionInboxOverlayStore.getState().remember(item)
@@ -382,7 +385,7 @@ export function isSessionInboxChip(value: unknown): value is SessionInboxChip {
   return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "session-inbox"
 }
 
-export function selectInboxOverlayChips(sessionID: string | null | undefined): SessionInboxChip[] {
+export function selectInboxOverlayChips(sessionID: string | null | undefined, location?: HostLocation): SessionInboxChip[] {
   if (!sessionID) return EMPTY_INBOX_CHIPS
-  return useSessionInboxOverlayStore.getState().list(sessionID).map(toChip)
+  return useSessionInboxOverlayStore.getState().list(location ? locationSessionKey(location, sessionID) : sessionID).map(toChip)
 }
