@@ -31,6 +31,14 @@ it never falls back to the Hub's terminal endpoint. Local close behavior remains
 unchanged. Remote filesystem/native IDE actions likewise cannot fall back to the
 Hub filesystem merely because their selected paths look local.
 
+## Delegated worker visibility
+
+Ordinary session visibility also excludes explicit delegated CLI workers carrying
+`metadata.yuri.worker.parentSessionID`, regardless of native `parentID`. The Host
+index/unread runtime and standalone VS Code notification gate use the same marker.
+Titles and selected agents never establish worker ownership. Removing the marker
+restores ordinary catalog eligibility on refresh without restoring old unread.
+
 `openSettingsAtItem` atomically selects a Settings page, opens its surface and
 queues a transient `settingsFocusItemId`. The sidebar logo targets
 `appearance.sidebar-brand`; the mounted Appearance input consumes the request

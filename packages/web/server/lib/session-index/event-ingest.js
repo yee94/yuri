@@ -5,6 +5,7 @@ import {
   resolveSessionDirectory,
 } from '../session-metadata/session-projection.js';
 import { extractSessionStatusUpdate } from '../opencode/session-runtime.js';
+import { isVisibleSession } from './service.js';
 
 const withDirectory = (session, directory) => {
   if (!session || typeof session !== 'object') return null;
@@ -36,6 +37,13 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
   const isHostReady = typeof options.isHostReady === 'function' ? options.isHostReady : null;
 
   const baseType = normalizeSessionEventType(payload.type);
+
+  if (baseType === 'session.metadata.updated') {
+    if (isHostReady && !isHostReady()) return false;
+    const data = payload.data ?? properties;
+    if (typeof data.sessionID !== 'string' || !data.metadata || typeof data.metadata !== 'object') return false;
+    return !isVisibleSession({ metadata: data.metadata }) ? service.remove(data.sessionID) : false;
+  }
 
   if (baseType === 'session.model.selected') {
     if (isHostReady && !isHostReady()) return false;

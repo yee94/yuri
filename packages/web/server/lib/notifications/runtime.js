@@ -218,7 +218,8 @@ export const createNotificationTriggerRuntime = (deps) => {
   );
 
   const getCachedSessionMeta = (sessionId, directory) => {
-    const cacheKey = getSessionMetaCacheKey(sessionId, directory);
+    const requestedKey = getSessionMetaCacheKey(sessionId, directory);
+    const cacheKey = sessionMetaCache.has(requestedKey) ? requestedKey : getSessionMetaCacheKey(sessionId, undefined);
     const entry = sessionMetaCache.get(cacheKey);
     if (!entry) return undefined;
     if (Date.now() - entry.at > SESSION_META_CACHE_TTL_MS) {
@@ -232,6 +233,8 @@ export const createNotificationTriggerRuntime = (deps) => {
     const previous = getCachedSessionMeta(sessionId, directory);
     sessionMetaCache.set(getSessionMetaCacheKey(sessionId, directory), {
       parentID: meta.parentID !== undefined ? meta.parentID : (previous?.parentID ?? null),
+      workerParentSessionID: meta.workerParentSessionID !== undefined
+        ? meta.workerParentSessionID : (previous?.workerParentSessionID ?? null),
       smallModelPurpose: meta.smallModelPurpose !== undefined
         ? meta.smallModelPurpose
         : (previous?.smallModelPurpose ?? null),
@@ -254,6 +257,7 @@ export const createNotificationTriggerRuntime = (deps) => {
       ? yuri.assigned.from
       : null;
     return {
+      workerParentSessionID: normalizeParentID(yuri?.worker?.parentSessionID),
       smallModelPurpose: normalizeSmallModelPurpose(yuri?.smallModel?.purpose),
       // Throwaway LLM gateway sessions (`metadata.yuri.llm.purpose`) share
       // the same sidebar-hidden contract as small-model system sessions.
@@ -271,6 +275,19 @@ export const createNotificationTriggerRuntime = (deps) => {
 
   const maybeCacheSessionMetaFromPayload = (payload) => {
     if (!payload || typeof payload !== 'object') return;
+    if (payload.type === 'session.metadata.updated') {
+      const data = payload.data ?? payload.properties;
+      if (typeof data?.sessionID === 'string' && data.metadata && typeof data.metadata === 'object') {
+        const meta = metaFromYuri(data.metadata.yuri);
+        for (const key of sessionMetaCache.keys()) {
+          if (key.endsWith(`\0${data.sessionID}`)) {
+            setCachedSessionMeta(data.sessionID, key.slice(0, -data.sessionID.length - 1), meta);
+          }
+        }
+        setCachedSessionMeta(data.sessionID, undefined, meta);
+      }
+      return;
+    }
     if (payload.type !== 'session.created' && payload.type !== 'session.updated') return;
     const info = payload.properties?.info;
     if (!info || typeof info !== 'object') return;
@@ -289,7 +306,7 @@ export const createNotificationTriggerRuntime = (deps) => {
     if (!sessionId) return undefined;
 
     const cached = getCachedSessionMeta(sessionId, directory);
-    if (cached?.complete) return cached;
+    if (cached?.complete || isHiddenFromNavSession(cached)) return cached;
 
     try {
       const base = buildOpenCodeUrl(`/session/${encodeURIComponent(sessionId)}`, '');
@@ -347,6 +364,7 @@ export const createNotificationTriggerRuntime = (deps) => {
   const isHiddenFromNavSession = (meta) => {
     if (!meta) return false;
     if (typeof meta.parentID === 'string' && meta.parentID.length > 0) return true;
+    if (meta.workerParentSessionID) return true;
     if (typeof meta.smallModelPurpose === 'string' && meta.smallModelPurpose.length > 0) return true;
     if (typeof meta.llmPurpose === 'string' && meta.llmPurpose.length > 0) return true;
     if (typeof meta.assistantID === 'string' && meta.assistantID.length > 0 && meta.assignedFrom !== 'contact') {

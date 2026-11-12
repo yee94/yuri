@@ -5,6 +5,7 @@ import { createProgressiveTools } from './progressive-tools.js';
 import { createYuriContactToolGroups } from './yuri-tools.js';
 import { createOpenCodeContactToolGroups } from './opencode-tools.js';
 import { createContactToolLimiter } from './tool-execution.js';
+import { formatAssistantBuiltinSkillsPrompt } from './builtin-skills.js';
 import {
   contactTurnClearedChatHistory,
   contactTurnHasSuccessfulReset,
@@ -536,6 +537,7 @@ export async function runContactTurn({
         cwd: runtime?.cwd,
         skillsPrompt: runtime?.skillsPrompt,
       }),
+      readOnly ? '' : formatAssistantBuiltinSkillsPrompt([...codingTools, ...contactTools]),
       assistant.defaultPrompt,
       codingTools.length > 0 ? WORKSPACE_RESPONSE_PROTOCOL : '',
       'Actual tool results arrive in tool-role messages; never manufacture them.',

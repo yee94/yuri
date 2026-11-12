@@ -1,9 +1,11 @@
 ---
 name: yuri-customization
-description: Configure Yuri SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
+description: Add existing directories as Yuri projects through its API, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
 ---
 
 # Yuri customization
+
+For adding an existing directory to Yuri's project list, follow [projects](references/projects.md) using this session's bound project API helper. Registration is separate from creating files, cloning or opening a conversation.
 
 For SSH setup, configuration sync or Relay pairing, first check this session's pointer for its exact bound local desktop helper command. Without that command, report unavailable and stop this branch: a script file or another capability's binding does not enable it. With the command, follow [remote connections](references/remote-connections.md). For UI changes, use the plugin workflow below. Its GUI contracts describe Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
 

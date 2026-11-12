@@ -3,6 +3,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { applySessionIndexEvent } from './event-ingest.js';
 
 describe('session index event ingest', () => {
+  it('removes an indexed CLI worker on authoritative metadata updates without deleting its conversation', () => {
+    const service = { remove: vi.fn(() => true), upsertAndReportChange: vi.fn() };
+    const event = { payload: { type: 'session.metadata.updated', data: {
+      sessionID: 'worker', metadata: { yuri: { worker: { parentSessionID: 'root' } } },
+    } } };
+    expect(applySessionIndexEvent(service, event, 30, { isHostReady: () => false })).toBe(false);
+    expect(service.remove).not.toHaveBeenCalled();
+    expect(applySessionIndexEvent(service, event, 30)).toBe(true);
+    expect(service.remove).toHaveBeenCalledWith('worker');
+    expect(service.upsertAndReportChange).not.toHaveBeenCalled();
+    service.remove.mockClear();
+    expect(applySessionIndexEvent(service, { payload: { type: 'session.metadata.updated', data: {
+      sessionID: 'ordinary', metadata: { yuri: { worker: { parentSessionID: '' } } },
+    } } }, 30)).toBe(false);
+    expect(service.remove).not.toHaveBeenCalled();
+  });
   it('ingests native model selection through the existing-row mutation and respects Host readiness', () => {
     const service = { updateModel: vi.fn(() => true) };
     const model = { providerID: 'p', id: 'model', variant: 'high' };

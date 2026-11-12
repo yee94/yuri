@@ -469,10 +469,22 @@ also exercised the real provider: the contact selected provider discovery and
 `websearch`, then returned actual source links, without a CLI or worker session.
 
 Interactive turns no longer fetch or inject the OpenCode built-in skill by default.
-The permanent prompt retains only short routing and evidence/authorization rules;
+`builtin-skills.js` adds only two short discovery pointers, gated by the granted
+readers: `opencode` uses `load_tools({ domain: 'opencode.catalog' })` followed by
+`read_opencode_skill({ id: 'opencode' })`; `yuri-customization` uses pi `read` on
+the existing shipped `../gui-customization/skill/SKILL.md`, then matching references
+relative to that file's directory. No body or reference is read during prompt
+construction, no additional skill directories are scanned, and no skill/config
+copy, tool registration or permission is created. Missing/failed OpenCode skill
+reads retain the existing explicit tool errors. These pointers are absent from
+read-only background reviews and do not change ordinary Session instructions.
+The customization pointer explicitly has no bound desktop helper: SSH, config
+sync and Relay pairing remain unavailable in the contact, without a filesystem,
+credential or internal-HTTP fallback. GUI authoring instructions do not authorize
+installation; substantive implementation still belongs in a worker.
 CLI authentication instructions, endpoint URLs and skill bodies are not duplicated
-there. Load `opencode.catalog`, discover the applicable skill ID, and call
-`read_opencode_skill` when instructions are relevant. The virtual
+in the permanent prompt. For other connected skills, load `opencode.catalog`,
+discover the applicable skill ID, and call `read_opencode_skill` on demand. The virtual
 `/builtin/opencode.md` / `<built-in>` markers are not local files. A skill result is
 instruction content, not tool registration or evidence of execution. Local skill
 indexes and `read` retain their existing separate instruction-loading behavior.

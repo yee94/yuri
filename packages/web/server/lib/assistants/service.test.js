@@ -4277,6 +4277,9 @@ describe('assistants service', () => {
     const createChatCompletion = vi.fn(async ({ body }) => {
       round++;
       const system = body.messages.find((message) => message.role === 'system').content;
+      expect(system).toContain('- opencode: For OpenCode itself:');
+      expect(system).toContain('read_opencode_skill({"id":"opencode"})');
+      expect(system).toContain('- yuri-customization:');
       expect(system).not.toContain(skillContent);
       expect(system).not.toContain('opencode api without --server');
       expect(system).not.toContain('Unrelated skill content');

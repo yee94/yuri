@@ -27,6 +27,7 @@
         "src/mini-chat-main.tsx",
         "src/sw.ts",
         "server/**/*.{test,spec}.{js,cjs,mjs,ts,tsx}",
+        "server/lib/gui-customization/*-client.mjs",
         "src/**/*.{test,spec}.{ts,tsx}"
       ],
       "project": [

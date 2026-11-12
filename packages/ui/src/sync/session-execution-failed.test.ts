@@ -481,4 +481,19 @@ describe("session.execution.succeeded unread marker", () => {
 
     expect(useNotificationStore.getState().list).toEqual([]);
   });
+
+  test("does not create local session or project badges for an explicitly linked CLI worker", () => {
+    const store = createFailedChildStore();
+    Object.assign((store.getState().session as object[])[0], {
+      metadata: { yuri: { worker: { parentSessionID: 'root' } } },
+    });
+    const childStores = {
+      getChild: () => store, children: new Map([[DIRECTORY, store]]), ensureChild: () => store, mark: () => undefined,
+    } as unknown as ChildStoreManager;
+    handleEvent(DIRECTORY, {
+      type: "session.execution.succeeded", properties: { sessionID: SESSION },
+    } as Event, childStores, emptyRoutingIndex);
+    expect(useNotificationStore.getState().list).toEqual([]);
+    expect(useNotificationStore.getState().projectUnseenCount(DIRECTORY)).toBe(0);
+  });
 });

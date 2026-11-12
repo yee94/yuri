@@ -283,6 +283,12 @@ they remain until a subsequent open/refocus action. Read and manual-unread chang
 apply only after confirmed server success, so failed mutations leave attention
 intact. Standalone VS Code retains local-only state without issuing Host routes.
 
+Local completion badges use `isVisibleGlobalSession`, matching catalog exclusions
+for native children and explicitly linked CLI workers. A worker marker is
+`metadata.yuri.worker.parentSessionID`; an ordinary CLI root without explicit
+ownership stays visible. Host startup and metadata-event reconciliation remove
+persisted hidden attention before a successful unread snapshot is returned.
+
 Successful top-level turn completion also emits the existing directory-scoped `sessionEvents.requestGitRefresh` hint, refreshing mounted Changes/Diff consumers through their runtime Git API. This is independent of window focus and targets the completed session's directory. The native succeeded event and its trailing legacy idle share the completion deduplication gate; streaming events do not trigger extra Git reads.
 
 Turn-complete and error notifications use the same viewed-session gate: the matching active directory/session in a focused window, or an externally registered viewed session, is already read on receipt. Background or other-session completions remain unread. `session.execution.succeeded` and its legacy `session.idle` fallback share this rule and retain completion deduplication. Regression coverage: `session-execution-failed.test.ts`.
