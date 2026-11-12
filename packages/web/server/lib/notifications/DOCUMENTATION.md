@@ -12,6 +12,18 @@ delivery settings and the legacy in-memory attention/presence endpoints.
 success/error (including legacy idle/error) increments attention without requiring
 an online client. Root/system visibility uses the session-index policy and an
 authoritative session record; child sessions do not create unread badges.
+Explicit CLI-worker ownership (`metadata.yuri.worker.parentSessionID`) uses the
+same exclusion as the session catalog, even if native `parentID` is absent.
+Metadata lifecycle updates remove existing hidden attention without waiting for
+another completion. The first unread GET after Host startup reconciles persisted
+unread rows against current session records, with at most four identity reads in
+flight and one shared reconciliation for concurrent clients. Already-read rows
+are skipped and successful identities are not reread on later GETs. Failed
+identity/cleanup writes retain that row, return retryable 503, and retry only the
+unresolved rows; independent successful cleanup stays committed. No transcript
+scan or title/agent-name heuristic is used. Unmarked CLI roots remain ordinary
+conversations; verified historical workers must first receive their explicit
+ownership marker through the metadata store.
 Token/part/message deltas do no work. Each session serializes lifecycle boundaries
 and independently retries failed identity reads/writes with capped backoff.
 New execution rearms terminal deduplication and clears its previous error marker;

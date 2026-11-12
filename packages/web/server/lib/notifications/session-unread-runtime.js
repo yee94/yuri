@@ -1,17 +1,22 @@
 import express from 'express';
 import { isVisibleSession } from '../session-index/service.js';
 
-/** Only lifecycle boundaries do work; token, part and message deltas never read or write. */
+/** Lifecycle boundaries and startup repair do work; streaming deltas never read or write. */
 export function createSessionUnreadRuntime({ store, loadSession, hub, resolveDirectory = value => value, retryMs = 1000 }) {
   const flights = new Map();
   const queues = new Map();
+  const unreconciled = new Set(Object.entries(store.snapshot().sessions)
+    .filter(([, row]) => row.unreadCount > 0).map(([id]) => id));
+  let reconciliation = null;
   let disposed = false;
   const directoryOf = session => resolveDirectory(session.location?.directory ?? session.directory ?? '');
   const visible = session => session && !session.parentID && isVisibleSession(session);
   const apply = async ({ payload, id, kind }) => {
     if (kind === 'deleted') { store.remove(id); return; }
     const session = await loadSession(id);
-    if (disposed || !visible(session)) return;
+    if (disposed) return;
+    if (!visible(session)) { store.remove(id); return; }
+    if (kind === 'refresh') return;
     store.observe({ id, directory: directoryOf(session), kind, eventAt: payload.created, sequence: payload.durable?.seq });
   };
   const drain = (id, queue) => {
@@ -22,7 +27,16 @@ export function createSessionUnreadRuntime({ store, loadSession, hub, resolveDir
           await apply(queue.items[0]);
           queue.items.shift().resolve();
           queue.attempt = 0;
-        } catch {
+        } catch (error) {
+          if (queue.items[0].retry === false) {
+            queue.items.shift().reject(error);
+            continue;
+          }
+          queue.items = queue.items.filter(item => {
+            if (item.retry !== false) return true;
+            item.reject(error);
+            return false;
+          });
           // Preserve the failed boundary and its following run boundaries in order.
           // Other sessions have independent queues and can continue normally.
           const delay = Math.min(retryMs * 2 ** Math.min(queue.attempt++, 5), 30000);
@@ -41,6 +55,35 @@ export function createSessionUnreadRuntime({ store, loadSession, hub, resolveDir
       if (pending) drain(id, pending);
     });
   };
+  const enqueue = (payload, id, kind, retry = true) => {
+    const queue = queues.get(id) ?? { items: [], timer: null, attempt: 0 };
+    if (!retry && queue.timer) return Promise.reject(new Error('Session identity retry pending'));
+    queues.set(id, queue);
+    const completion = new Promise((resolve, reject) => {
+      queue.items.push({ payload, id, kind, retry, resolve, reject });
+    });
+    drain(id, queue);
+    return completion;
+  };
+  const reconcileStored = () => {
+    if (reconciliation) return reconciliation;
+    if (!unreconciled.size) return Promise.resolve();
+    const ids = [...unreconciled];
+    let cursor = 0;
+    let failed = false;
+    reconciliation = Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+      while (!disposed && cursor < ids.length) {
+        const id = ids[cursor++];
+        try {
+          await enqueue({}, id, 'refresh', false);
+          unreconciled.delete(id);
+        } catch { failed = true; }
+      }
+    })).then(() => {
+      if (failed) throw new Error('Stored session identity unavailable');
+    }).finally(() => { reconciliation = null; });
+    return reconciliation;
+  };
   const processEvent = (envelope) => {
     const raw = envelope?.payload ?? envelope;
     const payload = raw?.payload ?? raw;
@@ -51,15 +94,10 @@ export function createSessionUnreadRuntime({ store, loadSession, hub, resolveDir
     const kind = type === 'session.execution.started' || (type === 'session.status' && body.status?.type === 'busy') ? 'running'
       : type === 'session.execution.succeeded' || type === 'session.idle' ? 'complete'
         : type === 'session.execution.failed' || type === 'session.error' ? 'error'
-          : type === 'session.deleted' ? 'deleted' : null;
+          : type === 'session.deleted' ? 'deleted'
+            : type === 'session.metadata.updated' || type === 'session.updated' || type === 'yuri:session-metadata' ? 'refresh' : null;
     if (!kind || disposed) return Promise.resolve();
-    const queue = queues.get(id) ?? { items: [], timer: null, attempt: 0 };
-    queues.set(id, queue);
-    const completion = new Promise(resolve => {
-      queue.items.push({ payload, id, kind, resolve });
-    });
-    drain(id, queue);
-    return completion;
+    return enqueue(payload, id, kind);
   };
   const unsubscribe = hub?.subscribeEvent(event => {
     void processEvent(event).catch(() => console.warn('[session-unread] lifecycle update failed'));
@@ -67,8 +105,8 @@ export function createSessionUnreadRuntime({ store, loadSession, hub, resolveDir
   return {
     processEvent,
     registerRoutes(app) {
-      app.get('/api/yuri/session-unread', (_req, res) => {
-        try { res.json(store.snapshot()); }
+      app.get('/api/yuri/session-unread', async (_req, res) => {
+        try { await reconcileStored(); res.json(store.snapshot()); }
         catch { res.status(503).json({ error: 'Session unread state unavailable' }); }
       });
       app.put('/api/yuri/session-unread/:id', express.json({ limit: '8kb' }), async (req, res) => {

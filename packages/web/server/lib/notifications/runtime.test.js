@@ -368,6 +368,27 @@ describe('notification trigger runtime llm system-session suppression', () => {
     expectAllOutletsSilent(outlets);
   });
 
+  it('skips completion/error outlets for explicitly linked CLI workers without native parentID', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      id: 'worker', title: 'Ordinary title', metadata: { yuri: { worker: { parentSessionID: 'root' } } },
+    })));
+    const outlets = createRuntime();
+    await outlets.runtime.maybeSendPushForTrigger(completionPayload('worker'));
+    await outlets.runtime.maybeSendPushForTrigger({ type: 'session.error', properties: { sessionID: 'worker', error: 'boom' } });
+    expectAllOutletsSilent(outlets);
+  });
+
+  it('refreshes cached CLI-worker ownership from a native metadata-only event', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ id: 'worker', metadata: {} })));
+    const outlets = createRuntime();
+    await outlets.runtime.maybeSendPushForTrigger({ type: 'session.updated', properties: { info: { id: 'worker' } } });
+    await outlets.runtime.maybeSendPushForTrigger({ type: 'session.metadata.updated', data: {
+      sessionID: 'worker', metadata: { yuri: { worker: { parentSessionID: 'root' } } },
+    } });
+    await outlets.runtime.maybeSendPushForTrigger(completionPayload('worker'));
+    expectAllOutletsSilent(outlets);
+  });
+
   it('skips ready notifications synthesized from session.idle for llm sessions', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => llmSessionResponse()));
     const outlets = createRuntime();

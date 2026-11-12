@@ -3,6 +3,11 @@ import type { OpenCodeClient } from '@/lib/opencode/v2-types'
 import { isVisibleGlobalSession, listGlobalSessionPages } from './globalSessions'
 
 describe('listGlobalSessionPages', () => {
+  test('hides explicitly linked CLI workers but not ordinary sessions with worker-like titles', () => {
+    expect(isVisibleGlobalSession({ title: 'Worker', metadata: { yuri: { worker: { parentSessionID: 'root' } } } })).toBe(false)
+    expect(isVisibleGlobalSession({ title: 'Worker', metadata: { yuri: { worker: { parentSessionID: '' } } } })).toBe(true)
+    expect(isVisibleGlobalSession({ title: 'Worker' })).toBe(true)
+  })
   test('follows cursor continuations after alias filtering leaves an empty or short page', async () => {
     const calls: Array<string | undefined> = []
     const apiClient = { session: { list: async (input: { cursor?: string }) => {

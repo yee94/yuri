@@ -13,9 +13,10 @@ import { registerScheduledTaskRoutes } from './routes.js';
 import { registerScheduledTaskSessionSkill } from './session-skill.js';
 import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_PATH } from './session-skill-contract.js';
 import { registerRemoteConnectionsSkill, REMOTE_CONNECTIONS_SKILL_PATH } from '../gui-customization/remote-connections.js';
+import { registerProjectsSkill, PROJECTS_SKILL_PATH } from '../gui-customization/projects.js';
 
 describe('built-in session skill with authenticated Host', () => {
-  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup, connections;
+  let root, server, origin, ui, sessions, entries, store, password, auth, registrationFile, sdk, sync, failInstructions, failCleanup, connections, registerProject;
   const upstreamOrigin = 'http://127.0.0.1:4096';
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-skill-'));
@@ -66,6 +67,9 @@ describe('built-in session skill with authenticated Host', () => {
       buildOpenCodeUrl: () => upstreamOrigin, getOpenCodeAuthHeaders: () => auth,
     };
     const router = express.Router();
+    registerProject = vi.fn(async (input) => ({ project: { id: 'registered', ...input }, created: true, settings: { password } }));
+    registerProjectsSkill(app, { express, getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth, createClient: () => sdk,
+      registerProject, readSettingsFromDiskStrict: common.readSettingsFromDiskMigrated, sanitizeProjects: common.sanitizeProjects });
     connections = { list: vi.fn(async () => ({ instances: [] })), setup: vi.fn(async () => ({ id: 'ssh_one', running: true })),
       pair: vi.fn(async () => ({ url: 'yuri://connect?v=2&p=fixture', expiresAt: '2099-01-01' })) };
     registerRemoteConnectionsSkill(app, { express, adapter: connections, getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth, createClient: () => sdk });
@@ -189,6 +193,35 @@ describe('built-in session skill with authenticated Host', () => {
     expect(denied.value.recovery).not.toContain('Use the bound list');
     expect(denied.stdout + denied.stderr).not.toContain(password);
     expect(connections.setup).toHaveBeenCalledTimes(1);
+  });
+
+  it('executes the exact staged project API helper and refuses browser credentials or changed Host/service bindings', async () => {
+    const session = await create();
+    const pointer = entries.get(`${session.id}:customization`);
+    const command = pointer.split('Bound project helper: ')[1].split('\n')[0];
+    const described = await run(command);
+    expect(described.code).toBe(0);
+    expect(described.value.supported).toBe(true);
+    expect(Object.keys(described.value.commands)).toEqual(['list', 'add']);
+    const { commands: cmd } = described.value;
+    expect((await run(cmd.list)).value.projects).toHaveLength(2);
+    const input = { path: path.join(root, 'project-b'), label: 'Existing project' };
+    const added = await run(cmd.add, input);
+    expect(added.value).toEqual({ project: { id: 'registered', ...input }, created: true });
+    expect(registerProject).toHaveBeenCalledExactlyOnceWith(input);
+    expect(added.stdout + pointer).not.toContain(password);
+    for (const headers of [{}, { Authorization: 'Bearer test-browser-client' }, { ...auth, Origin: origin }, { Authorization: 'Basic wrong' }]) {
+      const response = await fetch(`${origin}${PROJECTS_SKILL_PATH}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ sessionID: session.id, operation: 'add', input }) });
+      expect(response.status).toBe(403);
+    }
+    sessions.get(session.id).metadata.yuri.scheduledTaskSkill.hostOrigin = 'http://127.0.0.1:1';
+    expect((await run(cmd.add, input)).value).toMatchObject({ status: 403, terminal: true });
+    expect(registerProject).toHaveBeenCalledTimes(1);
+    await fs.writeFile(registrationFile, JSON.stringify({ url: 'http://127.0.0.1:1', password }));
+    const stale = await run(cmd.add, input);
+    expect(stale.value.terminal).toBe(true);
+    expect(stale.stdout + stale.stderr).not.toContain(password);
+    expect(registerProject).toHaveBeenCalledTimes(1);
   });
 
   it('rejects unbounded connection input and sanitizes remote errors', async () => {

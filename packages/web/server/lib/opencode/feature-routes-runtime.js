@@ -1,5 +1,6 @@
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerRemoteConnectionsSkill } from '../gui-customization/remote-connections.js';
+import { registerProjectsSkill } from '../gui-customization/projects.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
 import { registerSessionMetadataRoutes } from '../session-metadata/routes.js';
@@ -303,6 +304,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     };
     await refreshAssistantAllowedRoots();
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
+    registerProjectsSkill(app, {
+      express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
+      registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
+    });
     historyImportRuntime = registerHistoryImportRoutes(app, {
       express, uiAuthController, dataDir: yuriDataDir,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),

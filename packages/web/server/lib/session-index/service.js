@@ -16,6 +16,7 @@ const isContactAssignedSession = (yuri) => yuri?.assigned?.from === 'contact';
 const isSystemSession = (session) => {
   const yuri = session?.metadata?.yuri;
   if (!yuri || typeof yuri !== 'object') return false;
+  if (nonEmptySystemID(yuri.worker?.parentSessionID)) return true;
   // Contact-assigned workers stay visible in Chat. Only archived Assistant
   // bindings use `yuri.assistant` as a hide marker.
   if (nonEmptySystemID(yuri.assistant?.assistantID) && !isContactAssignedSession(yuri)) return true;

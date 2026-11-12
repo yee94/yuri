@@ -96,7 +96,10 @@ the index excludes them from every snapshot and clears prior summaries when a
   coding workers the Assistant subscribed to),
   `metadata.yuri.scheduledTask.taskID`,
   `metadata.yuri.smallModel.purpose`, or
-  `metadata.yuri.llm.purpose`. Metadata remains the ownership/isolation signal;
+   `metadata.yuri.llm.purpose`, or `metadata.yuri.worker.parentSessionID`.
+   Native `session.metadata.updated` removes newly hidden summaries and pins
+   immediately; ordinary metadata-only updates do not fabricate partial rows.
+   Metadata remains the ownership/isolation signal;
   reserved title tags are a separate background-list exclusion rule.
 `time.archived` is archive state (Host authority via
   `metadata.yuri.archive.archivedAt` when present — see

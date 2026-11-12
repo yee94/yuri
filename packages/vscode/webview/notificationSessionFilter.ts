@@ -15,6 +15,7 @@ export type NotificationSessionLike = {
       scheduledTask?: { taskID?: string };
       smallModel?: { purpose?: string };
       llm?: { purpose?: string };
+      worker?: { parentSessionID?: string };
     } | null;
   } | null;
 } | null | undefined;
@@ -31,6 +32,7 @@ export const shouldSkipVSCodeNotificationSession = (
 
   const yuri = session.metadata?.yuri;
   if (!yuri || typeof yuri !== 'object') return false;
+  if (yuri.worker?.parentSessionID) return true;
 
   // Truthy non-empty purpose only — empty string keeps ordinary-session semantics
   // (parity with Host notifications + globalSessions isSystemOwnedSession).

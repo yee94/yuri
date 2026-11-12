@@ -1,6 +1,7 @@
 import { MANAGED_SCHEDULED_TASK_TOOL_PATH } from '../scheduled-tasks/managed-tool-contract.js';
 import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_PATH } from '../scheduled-tasks/session-skill-contract.js';
 import { REMOTE_CONNECTIONS_SKILL_PATH } from '../gui-customization/remote-connections.js';
+import { PROJECTS_SKILL_PATH } from '../gui-customization/projects.js';
 import { MESSAGE_QUEUE_ADMISSION_HTTP_MAX_BYTES } from '../message-queue/service.js';
 
 const parseLoopbackUrl = (rawUrl) => {
@@ -660,7 +661,7 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
       }
       return res.status(403).json({ error: 'Forbidden' });
     }
-    if (normalizedRequestPathname === SCHEDULED_TASK_SKILL_PATH || normalizedRequestPathname === REMOTE_CONNECTIONS_SKILL_PATH) {
+    if (normalizedRequestPathname === SCHEDULED_TASK_SKILL_PATH || normalizedRequestPathname === REMOTE_CONNECTIONS_SKILL_PATH || normalizedRequestPathname === PROJECTS_SKILL_PATH) {
       if (authorizeScheduledTaskSkillRequest(req, getScheduledTaskSkillAuthHeaders())) return next();
       return res.status(403).json({ error: 'Forbidden' });
     }

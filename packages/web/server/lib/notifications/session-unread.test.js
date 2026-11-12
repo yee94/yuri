@@ -11,10 +11,12 @@ import { createSessionUnreadRuntime } from './session-unread-runtime.js';
 const cleanup = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const fixture = (options = {}) => {
+  const { seed, ...runtimeOptions } = options;
   const changed = vi.fn();
   const store = createSessionUnreadStore({ dbPath: ':memory:', onChanged: changed });
+  seed?.(store);
   const loadSession = vi.fn(async id => ({ id, title: 'Conversation', location: { directory: '/project' } }));
-  const runtime = createSessionUnreadRuntime({ store, loadSession, ...options });
+  const runtime = createSessionUnreadRuntime({ store, loadSession, ...runtimeOptions });
   cleanup.push(() => runtime.close());
   const event = (type, sessionID = 'one', created = undefined, seq = undefined) => runtime.processEvent({
     payload: { type, data: { sessionID }, created, ...(seq ? { durable: { seq } } : {}) },
@@ -25,6 +27,116 @@ const fixture = (options = {}) => {
 };
 
 describe('shared session unread', () => {
+  it('excludes explicitly linked CLI workers without guessing from titles or agent names', async () => {
+    const { store, event, loadSession, app } = fixture();
+    loadSession.mockImplementation(async id => ({ id, title: 'Worker', agent: 'general', directory: '/project',
+      metadata: { yuri: { worker: { parentSessionID: id === 'worker' ? 'root' : '' } } },
+    }));
+    await event('session.execution.succeeded', 'worker');
+    await event('session.execution.failed', 'worker');
+    expect((await request(app).put('/api/yuri/session-unread/worker').send({ unread: true })).status).toBe(400);
+    await event('session.execution.succeeded', 'ordinary');
+    expect(Object.keys(store.snapshot().sessions)).toEqual(['ordinary']);
+  });
+
+  it('reconciles persisted child/worker attention once and retains unread state for ordinary roots', async () => {
+    const { app, store, loadSession } = fixture({ seed: store => {
+      for (const id of ['child', 'worker', 'missing', 'root']) store.mark({ id, directory: '/project', unread: true });
+    } });
+    loadSession.mockImplementation(async id => id === 'missing' ? null : ({ id, directory: '/project',
+      ...(id === 'child' ? { parentID: 'root' } : {}),
+      ...(id === 'worker' ? { metadata: { yuri: { worker: { parentSessionID: 'root' } } } } : {}),
+    }));
+    const first = await request(app).get('/api/yuri/session-unread');
+    expect(first.status).toBe(200);
+    expect(Object.keys(first.body.sessions)).toEqual(['root']);
+    expect(first.body.sessions.root).toMatchObject({ unreadCount: 1, manual: true });
+    expect(store.snapshot()).toEqual(first.body);
+    expect((await request(app).get('/api/yuri/session-unread')).body).toEqual(first.body);
+    expect(loadSession).toHaveBeenCalledTimes(4);
+  });
+
+  it('preserves failed startup identities, repairs independent rows, and retries only the failed row', async () => {
+    const { app, store, loadSession } = fixture({ seed: store => {
+      for (const id of ['child', 'root']) store.mark({ id, unread: true });
+    } });
+    loadSession.mockImplementation(async id => {
+      if (id === 'root') throw new Error('temporarily unavailable');
+      return { id, parentID: 'root' };
+    });
+    expect((await request(app).get('/api/yuri/session-unread')).status).toBe(503);
+    expect(Object.keys(store.snapshot().sessions)).toEqual(['root']);
+    loadSession.mockResolvedValue({ id: 'root', directory: '/project' });
+    expect((await request(app).get('/api/yuri/session-unread')).body.sessions.root.unreadCount).toBe(1);
+    expect(loadSession.mock.calls.map(([id]) => id)).toEqual(['child', 'root', 'root']);
+  });
+
+  it('removes prior attention when authoritative metadata makes a session hidden without a new completion', async () => {
+    const { event, store, loadSession, changed } = fixture();
+    await event('session.execution.succeeded');
+    loadSession.mockResolvedValue({ id: 'one', metadata: { yuri: { worker: { parentSessionID: 'root' } } } });
+    await event('session.metadata.updated');
+    expect(store.snapshot().sessions.one).toBeUndefined();
+    expect(changed).toHaveBeenCalledTimes(2);
+    await event('session.execution.succeeded');
+    expect(store.snapshot().sessions.one).toBeUndefined();
+  });
+
+  it('coalesces startup snapshots, caps identity reads at four, and performs no warm snapshot reads', async () => {
+    const { app, loadSession } = fixture({ seed: store => {
+      for (let i = 0; i < 24; i++) store.mark({ id: `session-${i}`, unread: true });
+      store.mark({ id: 'already-read', unread: true });
+      const revision = store.snapshot().sessions['already-read'].revision;
+      store.mark({ id: 'already-read', unread: false, expectedRevision: revision });
+    } });
+    let active = 0;
+    let peak = 0;
+    loadSession.mockImplementation(async id => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      active--;
+      return { id, directory: '/project' };
+    });
+    const snapshots = await Promise.all([request(app).get('/api/yuri/session-unread'), request(app).get('/api/yuri/session-unread')]);
+    expect(snapshots.map(result => result.status)).toEqual([200, 200]);
+    expect(peak).toBe(4);
+    expect(loadSession).toHaveBeenCalledTimes(24);
+    await request(app).get('/api/yuri/session-unread');
+    expect(loadSession).toHaveBeenCalledTimes(24);
+  });
+
+  it('returns retryable snapshot failure rather than waiting forever behind a failed lifecycle boundary', async () => {
+    const { app, event, loadSession, store } = fixture({ seed: store => store.mark({ id: 'one', unread: true }) });
+    loadSession.mockRejectedValue(new Error('offline'));
+    void event('session.execution.started');
+    expect((await request(app).get('/api/yuri/session-unread')).status).toBe(503);
+    expect(store.snapshot().sessions.one.unreadCount).toBe(1);
+  });
+
+  it('keeps persisted unread and revision on cleanup write failure, then repairs only that row on retry', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-unread-repair-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, 'state.sqlite');
+    const store = createSessionUnreadStore({ dbPath });
+    store.mark({ id: 'worker', unread: true });
+    store.mark({ id: 'root', unread: true });
+    const previous = store.snapshot();
+    const loadSession = vi.fn(async id => ({ id, ...(id === 'worker' ? { parentID: 'root' } : {}) }));
+    const runtime = createSessionUnreadRuntime({ store, loadSession });
+    cleanup.push(() => runtime.close());
+    const app = express();
+    runtime.registerRoutes(app);
+    const Database = createRequire(import.meta.url)('better-sqlite3');
+    const db = new Database(dbPath);
+    cleanup.push(() => db.close());
+    db.exec("CREATE TRIGGER reject_cleanup BEFORE DELETE ON session_unread BEGIN SELECT RAISE(ABORT, 'write failed'); END");
+    expect((await request(app).get('/api/yuri/session-unread')).status).toBe(503);
+    expect(store.snapshot()).toEqual(previous);
+    db.exec('DROP TRIGGER reject_cleanup');
+    expect(Object.keys((await request(app).get('/api/yuri/session-unread')).body.sessions)).toEqual(['root']);
+    expect(loadSession.mock.calls.map(([id]) => id)).toEqual(['worker', 'root', 'worker']);
+  });
+
   it('records completion with no clients, deduplicates succeeded/idle, and rearms on a new run', async () => {
     const { store, event, changed } = fixture();
     await event('session.execution.succeeded');

@@ -34,7 +34,9 @@ export const isSystemOwnedSession = (
         scheduledTask?: { taskID?: unknown };
         smallModel?: { purpose?: unknown };
         llm?: { purpose?: unknown };
+        worker?: { parentSessionID?: unknown };
     };
+    if (nonEmptySystemID(record.worker?.parentSessionID)) return true;
     if (record.assigned?.from === 'contact') return false;
     if (nonEmptySystemID(record.assistant?.assistantID)) return true;
     if (nonEmptySystemID(record.scheduledTask?.taskID)) return true;

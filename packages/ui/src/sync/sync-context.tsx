@@ -126,6 +126,7 @@ import {
 } from "./reconnect-recovery"
 import { opencodeClient } from "@/lib/opencode/client"
 import { usePermissionStore } from "@/stores/permissionStore"
+import { isVisibleGlobalSession } from "@/stores/globalSessions"
 import { useConfigStore } from "@/stores/useConfigStore"
 import { useTodosPersistStore } from "@/stores/useTodosPersistStore"
 import { promoteProjectForConversation, useSessionUIStore } from "./session-ui-store"
@@ -2589,7 +2590,7 @@ export function handleEvent(
     const storeState = store.getState()
     const session = storeState.session.find((candidate) => candidate.id === sessionID)
       ?? useGlobalSessionsStore.getState().activeSessions.find((candidate) => candidate.id === sessionID)
-    if (sessionID && session && !(session as Session & { parentID?: string | null }).parentID) {
+    if (sessionID && session && isVisibleGlobalSession(session)) {
       // succeeded then idle is one completion. A lone idle (legacy) still notifies.
       const duplicateSuccess = isSuccessCompletion && payload.type === "session.idle" && turnCompleteNotified.has(sessionID)
       if (!duplicateSuccess) {
