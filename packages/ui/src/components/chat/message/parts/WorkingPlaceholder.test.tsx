@@ -190,6 +190,30 @@ describe('WorkingPlaceholder status stickiness', () => {
     expect(timer?.previousElementSibling).toBe(label);
   });
 
+  test('updates during fade-in merge into one latest transition without interrupting opacity', async () => {
+    motionState.reducedMotion = false;
+    await render({ isWorking: true, statusText: 'Running' });
+    await render({ isWorking: true, statusText: 'Thinking' });
+    await act(async () => animations[0].finish());
+    const label = container.querySelector('.animate-text-shimmer');
+    expect(label?.textContent).toBe('Thinking');
+    for (let index = 0; index < 50; index += 1) {
+      await render({ isWorking: true, statusText: `Reading ${index}` });
+    }
+    expect(animations).toHaveLength(2);
+    expect(animations[1].stop).not.toHaveBeenCalled();
+    expect(label?.textContent).toBe('Thinking');
+    await act(async () => animations[1].finish());
+    expect(animations).toHaveLength(3);
+    await act(async () => animations[2].finish());
+    expect(label?.textContent).toBe('Reading 49');
+    await render({ isWorking: true, statusText: 'Transient' });
+    await render({ isWorking: true, statusText: 'Reading 49' });
+    await act(async () => animations[3].finish());
+    expect(animations).toHaveLength(4);
+    expect(container.querySelector('.animate-text-shimmer')).toBe(label);
+  });
+
   test('reduced motion cancels an in-flight fade and stale completion cannot restore old text', async () => {
     motionState.reducedMotion = false;
     await render({ isWorking: true, statusText: 'Running command' });

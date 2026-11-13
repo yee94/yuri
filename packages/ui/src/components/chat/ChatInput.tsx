@@ -203,8 +203,8 @@ import {
     type ComposerSendPhase,
 } from '@/sync/composer-send-manager';
 import { drainEstablishingFollowUps } from '@/sync/composer-send-drain';
-import { getInboxTerminal, updateInboxOverlayDelivery, useSessionInboxOverlayStore, toChip as toInboxChip, EMPTY_INBOX_CHIPS } from '@/sync/session-inbox-overlay';
-import { cancelUnpromotedInboxItem, queueSessionInbox, steerSessionInbox } from '@/sync/session-prompt-api';
+import { getInboxTerminal, useSessionInboxOverlayStore, toChip as toInboxChip, EMPTY_INBOX_CHIPS } from '@/sync/session-inbox-overlay';
+import { cancelUnpromotedInboxItem, steerSessionInbox } from '@/sync/session-prompt-api';
 import { canPromoteInboxItem, useSessionCompactionBarrierStore } from '@/sync/session-compaction-api';
 import { runQueueMessageFireAndForget } from './queueMessageFireAndForget';
 import { resolveFollowUpEnterAction } from './followUpShortcut';
@@ -7303,17 +7303,6 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                             next.delete(inboxID);
                             return next;
                         });
-                        toast.error(t('chat.chatInput.toast.messageSendFailed'));
-                    });
-            }}
-            onQueueClientPending={(inboxID) => {
-                if (!currentSessionId) return;
-                const directory = currentSessionDirectoryForSync ?? currentDirectory ?? '';
-                void queueSessionInbox({ sessionID: currentSessionId, inboxID, directory })
-                    .then(() => {
-                        updateInboxOverlayDelivery(currentSessionId, inboxID, 'queue');
-                    })
-                    .catch(() => {
                         toast.error(t('chat.chatInput.toast.messageSendFailed'));
                     });
             }}

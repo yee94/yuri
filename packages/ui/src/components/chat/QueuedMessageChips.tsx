@@ -89,12 +89,11 @@ interface QueuedMessageChipProps {
     inboxEditable: boolean;
     onEdit: (message: ChipMessage) => void | Promise<void>;
     onSend: (message: ChipMessage) => void | Promise<void>;
-    onQueue?: (message: ChipMessage) => void;
     onRemove: (message: ChipMessage) => void;
     compactionBarrier?: boolean;
 }
 
-const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pendingOperationKinds, sendPendingTimedOut, abortSendPending, steering, isMobile, inboxEditable, onEdit, onSend, onQueue, onRemove, compactionBarrier = false }: QueuedMessageChipProps) => {
+const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pendingOperationKinds, sendPendingTimedOut, abortSendPending, steering, isMobile, inboxEditable, onEdit, onSend, onRemove, compactionBarrier = false }: QueuedMessageChipProps) => {
     const { t } = useI18n();
     const inboxChip = isSessionInboxChip(message);
     const inboxSend = useMutation({ mutationFn: async () => { await onSend(message); } });
@@ -123,9 +122,6 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
         : !clientMutationBlocked && !sendPending && (server
             ? canSendServerQueuedMessage(message as MessageQueueServerDisplayItem, hasDispatchLock, { allowManualDispatchRetry: sendPendingTimedOut })
             : canSendQueuedMessage(message as QueuedMessage, hasDispatchLock));
-    const canQueueInbox = inboxChip && typeof onQueue === 'function' && !frozen && !editPending
-        && !inboxSend.isPending && !steering && !abortSendPending && !rawSendPending
-        && message.delivery === 'steer' && !waitingForCompaction;
     const recovery = legacyMessage?.failure?.recovery;
     const visibleContent = resolveQueuedMessagePreviewText(message);
     const visibleAttachments = pendingAdmission || inboxChip ? undefined : recovery?.attachments ?? ('attachments' in message ? message.attachments : undefined);
@@ -298,12 +294,6 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                         </button>
                     </>
                 )}
-                {canQueueInbox ? <button type="button" onClick={() => onQueue?.(message)} aria-label={t('chat.queuedMessage.title')}
-                    className={cn('inline-flex items-center bg-transparent text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
-                        isMobile ? 'h-7 gap-1.5 px-0 text-[11px]' : 'h-6 gap-1 px-0.5')}>
-                    <Icon name="time" weight="medium" className={cn(isMobile ? 'size-3' : 'size-3.5')} aria-hidden="true" />
-                    <span className={isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]'}>{t('chat.queuedMessage.title')}</span>
-                </button> : null}
                 {!isMobile && !pendingAdmission ? removeAction : null}
             </div>
         </div>
@@ -334,7 +324,6 @@ interface QueuedMessageChipsProps {
     /** Remove a client-only pending chip (restoring content is caller-owned). */
     onRemoveClientPending?: (requestID: string) => void;
     onSteerClientPending?: (inboxID: string) => void | Promise<void>;
-    onQueueClientPending?: (inboxID: string) => void;
     /** Message ids admitted by Cmd+Enter steer. They show steering copy before delivery flips. */
     steeringMessageIDs?: ReadonlySet<string>;
     compactionBarrier?: boolean;
@@ -409,7 +398,7 @@ function NativeInboxRow({ item, readOnly, isMobile, onAction, onShowPopup }: {
         <QueuedMessageChip message={toChip(item)} server={false} frozen={readOnly || operation.isPending} hasDispatchLock={false}
             pendingOperationKinds={EMPTY_PENDING_OPERATION_KINDS} sendPendingTimedOut={false} abortSendPending={false} steering={false}
             isMobile={isMobile} inboxEditable={!readOnly} onEdit={async () => { await operation.mutateAsync('edit'); }} onSend={async () => { await operation.mutateAsync('steer'); }}
-            onQueue={() => operation.mutate('queue')} onRemove={() => operation.mutate('cancel')} />
+            onRemove={() => operation.mutate('cancel')} />
         {references.length ? <div className="px-6 typography-meta text-muted-foreground">{references.join(' ')}</div> : null}
         {files.length ? <div className="px-6 pb-1"><MessageFilesDisplay files={files} messageID={item.id} sessionID={item.sessionID} compact onShowPopup={onShowPopup} /></div> : null}
     </div>;
@@ -453,7 +442,7 @@ export const queuedMessageItemScope = (message: QueuedMessage, scope: BoundQueue
     return queueScopeKey(owner) === queueScopeKey(scope) ? scope : null;
 };
 
-export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCommitted, draftKey, scope: queueScope, draftTarget, clientPendingItems = EMPTY_PENDING_CLIENT, onRemoveClientPending, onSteerClientPending, onQueueClientPending, compactionBarrier = false, steeringMessageIDs = EMPTY_STEERING_MESSAGE_IDS, trailing }: QueuedMessageChipsProps) => {
+export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCommitted, draftKey, scope: queueScope, draftTarget, clientPendingItems = EMPTY_PENDING_CLIENT, onRemoveClientPending, onSteerClientPending, compactionBarrier = false, steeringMessageIDs = EMPTY_STEERING_MESSAGE_IDS, trailing }: QueuedMessageChipsProps) => {
     const { t } = useI18n();
     const isMobile = useUIStore((state) => state.isMobile);
     const serverQueue = useMessageQueueServerScope({
@@ -880,13 +869,6 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
         onSendMessage(retryID);
     });
 
-    const handleQueueInbox = useEvent((message: ChipMessage) => {
-        if (compactionBarrier) return;
-        if (isSessionInboxChip(message)) {
-            onQueueClientPending?.(message.queueItemID);
-        }
-    });
-
     const handleRemove = useEvent((message: ChipMessage) => {
         if (isSessionInboxChip(message)) {
             onRemoveClientPending?.(message.requestID);
@@ -964,7 +946,6 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
                                         inboxEditable={Boolean(queueScope && draftTarget)}
                                         onEdit={handleEdit}
                                         onSend={handleSend}
-                                        onQueue={onQueueClientPending ? handleQueueInbox : undefined}
                                         onRemove={handleRemove}
                                         compactionBarrier={compactionBarrier}
                                     />

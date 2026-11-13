@@ -28,7 +28,6 @@ function WorkingStatusText({ text, elapsed, reducedMotion }: { text: string; ela
   const textElement = React.useRef<HTMLSpanElement>(null);
   const initialText = React.useRef(text);
   const latestText = React.useRef(text);
-  const fadingOut = React.useRef(false);
   const animation = React.useRef<ReturnType<typeof animate> | null>(null);
 
   React.useLayoutEffect(() => {
@@ -39,29 +38,33 @@ function WorkingStatusText({ text, elapsed, reducedMotion }: { text: string; ela
     if (reducedMotion) {
       animation.current?.stop();
       animation.current = null;
-      fadingOut.current = false;
       label.textContent = text;
       node.style.opacity = '1';
       return;
     }
-    // Coalesce changes during fade-out without restarting it or remounting shimmer.
-    if (fadingOut.current || label.textContent === text) return;
-    animation.current?.stop();
-    fadingOut.current = true;
-    const exit = animate(node, { opacity: 0 }, { duration: 0.15, ease: 'easeInOut' });
-    animation.current = exit;
-    void exit.then(() => {
-      if (animation.current !== exit) return;
-      fadingOut.current = false;
-      label.textContent = latestText.current;
-      animation.current = animate(node, { opacity: 1 }, { duration: 0.15, ease: 'easeInOut' });
-    });
+    // Keep both halves continuous; bursts replace one pending label, not the animation.
+    const transition = () => {
+      if (animation.current || label.textContent === latestText.current) return;
+      const exit = animate(node, { opacity: 0 }, { duration: 0.25, ease: 'easeIn' });
+      animation.current = exit;
+      void exit.then(() => {
+        if (animation.current !== exit) return;
+        label.textContent = latestText.current;
+        const enter = animate(node, { opacity: 1 }, { duration: 0.35, ease: 'easeOut' });
+        animation.current = enter;
+        void enter.then(() => {
+          if (animation.current !== enter) return;
+          animation.current = null;
+          transition();
+        });
+      });
+    };
+    transition();
   }, [text, reducedMotion]);
 
   React.useLayoutEffect(() => () => {
     animation.current?.stop();
     animation.current = null;
-    fadingOut.current = false;
   }, []);
 
   // This leaf owns text replacement; React retains the initial child and slot.

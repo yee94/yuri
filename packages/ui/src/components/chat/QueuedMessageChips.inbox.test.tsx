@@ -166,6 +166,13 @@ it('shows promotion pending immediately and keeps it until authoritative consump
   await render([], promote);
   expect(host.querySelector('[data-yuri-queue-card]')).toBeNull();
 });
+it.each([false, true])('shows only steering status for an admitted steer item (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  await render([{ ...inbox, delivery: 'steer' }]);
+  expect(host.textContent).toContain(dict['chat.queuedMessage.sending']);
+  expect(host.querySelector(`button[aria-label="${dict['chat.queuedMessage.title']}"]`)).toBeNull();
+  expect(host.querySelector<HTMLButtonElement>(`button[aria-label="${dict['chat.queuedMessage.removeAria']}"]`)?.disabled).toBe(false);
+});
 it('restores waiting for compaction before steering and retains the message until consumption', async () => {
   await render([{ ...inbox, delivery: 'steer' }], undefined, undefined, true);
   expect(host.textContent).toContain(dict['chat.queuedMessage.waitingForCompaction']);

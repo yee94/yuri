@@ -308,7 +308,7 @@ margin otherwise escapes the pin-reveal root and shrinks the scrollable height
 by 4px on removal even when the measured root height is unchanged.
 Embedded composer rows retain their existing spacing.
 For a turn observed live by `MessageBody`, the footer occupies its final space
-immediately and fades in with Motion over 200ms (`easeOut`, opacity only).
+immediately and fades in with Motion over 350ms (`easeOut`, opacity only).
 The reveal reuses the existing message-scoped streaming lifecycle marker; it
 adds no separate lifecycle Effect, state update, timer or subscription.
 Cold settled history does not replay the entrance, metadata updates keep the same
@@ -1171,6 +1171,8 @@ the real touch sensor's long-press commit, quick-swipe and cancellation paths.
 These checks do not replace physical-device gesture validation.
 
 ## Native inbox configuration and shutdown recovery
+
+Steering chips show only the steering status and removal action, with no action to switch back to Queue. This applies to both local and remote native inbox rows, including after the steer request completes.
 
 Native queued inbox Edit restores the authoritative text, files, agents and skill references into the captured Composer draft through `session-inbox-edit.ts`, then cancels the pending inbox identity. Successful edits focus the Composer. Edit/Send/Remove on that chip are locked during the edit mutation; admitted steer items stay send-pending. Draft persistence must commit before cancellation. Definitive cancellation rejection uses revision-guarded rollback; an ambiguous network failure retains the recovered draft and reports failure. Session/runtime changes and unmount fence late work. Shared behavior applies to desktop, web, VS Code and mobile.
 

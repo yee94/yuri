@@ -38,8 +38,8 @@ test('native queue retains files/images/references, mature actions and recovery 
     await act(async () => root.render(render('steer')));
     expect(node.querySelector('[aria-label="chat.queuedMessage.title"]')).toBeNull();
     await act(async () => finish());
-    await vi.waitFor(() => expect(node.querySelector('[aria-label="chat.queuedMessage.title"]')).not.toBeNull());
-    await act(async () => node.querySelector<HTMLButtonElement>('[aria-label="chat.queuedMessage.title"]')!.click());
-    await vi.waitFor(() => expect(action).toHaveBeenLastCalledWith('queue', 'input-1'));
+    await vi.waitFor(() => expect(node.querySelector('[aria-label="chat.queuedMessage.sendingAria"]')).not.toBeNull());
+    expect(node.querySelector('[aria-label="chat.queuedMessage.title"]')).toBeNull();
+    expect(action).toHaveBeenCalledTimes(2);
   } finally { await act(async () => root.unmount()); client.clear(); node.remove(); }
 });

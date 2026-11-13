@@ -68,7 +68,7 @@ export const AssistantMessageFooter = React.memo(function AssistantMessageFooter
     return <motion.div className={isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS}
         initial={animateReveal && !reducedMotion ? { opacity: 0 } : false}
         animate={{ opacity: 1 }}
-        transition={{ duration: reducedMotion ? 0 : 0.2, ease: 'easeOut' }}
+        transition={{ duration: reducedMotion ? 0 : 0.35, ease: 'easeOut' }}
         data-message-footer="true" style={MESSAGE_FOOTER_CONTAINER_STYLE}>
         {actions ? <div className={MESSAGE_FOOTER_ACTION_GROUP_CLASS} data-message-action-group="true">{actions}</div> : null}
         {(tps || duration || timestamp || activity) ? <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>
